@@ -1,0 +1,74 @@
+name: release-main
+
+# Continuous delivery: every push to main runs the test suite, then — only if it
+# passes — builds the Windows installers and publishes them to a single rolling
+# "dev" pre-release that always tracks the latest main commit.
+#
+# Stable, versioned releases are cut separately by release.yml on a v* tag.
+on:
+  push:
+    branches: [main]
+
+# A newer push supersedes an in-flight one so the dev release reflects latest main.
+concurrency:
+  group: release-main
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write # publish the release + move the dev tag
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build (src-tauri/target)
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # --- test gate: a failure here fails the job before anything is published ---
+      - name: Frontend typecheck + build
+        run: npm run build # tsc --noEmit (strict) + vite build
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      # --- publish: replace the rolling dev release so its tag tracks this commit ---
+      - name: Remove the previous dev release + tag
+        run: gh release delete dev --yes --cleanup-tag
+        continue-on-error: true # no-op on the very first run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build installers + publish dev pre-release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: dev
+          releaseName: 'Development build — latest main'
+          prerelease: true
+          releaseDraft: false
+          releaseBody: |
+            Auto-built from `main` (${{ github.sha }}) — bleeding edge, may be unstable.
+
+            Download **`Francois_*_x64-setup.exe`** (NSIS) or **`Francois_*_x64_en-US.msi`** (WiX) below.
+            Requires the Claude Code CLI (`claude`) installed and authenticated on `PATH`. Unsigned →
+            Windows SmartScreen may warn (*More info → Run anyway*).
+
+            For stable, versioned builds see the tagged releases (pushed via a `v*` tag).

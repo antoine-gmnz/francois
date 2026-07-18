@@ -1,9 +1,8 @@
 name: ci
 
-# Run the test suite on every push to main and every pull request.
+# Test gate for pull requests. Direct pushes to main are tested by the
+# release-main workflow (which then also builds + publishes the dev release).
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 

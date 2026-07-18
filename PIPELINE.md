@@ -32,6 +32,10 @@ Project: **Francois** — a desktop terminal app that orchestrates Claude Code s
 - `default_branch`: `main`
 - `feature_branch_prefix`: `feat/`
 - Notes: repository initialized on the `main` branch. `/ship` requires a SHIP-verdict `/review` before it will push or open a PR.
+- **CI/CD** (`.github/workflows/`):
+  - `ci.yml` — pull requests: `npm run build` (tsc + vite) + `cargo test`.
+  - `release-main.yml` — every push to `main`: the same test gate, then (if green) build the Windows installers and refresh the rolling **`dev`** pre-release (always tracks latest main).
+  - `release.yml` — a `v*` tag (or manual run): build installers into a versioned draft release (the stable channel). Version comes from `tauri.conf.json`.
 
 ## Conventions
 
