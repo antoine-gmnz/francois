@@ -391,6 +391,11 @@ enum SessionEvent {
         #[serde(rename = "limitTokens")]
         limit_tokens: u64,
     },
+    #[serde(rename = "session.resumeFailed")]
+    ResumeFailed {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+    },
     #[serde(rename = "session.error")]
     Error {
         #[serde(rename = "sessionId")]
@@ -601,20 +606,145 @@ fn sessions_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("sessions.json"))
 }
 
+// ---------- transcript persistence (durable-sessions) ----------
+
+/// A session id must be a uuid-charset token so it can never escape the transcripts
+/// dir (no `/`, `\`, `..`). Defense-in-depth against a tampered/legacy sessions.json.
+fn valid_session_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+fn transcript_path(app: &AppHandle, session_id: &str) -> Option<std::path::PathBuf> {
+    if !valid_session_id(session_id) {
+        return None;
+    }
+    app.path().app_data_dir().ok().map(|d| d.join("transcripts").join(format!("{session_id}.jsonl")))
+}
+
+/// Serialize a finalized block to the on-disk PersistedBlock shape (durable-sessions §5).
+fn persisted_block_json(b: &BufBlock) -> Value {
+    let kind = match b.kind {
+        BlockKind::User => "user",
+        BlockKind::Assistant => "assistant",
+        BlockKind::Tool => "tool",
+        BlockKind::Subagent => "subagent",
+    };
+    serde_json::json!({
+        "blockId": b.block_id, "kind": kind, "text": b.text,
+        "tool": b.tool, "summary": b.summary, "meta": b.meta,
+    })
+}
+
+/// Append one finalized block as a JSON line to the session's transcript (FR-1/2).
+/// Best-effort: a write failure is ignored so it never breaks the turn (§7).
+fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
+    use std::io::Write as _;
+    let Some(path) = transcript_path(app, session_id) else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let mut line = serde_json::to_string(&persisted_block_json(block)).unwrap_or_default();
+    line.push('\n');
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// Parse one PersistedBlock line back into a BufBlock. Returns None for a malformed
+/// or partial line so reload can skip it (FR-15).
+fn parse_persisted_block(line: &str) -> Option<BufBlock> {
+    let v: Value = serde_json::from_str(line).ok()?;
+    let kind = match v.get("kind").and_then(|k| k.as_str())? {
+        "user" => BlockKind::User,
+        "assistant" => BlockKind::Assistant,
+        "tool" => BlockKind::Tool,
+        "subagent" => BlockKind::Subagent,
+        _ => return None,
+    };
+    Some(BufBlock {
+        block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+        kind,
+        text: v.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+        tool: v.get("tool").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+        summary: v.get("summary").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+        meta: v.get("meta").and_then(|m| m.as_str()).map(String::from),
+        streaming: false,
+    })
+}
+
+/// Read a session's persisted transcript back into a block buffer (FR-5).
+fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
+    let Some(path) = transcript_path(app, session_id) else { return Vec::new() };
+    let Ok(content) = std::fs::read_to_string(&path) else { return Vec::new() };
+    content.lines().filter_map(parse_persisted_block).collect()
+}
+
 fn persist(app: &AppHandle, engine: &Engine) {
     let map = engine.sessions.lock().unwrap();
     let list: Vec<Value> = map
         .values()
         .map(|s| {
-            serde_json::json!({ "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort })
+            serde_json::json!({
+                "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
+                "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
+                "lastActivityAt": s.last_activity_at,
+                "contextUsedTokens": s.context_used_tokens,
+            })
         })
         .collect();
     if let Some(path) = sessions_json_path(app) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::write(&path, serde_json::to_vec_pretty(&list).unwrap_or_default());
+        // Atomic write (temp + rename) so a crash mid-write can't torn sessions.json —
+        // it now holds every session's claudeSessionId resume anchor (FR-10).
+        let bytes = serde_json::to_vec_pretty(&list).unwrap_or_default();
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, &bytes).is_ok() {
+            if std::fs::rename(&tmp, &path).is_err() {
+                let _ = std::fs::remove_file(&tmp);
+            }
+        }
     }
+}
+
+/// Scalar fields parsed from a persisted session record. Backward-compatible:
+/// records from before durable-sessions lack claudeSessionId/lastActivityAt/
+/// contextUsedTokens → None / `now` / 0 (FR-3/4). Transcript is loaded separately.
+struct PersistedMeta {
+    id: String,
+    name: String,
+    cwd: String,
+    model_id: String,
+    effort: Option<String>,
+    claude_session_id: Option<String>,
+    last_activity_at: u64,
+    context_used_tokens: u64,
+}
+
+fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
+    let id = rec.get("id")?.as_str()?.to_string();
+    let name = rec.get("name")?.as_str()?.to_string();
+    let cwd = rec.get("cwd")?.as_str()?.to_string();
+    let raw = rec.get("modelId").and_then(|v| v.as_str()).unwrap_or(DEFAULT_MODEL);
+    // Heal the two made-up ids from an earlier build; keep real ids verbatim.
+    let model_id = match raw {
+        "" => DEFAULT_MODEL,
+        "claude-opus-4" => "opus",
+        "claude-haiku-4" => "haiku",
+        other => other,
+    }
+    .to_string();
+    Some(PersistedMeta {
+        id,
+        name,
+        cwd,
+        model_id,
+        effort: rec.get("effort").and_then(|v| v.as_str()).filter(|e| valid_effort(e)).map(String::from),
+        claude_session_id: rec.get("claudeSessionId").and_then(|v| v.as_str()).map(String::from),
+        last_activity_at: rec.get("lastActivityAt").and_then(|v| v.as_u64()).unwrap_or(now),
+        context_used_tokens: rec.get("contextUsedTokens").and_then(|v| v.as_u64()).unwrap_or(0),
+    })
 }
 
 pub fn load_persisted(app: &AppHandle) {
@@ -625,47 +755,34 @@ pub fn load_persisted(app: &AppHandle) {
     let mut watched: Vec<(String, String)> = Vec::new();
     let mut map = engine.sessions.lock().unwrap();
     for rec in list {
-        let (Some(id), Some(name), Some(cwd)) = (
-            rec.get("id").and_then(|v| v.as_str()),
-            rec.get("name").and_then(|v| v.as_str()),
-            rec.get("cwd").and_then(|v| v.as_str()),
-        ) else {
-            continue;
-        };
-        let raw = rec.get("modelId").and_then(|v| v.as_str()).unwrap_or(DEFAULT_MODEL);
-        // Heal the two made-up ids from an earlier build; keep real ids verbatim.
-        let model_id = match raw {
-            "" => DEFAULT_MODEL,
-            "claude-opus-4" => "opus",
-            "claude-haiku-4" => "haiku",
-            other => other,
-        };
-        let effort = rec.get("effort").and_then(|v| v.as_str()).filter(|e| valid_effort(e)).map(String::from);
         let now = now_ms();
+        let Some(m) = parse_session_record(&rec, now) else { continue };
+        let block_buffer = read_transcript(app, &m.id); // FR-5
+        let limit = context_limit(&m.model_id);
+        watched.push((m.id.clone(), m.cwd.clone()));
         map.insert(
-            id.to_string(),
+            m.id.clone(),
             Session {
-                id: id.to_string(),
-                name: name.to_string(),
-                cwd: cwd.to_string(),
-                model_id: model_id.to_string(),
+                id: m.id,
+                name: m.name,
+                cwd: m.cwd,
+                model_id: m.model_id,
                 status: "idle".into(),
-                context_used_tokens: 0,
-                context_limit_tokens: context_limit(model_id),
+                context_used_tokens: m.context_used_tokens,
+                context_limit_tokens: limit,
                 started_at: now,
-                last_activity_at: now,
+                last_activity_at: m.last_activity_at,
                 error_message: None,
-                effort,
+                effort: m.effort,
                 queue: VecDeque::new(),
-                claude_session_id: None,
+                claude_session_id: m.claude_session_id,
                 current: None,
                 agents: HashMap::new(),
                 agent_order: Vec::new(),
-                block_buffer: Vec::new(),
+                block_buffer,
                 mcp: HashMap::new(),
             },
         );
-        watched.push((id.to_string(), cwd.to_string()));
     }
     drop(map);
     // Start a diff watcher per restored session (FR-15).
@@ -1549,6 +1666,9 @@ pub fn session_remove(app: AppHandle, engine: State<'_, Engine>, session_id: Str
                 let _ = turn.child.lock().unwrap().kill();
             }
             persist(&app, &engine);
+            if let Some(path) = transcript_path(&app, &session_id) {
+                let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)
+            }
             crate::diff::unwatch_session(&session_id); // FR-15: dispose the watcher
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)
@@ -1704,6 +1824,9 @@ enum TurnMode {
     Normal,
     #[allow(dead_code)]
     Compact,
+    /// Re-run of a turn whose `--resume` was rejected: skip re-buffering the user
+    /// message; the caller has already cleared claude_session_id so it runs fresh (FR-9).
+    ResumeRetry,
 }
 
 fn spawn_claude(cwd: &str, model_id: &str, resume: Option<&str>, text: &str, effort: Option<&str>) -> std::io::Result<Child> {
@@ -1746,24 +1869,43 @@ fn compute_used(usage: &Value) -> u64 {
 }
 
 /// Emit message.user, then spawn the turn's claude child + reader thread.
+/// Detects a rejected `--resume`: the turn used resume but exited before starting a
+/// thread (no system/init, no result) and wasn't interrupted (FR-8). The retry runs
+/// with resume forced off, so it can never re-trigger this — at most one retry.
+fn is_resume_fail(resume_used: bool, got_init: bool, got_result: bool, was_interrupted: bool) -> bool {
+    resume_used && !got_init && !got_result && !was_interrupted
+}
+
 fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String, mode: TurnMode) {
     let (cwd, model_id, resume, effort) = {
         let engine = app.state::<Engine>();
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(session_id) else { return };
-        (s.cwd.clone(), s.model_id.clone(), s.claude_session_id.clone(), s.effort.clone())
+        // ResumeRetry forces resume off regardless of the stored id, so a still-good id
+        // is never dropped preemptively — a fresh init overwrites it only on success.
+        let resume = if mode == TurnMode::ResumeRetry { None } else { s.claude_session_id.clone() };
+        (s.cwd.clone(), s.model_id.clone(), resume, s.effort.clone())
     };
 
+    let resume_used = resume.is_some();
+
     if mode == TurnMode::Normal {
-        {
+        let block = {
             let engine = app.state::<Engine>();
             let mut map = engine.sessions.lock().unwrap();
-            if let Some(s) = map.get_mut(session_id) {
-                s.buf_user(&block_id, text.clone());
-                s.last_activity_at = now_ms();
+            match map.get_mut(session_id) {
+                Some(s) => {
+                    s.buf_user(&block_id, text.clone());
+                    s.last_activity_at = now_ms();
+                    s.block_buffer.last().cloned()
+                }
+                None => None,
             }
+        };
+        if let Some(b) = &block {
+            append_transcript(app, session_id, b); // durable-sessions FR-2
         }
-        emit(app, SessionEvent::MessageUser { session_id: session_id.into(), block_id, text: text.clone() });
+        emit(app, SessionEvent::MessageUser { session_id: session_id.into(), block_id: block_id.clone(), text: text.clone() });
     }
 
     let child = match spawn_claude(&cwd, &model_id, resume.as_deref(), &text, effort.as_deref()) {
@@ -1785,8 +1927,9 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
 
     let app2 = app.clone();
     let sid = session_id.to_string();
+    // block_id/text carried into the reader so a resume-fail can re-run this turn fresh (FR-9).
     std::thread::spawn(move || {
-        run_reader(app2, sid, child, interrupted, model_id);
+        run_reader(app2, sid, child, interrupted, model_id, resume_used, block_id, text);
     });
 }
 
@@ -1798,7 +1941,17 @@ struct ToolRec {
     is_task: bool,
 }
 
-fn run_reader(app: AppHandle, session_id: String, child: Arc<Mutex<Child>>, interrupted: Arc<AtomicBool>, model_id: String) {
+#[allow(clippy::too_many_arguments)]
+fn run_reader(
+    app: AppHandle,
+    session_id: String,
+    child: Arc<Mutex<Child>>,
+    interrupted: Arc<AtomicBool>,
+    model_id: String,
+    resume_used: bool,
+    block_id: String,
+    text: String,
+) {
     // Take stdout out of the shared child so we can read without holding its lock.
     let stdout = { child.lock().unwrap().stdout.take() };
     let Some(stdout) = stdout else {
@@ -1814,6 +1967,7 @@ fn run_reader(app: AppHandle, session_id: String, child: Arc<Mutex<Child>>, inte
     let mut open_block: Option<(String, u8)> = None;
     let mut pending_used: Option<u64> = None;
     let mut got_result = false;
+    let mut got_init = false; // did the stream start (system/init)? — resume-fail detection (FR-8)
     let mut result_error: Option<String> = None;
 
     let cwd = {
@@ -1829,12 +1983,18 @@ fn run_reader(app: AppHandle, session_id: String, child: Arc<Mutex<Child>>, inte
         match ty {
             "system" => {
                 if v.get("subtype").and_then(|s| s.as_str()) == Some("init") {
+                    got_init = true;
                     if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
-                        let engine = app.state::<Engine>();
-                        let mut map = engine.sessions.lock().unwrap();
-                        if let Some(s) = map.get_mut(&session_id) {
-                            s.claude_session_id = Some(sid.to_string());
+                        {
+                            let engine = app.state::<Engine>();
+                            let mut map = engine.sessions.lock().unwrap();
+                            if let Some(s) = map.get_mut(&session_id) {
+                                s.claude_session_id = Some(sid.to_string());
+                            }
                         }
+                        // persist the (possibly new) thread id so --resume survives a restart (FR-7)
+                        let engine = app.state::<Engine>();
+                        persist(&app, &engine);
                     }
                     emit_mcp_from_init(&app, &session_id, &v);
                 }
@@ -1869,6 +2029,16 @@ fn run_reader(app: AppHandle, session_id: String, child: Arc<Mutex<Child>>, inte
 
     let _ = child.lock().unwrap().wait();
     let was_interrupted = interrupted.load(Ordering::SeqCst);
+
+    // Resume-fail (FR-8/9): Claude rejected the stale --resume id before starting a
+    // thread. Tell the UI and transparently re-run the same message on a fresh thread
+    // (ResumeRetry forces resume off → this can fire at most once). The stored id is
+    // left in place — a fresh init overwrites it on success; a transient failure keeps it.
+    if is_resume_fail(resume_used, got_init, got_result, was_interrupted) {
+        emit(&app, SessionEvent::ResumeFailed { session_id: session_id.clone() });
+        begin_turn(&app, &session_id, block_id, text, TurnMode::ResumeRetry);
+        return;
+    }
 
     // Close any block left open (interrupt or crash) — FR-24/FR-34.
     if let Some((bid, kind)) = open_block.take() {
@@ -1926,6 +2096,9 @@ fn finish_turn(app: &AppHandle, session_id: &str, errored: bool, error_msg: Opti
             None
         }
     };
+
+    // Persist updated usage/activity/thread-id at turn boundary (durable-sessions FR-3).
+    persist(app, &engine);
 
     if errored {
         let msg = error_msg.unwrap_or_else(|| "session error".into());
@@ -2121,12 +2294,19 @@ fn handle_stream_event(
             if let Some((bid, kind, slot)) = blocks.get(&idx).cloned() {
                 if kind == 0 {
                     let text = text_accum.get(&bid).cloned().unwrap_or_default();
-                    {
+                    let block = {
                         let engine = app.state::<Engine>();
                         let mut map = engine.sessions.lock().unwrap();
-                        if let Some(s) = map.get_mut(session_id) {
-                            s.buf_assistant(&bid, text);
+                        match map.get_mut(session_id) {
+                            Some(s) => {
+                                s.buf_assistant(&bid, text);
+                                s.block_buffer.last().cloned()
+                            }
+                            None => None,
                         }
+                    };
+                    if let Some(b) = &block {
+                        append_transcript(app, session_id, b); // durable-sessions FR-2
                     }
                     *open_block = None;
                     emit(app, SessionEvent::AssistantDone { session_id: session_id.into(), block_id: bid });
@@ -2211,12 +2391,19 @@ fn handle_tool_results(
             }
         }
 
-        {
+        let done_block = {
             let engine = app.state::<Engine>();
             let mut map = engine.sessions.lock().unwrap();
-            if let Some(s) = map.get_mut(session_id) {
-                s.buf_tool_done(&block_id, meta.clone());
+            match map.get_mut(session_id) {
+                Some(s) => {
+                    s.buf_tool_done(&block_id, meta.clone());
+                    s.block_buffer.iter().find(|b| b.block_id == block_id).cloned()
+                }
+                None => None,
             }
+        };
+        if let Some(b) = &done_block {
+            append_transcript(app, session_id, b); // durable-sessions FR-2
         }
         if matches!(open_block, Some((b, _)) if *b == block_id) {
             *open_block = None;
@@ -2392,6 +2579,111 @@ mod tests {
     #[test]
     fn edit_counts_replace_one_line() {
         assert_eq!(edit_counts("a\nb\nc", "a\nX\nc"), (1, 1)); // +1 −1
+    }
+
+    #[test]
+    fn transcript_block_roundtrips_finalized() {
+        let b = BufBlock {
+            block_id: "b1".into(),
+            kind: BlockKind::Tool,
+            text: String::new(),
+            tool: "Edit".into(),
+            summary: "src/x.rs".into(),
+            meta: Some("+3 \u{2212}1".into()),
+            streaming: true, // in-memory streaming flag must NOT round-trip
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        let back = parse_persisted_block(&line).expect("parse");
+        assert_eq!(back.block_id, "b1");
+        assert_eq!(back.tool, "Edit");
+        assert_eq!(back.summary, "src/x.rs");
+        assert_eq!(back.meta.as_deref(), Some("+3 \u{2212}1"));
+        assert!(!back.streaming); // reloaded blocks are always finalized (FR-5)
+        assert!(matches!(back.kind, BlockKind::Tool));
+    }
+
+    #[test]
+    fn transcript_user_block_has_null_meta() {
+        let b = BufBlock {
+            block_id: "u1".into(),
+            kind: BlockKind::User,
+            text: "hi".into(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            streaming: false,
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        assert!(line.contains("\"meta\":null"));
+        let back = parse_persisted_block(&line).unwrap();
+        assert_eq!(back.text, "hi");
+        assert!(back.meta.is_none());
+        assert!(matches!(back.kind, BlockKind::User));
+    }
+
+    #[test]
+    fn transcript_skips_malformed_lines() {
+        assert!(parse_persisted_block("not json").is_none());
+        assert!(parse_persisted_block(r#"{"kind":"user"}"#).is_none()); // missing blockId
+        assert!(parse_persisted_block(r#"{"blockId":"x","kind":"bogus"}"#).is_none()); // unknown kind
+        assert!(parse_persisted_block("").is_none()); // partial/empty trailing line (FR-15)
+    }
+
+    #[test]
+    fn transcript_subagent_block_roundtrips() {
+        let b = BufBlock {
+            block_id: "s1".into(),
+            kind: BlockKind::Subagent,
+            text: String::new(),
+            tool: String::new(),
+            summary: "explorer".into(), // subagent name lives in `summary`
+            meta: Some("done".into()),
+            streaming: false,
+        };
+        let back = parse_persisted_block(&serde_json::to_string(&persisted_block_json(&b)).unwrap()).unwrap();
+        assert!(matches!(back.kind, BlockKind::Subagent));
+        assert_eq!(back.summary, "explorer");
+        assert_eq!(back.meta.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn resume_fail_predicate_truth_table() {
+        // fires only for a resumed turn that never started a thread and wasn't interrupted
+        assert!(is_resume_fail(true, false, false, false));
+        assert!(!is_resume_fail(false, false, false, false)); // not resumed → ordinary early error
+        assert!(!is_resume_fail(true, true, false, false)); // saw init → thread started
+        assert!(!is_resume_fail(true, false, true, false)); // produced a result → turn ran
+        assert!(!is_resume_fail(true, false, false, true)); // user interrupted → no retry
+    }
+
+    #[test]
+    fn session_record_backward_compat_and_full() {
+        // pre-durable-sessions record lacks the three new fields → safe defaults (FR-3/4)
+        let old = json!({ "id": "abc", "name": "proj", "cwd": "/x", "modelId": "opus" });
+        let m = parse_session_record(&old, 4242).expect("parse");
+        assert_eq!((m.id.as_str(), m.model_id.as_str()), ("abc", "opus"));
+        assert!(m.claude_session_id.is_none());
+        assert_eq!(m.context_used_tokens, 0);
+        assert_eq!(m.last_activity_at, 4242); // default `now`
+        // full record restores all three
+        let full = json!({ "id": "d", "name": "n", "cwd": "/y", "modelId": "sonnet",
+            "claudeSessionId": "cs-1", "lastActivityAt": 99u64, "contextUsedTokens": 512u64 });
+        let m2 = parse_session_record(&full, 0).unwrap();
+        assert_eq!(m2.claude_session_id.as_deref(), Some("cs-1"));
+        assert_eq!((m2.last_activity_at, m2.context_used_tokens), (99, 512));
+        // healing of a legacy made-up id
+        assert_eq!(parse_session_record(&json!({ "id": "z", "name": "n", "cwd": "/", "modelId": "claude-opus-4" }), 0).unwrap().model_id, "opus");
+        // missing required field → None
+        assert!(parse_session_record(&json!({ "name": "x" }), 0).is_none());
+    }
+
+    #[test]
+    fn valid_session_id_blocks_traversal() {
+        assert!(valid_session_id("11111111-2222-3333-4444-555555555555"));
+        assert!(!valid_session_id("../../etc/passwd"));
+        assert!(!valid_session_id("a/b"));
+        assert!(!valid_session_id("a\\b"));
+        assert!(!valid_session_id(""));
     }
 
     #[test]

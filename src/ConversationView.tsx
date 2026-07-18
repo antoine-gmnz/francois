@@ -122,6 +122,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   const [isPinned, setPinned] = useState(true);
   const [input, setInput] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
+  const [resumeFailed, setResumeFailed] = useState(false); // durable-sessions FR-14 banner
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -155,6 +156,10 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
           break;
         case 'message.user':
           dispatch({ t: 'msgUser', blockId: e.blockId, text: e.text });
+          setResumeFailed(false); // a new user turn clears the resume-fail notice (FR-14)
+          break;
+        case 'session.resumeFailed':
+          setResumeFailed(true); // the --resume was rejected; core continued fresh (FR-9/14)
           break;
         case 'assistant.delta':
           dispatch({ t: 'delta', blockId: e.blockId, text: e.text });
@@ -261,6 +266,29 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* resume-fail banner (durable-sessions FR-14) */}
+      {resumeFailed && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 9,
+            background: '#20222a',
+            borderLeft: '2px solid #c2b06a',
+            borderRadius: 4,
+            padding: '8px 11px',
+            margin: '6px 8px',
+            flexShrink: 0,
+            animation: 'fadeIn 120ms ease-out',
+          }}
+        >
+          <span style={{ fontSize: 11.5, color: '#a9adb6', flex: 1 }}>previous thread unavailable — continuing fresh</span>
+          <span onClick={() => setResumeFailed(false)} style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }} title="dismiss">
+            ✕
+          </span>
+        </div>
+      )}
+
       {/* transcript */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <div
