@@ -799,6 +799,20 @@ fn read_mcp_json(cwd: &str) -> Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
+/// Read `.mcp.json` for a WRITE path: absent → `{}`, valid object → it, present-but-
+/// unparseable → Err so attach/detach never clobber a malformed file (parity with
+/// skills_install's settings.json guard).
+fn read_mcp_json_for_write(cwd: &str) -> Result<Value, String> {
+    match std::fs::read(mcp_json_path(cwd)) {
+        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(v) if v.is_object() => Ok(v),
+            _ => Err("refusing to overwrite .mcp.json — it is not valid JSON".into()),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
+        Err(e) => Err(format!("could not read .mcp.json: {e}")),
+    }
+}
+
 /// Read `~/.claude.json` (the CLI's user store; holds user-scope `mcpServers` and
 /// per-project `projects[path].mcpServers` = local scope). `{}` if missing/unreadable.
 fn read_claude_json() -> Value {
@@ -1025,7 +1039,10 @@ pub fn mcp_detach(engine: State<'_, Engine>, session_id: String, name: String) -
             s.mcp.remove(&name);
         }
     }
-    let mut cfg = read_mcp_json(&cwd);
+    let mut cfg = match read_mcp_json_for_write(&cwd) {
+        Ok(v) => v,
+        Err(e) => return err("MCP_ERROR", e),
+    };
     if let Some(servers) = cfg.get_mut("mcpServers").and_then(|m| m.as_object_mut()) {
         servers.remove(&name);
     }
@@ -1050,10 +1067,10 @@ pub fn mcp_attach(app: AppHandle, engine: State<'_, Engine>, session_id: String,
         s.cwd.clone()
     };
 
-    let mut cfg = read_mcp_json(&cwd);
-    if !cfg.is_object() {
-        cfg = serde_json::json!({});
-    }
+    let mut cfg = match read_mcp_json_for_write(&cwd) {
+        Ok(v) => v,
+        Err(e) => return err("MCP_ERROR", e),
+    };
     let servers = cfg
         .as_object_mut()
         .unwrap()

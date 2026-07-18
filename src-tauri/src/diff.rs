@@ -671,4 +671,15 @@ mod tests {
         assert_eq!(num("-"), 0); // git's binary marker
         assert_eq!(num(""), 0);
     }
+
+    #[test]
+    fn ignored_path_is_git_only() {
+        use std::path::Path;
+        assert!(is_ignored_path(Path::new(".git/index")));
+        assert!(is_ignored_path(Path::new("a/b/.git/HEAD")));
+        // a tracked file under a dir literally named target/dist/node_modules is NOT ignored
+        assert!(!is_ignored_path(Path::new("src/target/mod.rs")));
+        assert!(!is_ignored_path(Path::new("node_modules/pkg/index.js")));
+        assert!(!is_ignored_path(Path::new("dist/bundle.js")));
+    }
 }

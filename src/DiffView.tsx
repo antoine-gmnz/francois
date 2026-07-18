@@ -50,6 +50,8 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedPath;
   const mountedRef = useRef(true);
+  const commitRef = useRef(commit); // latest commit state, read by doCommit outside any updater
+  commitRef.current = commit;
   // Every getSummary emits one diff.changed echo (FR-17). We count outstanding echoes
   // so our own subscription skips them and refetches only on external changes
   // (watcher / tool.done / another surface) — otherwise getSummary would self-trigger
@@ -90,7 +92,8 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     mountedRef.current = true;
     let unlisten: (() => void) | undefined;
-    loadSummary(sessionId);
+    // Register the listener BEFORE the first getSummary so that fetch's own echo is
+    // guaranteed to be consumed by the counter (no mount-race stuck-at-1, N1).
     void onDiffEvent((e) => {
       if (e.type !== 'diff.changed' || e.sessionId !== sessionId) return;
       if (pendingEchoRef.current > 0) {
@@ -99,8 +102,12 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
       }
       loadSummary(sessionId); // external change
     }).then((u) => {
-      if (!mountedRef.current) u();
-      else unlisten = u;
+      if (!mountedRef.current) {
+        u();
+        return;
+      }
+      unlisten = u;
+      loadSummary(sessionId); // initial hydrate, now that the listener is live
     });
     return () => {
       mountedRef.current = false;
@@ -166,27 +173,27 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const closeCommit = useCallback(() => setCommit({ open: false, message: '', error: null, success: null }), []);
 
   const doCommit = useCallback(() => {
-    setCommit((c) => {
-      const msg = c.message.trim();
-      if (!c.open || !msg || busy) return c; // FR-24 blank = no-op
-      setBusy(true);
-      void diffCommit(sessionId, msg)
-        .then((res) => {
-          if (res.ok) {
-            const short = res.data.commitHash.slice(0, 7);
-            setCommit({ open: true, message: '', error: null, success: short }); // FR-25
-            loadSummary(sessionId);
-            setTimeout(() => setCommit((cur) => (cur.success === short ? { open: false, message: '', error: null, success: null } : cur)), 1800);
-          } else {
-            setCommit((cur) => ({ ...cur, error: res.error.message })); // FR-26, keep message + bar open
-          }
-        })
-        .catch(() => setCommit((cur) => ({ ...cur, error: 'commit failed unexpectedly' })))
-        .finally(() => {
-          if (mountedRef.current) setBusy(false);
-        });
-      return c;
-    });
+    // Side effects live OUTSIDE any state updater so React StrictMode's double-invoke
+    // of updaters can't fire the commit twice (N2). Read latest state from the ref.
+    const c = commitRef.current;
+    const msg = c.message.trim();
+    if (!c.open || !msg || busy) return; // FR-24 blank = no-op
+    setBusy(true);
+    void diffCommit(sessionId, msg)
+      .then((res) => {
+        if (res.ok) {
+          const short = res.data.commitHash.slice(0, 7);
+          setCommit({ open: true, message: '', error: null, success: short }); // FR-25
+          loadSummary(sessionId);
+          setTimeout(() => setCommit((cur) => (cur.success === short ? { open: false, message: '', error: null, success: null } : cur)), 1800);
+        } else {
+          setCommit((cur) => ({ ...cur, error: res.error.message })); // FR-26, keep message + bar open
+        }
+      })
+      .catch(() => setCommit((cur) => ({ ...cur, error: 'commit failed unexpectedly' })))
+      .finally(() => {
+        if (mountedRef.current) setBusy(false);
+      });
   }, [busy, sessionId, loadSummary]);
 
   // Keyboard (FR-21/22/23/24). Active only while the DIFF tab is visible.

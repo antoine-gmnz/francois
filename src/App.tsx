@@ -81,6 +81,7 @@ export default function App() {
   // kept current by diff.changed events (diff-view FR-18).
   useEffect(() => {
     setDiffCount(0);
+    setPaletteDiffCount(0); // keep the palette's view-diff hint at 0 with no active session (FR-21/§7)
     if (!activeSessionId) return;
     const mounted = { current: true };
     let unlisten: (() => void) | undefined;

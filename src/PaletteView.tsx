@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PaletteCommand, SecondaryStep, SecondaryStepItem } from '../contract/command-palette';
 import { closePalette, filterRank, makeContext, paletteCommands, usePaletteState, useToastState } from './palette';
 import { getPaletteRunningAgents, usePaletteDataRev } from './paletteData';
@@ -87,8 +87,8 @@ function Palette() {
   const currentText = isSecondary ? secondaryQuery : query;
   const mirrorRef = useRef<HTMLSpanElement>(null);
   const [caretX, setCaretX] = useState(0);
-  useEffect(() => {
-    setCaretX(mirrorRef.current?.offsetWidth ?? 0);
+  useLayoutEffect(() => {
+    setCaretX(mirrorRef.current?.offsetWidth ?? 0); // measure before paint — no one-frame lag
   }, [currentText, isSecondary]);
 
   const runCommand = (cmd: PaletteCommand) => {
@@ -172,6 +172,7 @@ function Palette() {
                 flex: 1,
                 border: 'none',
                 outline: 'none',
+                padding: 0, // text starts at left:0 so the block caret aligns with the mirror
                 background: 'transparent',
                 fontFamily: 'inherit',
                 fontSize: 14,
