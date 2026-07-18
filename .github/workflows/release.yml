@@ -1,0 +1,62 @@
+name: release
+
+# Build the Windows installers and attach them to a GitHub Release.
+# Trigger it either from the Actions tab (Run workflow) or by pushing a v* tag.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write # tauri-action needs this to create the release + tag
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build (src-tauri/target)
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build app + create GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # __VERSION__ is substituted from tauri.conf.json (currently 0.1.0) →
+          # tag "v0.1.0", release "Francois v0.1.0". Bump the version there (and in
+          # package.json) for a new release.
+          tagName: v__VERSION__
+          releaseName: 'Francois v__VERSION__'
+          releaseDraft: true
+          prerelease: false
+          releaseBody: |
+            ## Install (Windows)
+
+            Download and run **`Francois_*_x64-setup.exe`** (NSIS) or **`Francois_*_x64_en-US.msi`** (WiX) below.
+
+            **Prerequisite:** the app orchestrates the Claude Code CLI, so the machine needs
+            [`claude`](https://claude.ai/code) installed and authenticated on `PATH`.
+
+            The build is unsigned, so Windows SmartScreen may warn on first launch — choose
+            *More info → Run anyway*.
