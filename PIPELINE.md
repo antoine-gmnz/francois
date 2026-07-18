@@ -27,11 +27,11 @@ Project: **Francois** — a desktop terminal app that orchestrates Claude Code s
 
 ## vcs
 
-- `host`: `github` _(assumed; confirm when the remote is added)_
-- `remote`: _pending_ — no remote yet. Add with `git remote add origin <url>`, then set this.
+- `host`: `github`
+- `remote`: `git@github.com:antoine-gmnz/francois.git` (`origin`)
 - `default_branch`: `main`
 - `feature_branch_prefix`: `feat/`
-- Notes: repository initialized on the `main` branch with this commit. `/ship` requires a remote and a SHIP-verdict `/review` before it will push or open a PR.
+- Notes: repository initialized on the `main` branch. `/ship` requires a SHIP-verdict `/review` before it will push or open a PR.
 
 ## Conventions
 
