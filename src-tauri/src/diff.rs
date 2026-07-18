@@ -1,0 +1,674 @@
+// diff-view core — the `diff` domain (specs/diff-view.md). Drives the system `git`
+// CLI against a session's cwd to compute change summaries, per-file unified diffs,
+// stage-all and commit; watches the cwd + reacts to Edit/Write tool.done to keep
+// the DIFF badge / chip strip live via `francois://diff/event`.
+//
+// No caching (§6): every getSummary/getFileDiff re-runs git fresh. Per-session git
+// ops are serialized (FR-14). Paths are always forward-slash (git emits '/').
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
+
+use crate::ipc::{err, ok, IpcResult};
+use crate::session::Engine;
+
+/// git's well-known empty-tree object — the diff base for a repo with no commits (FR-2).
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const NOT_A_REPO_MSG: &str = "not a git repository — initialize with `git init` in the shell";
+
+// ---------- serialized public shapes (contract/diff-view.ts) ----------
+
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+enum DiffFileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Untracked,
+    Renamed,
+}
+
+#[derive(Serialize)]
+struct DiffFileSummary {
+    path: String,
+    dir: String,
+    name: String,
+    additions: u64,
+    deletions: u64,
+    status: DiffFileStatus,
+}
+
+#[derive(Serialize)]
+pub struct DiffSummary {
+    files: Vec<DiffFileSummary>,
+    #[serde(rename = "totalAdd")]
+    total_add: u64,
+    #[serde(rename = "totalDel")]
+    total_del: u64,
+}
+
+#[derive(Serialize)]
+struct DiffLine {
+    kind: &'static str, // add | del | ctx (hunk headers live on DiffHunk.header)
+    #[serde(rename = "oldNo", skip_serializing_if = "Option::is_none")]
+    old_no: Option<u64>,
+    #[serde(rename = "newNo", skip_serializing_if = "Option::is_none")]
+    new_no: Option<u64>,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct DiffHunk {
+    header: String,
+    lines: Vec<DiffLine>,
+}
+
+#[derive(Serialize)]
+pub struct FileDiff {
+    hunks: Vec<DiffHunk>,
+    binary: bool,
+}
+
+#[derive(Serialize)]
+pub struct CommitResult {
+    #[serde(rename = "commitHash")]
+    commit_hash: String,
+}
+
+// ---------- git runner ----------
+
+struct GitOut {
+    code: i32,
+    stdout: Vec<u8>,
+    stderr: String,
+}
+
+#[cfg(windows)]
+fn no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash per git call
+}
+#[cfg(not(windows))]
+fn no_window(_cmd: &mut Command) {}
+
+/// Run `git <args>` in cwd with an argv array (never a shell string — FR-13).
+fn git(cwd: &str, args: &[&str]) -> std::io::Result<GitOut> {
+    let mut c = Command::new("git");
+    c.args(args).current_dir(cwd).stdin(Stdio::null());
+    no_window(&mut c);
+    let out = c.output()?;
+    Ok(GitOut {
+        code: out.status.code().unwrap_or(-1),
+        stdout: out.stdout,
+        stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+    })
+}
+
+type GitErr = (String, String); // (ErrorCode, message)
+
+fn is_git_repo(cwd: &str) -> bool {
+    matches!(git(cwd, &["rev-parse", "--is-inside-work-tree"]), Ok(o) if o.code == 0 && String::from_utf8_lossy(&o.stdout).trim() == "true")
+}
+
+/// HEAD when the repo has a commit, else the empty-tree object (FR-2).
+fn diff_base(cwd: &str) -> String {
+    match git(cwd, &["rev-parse", "--verify", "-q", "HEAD"]) {
+        Ok(o) if o.code == 0 => "HEAD".into(),
+        _ => EMPTY_TREE.into(),
+    }
+}
+
+/// The worktree top level for a cwd, so all git commands run from the same base and
+/// their repo-root-relative paths agree even when the session cwd is a subdirectory.
+/// Falls back to cwd if resolution fails.
+fn repo_root(cwd: &str) -> String {
+    match git(cwd, &["rev-parse", "--show-toplevel"]) {
+        Ok(o) if o.code == 0 => {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if s.is_empty() {
+                cwd.to_string()
+            } else {
+                s
+            }
+        }
+        _ => cwd.to_string(),
+    }
+}
+
+// ---------- parsers (pure — unit tested) ----------
+
+fn num(s: &str) -> u64 {
+    if s == "-" {
+        0
+    } else {
+        s.trim().parse().unwrap_or(0)
+    }
+}
+
+fn split_path(p: &str) -> (String, String) {
+    match p.rfind('/') {
+        Some(i) => (p[..i].to_string(), p[i + 1..].to_string()),
+        None => (String::new(), p.to_string()),
+    }
+}
+
+fn map_status(xy: &str) -> DiffFileStatus {
+    if xy == "??" {
+        return DiffFileStatus::Untracked;
+    }
+    // identity status wins: added > renamed > deleted > modified (FR-3).
+    if xy.contains('A') {
+        DiffFileStatus::Added
+    } else if xy.starts_with('R') {
+        DiffFileStatus::Renamed
+    } else if xy.contains('D') {
+        DiffFileStatus::Deleted
+    } else {
+        DiffFileStatus::Modified
+    }
+}
+
+/// Parse `git status --porcelain=v1 -z` into (xy, path). Each record is
+/// `XY<space>PATH\0`; a rename/copy (`R`/`C`) is followed by an extra NUL field
+/// carrying the origin path (the new path comes first — we keep it, discard origin).
+fn parse_porcelain_z(data: &[u8]) -> Vec<(String, String)> {
+    let s = String::from_utf8_lossy(data);
+    let tokens: Vec<&str> = s.split('\0').collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        i += 1;
+        if tok.len() < 3 {
+            continue; // trailing empty / malformed
+        }
+        let xy = tok[..2].to_string();
+        let path = tok[3..].to_string(); // skip 2-char code + 1 space
+        if xy.starts_with('R') || xy.starts_with('C') {
+            i += 1; // consume + discard the origin-path field
+        }
+        out.push((xy, path));
+    }
+    out
+}
+
+/// Parse `git diff -z --numstat` into path -> (additions, deletions). Normal record
+/// is `add\tdel\tpath\0`; a rename is `add\tdel\t\0oldpath\0newpath\0` (empty path
+/// field signals rename; the new path is the second field). Binary is `-\t-`.
+fn parse_numstat_z(data: &[u8]) -> HashMap<String, (u64, u64)> {
+    let s = String::from_utf8_lossy(data);
+    let tokens: Vec<&str> = s.split('\0').collect();
+    let mut map = HashMap::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        i += 1;
+        if tok.is_empty() {
+            continue;
+        }
+        let mut parts = tok.splitn(3, '\t');
+        let add = parts.next().unwrap_or("");
+        let del = parts.next().unwrap_or("");
+        let rest = parts.next().unwrap_or("");
+        if del.is_empty() {
+            continue; // not a numstat header — skip defensively
+        }
+        let counts = (num(add), num(del));
+        let path = if rest.is_empty() {
+            // rename: next two tokens are old, new
+            i += 1; // old (discard)
+            let new = tokens.get(i).copied().unwrap_or("");
+            i += 1;
+            new.to_string()
+        } else {
+            rest.to_string()
+        };
+        if !path.is_empty() {
+            map.insert(path, counts);
+        }
+    }
+    map
+}
+
+fn parse_hunk_header(line: &str) -> (u64, u64) {
+    // Only read the `-a,b +c,d` between the first and second `@@`; git appends
+    // function-context text after the closing `@@` that can contain `+`/`-` tokens.
+    let (mut old, mut new) = (0u64, 0u64);
+    let (mut in_range, mut got_old, mut got_new) = (false, false, false);
+    for tok in line.split(' ') {
+        if tok == "@@" {
+            if in_range {
+                break; // closing @@ — ignore trailing context
+            }
+            in_range = true;
+            continue;
+        }
+        if !in_range {
+            continue;
+        }
+        if let (false, Some(r)) = (got_old, tok.strip_prefix('-')) {
+            old = r.split(',').next().unwrap_or("0").parse().unwrap_or(0);
+            got_old = true;
+        } else if let (false, Some(r)) = (got_new, tok.strip_prefix('+')) {
+            new = r.split(',').next().unwrap_or("0").parse().unwrap_or(0);
+            got_new = true;
+        }
+    }
+    (old, new)
+}
+
+/// Parse a unified diff patch into hunks (FR-9). Preamble before the first `@@`
+/// (diff --git / index / +++/--- lines) is skipped; the `\ No newline` marker is dropped.
+fn parse_unified_diff(text: &str) -> Vec<DiffHunk> {
+    let mut hunks: Vec<DiffHunk> = Vec::new();
+    let (mut old_no, mut new_no) = (0u64, 0u64);
+    for line in text.split('\n') {
+        if line.starts_with("@@") {
+            let (os, ns) = parse_hunk_header(line);
+            old_no = os;
+            new_no = ns;
+            hunks.push(DiffHunk { header: line.to_string(), lines: Vec::new() });
+            continue;
+        }
+        let Some(h) = hunks.last_mut() else { continue }; // still in preamble
+        match line.as_bytes().first().copied() {
+            Some(b' ') => {
+                h.lines.push(DiffLine { kind: "ctx", old_no: Some(old_no), new_no: Some(new_no), text: line[1..].to_string() });
+                old_no += 1;
+                new_no += 1;
+            }
+            Some(b'+') if !line.starts_with("+++") => {
+                h.lines.push(DiffLine { kind: "add", old_no: None, new_no: Some(new_no), text: line[1..].to_string() });
+                new_no += 1;
+            }
+            Some(b'-') if !line.starts_with("---") => {
+                h.lines.push(DiffLine { kind: "del", old_no: Some(old_no), new_no: None, text: line[1..].to_string() });
+                old_no += 1;
+            }
+            _ => {} // `\ No newline`, blank tail, or stray line — dropped
+        }
+    }
+    hunks
+}
+
+// ---------- summary + file diff ----------
+
+fn untracked_counts(cwd: &str, path: &str) -> (u64, u64) {
+    // `--no-index` against /dev/null: additions = full line count, deletions = 0 (FR-5).
+    match git(cwd, &["diff", "--no-index", "--numstat", "--", "/dev/null", path]) {
+        Ok(o) => {
+            let s = String::from_utf8_lossy(&o.stdout);
+            let mut f = s.lines().next().unwrap_or("").split('\t');
+            (num(f.next().unwrap_or("0")), num(f.next().unwrap_or("0")))
+        }
+        Err(_) => (0, 0),
+    }
+}
+
+fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
+    if !is_git_repo(cwd) {
+        return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
+    }
+    let root = repo_root(cwd); // run everything from the worktree top so paths agree
+    let base = diff_base(&root);
+    let st = git(&root, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--renames"])
+        .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    if st.code != 0 {
+        return Err(("GIT_ERROR".into(), if st.stderr.is_empty() { "git status failed".into() } else { st.stderr }));
+    }
+    let numstat = git(&root, &["diff", &base, "-M", "-z", "--numstat"])
+        .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    let counts = parse_numstat_z(&numstat.stdout);
+
+    let mut files: Vec<DiffFileSummary> = parse_porcelain_z(&st.stdout)
+        .into_iter()
+        .map(|(xy, path)| {
+            let status = map_status(&xy);
+            let (additions, deletions) = if status == DiffFileStatus::Untracked {
+                untracked_counts(&root, &path)
+            } else {
+                counts.get(&path).copied().unwrap_or((0, 0))
+            };
+            let (dir, name) = split_path(&path);
+            DiffFileSummary { path, dir, name, additions, deletions, status }
+        })
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    let total_add = files.iter().map(|f| f.additions).sum();
+    let total_del = files.iter().map(|f| f.deletions).sum();
+    Ok(DiffSummary { files, total_add, total_del })
+}
+
+fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
+    let summary = compute_summary(cwd)?; // propagates NOT_A_GIT_REPO / GIT_ERROR
+    let Some(f) = summary.files.iter().find(|f| f.path == path) else {
+        return Err(("INVALID_INPUT".into(), format!("'{path}' is not in the current changes")));
+    };
+    let root = repo_root(cwd); // path is root-relative (from the summary) — run from root
+    let out = if f.status == DiffFileStatus::Untracked {
+        git(&root, &["diff", "--no-index", "--", "/dev/null", path])
+    } else {
+        let base = diff_base(&root);
+        git(&root, &["diff", &base, "-M", "--", path])
+    }
+    .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+
+    // `--no-index` exit 1 = "files differ" (success); only >=2 is a real failure (FR-8).
+    let failed = if f.status == DiffFileStatus::Untracked { out.code >= 2 } else { out.code != 0 };
+    if failed {
+        return Err(("GIT_ERROR".into(), if out.stderr.is_empty() { "git diff failed".into() } else { out.stderr }));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    if text.lines().any(|l| l.starts_with("Binary files") && l.contains("differ")) {
+        return Ok(FileDiff { hunks: Vec::new(), binary: true });
+    }
+    Ok(FileDiff { hunks: parse_unified_diff(&text), binary: false })
+}
+
+// ---------- per-session git serialization (FR-14) ----------
+
+static GIT_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+
+fn git_lock(session_id: &str) -> Arc<Mutex<()>> {
+    let mut m = GIT_LOCKS.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+    m.entry(session_id.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
+}
+
+// ---------- event broadcast (FR-17) ----------
+
+fn broadcast(app: &AppHandle, session_id: &str, file_count: usize) {
+    let _ = app.emit(
+        "francois://diff/event",
+        serde_json::json!({ "type": "diff.changed", "sessionId": session_id, "fileCount": file_count }),
+    );
+}
+
+/// Recompute + broadcast under the session's git lock. Used by the watcher and
+/// tool.done trigger; a NOT_A_GIT_REPO result clears the badge (fileCount 0).
+fn recompute_and_broadcast(app: &AppHandle, session_id: &str, cwd: &str) {
+    let lock = git_lock(session_id);
+    let _g = lock.lock().unwrap();
+    match compute_summary(cwd) {
+        Ok(s) => broadcast(app, session_id, s.files.len()),
+        Err((code, _)) if code == "NOT_A_GIT_REPO" => broadcast(app, session_id, 0),
+        Err(_) => {} // transient git error — don't zero the badge
+    }
+}
+
+// ---------- session-engine triggers (called from session.rs) ----------
+
+/// FR-16: an Edit/Write tool finished → recompute now (not debounced). Off-thread
+/// so the reader thread that emitted tool.done isn't blocked on git.
+pub fn on_tool_done(app: &AppHandle, session_id: &str, cwd: &str) {
+    let (app, sid, cwd) = (app.clone(), session_id.to_string(), cwd.to_string());
+    std::thread::spawn(move || recompute_and_broadcast(&app, &sid, &cwd));
+}
+
+// ---------- fs watcher (FR-15) ----------
+
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+
+static WATCHERS: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>> = OnceLock::new();
+
+/// Skip only events inside `.git/` — otherwise our own git writes (index/refs on
+/// stage/commit) would self-trigger the watcher. Everything else is left to the
+/// debounced, git-authoritative recompute (FR-15): git itself excludes .gitignore'd
+/// paths from the summary, so a heavy gitignored dir (node_modules, target) at worst
+/// causes a harmless coalesced recompute; hardcoding those names here would instead
+/// wrongly hide a *tracked* file that happens to live under such a directory.
+fn is_ignored_path(p: &Path) -> bool {
+    p.components().any(|c| c.as_os_str() == ".git")
+}
+
+/// Start a recursive watcher on a session's cwd (idempotent). On any relevant event,
+/// debounce 300ms then recompute + broadcast.
+pub fn watch_session(app: &AppHandle, session_id: &str, cwd: &str) {
+    let reg = WATCHERS.get_or_init(|| Mutex::new(HashMap::new()));
+    {
+        let map = reg.lock().unwrap();
+        if map.contains_key(session_id) {
+            return;
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let mut watcher = match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(ev) = res {
+            if ev.paths.iter().any(|p| !is_ignored_path(p)) {
+                let _ = tx.send(());
+            }
+        }
+    }) {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    if watcher.watch(Path::new(cwd), RecursiveMode::Recursive).is_err() {
+        return;
+    }
+
+    let (app2, sid2, cwd2) = (app.clone(), session_id.to_string(), cwd.to_string());
+    std::thread::spawn(move || {
+        use std::sync::mpsc::RecvTimeoutError;
+        loop {
+            if rx.recv().is_err() {
+                break; // watcher dropped → stop
+            }
+            // debounce: coalesce a burst, fire 300ms after the last event
+            loop {
+                match rx.recv_timeout(std::time::Duration::from_millis(300)) {
+                    Ok(()) => continue,
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            recompute_and_broadcast(&app2, &sid2, &cwd2);
+        }
+    });
+    reg.lock().unwrap().insert(session_id.to_string(), watcher);
+}
+
+/// Dispose a session's watcher (dropping it stops the fs events and ends the
+/// debounce thread via channel disconnect) and drop its git lock entry.
+pub fn unwatch_session(session_id: &str) {
+    if let Some(reg) = WATCHERS.get() {
+        reg.lock().unwrap().remove(session_id);
+    }
+    if let Some(locks) = GIT_LOCKS.get() {
+        locks.lock().unwrap().remove(session_id);
+    }
+}
+
+// ---------- commands (francois:diff:<verb>) ----------
+
+fn cwd_or_err<T: Serialize>(engine: &State<'_, Engine>, session_id: &str) -> Result<String, IpcResult<T>> {
+    engine.cwd_of(session_id).ok_or_else(|| err("SESSION_NOT_FOUND", "no such session"))
+}
+
+#[tauri::command]
+pub fn diff_get_summary(app: AppHandle, engine: State<'_, Engine>, session_id: String) -> IpcResult<DiffSummary> {
+    let cwd = match cwd_or_err(&engine, &session_id) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let lock = git_lock(&session_id);
+    let _g = lock.lock().unwrap();
+    match compute_summary(&cwd) {
+        Ok(s) => {
+            broadcast(&app, &session_id, s.files.len()); // FR-17
+            ok(s)
+        }
+        Err((code, msg)) => err(&code, msg),
+    }
+}
+
+#[tauri::command]
+pub fn diff_get_file_diff(engine: State<'_, Engine>, session_id: String, path: String) -> IpcResult<FileDiff> {
+    let cwd = match cwd_or_err(&engine, &session_id) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let lock = git_lock(&session_id);
+    let _g = lock.lock().unwrap();
+    match compute_file_diff(&cwd, &path) {
+        Ok(d) => ok(d),
+        Err((code, msg)) => err(&code, msg),
+    }
+}
+
+#[tauri::command]
+pub fn diff_stage_all(engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
+    let cwd = match cwd_or_err(&engine, &session_id) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    if !is_git_repo(&cwd) {
+        return err("NOT_A_GIT_REPO", NOT_A_REPO_MSG);
+    }
+    let lock = git_lock(&session_id);
+    let _g = lock.lock().unwrap();
+    let root = repo_root(&cwd);
+    match git(&root, &["add", "-A"]) {
+        Ok(o) if o.code == 0 => ok(None), // succeeds even with nothing to stage (FR-10)
+        Ok(o) => err("GIT_ERROR", if o.stderr.is_empty() { "git add failed".into() } else { o.stderr }),
+        Err(e) => err("GIT_ERROR", e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn diff_commit(engine: State<'_, Engine>, session_id: String, message: String) -> IpcResult<CommitResult> {
+    let cwd = match cwd_or_err(&engine, &session_id) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    if message.trim().is_empty() {
+        return err("INVALID_INPUT", "commit message is empty"); // defense in depth (FR-24)
+    }
+    if !is_git_repo(&cwd) {
+        return err("NOT_A_GIT_REPO", NOT_A_REPO_MSG);
+    }
+    let lock = git_lock(&session_id);
+    let _g = lock.lock().unwrap();
+    let root = repo_root(&cwd);
+
+    // FR-11: nothing staged → `git diff --cached --quiet` exits 0.
+    match git(&root, &["diff", "--cached", "--quiet"]) {
+        Ok(o) if o.code == 0 => return err("GIT_ERROR", "nothing staged to commit — stage changes first"),
+        Ok(_) => {}
+        Err(e) => return err("GIT_ERROR", e.to_string()),
+    }
+    match git(&root, &["commit", "-m", message.trim()]) {
+        Ok(o) if o.code == 0 => {}
+        Ok(o) => return err("GIT_ERROR", if o.stderr.is_empty() { "git commit failed".into() } else { o.stderr }),
+        Err(e) => return err("GIT_ERROR", e.to_string()),
+    }
+    match git(&root, &["rev-parse", "HEAD"]) {
+        Ok(o) if o.code == 0 => ok(CommitResult { commit_hash: String::from_utf8_lossy(&o.stdout).trim().to_string() }),
+        _ => ok(CommitResult { commit_hash: String::new() }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn porcelain_z_parses_rename_and_discards_origin() {
+        let data = b"R  renamed.txt\0torename.txt\0 M tracked.txt\0?? bin.dat\0?? untracked.txt\0";
+        let out = parse_porcelain_z(data);
+        assert_eq!(
+            out,
+            vec![
+                ("R ".to_string(), "renamed.txt".to_string()),
+                (" M".to_string(), "tracked.txt".to_string()),
+                ("??".to_string(), "bin.dat".to_string()),
+                ("??".to_string(), "untracked.txt".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn numstat_z_parses_rename_new_path() {
+        let data = b"0\t0\t\0torename.txt\0renamed.txt\x002\t1\ttracked.txt\0";
+        let m = parse_numstat_z(data);
+        assert_eq!(m.get("renamed.txt"), Some(&(0, 0)));
+        assert_eq!(m.get("tracked.txt"), Some(&(2, 1)));
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn numstat_binary_is_zero() {
+        let m = parse_numstat_z(b"-\t-\tbin.dat\0");
+        assert_eq!(m.get("bin.dat"), Some(&(0, 0)));
+    }
+
+    #[test]
+    fn status_precedence() {
+        assert_eq!(map_status("??"), DiffFileStatus::Untracked);
+        assert_eq!(map_status("AM"), DiffFileStatus::Added); // added wins
+        assert_eq!(map_status("R "), DiffFileStatus::Renamed);
+        assert_eq!(map_status("RM"), DiffFileStatus::Renamed); // rename identity wins over M
+        assert_eq!(map_status(" D"), DiffFileStatus::Deleted);
+        assert_eq!(map_status(" M"), DiffFileStatus::Modified);
+        assert_eq!(map_status("MM"), DiffFileStatus::Modified);
+    }
+
+    #[test]
+    fn split_path_repo_root_and_nested() {
+        assert_eq!(split_path("file.rs"), ("".to_string(), "file.rs".to_string()));
+        assert_eq!(split_path("src/auth/mw.ts"), ("src/auth".to_string(), "mw.ts".to_string()));
+    }
+
+    #[test]
+    fn unified_diff_line_numbers_and_kinds() {
+        let patch = "diff --git a/f b/f\nindex 000..111 100644\n--- a/f\n+++ b/f\n@@ -1,3 +1,4 @@\n line1\n-line2\n+CHANGED\n+added\n line3\n\\ No newline at end of file\n";
+        let hunks = parse_unified_diff(patch);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].header, "@@ -1,3 +1,4 @@");
+        let l = &hunks[0].lines;
+        assert_eq!(l.len(), 5); // ctx, del, add, add, ctx  ('\ No newline' dropped)
+        assert_eq!((l[0].kind, l[0].old_no, l[0].new_no), ("ctx", Some(1), Some(1)));
+        assert_eq!((l[1].kind, l[1].old_no, l[1].new_no, l[1].text.as_str()), ("del", Some(2), None, "line2"));
+        assert_eq!((l[2].kind, l[2].old_no, l[2].new_no, l[2].text.as_str()), ("add", None, Some(2), "CHANGED"));
+        assert_eq!((l[3].kind, l[3].new_no), ("add", Some(3)));
+        assert_eq!((l[4].kind, l[4].old_no, l[4].new_no), ("ctx", Some(3), Some(4)));
+    }
+
+    #[test]
+    fn hunk_header_without_line_counts() {
+        assert_eq!(parse_hunk_header("@@ -1 +1 @@"), (1, 1));
+        assert_eq!(parse_hunk_header("@@ -10,3 +12,5 @@ fn foo()"), (10, 12));
+    }
+
+    #[test]
+    fn hunk_header_ignores_context_with_plus_minus_tokens() {
+        // trailing function-context containing '-'/'+' tokens must not hijack the counters (M6)
+        assert_eq!(parse_hunk_header("@@ -10,6 +20,6 @@ def f(a - b + c):"), (10, 20));
+        assert_eq!(parse_hunk_header("@@ -1,4 +1,5 @@ - bullet + item"), (1, 1));
+    }
+
+    #[test]
+    fn unified_diff_multi_hunk_resets_counters_per_hunk() {
+        let patch = "@@ -1,2 +1,2 @@\n a\n-b\n+B\n@@ -50,2 +80,3 @@\n x\n+Y\n z\n";
+        let hunks = parse_unified_diff(patch);
+        assert_eq!(hunks.len(), 2);
+        // first hunk starts at old 1 / new 1
+        assert_eq!((hunks[0].lines[0].old_no, hunks[0].lines[0].new_no), (Some(1), Some(1)));
+        assert_eq!((hunks[0].lines[1].kind, hunks[0].lines[1].old_no), ("del", Some(2)));
+        // second hunk resets to old 50 / new 80
+        assert_eq!((hunks[1].lines[0].kind, hunks[1].lines[0].old_no, hunks[1].lines[0].new_no), ("ctx", Some(50), Some(80)));
+        assert_eq!((hunks[1].lines[1].kind, hunks[1].lines[1].new_no), ("add", Some(81)));
+        assert_eq!((hunks[1].lines[2].kind, hunks[1].lines[2].old_no, hunks[1].lines[2].new_no), ("ctx", Some(51), Some(82)));
+    }
+
+    #[test]
+    fn num_parses_counts_and_binary_dash() {
+        assert_eq!(num("0"), 0);
+        assert_eq!(num("42"), 42);
+        assert_eq!(num("-"), 0); // git's binary marker
+        assert_eq!(num(""), 0);
+    }
+}

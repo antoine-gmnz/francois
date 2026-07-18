@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: #08090b; font-family: 'JetBrains Mono', ui-monospace, monospace; -webkit-font-smoothing: antialiased; }
+  a { color: #c8a15a; text-decoration: none; }
+  a:hover { color: #e0bd77; }
+  @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .scz::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scz::-webkit-scrollbar-thumb { background: #2a2c33; border-radius: 4px; }
+  .scz::-webkit-scrollbar-track { background: transparent; }
+</style>
+</helmet>
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:34px;background:radial-gradient(120% 120% at 50% 0%, #101116 0%, #08090b 70%);">
+  <div style="position:relative;flex-shrink:0;width:1360px;height:864px;background:#121318;border:1px solid #2a2c33;border-radius:9px;overflow:hidden;box-shadow:0 40px 120px -30px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.02) inset;">
+
+    <!-- title bar -->
+    <div style="height:44px;display:flex;align-items:center;padding:0 14px;background:#191b21;border-bottom:1px solid #24262d;gap:14px;">
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span style="width:11px;height:11px;border-radius:50%;background:#3a3d45;display:block;"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#3a3d45;display:block;"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#3a3d45;display:block;"></span>
+      </div>
+      <div style="flex:1;text-align:center;font-size:12px;color:#868a93;letter-spacing:0.03em;">
+        <span style="color:#c8a15a;">clyde</span> <span style="color:#565a63;">·</span> session orchestrator <span style="color:#565a63;">—</span> <span style="color:#a9adb6;">acme-api</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#868a93;">
+        <span style="width:7px;height:7px;border-radius:50%;background:#d0a45c;display:block;animation:pulse 1.4s ease-in-out infinite;"></span>
+        2 agents running
+      </div>
+    </div>
+
+    <!-- tui grid -->
+    <div style="height:820px;display:grid;grid-template-columns:264px 1fr 336px;grid-template-rows:1fr 32px;gap:10px;padding:10px;">
+
+      <!-- SIDEBAR / sessions -->
+      <section onClick="{{ focusSidebar }}" style="grid-column:1;grid-row:1;display:flex;flex-direction:column;background:#16171c;border:1px solid {{ ringSidebar }};border-radius:5px;overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid #24262d;">
+          <span style="font-size:11px;letter-spacing:0.14em;color:{{ titleSidebar }};font-weight:700;">SESSIONS</span>
+          <span style="font-size:10px;color:#565a63;">5 · [1]</span>
+        </div>
+        <div class="scz" style="flex:1;overflow:auto;padding:6px;">
+          <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="5">
+            <div onClick="{{ s.onClick }}" style="display:flex;gap:9px;padding:8px 9px;border-radius:4px;cursor:pointer;background:{{ s.bg }};border-left:2px solid {{ s.marker }};margin-bottom:2px;">
+              <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:5px;background:{{ s.dot }};animation:{{ s.anim }};"></span>
+              <div style="min-width:0;flex:1;">
+                <div style="font-size:12.5px;color:{{ s.fg }};font-weight:500;">{{ s.name }}</div>
+                <div style="font-size:10.5px;color:#565a63;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;">{{ s.path }}</div>
+                <div style="font-size:10px;color:{{ s.statusFg }};margin-top:3px;letter-spacing:0.02em;">{{ s.status }} · {{ s.model }}</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="padding:8px 12px;border-top:1px solid #24262d;font-size:10.5px;color:#565a63;">+ new session <span style="color:#3a3d45;">[n]</span></div>
+      </section>
+
+      <!-- MAIN / active session -->
+      <section onClick="{{ focusMain }}" style="grid-column:2;grid-row:1;display:flex;flex-direction:column;background:#131419;border:1px solid {{ ringMain }};border-radius:5px;overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid #24262d;">
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="display:flex;align-items:center;gap:16px;">
+              <span onClick="{{ setSession }}" style="font-size:11px;letter-spacing:0.14em;font-weight:700;cursor:pointer;padding:2px 0;color:{{ tSessionFg }};border-bottom:2px solid {{ tSessionBorder }};">SESSION</span>
+              <span onClick="{{ setDiff }}" style="font-size:11px;letter-spacing:0.14em;font-weight:700;cursor:pointer;padding:2px 0;color:{{ tDiffFg }};border-bottom:2px solid {{ tDiffBorder }};">DIFF <span style="font-size:9px;letter-spacing:0;padding:1px 5px;border-radius:8px;background:#26282f;color:#a9adb6;vertical-align:middle;">7</span></span>
+              <span onClick="{{ setShell }}" style="font-size:11px;letter-spacing:0.14em;font-weight:700;cursor:pointer;padding:2px 0;color:{{ tShellFg }};border-bottom:2px solid {{ tShellBorder }};">SHELL</span>
+            </div>
+          </div>
+          <sc-if value="{{ isSession }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;gap:14px;font-size:10.5px;color:#868a93;">
+            <span>Sonnet 4.5</span>
+            <span style="color:#565a63;">ctx</span> <span>48.2K<span style="color:#565a63;">/200K</span></span>
+            <span style="color:#565a63;">02:14</span>
+          </div>
+          </sc-if>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
+        <sc-if value="{{ isSession }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
+        <div class="scz" style="flex:1;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px;">
+          <sc-for list="{{ blocks }}" as="b" hint-placeholder-count="6">
+            <sc-if value="{{ b.isUser }}" hint-placeholder-val="{{ false }}">
+              <div style="background:#1b1d23;border-left:2px solid #c8a15a;border-radius:0 4px 4px 0;padding:10px 13px;">
+                <div style="font-size:10px;letter-spacing:0.12em;color:#c8a15a;margin-bottom:5px;">YOU</div>
+                <div style="font-size:13px;color:#d3d6dc;line-height:1.55;">{{ b.body }}</div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ b.isOther }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;gap:10px;">
+                <span style="width:16px;flex-shrink:0;text-align:center;font-size:12px;color:{{ b.glyphColor }};margin-top:1px;">{{ b.glyph }}</span>
+                <div style="min-width:0;flex:1;font-size:12.5px;line-height:1.55;color:{{ b.bodyColor }};">
+                  {{ b.body }}<sc-if value="{{ b.isStream }}" hint-placeholder-val="{{ false }}"><span style="display:inline-block;width:8px;height:15px;background:#c8a15a;vertical-align:text-bottom;margin-left:2px;animation:blink 1s step-end infinite;"></span></sc-if>
+                  <sc-if value="{{ b.meta }}" hint-placeholder-val=""><span style="color:#565a63;"> · {{ b.meta }}</span></sc-if>
+                </div>
+              </div>
+            </sc-if>
+          </sc-for>
+        </div>
+        <div style="padding:10px 14px;border-top:1px solid #24262d;display:flex;align-items:center;gap:10px;">
+          <span style="color:#c8a15a;font-size:13px;">›</span>
+          <span style="flex:1;font-size:12.5px;color:#565a63;">send a follow-up, or run a command…</span>
+          <span style="font-size:10px;color:#3a3d45;">⌘K palette</span>
+        </div>
+        </div>
+        </sc-if>
+        <sc-if value="{{ isDiff }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
+          <div class="scz" style="display:flex;gap:6px;padding:9px 12px;border-bottom:1px solid #24262d;overflow-x:auto;">
+            <sc-for list="{{ diffFiles }}" as="f" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;gap:8px;padding:6px 11px;border-radius:4px;cursor:pointer;flex-shrink:0;background:{{ f.bg }};border-left:2px solid {{ f.marker }};">
+                <span style="font-size:11.5px;color:{{ f.fg }};">{{ f.name }}</span>
+                <span style="font-size:10px;color:#7fa07a;">+{{ f.add }}</span>
+                <span style="font-size:10px;color:#c46b62;">−{{ f.del }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div class="scz" style="flex:1;overflow:auto;padding:8px 0;font-size:12px;line-height:1.75;">
+            <sc-for list="{{ diffLines }}" as="d" hint-placeholder-count="12">
+              <div style="display:flex;background:{{ d.bg }};padding:0 12px;">
+                <span style="width:34px;flex-shrink:0;text-align:right;padding-right:12px;color:{{ d.numFg }};font-size:10.5px;user-select:none;">{{ d.num }}</span>
+                <span style="width:12px;flex-shrink:0;color:{{ d.signFg }};user-select:none;">{{ d.sign }}</span>
+                <span style="white-space:pre;color:{{ d.fg }};">{{ d.text }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="padding:10px 14px;border-top:1px solid #24262d;display:flex;align-items:center;gap:14px;font-size:11px;color:#6b7079;">
+            <span><span style="color:#7fa07a;">+185</span> <span style="color:#c46b62;">−21</span> across 4 files</span>
+            <span style="flex:1;"></span>
+            <span style="color:#a9adb6;">[s] stage all</span>
+            <span style="color:#a9adb6;">[c] commit…</span>
+          </div>
+        </div>
+        </sc-if>
+        <sc-if value="{{ isShell }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0;background:#0f1015;">
+          <div class="scz" style="flex:1;overflow:auto;padding:14px 16px;font-size:12.5px;line-height:1.85;">
+            <sc-for list="{{ shellLines }}" as="l" hint-placeholder-count="10">
+              <sc-if value="{{ l.isCmd }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;gap:8px;margin-top:6px;">
+                  <span style="color:#c8a15a;flex-shrink:0;">acme-api <span style="color:#7fa07a;">❯</span></span>
+                  <span style="color:#dfe2e8;white-space:pre-wrap;">{{ l.text }}</span>
+                </div>
+              </sc-if>
+              <sc-if value="{{ l.isOut }}" hint-placeholder-val="{{ true }}">
+                <div style="color:{{ l.fg }};white-space:pre-wrap;padding-left:2px;">{{ l.text }}</div>
+              </sc-if>
+            </sc-for>
+            <div style="display:flex;gap:8px;margin-top:6px;">
+              <span style="color:#c8a15a;flex-shrink:0;">acme-api <span style="color:#7fa07a;">❯</span></span>
+              <span style="color:#dfe2e8;">pnpm build<span style="display:inline-block;width:8px;height:15px;background:#c8a15a;vertical-align:text-bottom;margin-left:1px;animation:blink 1s step-end infinite;"></span></span>
+            </div>
+          </div>
+          <div style="padding:10px 14px;border-top:1px solid #24262d;display:flex;align-items:center;gap:14px;font-size:11px;color:#6b7079;">
+            <span style="color:#7fa07a;">●</span> bash <span style="color:#565a63;">·</span> ~/projects/acme-api
+            <span style="flex:1;"></span>
+            <span><span style="color:#a9adb6;">⌃C</span> interrupt</span>
+            <span><span style="color:#a9adb6;">⌃L</span> clear</span>
+          </div>
+        </div>
+        </sc-if>
+        </div>
+      </section>
+
+      <!-- RIGHT column: agents + mcp -->
+      <div style="grid-column:3;grid-row:1;display:flex;flex-direction:column;gap:10px;min-height:0;">
+
+        <section onClick="{{ focusAgents }}" style="flex:1.3;display:flex;flex-direction:column;background:#16171c;border:1px solid {{ ringAgents }};border-radius:5px;overflow:hidden;min-height:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid #24262d;">
+            <span style="font-size:11px;letter-spacing:0.14em;color:{{ titleAgents }};font-weight:700;">AGENTS</span>
+            <span style="font-size:10px;color:#565a63;">4 · [3]</span>
+          </div>
+          <div class="scz" style="flex:1;overflow:auto;padding:8px;">
+            <sc-for list="{{ agents }}" as="a" hint-placeholder-count="4">
+              <div style="padding:9px 9px;border-radius:4px;margin-bottom:4px;background:#1a1c22;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{{ a.dot }};animation:{{ a.anim }};"></span>
+                  <span style="font-size:12px;color:#c4c7ce;font-weight:500;flex:1;">{{ a.name }}</span>
+                  <span style="font-size:10px;color:{{ a.statusFg }};">{{ a.status }}</span>
+                </div>
+                <div style="font-size:10.5px;color:#6b7079;margin:5px 0 7px 16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ a.task }}</div>
+                <div style="height:3px;border-radius:2px;background:#26282f;margin-left:16px;overflow:hidden;">
+                  <div style="height:100%;width:{{ a.pct }}%;background:{{ a.dot }};border-radius:2px;"></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <section onClick="{{ focusMcp }}" style="flex:0.95;display:flex;flex-direction:column;background:#16171c;border:1px solid {{ ringMcp }};border-radius:5px;overflow:hidden;min-height:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid #24262d;">
+            <span style="font-size:11px;letter-spacing:0.14em;color:{{ titleMcp }};font-weight:700;">MCP SERVERS</span>
+            <span style="font-size:10px;color:#565a63;">5 · [4]</span>
+          </div>
+          <div class="scz" style="flex:1;overflow:auto;padding:6px 8px;">
+            <sc-for list="{{ mcps }}" as="m" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:9px;padding:7px 6px;border-bottom:1px solid #1d1f25;">
+                <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{{ m.dot }};animation:{{ m.anim }};"></span>
+                <span style="font-size:12px;color:#c4c7ce;flex:1;">{{ m.name }}</span>
+                <span style="font-size:10.5px;color:{{ m.detailFg }};">{{ m.detail }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <section onClick="{{ focusSkills }}" style="flex:1.05;display:flex;flex-direction:column;background:#16171c;border:1px solid {{ ringSkills }};border-radius:5px;overflow:hidden;min-height:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid #24262d;">
+            <span style="font-size:11px;letter-spacing:0.14em;color:{{ titleSkills }};font-weight:700;">SKILLS</span>
+            <span style="font-size:10px;color:#565a63;">5 · [5]</span>
+          </div>
+          <div class="scz" style="flex:1;overflow:auto;padding:6px 8px;">
+            <sc-for list="{{ skills }}" as="k" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:9px;padding:8px 6px;border-bottom:1px solid #1d1f25;">
+                <span style="width:14px;text-align:center;font-size:11px;color:{{ k.glyphFg }};flex-shrink:0;">{{ k.glyph }}</span>
+                <div style="min-width:0;flex:1;">
+                  <div style="font-size:12px;color:#c4c7ce;">{{ k.name }}</div>
+                  <div style="font-size:10px;color:#565a63;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;">{{ k.use }}</div>
+                </div>
+                <span style="font-size:9.5px;letter-spacing:0.04em;color:{{ k.statusFg }};flex-shrink:0;">{{ k.status }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+      </div>
+
+      <!-- STATUS BAR -->
+      <div style="grid-column:1/-1;grid-row:2;display:flex;align-items:center;gap:16px;padding:0 12px;background:#16171c;border:1px solid #24262d;border-radius:5px;font-size:10.5px;color:#6b7079;">
+        <span style="color:#868a93;"><span style="color:#c8a15a;">1-5</span> switch pane</span>
+        <span><span style="color:#a9adb6;">⏎</span> open</span>
+        <span><span style="color:#a9adb6;">/</span> search</span>
+        <span onClick="{{ togglePalette }}" style="cursor:pointer;color:#868a93;"><span style="color:#c8a15a;">⌘K</span> commands</span>
+        <span><span style="color:#a9adb6;">a</span> new agent</span>
+        <span><span style="color:#c8a15a;">d</span> diff</span>
+        <span><span style="color:#c8a15a;">t</span> shell</span>
+        <span style="flex:1;"></span>
+        <span>focus: <span style="color:#c8a15a;">{{ focusLabel }}</span></span>
+        <span style="color:#565a63;">clyde 0.4.2</span>
+      </div>
+    </div>
+
+    <!-- COMMAND PALETTE -->
+    <sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ togglePalette }}" style="position:absolute;inset:0;background:rgba(6,7,9,0.62);display:flex;align-items:flex-start;justify-content:center;padding-top:118px;">
+        <div onClick="{{ stop }}" style="width:588px;background:#191b21;border:1px solid #34363f;border-radius:8px;overflow:hidden;box-shadow:0 30px 80px -20px rgba(0,0,0,0.85);">
+          <div style="display:flex;align-items:center;gap:11px;padding:14px 16px;border-bottom:1px solid #24262d;">
+            <span style="color:#c8a15a;font-size:15px;">›</span>
+            <span style="font-size:14px;color:#d3d6dc;flex:1;">run a command<span style="display:inline-block;width:8px;height:16px;background:#c8a15a;vertical-align:text-bottom;margin-left:2px;animation:blink 1s step-end infinite;"></span></span>
+            <span style="font-size:10px;color:#565a63;">esc</span>
+          </div>
+          <div style="padding:6px;">
+            <sc-for list="{{ commands }}" as="c" hint-placeholder-count="7">
+              <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:5px;background:{{ c.bg }};">
+                <span style="width:16px;text-align:center;font-size:12px;color:{{ c.glyphFg }};">{{ c.glyph }}</span>
+                <span style="font-size:13px;color:{{ c.nameFg }};flex-shrink:0;">{{ c.name }}</span>
+                <span style="font-size:11px;color:#565a63;flex:1;text-align:right;">{{ c.hint }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:16px;padding:9px 16px;border-top:1px solid #24262d;font-size:10px;color:#565a63;">
+            <span><span style="color:#868a93;">↑↓</span> navigate</span>
+            <span><span style="color:#868a93;">⏎</span> run</span>
+            <span><span style="color:#868a93;">esc</span> dismiss</span>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1360,&quot;height&quot;:864}}">
+class Component extends DCLogic {
+  state = { focused: 'main', selected: 0, paletteOpen: false, mainView: 'session' };
+
+  componentDidMount() {
+    this._onKey = (e) => {
+      const k = e.key;
+      if ((e.metaKey || e.ctrlKey) && (k === 'k' || k === 'K')) { e.preventDefault(); this.setState(s => ({ paletteOpen: !s.paletteOpen })); return; }
+      if (k === 'Escape') { this.setState({ paletteOpen: false }); return; }
+      const map = { '1': 'sidebar', '2': 'main', '3': 'agents', '4': 'mcp', '5': 'skills' };
+      if (map[k]) this.setState({ focused: map[k] });
+      if (k === 'd' || k === 'D') this.setState(s => ({ focused: 'main', mainView: s.mainView === 'diff' ? 'session' : 'diff' }));
+      if (k === 't' || k === 'T') this.setState(s => ({ focused: 'main', mainView: s.mainView === 'shell' ? 'session' : 'shell' }));
+    };
+    window.addEventListener('keydown', this._onKey);
+  }
+  componentWillUnmount() { window.removeEventListener('keydown', this._onKey); }
+
+  renderVals() {
+    const C = {
+      running: '#d0a45c', idle: '#6b7079', done: '#7fa07a', error: '#c46b62', connecting: '#c2b06a',
+      accent: '#c8a15a', ringIdle: '#2a2c33', dim: '#868a93', primary: '#c4c7ce', faint: '#565a63',
+    };
+    const focused = this.state.focused;
+    const ring = p => focused === p ? C.accent : C.ringIdle;
+    const title = p => focused === p ? C.accent : C.dim;
+    const pulse = 'pulse 1.4s ease-in-out infinite';
+
+    const sessData = [
+      { name: 'acme-api', path: '~/projects/acme-api', model: 'Sonnet 4.5', status: 'running' },
+      { name: 'billing-svc', path: '~/work/billing', model: 'Opus 4', status: 'idle' },
+      { name: 'docs-site', path: '~/sites/docs', model: 'Haiku 4', status: 'done' },
+      { name: 'infra-tf', path: '~/ops/infra', model: 'Sonnet 4.5', status: 'error' },
+      { name: 'playground', path: '~/tmp/pg', model: 'Sonnet 4.5', status: 'idle' },
+    ];
+    const sessions = sessData.map((s, i) => {
+      const sel = i === this.state.selected;
+      return {
+        ...s, sel,
+        dot: C[s.status] || C.idle,
+        anim: s.status === 'running' ? pulse : 'none',
+        bg: sel ? '#20222a' : 'transparent',
+        marker: sel ? C.accent : 'transparent',
+        fg: sel ? '#dfe2e8' : C.primary,
+        statusFg: C[s.status] || C.idle,
+        onClick: () => this.setState({ selected: i, focused: 'sidebar' }),
+      };
+    });
+
+    const blk = [
+      { isUser: true, body: 'Refactor the auth middleware to delegate to the new TokenService and add unit tests for the failure paths.' },
+      { glyph: '●', glyphColor: C.dim, body: 'Mapping the current middleware and its callers before touching anything.', bodyColor: C.primary },
+      { glyph: '⧉', glyphColor: C.dim, body: 'Read  src/auth/middleware.ts', bodyColor: C.dim, meta: '128 lines' },
+      { glyph: '⌕', glyphColor: C.dim, body: 'Grep  verifyToken(', bodyColor: C.dim, meta: '14 matches · 6 files' },
+      { glyph: '⇉', glyphColor: C.accent, body: 'Dispatched subagent  test-writer', bodyColor: '#b9bcc4', meta: 'writing tests' },
+      { glyph: '●', glyphColor: C.dim, body: 'Rewriting middleware.ts to call TokenService.verify() and surface typed AuthError values.', bodyColor: C.primary },
+      { glyph: '✎', glyphColor: '#7fa07a', body: 'Edit  src/auth/middleware.ts', bodyColor: C.dim, meta: '+34 −19' },
+      { glyph: '●', glyphColor: C.accent, body: 'Running the auth suite to confirm the refactor holds', bodyColor: '#dfe2e8', isStream: true },
+    ];
+    const blocks = blk.map(b => ({
+      isUser: !!b.isUser, isOther: !b.isUser,
+      glyph: b.glyph || '', glyphColor: b.glyphColor || C.dim,
+      body: b.body, bodyColor: b.bodyColor || C.primary,
+      meta: b.meta || '', isStream: !!b.isStream,
+    }));
+
+    const agData = [
+      { name: 'test-writer', task: 'auth.middleware.test.ts · 12 cases', status: 'running', pct: 62 },
+      { name: 'code-reviewer', task: 'reviewing diff · 7 files', status: 'running', pct: 38 },
+      { name: 'doc-updater', task: 'queued', status: 'idle', pct: 6 },
+      { name: 'dep-auditor', task: '0 vulnerabilities found', status: 'done', pct: 100 },
+    ];
+    const agents = agData.map(a => ({
+      ...a, dot: C[a.status] || C.idle, statusFg: C[a.status] || C.idle,
+      anim: a.status === 'running' ? pulse : 'none',
+    }));
+
+    const mcpData = [
+      { name: 'filesystem', detail: '8 tools', status: 'connected' },
+      { name: 'github', detail: '21 tools', status: 'connected' },
+      { name: 'postgres', detail: '6 tools', status: 'connected' },
+      { name: 'puppeteer', detail: 'timeout', status: 'error' },
+      { name: 'linear', detail: 'handshake…', status: 'connecting' },
+    ];
+    const scmap = { connected: C.done, error: C.error, connecting: C.connecting };
+    const mcps = mcpData.map(m => ({
+      ...m, dot: scmap[m.status], detailFg: m.status === 'error' ? C.error : C.dim,
+      anim: m.status === 'connecting' ? pulse : 'none',
+    }));
+
+    const skillData = [
+      { glyph: '✦', name: 'pdf-extract', use: 'read & parse PDFs', status: 'installed' },
+      { glyph: '✦', name: 'web-research', use: 'grounded findings', status: 'installed' },
+      { glyph: '✦', name: 'deck-builder', use: 'HTML slide decks', status: 'installed' },
+      { glyph: '◇', name: 'sql-migrate', use: 'schema diffs', status: 'available' },
+      { glyph: '◇', name: 'brand-voice', use: 'rewrite copy', status: 'available' },
+    ];
+    const skills = skillData.map(k => ({
+      glyph: k.glyph, name: k.name, use: k.use,
+      installed: k.status === 'installed',
+      dot: k.status === 'installed' ? C.done : C.faint,
+      glyphFg: k.status === 'installed' ? C.accent : C.faint,
+      statusFg: k.status === 'installed' ? C.done : C.faint,
+      status: k.status,
+    }));
+
+    const cmdData = [
+      { glyph: '＋', name: 'New session', hint: 'spin up in cwd', sel: true },
+      { glyph: '⇄', name: 'Switch model', hint: 'sonnet · opus · haiku' },
+      { glyph: '⊞', name: 'Attach MCP server', hint: 'from registry' },
+      { glyph: '✦', name: 'Run skill', hint: 'browse installed' },
+      { glyph: '≡', name: 'View diff', hint: '7 files changed' },
+      { glyph: '⊙', name: 'Compact context', hint: '48.2K → summary' },
+      { glyph: '⊗', name: 'Kill agent', hint: 'select running' },
+    ];
+    const commands = cmdData.map(c => ({
+      glyph: c.glyph, name: c.name, hint: c.hint,
+      bg: c.sel ? '#26282f' : 'transparent',
+      glyphFg: c.sel ? C.accent : C.dim,
+      nameFg: c.sel ? '#dfe2e8' : C.primary,
+    }));
+
+    const mainView = this.state.mainView || 'session';
+    const isDiff = mainView === 'diff';
+    const isShell = mainView === 'shell';
+
+    const sh = (t, s) => ({ type: t, text: s });
+    const shData = [
+      sh('cmd', 'git status -sb'),
+      sh('out', '## feature/auth-refactor...origin'),
+      sh('mod', ' M src/auth/middleware.ts'),
+      sh('mod', ' M src/services/token.ts'),
+      sh('new', '?? src/auth/errors.ts'),
+      sh('cmd', 'npm test -- middleware'),
+      sh('out', 'PASS  src/auth/middleware.test.ts  (0.82s)'),
+      sh('ok', '  ✓ 12 passing   0 failing'),
+      sh('cmd', 'clyde agents --status'),
+      sh('out', 'test-writer     running   62%'),
+      sh('out', 'code-reviewer   running   38%'),
+      sh('out', 'dep-auditor     done      0 issues'),
+      sh('cmd', 'docker compose up -d db'),
+      sh('err', 'Error: port 5432 already allocated'),
+    ];
+    const shStyle = {
+      cmd: { fg: '#dfe2e8' }, out: { fg: '#868a93' },
+      ok: { fg: '#7fa07a' }, err: { fg: '#c46b62' },
+      mod: { fg: '#c8a15a' }, new: { fg: '#7fa07a' },
+    };
+    const shellLines = shData.map(l => ({
+      isCmd: l.type === 'cmd', isOut: l.type !== 'cmd', text: l.text, fg: (shStyle[l.type] || shStyle.out).fg,
+    }));
+
+    const dfData = [
+      { name: 'middleware.ts', path: 'src/auth', add: 34, del: 19, sel: true },
+      { name: 'token.ts', path: 'src/services', add: 52, del: 0 },
+      { name: 'middleware.test.ts', path: 'src/auth', add: 88, del: 0 },
+      { name: 'errors.ts', path: 'src/auth', add: 11, del: 2 },
+    ];
+    const diffFiles = dfData.map(f => ({
+      ...f, bg: f.sel ? '#20222a' : 'transparent',
+      marker: f.sel ? C.accent : 'transparent',
+      fg: f.sel ? '#dfe2e8' : C.primary,
+    }));
+
+    const dl = (t, n, s) => ({ type: t, num: n, text: s });
+    const dlData = [
+      dl('hunk', '', '@@ -1,18 +1,33 @@ src/auth/middleware.ts'),
+      dl('ctx', '12', "import { Router } from 'express';"),
+      dl('del', '13', "import { verifyToken } from './legacy-jwt';"),
+      dl('add', '13', "import { TokenService } from '../services/token';"),
+      dl('add', '14', "import { AuthError } from './errors';"),
+      dl('ctx', '15', ''),
+      dl('del', '16', 'export function authMiddleware(req, res, next) {'),
+      dl('del', '17', "  const token = req.headers.authorization?.split(' ')[1];"),
+      dl('del', '18', '  if (!verifyToken(token)) return res.status(401).end();'),
+      dl('add', '16', 'export function authMiddleware(tokens: TokenService) {'),
+      dl('add', '17', '  return (req, res, next) => {'),
+      dl('add', '18', "    const token = req.headers.authorization?.split(' ')[1];"),
+      dl('add', '19', '    const result = tokens.verify(token);'),
+      dl('add', '20', '    if (!result.ok) return next(new AuthError(result.reason));'),
+      dl('ctx', '21', '    next();'),
+      dl('add', '22', '  };'),
+      dl('ctx', '23', '}'),
+    ];
+    const dstyle = {
+      hunk: { bg: '#1b1d23', fg: C.accent, sign: '', num: C.faint },
+      add: { bg: 'rgba(127,160,122,0.09)', fg: '#a7c2a2', sign: '+', signFg: '#7fa07a', num: '#5f7a5b' },
+      del: { bg: 'rgba(196,107,98,0.09)', fg: '#d5a39d', sign: '-', signFg: '#c46b62', num: '#8a5751' },
+      ctx: { bg: 'transparent', fg: '#868a93', sign: ' ', signFg: '#3a3d45', num: C.faint },
+    };
+    const diffLines = dlData.map(d => {
+      const st = dstyle[d.type];
+      return {
+        isHunk: d.type === 'hunk', text: d.text, num: d.num,
+        bg: st.bg, fg: st.fg, sign: st.sign, signFg: st.signFg || C.faint, numFg: st.num,
+      };
+    });
+
+    const tab = active => ({
+      fg: active ? C.accent : C.dim,
+      border: active ? C.accent : 'transparent',
+    });
+    const tSession = tab(mainView === 'session'), tDiff = tab(isDiff), tShell = tab(isShell);
+
+    const labels = { sidebar: 'sessions', main: 'session', agents: 'agents', mcp: 'mcp', skills: 'skills' };
+
+    return {
+      sessions, blocks, agents, mcps, commands, skills, diffFiles, diffLines, shellLines,
+      isSession: mainView === 'session', isDiff, isShell,
+      tSessionFg: tSession.fg, tSessionBorder: tSession.border,
+      tDiffFg: tDiff.fg, tDiffBorder: tDiff.border,
+      tShellFg: tShell.fg, tShellBorder: tShell.border,
+      setSession: () => this.setState({ focused: 'main', mainView: 'session' }),
+      setDiff: () => this.setState({ focused: 'main', mainView: 'diff' }),
+      setShell: () => this.setState({ focused: 'main', mainView: 'shell' }),
+      paletteOpen: this.state.paletteOpen,
+      focusLabel: labels[focused],
+      ringSidebar: ring('sidebar'), ringMain: ring('main'), ringAgents: ring('agents'), ringMcp: ring('mcp'), ringSkills: ring('skills'),
+      titleSidebar: title('sidebar'), titleMain: title('main'), titleAgents: title('agents'), titleMcp: title('mcp'), titleSkills: title('skills'),
+      focusSidebar: () => this.setState({ focused: 'sidebar' }),
+      focusMain: () => this.setState({ focused: 'main' }),
+      focusAgents: () => this.setState({ focused: 'agents' }),
+      focusMcp: () => this.setState({ focused: 'mcp' }),
+      focusSkills: () => this.setState({ focused: 'skills' }),
+      togglePalette: () => this.setState(s => ({ paletteOpen: !s.paletteOpen })),
+      stop: (e) => { if (e && e.stopPropagation) e.stopPropagation(); },
+    };
+  }
+}
+</script>
+</body>
+</html>
