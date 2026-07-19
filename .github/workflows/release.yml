@@ -1,7 +1,8 @@
 name: release
 
-# Build the Windows installers and attach them to a GitHub Release.
-# Trigger it either from the Actions tab (Run workflow) or by pushing a v* tag.
+# Build the installers for Windows, macOS (universal) and Linux and attach them to
+# a versioned GitHub Release. Trigger from the Actions tab (Run workflow) or by
+# pushing a v* tag. Version comes from tauri.conf.json (bump it + package.json first).
 on:
   workflow_dispatch:
   push:
@@ -12,14 +13,34 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    permissions:
-      contents: write # tauri-action needs this to create the release + tag
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # universal .dmg (Apple Silicon + Intel)
+            args: '--target universal-apple-darwin'
+            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+          - platform: ubuntu-22.04 # .AppImage + .deb
+            args: ''
+            rust-targets: ''
+          - platform: windows-latest # .exe (NSIS) + .msi (WiX)
+            args: ''
+            rust-targets: ''
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -29,6 +50,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
 
       - name: Cache Rust build (src-tauri/target)
         uses: swatinem/rust-cache@v2
@@ -38,25 +61,26 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build app + create GitHub Release
+      - name: Build app + attach to the GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # __VERSION__ is substituted from tauri.conf.json (currently 0.1.0) →
-          # tag "v0.1.0", release "Francois v0.1.0". Bump the version there (and in
-          # package.json) for a new release.
+          # __VERSION__ is substituted from tauri.conf.json → tag "v0.1.0", etc.
           tagName: v__VERSION__
           releaseName: 'Francois v__VERSION__'
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.args }}
           releaseBody: |
-            ## Install (Windows)
+            ## Install
 
-            Download and run **`Francois_*_x64-setup.exe`** (NSIS) or **`Francois_*_x64_en-US.msi`** (WiX) below.
+            - **Windows**: `Francois_*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi` (WiX)
+            - **macOS**: `Francois_*_universal.dmg` (Apple Silicon + Intel)
+            - **Linux**: `Francois_*_amd64.AppImage` or `*_amd64.deb`
 
             **Prerequisite:** the app orchestrates the Claude Code CLI, so the machine needs
             [`claude`](https://claude.ai/code) installed and authenticated on `PATH`.
 
-            The build is unsigned, so Windows SmartScreen may warn on first launch — choose
-            *More info → Run anyway*.
+            Builds are **unsigned** — Windows SmartScreen / macOS Gatekeeper may warn on first
+            launch (on macOS: right-click → Open, or `xattr -cr` the app).

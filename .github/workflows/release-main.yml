@@ -1,61 +1,87 @@
 name: release-main
 
 # Continuous delivery: every push to main runs the test suite, then — only if it
-# passes — builds the Windows installers and publishes them to a single rolling
-# "dev" pre-release that always tracks the latest main commit.
+# passes — builds installers for Windows, macOS (universal) and Linux and publishes
+# them to a single rolling "dev" pre-release that always tracks the latest main.
 #
 # Stable, versioned releases are cut separately by release.yml on a v* tag.
 on:
   push:
     branches: [main]
 
-# A newer push supersedes an in-flight one so the dev release reflects latest main.
 concurrency:
   group: release-main
   cancel-in-progress: true
 
-jobs:
-  release:
-    runs-on: windows-latest
-    permissions:
-      contents: write # publish the release + move the dev tag
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+permissions:
+  contents: write # publish the release + move the dev tag
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
+jobs:
+  # Test gate + reset the rolling dev release. Runs once (a failure here stops the
+  # matrix, so nothing is published). cargo test also proves the crate compiles on Linux.
+  prepare:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust build (src-tauri/target)
-        uses: swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      # --- test gate: a failure here fails the job before anything is published ---
+      - run: npm ci
       - name: Frontend typecheck + build
-        run: npm run build # tsc --noEmit (strict) + vite build
-
+        run: npm run build
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
-
-      # --- publish: replace the rolling dev release so its tag tracks this commit ---
       - name: Remove the previous dev release + tag
         run: gh release delete dev --yes --cleanup-tag
         continue-on-error: true # no-op on the very first run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build installers + publish dev pre-release
+  publish:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # universal .dmg (Apple Silicon + Intel)
+            args: '--target universal-apple-darwin'
+            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+          - platform: ubuntu-22.04 # .AppImage + .deb
+            args: ''
+            rust-targets: ''
+          - platform: windows-latest # .exe (NSIS) + .msi (WiX)
+            args: ''
+            rust-targets: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Build installers + publish to the dev pre-release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,11 +90,14 @@ jobs:
           releaseName: 'Development build — latest main'
           prerelease: true
           releaseDraft: false
+          args: ${{ matrix.args }}
           releaseBody: |
             Auto-built from `main` (${{ github.sha }}) — bleeding edge, may be unstable.
 
-            Download **`Francois_*_x64-setup.exe`** (NSIS) or **`Francois_*_x64_en-US.msi`** (WiX) below.
-            Requires the Claude Code CLI (`claude`) installed and authenticated on `PATH`. Unsigned →
-            Windows SmartScreen may warn (*More info → Run anyway*).
+            - **Windows**: `Francois_*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi` (WiX)
+            - **macOS**: `Francois_*_universal.dmg` (Apple Silicon + Intel)
+            - **Linux**: `Francois_*_amd64.AppImage` or `*_amd64.deb`
 
-            For stable, versioned builds see the tagged releases (pushed via a `v*` tag).
+            Requires the Claude Code CLI (`claude`) installed and authenticated on `PATH`. Desktop
+            builds are **unsigned** — Windows SmartScreen / macOS Gatekeeper may warn (on macOS,
+            right-click → Open, or `xattr -cr` the app). For stable versions see the tagged releases.

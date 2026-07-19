@@ -34,8 +34,9 @@ Project: **Francois** — a desktop terminal app that orchestrates Claude Code s
 - Notes: repository initialized on the `main` branch. `/ship` requires a SHIP-verdict `/review` before it will push or open a PR.
 - **CI/CD** (`.github/workflows/`):
   - `ci.yml` — pull requests: `npm run build` (tsc + vite) + `cargo test`.
-  - `release-main.yml` — every push to `main`: the same test gate, then (if green) build the Windows installers and refresh the rolling **`dev`** pre-release (always tracks latest main).
-  - `release.yml` — a `v*` tag (or manual run): build installers into a versioned draft release (the stable channel). Version comes from `tauri.conf.json`.
+  - `release-main.yml` — every push to `main`: test gate + Linux compile check (`prepare` job), then (if green) a `publish` matrix building installers for **Windows / macOS (universal) / Linux** and refreshing the rolling **`dev`** pre-release (always tracks latest main).
+  - `release.yml` — a `v*` tag (or manual run): the same 3-OS matrix into a versioned draft release (the stable channel). Version comes from `tauri.conf.json`.
+  - Build matrix: `windows-latest` (.exe/.msi), `macos-latest` universal .dmg (Apple Silicon + Intel), `ubuntu-22.04` (.AppImage/.deb, needs the webkit2gtk apt deps). All desktop builds are unsigned.
 
 ## Conventions
 
