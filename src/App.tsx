@@ -53,6 +53,10 @@ export default function App() {
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const mainTab = useStore((s) => s.mainTab);
   const setMainTab = useStore((s) => s.setMainTab);
+  const showLeftPane = useStore((s) => s.showLeftPane);
+  const showRightPane = useStore((s) => s.showRightPane);
+  const toggleLeftPane = useStore((s) => s.toggleLeftPane);
+  const toggleRightPane = useStore((s) => s.toggleRightPane);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
@@ -165,6 +169,10 @@ export default function App() {
       } else if (e.key === 't' || e.key === 'T') {
         setFocusedPane('main');
         setMainTab(useStore.getState().mainTab === 'shell' ? 'session' : 'shell');
+      } else if (e.key === '[') {
+        useStore.getState().toggleLeftPane();
+      } else if (e.key === ']') {
+        useStore.getState().toggleRightPane();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -197,13 +205,17 @@ export default function App() {
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: '264px 1fr 336px',
+          // columns adapt to the [ / ] toggles; hidden columns keep their panes
+          // MOUNTED (display:none) — Sidebar owns the session-cache subscriptions.
+          gridTemplateColumns: [showLeftPane ? '264px' : null, '1fr', showRightPane ? '336px' : null]
+            .filter(Boolean)
+            .join(' '),
           gridTemplateRows: '1fr 32px',
           gap: 10,
           padding: 10,
         }}
       >
-        <div style={{ gridColumn: 1, gridRow: 1, minHeight: 0 }}>
+        <div style={{ gridRow: 1, minHeight: 0, display: showLeftPane ? undefined : 'none' }}>
           <Sidebar home={home} />
         </div>
 
@@ -211,7 +223,6 @@ export default function App() {
         <section
           onClick={() => setFocusedPane('main')}
           style={{
-            gridColumn: 2,
             gridRow: 1,
             display: 'flex',
             flexDirection: 'column',
@@ -331,7 +342,7 @@ export default function App() {
         </section>
 
         {/* right column: agents [3] + mcp [4] + skills [5] */}
-        <div style={{ gridColumn: 3, gridRow: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ gridRow: 1, minHeight: 0, display: showRightPane ? 'flex' : 'none', flexDirection: 'column', gap: 10 }}>
           <div style={{ flex: 1.3, minHeight: 0 }}>
             <AgentsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
@@ -373,6 +384,12 @@ export default function App() {
           </span>
           <span>
             <span style={{ color: C.accent }}>t</span> shell
+          </span>
+          <span onClick={toggleLeftPane} style={{ cursor: 'pointer' }} title="toggle sessions column">
+            <span style={{ color: C.accent }}>[</span> <span style={{ opacity: showLeftPane ? 1 : 0.5 }}>sessions</span>
+          </span>
+          <span onClick={toggleRightPane} style={{ cursor: 'pointer' }} title="toggle side panels">
+            <span style={{ color: C.accent }}>]</span> <span style={{ opacity: showRightPane ? 1 : 0.5 }}>panels</span>
           </span>
           <span>
             <span style={{ color: C.accent }}>n</span> new session
