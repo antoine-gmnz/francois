@@ -37,6 +37,9 @@ jobs:
       - name: Frontend typecheck + build
         run: npm run build # tsc --noEmit (strict) + vite build
 
+      - name: Frontend tests
+        run: npm test # vitest run
+
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
