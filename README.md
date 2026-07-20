@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="app-icon.svg" width="96" alt="Francois logo" />
+
 # Francois
 
 **Mission control for your Claude Code fleet.**
@@ -14,19 +16,7 @@ One window: every session, its transcript, its diff, its agents — and a real s
 
 </div>
 
-<!-- TODO: replace with a real screenshot of the running app -->
-```text
-┌─ SESSIONS ────────────┬─ SESSION · DIFF ③ · SHELL ──────────────┬─ AGENTS ─────────────┐
-│ ● acme-api        now │ YOU › refactor the auth middleware       │ ⇉ test-writer        │
-│   active · Sonnet 4.5 │ ● Mapping the current callers first…     │   running ▰▰▰▱ 12 cs │
-│   ctx 128K/1M  ≡3  ⇉2 │ ⧉ Read src/auth/middleware.ts · 128 ln   │ ⇉ code-reviewer      │
-│ ● billing-svc      4m │ ⌕ Grep verifyToken( · 14 matches         │   queued             │
-│   ready · Opus 4      │ ✎ Edit middleware.ts · +34 −19           ├─ MCP SERVERS ────────┤
-│ ● infra-tf        12m │ ▌                                        │ ● github · 21 tools  │
-│   error · Sonnet 4.5  │ › follow up…                        ⌘K   │ ● postgres · 6 tools │
-└───────────────────────┴──────────────────────────────────────────┴──────────────────────┘
-  1-5 panes · d diff · t shell · n new session · [ ] columns · ⌘K commands
-```
+![Francois — the whole fleet in one window](screenshots/francois.png)
 
 ## Why
 
