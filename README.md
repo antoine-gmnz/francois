@@ -10,6 +10,7 @@ One window: every session, its transcript, its diff, its agents — and a real s
 [![download](https://img.shields.io/badge/download-dev_build-c8a15a)](https://github.com/antoine-gmnz/francois/releases/tag/dev)
 [![platforms](https://img.shields.io/badge/Windows_·_macOS_·_Linux-16171c)](https://github.com/antoine-gmnz/francois/releases)
 [![stack](https://img.shields.io/badge/Tauri_2-Rust_core_·_React-24262d)](#under-the-hood)
+[![license](https://img.shields.io/badge/license-AGPL--3.0-24262d)](LICENSE)
 
 </div>
 
@@ -103,3 +104,7 @@ npm run tauri build   # produce installers
 ## The name
 
 Named after **Claude François** — the French singer with the immaculate choreography. He kept a stage full of Claudettes perfectly in sync; Francois does the same for a fleet of Claudes. *Comme d'habitude.*
+
+## License
+
+[AGPL-3.0](LICENSE) © 2026 Antoine Gimenez. Use it, study it, fork it — but if you distribute or host a modified version, your version must stay open under the same license.
