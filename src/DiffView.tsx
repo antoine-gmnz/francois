@@ -66,35 +66,51 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   // (watcher / tool.done / another surface) — otherwise getSummary would self-trigger
   // an unbounded refetch loop.
   const pendingEchoRef = useRef(0);
+  // Coalesce external-broadcast refetches: while one summary load is in flight, a
+  // burst of diff.changed events queues exactly ONE trailing re-run instead of
+  // stacking fetches (which strobed requestBusy → the footer hints "blinked").
+  const summaryInFlightRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
 
   const notRepo = summaryError?.code === 'NOT_A_GIT_REPO';
   const files = summary?.files ?? [];
 
   // Load summary, preserving selection when the selected path survives (FR-19).
   const loadSummary = useCallback((sid: string) => {
-    pendingEchoRef.current += 1; // a successful getSummary will broadcast one echo
-    setSummaryLoading(true);
-    void diffGetSummary(sid)
-      .then((res) => {
-        if (!res.ok) pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1); // no broadcast on error
-        if (!mountedRef.current) return;
-        setSummaryLoading(false);
-        if (res.ok) {
-          setSummary(res.data);
-          setSummaryError(null);
-          const prev = selectedRef.current;
-          const keep = prev && res.data.files.some((f) => f.path === prev);
-          setSelectedPath(keep ? prev : (res.data.files[0]?.path ?? null));
-        } else {
-          setSummary(null);
-          setSummaryError(res.error);
-          setSelectedPath(null);
-        }
-      })
-      .catch(() => {
-        pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1);
-        if (mountedRef.current) setSummaryLoading(false);
-      });
+    const run = () => {
+      summaryInFlightRef.current = true;
+      pendingEchoRef.current += 1; // a successful getSummary will broadcast one echo
+      setSummaryLoading(true);
+      void diffGetSummary(sid)
+        .then((res) => {
+          if (!res.ok) pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1); // no broadcast on error
+          if (!mountedRef.current) return;
+          setSummaryLoading(false);
+          if (res.ok) {
+            setSummary(res.data);
+            setSummaryError(null);
+            const prev = selectedRef.current;
+            const keep = prev && res.data.files.some((f) => f.path === prev);
+            setSelectedPath(keep ? prev : (res.data.files[0]?.path ?? null));
+          } else {
+            setSummary(null);
+            setSummaryError(res.error);
+            setSelectedPath(null);
+          }
+        })
+        .catch(() => {
+          pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1);
+          if (mountedRef.current) setSummaryLoading(false);
+        })
+        .finally(() => {
+          summaryInFlightRef.current = false;
+          if (refreshQueuedRef.current && mountedRef.current) {
+            refreshQueuedRef.current = false;
+            run(); // one trailing re-run covers every broadcast that arrived mid-flight
+          }
+        });
+    };
+    run();
   }, []);
 
   // Hydrate + live diff.changed for this session (component is keyed by sessionId in App).
@@ -107,6 +123,10 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
       if (e.type !== 'diff.changed' || e.sessionId !== sessionId) return;
       if (pendingEchoRef.current > 0) {
         pendingEchoRef.current -= 1; // our own getSummary echo — do not refetch
+        return;
+      }
+      if (summaryInFlightRef.current) {
+        refreshQueuedRef.current = true; // fold the burst into one trailing re-run
         return;
       }
       loadSummary(sessionId); // external change
@@ -375,7 +395,9 @@ function DiffBody({
     const recompute = () => {
       const start = Math.max(0, Math.floor(el.scrollTop / ROW_H) - OVERSCAN);
       const visible = Math.ceil(el.clientHeight / ROW_H) + OVERSCAN * 2;
-      setWin({ start, end: Math.min(rows.length, start + visible) });
+      const end = Math.min(rows.length, start + visible);
+      // bail out when unchanged — otherwise every scroll tick re-renders the body
+      setWin((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
     };
     recompute();
     el.addEventListener('scroll', recompute, { passive: true });
