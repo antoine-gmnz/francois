@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import type { AppError } from '../contract/common';
-import type { DiffSummary, DiffFileSummary, FileDiff, DiffHunk, DiffLine } from '../contract/diff-view';
+import type { DiffSummary, DiffFileSummary, DiffFileStatus, FileDiff, DiffHunk, DiffLine } from '../contract/diff-view';
 import { diffCommit, diffGetFileDiff, diffGetSummary, diffStageAll, onDiffEvent } from './api';
 import { useStore } from './store';
 
@@ -25,6 +26,13 @@ const KIND: Record<string, { bg: string; fg: string; sign: string; signFg: strin
   ctx: { bg: 'transparent', fg: '#868a93', sign: ' ', signFg: '#565a63', noFg: '#565a63' },
 };
 
+// Diff rows are single-line (white-space: pre, no wrap), so each is a fixed height:
+// fontSize 12 × lineHeight 1.75 = 21px. That lets us window the body — mount only the
+// rows in view — so a 5k-line diff stays as snappy to scroll/switch as a 50-line one.
+const ROW_H = 21;
+const OVERSCAN = 12; // rows rendered beyond each edge, to hide scroll blanking
+const WINDOW_INITIAL = 80; // rows to render on first paint, before the scroll box is measured
+
 interface CommitState {
   open: boolean;
   message: string;
@@ -47,6 +55,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const [summaryLoading, setSummaryLoading] = useState(false);
 
   const commitInputRef = useRef<HTMLInputElement>(null);
+  const bodyScrollRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedPath;
   const mountedRef = useRef(true);
@@ -134,7 +143,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
       } else {
         setFileDiff(null);
         setFileDiffError(res.error);
-        if (res.error.code === 'INVALID_INPUT') loadSummary(sessionId); // catch chip strip up
+        if (res.error.code === 'INVALID_INPUT') loadSummary(sessionId); // stale path → refresh
       }
     });
     return () => {
@@ -232,29 +241,33 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: '#131419' }}>
-      {/* chip strip — renders nothing when empty (spec §8) */}
-      {files.length > 0 && (
-        <div
-          className="scz"
-          style={{ display: 'flex', gap: 6, padding: '9px 12px', borderBottom: `1px solid ${C.border}`, overflowX: 'auto', flexShrink: 0 }}
-        >
-          {files.map((f) => (
-            <Chip key={f.path} f={f} selected={f.path === selectedPath} onClick={() => setSelectedPath(f.path)} />
-          ))}
-        </div>
-      )}
-
-      {/* body */}
-      <div className="scz" style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-        {notRepo ? (
-          <EmptyState text="not a git repository — initialize with `git init` in the shell" />
-        ) : summaryError ? (
-          <EmptyState text={summaryError.message} color={C.del} />
-        ) : summary && files.length === 0 ? (
-          <EmptyState text="working tree clean" />
-        ) : (
-          <DiffBody loading={fileDiffLoading} error={fileDiffError} diff={fileDiff} />
+      {/* main area: vertical file selector (left) + diff body (right) */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* file list — a vertical selector (replaces the horizontal chip strip, which
+            became unusable with many files). Renders nothing when empty (spec §8). */}
+        {files.length > 0 && (
+          <div
+            className="scz"
+            style={{ width: 236, flexShrink: 0, overflowY: 'auto', borderRight: `1px solid ${C.border}`, padding: '8px 6px' }}
+          >
+            {files.map((f) => (
+              <FileRow key={f.path} f={f} selected={f.path === selectedPath} onClick={() => setSelectedPath(f.path)} />
+            ))}
+          </div>
         )}
+
+        {/* body */}
+        <div ref={bodyScrollRef} className="scz" style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+          {notRepo ? (
+            <EmptyState text="not a git repository — initialize with `git init` in the shell" />
+          ) : summaryError ? (
+            <EmptyState text={summaryError.message} color={C.del} />
+          ) : summary && files.length === 0 ? (
+            <EmptyState text="working tree clean" />
+          ) : (
+            <DiffBody loading={fileDiffLoading} error={fileDiffError} diff={fileDiff} scrollRef={bodyScrollRef} />
+          )}
+        </div>
       </div>
 
       {/* footer / commit bar — hidden entirely for a non-repo (nothing actionable) */}
@@ -275,25 +288,41 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   );
 }
 
-function Chip({ f, selected, onClick }: { f: DiffFileSummary; selected: boolean; onClick: () => void }) {
+// per-status glyph + color for the vertical file list (spec §8 status set).
+const STATUS: Record<DiffFileStatus, { ch: string; color: string }> = {
+  modified: { ch: 'M', color: '#c8a15a' },
+  added: { ch: 'A', color: '#7fa07a' },
+  deleted: { ch: 'D', color: '#c46b62' },
+  untracked: { ch: 'U', color: '#6b8fb0' },
+  renamed: { ch: 'R', color: '#9a86c4' },
+};
+
+// One row in the vertical file selector: status glyph · filename · +add/−del.
+// Full repo-relative path shows on hover (title); the dir is elided to keep rows dense.
+function FileRow({ f, selected, onClick }: { f: DiffFileSummary; selected: boolean; onClick: () => void }) {
+  const st = STATUS[f.status] ?? STATUS.modified;
   return (
     <div
       onClick={onClick}
+      title={f.path}
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
-        padding: '6px 11px',
+        gap: 7,
+        padding: '5px 8px',
         borderRadius: 4,
         cursor: 'pointer',
-        flexShrink: 0,
+        marginBottom: 1,
         background: selected ? '#20222a' : 'transparent',
         borderLeft: `2px solid ${selected ? C.accent : 'transparent'}`,
       }}
     >
-      <span style={{ fontSize: 11.5, color: selected ? C.bright : C.name }}>{f.name}</span>
-      {f.additions > 0 && <span style={{ fontSize: 10, color: C.add }}>+{f.additions}</span>}
-      {f.deletions > 0 && <span style={{ fontSize: 10, color: C.del }}>−{f.deletions}</span>}
+      <span style={{ width: 9, flexShrink: 0, fontSize: 9.5, fontWeight: 700, textAlign: 'center', color: st.color }}>{st.ch}</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selected ? C.bright : C.name }}>
+        {f.name}
+      </span>
+      {f.additions > 0 && <span style={{ flexShrink: 0, fontSize: 10, color: C.add }}>+{f.additions}</span>}
+      {f.deletions > 0 && <span style={{ flexShrink: 0, fontSize: 10, color: C.del }}>−{f.deletions}</span>}
     </div>
   );
 }
@@ -306,27 +335,85 @@ function EmptyState({ text, color }: { text: string; color?: string }) {
   );
 }
 
-function DiffBody({ loading, error, diff }: { loading: boolean; error: AppError | null; diff: FileDiff | null }) {
+interface FlatRow {
+  kind: string;
+  no: string;
+  text: string;
+}
+
+function DiffBody({
+  loading,
+  error,
+  diff,
+  scrollRef,
+}: {
+  loading: boolean;
+  error: AppError | null;
+  diff: FileDiff | null;
+  scrollRef: RefObject<HTMLDivElement>;
+}) {
+  // Flatten hunks (header + lines) into one fixed-height row list so the body can be
+  // windowed. Cheap for small diffs, essential for huge ones.
+  const rows = useMemo<FlatRow[]>(() => {
+    if (!diff || diff.binary) return [];
+    const out: FlatRow[] = [];
+    for (const h of diff.hunks as DiffHunk[]) {
+      out.push({ kind: 'hunk', no: '', text: h.header });
+      for (const l of h.lines as DiffLine[]) {
+        out.push({ kind: l.kind, no: l.kind === 'del' ? String(l.oldNo ?? '') : String(l.newNo ?? ''), text: l.text });
+      }
+    }
+    return out;
+  }, [diff]);
+
+  const [win, setWin] = useState({ start: 0, end: WINDOW_INITIAL });
+
+  // Recompute the visible window on scroll / resize.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || rows.length === 0) return;
+    const recompute = () => {
+      const start = Math.max(0, Math.floor(el.scrollTop / ROW_H) - OVERSCAN);
+      const visible = Math.ceil(el.clientHeight / ROW_H) + OVERSCAN * 2;
+      setWin({ start, end: Math.min(rows.length, start + visible) });
+    };
+    recompute();
+    el.addEventListener('scroll', recompute, { passive: true });
+    const ro = new ResizeObserver(recompute);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', recompute);
+      ro.disconnect();
+    };
+  }, [rows.length, scrollRef]);
+
+  // Switching files: jump back to the top and reset the window for the new content.
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setWin({ start: 0, end: WINDOW_INITIAL });
+  }, [diff, scrollRef]);
+
   if (error) return <Placeholder text={error.message} color={C.del} />;
   if (loading && !diff) return <Placeholder text="loading…" />;
   if (!diff) return null;
   if (diff.binary) return <Placeholder text="binary file" />;
-  if (diff.hunks.length === 0) return <Placeholder text="no content changes" />;
+  if (rows.length === 0) return <Placeholder text="no content changes" />;
 
+  const start = Math.min(win.start, rows.length);
+  const end = Math.min(win.end, rows.length);
+  // 8px matches the original body padding; the spacers reserve the off-screen rows so
+  // the scrollbar length stays correct.
   return (
-    <div style={{ padding: '8px 0', fontSize: 12, lineHeight: 1.75 }}>
-      {diff.hunks.map((h: DiffHunk, hi: number) => (
-        <div key={hi}>
-          <Row kind="hunk" no="" text={h.header} />
-          {h.lines.map((l: DiffLine, li: number) => (
-            <Row
-              key={li}
-              kind={l.kind}
-              no={l.kind === 'del' ? String(l.oldNo ?? '') : String(l.newNo ?? '')}
-              text={l.text}
-            />
-          ))}
-        </div>
+    <div
+      style={{
+        paddingTop: 8 + start * ROW_H,
+        paddingBottom: 8 + (rows.length - end) * ROW_H,
+        fontSize: 12,
+        lineHeight: `${ROW_H}px`,
+      }}
+    >
+      {rows.slice(start, end).map((r, i) => (
+        <Row key={start + i} kind={r.kind} no={r.no} text={r.text} />
       ))}
     </div>
   );

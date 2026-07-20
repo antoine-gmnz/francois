@@ -140,6 +140,32 @@ fn repo_root(cwd: &str) -> String {
     }
 }
 
+/// Cache of `cwd -> (worktree_root, stable_base)`. `git.exe` spawn overhead is ~100ms+
+/// on Windows, and every diff op needs the root + base; without caching, each
+/// `getFileDiff` fires 3 separate rev-parse probes before it even runs the diff. The
+/// root of a cwd never changes. `stable_base` holds `Some("HEAD")` once a commit
+/// exists (HEAD never reverts to no-commits in practice, so it's safe to pin); for a
+/// commit-less repo it stays `None` and the base is recomputed each call (cheap, rare,
+/// and self-corrects to `HEAD` on the first commit).
+static REPO_CACHE: OnceLock<Mutex<HashMap<String, (String, Option<String>)>>> = OnceLock::new();
+
+/// `(root, base)` for a cwd, or `None` if it isn't a git worktree. Serves the common
+/// case (a repo with commits) entirely from cache after the first call — zero git spawns.
+fn repo_info(cwd: &str) -> Option<(String, String)> {
+    let cache = REPO_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some((root, stable_base)) = cache.lock().unwrap().get(cwd).cloned() {
+        return Some((root.clone(), stable_base.unwrap_or_else(|| diff_base(&root))));
+    }
+    if !is_git_repo(cwd) {
+        return None;
+    }
+    let root = repo_root(cwd);
+    let base = diff_base(&root);
+    let stable = (base == "HEAD").then(|| "HEAD".to_string());
+    cache.lock().unwrap().insert(cwd.to_string(), (root.clone(), stable));
+    Some((root, base))
+}
+
 // ---------- parsers (pure — unit tested) ----------
 
 fn num(s: &str) -> u64 {
@@ -311,11 +337,10 @@ fn untracked_counts(cwd: &str, path: &str) -> (u64, u64) {
 }
 
 fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
-    if !is_git_repo(cwd) {
+    // Cached root + base (run everything from the worktree top so paths agree).
+    let Some((root, base)) = repo_info(cwd) else {
         return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
-    }
-    let root = repo_root(cwd); // run everything from the worktree top so paths agree
-    let base = diff_base(&root);
+    };
     let st = git(&root, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--renames"])
         .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
     if st.code != 0 {
@@ -345,21 +370,31 @@ fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
 }
 
 fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
-    let summary = compute_summary(cwd)?; // propagates NOT_A_GIT_REPO / GIT_ERROR
-    let Some(f) = summary.files.iter().find(|f| f.path == path) else {
+    let Some((root, base)) = repo_info(cwd) else {
+        return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
+    };
+    // Targeted status for just this path — avoids re-running the whole summary (which
+    // costs a full `git status` + numstat + a diff per untracked file). Big win on a
+    // large repo where every chip click otherwise re-scans everything.
+    let st = git(&root, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", path])
+        .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    if st.code != 0 {
+        return Err(("GIT_ERROR".into(), if st.stderr.is_empty() { "git status failed".into() } else { st.stderr }));
+    }
+    // A path with no porcelain entry is not a currently-changed file → stale selection.
+    let Some((xy, _)) = parse_porcelain_z(&st.stdout).into_iter().find(|(_, p)| p == path) else {
         return Err(("INVALID_INPUT".into(), format!("'{path}' is not in the current changes")));
     };
-    let root = repo_root(cwd); // path is root-relative (from the summary) — run from root
-    let out = if f.status == DiffFileStatus::Untracked {
+    let status = map_status(&xy);
+    let out = if status == DiffFileStatus::Untracked {
         git(&root, &["diff", "--no-index", "--", "/dev/null", path])
     } else {
-        let base = diff_base(&root);
         git(&root, &["diff", &base, "-M", "--", path])
     }
     .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
 
     // `--no-index` exit 1 = "files differ" (success); only >=2 is a real failure (FR-8).
-    let failed = if f.status == DiffFileStatus::Untracked { out.code >= 2 } else { out.code != 0 };
+    let failed = if status == DiffFileStatus::Untracked { out.code >= 2 } else { out.code != 0 };
     if failed {
         return Err(("GIT_ERROR".into(), if out.stderr.is_empty() { "git diff failed".into() } else { out.stderr }));
     }
@@ -415,14 +450,30 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 static WATCHERS: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>> = OnceLock::new();
 
-/// Skip only events inside `.git/` — otherwise our own git writes (index/refs on
-/// stage/commit) would self-trigger the watcher. Everything else is left to the
-/// debounced, git-authoritative recompute (FR-15): git itself excludes .gitignore'd
-/// paths from the summary, so a heavy gitignored dir (node_modules, target) at worst
-/// causes a harmless coalesced recompute; hardcoding those names here would instead
-/// wrongly hide a *tracked* file that happens to live under such a directory.
-fn is_ignored_path(p: &Path) -> bool {
-    p.components().any(|c| c.as_os_str() == ".git")
+/// Skip events inside `.git/` (our own index/ref writes) and inside well-known heavy
+/// build / dependency directories. Recursively watching a multi-GB `target/` or
+/// `node_modules` and recomputing on its churn makes the DIFF panel lag badly — so,
+/// like every mainstream file-watcher (chokidar, watchman, …), we hardcode a skip
+/// list. These dirs are `.gitignore`'d in practice, so git already excludes them from
+/// the summary; the only tradeoff is a *tracked* file living directly under a dir
+/// literally named one of these, whose live update would be missed (any other change,
+/// or reopening the tab, still refreshes it).
+fn is_ignored_path(p: &Path, root: &Path) -> bool {
+    // Match only the path *below* the watched root: a session whose cwd itself lives
+    // under a dir named e.g. `build`/`vendor`/`.cache` must not have EVERY event
+    // ignored — that would silently disable the watcher entirely (H1).
+    p.strip_prefix(root)
+        .unwrap_or(p)
+        .components()
+        .any(|c| {
+            matches!(
+                c.as_os_str().to_str(),
+                Some(
+                    ".git" | "node_modules" | "target" | "dist" | "build" | ".next" | ".nuxt" | ".svelte-kit"
+                        | ".venv" | "venv" | "__pycache__" | ".turbo" | ".cache" | ".gradle" | "vendor"
+                )
+            )
+        })
 }
 
 /// Start a recursive watcher on a session's cwd (idempotent). On any relevant event,
@@ -436,9 +487,10 @@ pub fn watch_session(app: &AppHandle, session_id: &str, cwd: &str) {
         }
     }
     let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let root = Path::new(cwd).to_path_buf();
     let mut watcher = match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res {
-            if ev.paths.iter().any(|p| !is_ignored_path(p)) {
+            if ev.paths.iter().any(|p| !is_ignored_path(p, &root)) {
                 let _ = tx.send(());
             }
         }
@@ -673,13 +725,24 @@ mod tests {
     }
 
     #[test]
-    fn ignored_path_is_git_only() {
+    fn ignored_path_skips_git_and_heavy_dirs() {
         use std::path::Path;
-        assert!(is_ignored_path(Path::new(".git/index")));
-        assert!(is_ignored_path(Path::new("a/b/.git/HEAD")));
-        // a tracked file under a dir literally named target/dist/node_modules is NOT ignored
-        assert!(!is_ignored_path(Path::new("src/target/mod.rs")));
-        assert!(!is_ignored_path(Path::new("node_modules/pkg/index.js")));
-        assert!(!is_ignored_path(Path::new("dist/bundle.js")));
+        let root = Path::new("/home/u/proj");
+        // heavy build/dependency dirs *inside* the repo are skipped so their churn can't storm the watcher
+        assert!(is_ignored_path(Path::new("/home/u/proj/.git/index"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/a/b/.git/HEAD"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/node_modules/pkg/index.js"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/target/debug/francois.exe"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/dist/bundle.js"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/a/b/__pycache__/x.pyc"), root));
+        // ordinary source paths are watched
+        assert!(!is_ignored_path(Path::new("/home/u/proj/src/main.rs"), root));
+        assert!(!is_ignored_path(Path::new("/home/u/proj/contract/common.ts"), root));
+        // H1 regression: when the repo ROOT path itself contains an ignored segment
+        // (the project lives under `.../build/plugin`), only segments BELOW the root
+        // count — its files must still be watched, not all silently ignored.
+        let nested = Path::new("/home/u/build/plugin");
+        assert!(!is_ignored_path(Path::new("/home/u/build/plugin/src/main.rs"), nested));
+        assert!(is_ignored_path(Path::new("/home/u/build/plugin/target/x"), nested));
     }
 }
