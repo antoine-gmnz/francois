@@ -510,7 +510,6 @@ function SessionCard({
         cursor: 'pointer',
         marginBottom: 3,
         background: selected ? '#20222a' : hover ? '#1b1d23' : 'transparent',
-        borderLeft: `2px solid ${selected ? C.accent : 'transparent'}`,
         outline: cursor ? '1px solid #3a3d45' : 'none',
         outlineOffset: -1,
       }}

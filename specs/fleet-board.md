@@ -230,9 +230,10 @@ global `n` key open the new-session modal. Right-clicking a card opens the
   `activeSessionId` if visible, else index `0` (identical to `sessions-sidebar`
   FR-11).
 - **FR-19 (selection visuals).** The card whose `id === activeSessionId` gets
-  background `#20222a`, a 2px `#c8a15a` left marker, and its name brightened to
-  `#dfe2e8`; all others transparent background, transparent marker, name `#c4c7ce`
-  (identical tokens to `sessions-sidebar` FR-6).
+  background `#20222a` and its name brightened to `#dfe2e8`; all others transparent
+  background, name `#c4c7ce`. *(Post-ship change 2026-07-20: the 2px `#c8a15a`
+  left marker inherited from `sessions-sidebar` FR-6 was removed — the selected
+  treatment is the grey background alone.)*
 
 **Preserved `sessions-sidebar` behaviours**
 
@@ -499,10 +500,10 @@ by `app-shell`'s grid, not this spec.
 
 Container: `display:flex; flex-direction:column; gap:4px; padding:9px 10px;
 border-radius:4px; margin-bottom:3px; cursor:pointer;`
-- Default: `background:transparent; border-left:2px solid transparent;`
+- Default: `background:transparent;`
 - Hover: `background:#1b1d23;`
-- Selected (`id === activeSessionId`): `background:#20222a; border-left:2px solid
-  #c8a15a;`
+- Selected (`id === activeSessionId`): `background:#20222a;` *(no left marker —
+  post-ship change 2026-07-20)*
 - Keyboard-cursor (not yet committed): `outline:1px solid #3a3d45; outline-offset:-1px;`
   — independent of and combinable with selected.
 
