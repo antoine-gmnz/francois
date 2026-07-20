@@ -59,7 +59,7 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 
 ## Install
 
-**[⇓ Grab the latest dev build](https://github.com/antoine-gmnz/francois/releases/tag/dev)** — rebuilt on every push to `main`: Windows (`.exe`/`.msi`), macOS universal (`.dmg`, Apple Silicon + Intel), Linux (`.AppImage`/`.deb`).
+**[⇓ Grab the latest dev build](https://github.com/antoine-gmnz/francois/releases/tag/dev)** — rebuilt on every push to `main`: Windows (`.exe`/`.msi`), macOS universal (`.dmg`, Apple Silicon + Intel), Linux (`.AppImage`/`.deb`). The dev channel installs as **Francois Dev** — a separate app with its own data, safe to run side-by-side with a stable Francois.
 
 > Builds are currently **unsigned**: on Windows, SmartScreen → *More info → Run anyway*; on macOS, right-click the app → *Open* (or `xattr -cr /Applications/Francois.app`).
 
@@ -72,9 +72,13 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 ```sh
 # prerequisites: Node 20+, Rust stable, and the Tauri 2 platform deps
 npm ci
-npm run tauri dev     # run it
-npm run tauri build   # produce installers
+npm run dev:app        # run it (dev identity — safe next to an installed Francois)
+npm run build:app      # produce installers (stable identity: Francois)
+npm run build:app:dev  # produce installers (dev identity: Francois Dev)
 ```
+
+Dev and stable are separate apps (`com.francois.dev` vs `com.francois.desktop`) with
+separate data directories — run both at once, sessions never collide.
 
 ## Under the hood
 

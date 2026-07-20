@@ -92,13 +92,19 @@ jobs:
           releaseName: 'Development build — latest main'
           prerelease: true
           releaseDraft: false
-          args: ${{ matrix.args }}
+          # dev-channel identity (Francois Dev / com.francois.dev): separate app +
+          # separate data dir, so it installs and runs SIDE-BY-SIDE with a stable
+          # Francois instead of replacing it. Stable (release.yml) uses the base config.
+          args: ${{ matrix.args }} --config src-tauri/tauri.dev.conf.json
           releaseBody: |
             Auto-built from `main` (${{ github.sha }}) — bleeding edge, may be unstable.
 
-            - **Windows**: `Francois_*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi` (WiX)
-            - **macOS**: `Francois_*_universal.dmg` (Apple Silicon + Intel)
-            - **Linux**: `Francois_*_amd64.AppImage` or `*_amd64.deb`
+            Installs as **Francois Dev** — a separate app with its own data, safe to run
+            side-by-side with a stable Francois.
+
+            - **Windows**: `Francois Dev_*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi` (WiX)
+            - **macOS**: `Francois Dev_*_universal.dmg` (Apple Silicon + Intel)
+            - **Linux**: `Francois Dev_*_amd64.AppImage` or `*_amd64.deb`
 
             Requires the Claude Code CLI (`claude`) installed and authenticated on `PATH`. Desktop
             builds are **unsigned** — Windows SmartScreen / macOS Gatekeeper may warn (on macOS,

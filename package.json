@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:app": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "build:app": "tauri build",
+    "build:app:dev": "tauri build --config src-tauri/tauri.dev.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",

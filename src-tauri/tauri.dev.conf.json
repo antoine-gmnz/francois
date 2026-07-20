@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Francois Dev",
+  "identifier": "com.francois.dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "francois · session orchestrator — DEV",
+        "width": 1360,
+        "height": 864,
+        "minWidth": 1080,
+        "minHeight": 700,
+        "decorations": true,
+        "theme": "Dark"
+      }
+    ]
+  }
+}
