@@ -1,3 +1,19 @@
+/* WebView2 falls back to SOFTWARE compositing in some environments (incl. this dev
+   webview). There a smooth 60fps opacity animation repaints its element every frame
+   forever, pegging ~half a CPU core at idle — even with layer promotion, which does
+   not help software compositing. So throttle our one continuous smooth animation
+   (`pulse`, ease-in-out) to a low step rate: still reads as a gentle breathe, but
+   ~a dozen repaints/sec instead of 60. (`blink` is already step-based → cheap.) */
+[style*="pulse"] {
+  animation-duration: 1.6s !important;
+  animation-timing-function: steps(6, end) !important;
+}
+/* Stop every looping animation while the window is hidden/minimized — no wasted
+   repaints, and no compositor backlog to flush (and re-lag) on restore. Toggled by
+   the visibilitychange handler in main.tsx. */
+html[data-hidden='1'] [style*='animation'] {
+  animation-play-state: paused !important;
+}
 * {
   box-sizing: border-box;
 }

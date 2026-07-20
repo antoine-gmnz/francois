@@ -38,6 +38,8 @@ jobs:
       - run: npm ci
       - name: Frontend typecheck + build
         run: npm run build
+      - name: Frontend tests
+        run: npm test
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test

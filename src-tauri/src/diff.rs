@@ -3,8 +3,9 @@
 // stage-all and commit; watches the cwd + reacts to Edit/Write tool.done to keep
 // the DIFF badge / chip strip live via `francois://diff/event`.
 //
-// No caching (§6): every getSummary/getFileDiff re-runs git fresh. Per-session git
-// ops are serialized (FR-14). Paths are always forward-slash (git emits '/').
+// Caching: only the per-cwd (root, base) pair is cached (REPO_CACHE — git.exe spawn
+// overhead on Windows); summaries/diffs themselves are recomputed fresh. Per-session
+// git ops are serialized (FR-14). Paths are always forward-slash (git emits '/').
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,7 +13,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::ipc::{err, ok, IpcResult};
 use crate::session::Engine;
@@ -138,6 +139,32 @@ fn repo_root(cwd: &str) -> String {
         }
         _ => cwd.to_string(),
     }
+}
+
+/// Cache of `cwd -> (worktree_root, stable_base)`. `git.exe` spawn overhead is ~100ms+
+/// on Windows, and every diff op needs the root + base; without caching, each
+/// `getFileDiff` fires 3 separate rev-parse probes before it even runs the diff. The
+/// root of a cwd never changes. `stable_base` holds `Some("HEAD")` once a commit
+/// exists (HEAD never reverts to no-commits in practice, so it's safe to pin); for a
+/// commit-less repo it stays `None` and the base is recomputed each call (cheap, rare,
+/// and self-corrects to `HEAD` on the first commit).
+static REPO_CACHE: OnceLock<Mutex<HashMap<String, (String, Option<String>)>>> = OnceLock::new();
+
+/// `(root, base)` for a cwd, or `None` if it isn't a git worktree. Serves the common
+/// case (a repo with commits) entirely from cache after the first call — zero git spawns.
+fn repo_info(cwd: &str) -> Option<(String, String)> {
+    let cache = REPO_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some((root, stable_base)) = cache.lock().unwrap().get(cwd).cloned() {
+        return Some((root.clone(), stable_base.unwrap_or_else(|| diff_base(&root))));
+    }
+    if !is_git_repo(cwd) {
+        return None;
+    }
+    let root = repo_root(cwd);
+    let base = diff_base(&root);
+    let stable = (base == "HEAD").then(|| "HEAD".to_string());
+    cache.lock().unwrap().insert(cwd.to_string(), (root.clone(), stable));
+    Some((root, base))
 }
 
 // ---------- parsers (pure — unit tested) ----------
@@ -298,24 +325,47 @@ fn parse_unified_diff(text: &str) -> Vec<DiffHunk> {
 
 // ---------- summary + file diff ----------
 
-fn untracked_counts(cwd: &str, path: &str) -> (u64, u64) {
-    // `--no-index` against /dev/null: additions = full line count, deletions = 0 (FR-5).
-    match git(cwd, &["diff", "--no-index", "--numstat", "--", "/dev/null", path]) {
-        Ok(o) => {
-            let s = String::from_utf8_lossy(&o.stdout);
-            let mut f = s.lines().next().unwrap_or("").split('\t');
-            (num(f.next().unwrap_or("0")), num(f.next().unwrap_or("0")))
+/// Additions = full line count, deletions = 0 (FR-5) — computed IN-PROCESS. This used
+/// to spawn `git diff --no-index --numstat` per untracked file, making every summary
+/// cost O(untracked) git.exe spawns (~100ms each on Windows): a repo with a dozen new
+/// files paid over a second per recompute. Semantics match numstat: binary (NUL in the
+/// first 8 KiB) counts 0/0; a final line without a trailing newline still counts;
+/// empty/unreadable → 0/0.
+fn untracked_counts(root: &str, path: &str) -> (u64, u64) {
+    use std::io::Read;
+    let Ok(f) = std::fs::File::open(Path::new(root).join(path)) else {
+        return (0, 0);
+    };
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, f);
+    let mut buf = [0u8; 64 * 1024];
+    let (mut lines, mut last, mut first) = (0u64, b'\n', true);
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if first {
+                    if buf[..n.min(8192)].contains(&0) {
+                        return (0, 0); // binary → numstat reports `-` → 0
+                    }
+                    first = false;
+                }
+                lines += buf[..n].iter().filter(|&&b| b == b'\n').count() as u64;
+                last = buf[n - 1];
+            }
+            Err(_) => return (0, 0),
         }
-        Err(_) => (0, 0),
     }
+    if last != b'\n' {
+        lines += 1; // unterminated final line still counts (git semantics)
+    }
+    (lines, 0)
 }
 
 fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
-    if !is_git_repo(cwd) {
+    // Cached root + base (run everything from the worktree top so paths agree).
+    let Some((root, base)) = repo_info(cwd) else {
         return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
-    }
-    let root = repo_root(cwd); // run everything from the worktree top so paths agree
-    let base = diff_base(&root);
+    };
     let st = git(&root, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--renames"])
         .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
     if st.code != 0 {
@@ -345,21 +395,31 @@ fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
 }
 
 fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
-    let summary = compute_summary(cwd)?; // propagates NOT_A_GIT_REPO / GIT_ERROR
-    let Some(f) = summary.files.iter().find(|f| f.path == path) else {
+    let Some((root, base)) = repo_info(cwd) else {
+        return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
+    };
+    // Targeted status for just this path — avoids re-running the whole summary (which
+    // costs a full `git status` + numstat + a diff per untracked file). Big win on a
+    // large repo where every chip click otherwise re-scans everything.
+    let st = git(&root, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", path])
+        .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    if st.code != 0 {
+        return Err(("GIT_ERROR".into(), if st.stderr.is_empty() { "git status failed".into() } else { st.stderr }));
+    }
+    // A path with no porcelain entry is not a currently-changed file → stale selection.
+    let Some((xy, _)) = parse_porcelain_z(&st.stdout).into_iter().find(|(_, p)| p == path) else {
         return Err(("INVALID_INPUT".into(), format!("'{path}' is not in the current changes")));
     };
-    let root = repo_root(cwd); // path is root-relative (from the summary) — run from root
-    let out = if f.status == DiffFileStatus::Untracked {
+    let status = map_status(&xy);
+    let out = if status == DiffFileStatus::Untracked {
         git(&root, &["diff", "--no-index", "--", "/dev/null", path])
     } else {
-        let base = diff_base(&root);
         git(&root, &["diff", &base, "-M", "--", path])
     }
     .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
 
     // `--no-index` exit 1 = "files differ" (success); only >=2 is a real failure (FR-8).
-    let failed = if f.status == DiffFileStatus::Untracked { out.code >= 2 } else { out.code != 0 };
+    let failed = if status == DiffFileStatus::Untracked { out.code >= 2 } else { out.code != 0 };
     if failed {
         return Err(("GIT_ERROR".into(), if out.stderr.is_empty() { "git diff failed".into() } else { out.stderr }));
     }
@@ -400,13 +460,50 @@ fn recompute_and_broadcast(app: &AppHandle, session_id: &str, cwd: &str) {
     }
 }
 
+/// Per-session recompute coalescer: at most ONE compute in flight; triggers that
+/// arrive mid-compute set `dirty` so exactly one trailing compute follows. Without
+/// this, a burst of Edit/Write tool.done events (one per edit, undebounced) plus the
+/// watcher each spawn their own full `compute_summary` — a queue of O(burst) git
+/// storms that serialize on the git lock and strobe diff.changed at the frontend.
+struct RecomputeState {
+    running: bool,
+    dirty: bool,
+}
+static RECOMPUTES: OnceLock<Mutex<HashMap<String, RecomputeState>>> = OnceLock::new();
+
+fn schedule_recompute(app: &AppHandle, session_id: &str, cwd: &str) {
+    let states = RECOMPUTES.get_or_init(|| Mutex::new(HashMap::new()));
+    {
+        let mut m = states.lock().unwrap();
+        let st = m.entry(session_id.to_string()).or_insert(RecomputeState { running: false, dirty: false });
+        if st.running {
+            st.dirty = true; // fold into the in-flight run's trailing recompute
+            return;
+        }
+        st.running = true;
+    }
+    let (app, sid, cwd) = (app.clone(), session_id.to_string(), cwd.to_string());
+    std::thread::spawn(move || loop {
+        recompute_and_broadcast(&app, &sid, &cwd);
+        let mut m = RECOMPUTES.get().unwrap().lock().unwrap();
+        let Some(st) = m.get_mut(&sid) else { break }; // session unwatched mid-run
+        if st.dirty {
+            st.dirty = false;
+            drop(m);
+            continue; // one trailing recompute picks up everything that arrived mid-run
+        }
+        st.running = false;
+        break;
+    });
+}
+
 // ---------- session-engine triggers (called from session.rs) ----------
 
-/// FR-16: an Edit/Write tool finished → recompute now (not debounced). Off-thread
-/// so the reader thread that emitted tool.done isn't blocked on git.
+/// FR-16: an Edit/Write tool finished → recompute immediately when idle (off-thread,
+/// so the reader thread that emitted tool.done isn't blocked on git); bursts coalesce
+/// into ≤ one in-flight + one trailing compute via `schedule_recompute`.
 pub fn on_tool_done(app: &AppHandle, session_id: &str, cwd: &str) {
-    let (app, sid, cwd) = (app.clone(), session_id.to_string(), cwd.to_string());
-    std::thread::spawn(move || recompute_and_broadcast(&app, &sid, &cwd));
+    schedule_recompute(app, session_id, cwd);
 }
 
 // ---------- fs watcher (FR-15) ----------
@@ -415,14 +512,30 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 static WATCHERS: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>> = OnceLock::new();
 
-/// Skip only events inside `.git/` — otherwise our own git writes (index/refs on
-/// stage/commit) would self-trigger the watcher. Everything else is left to the
-/// debounced, git-authoritative recompute (FR-15): git itself excludes .gitignore'd
-/// paths from the summary, so a heavy gitignored dir (node_modules, target) at worst
-/// causes a harmless coalesced recompute; hardcoding those names here would instead
-/// wrongly hide a *tracked* file that happens to live under such a directory.
-fn is_ignored_path(p: &Path) -> bool {
-    p.components().any(|c| c.as_os_str() == ".git")
+/// Skip events inside `.git/` (our own index/ref writes) and inside well-known heavy
+/// build / dependency directories. Recursively watching a multi-GB `target/` or
+/// `node_modules` and recomputing on its churn makes the DIFF panel lag badly — so,
+/// like every mainstream file-watcher (chokidar, watchman, …), we hardcode a skip
+/// list. These dirs are `.gitignore`'d in practice, so git already excludes them from
+/// the summary; the only tradeoff is a *tracked* file living directly under a dir
+/// literally named one of these, whose live update would be missed (any other change,
+/// or reopening the tab, still refreshes it).
+fn is_ignored_path(p: &Path, root: &Path) -> bool {
+    // Match only the path *below* the watched root: a session whose cwd itself lives
+    // under a dir named e.g. `build`/`vendor`/`.cache` must not have EVERY event
+    // ignored — that would silently disable the watcher entirely (H1).
+    p.strip_prefix(root)
+        .unwrap_or(p)
+        .components()
+        .any(|c| {
+            matches!(
+                c.as_os_str().to_str(),
+                Some(
+                    ".git" | "node_modules" | "target" | "dist" | "build" | ".next" | ".nuxt" | ".svelte-kit"
+                        | ".venv" | "venv" | "__pycache__" | ".turbo" | ".cache" | ".gradle" | "vendor"
+                )
+            )
+        })
 }
 
 /// Start a recursive watcher on a session's cwd (idempotent). On any relevant event,
@@ -436,9 +549,10 @@ pub fn watch_session(app: &AppHandle, session_id: &str, cwd: &str) {
         }
     }
     let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let root = Path::new(cwd).to_path_buf();
     let mut watcher = match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res {
-            if ev.paths.iter().any(|p| !is_ignored_path(p)) {
+            if ev.paths.iter().any(|p| !is_ignored_path(p, &root)) {
                 let _ = tx.send(());
             }
         }
@@ -465,7 +579,7 @@ pub fn watch_session(app: &AppHandle, session_id: &str, cwd: &str) {
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
-            recompute_and_broadcast(&app2, &sid2, &cwd2);
+            schedule_recompute(&app2, &sid2, &cwd2);
         }
     });
     reg.lock().unwrap().insert(session_id.to_string(), watcher);
@@ -480,6 +594,9 @@ pub fn unwatch_session(session_id: &str) {
     if let Some(locks) = GIT_LOCKS.get() {
         locks.lock().unwrap().remove(session_id);
     }
+    if let Some(states) = RECOMPUTES.get() {
+        states.lock().unwrap().remove(session_id); // in-flight loop sees the gap and stops
+    }
 }
 
 // ---------- commands (francois:diff:<verb>) ----------
@@ -488,8 +605,18 @@ fn cwd_or_err<T: Serialize>(engine: &State<'_, Engine>, session_id: &str) -> Res
     engine.cwd_of(session_id).ok_or_else(|| err("SESSION_NOT_FOUND", "no such session"))
 }
 
+// All diff commands are `async` so Tauri executes them on the async runtime — a
+// SYNC command runs on the MAIN thread (Tauri 2), where every git spawn and every
+// git-lock wait freezes the entire app (window moves, all panes, all IPC). With
+// changes present, a background recompute holds the session git lock while the
+// frontend refetches → the sync command blocked the main thread on that lock for
+// the full multi-spawn summary. Bodies stay synchronous; parking a runtime worker
+// on a git call is fine. Engine is resolved via `app.state()` instead of a
+// `State<'_, Engine>` parameter: an async command's future must be 'static, and a
+// borrowed State param breaks that (E0597 in the generated handler).
 #[tauri::command]
-pub fn diff_get_summary(app: AppHandle, engine: State<'_, Engine>, session_id: String) -> IpcResult<DiffSummary> {
+pub async fn diff_get_summary(app: AppHandle, session_id: String) -> IpcResult<DiffSummary> {
+    let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
         Err(e) => return e,
@@ -506,7 +633,8 @@ pub fn diff_get_summary(app: AppHandle, engine: State<'_, Engine>, session_id: S
 }
 
 #[tauri::command]
-pub fn diff_get_file_diff(engine: State<'_, Engine>, session_id: String, path: String) -> IpcResult<FileDiff> {
+pub async fn diff_get_file_diff(app: AppHandle, session_id: String, path: String) -> IpcResult<FileDiff> {
+    let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
         Err(e) => return e,
@@ -520,7 +648,8 @@ pub fn diff_get_file_diff(engine: State<'_, Engine>, session_id: String, path: S
 }
 
 #[tauri::command]
-pub fn diff_stage_all(engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
+pub async fn diff_stage_all(app: AppHandle, session_id: String) -> IpcResult<Option<()>> {
+    let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
         Err(e) => return e,
@@ -539,7 +668,8 @@ pub fn diff_stage_all(engine: State<'_, Engine>, session_id: String) -> IpcResul
 }
 
 #[tauri::command]
-pub fn diff_commit(engine: State<'_, Engine>, session_id: String, message: String) -> IpcResult<CommitResult> {
+pub async fn diff_commit(app: AppHandle, session_id: String, message: String) -> IpcResult<CommitResult> {
+    let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
         Err(e) => return e,
@@ -673,13 +803,43 @@ mod tests {
     }
 
     #[test]
-    fn ignored_path_is_git_only() {
+    fn untracked_counts_in_process() {
+        let dir = std::env::temp_dir().join("francois-untracked-counts-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.to_string_lossy().to_string();
+        std::fs::write(dir.join("two.txt"), "one\ntwo\n").unwrap();
+        assert_eq!(untracked_counts(&root, "two.txt"), (2, 0));
+        // final line without trailing newline still counts (git numstat semantics)
+        std::fs::write(dir.join("noeol.txt"), "one\ntwo").unwrap();
+        assert_eq!(untracked_counts(&root, "noeol.txt"), (2, 0));
+        std::fs::write(dir.join("empty.txt"), "").unwrap();
+        assert_eq!(untracked_counts(&root, "empty.txt"), (0, 0));
+        // NUL in the first 8 KiB → binary → 0/0, like numstat's `-`
+        std::fs::write(dir.join("bin.dat"), b"ab\0cd\n\n").unwrap();
+        assert_eq!(untracked_counts(&root, "bin.dat"), (0, 0));
+        // unreadable/missing → 0/0 (best-effort, matches the old spawn-failure path)
+        assert_eq!(untracked_counts(&root, "missing.txt"), (0, 0));
+    }
+
+    #[test]
+    fn ignored_path_skips_git_and_heavy_dirs() {
         use std::path::Path;
-        assert!(is_ignored_path(Path::new(".git/index")));
-        assert!(is_ignored_path(Path::new("a/b/.git/HEAD")));
-        // a tracked file under a dir literally named target/dist/node_modules is NOT ignored
-        assert!(!is_ignored_path(Path::new("src/target/mod.rs")));
-        assert!(!is_ignored_path(Path::new("node_modules/pkg/index.js")));
-        assert!(!is_ignored_path(Path::new("dist/bundle.js")));
+        let root = Path::new("/home/u/proj");
+        // heavy build/dependency dirs *inside* the repo are skipped so their churn can't storm the watcher
+        assert!(is_ignored_path(Path::new("/home/u/proj/.git/index"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/a/b/.git/HEAD"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/node_modules/pkg/index.js"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/target/debug/francois.exe"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/dist/bundle.js"), root));
+        assert!(is_ignored_path(Path::new("/home/u/proj/a/b/__pycache__/x.pyc"), root));
+        // ordinary source paths are watched
+        assert!(!is_ignored_path(Path::new("/home/u/proj/src/main.rs"), root));
+        assert!(!is_ignored_path(Path::new("/home/u/proj/contract/common.ts"), root));
+        // H1 regression: when the repo ROOT path itself contains an ignored segment
+        // (the project lives under `.../build/plugin`), only segments BELOW the root
+        // count — its files must still be watched, not all silently ignored.
+        let nested = Path::new("/home/u/build/plugin");
+        assert!(!is_ignored_path(Path::new("/home/u/build/plugin/src/main.rs"), nested));
+        assert!(is_ignored_path(Path::new("/home/u/build/plugin/target/x"), nested));
     }
 }

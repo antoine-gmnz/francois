@@ -9,6 +9,26 @@ import type { SessionMeta, SessionId } from '../contract/common';
 export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills';
 export type MainTab = 'session' | 'diff' | 'shell';
 
+// localStorage persistence for the column toggles — guarded so a restricted
+// storage environment (or node test env) degrades to defaults silently.
+function loadPane(key: string): boolean {
+  try {
+    return localStorage.getItem(key) !== '0'; // default visible
+  } catch {
+    return true;
+  }
+}
+function persistPane(key: string, visible: boolean): void {
+  try {
+    localStorage.setItem(key, visible ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
+const LEFT_KEY = 'francois.showLeftPane';
+const RIGHT_KEY = 'francois.showRightPane';
+const RIGHT_PANES: readonly Pane[] = ['agents', 'mcp', 'skills'];
+
 interface AppState {
   // session cache (owned/written by sessions-sidebar, read by all)
   sessions: SessionMeta[];
@@ -31,6 +51,13 @@ interface AppState {
   // minimal app-shell state
   focusedPane: Pane;
   setFocusedPane: (p: Pane) => void;
+  // layout: left (sessions) / right (agents+mcp+skills) column visibility.
+  // Persisted to localStorage; hiding the column that owns focus hands focus to
+  // 'main', and focusing a pane always reveals its column (setFocusedPane).
+  showLeftPane: boolean;
+  showRightPane: boolean;
+  toggleLeftPane: () => void;
+  toggleRightPane: () => void;
   newSessionOpen: boolean;
   setNewSessionOpen: (o: boolean) => void;
   newAgentOpen: boolean;
@@ -72,7 +99,38 @@ export const useStore = create<AppState>((set) => ({
   setSidebarFilter: (sidebarFilter) => set({ sidebarFilter }),
 
   focusedPane: 'sidebar',
-  setFocusedPane: (focusedPane) => set({ focusedPane }),
+  // Invariant: the focused pane's column is always visible — focusing a hidden
+  // pane (key 1/3/4/5, palette commands, `a`) reveals its column first.
+  setFocusedPane: (focusedPane) =>
+    set((s) => {
+      const patch: Partial<AppState> = { focusedPane };
+      if (focusedPane === 'sidebar' && !s.showLeftPane) {
+        patch.showLeftPane = true;
+        persistPane(LEFT_KEY, true);
+      }
+      if (RIGHT_PANES.includes(focusedPane) && !s.showRightPane) {
+        patch.showRightPane = true;
+        persistPane(RIGHT_KEY, true);
+      }
+      return patch;
+    }),
+  showLeftPane: loadPane(LEFT_KEY),
+  showRightPane: loadPane(RIGHT_KEY),
+  toggleLeftPane: () =>
+    set((s) => {
+      const show = !s.showLeftPane;
+      persistPane(LEFT_KEY, show);
+      // hiding the column that owns focus → hand focus to main
+      const focusedPane = !show && s.focusedPane === 'sidebar' ? 'main' : s.focusedPane;
+      return { showLeftPane: show, focusedPane };
+    }),
+  toggleRightPane: () =>
+    set((s) => {
+      const show = !s.showRightPane;
+      persistPane(RIGHT_KEY, show);
+      const focusedPane = !show && RIGHT_PANES.includes(s.focusedPane) ? 'main' : s.focusedPane;
+      return { showRightPane: show, focusedPane };
+    }),
   newSessionOpen: false,
   setNewSessionOpen: (newSessionOpen) => set({ newSessionOpen }),
   newAgentOpen: false,

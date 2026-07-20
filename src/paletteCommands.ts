@@ -68,7 +68,9 @@ export function registerBuiltinCommands(): void {
     hint: () => 'from registry',
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: () => {
-      useStore.getState().setMcpAttachOpen(true);
+      const st = useStore.getState();
+      st.setFocusedPane('mcp'); // reveals the right column if hidden (the overlay lives in McpPanel)
+      st.setMcpAttachOpen(true);
     },
   });
 
@@ -150,6 +152,26 @@ export function registerBuiltinCommands(): void {
       const st = useStore.getState();
       st.setFocusedPane('agents');
       st.setNewAgentOpen(true);
+    },
+  });
+
+  // 9/10 — layout toggles (app-shell): hide/show the sessions + side-panel columns
+  registerPaletteCommand({
+    id: 'toggle-sessions-column',
+    glyph: '◧',
+    name: 'Toggle sessions column',
+    hint: () => (useStore.getState().showLeftPane ? 'hide left · [' : 'show left · ['),
+    run: () => {
+      useStore.getState().toggleLeftPane();
+    },
+  });
+  registerPaletteCommand({
+    id: 'toggle-side-panels',
+    glyph: '◨',
+    name: 'Toggle side panels',
+    hint: () => (useStore.getState().showRightPane ? 'hide right · ]' : 'show right · ]'),
+    run: () => {
+      useStore.getState().toggleRightPane();
     },
   });
 }

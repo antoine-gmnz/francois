@@ -1,26 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AppError, SessionMeta } from '../contract/common';
-import { onSessionEvent, sessionList, sessionRemove } from './api';
+import type { AppError, SessionMeta, SessionStatus } from '../contract/common';
+import { STATUS_COLOR, STATUS_LABEL, countRunning, formatRelativeTime, statusPulses, type SessionDerived } from '../contract/fleet-board';
+import { formatContextTokens } from '../contract/conversation-view';
+import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList, sessionRemove } from './api';
 import { prunePaletteSession } from './paletteData';
 import { useStore } from './store';
 
+// pane [1] — the fleet board (Mission Control). Evolves the sessions-sidebar row
+// list into rich per-session status cards, aggregated from existing channels
+// (specs/fleet-board.md). Preserves every sessions-sidebar behaviour.
+
 const C = {
-  running: '#d0a45c',
-  idle: '#6b7079',
-  done: '#7fa07a',
-  error: '#c46b62',
   accent: '#c8a15a',
   dim: '#868a93',
   faint: '#565a63',
   primary: '#c4c7ce',
   bright: '#dfe2e8',
-};
-
-const statusColor: Record<string, string> = {
-  running: C.running,
-  idle: C.idle,
-  done: C.done,
-  error: C.error,
+  meta: '#a9adb6',
+  error: '#c46b62',
 };
 
 function abbreviate(cwd: string, home: string): string {
@@ -43,6 +40,7 @@ export default function Sidebar({ home }: { home: string }) {
   const setSessions = useStore((s) => s.setSessions);
   const upsertSession = useStore((s) => s.upsertSession);
   const patchStatus = useStore((s) => s.patchStatus);
+  const patchUsage = useStore((s) => s.patchUsage);
   const removeSessionFromCache = useStore((s) => s.removeSession);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
@@ -55,6 +53,12 @@ export default function Sidebar({ home }: { home: string }) {
   const [hydrationError, setHydrationError] = useState<AppError | null>(null);
   const [rowCursor, setRowCursor] = useState(0);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Per-session derived figures NOT on SessionMeta: diff file count + running agents (FR-4).
+  const [derived, setDerived] = useState<Map<string, SessionDerived>>(new Map());
+  // Backing store for runningAgentCount: sessionId → (agentId → status) (FR-5).
+  const agentStatusRef = useRef<Map<string, Map<string, SessionStatus>>>(new Map());
+  const seededRef = useRef<Set<string>>(new Set()); // sessions whose diff badge was seeded once (FR-6)
+  const [, setTick] = useState(0); // forces relative-time re-render (FR-25)
   const filterRef = useRef<HTMLInputElement>(null);
 
   const visible = useMemo(() => {
@@ -63,35 +67,103 @@ export default function Sidebar({ home }: { home: string }) {
     return sessions.filter((s) => s.name.toLowerCase().includes(q) || s.cwd.toLowerCase().includes(q));
   }, [sessions, sidebarFilter]);
 
-  // Hydration + live event subscription (FR-1/FR-2/FR-7).
+  // Merge a partial into a session's derived entry (FR-4). Ignore late resolutions
+  // for a session no longer in the cache so a removed session can't leak an entry (FR-7).
+  const updateDerived = (id: string, partial: Partial<SessionDerived>) => {
+    if (!useStore.getState().sessions.some((x) => x.id === id)) return;
+    setDerived((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(id) ?? { fileCount: null, runningAgentCount: 0 };
+      next.set(id, { ...cur, ...partial });
+      return next;
+    });
+  };
+  const dropDerived = (id: string) => {
+    agentStatusRef.current.delete(id);
+    seededRef.current.delete(id);
+    setDerived((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+  // Best-effort one-shot diff seed, deduped by id so it fires exactly once per session
+  // regardless of cache-membership ordering (FR-6). Failure → leaves fileCount null.
+  const seedDiff = (id: string) => {
+    if (seededRef.current.has(id)) return;
+    seededRef.current.add(id);
+    void diffGetSummary(id).then((res) => {
+      if (res.ok) updateDerived(id, { fileCount: res.data.files.length });
+    });
+  };
+
+  // Apply a successful session_list (mount hydration + retry) identically (FR-2/6/23).
+  const applyHydration = (data: SessionMeta[]) => {
+    setHydrationError(null);
+    setSessions(data);
+    if (useStore.getState().activeSessionId === null && data[0]) setActiveSessionId(data[0].id);
+    for (const s of data) seedDiff(s.id);
+  };
+
+  // Hydration + live event subscription (FR-2/FR-3/FR-5/FR-6/FR-7).
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenSession: (() => void) | undefined;
+    let unlistenDiff: (() => void) | undefined;
     let cancelled = false;
+
     void onSessionEvent((e) => {
-      if (e.type === 'session.meta') upsertSession(e.meta);
-      else if (e.type === 'session.status') patchStatus(e.sessionId, e.status);
-      else if (e.type === 'session.removed') handleRemovedEvent(e.sessionId);
+      if (e.type === 'session.meta') {
+        upsertSession(e.meta);
+        seedDiff(e.meta.id); // FR-6 — seedDiff dedups, so this fires once even though App upserts first
+      } else if (e.type === 'session.status') {
+        patchStatus(e.sessionId, e.status);
+      } else if (e.type === 'context.usage') {
+        patchUsage(e.sessionId, e.usedTokens, e.limitTokens); // keeps the ctx figure live (FR-3)
+      } else if (e.type === 'agent.update') {
+        const a = e.agent;
+        if (!useStore.getState().sessions.some((x) => x.id === a.sessionId)) return; // drop post-removal (FR-7)
+        let m = agentStatusRef.current.get(a.sessionId);
+        if (!m) {
+          m = new Map();
+          agentStatusRef.current.set(a.sessionId, m);
+        }
+        m.set(a.id, a.status);
+        updateDerived(a.sessionId, { runningAgentCount: countRunning(m) }); // FR-5
+      } else if (e.type === 'session.removed') {
+        handleRemovedEvent(e.sessionId);
+      }
     }).then((u) => {
       if (cancelled) u();
-      else unlisten = u;
+      else unlistenSession = u;
+    });
+
+    // Per-session diff file count, matched on sessionId for ALL sessions (FR-6).
+    void onDiffEvent((e) => {
+      if (e.type === 'diff.changed') updateDerived(e.sessionId, { fileCount: e.fileCount });
+    }).then((u) => {
+      if (cancelled) u();
+      else unlistenDiff = u;
     });
 
     void sessionList().then((res) => {
-      if (res.ok) {
-        setHydrationError(null);
-        setSessions(res.data);
-        const st = useStore.getState();
-        if (st.activeSessionId === null && res.data[0]) setActiveSessionId(res.data[0].id);
-      } else {
-        setHydrationError(res.error);
-      }
+      if (cancelled) return;
+      if (res.ok) applyHydration(res.data);
+      else setHydrationError(res.error);
     });
 
     return () => {
       cancelled = true;
-      if (unlisten) unlisten();
+      if (unlistenSession) unlistenSession();
+      if (unlistenDiff) unlistenDiff();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Relative-time refresh: idle cards age visibly without any event (FR-25).
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => (t + 1) % 1_000_000), 30_000);
+    return () => clearInterval(id);
   }, []);
 
   // Reassign selection when the active session disappears (§7).
@@ -99,7 +171,8 @@ export default function Sidebar({ home }: { home: string }) {
     const st = useStore.getState();
     if (st.activeSessionId === id) reassignAfterRemoval(id);
     removeSessionFromCache(id);
-    prunePaletteSession(id); // drop the palette's cached data for this session
+    dropDerived(id); // FR-7
+    prunePaletteSession(id);
   };
 
   const reassignAfterRemoval = (id: string) => {
@@ -115,7 +188,7 @@ export default function Sidebar({ home }: { home: string }) {
     }
   };
 
-  // Clamp keyboard cursor into range on list / selection changes (FR-11).
+  // Clamp keyboard cursor into range on list / selection changes (FR-18).
   useEffect(() => {
     if (visible.length === 0) {
       setRowCursor(0);
@@ -128,7 +201,7 @@ export default function Sidebar({ home }: { home: string }) {
     });
   }, [visible, activeSessionId]);
 
-  // Keyboard handling for pane [1] and the filter input (FR-9/10/13/16/17).
+  // Keyboard handling for pane [1] and the filter input (FR-16/17/20).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (newSessionOpen || menu) return;
@@ -151,6 +224,7 @@ export default function Sidebar({ home }: { home: string }) {
           if (visible.length > 0 && visible[rowCursor]) {
             e.preventDefault();
             setActiveSessionId(visible[rowCursor].id);
+            setFocusedPane('main'); // FR-17: commit AND jump into the conversation
           }
           break;
         case '/':
@@ -171,7 +245,7 @@ export default function Sidebar({ home }: { home: string }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [focusedPane, visible, rowCursor, sidebarFilter, newSessionOpen, menu, setActiveSessionId, setSidebarFilter]);
+  }, [focusedPane, visible, rowCursor, sidebarFilter, newSessionOpen, menu, setActiveSessionId, setSidebarFilter, setFocusedPane]);
 
   // Close the context menu on any outside interaction.
   useEffect(() => {
@@ -194,6 +268,8 @@ export default function Sidebar({ home }: { home: string }) {
       const st = useStore.getState();
       if (st.activeSessionId === sessionId) reassignAfterRemoval(sessionId);
       removeSessionFromCache(sessionId);
+      dropDerived(sessionId); // FR-7
+      prunePaletteSession(sessionId);
       setMenu(null);
     } else {
       setMenu((m) => (m ? { ...m, error: res.error } : m));
@@ -263,9 +339,8 @@ export default function Sidebar({ home }: { home: string }) {
             failed to load sessions
             <div
               onClick={() => {
-                setHydrationError(null);
                 void sessionList().then((res) => {
-                  if (res.ok) setSessions(res.data);
+                  if (res.ok) applyHydration(res.data);
                   else setHydrationError(res.error);
                 });
               }}
@@ -280,12 +355,13 @@ export default function Sidebar({ home }: { home: string }) {
           <Centered>no matches · esc to clear</Centered>
         ) : (
           visible.map((s, i) => (
-            <Row
+            <SessionCard
               key={s.id}
               s={s}
               home={home}
               selected={s.id === activeSessionId}
               cursor={focused && i === rowCursor}
+              derived={derived.get(s.id)}
               onClick={() => {
                 setActiveSessionId(s.id);
                 setFocusedPane('sidebar');
@@ -379,11 +455,25 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Row({
+function ContextFigure({ used, limit }: { used: number; limit: number }) {
+  if (limit <= 0) {
+    if (used <= 0) return <span style={{ color: C.faint }}>—</span>;
+    return <span style={{ color: C.meta }}>{formatContextTokens(used)}</span>;
+  }
+  return (
+    <>
+      <span style={{ color: C.meta }}>{formatContextTokens(used)}</span>
+      <span style={{ color: C.faint }}>/{formatContextTokens(limit)}</span>
+    </>
+  );
+}
+
+function SessionCard({
   s,
   home,
   selected,
   cursor,
+  derived,
   onClick,
   onContext,
 }: {
@@ -391,11 +481,16 @@ function Row({
   home: string;
   selected: boolean;
   cursor: boolean;
+  derived: SessionDerived | undefined;
   onClick: () => void;
   onContext: (x: number, y: number) => void;
 }) {
   const [hover, setHover] = useState(false);
-  const sc = statusColor[s.status] ?? C.idle;
+  const sc = STATUS_COLOR[s.status] ?? C.dim;
+  const label = STATUS_LABEL[s.status] ?? s.status;
+  const fileCount = derived?.fileCount ?? null;
+  const agents = derived?.runningAgentCount ?? 0;
+
   return (
     <div
       onClick={onClick}
@@ -405,47 +500,64 @@ function Row({
         e.preventDefault();
         onContext(e.clientX, e.clientY);
       }}
+      title={s.status === 'error' ? s.errorMessage : undefined}
       style={{
         display: 'flex',
-        gap: 9,
-        padding: '8px 9px',
+        flexDirection: 'column',
+        gap: 4,
+        padding: '9px 10px',
         borderRadius: 4,
         cursor: 'pointer',
+        marginBottom: 3,
         background: selected ? '#20222a' : hover ? '#1b1d23' : 'transparent',
         borderLeft: `2px solid ${selected ? C.accent : 'transparent'}`,
         outline: cursor ? '1px solid #3a3d45' : 'none',
         outlineOffset: -1,
-        marginBottom: 2,
       }}
     >
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          flexShrink: 0,
-          marginTop: 5,
-          background: sc,
-          animation: s.status === 'running' ? 'pulse 1.4s ease-in-out infinite' : 'none',
-        }}
-      />
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 12.5, color: selected ? C.bright : C.primary, fontWeight: 500 }}>{s.name}</div>
-        <div
+      {/* Row 1 — header: dot + name + relative time */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        <span
           style={{
-            fontSize: 10.5,
-            color: C.faint,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            marginTop: 1,
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            flexShrink: 0,
+            background: sc,
+            animation: statusPulses(s.status) ? 'pulse 1.4s ease-in-out infinite' : 'none',
           }}
+        />
+        <span
+          style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selected ? C.bright : C.primary }}
         >
-          {abbreviate(s.cwd, home)}
-        </div>
-        <div style={{ fontSize: 10, color: sc, marginTop: 3, letterSpacing: '0.02em' }}>
-          {s.status} · {s.model.label}
-        </div>
+          {s.name}
+        </span>
+        <span style={{ flexShrink: 0, fontSize: 10, color: C.faint }}>{formatRelativeTime(s.lastActivityAt)}</span>
+      </div>
+
+      {/* Row 2 — cwd */}
+      <div style={{ fontSize: 10.5, color: C.faint, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginLeft: 17 }}>
+        {abbreviate(s.cwd, home)}
+      </div>
+
+      {/* Row 3 — status line */}
+      <div style={{ fontSize: 10, letterSpacing: '0.02em', marginLeft: 17, color: sc, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {label} · {s.model.label}
+      </div>
+
+      {/* Row 4 — meta: context + diff badge + agent count */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 17, fontSize: 10 }}>
+        <span>
+          <span style={{ color: C.faint }}>ctx </span>
+          <ContextFigure used={s.contextUsedTokens} limit={s.contextLimitTokens} />
+        </span>
+        {fileCount != null && fileCount > 0 && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ color: C.faint }}>≡</span>
+            <span style={{ background: '#26282f', color: C.meta, fontSize: 9, fontWeight: 500, letterSpacing: 0, padding: '1px 5px', borderRadius: 8 }}>{fileCount}</span>
+          </span>
+        )}
+        {agents > 0 && <span style={{ color: C.accent }}>⇉ {agents}</span>}
       </div>
     </div>
   );
