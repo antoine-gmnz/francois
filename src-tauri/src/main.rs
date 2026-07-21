@@ -154,7 +154,7 @@ fn session_cwd() -> String {
 
 // ---------- shell commands ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 fn shell_ensure(app: AppHandle, reg: State<'_, Registry>, session_id: String) -> IpcResult<EnsureData> {
     let mut map = reg.0.lock().unwrap();
 
@@ -250,7 +250,7 @@ fn shell_ensure(app: AppHandle, reg: State<'_, Registry>, session_id: String) ->
     ok(EnsureData { cols, rows, scrollback_replay: String::new(), exit_code: None, shell_name, cwd })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn shell_write(reg: State<'_, Registry>, session_id: String, data: String) -> IpcResult<()> {
     let mut map = reg.0.lock().unwrap();
     match map.get_mut(&session_id) {
@@ -268,7 +268,7 @@ fn shell_write(reg: State<'_, Registry>, session_id: String, data: String) -> Ip
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn shell_resize(reg: State<'_, Registry>, session_id: String, cols: u16, rows: u16) -> IpcResult<()> {
     if cols == 0 || rows == 0 {
         return err("INVALID_INPUT", "cols and rows must be positive");
@@ -288,7 +288,7 @@ fn shell_resize(reg: State<'_, Registry>, session_id: String, cols: u16, rows: u
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn shell_dispose(reg: State<'_, Registry>, session_id: String) -> IpcResult<()> {
     let mut map = reg.0.lock().unwrap();
     match map.remove(&session_id) {
@@ -317,12 +317,35 @@ fn kill_all_shells(app: &AppHandle) {
     }
 }
 
+/// Any panic, on any thread, appends one line to `<app_data>/panic.log` before the
+/// default handler runs. A main-thread panic aborts the whole app (the "it just
+/// closed" report) and this file is the only trace it leaves; a background-thread
+/// panic is otherwise completely silent. Best-effort — never panics itself.
+fn install_panic_log(app: &AppHandle) {
+    let Ok(dir) = app.path().app_data_dir() else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("panic.log");
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let thread = std::thread::current().name().unwrap_or("<unnamed>").to_string();
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "[{ts}] panic on thread '{thread}': {info}");
+        }
+        default_hook(info);
+    }));
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Registry::default())
         .manage(session::Engine::default())
         .setup(|app| {
+            install_panic_log(app.handle());
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
             Ok(())

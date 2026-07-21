@@ -680,6 +680,11 @@ fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
 }
 
 fn persist(app: &AppHandle, engine: &Engine) {
+    // One writer at a time: persist() is called from commands (async runtime) AND
+    // from run_reader threads, and every caller writes the SAME sessions.json.tmp
+    // before the atomic rename — two concurrent writers could rename a torn file.
+    static PERSIST_LOCK: Mutex<()> = Mutex::new(());
+    let _w = PERSIST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let map = engine.sessions.lock().unwrap();
     let list: Vec<Value> = map
         .values()
@@ -811,7 +816,7 @@ fn basename(path: &str) -> String {
 
 // ---------- commands ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_models() -> IpcResult<Vec<ModelInfo>> {
     ok(refresh_models())
 }
@@ -826,7 +831,7 @@ pub fn session_models() -> IpcResult<Vec<ModelInfo>> {
 // the normal content_block_start(Task) path. `kill` marks the agent errored and
 // emits agent.update; it cannot halt an in-turn Claude subagent in v1.
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agents_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<AgentInfo>> {
     let map = engine.sessions.lock().unwrap();
     match map.get(&session_id) {
@@ -841,7 +846,7 @@ pub struct DispatchOutput {
     agent_id: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agents_dispatch(app: AppHandle, engine: State<'_, Engine>, session_id: String, task: String) -> IpcResult<DispatchOutput> {
     let task = task.trim().to_string();
     if task.is_empty() {
@@ -873,7 +878,7 @@ pub fn agents_dispatch(app: AppHandle, engine: State<'_, Engine>, session_id: St
     ok(DispatchOutput { agent_id })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agents_kill(app: AppHandle, engine: State<'_, Engine>, agent_id: String) -> IpcResult<Option<()>> {
     let agent = {
         let mut map = engine.sessions.lock().unwrap();
@@ -1026,7 +1031,7 @@ fn registry() -> Vec<Value> {
     ]
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_registry() -> IpcResult<Vec<Value>> {
     ok(registry())
 }
@@ -1068,7 +1073,7 @@ fn find_mcp_config(cwd: &str, name: &str) -> Option<(Value, String)> {
     None
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<Value>> {
     let (cwd, runtime) = {
         let map = engine.sessions.lock().unwrap();
@@ -1094,7 +1099,7 @@ pub fn mcp_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<
     ok(out)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_detail(engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Value> {
     let (cwd, runtime) = {
         let map = engine.sessions.lock().unwrap();
@@ -1119,7 +1124,7 @@ pub fn mcp_detail(engine: State<'_, Engine>, session_id: String, name: String) -
     ok(o)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_reconnect(app: AppHandle, engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Option<()>> {
     let info = {
         let mut map = engine.sessions.lock().unwrap();
@@ -1134,7 +1139,7 @@ pub fn mcp_reconnect(app: AppHandle, engine: State<'_, Engine>, session_id: Stri
     ok(None)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_detach(engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Option<()>> {
     let cwd = {
         let map = engine.sessions.lock().unwrap();
@@ -1169,7 +1174,7 @@ pub fn mcp_detach(engine: State<'_, Engine>, session_id: String, name: String) -
     ok(None)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_attach(app: AppHandle, engine: State<'_, Engine>, session_id: String, entry: Value) -> IpcResult<Option<()>> {
     let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("").trim().to_string();
     if name.is_empty() {
@@ -1463,7 +1468,7 @@ fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
     out
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skills_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<SkillInfo>> {
     let cwd = {
         let map = engine.sessions.lock().unwrap();
@@ -1478,7 +1483,7 @@ pub fn skills_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<V
 /// Enable a plugin (by an available skill's owning plugin) in ~/.claude/settings.json.
 /// This is the real "install" for a plugin skill; it applies to every Claude Code
 /// session on the next turn. Idempotent.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skills_install(app: AppHandle, engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Option<()>> {
     let cwd = {
         let map = engine.sessions.lock().unwrap();
@@ -1533,7 +1538,7 @@ pub fn skills_install(app: AppHandle, engine: State<'_, Engine>, session_id: Str
     ok(None)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skills_run(app: AppHandle, engine: State<'_, Engine>, session_id: String, name: String, args: Option<String>) -> IpcResult<Option<()>> {
     let cwd = {
         let map = engine.sessions.lock().unwrap();
@@ -1557,7 +1562,7 @@ pub fn skills_run(app: AppHandle, engine: State<'_, Engine>, session_id: String,
 
 /// francois:conversation:getTranscript — owned by conversation-view (spec §5).
 /// Returns the session's in-memory transcript buffer as ConversationBlock[].
-#[tauri::command]
+#[tauri::command(async)]
 pub fn conversation_get_transcript(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<Value>> {
     let map = engine.sessions.lock().unwrap();
     match map.get(&session_id) {
@@ -1568,7 +1573,7 @@ pub fn conversation_get_transcript(engine: State<'_, Engine>, session_id: String
 
 /// francois:session:pickDirectory — owned by sessions-sidebar (spec §5).
 /// Opens the native OS directory dialog. `data: null` = user cancelled.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_pick_directory(app: AppHandle) -> IpcResult<Option<Value>> {
     use tauri_plugin_dialog::DialogExt;
     match app.dialog().file().blocking_pick_folder() {
@@ -1580,7 +1585,7 @@ pub fn session_pick_directory(app: AppHandle) -> IpcResult<Option<Value>> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_list(app: AppHandle, engine: State<'_, Engine>) -> IpcResult<Vec<Value>> {
     // FR-12: re-emit one session.meta per entry (registry order) before resolving.
     let metas: Vec<SessionMeta> = {
@@ -1593,7 +1598,7 @@ pub fn session_list(app: AppHandle, engine: State<'_, Engine>) -> IpcResult<Vec<
     ok(metas.into_iter().map(|m| serde_json::to_value(m).unwrap()).collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_create(
     app: AppHandle,
     engine: State<'_, Engine>,
@@ -1652,7 +1657,7 @@ pub fn session_create(
     ok(serde_json::to_value(meta).unwrap())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_remove(app: AppHandle, engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
     let removed = {
         let mut map = engine.sessions.lock().unwrap();
@@ -1676,7 +1681,7 @@ pub fn session_remove(app: AppHandle, engine: State<'_, Engine>, session_id: Str
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_switch_model(
     app: AppHandle,
     engine: State<'_, Engine>,
@@ -1703,7 +1708,7 @@ pub fn session_switch_model(
     ok(serde_json::to_value(meta).unwrap())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
     let mut map = engine.sessions.lock().unwrap();
     let Some(s) = map.get_mut(&session_id) else {
@@ -1756,7 +1761,7 @@ fn do_send(app: &AppHandle, session_id: &str, text: String, block_id: String) ->
     ok(SendOutput { queued: false, queue_position: None })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_send(app: AppHandle, session_id: String, text: String, block_id: Option<String>) -> IpcResult<SendOutput> {
     if text.trim().is_empty() {
         return err("INVALID_INPUT", "message is empty");
@@ -1766,7 +1771,7 @@ pub fn session_send(app: AppHandle, session_id: String, text: String, block_id: 
     do_send(&app, &session_id, text, block_id.unwrap_or_else(uuid))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_compact(app: AppHandle, engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
     // Snapshot cwd/model/resume/effort; enforce status.
     let (cwd, model_id, resume, effort) = {
