@@ -401,7 +401,7 @@ export default function App() {
           <span>
             focus: <span style={{ color: C.accent }}>{focusedPane}</span>
           </span>
-          <span style={{ color: C.faint }}>francois 0.2.0</span>
+          <span style={{ color: C.faint }}>francois 0.2.1</span>
         </div>
       </div>
 
