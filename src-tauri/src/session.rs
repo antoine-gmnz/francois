@@ -289,12 +289,15 @@ fn permission_args(mode: &str) -> Vec<String> {
 }
 
 /// (program, argv) launching `claude <claude_args>` under a session's runtime.
-/// wsl: `wsl.exe --cd <cwd> -- claude …` — wsl.exe itself translates the Windows
-/// cwd to /mnt/… inside the default distro, so no manual path mapping is needed.
+/// wsl: `wsl.exe --cd <dir> -- claude …`. Drive-letter cwds pass through verbatim
+/// (wsl.exe maps them to /mnt/… itself — verified live), but a WSL UNC cwd MUST be
+/// pre-translated to its Linux path: `--cd '\\wsl.localhost\…'` fails with
+/// Wsl/E_INVALIDARG (verified live; wsl-filesystem FR-2/FR-11 rationale).
 /// native: plain `claude …`; the caller sets current_dir.
 fn claude_invocation(runtime: &str, cwd: &str, claude_args: Vec<String>) -> (String, Vec<String>) {
     if runtime == "wsl" {
-        let mut argv = vec!["--cd".to_string(), cwd.to_string(), "--".to_string(), "claude".to_string()];
+        let cd = crate::wsl::wsl_unc_to_linux(cwd).map(|(_, p)| p).unwrap_or_else(|| cwd.to_string());
+        let mut argv = vec!["--cd".to_string(), cd, "--".to_string(), "claude".to_string()];
         argv.extend(claude_args);
         ("wsl.exe".into(), argv)
     } else {
@@ -636,6 +639,12 @@ impl Engine {
     /// The working directory of a session (used by the `diff` domain, FR-1). None if unknown.
     pub fn cwd_of(&self, session_id: &str) -> Option<String> {
         self.sessions.lock().unwrap().get(session_id).map(|s| s.cwd.clone())
+    }
+
+    /// The claude runtime ("native" | "wsl") of a session — used by the `shell`
+    /// domain's per-session spawn matrix (wsl-filesystem FR-10/FR-11). None if unknown.
+    pub fn runtime_of(&self, session_id: &str) -> Option<String> {
+        self.sessions.lock().unwrap().get(session_id).map(|s| s.runtime.clone())
     }
 }
 
@@ -1768,6 +1777,7 @@ pub fn session_remove(app: AppHandle, engine: State<'_, Engine>, session_id: Str
                 let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)
             }
             crate::diff::unwatch_session(&session_id); // FR-15: dispose the watcher
+            crate::dispose_session_shell(&app, &session_id); // wsl-filesystem FR-13: dispose the shell
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)
         }
@@ -2775,10 +2785,14 @@ mod tests {
         let (prog, args) = claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()]);
         assert_eq!(prog, "claude");
         assert_eq!(args, vec!["-p", "hi"]);
-        // wsl: wsl.exe translates the Windows cwd via --cd; claude runs inside the distro
+        // wsl + drive cwd: wsl.exe maps it to /mnt/… itself — passed verbatim
         let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()]);
         assert_eq!(prog, "wsl.exe");
         assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
+        // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG live)
+        let (prog, args) = claude_invocation("wsl", "\\\\wsl.localhost\\Ubuntu\\home\\u\\api", vec!["-p".into(), "hi".into()]);
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(args, vec!["--cd", "/home/u/api", "--", "claude", "-p", "hi"]);
     }
 
     #[test]

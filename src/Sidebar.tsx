@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AppError, SessionMeta, SessionStatus } from '../contract/common';
 import { STATUS_COLOR, STATUS_LABEL, countRunning, formatRelativeTime, statusPulses, type SessionDerived } from '../contract/fleet-board';
 import { formatContextTokens } from '../contract/conversation-view';
+import { displayWslCwd } from '../contract/wsl-filesystem';
 import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList, sessionRemove } from './api';
 import { prunePaletteSession } from './paletteData';
 import { useStore } from './store';
@@ -536,7 +537,7 @@ function SessionCard({
 
       {/* Row 2 — cwd */}
       <div style={{ fontSize: 10.5, color: C.faint, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginLeft: 17 }}>
-        {abbreviate(s.cwd, home)}
+        {displayWslCwd(s.cwd) ?? abbreviate(s.cwd, home)}
       </div>
 
       {/* Row 3 — status line */}

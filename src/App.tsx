@@ -9,9 +9,10 @@ import DiffView from './DiffView';
 import AgentsPanel from './AgentsPanel';
 import McpPanel from './McpPanel';
 import SkillsPanel from './SkillsPanel';
-import { DEFAULT_SESSION_ID, initShellEvents, useShellState } from './shellStore';
+import { initShellEvents, useShellState } from './shellStore';
 import { useStore } from './store';
 import { formatContextTokens, formatElapsed } from '../contract/conversation-view';
+import { displayWslCwd } from '../contract/wsl-filesystem';
 import { diffGetSummary, onDiffEvent } from './api';
 import PaletteRoot from './PaletteView';
 import { dismissPalette, isPaletteOpen, togglePalette } from './palette';
@@ -42,13 +43,25 @@ function abbreviate(cwd: string, home: string): string {
   return cwd;
 }
 
+// Shell footer path (spec §8): WSL cwds render as '<distro>:/path'; when the
+// shell name already names that distro (FR-12), drop the redundant prefix so
+// the footer doesn't repeat it — '● Ubuntu · /home/u/api', not '· Ubuntu:/…'.
+function shellFooterPath(cwd: string, shellName: string, home: string): string {
+  const wsl = displayWslCwd(cwd);
+  if (!wsl) return abbreviate(cwd, home);
+  const prefix = `${shellName}:`;
+  return wsl.startsWith(prefix) ? wsl.slice(prefix.length) : wsl;
+}
+
 export default function App() {
   const [home, setHome] = useState('');
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [diffCount, setDiffCount] = useState(0);
-  const shell = useShellState(DEFAULT_SESSION_ID);
   const sessions = useStore((s) => s.sessions);
   const activeSessionId = useStore((s) => s.activeSessionId);
+  // Per-session shell state (FR-10/13); '' resolves to the untouched default
+  // ShellUiState until a session is active — never spawns a PTY on its own.
+  const shell = useShellState(activeSessionId ?? '');
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const mainTab = useStore((s) => s.mainTab);
@@ -308,10 +321,10 @@ export default function App() {
                 select a session to review its changes
               </div>
             )
-          ) : (
+          ) : active ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: '#0f1015' }}>
               <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-                <ShellTerminal sessionId={DEFAULT_SESSION_ID} />
+                <ShellTerminal key={active.id} sessionId={active.id} />
               </div>
               <div
                 style={{
@@ -334,7 +347,7 @@ export default function App() {
                   {shell.cwd && (
                     <>
                       {' '}
-                      <span style={{ color: C.faint }}>·</span> {abbreviate(shell.cwd, home)}
+                      <span style={{ color: C.faint }}>·</span> {shellFooterPath(shell.cwd, shell.shellName, home)}
                     </>
                   )}
                 </span>
@@ -346,6 +359,10 @@ export default function App() {
                   <span style={{ color: C.hint }}>⌃L</span> clear
                 </span>
               </div>
+            </div>
+          ) : (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
+              select a session to open its shell
             </div>
           )}
         </section>

@@ -7,6 +7,7 @@ import {
   type ConversationBlock,
   type UserConversationBlock,
 } from '../contract/conversation-view';
+import { displayWslCwd } from '../contract/wsl-filesystem';
 import { getTranscript, onSessionEvent, sessionSend } from './api';
 import { useStore } from './store';
 
@@ -311,7 +312,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
             </Centered>
           ) : hydrated && state.blocks.length === 0 ? (
             <Centered>
-              <div style={{ fontSize: 12, color: C.dim }}>{meta?.cwd}</div>
+              <div style={{ fontSize: 12, color: C.dim }}>{meta && (displayWslCwd(meta.cwd) ?? meta.cwd)}</div>
               <div style={{ fontSize: 11, color: C.faint, marginTop: 2 }}>{meta?.model.label}</div>
               <div style={{ fontSize: 12.5, color: C.faint, marginTop: 10 }}>waiting for your first prompt</div>
             </Centered>

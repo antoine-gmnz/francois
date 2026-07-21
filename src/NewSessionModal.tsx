@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppError, ClaudeRuntime, ModelInfo, PermissionMode, SessionMeta } from '../contract/common';
+import { isWslUncPath } from '../contract/wsl-filesystem';
 import { sessionCreate, sessionModels, sessionPickDirectory } from './api';
 import ModelPicker from './ModelPicker';
 
@@ -64,6 +65,10 @@ export default function NewSessionModal({
   const [effort, setEffort] = useState(''); // '' = model default
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [runtime, setRuntime] = useState<ClaudeRuntime>('native');
+  // Reset each modal open (component remounts per open — see App.tsx). Tracks
+  // whether the user has explicitly clicked a runtime chip this open, so
+  // FR-16's auto-suggest never clobbers a deliberate choice.
+  const [runtimeTouched, setRuntimeTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<AppError | null>(null);
   const [pickerError, setPickerError] = useState<AppError | null>(null);
@@ -104,9 +109,15 @@ export default function NewSessionModal({
     const path = res.data.path;
     setCwd(path);
     if (!nameTouched) setName(basename(path));
+    // FR-16: auto-suggest the wsl runtime for a WSL UNC pick, unless the user
+    // already touched a runtime chip this modal-open — still freely editable.
+    if (IS_WINDOWS && !runtimeTouched && isWslUncPath(path)) setRuntime('wsl');
   };
 
   const canCreate = cwd.trim() !== '' && name.trim() !== '' && modelId !== '' && !submitting;
+  // FR-16/17: whether the picked directory is a WSL UNC path, drives the
+  // auto-suggest + mismatch hints below the CLAUDE RUNTIME row.
+  const cwdIsWsl = isWslUncPath(cwd);
 
   const submit = async () => {
     if (!canCreate) return;
@@ -292,7 +303,10 @@ export default function NewSessionModal({
                   return (
                     <span
                       key={r}
-                      onClick={() => setRuntime(r)}
+                      onClick={() => {
+                        setRuntime(r);
+                        setRuntimeTouched(true);
+                      }}
                       style={{
                         fontSize: 11,
                         padding: '4px 9px',
@@ -308,10 +322,19 @@ export default function NewSessionModal({
                   );
                 })}
               </div>
-              {runtime === 'wsl' && (
+              {/* FR-16/17: mutually exclusive, below the row — never blocks creation. */}
+              {runtime === 'wsl' ? (
                 <div style={{ fontSize: 10.5, color: C.faint, marginTop: 5 }}>
-                  runs `claude` inside your default WSL distro (wsl.exe translates the directory)
+                  {cwdIsWsl
+                    ? 'WSL directory — claude will run inside your default distro'
+                    : 'runs `claude` inside your default WSL distro (wsl.exe translates the directory)'}
                 </div>
+              ) : (
+                cwdIsWsl && (
+                  <div style={{ fontSize: 10.5, color: C.error, marginTop: 5 }}>
+                    Windows tools will access this directory over 9P — expect slow git and no live diff updates
+                  </div>
+                )
               )}
             </div>
           )}
