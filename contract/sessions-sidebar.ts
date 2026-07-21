@@ -6,7 +6,7 @@
 // `session_pick_directory`. The consumed session-engine channels bind per
 // contract/session-engine.ts. The event stream is francois://session/event.
 
-import type { SessionId, SessionMeta, ModelInfo, Result, SessionEvent } from './common';
+import type { SessionId, SessionMeta, ModelInfo, Result, SessionEvent, PermissionMode, ClaudeRuntime } from './common';
 
 // ---------- owned by this feature ----------
 
@@ -29,6 +29,10 @@ export interface NewSessionRequest {
   modelId: string;
   /** effort level (low/medium/high/xhigh/max); omit for the model default. */
   effort?: string;
+  /** omit for 'default' (inherit ~/.claude settings). */
+  permissionMode?: PermissionMode;
+  /** omit for 'native'; 'wsl' runs claude inside WSL (Windows only). */
+  runtime?: ClaudeRuntime;
 }
 
 // ---------- consumed (owned by session-engine; pinned here for build-ability) ----------

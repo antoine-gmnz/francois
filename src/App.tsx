@@ -263,6 +263,15 @@ export default function App() {
             {mainTab === 'session' && active && (
               <div style={{ display: 'flex', gap: 14, fontSize: 10.5, color: C.dim, alignItems: 'center' }}>
                 <span>{active.model.label}</span>
+                {active.permissionMode !== 'default' && (
+                  <span
+                    title={`permission mode: ${active.permissionMode}`}
+                    style={{ color: active.permissionMode === 'bypassPermissions' ? C.error : C.faint }}
+                  >
+                    {active.permissionMode === 'acceptEdits' ? 'edits-ok' : active.permissionMode === 'bypassPermissions' ? 'bypass' : 'plan'}
+                  </span>
+                )}
+                {active.runtime === 'wsl' && <span style={{ color: C.faint }}>wsl</span>}
                 <span>
                   <span style={{ color: C.faint }}>ctx </span>
                   <span style={{ color: C.bright }}>{formatContextTokens(active.contextUsedTokens)}</span>

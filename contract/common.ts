@@ -38,6 +38,19 @@ export type ErrorCode =
 
 export type SessionStatus = 'running' | 'idle' | 'done' | 'error';
 
+/**
+ * Permission mode a session's claude turns run with (`claude --permission-mode`).
+ * 'default' passes NO flag — the turn inherits the user's own ~/.claude settings
+ * (permissions.defaultMode / allow rules), which is the pre-feature behavior.
+ * The CLI's `auto`/`dontAsk` modes are deliberately not offered: `auto` aborts
+ * headless (-p) runs on repeated classifier blocks, `dontAsk` needs a paired
+ * allowedTools list.
+ */
+export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
+
+/** Where the claude CLI runs for a session: natively, or inside WSL (Windows only). */
+export type ClaudeRuntime = 'native' | 'wsl';
+
 export interface ModelInfo {
   id: string; // e.g. 'claude-sonnet-5'
   label: string; // display label, e.g. 'Sonnet 5'
@@ -60,6 +73,10 @@ export interface SessionMeta {
   startedAt: number; // epoch ms
   lastActivityAt: number; // epoch ms
   errorMessage?: string; // set when status === 'error'
+  /** Permission mode for this session's turns; 'default' = inherit ~/.claude settings. */
+  permissionMode: PermissionMode;
+  /** CLI runtime for this session; 'wsl' spawns `wsl.exe -- claude …` (Windows only). */
+  runtime: ClaudeRuntime;
 }
 
 // ---------- subagents ----------

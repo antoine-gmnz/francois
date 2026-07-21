@@ -265,6 +265,51 @@ fn valid_effort(e: &str) -> bool {
     matches!(e, "low" | "medium" | "high" | "xhigh" | "max")
 }
 
+/// contract/common.ts PermissionMode. The CLI's `auto`/`dontAsk` are deliberately
+/// excluded (auto aborts headless -p runs on classifier blocks; dontAsk needs a
+/// paired allowedTools list).
+fn valid_permission_mode(m: &str) -> bool {
+    matches!(m, "default" | "plan" | "acceptEdits" | "bypassPermissions")
+}
+
+/// contract/common.ts ClaudeRuntime. 'wsl' is only accepted on Windows (create-time check).
+fn valid_runtime(r: &str) -> bool {
+    matches!(r, "native" | "wsl")
+}
+
+/// `--permission-mode` args for a turn. 'default' adds NOTHING — the turn inherits
+/// the user's ~/.claude settings (permissions.defaultMode / allow rules), exactly
+/// the pre-feature behavior. The flag does not persist across --resume, so every
+/// invocation passes it explicitly.
+fn permission_args(mode: &str) -> Vec<String> {
+    match mode {
+        "plan" | "acceptEdits" | "bypassPermissions" => vec!["--permission-mode".into(), mode.into()],
+        _ => Vec::new(),
+    }
+}
+
+/// (program, argv) launching `claude <claude_args>` under a session's runtime.
+/// wsl: `wsl.exe --cd <cwd> -- claude …` — wsl.exe itself translates the Windows
+/// cwd to /mnt/… inside the default distro, so no manual path mapping is needed.
+/// native: plain `claude …`; the caller sets current_dir.
+fn claude_invocation(runtime: &str, cwd: &str, claude_args: Vec<String>) -> (String, Vec<String>) {
+    if runtime == "wsl" {
+        let mut argv = vec!["--cd".to_string(), cwd.to_string(), "--".to_string(), "claude".to_string()];
+        argv.extend(claude_args);
+        ("wsl.exe".into(), argv)
+    } else {
+        ("claude".into(), claude_args)
+    }
+}
+
+#[cfg(windows)]
+fn no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash (esp. wsl.exe)
+}
+#[cfg(not(windows))]
+fn no_window(_cmd: &mut Command) {}
+
 #[derive(Serialize, Clone)]
 struct SessionMeta {
     id: String,
@@ -282,6 +327,9 @@ struct SessionMeta {
     last_activity_at: u64,
     #[serde(rename = "errorMessage", skip_serializing_if = "Option::is_none")]
     error_message: Option<String>,
+    #[serde(rename = "permissionMode")]
+    permission_mode: String,
+    runtime: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -448,6 +496,8 @@ struct Session {
     last_activity_at: u64,
     error_message: Option<String>,
     effort: Option<String>, // --effort level (None = model default)
+    permission_mode: String, // contract PermissionMode; "default" = inherit ~/.claude settings
+    runtime: String, // contract ClaudeRuntime; "native" | "wsl"
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
@@ -471,6 +521,8 @@ impl Session {
             started_at: self.started_at,
             last_activity_at: self.last_activity_at,
             error_message: self.error_message.clone(),
+            permission_mode: self.permission_mode.clone(),
+            runtime: self.runtime.clone(),
         }
     }
 
@@ -691,6 +743,7 @@ fn persist(app: &AppHandle, engine: &Engine) {
         .map(|s| {
             serde_json::json!({
                 "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
+                "permissionMode": s.permission_mode, "runtime": s.runtime,
                 "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
                 "lastActivityAt": s.last_activity_at,
                 "contextUsedTokens": s.context_used_tokens,
@@ -722,6 +775,8 @@ struct PersistedMeta {
     cwd: String,
     model_id: String,
     effort: Option<String>,
+    permission_mode: String, // "default" when absent (pre-feature records)
+    runtime: String,         // "native" when absent, or when "wsl" off-Windows
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
@@ -746,6 +801,19 @@ fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
         cwd,
         model_id,
         effort: rec.get("effort").and_then(|v| v.as_str()).filter(|e| valid_effort(e)).map(String::from),
+        permission_mode: rec
+            .get("permissionMode")
+            .and_then(|v| v.as_str())
+            .filter(|m| valid_permission_mode(m))
+            .unwrap_or("default")
+            .to_string(),
+        // A sessions.json copied to a non-Windows machine degrades wsl → native.
+        runtime: rec
+            .get("runtime")
+            .and_then(|v| v.as_str())
+            .filter(|r| valid_runtime(r) && (cfg!(windows) || *r != "wsl"))
+            .unwrap_or("native")
+            .to_string(),
         claude_session_id: rec.get("claudeSessionId").and_then(|v| v.as_str()).map(String::from),
         last_activity_at: rec.get("lastActivityAt").and_then(|v| v.as_u64()).unwrap_or(now),
         context_used_tokens: rec.get("contextUsedTokens").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -779,6 +847,8 @@ pub fn load_persisted(app: &AppHandle) {
                 last_activity_at: m.last_activity_at,
                 error_message: None,
                 effort: m.effort,
+                permission_mode: m.permission_mode,
+                runtime: m.runtime,
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
@@ -1606,6 +1676,8 @@ pub fn session_create(
     name: Option<String>,
     model_id: Option<String>,
     effort: Option<String>,
+    permission_mode: Option<String>,
+    runtime: Option<String>,
 ) -> IpcResult<Value> {
     // FR-7: cwd must exist and be a directory.
     let meta = std::fs::metadata(&cwd);
@@ -1618,10 +1690,29 @@ pub fn session_create(
     // permissive here is what keeps newly released models usable without a
     // redeploy.
     let model_id = model_id.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| DEFAULT_MODEL.to_string());
-    // FR-9: eager spawn check — verify the claude binary runs.
-    match Command::new("claude").arg("--version").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status() {
+    let permission_mode = permission_mode.unwrap_or_else(|| "default".to_string());
+    if !valid_permission_mode(&permission_mode) {
+        return err("INVALID_INPUT", "unknown permission mode");
+    }
+    let runtime = runtime.unwrap_or_else(|| "native".to_string());
+    if !valid_runtime(&runtime) {
+        return err("INVALID_INPUT", "unknown runtime");
+    }
+    if runtime == "wsl" && !cfg!(windows) {
+        return err("INVALID_INPUT", "the WSL runtime is only available on Windows");
+    }
+    // FR-9: eager spawn check — verify the claude binary runs under the session's runtime.
+    let (probe, probe_args) = claude_invocation(&runtime, &cwd, vec!["--version".to_string()]);
+    let mut probe_cmd = Command::new(&probe);
+    probe_cmd.args(&probe_args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    no_window(&mut probe_cmd);
+    match probe_cmd.status() {
         Ok(s) if s.success() => {}
+        Ok(_) if runtime == "wsl" => {
+            return err("SPAWN_FAILED", "Claude Code CLI failed inside WSL. Run `claude` once in your WSL distro to install and authenticate it.")
+        }
         Ok(_) => return err("SPAWN_FAILED", "Claude Code CLI exited with an error. Run `claude` once in a terminal to authenticate."),
+        Err(_) if runtime == "wsl" => return err("SPAWN_FAILED", "WSL not found. Install it (wsl --install) or use the native runtime."),
         Err(_) => return err("SPAWN_FAILED", "Claude Code CLI not found. Install it and ensure `claude` is on PATH."),
     }
 
@@ -1641,6 +1732,8 @@ pub fn session_create(
         last_activity_at: now,
         error_message: None,
         effort,
+        permission_mode,
+        runtime,
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,
@@ -1774,7 +1867,7 @@ pub fn session_send(app: AppHandle, session_id: String, text: String, block_id: 
 #[tauri::command(async)]
 pub fn session_compact(app: AppHandle, engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
     // Snapshot cwd/model/resume/effort; enforce status.
-    let (cwd, model_id, resume, effort) = {
+    let (cwd, model_id, resume, effort, permission_mode, runtime) = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(&session_id) else {
             return err("SESSION_NOT_FOUND", "no such session");
@@ -1785,7 +1878,7 @@ pub fn session_compact(app: AppHandle, engine: State<'_, Engine>, session_id: St
             _ => {}
         }
         s.status = "running".into();
-        (s.cwd.clone(), s.model_id.clone(), s.claude_session_id.clone(), s.effort.clone())
+        (s.cwd.clone(), s.model_id.clone(), s.claude_session_id.clone(), s.effort.clone(), s.permission_mode.clone(), s.runtime.clone())
     };
     emit(&app, SessionEvent::Status { session_id: session_id.clone(), status: "running".into() });
 
@@ -1793,7 +1886,7 @@ pub fn session_compact(app: AppHandle, engine: State<'_, Engine>, session_id: St
     // usage — FR-28. No transcript events are surfaced.
     let limit = context_limit(&model_id);
     let mut used: Option<u64> = None;
-    if let Ok(child) = spawn_claude(&cwd, &model_id, resume.as_deref(), "/compact", effort.as_deref()) {
+    if let Ok(child) = spawn_claude(&cwd, &model_id, resume.as_deref(), "/compact", effort.as_deref(), &permission_mode, &runtime) {
         if let Some(out) = child_stdout_lines(child) {
             for line in out {
                 if let Ok(v) = serde_json::from_str::<Value>(&line) {
@@ -1834,23 +1927,40 @@ enum TurnMode {
     ResumeRetry,
 }
 
-fn spawn_claude(cwd: &str, model_id: &str, resume: Option<&str>, text: &str, effort: Option<&str>) -> std::io::Result<Child> {
-    let mut cmd = Command::new("claude");
-    cmd.arg("-p")
-        .arg(text)
-        .arg("--output-format")
-        .arg("stream-json")
-        .arg("--include-partial-messages")
-        .arg("--verbose")
-        .arg("--model")
-        .arg(model_id);
+fn spawn_claude(
+    cwd: &str,
+    model_id: &str,
+    resume: Option<&str>,
+    text: &str,
+    effort: Option<&str>,
+    permission_mode: &str,
+    runtime: &str,
+) -> std::io::Result<Child> {
+    let mut args: Vec<String> = vec![
+        "-p".into(),
+        text.into(),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--include-partial-messages".into(),
+        "--verbose".into(),
+        "--model".into(),
+        model_id.into(),
+    ];
+    args.extend(permission_args(permission_mode)); // per-invocation; --resume does not carry it
     if let Some(e) = effort {
-        cmd.arg("--effort").arg(e);
+        args.extend(["--effort".into(), e.into()]);
     }
     if let Some(r) = resume {
-        cmd.arg("--resume").arg(r);
+        args.extend(["--resume".into(), r.into()]);
     }
-    cmd.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let (program, argv) = claude_invocation(runtime, cwd, args);
+    let mut cmd = Command::new(program);
+    cmd.args(argv);
+    if runtime != "wsl" {
+        cmd.current_dir(cwd); // wsl turns get their cwd via `--cd` inside the distro
+    }
+    no_window(&mut cmd);
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     cmd.spawn()
 }
 
@@ -1882,14 +1992,14 @@ fn is_resume_fail(resume_used: bool, got_init: bool, got_result: bool, was_inter
 }
 
 fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String, mode: TurnMode) {
-    let (cwd, model_id, resume, effort) = {
+    let (cwd, model_id, resume, effort, permission_mode, runtime) = {
         let engine = app.state::<Engine>();
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(session_id) else { return };
         // ResumeRetry forces resume off regardless of the stored id, so a still-good id
         // is never dropped preemptively — a fresh init overwrites it only on success.
         let resume = if mode == TurnMode::ResumeRetry { None } else { s.claude_session_id.clone() };
-        (s.cwd.clone(), s.model_id.clone(), resume, s.effort.clone())
+        (s.cwd.clone(), s.model_id.clone(), resume, s.effort.clone(), s.permission_mode.clone(), s.runtime.clone())
     };
 
     let resume_used = resume.is_some();
@@ -1913,7 +2023,7 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
         emit(app, SessionEvent::MessageUser { session_id: session_id.into(), block_id: block_id.clone(), text: text.clone() });
     }
 
-    let child = match spawn_claude(&cwd, &model_id, resume.as_deref(), &text, effort.as_deref()) {
+    let child = match spawn_claude(&cwd, &model_id, resume.as_deref(), &text, effort.as_deref(), &permission_mode, &runtime) {
         Ok(c) => c,
         Err(e) => {
             fail_session(app, session_id, "SPAWN_FAILED", &format!("could not start claude: {e}"));
@@ -2649,6 +2759,41 @@ mod tests {
         assert!(matches!(back.kind, BlockKind::Subagent));
         assert_eq!(back.summary, "explorer");
         assert_eq!(back.meta.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn permission_args_only_for_explicit_modes() {
+        assert!(permission_args("default").is_empty()); // inherit ~/.claude settings — no flag
+        assert!(permission_args("garbage").is_empty());
+        assert_eq!(permission_args("plan"), vec!["--permission-mode", "plan"]);
+        assert_eq!(permission_args("acceptEdits"), vec!["--permission-mode", "acceptEdits"]);
+        assert_eq!(permission_args("bypassPermissions"), vec!["--permission-mode", "bypassPermissions"]);
+    }
+
+    #[test]
+    fn claude_invocation_wraps_wsl() {
+        let (prog, args) = claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()]);
+        assert_eq!(prog, "claude");
+        assert_eq!(args, vec!["-p", "hi"]);
+        // wsl: wsl.exe translates the Windows cwd via --cd; claude runs inside the distro
+        let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()]);
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
+    }
+
+    #[test]
+    fn persisted_permission_and_runtime_defaults() {
+        // pre-feature record → defaults
+        let old = serde_json::json!({ "id": "a", "name": "n", "cwd": "/x" });
+        let m = parse_session_record(&old, 5).unwrap();
+        assert_eq!(m.permission_mode, "default");
+        assert_eq!(m.runtime, "native");
+        // valid persisted mode round-trips
+        let full = serde_json::json!({ "id": "a", "name": "n", "cwd": "/x", "permissionMode": "plan", "runtime": "native" });
+        assert_eq!(parse_session_record(&full, 5).unwrap().permission_mode, "plan");
+        // modes we don't offer (e.g. "auto") sanitize back to default
+        let bad = serde_json::json!({ "id": "a", "name": "n", "cwd": "/x", "permissionMode": "auto" });
+        assert_eq!(parse_session_record(&bad, 5).unwrap().permission_mode, "default");
     }
 
     #[test]

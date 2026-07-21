@@ -9,7 +9,7 @@
 // `francois:session:event` → Tauri event `francois://session/event`. Every
 // command RESOLVES a `Result<T>` (never rejects across the bridge).
 
-import type { SessionId, ModelInfo, SessionEvent, Result } from './common';
+import type { SessionId, ModelInfo, SessionEvent, Result, PermissionMode, ClaudeRuntime } from './common';
 
 // ---------- francois:session:create ----------
 
@@ -18,6 +18,10 @@ export interface SessionCreateInput {
   name?: string; // defaults to basename(cwd)
   modelId?: string; // defaults to the default model; from session:models
   effort?: string; // effort level (low/medium/high/xhigh/max); omit for model default
+  /** omit for 'default' (inherit ~/.claude settings). Passed to every turn incl. --resume. */
+  permissionMode?: PermissionMode;
+  /** omit for 'native'. 'wsl' is INVALID_INPUT off Windows. */
+  runtime?: ClaudeRuntime;
 }
 // invoke('session_create', req: SessionCreateInput): Promise<Result<SessionMeta>>
 

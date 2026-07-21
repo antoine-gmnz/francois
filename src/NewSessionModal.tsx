@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AppError, ModelInfo, SessionMeta } from '../contract/common';
+import type { AppError, ClaudeRuntime, ModelInfo, PermissionMode, SessionMeta } from '../contract/common';
 import { sessionCreate, sessionModels, sessionPickDirectory } from './api';
 import ModelPicker from './ModelPicker';
+
+// PermissionMode choices (contract/common.ts): label + the plain-language consequence.
+const PERMISSION_OPTIONS: { mode: PermissionMode; label: string; hint: string }[] = [
+  { mode: 'default', label: 'default', hint: 'inherit your Claude settings (~/.claude)' },
+  { mode: 'plan', label: 'plan', hint: 'read & plan only — never edits or runs commands' },
+  { mode: 'acceptEdits', label: 'accept edits', hint: 'auto-approve file edits; other tools follow your settings' },
+  { mode: 'bypassPermissions', label: 'bypass', hint: 'skip every permission check — full access' },
+];
+
+const IS_WINDOWS = navigator.userAgent.includes('Windows');
 
 const C = {
   accent: '#c8a15a',
@@ -52,6 +62,8 @@ export default function NewSessionModal({
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelId, setModelId] = useState('');
   const [effort, setEffort] = useState(''); // '' = model default
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
+  const [runtime, setRuntime] = useState<ClaudeRuntime>('native');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<AppError | null>(null);
   const [pickerError, setPickerError] = useState<AppError | null>(null);
@@ -100,7 +112,14 @@ export default function NewSessionModal({
     if (!canCreate) return;
     setSubmitting(true);
     setSubmitError(null);
-    const res = await sessionCreate({ cwd, name, modelId, effort: effort || undefined });
+    const res = await sessionCreate({
+      cwd,
+      name,
+      modelId,
+      effort: effort || undefined,
+      permissionMode: permissionMode !== 'default' ? permissionMode : undefined,
+      runtime: runtime !== 'native' ? runtime : undefined,
+    });
     if (!openRef.current) {
       // Modal was cancelled mid-flight: still real, upsert but don't force-select.
       if (res.ok) onCreated(res.data);
@@ -231,6 +250,69 @@ export default function NewSessionModal({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          <div>
+            <label style={labelStyle}>PERMISSIONS</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {PERMISSION_OPTIONS.map(({ mode, label }) => {
+                const sel = permissionMode === mode;
+                const danger = mode === 'bypassPermissions';
+                return (
+                  <span
+                    key={mode}
+                    onClick={() => setPermissionMode(mode)}
+                    style={{
+                      fontSize: 11,
+                      padding: '4px 9px',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      border: `1px solid ${sel ? (danger ? C.error : C.accent) : '#2a2c33'}`,
+                      background: sel ? (danger ? 'rgba(196,107,98,0.12)' : 'rgba(200,161,90,0.12)') : '#1a1c22',
+                      color: sel ? (danger ? C.error : C.accent) : C.dim,
+                    }}
+                  >
+                    {label}
+                  </span>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 10.5, color: C.faint, marginTop: 5 }}>
+              {PERMISSION_OPTIONS.find((o) => o.mode === permissionMode)?.hint}
+            </div>
+          </div>
+
+          {IS_WINDOWS && (
+            <div>
+              <label style={labelStyle}>CLAUDE RUNTIME</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {(['native', 'wsl'] as const).map((r) => {
+                  const sel = runtime === r;
+                  return (
+                    <span
+                      key={r}
+                      onClick={() => setRuntime(r)}
+                      style={{
+                        fontSize: 11,
+                        padding: '4px 9px',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        border: `1px solid ${sel ? C.accent : '#2a2c33'}`,
+                        background: sel ? 'rgba(200,161,90,0.12)' : '#1a1c22',
+                        color: sel ? C.accent : C.dim,
+                      }}
+                    >
+                      {r}
+                    </span>
+                  );
+                })}
+              </div>
+              {runtime === 'wsl' && (
+                <div style={{ fontSize: 10.5, color: C.faint, marginTop: 5 }}>
+                  runs `claude` inside your default WSL distro (wsl.exe translates the directory)
+                </div>
+              )}
             </div>
           )}
 
