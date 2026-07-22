@@ -14,6 +14,10 @@
 //    matching FR-19's lazy-error path rather than failing `create`.
 
 use crate::ipc::{err, ok, AppError, IpcResult};
+// usage-bar §6: the /usage meter grammar + stream-json answer extraction now live
+// in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
+// is unchanged — these are the same functions, imported instead of defined.
+use crate::usage::{parse_meter_line, probe_answer, synthetic_text, UsageMeter};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -28,7 +32,8 @@ const EVENT_CHANNEL: &str = "francois://session/event";
 const QUEUE_CAP: usize = 20;
 const DEFAULT_MODEL: &str = "sonnet";
 /// interactive-commands FR-10: a /usage//cost probe is killed after this long.
-const PROBE_TIMEOUT_SECS: u64 = 30;
+/// Reused by the app-scoped usage-bar probe (usage.rs, usage-bar FR-8).
+pub(crate) const PROBE_TIMEOUT_SECS: u64 = 30;
 
 // ---------- model catalog (§5.1) ----------
 //
@@ -375,12 +380,12 @@ fn claude_invocation(runtime: &str, cwd: &str, claude_args: Vec<String>) -> (Str
 }
 
 #[cfg(windows)]
-fn no_window(cmd: &mut Command) {
+pub(crate) fn no_window(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash (esp. wsl.exe)
 }
 #[cfg(not(windows))]
-fn no_window(_cmd: &mut Command) {}
+pub(crate) fn no_window(_cmd: &mut Command) {}
 
 #[derive(Serialize, Clone)]
 struct SessionMeta {
@@ -442,16 +447,8 @@ struct McpServerInfo {
 // contract/common.ts; the intercept set / help entries / grammar are canonical in
 // contract/interactive-commands.ts. Mirrored here by hand (specs/interactive-commands.md §5).
 
-/// One plan-limit meter parsed from the CLI's /usage output (contract UsageMeter).
-#[derive(Serialize, Clone, PartialEq, Debug)]
-struct UsageMeter {
-    label: String,
-    #[serde(rename = "percentUsed")]
-    percent_used: u64,
-    /// verbatim reset text, e.g. 'Jul 22, 5:29pm (Europe/Paris)'
-    #[serde(rename = "resetsAt")]
-    resets_at: String,
-}
+// `UsageMeter` (contract UsageMeter) is defined in usage.rs and imported above —
+// the /usage card and the usage bar must serialize the identical shape.
 
 /// contract HelpEntry — one /help card row.
 #[derive(Serialize, Clone)]
@@ -1212,7 +1209,7 @@ pub fn load_persisted(app: &AppHandle) {
 
 // ---------- helpers ----------
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -2587,6 +2584,7 @@ pub fn session_compact(
             s.status = "idle".into();
         }
     }
+    crate::usage::note_turn_ended(&app); // usage-bar FR-13: a /compact turn ended too
     if let Some(u) = used {
         emit(
             &app,
@@ -3058,6 +3056,13 @@ fn finish_turn(app: &AppHandle, session_id: &str, errored: bool, error_msg: Opti
     // Persist updated usage/activity/thread-id at turn boundary (durable-sessions FR-3).
     persist(app, &engine);
 
+    // usage-bar FR-13: this session just left `running` (idle or error), so plan
+    // usage moved — schedule the debounced app-scoped probe. Called with NO engine
+    // lock held; usage state is a leaf that never reaches back into the engine.
+    if errored || next.is_none() {
+        crate::usage::note_turn_ended(app);
+    }
+
     if errored {
         let msg = error_msg.unwrap_or_else(|| "session error".into());
         // Final agent.update for any agents just errored.
@@ -3119,6 +3124,7 @@ fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &str) {
             s.queue.clear();
         }
     }
+    crate::usage::note_turn_ended(app); // usage-bar FR-13: running → error
     emit(
         app,
         SessionEvent::Error {
@@ -3793,40 +3799,6 @@ fn intercepted_command(text: &str) -> Option<(String, Option<String>)> {
     parse_command(text).filter(|(c, _)| INTERCEPTED_COMMANDS.contains(&c.as_str()))
 }
 
-/// §5 meter line: `^(.+?): (\d+)% used · resets (.+)$` (the `·` is U+00B7).
-/// Lazy label — the first `": "` split whose tail matches wins.
-fn parse_meter_line(line: &str) -> Option<UsageMeter> {
-    let mut from = 0;
-    while let Some(rel) = line[from..].find(": ") {
-        let pos = from + rel;
-        if pos > 0 {
-            if let Some(m) = parse_meter_tail(&line[..pos], &line[pos + 2..]) {
-                return Some(m);
-            }
-        }
-        from = pos + 1;
-    }
-    None
-}
-
-fn parse_meter_tail(label: &str, rest: &str) -> Option<UsageMeter> {
-    let digits_end = rest
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(rest.len());
-    if digits_end == 0 {
-        return None;
-    }
-    let resets_at = rest[digits_end..].strip_prefix("% used \u{b7} resets ")?;
-    if resets_at.is_empty() {
-        return None;
-    }
-    Some(UsageMeter {
-        label: label.to_string(),
-        percent_used: rest[..digits_end].parse().ok()?,
-        resets_at: resets_at.to_string(),
-    })
-}
-
 /// FR-9: parse a /usage//cost answer. ≥1 meter → usage card (meters + tail: the
 /// non-meter lines, blank runs collapsed to one, trimmed); else a raw text card.
 fn usage_card(command: &str, answer: &str) -> CommandCard {
@@ -3942,48 +3914,8 @@ fn context_card(answer: &str) -> CommandCard {
     }
 }
 
-/// FR-16 detection: the concatenated `content[].text` of an assistant event whose
-/// `message.model` is `"<synthetic>"`. None for real assistant messages.
-fn synthetic_text(v: &Value) -> Option<String> {
-    let msg = v.get("message")?;
-    if msg.get("model").and_then(|m| m.as_str()) != Some("<synthetic>") {
-        return None;
-    }
-    let content = msg.get("content")?.as_array()?;
-    Some(
-        content
-            .iter()
-            .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
-            .collect::<Vec<_>>()
-            .join(""),
-    )
-}
-
-/// FR-8: extract a probe's answer from its stdout lines — the first synthetic
-/// assistant message's text, else the final result event's `result` string.
-/// Trailing whitespace stripped; caller treats empty as failure (FR-10).
-fn probe_answer(lines: &[String]) -> Option<String> {
-    let mut result_text: Option<String> = None;
-    for line in lines {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        match v.get("type").and_then(|t| t.as_str()) {
-            Some("assistant") => {
-                if let Some(t) = synthetic_text(&v) {
-                    return Some(t.trim_end().to_string());
-                }
-            }
-            Some("result") => {
-                if let Some(r) = v.get("result").and_then(|r| r.as_str()) {
-                    result_text = Some(r.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    result_text.map(|s| s.trim_end().to_string())
-}
+// `synthetic_text` (FR-16 detection) and `probe_answer` (FR-8 answer extraction)
+// moved to usage.rs and are imported above — same functions, same behavior.
 
 /// FR-9/10 probe verdict (pure; unit-tested). A fully-parsed answer always wins —
 /// even when the 30s watchdog fired while the final bytes were being read — so
@@ -4837,32 +4769,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn meter_line_parses_probed_samples() {
-        // real probed output (spec §1)
-        let m = parse_meter_line(
-            "Current session: 14% used \u{b7} resets Jul 22, 5:29pm (Europe/Paris)",
-        )
-        .unwrap();
-        assert_eq!(m.label, "Current session");
-        assert_eq!(m.percent_used, 14);
-        assert_eq!(m.resets_at, "Jul 22, 5:29pm (Europe/Paris)");
-        let m = parse_meter_line(
-            "Current week (all models): 34% used \u{b7} resets Jul 25, 11:00am (Europe/Paris)",
-        )
-        .unwrap();
-        assert_eq!(m.label, "Current week (all models)");
-        assert_eq!(m.percent_used, 34);
-    }
-
-    #[test]
-    fn meter_line_drift_returns_none() {
-        assert!(parse_meter_line("Current session: 14% consumed").is_none());
-        assert!(parse_meter_line("Current session: 14% used . resets Jul 22").is_none()); // ASCII dot, not U+00B7
-        assert!(parse_meter_line("Current session: x% used \u{b7} resets Jul 22").is_none());
-        assert!(parse_meter_line("Current session: 14% used \u{b7} resets ").is_none()); // empty resets
-        assert!(parse_meter_line("no meter here").is_none());
-    }
+    // The meter-grammar tests (`meter_line_*`), the answer-extraction tests
+    // (`probe_answer_*`) and `synthetic_detection_requires_synthetic_model` moved
+    // to usage.rs with their functions (usage-bar §6) — unchanged.
 
     #[test]
     fn usage_card_parses_meters_and_tail() {
@@ -4959,32 +4868,6 @@ mod tests {
     }
 
     #[test]
-    fn probe_answer_prefers_first_synthetic_assistant() {
-        let lines = ndjson(&[
-            json!({ "type": "system", "subtype": "init" }),
-            json!({ "type": "assistant", "message": { "model": "<synthetic>",
-                "content": [{ "type": "text", "text": "Current session: 14% used" }, { "type": "text", "text": " \n" }] } }),
-            json!({ "type": "result", "subtype": "success", "result": "other" }),
-        ]);
-        // content[].text concatenated + trailing whitespace stripped (FR-8)
-        assert_eq!(
-            probe_answer(&lines).as_deref(),
-            Some("Current session: 14% used")
-        );
-    }
-
-    #[test]
-    fn probe_answer_falls_back_to_result() {
-        let lines = ndjson(&[
-            json!({ "type": "assistant", "message": { "model": "claude-opus-4-8", "content": [{ "type": "text", "text": "real turn" }] } }),
-            json!({ "type": "result", "subtype": "success", "result": "from result\n" }),
-        ]);
-        assert_eq!(probe_answer(&lines).as_deref(), Some("from result"));
-        assert!(probe_answer(&[String::from("not json")]).is_none());
-        assert!(probe_answer(&[]).is_none());
-    }
-
-    #[test]
     fn skill_sends_are_never_intercepted() {
         // Remediation R1 / spec §2 non-goal: a skill named like an intercepted
         // command passes through byte-for-byte; typed input keeps intercepting.
@@ -5047,18 +4930,6 @@ mod tests {
             panic!("expected a notice")
         };
         assert!(text.contains("no answer"));
-    }
-
-    #[test]
-    fn synthetic_detection_requires_synthetic_model() {
-        let synth = json!({ "message": { "model": "<synthetic>", "content": [{ "type": "text", "text": "Unknown command: /x" }] } });
-        assert_eq!(
-            synthetic_text(&synth).as_deref(),
-            Some("Unknown command: /x")
-        );
-        let real = json!({ "message": { "model": "claude-opus-4-8", "content": [{ "type": "text", "text": "hi" }] } });
-        assert!(synthetic_text(&real).is_none());
-        assert!(synthetic_text(&json!({})).is_none());
     }
 
     #[test]

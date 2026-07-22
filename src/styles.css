@@ -25,7 +25,9 @@ body,
   height: 100%;
 }
 body {
-  background: #08090b;
+  /* Same as the App root shell — body is only visible before React mounts, and a
+     darker value there flashes as a black band against the tinted caption bar. */
+  background: #0f1015;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;

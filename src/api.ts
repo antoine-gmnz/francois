@@ -9,6 +9,7 @@ import type { ConversationBlock } from '../contract/conversation-view';
 import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../contract/mcp-panel';
 import type { SkillsEvent } from '../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../contract/diff-view';
+import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../contract/usage-bar';
 
 function ipc<T>(cmd: string, args?: object): Promise<T> {
   return invoke<T>(cmd, args as Record<string, unknown> | undefined);
@@ -61,6 +62,16 @@ export const diffCommit = (sessionId: SessionId, message: string) =>
 /** Subscribe to francois://diff/event (diff.changed). */
 export function onDiffEvent(cb: (e: DiffEvent) => void): Promise<UnlistenFn> {
   return listen<DiffEvent>('francois://diff/event', (e) => cb(e.payload));
+}
+
+// usage-bar (app domain, app-scoped plan limits). getUsage NEVER triggers a probe
+// (FR-22); refreshUsage only acks — the result always arrives as a usage.state event.
+export const appGetUsage = () => ipc<Result<UsageSnapshot>>('app_get_usage');
+export const appRefreshUsage = () => ipc<Result<UsageRefreshAck>>('app_refresh_usage');
+
+/** Subscribe to francois://app/event (usage.state, extensible tagged union). */
+export function onAppEvent(cb: (e: AppEvent) => void): Promise<UnlistenFn> {
+  return listen<AppEvent>('francois://app/event', (e) => cb(e.payload));
 }
 
 /** Subscribe to the core→frontend session event stream. */

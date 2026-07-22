@@ -32,6 +32,7 @@ export type ErrorCode =
   | 'SKILL_ERROR'
   | 'AGENT_NOT_FOUND'
   | 'APP_NOT_RUNNING' // CLI companion: no app instance to talk to
+  | 'USAGE_UNAVAILABLE' // usage bar: the CLI ran but returned no parseable meters
   | 'INTERNAL';
 
 // ---------- sessions ----------
