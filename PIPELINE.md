@@ -186,3 +186,5 @@ gate:
 | `skills-panel` | pane [5]: skills list + run | session-engine |
 | `command-palette` | ⌘K modal + command registry | all UI features |
 | `cli-companion` | `francois` CLI ↔ running app | session-engine |
+| `session-questions` | SESSION tab: AskUserQuestion cards over the stdio control channel | session-engine, conversation-view |
+| `slash-menu` | SESSION composer: "/" command autocomplete popup + per-session command registry | session-engine, conversation-view, interactive-commands, skills-panel |

@@ -3,8 +3,9 @@
 // and the model-card switch error path. Pure logic only (no DOM).
 
 import { describe, expect, it, vi } from 'vitest';
-import type { CommandCard, Result } from '../contract/common';
+import type { CommandCard, Result, SessionQuestion } from '../contract/common';
 import type { CommandConversationBlock } from '../contract/interactive-commands';
+import type { QuestionConversationBlock } from '../contract/session-questions';
 import { classifyToolStart, type ConversationBlock } from '../contract/conversation-view';
 import {
   cardHeaderLabel,
@@ -238,6 +239,110 @@ describe('cardHeaderLabel (§8 header, OUTPUT fallback)', () => {
 
   it("falls back to 'OUTPUT' when both resolve empty (text card with command: '')", () => {
     expect(cardHeaderLabel({ kind: 'text', command: '', text: 'raw CLI output' }, '')).toBe('OUTPUT');
+  });
+});
+
+describe('transcriptReducer — question.asked / question.resolved (session-questions FR-16)', () => {
+  const questions: SessionQuestion[] = [
+    {
+      question: 'Which color do you prefer?',
+      header: 'Color',
+      multiSelect: false,
+      options: [
+        { label: 'Red', description: 'The color red' },
+        { label: 'Blue', description: 'The color blue' },
+      ],
+    },
+  ];
+
+  function questionBlock(s: TranscriptState, blockId: string): QuestionConversationBlock {
+    const b = s.blocks.find((x) => x.blockId === blockId);
+    if (!b || b.kind !== 'question') throw new Error(`no question block ${blockId}`);
+    return b;
+  }
+
+  it('questionAsked inserts a pending block at the end (FR-15: isStreaming iff pending)', () => {
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'go', queued: false };
+    const s = transcriptReducer({ blocks: [user] }, { t: 'questionAsked', blockId: 'q1', questions });
+    expect(s.blocks).toHaveLength(2);
+    expect(s.blocks[1]).toEqual({ kind: 'question', blockId: 'q1', isStreaming: true, questions, state: 'pending' });
+    expect(questionBlock(s, 'q1')).not.toHaveProperty('answers');
+  });
+
+  it('questionAsked is idempotent on replay (existing blockId → same state)', () => {
+    const s1 = transcriptReducer(S0, { t: 'questionAsked', blockId: 'q1', questions });
+    const s2 = transcriptReducer(s1, { t: 'questionAsked', blockId: 'q1', questions });
+    expect(s2).toBe(s1); // no-op, not a duplicate insert
+  });
+
+  it('questionResolved answered: updates state + answers in place, clears isStreaming', () => {
+    const answers = { 'Which color do you prefer?': 'Blue' };
+    const s1 = transcriptReducer(S0, { t: 'questionAsked', blockId: 'q1', questions });
+    const s2 = transcriptReducer(s1, { t: 'questionResolved', blockId: 'q1', state: 'answered', answers });
+    expect(s2.blocks).toHaveLength(1);
+    expect(questionBlock(s2, 'q1')).toEqual({
+      kind: 'question',
+      blockId: 'q1',
+      isStreaming: false,
+      questions,
+      state: 'answered',
+      answers,
+    });
+  });
+
+  it('questionResolved cancelled: no answers property on the block', () => {
+    const s1 = transcriptReducer(S0, { t: 'questionAsked', blockId: 'q1', questions });
+    const s2 = transcriptReducer(s1, { t: 'questionResolved', blockId: 'q1', state: 'cancelled' });
+    const b = questionBlock(s2, 'q1');
+    expect(b.state).toBe('cancelled');
+    expect(b.isStreaming).toBe(false);
+    expect(b).not.toHaveProperty('answers');
+  });
+
+  it('questionResolved is idempotent on replay', () => {
+    const answers = { 'Which color do you prefer?': 'Blue' };
+    const s1 = transcriptReducer(S0, { t: 'questionAsked', blockId: 'q1', questions });
+    const s2 = transcriptReducer(s1, { t: 'questionResolved', blockId: 'q1', state: 'answered', answers });
+    const s3 = transcriptReducer(s2, { t: 'questionResolved', blockId: 'q1', state: 'answered', answers });
+    expect(s3.blocks).toEqual(s2.blocks);
+  });
+
+  it('resolve before insert (out-of-order) inserts the resolved block', () => {
+    const answers = { 'Which color do you prefer?': 'Red' };
+    const s = transcriptReducer(S0, { t: 'questionResolved', blockId: 'q1', state: 'answered', answers });
+    expect(s.blocks).toHaveLength(1);
+    expect(questionBlock(s, 'q1')).toEqual({
+      kind: 'question',
+      blockId: 'q1',
+      isStreaming: false,
+      questions: [],
+      state: 'answered',
+      answers,
+    });
+  });
+
+  it('a late questionAsked fills the questions of a resolved-first block without reviving it', () => {
+    const s1 = transcriptReducer(S0, { t: 'questionResolved', blockId: 'q1', state: 'cancelled' });
+    const s2 = transcriptReducer(s1, { t: 'questionAsked', blockId: 'q1', questions });
+    expect(s2.blocks).toHaveLength(1);
+    const b = questionBlock(s2, 'q1');
+    expect(b.questions).toEqual(questions); // verbatim content restored…
+    expect(b.state).toBe('cancelled'); // …but the resolution stands
+    expect(b.isStreaming).toBe(false);
+  });
+
+  it('questionAsked is a no-op when the blockId belongs to a non-question block', () => {
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false };
+    const s1: TranscriptState = { blocks: [user] };
+    const s2 = transcriptReducer(s1, { t: 'questionAsked', blockId: 'u1', questions });
+    expect(s2).toBe(s1);
+  });
+
+  it('questionResolved is a no-op when the blockId belongs to a non-question block', () => {
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false };
+    const s1: TranscriptState = { blocks: [user] };
+    const s2 = transcriptReducer(s1, { t: 'questionResolved', blockId: 'u1', state: 'cancelled' });
+    expect(s2).toBe(s1);
   });
 });
 

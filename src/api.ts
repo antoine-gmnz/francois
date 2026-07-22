@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, McpServerInfo, SkillInfo } from '../contract/common';
+import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, McpServerInfo, SkillInfo, SlashCommandInfo } from '../contract/common';
 import type { NewSessionRequest, PickDirectoryData } from '../contract/sessions-sidebar';
 import type { ConversationBlock } from '../contract/conversation-view';
 import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../contract/mcp-panel';
@@ -24,6 +24,11 @@ export const sessionSend = (sessionId: SessionId, blockId: string, text: string)
   ipc<Result<{ queued: boolean; queuePosition?: number }>>('session_send', { sessionId, blockId, text });
 export const getTranscript = (sessionId: SessionId) =>
   ipc<Result<ConversationBlock[]>>('conversation_get_transcript', { sessionId });
+export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
+  ipc<Result<null>>('session_answer_question', { sessionId, blockId, answers });
+// slash-menu FR-1/4: merged per-session command registry (francois:session:listCommands)
+export const sessionListCommands = (sessionId: SessionId) =>
+  ipc<Result<SlashCommandInfo[]>>('session_list_commands', { sessionId });
 
 export const sessionSwitchModel = (sessionId: SessionId, modelId: string) =>
   ipc<Result<SessionMeta>>('session_switch_model', { sessionId, modelId });

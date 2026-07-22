@@ -1,10 +1,25 @@
-import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
-import type { SessionEvent } from '../contract/common';
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import type { SessionEvent, SlashCommandInfo } from '../contract/common';
 import { toolBody, type ConversationBlock } from '../contract/conversation-view';
 import { displayWslCwd } from '../contract/wsl-filesystem';
-import { getTranscript, onSessionEvent, sessionSend } from './api';
+import { getTranscript, onSessionEvent, sessionListCommands, sessionSend } from './api';
 import CommandBlock from './CommandCard';
 import { transcriptReducer } from './conversation-blocks';
+import { composerPlaceholder, hasPendingQuestionBlock } from './question-card';
+import QuestionCard from './QuestionCard';
+import {
+  completionText,
+  filterCommands,
+  getSessionCommands,
+  moveSelection,
+  nextDismissed,
+  popupKeyAction,
+  popupVisible,
+  refreshSelection,
+  setSessionCommands,
+  slashToken,
+} from './slash-menu';
+import SlashMenu from './SlashMenu';
 import { useStore } from './store';
 
 const C = {
@@ -37,6 +52,13 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   const [input, setInput] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
   const [resumeFailed, setResumeFailed] = useState(false); // durable-sessions FR-14 banner
+
+  // slash-menu popup state (spec §6): registry mirror for THIS session (cache-
+  // seeded, FR-10), dismissal token (FR-9) and selection (FR-7). All component-
+  // local — a session switch remounts (keyed by sessionId) and clears them.
+  const [commands, setCommands] = useState<SlashCommandInfo[]>(() => getSessionCommands(sessionId));
+  const [dismissedToken, setDismissedToken] = useState<string | null>(null);
+  const [selIdx, setSelIdx] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -95,12 +117,27 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
           // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
           dispatch({ t: 'commandOutput', blockId: e.blockId, card: e.card });
           break;
+        case 'question.asked':
+          // session-questions FR-6/16: insert the pending question card
+          dispatch({ t: 'questionAsked', blockId: e.blockId, questions: e.questions });
+          break;
+        case 'question.resolved':
+          // session-questions FR-11/13/16: flip to answered/cancelled in place
+          dispatch({ t: 'questionResolved', blockId: e.blockId, state: e.state, answers: e.answers });
+          break;
+        case 'session.commands':
+          // slash-menu FR-10: idempotent replace — an open popup refilters in place
+          setCommands(e.commands);
+          break;
         default:
           break;
       }
     };
 
     void onSessionEvent((e) => {
+      // slash-menu edge 7: cache the registry for EVERY session (no UI effect
+      // for non-visible ones — they re-seed from this cache when shown).
+      if (e.type === 'session.commands') setSessionCommands(e.sessionId, e.commands);
       if (eventSessionId(e) !== sessionId) return;
       if (!hydratedLocal) pending.push(e);
       else route(e);
@@ -129,6 +166,21 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
+  // slash-menu FR-10: seed the registry on mount / session switch (the keyed
+  // remount makes both the same path). The cache gave an instant value above;
+  // listCommands refreshes it. Errors keep whatever the cache had.
+  useEffect(() => {
+    let mounted = true;
+    void sessionListCommands(sessionId).then((res) => {
+      if (!mounted || !res.ok) return;
+      setSessionCommands(sessionId, res.data);
+      setCommands(res.data);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [sessionId]);
+
   // Scroll-to-bottom while pinned (FR-17/18).
   useLayoutEffect(() => {
     if (pinnedRef.current && scrollRef.current) {
@@ -150,8 +202,44 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 
   const disabled = status === 'done' || status === 'error';
 
-  const send = async () => {
-    const text = input;
+  // ---------- slash-menu popup (FR-5..FR-9/12) ----------
+
+  const token = slashToken(input);
+  const filtered = useMemo(() => filterCommands(commands, token ?? ''), [commands, token]);
+  const popupOpen = popupVisible({ token, matchCount: filtered.length, dismissedToken, disabled });
+
+  // FR-9: dismissal holds only while the token stays the dismissed one.
+  useEffect(() => {
+    setDismissedToken((d) => nextDismissed(d, token));
+  }, [token]);
+
+  // FR-7: first row on open/refilter (token changed). FR-10: on a registry
+  // refresh with an unchanged token, keep the selected name if it survived.
+  const selIdxRef = useRef(0);
+  selIdxRef.current = selIdx;
+  const prevTokenRef = useRef<string | null>(null);
+  const prevFilteredRef = useRef<SlashCommandInfo[]>([]);
+  useEffect(() => {
+    if (prevTokenRef.current !== token) {
+      setSelIdx(0);
+    } else if (prevFilteredRef.current !== filtered) {
+      const name = prevFilteredRef.current[selIdxRef.current]?.name ?? null;
+      setSelIdx(refreshSelection(filtered, name));
+    }
+    prevTokenRef.current = token;
+    prevFilteredRef.current = filtered;
+  }, [token, filtered]);
+
+  const dismissPopup = () => setDismissedToken(token);
+
+  // FR-8/11: a menu run goes through the NORMAL send path with the bare
+  // '/name' — byte-identical to having typed it. No metadata rides along.
+  const runCommand = (name: string) => {
+    void send(completionText(name, 'run'));
+  };
+
+  const send = async (textArg?: string) => {
+    const text = textArg ?? input;
     if (!text.trim() || disabled) return;
     const blockId = crypto.randomUUID();
     dispatch({ t: 'optimisticUser', blockId, text });
@@ -168,6 +256,26 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   };
 
   const onInputKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // slash-menu FR-8/9: while the popup is rendered its keys preempt the
+    // composer defaults (Enter-to-send included); everything else falls through.
+    if (popupOpen) {
+      const action = popupKeyAction(e.key, e.shiftKey);
+      if (action) {
+        e.preventDefault();
+        if (action === 'down' || action === 'up') {
+          setSelIdx((i) => moveSelection(filtered.length, i, action === 'down' ? 1 : -1));
+        } else if (action === 'run') {
+          const sel = filtered[selIdx] ?? filtered[0];
+          if (sel) runCommand(sel.name);
+        } else if (action === 'complete') {
+          const sel = filtered[selIdx] ?? filtered[0];
+          if (sel) setInput(completionText(sel.name, 'complete')); // trailing space ends the token → popup closes
+        } else {
+          dismissPopup();
+        }
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void send();
@@ -179,12 +287,9 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     el.style.height = Math.min(el.scrollHeight, 130) + 'px';
   };
 
-  const placeholder =
-    status === 'done'
-      ? 'session ended — press n for a new one'
-      : status === 'error'
-        ? errorMessage || 'session error'
-        : 'send a follow-up, or run a command…';
+  // session-questions FR-20: the placeholder swaps while a pending question
+  // card exists in this session's transcript and reverts when none is.
+  const placeholder = composerPlaceholder(status, errorMessage, hasPendingQuestionBlock(state.blocks));
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -268,6 +373,10 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 
       {/* input bar */}
       <div style={{ position: 'relative', flexShrink: 0 }}>
+        {/* slash-menu popup — anchored above the input bar, never covering it (FR-5) */}
+        {popupOpen && (
+          <SlashMenu items={filtered} selIdx={selIdx} onHover={setSelIdx} onRun={runCommand} onDismiss={dismissPopup} />
+        )}
         {sendError && (
           <div
             style={{
@@ -350,6 +459,10 @@ function Block({ b, sessionId }: { b: ConversationBlock; sessionId: string }) {
   // interactive-commands: command cards (and notice one-liners) have their own renderer (§8)
   if (b.kind === 'command') {
     return <CommandBlock b={b} sessionId={sessionId} />;
+  }
+  // session-questions: interactive question cards (spec §8)
+  if (b.kind === 'question') {
+    return <QuestionCard b={b} sessionId={sessionId} />;
   }
   if (b.kind === 'user') {
     return (
