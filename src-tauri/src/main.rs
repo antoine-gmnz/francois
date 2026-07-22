@@ -8,6 +8,7 @@
 mod diff;
 mod ipc;
 mod session;
+mod usage;
 mod wsl;
 
 use crate::ipc::{err, ok, IpcResult};
@@ -412,15 +413,64 @@ fn install_panic_log(app: &AppHandle) {
     }));
 }
 
+/// Paint the native caption bar with the app's own palette so the OS chrome reads as
+/// part of the window instead of a grey strip sitting on top of it. The window keeps
+/// its real minimize/maximize/close buttons — only their backdrop is recolored.
+/// Windows 11 (build 22000+) only; older builds ignore the attributes and keep the
+/// plain dark caption from `"theme": "Dark"`.
+#[cfg(windows)]
+fn tint_window_chrome(window: &tauri::WebviewWindow) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+    };
+
+    // COLORREF is 0x00BBGGRR — byte order reversed from CSS hex.
+    const fn colorref(rgb: u32) -> u32 {
+        ((rgb & 0xff) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 0xff)
+    }
+    // The app shell, NOT body's #08090b — the root <div> in App.tsx covers body, so
+    // #0f1015 is the surface the caption actually has to disappear into.
+    const CAPTION: u32 = colorref(0x0f_10_15);
+    const TEXT: u32 = colorref(0xa9_ad_b6); // secondary foreground
+    const BORDER: u32 = CAPTION; // no seam between the caption and the window edge
+
+    let Ok(hwnd) = window.hwnd() else { return };
+    for (attr, color) in [
+        (DWMWA_CAPTION_COLOR, CAPTION),
+        (DWMWA_TEXT_COLOR, TEXT),
+        (DWMWA_BORDER_COLOR, BORDER),
+    ] {
+        // SAFETY: hwnd is live (we hold the window), and the attribute payload is the
+        // COLORREF u32 the DWM docs specify for these three attributes.
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd.0 as _,
+                attr as u32,
+                std::ptr::addr_of!(color).cast(),
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Registry::default())
         .manage(session::Engine::default())
+        // usage-bar §6: the app-scoped usage cache lives in its OWN mutex, never
+        // inside session::Engine — a leaf lock the probe path can take freely.
+        .manage(usage::UsageState::default())
         .setup(|app| {
             install_panic_log(app.handle());
+            #[cfg(windows)]
+            if let Some(w) = app.get_webview_window("main") {
+                tint_window_chrome(&w);
+            }
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
+            // usage-bar FR-11/FR-12: probe once now, then every 5 minutes.
+            usage::start_timers(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -450,6 +500,8 @@ fn main() {
             session::skills_list,
             session::skills_install,
             session::skills_run,
+            usage::app_get_usage,
+            usage::app_refresh_usage,
             diff::diff_get_summary,
             diff::diff_get_file_diff,
             diff::diff_stage_all,
@@ -461,6 +513,7 @@ fn main() {
             if let RunEvent::Exit = event {
                 kill_all_shells(app);
                 session::kill_all(app);
+                usage::kill_probe(app); // usage-bar §7 #9 — no orphan `claude`
             }
         });
 }

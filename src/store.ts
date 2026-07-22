@@ -5,6 +5,7 @@
 
 import { create } from 'zustand';
 import type { SessionMeta, SessionId } from '../contract/common';
+import type { UsageSnapshot } from '../contract/usage-bar';
 
 export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills';
 export type MainTab = 'session' | 'diff' | 'shell';
@@ -65,7 +66,16 @@ interface AppState {
   // mcp-panel attach overlay — lifted to the store so the command palette can open it (FR-23)
   mcpAttachOpen: boolean;
   setMcpAttachOpen: (o: boolean) => void;
+
+  // usage-bar slice (§6): ONE app-scoped snapshot, written by the
+  // francois://app/event subscription (and the mount-time cache seed). Nothing
+  // derived is stored — threshold color and fill width are computed at render.
+  usage: UsageSnapshot;
+  setUsage: (s: UsageSnapshot) => void;
 }
+
+/** Pre-first-probe cache state, mirroring the core's own initial snapshot (FR-4). */
+const EMPTY_USAGE: UsageSnapshot = { status: 'empty', meters: [], fetchedAt: null, error: null };
 
 export const useStore = create<AppState>((set) => ({
   sessions: [],
@@ -137,4 +147,7 @@ export const useStore = create<AppState>((set) => ({
   setNewAgentOpen: (newAgentOpen) => set({ newAgentOpen }),
   mcpAttachOpen: false,
   setMcpAttachOpen: (mcpAttachOpen) => set({ mcpAttachOpen }),
+
+  usage: EMPTY_USAGE,
+  setUsage: (usage) => set({ usage }),
 }));

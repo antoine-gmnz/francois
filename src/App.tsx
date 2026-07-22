@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { homeDir } from '@tauri-apps/api/path';
+import { getName } from '@tauri-apps/api/app';
 import ShellTerminal from './ShellTerminal';
 import Sidebar from './Sidebar';
 import NewSessionModal from './NewSessionModal';
@@ -9,6 +10,7 @@ import DiffView from './DiffView';
 import AgentsPanel from './AgentsPanel';
 import McpPanel from './McpPanel';
 import SkillsPanel from './SkillsPanel';
+import UsageBar from './UsageBar';
 import { initShellEvents, useShellState } from './shellStore';
 import { useStore } from './store';
 import { formatContextTokens, formatElapsed } from '../contract/conversation-view';
@@ -86,13 +88,20 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Keep the native window title in sync with the active session.
+  // Keep the native window title in sync with the active session, "<session> — <app>"
+  // (document-first, so the taskbar and alt-tab show the session, not a constant
+  // prefix). The app name comes from the bundle so the dev channel stays "Francois Dev".
+  const [appName, setAppName] = useState('Francois');
   useEffect(() => {
-    const base = 'francois · session orchestrator';
-    void getCurrentWindow()
-      .setTitle(active ? `${base} — ${active.name}` : base)
+    void getName()
+      .then(setAppName)
       .catch(() => {});
-  }, [active?.name]);
+  }, []);
+  useEffect(() => {
+    void getCurrentWindow()
+      .setTitle(active ? `${active.name} — ${appName}` : appName)
+      .catch(() => {});
+  }, [active?.name, appName]);
 
   // DIFF-tab badge: fileCount for the active session, seeded by getSummary and
   // kept current by diff.changed events (diff-view FR-18).
@@ -212,6 +221,9 @@ export default function App() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#0f1015' }}>
+      {/* usage bar: app-scoped plan limits, always mounted, fixed 28px, directly
+          under the (same-colored) native caption — usage-bar FR-1/FR-2/§8 */}
+      <UsageBar />
       {/* grid: sidebar + main + agents (native OS title bar provides window chrome) */}
       <div
         style={{

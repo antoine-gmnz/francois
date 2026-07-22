@@ -8,6 +8,7 @@ import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './pa
 import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
 import { agentsKill, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from './api';
 import { useStore } from './store';
+import { requestUsageRefresh } from './usage';
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
 
@@ -172,6 +173,18 @@ export function registerBuiltinCommands(): void {
     hint: () => (useStore.getState().showRightPane ? 'hide right · ]' : 'show right · ]'),
     run: () => {
       useStore.getState().toggleRightPane();
+    },
+  });
+
+  // 11 — Refresh usage limits (usage-bar FR-28): the mouse-free route to the same
+  // channel the bar's click uses. Fire-and-forget — the result arrives as an event.
+  registerPaletteCommand({
+    id: 'refresh-usage',
+    glyph: '↻',
+    name: 'Refresh usage limits',
+    hint: () => 'plan meters',
+    run: () => {
+      requestUsageRefresh();
     },
   });
 }
