@@ -1,0 +1,6 @@
+{
+  "pipeline": "thebidouille-agents",
+  "mode": "global",
+  "core_version": "0.1.13",
+  "install": "npx thebidouille-agents install --global (without npm: curl -fsSL https://raw.githubusercontent.com/EnzoTheBidouille/thebidouille-agents/main/install.sh | sh -s -- --global; Windows: install.ps1 -Global from the same repo)"
+}
