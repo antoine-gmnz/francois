@@ -27,6 +27,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 const EVENT_CHANNEL: &str = "francois://session/event";
 const QUEUE_CAP: usize = 20;
 const DEFAULT_MODEL: &str = "sonnet";
+/// interactive-commands FR-10: a /usage//cost probe is killed after this long.
+const PROBE_TIMEOUT_SECS: u64 = 30;
 
 // ---------- model catalog (§5.1) ----------
 //
@@ -36,7 +38,11 @@ const DEFAULT_MODEL: &str = "sonnet";
 // `claude-opus-4` are rejected by the CLI.)
 
 fn catalog() -> Vec<ModelInfo> {
-    vec![model("sonnet", "Sonnet"), model("opus", "Opus"), model("haiku", "Haiku")]
+    vec![
+        model("sonnet", "Sonnet"),
+        model("opus", "Opus"),
+        model("haiku", "Haiku"),
+    ]
 }
 
 fn context_limit(model_id: &str) -> u64 {
@@ -49,14 +55,24 @@ fn context_limit(model_id: &str) -> u64 {
 /// current Opus context window (e.g. 1M) rather than the 200K default.
 fn resolve_context_tokens(model_id: &str) -> Option<u64> {
     let cache = model_cache().lock().unwrap();
-    if let Some(c) = cache.iter().find(|m| m.id == model_id).and_then(|m| m.context_tokens) {
+    if let Some(c) = cache
+        .iter()
+        .find(|m| m.id == model_id)
+        .and_then(|m| m.context_tokens)
+    {
         return Some(c);
     }
     let key = model_id.to_lowercase();
-    let fam = ["fable", "opus", "sonnet", "haiku"].into_iter().find(|f| key.contains(f))?;
+    let fam = ["fable", "opus", "sonnet", "haiku"]
+        .into_iter()
+        .find(|f| key.contains(f))?;
     // The CLI alias points at the family flagship — take the largest context window in
     // the family rather than relying on cache ordering / "newest".
-    cache.iter().filter(|m| m.id.to_lowercase().contains(fam)).filter_map(|m| m.context_tokens).max()
+    cache
+        .iter()
+        .filter(|m| m.id.to_lowercase().contains(fam))
+        .filter_map(|m| m.context_tokens)
+        .max()
 }
 
 fn fmt_tokens(n: u64) -> String {
@@ -107,7 +123,10 @@ fn read_oauth_token() -> Option<String> {
     let path = dirs::home_dir()?.join(".claude").join(".credentials.json");
     let bytes = std::fs::read(path).ok()?;
     let v: Value = serde_json::from_slice(&bytes).ok()?;
-    v.get("claudeAiOauth")?.get("accessToken")?.as_str().map(String::from)
+    v.get("claudeAiOauth")?
+        .get("accessToken")?
+        .as_str()
+        .map(String::from)
 }
 
 fn fetch_live_models() -> Option<Vec<ModelInfo>> {
@@ -135,12 +154,19 @@ fn fetch_live_models() -> Option<Vec<ModelInfo>> {
                 .and_then(|d| d.as_str())
                 .map(|s| s.strip_prefix("Claude ").unwrap_or(s).to_string())
                 .unwrap_or_else(|| id.clone());
-            let created = m.get("created_at").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            let created = m
+                .get("created_at")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
             let ctx = m.get("max_input_tokens").and_then(|v| v.as_u64());
             let out = m.get("max_tokens").and_then(|v| v.as_u64());
             let caps = m.get("capabilities");
             let cap = |key: &str| {
-                caps.and_then(|c| c.get(key)).and_then(|c| c.get("supported")).and_then(|b| b.as_bool()).unwrap_or(false)
+                caps.and_then(|c| c.get(key))
+                    .and_then(|c| c.get("supported"))
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false)
             };
             let mut parts: Vec<String> = Vec::new();
             if let Some(c) = ctx {
@@ -155,19 +181,42 @@ fn fetch_live_models() -> Option<Vec<ModelInfo>> {
             if cap("thinking") {
                 parts.push("thinking".into());
             }
-            let brief = if parts.is_empty() { None } else { Some(parts.join(" \u{b7} ")) };
+            let brief = if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(" \u{b7} "))
+            };
             let efforts: Vec<String> = caps
                 .and_then(|c| c.get("effort"))
-                .filter(|e| e.get("supported").and_then(|b| b.as_bool()).unwrap_or(false))
+                .filter(|e| {
+                    e.get("supported")
+                        .and_then(|b| b.as_bool())
+                        .unwrap_or(false)
+                })
                 .map(|e| {
                     ["low", "medium", "high", "xhigh", "max"]
                         .iter()
-                        .filter(|lvl| e.get(**lvl).and_then(|l| l.get("supported")).and_then(|b| b.as_bool()).unwrap_or(false))
+                        .filter(|lvl| {
+                            e.get(**lvl)
+                                .and_then(|l| l.get("supported"))
+                                .and_then(|b| b.as_bool())
+                                .unwrap_or(false)
+                        })
                         .map(|lvl| lvl.to_string())
                         .collect()
                 })
                 .unwrap_or_default();
-            Some((tier_rank(&id), created, ModelInfo { id, label, brief, context_tokens: ctx, efforts }))
+            Some((
+                tier_rank(&id),
+                created,
+                ModelInfo {
+                    id,
+                    label,
+                    brief,
+                    context_tokens: ctx,
+                    efforts,
+                },
+            ))
         })
         .collect();
 
@@ -221,9 +270,14 @@ fn label_for(id: &str) -> String {
 fn humanize(id: &str) -> String {
     let s = id.strip_prefix("claude-").unwrap_or(id);
     let parts: Vec<&str> = s.split('-').collect();
-    let Some(tier) = parts.first() else { return id.to_string() };
+    let Some(tier) = parts.first() else {
+        return id.to_string();
+    };
     let mut chars = tier.chars();
-    let tier_cap = chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default();
+    let tier_cap = chars
+        .next()
+        .map(|c| c.to_uppercase().collect::<String>() + chars.as_str())
+        .unwrap_or_default();
     let mut ver = Vec::new();
     for p in &parts[1..] {
         if p.len() >= 8 && p.chars().all(|c| c.is_ascii_digit()) {
@@ -258,7 +312,13 @@ pub struct ModelInfo {
 }
 
 fn model(id: &str, label: &str) -> ModelInfo {
-    ModelInfo { id: id.into(), label: label.into(), brief: None, context_tokens: None, efforts: Vec::new() }
+    ModelInfo {
+        id: id.into(),
+        label: label.into(),
+        brief: None,
+        context_tokens: None,
+        efforts: Vec::new(),
+    }
 }
 
 fn valid_effort(e: &str) -> bool {
@@ -283,7 +343,9 @@ fn valid_runtime(r: &str) -> bool {
 /// invocation passes it explicitly.
 fn permission_args(mode: &str) -> Vec<String> {
     match mode {
-        "plan" | "acceptEdits" | "bypassPermissions" => vec!["--permission-mode".into(), mode.into()],
+        "plan" | "acceptEdits" | "bypassPermissions" => {
+            vec!["--permission-mode".into(), mode.into()]
+        }
         _ => Vec::new(),
     }
 }
@@ -296,8 +358,15 @@ fn permission_args(mode: &str) -> Vec<String> {
 /// native: plain `claude …`; the caller sets current_dir.
 fn claude_invocation(runtime: &str, cwd: &str, claude_args: Vec<String>) -> (String, Vec<String>) {
     if runtime == "wsl" {
-        let cd = crate::wsl::wsl_unc_to_linux(cwd).map(|(_, p)| p).unwrap_or_else(|| cwd.to_string());
-        let mut argv = vec!["--cd".to_string(), cd, "--".to_string(), "claude".to_string()];
+        let cd = crate::wsl::wsl_unc_to_linux(cwd)
+            .map(|(_, p)| p)
+            .unwrap_or_else(|| cwd.to_string());
+        let mut argv = vec![
+            "--cd".to_string(),
+            cd,
+            "--".to_string(),
+            "claude".to_string(),
+        ];
         argv.extend(claude_args);
         ("wsl.exe".into(), argv)
     } else {
@@ -367,6 +436,67 @@ struct McpServerInfo {
     scope: Option<String>, // project | local | user — set by mcp_list; None on runtime updates
 }
 
+// ---------- interactive-commands card shapes (contract/common.ts, reproduced) ----------
+//
+// The CommandCard union + UsageMeter/HelpEntry vocabulary are canonical in
+// contract/common.ts; the intercept set / help entries / grammar are canonical in
+// contract/interactive-commands.ts. Mirrored here by hand (specs/interactive-commands.md §5).
+
+/// One plan-limit meter parsed from the CLI's /usage output (contract UsageMeter).
+#[derive(Serialize, Clone, PartialEq, Debug)]
+struct UsageMeter {
+    label: String,
+    #[serde(rename = "percentUsed")]
+    percent_used: u64,
+    /// verbatim reset text, e.g. 'Jul 22, 5:29pm (Europe/Paris)'
+    #[serde(rename = "resetsAt")]
+    resets_at: String,
+}
+
+/// contract HelpEntry — one /help card row.
+#[derive(Serialize, Clone)]
+struct HelpEntry {
+    command: &'static str,
+    description: &'static str,
+}
+
+/// contract CommandCard — the tagged payload of command.output.
+#[derive(Serialize, Clone)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum CommandCard {
+    /// /usage & /cost, parsed (FR-9). meters non-empty; tail preformatted.
+    Usage {
+        command: String,
+        meters: Vec<UsageMeter>,
+        tail: String,
+    },
+    /// /context (FR-19). The three parse fields serialize as JSON null when the
+    /// tokens line didn't match (contract: `number | null` — never omitted).
+    Context {
+        #[serde(rename = "percentUsed")]
+        percent_used: Option<u64>,
+        #[serde(rename = "usedLabel")]
+        used_label: Option<String>,
+        #[serde(rename = "limitLabel")]
+        limit_label: Option<String>,
+        body: String,
+    },
+    /// /model bare (FR-12). currentId is a snapshot; the live marker derives from SessionMeta.
+    Model {
+        models: Vec<ModelInfo>,
+        #[serde(rename = "currentId")]
+        current_id: String,
+    },
+    /// /status (FR-14).
+    Status { meta: SessionMeta },
+    /// /help (FR-15).
+    Help { entries: Vec<HelpEntry> },
+    /// Dim one-liner: unknown/unavailable command, probe failure, model switch ack.
+    Notice { text: String },
+    /// Generic CLI-local output that fits no richer card.
+    Text { command: String, text: String },
+}
+
 // ---------- SessionEvent (contract/common.ts, reproduced) ----------
 
 #[derive(Serialize, Clone)]
@@ -425,6 +555,22 @@ enum SessionEvent {
         block_id: String,
         meta: String,
     },
+    #[serde(rename = "command.started")]
+    CommandStarted {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        command: String,
+    },
+    #[serde(rename = "command.output")]
+    CommandOutput {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        card: Value,
+    },
     #[serde(rename = "agent.update")]
     AgentUpdate { agent: AgentInfo },
     #[serde(rename = "mcp.update")]
@@ -469,6 +615,7 @@ enum BlockKind {
     Assistant,
     Tool,
     Subagent,
+    Command, // interactive-commands: a slash-command response card
 }
 
 #[derive(Clone)]
@@ -476,15 +623,34 @@ struct BufBlock {
     block_id: String,
     kind: BlockKind,
     text: String,
+    // Field reuse per kind (precedent: the subagent name lives in `summary`):
+    // `tool` holds the tool name for Tool blocks and the command token for Command blocks.
     tool: String,
     summary: String,
     meta: Option<String>,
+    /// interactive-commands: serialized CommandCard (Command kind; None while pending).
+    card: Option<Value>,
     streaming: bool,
 }
 
 struct TurnHandle {
     child: Arc<Mutex<Child>>,
     interrupted: Arc<AtomicBool>,
+}
+
+/// The single in-flight /usage-/cost side-spawn of a session (interactive-commands
+/// FR-11). The child slot is filled once spawned; killed on session remove & app exit.
+struct ProbeHandle {
+    block_id: String,
+    child: Arc<Mutex<Option<Child>>>,
+}
+
+impl ProbeHandle {
+    fn kill(&self) {
+        if let Some(c) = self.child.lock().unwrap().as_mut() {
+            let _ = c.kill();
+        }
+    }
 }
 
 struct Session {
@@ -498,14 +664,15 @@ struct Session {
     started_at: u64,
     last_activity_at: u64,
     error_message: Option<String>,
-    effort: Option<String>, // --effort level (None = model default)
+    effort: Option<String>,            // --effort level (None = model default)
     permission_mode: String, // contract PermissionMode; "default" = inherit ~/.claude settings
-    runtime: String, // contract ClaudeRuntime; "native" | "wsl"
+    runtime: String,         // contract ClaudeRuntime; "native" | "wsl"
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
+    pending_probe: Option<ProbeHandle>, // interactive-commands FR-11: single in-flight side-spawn
     agents: HashMap<String, AgentInfo>,
-    agent_order: Vec<String>, // first-seen order for agents_list (FR-7)
+    agent_order: Vec<String>,    // first-seen order for agents_list (FR-7)
     block_buffer: Vec<BufBlock>, // §6: read by conversation-view's getTranscript
     mcp: HashMap<String, McpServerInfo>,
 }
@@ -537,6 +704,7 @@ impl Session {
             tool: String::new(),
             summary: String::new(),
             meta: None,
+            card: None,
             streaming: false,
         });
     }
@@ -549,6 +717,7 @@ impl Session {
             tool: String::new(),
             summary: String::new(),
             meta: None,
+            card: None,
             streaming: false,
         });
     }
@@ -556,17 +725,78 @@ impl Session {
     fn buf_tool(&mut self, block_id: &str, tool: String, summary: String, is_task: bool) {
         self.block_buffer.push(BufBlock {
             block_id: block_id.into(),
-            kind: if is_task { BlockKind::Subagent } else { BlockKind::Tool },
+            kind: if is_task {
+                BlockKind::Subagent
+            } else {
+                BlockKind::Tool
+            },
             text: String::new(),
             tool,
             summary,
             meta: None,
+            card: None,
             streaming: true,
         });
     }
 
+    /// interactive-commands FR-6: append a pending command block (loading card).
+    fn buf_command_pending(&mut self, block_id: &str, command: &str) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::Command,
+            text: String::new(),
+            tool: command.into(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: true,
+        });
+    }
+
+    /// interactive-commands FR-9/20: finalize the pending command block in place, or
+    /// append a finalized one when the flow had no command.started (instant cards).
+    fn buf_command_output(&mut self, block_id: &str, command: &str, card: Value) {
+        if let Some(b) = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id)
+        {
+            b.card = Some(card);
+            b.streaming = false;
+        } else {
+            self.block_buffer.push(BufBlock {
+                block_id: block_id.into(),
+                kind: BlockKind::Command,
+                text: String::new(),
+                tool: command.into(),
+                summary: String::new(),
+                meta: None,
+                card: Some(card),
+                streaming: false,
+            });
+        }
+    }
+
+    /// interactive-commands FR-11: reserve the single in-flight probe slot.
+    /// Returns the (still empty) child slot, or None if a probe is already pending.
+    fn reserve_probe(&mut self, block_id: &str) -> Option<Arc<Mutex<Option<Child>>>> {
+        if self.pending_probe.is_some() {
+            return None;
+        }
+        let child = Arc::new(Mutex::new(None));
+        self.pending_probe = Some(ProbeHandle {
+            block_id: block_id.into(),
+            child: child.clone(),
+        });
+        Some(child)
+    }
+
     fn buf_tool_done(&mut self, block_id: &str, meta: String) {
-        if let Some(b) = self.block_buffer.iter_mut().find(|b| b.block_id == block_id) {
+        if let Some(b) = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id)
+        {
             b.meta = Some(meta);
             b.streaming = false;
         }
@@ -598,7 +828,11 @@ fn classify_block(b: &BufBlock) -> Value {
             "text": b.text, "queued": false,
         }),
         BlockKind::Assistant => {
-            let (gc, bc) = if b.streaming { ("#c8a15a", "#dfe2e8") } else { ("#868a93", "#c4c7ce") };
+            let (gc, bc) = if b.streaming {
+                ("#c8a15a", "#dfe2e8")
+            } else {
+                ("#868a93", "#c4c7ce")
+            };
             serde_json::json!({
                 "kind": "assistant", "blockId": b.block_id, "isStreaming": b.streaming,
                 "glyph": "\u{25CF}", "glyphColor": gc, "bodyColor": bc, "text": b.text,
@@ -627,6 +861,17 @@ fn classify_block(b: &BufBlock) -> Value {
             }
             o
         }
+        BlockKind::Command => {
+            // CommandConversationBlock (contract/interactive-commands.ts): `card` absent while pending.
+            let mut o = serde_json::json!({
+                "kind": "command", "blockId": b.block_id, "isStreaming": b.streaming,
+                "command": b.tool,
+            });
+            if let Some(c) = &b.card {
+                o["card"] = c.clone();
+            }
+            o
+        }
     }
 }
 
@@ -638,13 +883,21 @@ pub struct Engine {
 impl Engine {
     /// The working directory of a session (used by the `diff` domain, FR-1). None if unknown.
     pub fn cwd_of(&self, session_id: &str) -> Option<String> {
-        self.sessions.lock().unwrap().get(session_id).map(|s| s.cwd.clone())
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(|s| s.cwd.clone())
     }
 
     /// The claude runtime ("native" | "wsl") of a session — used by the `shell`
     /// domain's per-session spawn matrix (wsl-filesystem FR-10/FR-11). None if unknown.
     pub fn runtime_of(&self, session_id: &str) -> Option<String> {
-        self.sessions.lock().unwrap().get(session_id).map(|s| s.runtime.clone())
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(|s| s.runtime.clone())
     }
 }
 
@@ -657,6 +910,9 @@ pub fn kill_all(app: &AppHandle) {
                 turn.interrupted.store(true, Ordering::SeqCst);
                 let _ = turn.child.lock().unwrap().kill();
             }
+            if let Some(p) = &s.pending_probe {
+                p.kill(); // interactive-commands: probes die with the app
+            }
         }
     }
 }
@@ -664,7 +920,10 @@ pub fn kill_all(app: &AppHandle) {
 // ---------- persistence (FR-42/43) ----------
 
 fn sessions_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("sessions.json"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("sessions.json"))
 }
 
 // ---------- transcript persistence (durable-sessions) ----------
@@ -679,7 +938,10 @@ fn transcript_path(app: &AppHandle, session_id: &str) -> Option<std::path::PathB
     if !valid_session_id(session_id) {
         return None;
     }
-    app.path().app_data_dir().ok().map(|d| d.join("transcripts").join(format!("{session_id}.jsonl")))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("transcripts").join(format!("{session_id}.jsonl")))
 }
 
 /// Serialize a finalized block to the on-disk PersistedBlock shape (durable-sessions §5).
@@ -689,6 +951,12 @@ fn persisted_block_json(b: &BufBlock) -> Value {
         BlockKind::Assistant => "assistant",
         BlockKind::Tool => "tool",
         BlockKind::Subagent => "subagent",
+        BlockKind::Command => {
+            // interactive-commands FR-24: finalized command blocks persist the card as JSON.
+            return serde_json::json!({
+                "blockId": b.block_id, "kind": "command", "command": b.tool, "card": b.card,
+            });
+        }
     };
     serde_json::json!({
         "blockId": b.block_id, "kind": kind, "text": b.text,
@@ -700,13 +968,19 @@ fn persisted_block_json(b: &BufBlock) -> Value {
 /// Best-effort: a write failure is ignored so it never breaks the turn (§7).
 fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
     use std::io::Write as _;
-    let Some(path) = transcript_path(app, session_id) else { return };
+    let Some(path) = transcript_path(app, session_id) else {
+        return;
+    };
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let mut line = serde_json::to_string(&persisted_block_json(block)).unwrap_or_default();
     line.push('\n');
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = f.write_all(line.as_bytes());
     }
 }
@@ -720,23 +994,59 @@ fn parse_persisted_block(line: &str) -> Option<BufBlock> {
         "assistant" => BlockKind::Assistant,
         "tool" => BlockKind::Tool,
         "subagent" => BlockKind::Subagent,
+        "command" => {
+            // A persisted command block always carries its card (FR-24 — pending blocks
+            // are never persisted); treat a card-less line as malformed and skip it.
+            let card = v.get("card").filter(|c| !c.is_null())?.clone();
+            return Some(BufBlock {
+                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+                kind: BlockKind::Command,
+                text: String::new(),
+                tool: v
+                    .get("command")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                summary: String::new(),
+                meta: None,
+                card: Some(card),
+                streaming: false,
+            });
+        }
         _ => return None,
     };
     Some(BufBlock {
         block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
         kind,
-        text: v.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-        tool: v.get("tool").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-        summary: v.get("summary").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+        text: v
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        tool: v
+            .get("tool")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        summary: v
+            .get("summary")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
         meta: v.get("meta").and_then(|m| m.as_str()).map(String::from),
+        card: None,
         streaming: false,
     })
 }
 
 /// Read a session's persisted transcript back into a block buffer (FR-5).
 fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
-    let Some(path) = transcript_path(app, session_id) else { return Vec::new() };
-    let Ok(content) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let Some(path) = transcript_path(app, session_id) else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
     content.lines().filter_map(parse_persisted_block).collect()
 }
 
@@ -795,7 +1105,10 @@ fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
     let id = rec.get("id")?.as_str()?.to_string();
     let name = rec.get("name")?.as_str()?.to_string();
     let cwd = rec.get("cwd")?.as_str()?.to_string();
-    let raw = rec.get("modelId").and_then(|v| v.as_str()).unwrap_or(DEFAULT_MODEL);
+    let raw = rec
+        .get("modelId")
+        .and_then(|v| v.as_str())
+        .unwrap_or(DEFAULT_MODEL);
     // Heal the two made-up ids from an earlier build; keep real ids verbatim.
     let model_id = match raw {
         "" => DEFAULT_MODEL,
@@ -809,7 +1122,11 @@ fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
         name,
         cwd,
         model_id,
-        effort: rec.get("effort").and_then(|v| v.as_str()).filter(|e| valid_effort(e)).map(String::from),
+        effort: rec
+            .get("effort")
+            .and_then(|v| v.as_str())
+            .filter(|e| valid_effort(e))
+            .map(String::from),
         permission_mode: rec
             .get("permissionMode")
             .and_then(|v| v.as_str())
@@ -823,22 +1140,39 @@ fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
             .filter(|r| valid_runtime(r) && (cfg!(windows) || *r != "wsl"))
             .unwrap_or("native")
             .to_string(),
-        claude_session_id: rec.get("claudeSessionId").and_then(|v| v.as_str()).map(String::from),
-        last_activity_at: rec.get("lastActivityAt").and_then(|v| v.as_u64()).unwrap_or(now),
-        context_used_tokens: rec.get("contextUsedTokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        claude_session_id: rec
+            .get("claudeSessionId")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        last_activity_at: rec
+            .get("lastActivityAt")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(now),
+        context_used_tokens: rec
+            .get("contextUsedTokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
     })
 }
 
 pub fn load_persisted(app: &AppHandle) {
-    let Some(path) = sessions_json_path(app) else { return };
-    let Ok(bytes) = std::fs::read(&path) else { return };
-    let Ok(list) = serde_json::from_slice::<Vec<Value>>(&bytes) else { return };
+    let Some(path) = sessions_json_path(app) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let Ok(list) = serde_json::from_slice::<Vec<Value>>(&bytes) else {
+        return;
+    };
     let engine = app.state::<Engine>();
     let mut watched: Vec<(String, String)> = Vec::new();
     let mut map = engine.sessions.lock().unwrap();
     for rec in list {
         let now = now_ms();
-        let Some(m) = parse_session_record(&rec, now) else { continue };
+        let Some(m) = parse_session_record(&rec, now) else {
+            continue;
+        };
         let block_buffer = read_transcript(app, &m.id); // FR-5
         let limit = context_limit(&m.model_id);
         watched.push((m.id.clone(), m.cwd.clone()));
@@ -861,6 +1195,7 @@ pub fn load_persisted(app: &AppHandle) {
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
+                pending_probe: None,
                 agents: HashMap::new(),
                 agent_order: Vec::new(),
                 block_buffer,
@@ -878,7 +1213,10 @@ pub fn load_persisted(app: &AppHandle) {
 // ---------- helpers ----------
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn uuid() -> String {
@@ -915,7 +1253,11 @@ pub fn agents_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<V
     let map = engine.sessions.lock().unwrap();
     match map.get(&session_id) {
         None => err("SESSION_NOT_FOUND", "no such session"),
-        Some(s) => ok(s.agent_order.iter().filter_map(|id| s.agents.get(id).cloned()).collect()),
+        Some(s) => ok(s
+            .agent_order
+            .iter()
+            .filter_map(|id| s.agents.get(id).cloned())
+            .collect()),
     }
 }
 
@@ -926,7 +1268,12 @@ pub struct DispatchOutput {
 }
 
 #[tauri::command(async)]
-pub fn agents_dispatch(app: AppHandle, engine: State<'_, Engine>, session_id: String, task: String) -> IpcResult<DispatchOutput> {
+pub fn agents_dispatch(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    task: String,
+) -> IpcResult<DispatchOutput> {
     let task = task.trim().to_string();
     if task.is_empty() {
         return err("INVALID_INPUT", "task is empty");
@@ -958,7 +1305,11 @@ pub fn agents_dispatch(app: AppHandle, engine: State<'_, Engine>, session_id: St
 }
 
 #[tauri::command(async)]
-pub fn agents_kill(app: AppHandle, engine: State<'_, Engine>, agent_id: String) -> IpcResult<Option<()>> {
+pub fn agents_kill(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    agent_id: String,
+) -> IpcResult<Option<()>> {
     let agent = {
         let mut map = engine.sessions.lock().unwrap();
         let mut found = None;
@@ -1055,11 +1406,17 @@ fn path_eq(a: &str, b: &str) -> bool {
 /// Look up the local-scope project node in `~/.claude.json` for a cwd, matching
 /// on normalized path (CLI stores keys with forward slashes on Windows).
 fn project_node<'a>(cj: &'a Value, cwd: &str) -> Option<&'a Value> {
-    cj.get("projects")?.as_object()?.iter().find_map(|(k, v)| path_eq(k, cwd).then_some(v))
+    cj.get("projects")?
+        .as_object()?
+        .iter()
+        .find_map(|(k, v)| path_eq(k, cwd).then_some(v))
 }
 
 fn write_mcp_json(cwd: &str, v: &Value) -> std::io::Result<()> {
-    std::fs::write(mcp_json_path(cwd), serde_json::to_vec_pretty(v).unwrap_or_default())
+    std::fs::write(
+        mcp_json_path(cwd),
+        serde_json::to_vec_pretty(v).unwrap_or_default(),
+    )
 }
 
 fn transport_of(cfg: &Value) -> &'static str {
@@ -1076,7 +1433,11 @@ fn command_of(cfg: &Value) -> String {
     let args: Vec<String> = cfg
         .get("args")
         .and_then(|a| a.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     if args.is_empty() {
         cmd.to_string()
@@ -1086,7 +1447,13 @@ fn command_of(cfg: &Value) -> String {
 }
 
 fn connecting_info(name: &str) -> McpServerInfo {
-    McpServerInfo { name: name.to_string(), status: "connecting".into(), tool_count: None, error_message: None, scope: None }
+    McpServerInfo {
+        name: name.to_string(),
+        status: "connecting".into(),
+        tool_count: None,
+        error_message: None,
+        scope: None,
+    }
 }
 
 /// v1 curated registry (static; no network). Mirrors McpRegistryEntry.
@@ -1140,10 +1507,16 @@ fn merged_mcp_scopes(cwd: &str) -> Vec<(String, String)> {
 /// Find a server's raw config + scope across all scopes (local > project > user).
 fn find_mcp_config(cwd: &str, name: &str) -> Option<(Value, String)> {
     let cj = read_claude_json();
-    if let Some(v) = project_node(&cj, cwd).and_then(|n| n.get("mcpServers")).and_then(|m| m.get(name)) {
+    if let Some(v) = project_node(&cj, cwd)
+        .and_then(|n| n.get("mcpServers"))
+        .and_then(|m| m.get(name))
+    {
         return Some((v.clone(), "local".into()));
     }
-    if let Some(v) = read_mcp_json(cwd).get("mcpServers").and_then(|m| m.get(name)) {
+    if let Some(v) = read_mcp_json(cwd)
+        .get("mcpServers")
+        .and_then(|m| m.get(name))
+    {
         return Some((v.clone(), "project".into()));
     }
     if let Some(v) = cj.get("mcpServers").and_then(|m| m.get(name)) {
@@ -1165,7 +1538,10 @@ pub fn mcp_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<
     let mut seen = std::collections::HashSet::new();
     for (name, scope) in merged_mcp_scopes(&cwd) {
         seen.insert(name.clone());
-        let mut info = runtime.get(&name).cloned().unwrap_or_else(|| connecting_info(&name));
+        let mut info = runtime
+            .get(&name)
+            .cloned()
+            .unwrap_or_else(|| connecting_info(&name));
         info.scope = Some(scope);
         out.push(serde_json::to_value(info).unwrap());
     }
@@ -1188,7 +1564,10 @@ pub fn mcp_detail(engine: State<'_, Engine>, session_id: String, name: String) -
         (s.cwd.clone(), s.mcp.get(&name).cloned())
     };
     let Some((entry, scope)) = find_mcp_config(&cwd, &name) else {
-        return err("MCP_ERROR", format!("'{name}' is not configured for this session"));
+        return err(
+            "MCP_ERROR",
+            format!("'{name}' is not configured for this session"),
+        );
     };
     let transport = transport_of(&entry);
     let mut info = runtime.unwrap_or_else(|| connecting_info(&name));
@@ -1198,13 +1577,24 @@ pub fn mcp_detail(engine: State<'_, Engine>, session_id: String, name: String) -
     if transport == "stdio" {
         o["command"] = Value::String(command_of(&entry));
     } else {
-        o["url"] = Value::String(entry.get("url").and_then(|u| u.as_str()).unwrap_or("").into());
+        o["url"] = Value::String(
+            entry
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .into(),
+        );
     }
     ok(o)
 }
 
 #[tauri::command(async)]
-pub fn mcp_reconnect(app: AppHandle, engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Option<()>> {
+pub fn mcp_reconnect(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    name: String,
+) -> IpcResult<Option<()>> {
     let info = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(&session_id) else {
@@ -1214,12 +1604,22 @@ pub fn mcp_reconnect(app: AppHandle, engine: State<'_, Engine>, session_id: Stri
         s.mcp.insert(name.clone(), info.clone());
         info
     };
-    emit(&app, SessionEvent::McpUpdate { session_id, server: info });
+    emit(
+        &app,
+        SessionEvent::McpUpdate {
+            session_id,
+            server: info,
+        },
+    );
     ok(None)
 }
 
 #[tauri::command(async)]
-pub fn mcp_detach(engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Option<()>> {
+pub fn mcp_detach(
+    engine: State<'_, Engine>,
+    session_id: String,
+    name: String,
+) -> IpcResult<Option<()>> {
     let cwd = {
         let map = engine.sessions.lock().unwrap();
         let Some(s) = map.get(&session_id) else {
@@ -1254,12 +1654,25 @@ pub fn mcp_detach(engine: State<'_, Engine>, session_id: String, name: String) -
 }
 
 #[tauri::command(async)]
-pub fn mcp_attach(app: AppHandle, engine: State<'_, Engine>, session_id: String, entry: Value) -> IpcResult<Option<()>> {
-    let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("").trim().to_string();
+pub fn mcp_attach(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    entry: Value,
+) -> IpcResult<Option<()>> {
+    let name = entry
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if name.is_empty() {
         return err("INVALID_INPUT", "server name is required");
     }
-    let transport = entry.get("transport").and_then(|t| t.as_str()).unwrap_or("stdio");
+    let transport = entry
+        .get("transport")
+        .and_then(|t| t.as_str())
+        .unwrap_or("stdio");
     let cwd = {
         let map = engine.sessions.lock().unwrap();
         let Some(s) = map.get(&session_id) else {
@@ -1279,15 +1692,25 @@ pub fn mcp_attach(app: AppHandle, engine: State<'_, Engine>, session_id: String,
         .or_insert_with(|| serde_json::json!({}))
         .as_object_mut();
     let Some(servers) = servers else {
-        return err("MCP_ERROR", "malformed .mcp.json (mcpServers is not an object)");
+        return err(
+            "MCP_ERROR",
+            "malformed .mcp.json (mcpServers is not an object)",
+        );
     };
     if servers.contains_key(&name) {
-        return err("INVALID_INPUT", format!("'{name}' already exists in this project's .mcp.json"));
+        return err(
+            "INVALID_INPUT",
+            format!("'{name}' already exists in this project's .mcp.json"),
+        );
     }
 
     let secret = entry.get("secretParams").and_then(|s| s.as_object());
     let server = if transport == "http" {
-        let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("").trim();
+        let url = entry
+            .get("url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .trim();
         if url.is_empty() {
             return err("INVALID_INPUT", "url is required for an http server");
         }
@@ -1299,7 +1722,11 @@ pub fn mcp_attach(app: AppHandle, engine: State<'_, Engine>, session_id: String,
         }
         o
     } else {
-        let cmdline = entry.get("command").and_then(|c| c.as_str()).unwrap_or("").trim();
+        let cmdline = entry
+            .get("command")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .trim();
         if cmdline.is_empty() {
             return err("INVALID_INPUT", "command is required for a stdio server");
         }
@@ -1327,7 +1754,13 @@ pub fn mcp_attach(app: AppHandle, engine: State<'_, Engine>, session_id: String,
             s.mcp.insert(name.clone(), info.clone());
         }
     }
-    emit(&app, SessionEvent::McpUpdate { session_id, server: info });
+    emit(
+        &app,
+        SessionEvent::McpUpdate {
+            session_id,
+            server: info,
+        },
+    );
     ok(None)
 }
 
@@ -1366,11 +1799,17 @@ fn marketplaces_root() -> Option<std::path::PathBuf> {
 /// Enabled plugin ids ("<plugin>@<marketplace>") from ~/.claude/settings.json.
 fn enabled_plugin_ids() -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
-    let Some(home) = dirs::home_dir() else { return set };
+    let Some(home) = dirs::home_dir() else {
+        return set;
+    };
     let cfg = std::fs::read(home.join(".claude").join("settings.json"))
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-    if let Some(obj) = cfg.as_ref().and_then(|c| c.get("enabledPlugins")).and_then(|e| e.as_object()) {
+    if let Some(obj) = cfg
+        .as_ref()
+        .and_then(|c| c.get("enabledPlugins"))
+        .and_then(|e| e.as_object())
+    {
         for (k, v) in obj {
             if v.as_bool().unwrap_or(false) {
                 set.insert(k.clone());
@@ -1384,15 +1823,23 @@ fn enabled_plugin_ids() -> std::collections::HashSet<String> {
 /// both plugins/ and external_plugins/ under each installed marketplace.
 fn all_plugins() -> Vec<(String, std::path::PathBuf)> {
     let mut out = Vec::new();
-    let Some(root) = marketplaces_root() else { return out };
-    let Ok(mkts) = std::fs::read_dir(&root) else { return out };
+    let Some(root) = marketplaces_root() else {
+        return out;
+    };
+    let Ok(mkts) = std::fs::read_dir(&root) else {
+        return out;
+    };
     for mkt in mkts.flatten() {
         if !mkt.path().is_dir() {
             continue;
         }
-        let Some(mkt_name) = mkt.file_name().to_str().map(String::from) else { continue };
+        let Some(mkt_name) = mkt.file_name().to_str().map(String::from) else {
+            continue;
+        };
         for sub in ["plugins", "external_plugins"] {
-            let Ok(plugins) = std::fs::read_dir(mkt.path().join(sub)) else { continue };
+            let Ok(plugins) = std::fs::read_dir(mkt.path().join(sub)) else {
+                continue;
+            };
             for p in plugins.flatten() {
                 if !p.path().is_dir() {
                     continue;
@@ -1412,7 +1859,9 @@ fn all_plugins() -> Vec<(String, std::path::PathBuf)> {
 /// Scan a dir of `*.md` slash-command files → (name = file stem, description).
 fn scan_commands(dir: &std::path::Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
     for e in entries.flatten() {
         let path = e.path();
         if !path.is_file() || path.extension().and_then(|x| x.to_str()) != Some("md") {
@@ -1425,15 +1874,30 @@ fn scan_commands(dir: &std::path::Path) -> Vec<(String, String)> {
     out
 }
 
-fn skill_entry(name: String, description: String, installed: bool, scope: &str, kind: &str, plugin_id: Option<String>) -> SkillInfo {
-    SkillInfo { name, description, installed, scope: Some(scope.into()), kind: Some(kind.into()), plugin_id }
+fn skill_entry(
+    name: String,
+    description: String,
+    installed: bool,
+    scope: &str,
+    kind: &str,
+    plugin_id: Option<String>,
+) -> SkillInfo {
+    SkillInfo {
+        name,
+        description,
+        installed,
+        scope: Some(scope.into()),
+        kind: Some(kind.into()),
+        plugin_id,
+    }
 }
 
 /// Full skills+commands list for a cwd (FR-3/4): installed (project ∪ user ∪ enabled
 /// plugins, alpha) then available (non-enabled plugin skills, alpha). Project wins over
 /// user wins over plugin on a name collision; skill wins over command within a scope.
 fn discover_skills(cwd: &str) -> Vec<SkillInfo> {
-    let mut installed: std::collections::BTreeMap<String, SkillInfo> = std::collections::BTreeMap::new();
+    let mut installed: std::collections::BTreeMap<String, SkillInfo> =
+        std::collections::BTreeMap::new();
     let enabled = enabled_plugin_ids();
 
     // insert lowest → highest precedence; each later insert overwrites the earlier.
@@ -1442,10 +1906,16 @@ fn discover_skills(cwd: &str) -> Vec<SkillInfo> {
             continue;
         }
         for (n, d) in scan_commands(&dir.join("commands")) {
-            installed.insert(n.clone(), skill_entry(n, d, true, "plugin", "command", Some(pid.clone())));
+            installed.insert(
+                n.clone(),
+                skill_entry(n, d, true, "plugin", "command", Some(pid.clone())),
+            );
         }
         for (n, d) in scan_skills(&dir.join("skills")) {
-            installed.insert(n.clone(), skill_entry(n, d, true, "plugin", "skill", Some(pid.clone())));
+            installed.insert(
+                n.clone(),
+                skill_entry(n, d, true, "plugin", "skill", Some(pid.clone())),
+            );
         }
     }
     if let Some(home) = dirs::home_dir() {
@@ -1458,14 +1928,18 @@ fn discover_skills(cwd: &str) -> Vec<SkillInfo> {
     }
     let proj = std::path::Path::new(cwd);
     for (n, d) in scan_commands(&commands_dir(proj)) {
-        installed.insert(n.clone(), skill_entry(n, d, true, "project", "command", None));
+        installed.insert(
+            n.clone(),
+            skill_entry(n, d, true, "project", "command", None),
+        );
     }
     for (n, d) in scan_skills(&skills_dir(proj)) {
         installed.insert(n.clone(), skill_entry(n, d, true, "project", "skill", None));
     }
 
     // available = SKILL.md skills from plugins that are NOT enabled, excluding installed names.
-    let mut available: std::collections::BTreeMap<String, SkillInfo> = std::collections::BTreeMap::new();
+    let mut available: std::collections::BTreeMap<String, SkillInfo> =
+        std::collections::BTreeMap::new();
     for (pid, dir) in all_plugins() {
         if enabled.contains(&pid) {
             continue;
@@ -1474,7 +1948,10 @@ fn discover_skills(cwd: &str) -> Vec<SkillInfo> {
             if installed.contains_key(&n) || available.contains_key(&n) {
                 continue;
             }
-            available.insert(n.clone(), skill_entry(n, d, false, "plugin", "skill", Some(pid.clone())));
+            available.insert(
+                n.clone(),
+                skill_entry(n, d, false, "plugin", "skill", Some(pid.clone())),
+            );
         }
     }
 
@@ -1488,7 +1965,9 @@ fn skills_dir(base: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn parse_skill_description(skill_md: &std::path::Path) -> String {
-    std::fs::read_to_string(skill_md).map(|c| parse_skill_description_str(&c)).unwrap_or_default()
+    std::fs::read_to_string(skill_md)
+        .map(|c| parse_skill_description_str(&c))
+        .unwrap_or_default()
 }
 
 /// Parse the `description:` from a SKILL.md frontmatter, first sentence, ≤100 chars (FR-4).
@@ -1499,7 +1978,9 @@ fn parse_skill_description_str(content: &str) -> String {
     }
     // frontmatter is between the first two `---` fences
     let after = &trimmed[3..];
-    let Some(end) = after.find("\n---") else { return String::new() };
+    let Some(end) = after.find("\n---") else {
+        return String::new();
+    };
     let fm = &after[..end];
     let mut raw = String::new();
     for line in fm.lines() {
@@ -1515,7 +1996,9 @@ fn parse_skill_description_str(content: &str) -> String {
     let bytes = raw.as_bytes();
     let mut cut = raw.len();
     for (i, &b) in bytes.iter().enumerate() {
-        if (b == b'.' || b == b'!' || b == b'?') && (i + 1 >= bytes.len() || bytes[i + 1].is_ascii_whitespace()) {
+        if (b == b'.' || b == b'!' || b == b'?')
+            && (i + 1 >= bytes.len() || bytes[i + 1].is_ascii_whitespace())
+        {
             cut = i;
             break;
         }
@@ -1531,7 +2014,9 @@ fn parse_skill_description_str(content: &str) -> String {
 /// Scan a skills dir for immediate subdirs containing SKILL.md → (name, description).
 fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
     for e in entries.flatten() {
         let path = e.path();
         if !path.is_dir() {
@@ -1541,7 +2026,9 @@ fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
         if !skill_md.is_file() {
             continue;
         }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         out.push((name.to_string(), parse_skill_description(&skill_md)));
     }
     out
@@ -1563,7 +2050,12 @@ pub fn skills_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<V
 /// This is the real "install" for a plugin skill; it applies to every Claude Code
 /// session on the next turn. Idempotent.
 #[tauri::command(async)]
-pub fn skills_install(app: AppHandle, engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Option<()>> {
+pub fn skills_install(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    name: String,
+) -> IpcResult<Option<()>> {
     let cwd = {
         let map = engine.sessions.lock().unwrap();
         let Some(s) = map.get(&session_id) else {
@@ -1571,8 +2063,14 @@ pub fn skills_install(app: AppHandle, engine: State<'_, Engine>, session_id: Str
         };
         s.cwd.clone()
     };
-    let Some(target) = discover_skills(&cwd).into_iter().find(|s| s.name == name && !s.installed) else {
-        return err("SKILL_ERROR", format!("'{name}' is not an available plugin skill"));
+    let Some(target) = discover_skills(&cwd)
+        .into_iter()
+        .find(|s| s.name == name && !s.installed)
+    else {
+        return err(
+            "SKILL_ERROR",
+            format!("'{name}' is not an available plugin skill"),
+        );
     };
     let Some(pid) = target.plugin_id else {
         return err("SKILL_ERROR", format!("'{name}' has no plugin to enable"));
@@ -1586,7 +2084,12 @@ pub fn skills_install(app: AppHandle, engine: State<'_, Engine>, session_id: Str
     let mut cfg = match std::fs::read(&path) {
         Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
             Ok(v) if v.is_object() => v,
-            _ => return err("SKILL_ERROR", "~/.claude/settings.json is not valid JSON — refusing to modify it"),
+            _ => {
+                return err(
+                    "SKILL_ERROR",
+                    "~/.claude/settings.json is not valid JSON — refusing to modify it",
+                )
+            }
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
         Err(e) => return err("SKILL_ERROR", format!("could not read settings.json: {e}")),
@@ -1597,7 +2100,10 @@ pub fn skills_install(app: AppHandle, engine: State<'_, Engine>, session_id: Str
         .entry("enabledPlugins")
         .or_insert_with(|| serde_json::json!({}));
     let Some(ep) = ep.as_object_mut() else {
-        return err("SKILL_ERROR", "malformed settings.json (enabledPlugins is not an object)");
+        return err(
+            "SKILL_ERROR",
+            "malformed settings.json (enabledPlugins is not an object)",
+        );
     };
     if ep.get(&pid).and_then(|v| v.as_bool()) == Some(true) {
         return ok(None); // already enabled — idempotent
@@ -1611,14 +2117,26 @@ pub fn skills_install(app: AppHandle, engine: State<'_, Engine>, session_id: Str
     }
     if let Err(e) = std::fs::rename(&tmp, &path) {
         let _ = std::fs::remove_file(&tmp);
-        return err("SKILL_ERROR", format!("could not replace settings.json: {e}"));
+        return err(
+            "SKILL_ERROR",
+            format!("could not replace settings.json: {e}"),
+        );
     }
-    let _ = app.emit("francois://skills/event", serde_json::json!({ "type": "skills.changed", "sessionId": session_id }));
+    let _ = app.emit(
+        "francois://skills/event",
+        serde_json::json!({ "type": "skills.changed", "sessionId": session_id }),
+    );
     ok(None)
 }
 
 #[tauri::command(async)]
-pub fn skills_run(app: AppHandle, engine: State<'_, Engine>, session_id: String, name: String, args: Option<String>) -> IpcResult<Option<()>> {
+pub fn skills_run(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    name: String,
+    args: Option<String>,
+) -> IpcResult<Option<()>> {
     let cwd = {
         let map = engine.sessions.lock().unwrap();
         let Some(s) = map.get(&session_id) else {
@@ -1626,14 +2144,19 @@ pub fn skills_run(app: AppHandle, engine: State<'_, Engine>, session_id: String,
         };
         s.cwd.clone()
     };
-    if !discover_skills(&cwd).iter().any(|s| s.installed && s.name == name) {
+    if !discover_skills(&cwd)
+        .iter()
+        .any(|s| s.installed && s.name == name)
+    {
         return err("INVALID_INPUT", format!("'{name}' is not installed"));
     }
     let text = match args {
         Some(a) if !a.trim().is_empty() => format!("/{} {}", name, a.trim()),
         _ => format!("/{name}"),
     };
-    match do_send(&app, &session_id, text, uuid()) {
+    // interactive-commands §2 non-goal: skills pass through byte-for-byte — a
+    // skill named usage/cost/model/status/help must still run as a real turn.
+    match do_send(&app, &session_id, text, uuid(), SendSource::Skill) {
         IpcResult::Ok { .. } => ok(None),
         IpcResult::Err { error, .. } => IpcResult::Err { ok: false, error },
     }
@@ -1642,7 +2165,10 @@ pub fn skills_run(app: AppHandle, engine: State<'_, Engine>, session_id: String,
 /// francois:conversation:getTranscript — owned by conversation-view (spec §5).
 /// Returns the session's in-memory transcript buffer as ConversationBlock[].
 #[tauri::command(async)]
-pub fn conversation_get_transcript(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<Value>> {
+pub fn conversation_get_transcript(
+    engine: State<'_, Engine>,
+    session_id: String,
+) -> IpcResult<Vec<Value>> {
     let map = engine.sessions.lock().unwrap();
     match map.get(&session_id) {
         None => err("SESSION_NOT_FOUND", "no such session"),
@@ -1674,7 +2200,10 @@ pub fn session_list(app: AppHandle, engine: State<'_, Engine>) -> IpcResult<Vec<
     for m in &metas {
         emit(&app, SessionEvent::Meta { meta: m.clone() });
     }
-    ok(metas.into_iter().map(|m| serde_json::to_value(m).unwrap()).collect())
+    ok(metas
+        .into_iter()
+        .map(|m| serde_json::to_value(m).unwrap())
+        .collect())
 }
 
 #[tauri::command(async)]
@@ -1692,13 +2221,20 @@ pub fn session_create(
     let meta = std::fs::metadata(&cwd);
     match meta {
         Ok(m) if m.is_dir() => {}
-        _ => return err("INVALID_INPUT", "working directory does not exist or is not a directory"),
+        _ => {
+            return err(
+                "INVALID_INPUT",
+                "working directory does not exist or is not a directory",
+            )
+        }
     }
     // Model is chosen from the live list (session_models); accept any non-empty
     // id and let the CLI reject a truly invalid one at turn time. Being
     // permissive here is what keeps newly released models usable without a
     // redeploy.
-    let model_id = model_id.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let model_id = model_id
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
     let permission_mode = permission_mode.unwrap_or_else(|| "default".to_string());
     if !valid_permission_mode(&permission_mode) {
         return err("INVALID_INPUT", "unknown permission mode");
@@ -1708,12 +2244,19 @@ pub fn session_create(
         return err("INVALID_INPUT", "unknown runtime");
     }
     if runtime == "wsl" && !cfg!(windows) {
-        return err("INVALID_INPUT", "the WSL runtime is only available on Windows");
+        return err(
+            "INVALID_INPUT",
+            "the WSL runtime is only available on Windows",
+        );
     }
     // FR-9: eager spawn check — verify the claude binary runs under the session's runtime.
     let (probe, probe_args) = claude_invocation(&runtime, &cwd, vec!["--version".to_string()]);
     let mut probe_cmd = Command::new(&probe);
-    probe_cmd.args(&probe_args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    probe_cmd
+        .args(&probe_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     no_window(&mut probe_cmd);
     match probe_cmd.status() {
         Ok(s) if s.success() => {}
@@ -1746,6 +2289,7 @@ pub fn session_create(
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,
+        pending_probe: None,
         agents: HashMap::new(),
         agent_order: Vec::new(),
         block_buffer: Vec::new(),
@@ -1760,7 +2304,11 @@ pub fn session_create(
 }
 
 #[tauri::command(async)]
-pub fn session_remove(app: AppHandle, engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
+pub fn session_remove(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+) -> IpcResult<Option<()>> {
     let removed = {
         let mut map = engine.sessions.lock().unwrap();
         map.remove(&session_id)
@@ -1771,6 +2319,9 @@ pub fn session_remove(app: AppHandle, engine: State<'_, Engine>, session_id: Str
             if let Some(turn) = session.current {
                 turn.interrupted.store(true, Ordering::SeqCst);
                 let _ = turn.child.lock().unwrap().kill();
+            }
+            if let Some(p) = &session.pending_probe {
+                p.kill(); // interactive-commands: the probe dies with the session (§7)
             }
             persist(&app, &engine);
             if let Some(path) = transcript_path(&app, &session_id) {
@@ -1794,21 +2345,36 @@ pub fn session_switch_model(
     if model_id.trim().is_empty() {
         return err("INVALID_INPUT", "model is empty");
     }
-    let meta = {
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(&session_id) else {
+    {
+        let map = engine.sessions.lock().unwrap();
+        let Some(s) = map.get(&session_id) else {
             return err("SESSION_NOT_FOUND", "no such session");
         };
         if s.status == "done" || s.status == "error" {
             return err("SESSION_NOT_RUNNING", "session has ended");
         }
-        s.model_id = model_id.clone();
-        s.context_limit_tokens = context_limit(&model_id);
+    }
+    match apply_model_switch(&app, &session_id, &model_id) {
+        Some(meta) => ok(serde_json::to_value(meta).unwrap()),
+        None => err("SESSION_NOT_FOUND", "no such session"),
+    }
+}
+
+/// Shared switch semantics (francois:session:switchModel and `/model <arg>` —
+/// interactive-commands FR-13): update the model + context limit, persist, emit
+/// session.meta. The in-flight turn is unaffected. None if the session is gone.
+fn apply_model_switch(app: &AppHandle, session_id: &str, model_id: &str) -> Option<SessionMeta> {
+    let engine = app.state::<Engine>();
+    let meta = {
+        let mut map = engine.sessions.lock().unwrap();
+        let s = map.get_mut(session_id)?;
+        s.model_id = model_id.to_string();
+        s.context_limit_tokens = context_limit(model_id);
         s.meta()
     };
-    persist(&app, &engine);
-    emit(&app, SessionEvent::Meta { meta: meta.clone() });
-    ok(serde_json::to_value(meta).unwrap())
+    persist(app, &engine);
+    emit(app, SessionEvent::Meta { meta: meta.clone() });
+    Some(meta)
 }
 
 #[tauri::command(async)]
@@ -1836,46 +2402,128 @@ pub struct SendOutput {
     queue_position: Option<usize>,
 }
 
+/// Where a send originated — controls the interactive-commands intercept branch.
+#[derive(Clone, Copy, PartialEq)]
+enum SendSource {
+    /// Typed input (francois:session:send): slash commands in the intercept set
+    /// are answered locally (interactive-commands FR-2).
+    Typed,
+    /// francois:skills:run: custom skills pass through byte-for-byte
+    /// (interactive-commands §2 non-goal) — never intercepted, always a real turn.
+    Skill,
+}
+
+/// The intercept decision for a send (interactive-commands FR-1/2), honoring the
+/// skills passthrough. Pure; unit-tested.
+fn send_intercept(text: &str, source: SendSource) -> Option<(String, Option<String>)> {
+    match source {
+        SendSource::Typed => intercepted_command(text),
+        SendSource::Skill => None,
+    }
+}
+
 /// Shared send logic (used by session_send and skills_run): queue if a turn is
 /// running, else start a new turn. Assumes `text` is already non-empty.
-fn do_send(app: &AppHandle, session_id: &str, text: String, block_id: String) -> IpcResult<SendOutput> {
+fn do_send(
+    app: &AppHandle,
+    session_id: &str,
+    text: String,
+    block_id: String,
+    source: SendSource,
+) -> IpcResult<SendOutput> {
     let engine = app.state::<Engine>();
     let mut map = engine.sessions.lock().unwrap();
     let Some(s) = map.get_mut(session_id) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
+    if s.status == "done" || s.status == "error" {
+        return err("SESSION_NOT_RUNNING", "session has ended; create a new one");
+    }
+    // interactive-commands FR-1/2: an intercepted slash command never enqueues, never
+    // changes SessionStatus, and works identically whether running or idle. It sits
+    // BEFORE the running→enqueue branch so it bypasses the FIFO queue.
+    if let Some((command, arg)) = send_intercept(&text, source) {
+        // FR-4: user echo first — buffer + persist the user block, then message.user
+        // with the request's blockId, then the per-command flow.
+        s.buf_user(&block_id, text.clone());
+        s.last_activity_at = now_ms();
+        let user_block = s.block_buffer.last().cloned();
+        drop(map);
+        if let Some(b) = &user_block {
+            append_transcript(app, session_id, b);
+        }
+        emit(
+            app,
+            SessionEvent::MessageUser {
+                session_id: session_id.into(),
+                block_id,
+                text,
+            },
+        );
+        run_intercepted_command(app, session_id, &command, arg.as_deref());
+        return ok(SendOutput {
+            queued: false,
+            queue_position: None,
+        }); // FR-3
+    }
     match s.status.as_str() {
-        "done" | "error" => return err("SESSION_NOT_RUNNING", "session has ended; create a new one"),
         "running" => {
             if s.queue.len() >= QUEUE_CAP {
                 return err("INVALID_INPUT", "send queue is full (20 pending)");
             }
             s.queue.push_back((block_id, text));
             let pos = s.queue.len();
-            return ok(SendOutput { queued: true, queue_position: Some(pos) });
+            return ok(SendOutput {
+                queued: true,
+                queue_position: Some(pos),
+            });
         }
         _ => {} // idle → start a turn
     }
     s.status = "running".into();
     s.last_activity_at = now_ms();
     drop(map);
-    emit(app, SessionEvent::Status { session_id: session_id.into(), status: "running".into() });
+    emit(
+        app,
+        SessionEvent::Status {
+            session_id: session_id.into(),
+            status: "running".into(),
+        },
+    );
     begin_turn(app, session_id, block_id, text, TurnMode::Normal);
-    ok(SendOutput { queued: false, queue_position: None })
+    ok(SendOutput {
+        queued: false,
+        queue_position: None,
+    })
 }
 
 #[tauri::command(async)]
-pub fn session_send(app: AppHandle, session_id: String, text: String, block_id: Option<String>) -> IpcResult<SendOutput> {
+pub fn session_send(
+    app: AppHandle,
+    session_id: String,
+    text: String,
+    block_id: Option<String>,
+) -> IpcResult<SendOutput> {
     if text.trim().is_empty() {
         return err("INVALID_INPUT", "message is empty");
     }
     // The client generates the blockId so its optimistic block matches the
     // eventual message.user event (conversation-view FR-15/FR-21).
-    do_send(&app, &session_id, text, block_id.unwrap_or_else(uuid))
+    do_send(
+        &app,
+        &session_id,
+        text,
+        block_id.unwrap_or_else(uuid),
+        SendSource::Typed,
+    )
 }
 
 #[tauri::command(async)]
-pub fn session_compact(app: AppHandle, engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
+pub fn session_compact(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+) -> IpcResult<Option<()>> {
     // Snapshot cwd/model/resume/effort; enforce status.
     let (cwd, model_id, resume, effort, permission_mode, runtime) = {
         let mut map = engine.sessions.lock().unwrap();
@@ -1888,15 +2536,36 @@ pub fn session_compact(app: AppHandle, engine: State<'_, Engine>, session_id: St
             _ => {}
         }
         s.status = "running".into();
-        (s.cwd.clone(), s.model_id.clone(), s.claude_session_id.clone(), s.effort.clone(), s.permission_mode.clone(), s.runtime.clone())
+        (
+            s.cwd.clone(),
+            s.model_id.clone(),
+            s.claude_session_id.clone(),
+            s.effort.clone(),
+            s.permission_mode.clone(),
+            s.runtime.clone(),
+        )
     };
-    emit(&app, SessionEvent::Status { session_id: session_id.clone(), status: "running".into() });
+    emit(
+        &app,
+        SessionEvent::Status {
+            session_id: session_id.clone(),
+            status: "running".into(),
+        },
+    );
 
     // Run a synchronous compaction turn ("/compact"), reading only its final
     // usage — FR-28. No transcript events are surfaced.
     let limit = context_limit(&model_id);
     let mut used: Option<u64> = None;
-    if let Ok(child) = spawn_claude(&cwd, &model_id, resume.as_deref(), "/compact", effort.as_deref(), &permission_mode, &runtime) {
+    if let Ok(child) = spawn_claude(
+        &cwd,
+        &model_id,
+        resume.as_deref(),
+        "/compact",
+        effort.as_deref(),
+        &permission_mode,
+        &runtime,
+    ) {
         if let Some(out) = child_stdout_lines(child) {
             for line in out {
                 if let Ok(v) = serde_json::from_str::<Value>(&line) {
@@ -1919,9 +2588,22 @@ pub fn session_compact(app: AppHandle, engine: State<'_, Engine>, session_id: St
         }
     }
     if let Some(u) = used {
-        emit(&app, SessionEvent::ContextUsage { session_id: session_id.clone(), used_tokens: u, limit_tokens: limit });
+        emit(
+            &app,
+            SessionEvent::ContextUsage {
+                session_id: session_id.clone(),
+                used_tokens: u,
+                limit_tokens: limit,
+            },
+        );
     }
-    emit(&app, SessionEvent::Status { session_id, status: "idle".into() });
+    emit(
+        &app,
+        SessionEvent::Status {
+            session_id,
+            status: "idle".into(),
+        },
+    );
     ok(None)
 }
 
@@ -1970,7 +2652,9 @@ fn spawn_claude(
         cmd.current_dir(cwd); // wsl turns get their cwd via `--cd` inside the distro
     }
     no_window(&mut cmd);
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     cmd.spawn()
 }
 
@@ -1997,7 +2681,12 @@ fn compute_used(usage: &Value) -> u64 {
 /// Detects a rejected `--resume`: the turn used resume but exited before starting a
 /// thread (no system/init, no result) and wasn't interrupted (FR-8). The retry runs
 /// with resume forced off, so it can never re-trigger this — at most one retry.
-fn is_resume_fail(resume_used: bool, got_init: bool, got_result: bool, was_interrupted: bool) -> bool {
+fn is_resume_fail(
+    resume_used: bool,
+    got_init: bool,
+    got_result: bool,
+    was_interrupted: bool,
+) -> bool {
     resume_used && !got_init && !got_result && !was_interrupted
 }
 
@@ -2005,11 +2694,24 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
     let (cwd, model_id, resume, effort, permission_mode, runtime) = {
         let engine = app.state::<Engine>();
         let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else { return };
+        let Some(s) = map.get_mut(session_id) else {
+            return;
+        };
         // ResumeRetry forces resume off regardless of the stored id, so a still-good id
         // is never dropped preemptively — a fresh init overwrites it only on success.
-        let resume = if mode == TurnMode::ResumeRetry { None } else { s.claude_session_id.clone() };
-        (s.cwd.clone(), s.model_id.clone(), resume, s.effort.clone(), s.permission_mode.clone(), s.runtime.clone())
+        let resume = if mode == TurnMode::ResumeRetry {
+            None
+        } else {
+            s.claude_session_id.clone()
+        };
+        (
+            s.cwd.clone(),
+            s.model_id.clone(),
+            resume,
+            s.effort.clone(),
+            s.permission_mode.clone(),
+            s.runtime.clone(),
+        )
     };
 
     let resume_used = resume.is_some();
@@ -2030,13 +2732,33 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
         if let Some(b) = &block {
             append_transcript(app, session_id, b); // durable-sessions FR-2
         }
-        emit(app, SessionEvent::MessageUser { session_id: session_id.into(), block_id: block_id.clone(), text: text.clone() });
+        emit(
+            app,
+            SessionEvent::MessageUser {
+                session_id: session_id.into(),
+                block_id: block_id.clone(),
+                text: text.clone(),
+            },
+        );
     }
 
-    let child = match spawn_claude(&cwd, &model_id, resume.as_deref(), &text, effort.as_deref(), &permission_mode, &runtime) {
+    let child = match spawn_claude(
+        &cwd,
+        &model_id,
+        resume.as_deref(),
+        &text,
+        effort.as_deref(),
+        &permission_mode,
+        &runtime,
+    ) {
         Ok(c) => c,
         Err(e) => {
-            fail_session(app, session_id, "SPAWN_FAILED", &format!("could not start claude: {e}"));
+            fail_session(
+                app,
+                session_id,
+                "SPAWN_FAILED",
+                &format!("could not start claude: {e}"),
+            );
             return;
         }
     };
@@ -2046,7 +2768,10 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
         let engine = app.state::<Engine>();
         let mut map = engine.sessions.lock().unwrap();
         if let Some(s) = map.get_mut(session_id) {
-            s.current = Some(TurnHandle { child: child.clone(), interrupted: interrupted.clone() });
+            s.current = Some(TurnHandle {
+                child: child.clone(),
+                interrupted: interrupted.clone(),
+            });
         }
     }
 
@@ -2054,7 +2779,16 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
     let sid = session_id.to_string();
     // block_id/text carried into the reader so a resume-fail can re-run this turn fresh (FR-9).
     std::thread::spawn(move || {
-        run_reader(app2, sid, child, interrupted, model_id, resume_used, block_id, text);
+        run_reader(
+            app2,
+            sid,
+            child,
+            interrupted,
+            model_id,
+            resume_used,
+            block_id,
+            text,
+        );
     });
 }
 
@@ -2094,16 +2828,25 @@ fn run_reader(
     let mut got_result = false;
     let mut got_init = false; // did the stream start (system/init)? — resume-fail detection (FR-8)
     let mut result_error: Option<String> = None;
+    // interactive-commands: the turn's parsed command token (FR-17), whether a
+    // synthetic message was carded (FR-16), and the result string (FR-18 fallback).
+    let turn_cmd: Option<String> = parse_command(&text).map(|(c, _)| c);
+    let mut saw_synthetic = false;
+    let mut result_text: Option<String> = None;
 
     let cwd = {
         let engine = app.state::<Engine>();
         let map = engine.sessions.lock().unwrap();
-        map.get(&session_id).map(|s| s.cwd.clone()).unwrap_or_default()
+        map.get(&session_id)
+            .map(|s| s.cwd.clone())
+            .unwrap_or_default()
     };
 
     for line in reader.lines() {
         let Ok(line) = line else { break };
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
         match ty {
             "system" => {
@@ -2127,22 +2870,54 @@ fn run_reader(
             "stream_event" => {
                 if let Some(ev) = v.get("event") {
                     handle_stream_event(
-                        &app, &session_id, &cwd, ev, &mut blocks, &mut tools, &mut text_accum,
-                        &mut open_block, &mut pending_used,
+                        &app,
+                        &session_id,
+                        &cwd,
+                        ev,
+                        &mut blocks,
+                        &mut tools,
+                        &mut text_accum,
+                        &mut open_block,
+                        &mut pending_used,
                     );
                 }
             }
             "user" => {
                 handle_tool_results(&app, &session_id, &v, &mut tools, &mut open_block);
             }
+            "assistant" => {
+                // interactive-commands FR-16: a synthetic (CLI-local) assistant message
+                // becomes its own command card — no assistant.delta/done for it. Real
+                // top-level assistant echoes stay ignored (stream_events carry them).
+                if let Some(answer) = synthetic_text(&v) {
+                    saw_synthetic = true;
+                    let card = classify_local_answer(turn_cmd.as_deref(), &answer);
+                    finalize_command_block(
+                        &app,
+                        &session_id,
+                        &uuid(),
+                        turn_cmd.as_deref().unwrap_or(""),
+                        &card,
+                    );
+                }
+            }
             "result" => {
                 got_result = true;
                 if v.get("is_error").and_then(|b| b.as_bool()) == Some(true)
-                    || v.get("subtype").and_then(|s| s.as_str()).map(|s| s != "success").unwrap_or(false)
+                    || v.get("subtype")
+                        .and_then(|s| s.as_str())
+                        .map(|s| s != "success")
+                        .unwrap_or(false)
                 {
                     result_error = Some(
-                        v.get("result").and_then(|r| r.as_str()).unwrap_or("the turn ended with an error").to_string(),
+                        v.get("result")
+                            .and_then(|r| r.as_str())
+                            .unwrap_or("the turn ended with an error")
+                            .to_string(),
                     );
+                }
+                if let Some(r) = v.get("result").and_then(|r| r.as_str()) {
+                    result_text = Some(r.to_string()); // interactive-commands FR-18
                 }
                 if let Some(u) = v.get("usage") {
                     pending_used = Some(compute_used(u));
@@ -2160,7 +2935,12 @@ fn run_reader(
     // (ResumeRetry forces resume off → this can fire at most once). The stored id is
     // left in place — a fresh init overwrites it on success; a transient failure keeps it.
     if is_resume_fail(resume_used, got_init, got_result, was_interrupted) {
-        emit(&app, SessionEvent::ResumeFailed { session_id: session_id.clone() });
+        emit(
+            &app,
+            SessionEvent::ResumeFailed {
+                session_id: session_id.clone(),
+            },
+        );
         begin_turn(&app, &session_id, block_id, text, TurnMode::ResumeRetry);
         return;
     }
@@ -2168,27 +2948,74 @@ fn run_reader(
     // Close any block left open (interrupt or crash) — FR-24/FR-34.
     if let Some((bid, kind)) = open_block.take() {
         if kind == 0 {
-            emit(&app, SessionEvent::AssistantDone { session_id: session_id.clone(), block_id: bid });
+            emit(
+                &app,
+                SessionEvent::AssistantDone {
+                    session_id: session_id.clone(),
+                    block_id: bid,
+                },
+            );
         } else {
-            emit(&app, SessionEvent::ToolDone { session_id: session_id.clone(), block_id: bid, meta: "interrupted".into() });
+            emit(
+                &app,
+                SessionEvent::ToolDone {
+                    session_id: session_id.clone(),
+                    block_id: bid,
+                    meta: "interrupted".into(),
+                },
+            );
         }
     }
 
     let limit = context_limit(&model_id);
     if got_result && result_error.is_none() {
+        // interactive-commands FR-18 defensive fallback: a success turn with zero
+        // assistant/tool blocks and no synthetic seen put its local answer only in
+        // the result string — card it so no slash command ever dies silently.
+        if command_fallback_fires(
+            true,
+            saw_synthetic,
+            !blocks.is_empty(),
+            result_text.as_deref(),
+        ) {
+            let answer = result_text.clone().unwrap_or_default();
+            let card = classify_local_answer(turn_cmd.as_deref(), &answer);
+            finalize_command_block(
+                &app,
+                &session_id,
+                &uuid(),
+                turn_cmd.as_deref().unwrap_or(""),
+                &card,
+            );
+        }
         if let Some(u) = pending_used {
             update_used(&app, &session_id, u);
-            emit(&app, SessionEvent::ContextUsage { session_id: session_id.clone(), used_tokens: u, limit_tokens: limit });
+            emit(
+                &app,
+                SessionEvent::ContextUsage {
+                    session_id: session_id.clone(),
+                    used_tokens: u,
+                    limit_tokens: limit,
+                },
+            );
         }
         finish_turn(&app, &session_id, false, None);
     } else if was_interrupted {
         if let Some(u) = pending_used {
             update_used(&app, &session_id, u);
-            emit(&app, SessionEvent::ContextUsage { session_id: session_id.clone(), used_tokens: u, limit_tokens: limit });
+            emit(
+                &app,
+                SessionEvent::ContextUsage {
+                    session_id: session_id.clone(),
+                    used_tokens: u,
+                    limit_tokens: limit,
+                },
+            );
         }
         finish_turn(&app, &session_id, false, None);
     } else {
-        let msg = result_error.unwrap_or_else(|| "the Claude Code process ended unexpectedly".to_string());
+        let msg = result_error
+            .unwrap_or_else(|| "the Claude Code process ended unexpectedly".to_string());
         finish_turn(&app, &session_id, true, Some(msg));
     }
 }
@@ -2198,14 +3025,20 @@ fn finish_turn(app: &AppHandle, session_id: &str, errored: bool, error_msg: Opti
     let engine = app.state::<Engine>();
     let next: Option<(String, String)> = {
         let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else { return };
+        let Some(s) = map.get_mut(session_id) else {
+            return;
+        };
         s.current = None;
         if errored {
             s.status = "error".into();
             s.error_message = error_msg.clone();
             // Any running agents become errored (FR-40).
-            let running: Vec<String> =
-                s.agents.iter().filter(|(_, a)| a.status == "running").map(|(k, _)| k.clone()).collect();
+            let running: Vec<String> = s
+                .agents
+                .iter()
+                .filter(|(_, a)| a.status == "running")
+                .map(|(k, _)| k.clone())
+                .collect();
             for k in &running {
                 if let Some(a) = s.agents.get_mut(k) {
                     a.status = "error".into();
@@ -2230,19 +3063,48 @@ fn finish_turn(app: &AppHandle, session_id: &str, errored: bool, error_msg: Opti
         // Final agent.update for any agents just errored.
         let agents: Vec<AgentInfo> = {
             let map = engine.sessions.lock().unwrap();
-            map.get(session_id).map(|s| s.agents.values().filter(|a| a.status == "error").cloned().collect()).unwrap_or_default()
+            map.get(session_id)
+                .map(|s| {
+                    s.agents
+                        .values()
+                        .filter(|a| a.status == "error")
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default()
         };
         for a in agents {
             emit(app, SessionEvent::AgentUpdate { agent: a });
         }
-        emit(app, SessionEvent::Error { session_id: session_id.into(), error: AppError { code: "INTERNAL".into(), message: msg } });
-        emit(app, SessionEvent::Status { session_id: session_id.into(), status: "error".into() });
+        emit(
+            app,
+            SessionEvent::Error {
+                session_id: session_id.into(),
+                error: AppError {
+                    code: "INTERNAL".into(),
+                    message: msg,
+                },
+            },
+        );
+        emit(
+            app,
+            SessionEvent::Status {
+                session_id: session_id.into(),
+                status: "error".into(),
+            },
+        );
         return;
     }
 
     match next {
         Some((block_id, text)) => begin_turn(app, session_id, block_id, text, TurnMode::Normal), // no idle blip (FR-20)
-        None => emit(app, SessionEvent::Status { session_id: session_id.into(), status: "idle".into() }),
+        None => emit(
+            app,
+            SessionEvent::Status {
+                session_id: session_id.into(),
+                status: "idle".into(),
+            },
+        ),
     }
 }
 
@@ -2257,8 +3119,23 @@ fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &str) {
             s.queue.clear();
         }
     }
-    emit(app, SessionEvent::Error { session_id: session_id.into(), error: AppError { code: code.into(), message: msg.into() } });
-    emit(app, SessionEvent::Status { session_id: session_id.into(), status: "error".into() });
+    emit(
+        app,
+        SessionEvent::Error {
+            session_id: session_id.into(),
+            error: AppError {
+                code: code.into(),
+                message: msg.into(),
+            },
+        },
+    );
+    emit(
+        app,
+        SessionEvent::Status {
+            session_id: session_id.into(),
+            status: "error".into(),
+        },
+    );
 }
 
 fn update_used(app: &AppHandle, session_id: &str, used: u64) {
@@ -2274,15 +3151,28 @@ fn emit_mcp_from_init(app: &AppHandle, session_id: &str, init: &Value) {
     let tools: Vec<String> = init
         .get("tools")
         .and_then(|t| t.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
-    let Some(servers) = init.get("mcp_servers").and_then(|s| s.as_array()) else { return };
+    let Some(servers) = init.get("mcp_servers").and_then(|s| s.as_array()) else {
+        return;
+    };
     for srv in servers {
-        let name = srv.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+        let name = srv
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() {
             continue;
         }
-        let raw_status = srv.get("status").and_then(|s| s.as_str()).unwrap_or("connected");
+        let raw_status = srv
+            .get("status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("connected");
         let status = match raw_status {
             "connected" | "ready" => "connected",
             "failed" | "error" => "error",
@@ -2293,9 +3183,18 @@ fn emit_mcp_from_init(app: &AppHandle, session_id: &str, init: &Value) {
         let info = McpServerInfo {
             name: name.clone(),
             status: status.into(),
-            tool_count: if status == "connected" { Some(count) } else { None },
+            tool_count: if status == "connected" {
+                Some(count)
+            } else {
+                None
+            },
             error_message: if status == "error" {
-                Some(srv.get("error").and_then(|e| e.as_str()).unwrap_or("connection failed").to_string())
+                Some(
+                    srv.get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("connection failed")
+                        .to_string(),
+                )
             } else {
                 None
             },
@@ -2308,7 +3207,13 @@ fn emit_mcp_from_init(app: &AppHandle, session_id: &str, init: &Value) {
                 s.mcp.insert(name.clone(), info.clone());
             }
         }
-        emit(app, SessionEvent::McpUpdate { session_id: session_id.into(), server: info });
+        emit(
+            app,
+            SessionEvent::McpUpdate {
+                session_id: session_id.into(),
+                server: info,
+            },
+        );
     }
 }
 
@@ -2338,12 +3243,31 @@ fn handle_stream_event(
                 }
                 "tool_use" => {
                     let bid = uuid();
-                    let tool = cb.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                    let tuid = cb.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-                    let start_input = cb.get("input").cloned().unwrap_or(Value::Object(Default::default()));
+                    let tool = cb
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let tuid = cb
+                        .get("id")
+                        .and_then(|i| i.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let start_input = cb
+                        .get("input")
+                        .cloned()
+                        .unwrap_or(Value::Object(Default::default()));
                     blocks.insert(idx, (bid.clone(), 1, String::new()));
                     let is_task = is_subagent_tool(&tool);
-                    tools.insert(tuid.clone(), ToolRec { block_id: bid.clone(), tool: tool.clone(), input: start_input, is_task });
+                    tools.insert(
+                        tuid.clone(),
+                        ToolRec {
+                            block_id: bid.clone(),
+                            tool: tool.clone(),
+                            input: start_input,
+                            is_task,
+                        },
+                    );
                     // stash tuid in the block accum slot's kind — track via separate map:
                     blocks.get_mut(&idx).map(|b| b.2 = tuid.clone());
                     if is_task {
@@ -2352,12 +3276,21 @@ fn handle_stream_event(
                         let desc = tools
                             .get(&tuid)
                             .map(|r| {
-                                r.input.get("description").and_then(|d| d.as_str()).unwrap_or("subagent").to_string()
+                                r.input
+                                    .get("description")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or("subagent")
+                                    .to_string()
                             })
                             .unwrap_or_else(|| "subagent".into());
                         let name = tools
                             .get(&tuid)
-                            .and_then(|r| r.input.get("subagent_type").and_then(|d| d.as_str()).map(String::from))
+                            .and_then(|r| {
+                                r.input
+                                    .get("subagent_type")
+                                    .and_then(|d| d.as_str())
+                                    .map(String::from)
+                            })
                             .unwrap_or_else(|| desc.clone());
                         let agent = AgentInfo {
                             id: agent_id.clone(),
@@ -2393,10 +3326,21 @@ fn handle_stream_event(
                 "text_delta" => {
                     if let Some((bid, kind, _)) = blocks.get(&idx).cloned() {
                         if kind == 0 {
-                            let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                            let text = delta
+                                .get("text")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             text_accum.entry(bid.clone()).or_default().push_str(&text);
                             *open_block = Some((bid.clone(), 0));
-                            emit(app, SessionEvent::AssistantDelta { session_id: session_id.into(), block_id: bid, text });
+                            emit(
+                                app,
+                                SessionEvent::AssistantDelta {
+                                    session_id: session_id.into(),
+                                    block_id: bid,
+                                    text,
+                                },
+                            );
                         }
                     }
                 }
@@ -2404,9 +3348,17 @@ fn handle_stream_event(
                     if let Some(b) = blocks.get_mut(&idx) {
                         // b.2 currently holds the tool_use_id; accumulate partial json into the ToolRec instead.
                         let tuid = b.2.clone();
-                        let partial = delta.get("partial_json").and_then(|t| t.as_str()).unwrap_or("");
+                        let partial = delta
+                            .get("partial_json")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("");
                         if let Some(rec) = tools.get_mut(&tuid) {
-                            let acc = rec.input.get("__acc").and_then(|a| a.as_str()).unwrap_or("").to_string();
+                            let acc = rec
+                                .input
+                                .get("__acc")
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             rec.input["__acc"] = Value::String(acc + partial);
                         }
                     }
@@ -2434,7 +3386,13 @@ fn handle_stream_event(
                         append_transcript(app, session_id, b); // durable-sessions FR-2
                     }
                     *open_block = None;
-                    emit(app, SessionEvent::AssistantDone { session_id: session_id.into(), block_id: bid });
+                    emit(
+                        app,
+                        SessionEvent::AssistantDone {
+                            session_id: session_id.into(),
+                            block_id: bid,
+                        },
+                    );
                 } else {
                     // tool: finalize input (accumulated json overrides start input), derive summary, emit tool.start
                     let tuid = slot;
@@ -2460,7 +3418,15 @@ fn handle_stream_event(
                             }
                         }
                         *open_block = Some((bid.clone(), 1));
-                        emit(app, SessionEvent::ToolStart { session_id: session_id.into(), block_id: bid, tool: rec.tool.clone(), summary });
+                        emit(
+                            app,
+                            SessionEvent::ToolStart {
+                                session_id: session_id.into(),
+                                block_id: bid,
+                                tool: rec.tool.clone(),
+                                summary,
+                            },
+                        );
                     }
                 }
             }
@@ -2481,23 +3447,45 @@ fn handle_tool_results(
     tools: &mut HashMap<String, ToolRec>,
     open_block: &mut Option<(String, u8)>,
 ) {
-    let content = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array());
+    let content = v
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_array());
     let Some(content) = content else { return };
     for item in content {
         if item.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
             continue;
         }
-        let tuid = item.get("tool_use_id").and_then(|t| t.as_str()).unwrap_or("").to_string();
-        let is_error = item.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false);
+        let tuid = item
+            .get("tool_use_id")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let is_error = item
+            .get("is_error")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
         let result_text = extract_result_text(item.get("content"));
-        let Some(rec) = tools.get(&tuid) else { continue };
+        let Some(rec) = tools.get(&tuid) else {
+            continue;
+        };
         let block_id = rec.block_id.clone();
-        let meta = if is_error { "error".to_string() } else { tool_meta(&rec.tool, &rec.input, &result_text) };
+        let meta = if is_error {
+            "error".to_string()
+        } else {
+            tool_meta(&rec.tool, &rec.input, &result_text)
+        };
 
         // Task completion → agent done (FR-39).
         if rec.is_task {
             if let Some(aid) = rec.input.get("__agentId").and_then(|a| a.as_str()) {
-                let excerpt = result_text.lines().next().unwrap_or("done").chars().take(80).collect::<String>();
+                let excerpt = result_text
+                    .lines()
+                    .next()
+                    .unwrap_or("done")
+                    .chars()
+                    .take(80)
+                    .collect::<String>();
                 let agent = {
                     let engine = app.state::<Engine>();
                     let mut map = engine.sessions.lock().unwrap();
@@ -2505,7 +3493,11 @@ fn handle_tool_results(
                         s.agents.get_mut(aid).map(|a| {
                             a.status = "done".into();
                             a.ended_at = Some(now_ms());
-                            a.task = if excerpt.is_empty() { a.task.clone() } else { excerpt.clone() };
+                            a.task = if excerpt.is_empty() {
+                                a.task.clone()
+                            } else {
+                                excerpt.clone()
+                            };
                             a.clone()
                         })
                     })
@@ -2522,7 +3514,10 @@ fn handle_tool_results(
             match map.get_mut(session_id) {
                 Some(s) => {
                     s.buf_tool_done(&block_id, meta.clone());
-                    s.block_buffer.iter().find(|b| b.block_id == block_id).cloned()
+                    s.block_buffer
+                        .iter()
+                        .find(|b| b.block_id == block_id)
+                        .cloned()
                 }
                 None => None,
             }
@@ -2539,7 +3534,14 @@ fn handle_tool_results(
                 crate::diff::on_tool_done(app, session_id, &cwd);
             }
         }
-        emit(app, SessionEvent::ToolDone { session_id: session_id.into(), block_id, meta });
+        emit(
+            app,
+            SessionEvent::ToolDone {
+                session_id: session_id.into(),
+                block_id,
+                meta,
+            },
+        );
     }
 }
 
@@ -2570,7 +3572,10 @@ fn rel_path(path: &str, cwd: &str) -> String {
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    let collapsed: String = s.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).collect();
+    let collapsed: String = s
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
     if collapsed.chars().count() > n {
         collapsed.chars().take(n).collect()
     } else {
@@ -2584,13 +3589,16 @@ fn str_field<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
 
 fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
     match tool {
-        "Read" | "Edit" | "MultiEdit" | "Write" => {
-            str_field(input, "file_path").map(|p| rel_path(p, cwd)).unwrap_or_default()
-        }
+        "Read" | "Edit" | "MultiEdit" | "Write" => str_field(input, "file_path")
+            .map(|p| rel_path(p, cwd))
+            .unwrap_or_default(),
         "Grep" => truncate(str_field(input, "pattern").unwrap_or(""), 60),
         "Glob" => str_field(input, "pattern").unwrap_or("").to_string(),
         "Bash" => truncate(str_field(input, "command").unwrap_or(""), 60),
-        "Task" | "Agent" => str_field(input, "subagent_type").or_else(|| str_field(input, "description")).unwrap_or("subagent").to_string(),
+        "Task" | "Agent" => str_field(input, "subagent_type")
+            .or_else(|| str_field(input, "description"))
+            .unwrap_or("subagent")
+            .to_string(),
         "WebFetch" => str_field(input, "url").unwrap_or("").to_string(),
         "WebSearch" => str_field(input, "query").unwrap_or("").to_string(),
         _ => {
@@ -2625,7 +3633,10 @@ fn edit_counts(old: &str, new: &str) -> (usize, usize) {
         lead += 1;
     }
     let mut trail = 0;
-    while trail < (old_lines.len() - lead) && trail < (new_lines.len() - lead) && old_lines[old_lines.len() - 1 - trail] == new_lines[new_lines.len() - 1 - trail] {
+    while trail < (old_lines.len() - lead)
+        && trail < (new_lines.len() - lead)
+        && old_lines[old_lines.len() - 1 - trail] == new_lines[new_lines.len() - 1 - trail]
+    {
         trail += 1;
     }
     let m = old_lines.len() - lead - trail; // removed
@@ -2673,7 +3684,10 @@ fn tool_meta(tool: &str, input: &Value, result: &str) -> String {
             }
             format!("+{tn} \u{2212}{tm}")
         }
-        "Write" => format!("{} lines", line_count(str_field(input, "content").unwrap_or(""))),
+        "Write" => format!(
+            "{} lines",
+            line_count(str_field(input, "content").unwrap_or(""))
+        ),
         "Bash" => {
             if result.trim().is_empty() {
                 "done".into()
@@ -2682,7 +3696,13 @@ fn tool_meta(tool: &str, input: &Value, result: &str) -> String {
             }
         }
         "Task" | "Agent" => {
-            let first = result.lines().next().unwrap_or("").chars().take(80).collect::<String>();
+            let first = result
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect::<String>();
             if first.is_empty() {
                 "done".into()
             } else {
@@ -2692,6 +3712,663 @@ fn tool_meta(tool: &str, input: &Value, result: &str) -> String {
         "WebFetch" | "WebSearch" => "done".into(),
         _ => "done".into(),
     }
+}
+
+// ---------- interactive commands (specs/interactive-commands.md) ----------
+//
+// Grammar, intercept set, and help entries mirror contract/interactive-commands.ts
+// (parseCommand / INTERCEPTED_COMMANDS / HELP_ENTRIES) exactly; the parse rules
+// mirror spec §5 (probed against claude 2.1.217, 2026-07-22).
+
+/// FR-2 intercept set — mirrors INTERCEPTED_COMMANDS. These never spawn a turn.
+const INTERCEPTED_COMMANDS: [&str; 5] = ["usage", "cost", "model", "status", "help"];
+
+/// /help card contents — mirrors HELP_ENTRIES (FR-15), in display order.
+fn help_entries() -> Vec<HelpEntry> {
+    vec![
+        HelpEntry {
+            command: "usage",
+            description: "plan usage limits (session + weekly)",
+        },
+        HelpEntry {
+            command: "cost",
+            description: "alias of /usage",
+        },
+        HelpEntry {
+            command: "context",
+            description: "context window breakdown (runs on the session thread)",
+        },
+        HelpEntry {
+            command: "model",
+            description: "show or switch the session model",
+        },
+        HelpEntry {
+            command: "status",
+            description: "session snapshot (cwd, model, runtime, context)",
+        },
+        HelpEntry {
+            command: "help",
+            description: "this list",
+        },
+    ]
+}
+
+/// FR-1 grammar — mirrors parseCommand: the trimmed text is a command iff it is a
+/// single line matching `^/([A-Za-z][A-Za-z0-9_-]*)(\s+\S.*)?$`. Returns
+/// (token lowercased, arg trimmed). None → normal passthrough turn.
+fn parse_command(text: &str) -> Option<(String, Option<String>)> {
+    let t = text.trim();
+    if t.contains('\n') {
+        return None;
+    }
+    let rest = t.strip_prefix('/')?;
+    let bytes = rest.as_bytes();
+    if bytes.is_empty() || !bytes[0].is_ascii_alphabetic() {
+        return None;
+    }
+    let mut end = 1;
+    while end < bytes.len()
+        && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'-')
+    {
+        end += 1;
+    }
+    let token = rest[..end].to_lowercase();
+    let after = &rest[end..];
+    if after.is_empty() {
+        return Some((token, None));
+    }
+    // the char right after the token must be whitespace (`\s+\S.*`), else no match
+    if !after.chars().next().is_some_and(|c| c.is_whitespace()) {
+        return None;
+    }
+    let arg = after.trim();
+    if arg.is_empty() {
+        return None; // unreachable for trimmed input; defensive
+    }
+    Some((token, Some(arg.to_string())))
+}
+
+/// FR-2: parse + filter to the intercept set. None → normal passthrough turn.
+fn intercepted_command(text: &str) -> Option<(String, Option<String>)> {
+    parse_command(text).filter(|(c, _)| INTERCEPTED_COMMANDS.contains(&c.as_str()))
+}
+
+/// §5 meter line: `^(.+?): (\d+)% used · resets (.+)$` (the `·` is U+00B7).
+/// Lazy label — the first `": "` split whose tail matches wins.
+fn parse_meter_line(line: &str) -> Option<UsageMeter> {
+    let mut from = 0;
+    while let Some(rel) = line[from..].find(": ") {
+        let pos = from + rel;
+        if pos > 0 {
+            if let Some(m) = parse_meter_tail(&line[..pos], &line[pos + 2..]) {
+                return Some(m);
+            }
+        }
+        from = pos + 1;
+    }
+    None
+}
+
+fn parse_meter_tail(label: &str, rest: &str) -> Option<UsageMeter> {
+    let digits_end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    if digits_end == 0 {
+        return None;
+    }
+    let resets_at = rest[digits_end..].strip_prefix("% used \u{b7} resets ")?;
+    if resets_at.is_empty() {
+        return None;
+    }
+    Some(UsageMeter {
+        label: label.to_string(),
+        percent_used: rest[..digits_end].parse().ok()?,
+        resets_at: resets_at.to_string(),
+    })
+}
+
+/// FR-9: parse a /usage//cost answer. ≥1 meter → usage card (meters + tail: the
+/// non-meter lines, blank runs collapsed to one, trimmed); else a raw text card.
+fn usage_card(command: &str, answer: &str) -> CommandCard {
+    let mut meters: Vec<UsageMeter> = Vec::new();
+    let mut tail_lines: Vec<&str> = Vec::new();
+    for line in answer.lines() {
+        match parse_meter_line(line) {
+            Some(m) => meters.push(m),
+            None => tail_lines.push(line),
+        }
+    }
+    if meters.is_empty() {
+        // format drifted — never an error, just the raw answer (FR-9, §7)
+        return CommandCard::Text {
+            command: command.to_string(),
+            text: answer.to_string(),
+        };
+    }
+    let mut collapsed: Vec<&str> = Vec::new();
+    for l in tail_lines {
+        if l.trim().is_empty()
+            && collapsed
+                .last()
+                .map(|p| p.trim().is_empty())
+                .unwrap_or(true)
+        {
+            continue; // collapse blank-line runs (and drop leading blanks)
+        }
+        collapsed.push(l);
+    }
+    let tail = collapsed.join("\n").trim().to_string();
+    CommandCard::Usage {
+        command: command.to_string(),
+        meters,
+        tail,
+    }
+}
+
+/// FR-19: first match of `\*\*Tokens:\*\*\s*(\S+)\s*/\s*(\S+)\s*\((\d+)%\)` →
+/// (usedLabel, limitLabel, percentUsed). None on drift → body-only context card.
+fn parse_context_tokens(text: &str) -> Option<(String, String, u64)> {
+    let mut search = text;
+    while let Some(pos) = search.find("**Tokens:**") {
+        let after = &search[pos + 11..];
+        if let Some(hit) = parse_context_tokens_tail(after) {
+            return Some(hit);
+        }
+        search = after;
+    }
+    None
+}
+
+fn parse_context_tokens_tail(after: &str) -> Option<(String, String, u64)> {
+    let s = after.trim_start();
+    let slash = s.find('/')?;
+    let used = s[..slash].trim_end();
+    if used.is_empty() || used.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let rest = s[slash + 1..].trim_start();
+    let paren = rest.find('(')?;
+    let limit = rest[..paren].trim_end();
+    if limit.is_empty() || limit.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let tail = &rest[paren + 1..];
+    let digits_end = tail
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(tail.len());
+    if digits_end == 0 || !tail[digits_end..].starts_with("%)") {
+        return None;
+    }
+    Some((
+        used.to_string(),
+        limit.to_string(),
+        tail[..digits_end].parse().ok()?,
+    ))
+}
+
+/// FR-19 body normalization: remove `**` bold markers; strip leading `#`-runs
+/// (plus one space) from heading lines; table pipes kept verbatim.
+fn normalize_context_body(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let line = line.replace("**", "");
+            if let Some(stripped) = line.strip_prefix('#') {
+                let rest = stripped.trim_start_matches('#');
+                rest.strip_prefix(' ').unwrap_or(rest).to_string()
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// FR-19: build the /context card from the synthetic answer.
+fn context_card(answer: &str) -> CommandCard {
+    let body = normalize_context_body(answer);
+    match parse_context_tokens(answer) {
+        Some((used, limit, pct)) => CommandCard::Context {
+            percent_used: Some(pct),
+            used_label: Some(used),
+            limit_label: Some(limit),
+            body,
+        },
+        None => CommandCard::Context {
+            percent_used: None,
+            used_label: None,
+            limit_label: None,
+            body,
+        },
+    }
+}
+
+/// FR-16 detection: the concatenated `content[].text` of an assistant event whose
+/// `message.model` is `"<synthetic>"`. None for real assistant messages.
+fn synthetic_text(v: &Value) -> Option<String> {
+    let msg = v.get("message")?;
+    if msg.get("model").and_then(|m| m.as_str()) != Some("<synthetic>") {
+        return None;
+    }
+    let content = msg.get("content")?.as_array()?;
+    Some(
+        content
+            .iter()
+            .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join(""),
+    )
+}
+
+/// FR-8: extract a probe's answer from its stdout lines — the first synthetic
+/// assistant message's text, else the final result event's `result` string.
+/// Trailing whitespace stripped; caller treats empty as failure (FR-10).
+fn probe_answer(lines: &[String]) -> Option<String> {
+    let mut result_text: Option<String> = None;
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                if let Some(t) = synthetic_text(&v) {
+                    return Some(t.trim_end().to_string());
+                }
+            }
+            Some("result") => {
+                if let Some(r) = v.get("result").and_then(|r| r.as_str()) {
+                    result_text = Some(r.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    result_text.map(|s| s.trim_end().to_string())
+}
+
+/// FR-9/10 probe verdict (pure; unit-tested). A fully-parsed answer always wins —
+/// even when the 30s watchdog fired while the final bytes were being read — so
+/// `timed_out` is consulted only in the no-parsed-answer arm.
+fn probe_card(command: &str, lines: &[String], timed_out: bool) -> CommandCard {
+    match probe_answer(lines) {
+        Some(answer) if !answer.is_empty() => usage_card(command, &answer),
+        _ if timed_out => CommandCard::Notice { text: "couldn't fetch usage \u{2014} timed out".into() },
+        _ => CommandCard::Notice {
+            text: "couldn't fetch usage \u{2014} the Claude Code CLI returned no answer. Run `claude` once in a terminal to authenticate.".into(),
+        },
+    }
+}
+
+/// FR-17: classify a CLI-local answer into a card, in order: (a) context turn →
+/// context card; (b) unknown/unavailable → notice verbatim; (c) text card.
+fn classify_local_answer(turn_command: Option<&str>, answer: &str) -> CommandCard {
+    if turn_command == Some("context") {
+        return context_card(answer);
+    }
+    if answer.starts_with("Unknown command: ")
+        || answer.contains("isn't available in this environment")
+    {
+        return CommandCard::Notice {
+            text: answer.to_string(),
+        };
+    }
+    CommandCard::Text {
+        command: turn_command.unwrap_or("").to_string(),
+        text: answer.to_string(),
+    }
+}
+
+/// FR-18 predicate: fire the defensive fallback? (turn succeeded, no synthetic
+/// message seen, zero assistant/tool blocks, non-empty result string).
+fn command_fallback_fires(
+    success: bool,
+    saw_synthetic: bool,
+    saw_blocks: bool,
+    result_text: Option<&str>,
+) -> bool {
+    success && !saw_synthetic && !saw_blocks && result_text.map(|r| !r.is_empty()).unwrap_or(false)
+}
+
+/// FR-13: resolve a /model argument against the catalog — exact id match first,
+/// else case-insensitive label match.
+fn resolve_model_arg<'a>(models: &'a [ModelInfo], arg: &str) -> Option<&'a ModelInfo> {
+    models
+        .iter()
+        .find(|m| m.id == arg)
+        .or_else(|| models.iter().find(|m| m.label.eq_ignore_ascii_case(arg)))
+}
+
+/// FR-12: the current catalog snapshot for the /model card — same source as
+/// francois:session:models (the warmed cache). FR-12/13 require instant: a cold
+/// cache serves the tier-alias fallback immediately and kicks a background
+/// refresh — never a synchronous fetch on the intercepted-send path.
+fn model_catalog_snapshot() -> Vec<ModelInfo> {
+    let cached = model_cache().lock().unwrap().clone();
+    let (models, needs_refresh) = snapshot_from_cache(cached);
+    if needs_refresh {
+        std::thread::spawn(|| {
+            refresh_models();
+        });
+    }
+    models
+}
+
+/// Pure snapshot decision (unit-tested): a warm cache is served as-is; a cold
+/// cache yields the tier-alias catalog plus a background-refresh request.
+fn snapshot_from_cache(cached: Vec<ModelInfo>) -> (Vec<ModelInfo>, bool) {
+    if cached.is_empty() {
+        (catalog(), true)
+    } else {
+        (cached, false)
+    }
+}
+
+/// Upsert + persist a finalized command block and emit its command.output
+/// (FR-9/10/12–18, FR-24). No-op if the session is gone (session-engine FR-14).
+fn finalize_command_block(
+    app: &AppHandle,
+    session_id: &str,
+    block_id: &str,
+    command: &str,
+    card: &CommandCard,
+) {
+    let card_json = serde_json::to_value(card).unwrap_or(Value::Null);
+    let engine = app.state::<Engine>();
+    let block = {
+        let mut map = engine.sessions.lock().unwrap();
+        let Some(s) = map.get_mut(session_id) else {
+            return;
+        };
+        s.buf_command_output(block_id, command, card_json.clone());
+        s.last_activity_at = now_ms();
+        s.block_buffer
+            .iter()
+            .find(|b| b.block_id == block_id)
+            .cloned()
+    };
+    if let Some(b) = &block {
+        append_transcript(app, session_id, b);
+    }
+    emit(
+        app,
+        SessionEvent::CommandOutput {
+            session_id: session_id.into(),
+            block_id: block_id.into(),
+            card: card_json,
+        },
+    );
+}
+
+/// Per-command flow for an intercepted command (FR-5..FR-15). The user block is
+/// already buffered and message.user emitted (FR-4).
+fn run_intercepted_command(app: &AppHandle, session_id: &str, command: &str, arg: Option<&str>) {
+    match command {
+        // FR-5: a present arg is ignored for usage/cost/status/help.
+        "usage" | "cost" => start_usage_probe(app, session_id, command),
+        "model" => run_model_command(app, session_id, arg),
+        "status" => {
+            // FR-14: instant snapshot card
+            let meta = {
+                let engine = app.state::<Engine>();
+                let map = engine.sessions.lock().unwrap();
+                map.get(session_id).map(|s| s.meta())
+            };
+            if let Some(meta) = meta {
+                finalize_command_block(
+                    app,
+                    session_id,
+                    &uuid(),
+                    "status",
+                    &CommandCard::Status { meta },
+                );
+            }
+        }
+        "help" => {
+            finalize_command_block(
+                app,
+                session_id,
+                &uuid(),
+                "help",
+                &CommandCard::Help {
+                    entries: help_entries(),
+                },
+            );
+        }
+        _ => {}
+    }
+}
+
+/// /model — bare: catalog card (FR-12); with an argument: resolve + switch or an
+/// unknown-model notice (FR-13). Instant either way; no status change.
+fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&str>) {
+    let models = model_catalog_snapshot();
+    let Some(arg) = arg else {
+        let current_id = {
+            let engine = app.state::<Engine>();
+            let map = engine.sessions.lock().unwrap();
+            let Some(s) = map.get(session_id) else { return };
+            s.model_id.clone()
+        };
+        finalize_command_block(
+            app,
+            session_id,
+            &uuid(),
+            "model",
+            &CommandCard::Model { models, current_id },
+        );
+        return;
+    };
+    match resolve_model_arg(&models, arg) {
+        Some(m) => {
+            let (id, label) = (m.id.clone(), m.label.clone());
+            if apply_model_switch(app, session_id, &id).is_some() {
+                finalize_command_block(
+                    app,
+                    session_id,
+                    &uuid(),
+                    "model",
+                    &CommandCard::Notice {
+                        text: format!("model \u{2192} {label}"),
+                    },
+                );
+            }
+        }
+        None => {
+            let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+            finalize_command_block(
+                app,
+                session_id,
+                &uuid(),
+                "model",
+                &CommandCard::Notice {
+                    text: format!(
+                        "unknown model: {arg} \u{2014} available: {}",
+                        ids.join(", ")
+                    ),
+                },
+            );
+        }
+    }
+}
+
+/// FR-6/7/11: begin the /usage//cost detached side-spawn — reserve the single probe
+/// slot, emit command.started + a pending block, then probe on a detached thread.
+/// Invisible to the turn lifecycle: status, queue, claude_session_id and
+/// contextUsedTokens are never touched.
+fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str) {
+    let engine = app.state::<Engine>();
+    let block_id = uuid();
+    let (cwd, model_id, runtime, slot) = {
+        let mut map = engine.sessions.lock().unwrap();
+        let Some(s) = map.get_mut(session_id) else {
+            return;
+        };
+        let Some(slot) = s.reserve_probe(&block_id) else {
+            // FR-11: one in-flight probe per session → instant notice on a fresh block.
+            drop(map);
+            finalize_command_block(
+                app,
+                session_id,
+                &uuid(),
+                command,
+                &CommandCard::Notice {
+                    text: "a usage check is already running".into(),
+                },
+            );
+            return;
+        };
+        s.buf_command_pending(&block_id, command);
+        s.last_activity_at = now_ms();
+        (s.cwd.clone(), s.model_id.clone(), s.runtime.clone(), slot)
+    };
+    emit(
+        app,
+        SessionEvent::CommandStarted {
+            session_id: session_id.into(),
+            block_id: block_id.clone(),
+            command: command.into(),
+        },
+    );
+    let app = app.clone();
+    let sid = session_id.to_string();
+    let command = command.to_string();
+    std::thread::spawn(move || {
+        run_probe(app, sid, block_id, command, cwd, model_id, runtime, slot)
+    });
+}
+
+/// FR-7/8/9/10: the detached probe body. Same invocation machinery as turns
+/// (session runtime incl. WSL + session cwd); NO --resume, no permission flags.
+#[allow(clippy::too_many_arguments)]
+fn run_probe(
+    app: AppHandle,
+    session_id: String,
+    block_id: String,
+    command: String,
+    cwd: String,
+    model_id: String,
+    runtime: String,
+    slot: Arc<Mutex<Option<Child>>>,
+) {
+    let args: Vec<String> = vec![
+        "-p".into(),
+        format!("/{command}"),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--verbose".into(),
+        "--model".into(),
+        model_id,
+    ];
+    let (program, argv) = claude_invocation(&runtime, &cwd, args);
+    let mut cmd = Command::new(program);
+    cmd.args(argv);
+    if runtime != "wsl" {
+        cmd.current_dir(&cwd); // wsl probes get their cwd via `--cd` inside the distro
+    }
+    no_window(&mut cmd);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => {
+            // FR-10 with session-engine FR-45's actionable wording where determinable.
+            let text = if runtime == "wsl" {
+                "couldn't fetch usage \u{2014} WSL not found. Install it (wsl --install) or use the native runtime."
+            } else {
+                "couldn't fetch usage \u{2014} Claude Code CLI not found. Install it and ensure `claude` is on PATH."
+            };
+            finish_probe(
+                &app,
+                &session_id,
+                &block_id,
+                &command,
+                CommandCard::Notice { text: text.into() },
+            );
+            return;
+        }
+    };
+    let stdout = child.stdout.take();
+    *slot.lock().unwrap() = Some(child);
+
+    // If the session was removed between reserve and spawn, its remove-path kill
+    // found an empty slot — kill the child ourselves and vanish (§7, FR-14).
+    let still_wanted = {
+        let engine = app.state::<Engine>();
+        let map = engine.sessions.lock().unwrap();
+        map.get(&session_id)
+            .and_then(|s| s.pending_probe.as_ref())
+            .map(|p| p.block_id == block_id)
+            .unwrap_or(false)
+    };
+    if !still_wanted {
+        if let Some(mut c) = slot.lock().unwrap().take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        return;
+    }
+
+    // FR-10: 30s watchdog → kill. `done` stops the watchdog after a normal finish.
+    let done = Arc::new(AtomicBool::new(false));
+    let timed_out = Arc::new(AtomicBool::new(false));
+    {
+        let (slot, done, timed_out) = (slot.clone(), done.clone(), timed_out.clone());
+        std::thread::spawn(move || {
+            for _ in 0..(PROBE_TIMEOUT_SECS * 10) {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if done.load(Ordering::SeqCst) {
+                    return;
+                }
+            }
+            timed_out.store(true, Ordering::SeqCst);
+            if let Some(c) = slot.lock().unwrap().as_mut() {
+                let _ = c.kill();
+            }
+        });
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(out) = stdout {
+        for line in BufReader::new(out).lines() {
+            match line {
+                Ok(l) => lines.push(l),
+                Err(_) => break,
+            }
+        }
+    }
+    if let Some(mut c) = slot.lock().unwrap().take() {
+        let _ = c.wait();
+    }
+    done.store(true, Ordering::SeqCst);
+
+    // Remediation R1: prefer a fully-parsed answer over the timeout notice —
+    // an answer read just before the 30s kill must not be discarded (probe_card).
+    let card = probe_card(&command, &lines, timed_out.load(Ordering::SeqCst));
+    finish_probe(&app, &session_id, &block_id, &command, card);
+}
+
+/// Release the probe slot and finalize its pending block (FR-9/10 — a pending
+/// command block is never left open). If the session was removed mid-probe,
+/// nothing is emitted (session-engine FR-14).
+fn finish_probe(
+    app: &AppHandle,
+    session_id: &str,
+    block_id: &str,
+    command: &str,
+    card: CommandCard,
+) {
+    {
+        let engine = app.state::<Engine>();
+        let mut map = engine.sessions.lock().unwrap();
+        let Some(s) = map.get_mut(session_id) else {
+            return;
+        };
+        match &s.pending_probe {
+            Some(p) if p.block_id == block_id => s.pending_probe = None,
+            _ => return, // superseded or cancelled — never finalize another probe's block
+        }
+    }
+    finalize_command_block(app, session_id, block_id, command, &card);
 }
 
 // ---------- unit tests for the §5.4 derivation logic (acceptance criteria) ----------
@@ -2715,6 +4392,7 @@ mod tests {
             tool: "Edit".into(),
             summary: "src/x.rs".into(),
             meta: Some("+3 \u{2212}1".into()),
+            card: None,
             streaming: true, // in-memory streaming flag must NOT round-trip
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
@@ -2736,6 +4414,7 @@ mod tests {
             tool: String::new(),
             summary: String::new(),
             meta: None,
+            card: None,
             streaming: false,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
@@ -2763,9 +4442,12 @@ mod tests {
             tool: String::new(),
             summary: "explorer".into(), // subagent name lives in `summary`
             meta: Some("done".into()),
+            card: None,
             streaming: false,
         };
-        let back = parse_persisted_block(&serde_json::to_string(&persisted_block_json(&b)).unwrap()).unwrap();
+        let back =
+            parse_persisted_block(&serde_json::to_string(&persisted_block_json(&b)).unwrap())
+                .unwrap();
         assert!(matches!(back.kind, BlockKind::Subagent));
         assert_eq!(back.summary, "explorer");
         assert_eq!(back.meta.as_deref(), Some("done"));
@@ -2776,8 +4458,14 @@ mod tests {
         assert!(permission_args("default").is_empty()); // inherit ~/.claude settings — no flag
         assert!(permission_args("garbage").is_empty());
         assert_eq!(permission_args("plan"), vec!["--permission-mode", "plan"]);
-        assert_eq!(permission_args("acceptEdits"), vec!["--permission-mode", "acceptEdits"]);
-        assert_eq!(permission_args("bypassPermissions"), vec!["--permission-mode", "bypassPermissions"]);
+        assert_eq!(
+            permission_args("acceptEdits"),
+            vec!["--permission-mode", "acceptEdits"]
+        );
+        assert_eq!(
+            permission_args("bypassPermissions"),
+            vec!["--permission-mode", "bypassPermissions"]
+        );
     }
 
     #[test]
@@ -2790,9 +4478,16 @@ mod tests {
         assert_eq!(prog, "wsl.exe");
         assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
         // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG live)
-        let (prog, args) = claude_invocation("wsl", "\\\\wsl.localhost\\Ubuntu\\home\\u\\api", vec!["-p".into(), "hi".into()]);
+        let (prog, args) = claude_invocation(
+            "wsl",
+            "\\\\wsl.localhost\\Ubuntu\\home\\u\\api",
+            vec!["-p".into(), "hi".into()],
+        );
         assert_eq!(prog, "wsl.exe");
-        assert_eq!(args, vec!["--cd", "/home/u/api", "--", "claude", "-p", "hi"]);
+        assert_eq!(
+            args,
+            vec!["--cd", "/home/u/api", "--", "claude", "-p", "hi"]
+        );
     }
 
     #[test]
@@ -2804,10 +4499,17 @@ mod tests {
         assert_eq!(m.runtime, "native");
         // valid persisted mode round-trips
         let full = serde_json::json!({ "id": "a", "name": "n", "cwd": "/x", "permissionMode": "plan", "runtime": "native" });
-        assert_eq!(parse_session_record(&full, 5).unwrap().permission_mode, "plan");
+        assert_eq!(
+            parse_session_record(&full, 5).unwrap().permission_mode,
+            "plan"
+        );
         // modes we don't offer (e.g. "auto") sanitize back to default
-        let bad = serde_json::json!({ "id": "a", "name": "n", "cwd": "/x", "permissionMode": "auto" });
-        assert_eq!(parse_session_record(&bad, 5).unwrap().permission_mode, "default");
+        let bad =
+            serde_json::json!({ "id": "a", "name": "n", "cwd": "/x", "permissionMode": "auto" });
+        assert_eq!(
+            parse_session_record(&bad, 5).unwrap().permission_mode,
+            "default"
+        );
     }
 
     #[test]
@@ -2829,14 +4531,22 @@ mod tests {
         assert!(m.claude_session_id.is_none());
         assert_eq!(m.context_used_tokens, 0);
         assert_eq!(m.last_activity_at, 4242); // default `now`
-        // full record restores all three
+                                              // full record restores all three
         let full = json!({ "id": "d", "name": "n", "cwd": "/y", "modelId": "sonnet",
             "claudeSessionId": "cs-1", "lastActivityAt": 99u64, "contextUsedTokens": 512u64 });
         let m2 = parse_session_record(&full, 0).unwrap();
         assert_eq!(m2.claude_session_id.as_deref(), Some("cs-1"));
         assert_eq!((m2.last_activity_at, m2.context_used_tokens), (99, 512));
         // healing of a legacy made-up id
-        assert_eq!(parse_session_record(&json!({ "id": "z", "name": "n", "cwd": "/", "modelId": "claude-opus-4" }), 0).unwrap().model_id, "opus");
+        assert_eq!(
+            parse_session_record(
+                &json!({ "id": "z", "name": "n", "cwd": "/", "modelId": "claude-opus-4" }),
+                0
+            )
+            .unwrap()
+            .model_id,
+            "opus"
+        );
         // missing required field → None
         assert!(parse_session_record(&json!({ "name": "x" }), 0).is_none());
     }
@@ -2899,7 +4609,10 @@ mod tests {
 
     #[test]
     fn write_meta_counts_input_lines() {
-        assert_eq!(tool_meta("Write", &json!({ "content": "a\nb" }), ""), "2 lines");
+        assert_eq!(
+            tool_meta("Write", &json!({ "content": "a\nb" }), ""),
+            "2 lines"
+        );
     }
 
     #[test]
@@ -2979,7 +4692,8 @@ mod tests {
 
     #[test]
     fn compute_used_sums_input_cacheread_output() {
-        let u = json!({ "input_tokens": 10, "cache_read_input_tokens": 21213, "output_tokens": 47 });
+        let u =
+            json!({ "input_tokens": 10, "cache_read_input_tokens": 21213, "output_tokens": 47 });
         assert_eq!(compute_used(&u), 21270);
     }
 
@@ -2994,9 +4708,27 @@ mod tests {
         {
             let mut c = model_cache().lock().unwrap();
             *c = vec![
-                ModelInfo { id: "claude-opus-4-8".into(), label: "Opus 4.8".into(), brief: None, context_tokens: Some(1_000_000), efforts: vec![] },
-                ModelInfo { id: "claude-opus-4-5-20251101".into(), label: "Opus 4.5".into(), brief: None, context_tokens: Some(200_000), efforts: vec![] },
-                ModelInfo { id: "claude-haiku-4-5".into(), label: "Haiku 4.5".into(), brief: None, context_tokens: Some(200_000), efforts: vec![] },
+                ModelInfo {
+                    id: "claude-opus-4-8".into(),
+                    label: "Opus 4.8".into(),
+                    brief: None,
+                    context_tokens: Some(1_000_000),
+                    efforts: vec![],
+                },
+                ModelInfo {
+                    id: "claude-opus-4-5-20251101".into(),
+                    label: "Opus 4.5".into(),
+                    brief: None,
+                    context_tokens: Some(200_000),
+                    efforts: vec![],
+                },
+                ModelInfo {
+                    id: "claude-haiku-4-5".into(),
+                    label: "Haiku 4.5".into(),
+                    brief: None,
+                    context_tokens: Some(200_000),
+                    efforts: vec![],
+                },
             ];
         }
         // exact id
@@ -3015,5 +4747,569 @@ mod tests {
         assert_eq!(humanize("claude-sonnet-4-5-20250929"), "Sonnet 4.5");
         assert_eq!(humanize("claude-fable-5"), "Fable 5");
         assert_eq!(humanize("opus"), "Opus");
+    }
+
+    // ---------- interactive-commands (specs/interactive-commands.md) ----------
+
+    fn test_session() -> Session {
+        Session {
+            id: "s1".into(),
+            name: "n".into(),
+            cwd: "/x".into(),
+            model_id: "sonnet".into(),
+            status: "idle".into(),
+            context_used_tokens: 0,
+            context_limit_tokens: 200_000,
+            started_at: 0,
+            last_activity_at: 0,
+            error_message: None,
+            effort: None,
+            permission_mode: "default".into(),
+            runtime: "native".into(),
+            queue: VecDeque::new(),
+            claude_session_id: None,
+            current: None,
+            pending_probe: None,
+            agents: HashMap::new(),
+            agent_order: Vec::new(),
+            block_buffer: Vec::new(),
+            mcp: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn command_grammar_parses_and_lowercases() {
+        // FR-1: single-line `/token [arg]`, token lowercased, arg trimmed
+        assert_eq!(parse_command("/usage"), Some(("usage".into(), None)));
+        assert_eq!(parse_command("  /USAGE  "), Some(("usage".into(), None)));
+        assert_eq!(
+            parse_command("/model opus"),
+            Some(("model".into(), Some("opus".into())))
+        );
+        // arg keeps its case and interior spacing; ends trimmed
+        assert_eq!(
+            parse_command("/model  Opus 4.5 "),
+            Some(("model".into(), Some("Opus 4.5".into())))
+        );
+        assert_eq!(
+            parse_command("/spec-x_2 arg"),
+            Some(("spec-x_2".into(), Some("arg".into())))
+        );
+    }
+
+    #[test]
+    fn command_grammar_rejects_non_commands() {
+        assert_eq!(parse_command("hello"), None);
+        assert_eq!(parse_command("/"), None);
+        assert_eq!(parse_command("/9lives"), None); // token must start with a letter
+        assert_eq!(parse_command("/foo!bar"), None); // arg must be whitespace-separated
+        assert_eq!(parse_command("/usage\nmore"), None); // multiline is never a command (FR-1)
+        assert_eq!(parse_command("  /usage\nmore  "), None);
+    }
+
+    #[test]
+    fn intercept_set_matches_contract() {
+        // FR-2: exactly usage/cost/model/status/help are intercepted
+        for c in [
+            "/usage",
+            "/cost",
+            "/model",
+            "/status",
+            "/help",
+            "/USAGE",
+            "/usage extra words",
+        ] {
+            assert!(
+                intercepted_command(c).is_some(),
+                "{c} should be intercepted"
+            );
+        }
+        // passthrough: /context, /compact, custom skills, unknowns, multiline, plain text
+        for c in [
+            "/context",
+            "/compact",
+            "/spec something",
+            "/frobnicate",
+            "/usage\nx",
+            "usage",
+        ] {
+            assert!(intercepted_command(c).is_none(), "{c} must pass through");
+        }
+    }
+
+    #[test]
+    fn meter_line_parses_probed_samples() {
+        // real probed output (spec §1)
+        let m = parse_meter_line(
+            "Current session: 14% used \u{b7} resets Jul 22, 5:29pm (Europe/Paris)",
+        )
+        .unwrap();
+        assert_eq!(m.label, "Current session");
+        assert_eq!(m.percent_used, 14);
+        assert_eq!(m.resets_at, "Jul 22, 5:29pm (Europe/Paris)");
+        let m = parse_meter_line(
+            "Current week (all models): 34% used \u{b7} resets Jul 25, 11:00am (Europe/Paris)",
+        )
+        .unwrap();
+        assert_eq!(m.label, "Current week (all models)");
+        assert_eq!(m.percent_used, 34);
+    }
+
+    #[test]
+    fn meter_line_drift_returns_none() {
+        assert!(parse_meter_line("Current session: 14% consumed").is_none());
+        assert!(parse_meter_line("Current session: 14% used . resets Jul 22").is_none()); // ASCII dot, not U+00B7
+        assert!(parse_meter_line("Current session: x% used \u{b7} resets Jul 22").is_none());
+        assert!(parse_meter_line("Current session: 14% used \u{b7} resets ").is_none()); // empty resets
+        assert!(parse_meter_line("no meter here").is_none());
+    }
+
+    #[test]
+    fn usage_card_parses_meters_and_tail() {
+        let answer = "Current session: 14% used \u{b7} resets Jul 22, 5:29pm (Europe/Paris)\nCurrent week (all models): 34% used \u{b7} resets Jul 25, 11:00am (Europe/Paris)\n\n\nWhat's contributing:\n\u{2022} lots of turns";
+        let CommandCard::Usage {
+            command,
+            meters,
+            tail,
+        } = usage_card("usage", answer)
+        else {
+            panic!("expected a usage card");
+        };
+        assert_eq!(command, "usage");
+        assert_eq!(meters.len(), 2);
+        assert_eq!(meters[1].label, "Current week (all models)");
+        // tail = answer minus meter lines, blank runs collapsed, trimmed (§5)
+        assert_eq!(tail, "What's contributing:\n\u{2022} lots of turns");
+    }
+
+    #[test]
+    fn usage_tail_collapses_blank_runs() {
+        let answer = "Current session: 1% used \u{b7} resets soon\ntop\n\n\n\nbottom";
+        let CommandCard::Usage { tail, .. } = usage_card("cost", answer) else {
+            panic!("expected a usage card");
+        };
+        assert_eq!(tail, "top\n\nbottom");
+    }
+
+    #[test]
+    fn usage_card_drift_falls_back_to_text() {
+        // FR-9: no meter matches → raw text card, never an error
+        let CommandCard::Text { command, text } = usage_card("usage", "totally new format") else {
+            panic!("expected a text card");
+        };
+        assert_eq!(command, "usage");
+        assert_eq!(text, "totally new format");
+    }
+
+    #[test]
+    fn context_tokens_parses_and_drifts() {
+        assert_eq!(
+            parse_context_tokens("## Context\n**Tokens:** 26.4k / 200k (13%)\nmore"),
+            Some(("26.4k".into(), "200k".into(), 13))
+        );
+        assert_eq!(
+            parse_context_tokens("**Tokens:** 26.4k/200k (13%)"),
+            Some(("26.4k".into(), "200k".into(), 13))
+        );
+        // drift → None (FR-19 body-only fallback)
+        assert!(parse_context_tokens("Tokens: 26.4k / 200k (13%)").is_none());
+        assert!(parse_context_tokens("**Tokens:** 26.4k of 200k (13%)").is_none());
+        assert!(parse_context_tokens("").is_none());
+    }
+
+    #[test]
+    fn context_card_normalizes_body() {
+        let answer = "## Context Usage\n**Tokens:** 26.4k / 200k (13%)\n| Category | Tokens |\n|---|---|\n**System prompt** stays";
+        let CommandCard::Context {
+            percent_used,
+            used_label,
+            limit_label,
+            body,
+        } = context_card(answer)
+        else {
+            panic!("expected a context card");
+        };
+        assert_eq!(percent_used, Some(13));
+        assert_eq!(used_label.as_deref(), Some("26.4k"));
+        assert_eq!(limit_label.as_deref(), Some("200k"));
+        // `**` removed, heading '#'-run + one space stripped, table pipes verbatim (FR-19)
+        assert_eq!(body, "Context Usage\nTokens: 26.4k / 200k (13%)\n| Category | Tokens |\n|---|---|\nSystem prompt stays");
+    }
+
+    #[test]
+    fn context_card_without_tokens_line_is_body_only() {
+        let CommandCard::Context {
+            percent_used,
+            used_label,
+            limit_label,
+            body,
+        } = context_card("just text")
+        else {
+            panic!("expected a context card");
+        };
+        assert!(percent_used.is_none() && used_label.is_none() && limit_label.is_none());
+        assert_eq!(body, "just text");
+    }
+
+    fn ndjson(lines: &[Value]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn probe_answer_prefers_first_synthetic_assistant() {
+        let lines = ndjson(&[
+            json!({ "type": "system", "subtype": "init" }),
+            json!({ "type": "assistant", "message": { "model": "<synthetic>",
+                "content": [{ "type": "text", "text": "Current session: 14% used" }, { "type": "text", "text": " \n" }] } }),
+            json!({ "type": "result", "subtype": "success", "result": "other" }),
+        ]);
+        // content[].text concatenated + trailing whitespace stripped (FR-8)
+        assert_eq!(
+            probe_answer(&lines).as_deref(),
+            Some("Current session: 14% used")
+        );
+    }
+
+    #[test]
+    fn probe_answer_falls_back_to_result() {
+        let lines = ndjson(&[
+            json!({ "type": "assistant", "message": { "model": "claude-opus-4-8", "content": [{ "type": "text", "text": "real turn" }] } }),
+            json!({ "type": "result", "subtype": "success", "result": "from result\n" }),
+        ]);
+        assert_eq!(probe_answer(&lines).as_deref(), Some("from result"));
+        assert!(probe_answer(&[String::from("not json")]).is_none());
+        assert!(probe_answer(&[]).is_none());
+    }
+
+    #[test]
+    fn skill_sends_are_never_intercepted() {
+        // Remediation R1 / spec §2 non-goal: a skill named like an intercepted
+        // command passes through byte-for-byte; typed input keeps intercepting.
+        for t in ["/usage", "/cost", "/model opus", "/status", "/help"] {
+            assert!(
+                send_intercept(t, SendSource::Skill).is_none(),
+                "{t} from skills_run must pass through"
+            );
+            assert!(
+                send_intercept(t, SendSource::Typed).is_some(),
+                "{t} typed must intercept"
+            );
+        }
+        // non-intercepted text is passthrough from both sources
+        assert!(send_intercept("/spec something", SendSource::Typed).is_none());
+        assert!(send_intercept("/spec something", SendSource::Skill).is_none());
+    }
+
+    #[test]
+    fn model_snapshot_cold_cache_serves_catalog_instantly() {
+        // Remediation R1 / FR-12-13: cold cache → tier-alias fallback served
+        // immediately (background refresh requested), never a synchronous fetch.
+        let (models, needs_refresh) = snapshot_from_cache(Vec::new());
+        assert!(needs_refresh);
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["sonnet", "opus", "haiku"]
+        );
+        // warm cache is served as-is, no refresh kicked
+        let (models, needs_refresh) =
+            snapshot_from_cache(vec![model("claude-opus-4-8", "Opus 4.8")]);
+        assert!(!needs_refresh);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "claude-opus-4-8");
+    }
+
+    #[test]
+    fn probe_card_prefers_parsed_answer_over_timeout() {
+        // Remediation R1 / FR-10 watchdog-finish race: an answer fully read just
+        // before the 30s kill wins; timed_out only matters with no parsed answer.
+        let lines = ndjson(&[
+            json!({ "type": "assistant", "message": { "model": "<synthetic>",
+            "content": [{ "type": "text", "text": "Current session: 14% used \u{b7} resets soon" }] } }),
+        ]);
+        assert!(matches!(
+            probe_card("usage", &lines, true),
+            CommandCard::Usage { .. }
+        ));
+        assert!(matches!(
+            probe_card("usage", &lines, false),
+            CommandCard::Usage { .. }
+        ));
+        // no parsed answer + timed out → timeout notice
+        let CommandCard::Notice { text } = probe_card("usage", &[], true) else {
+            panic!("expected a notice")
+        };
+        assert!(text.contains("timed out"));
+        // no parsed answer, no timeout → no-answer notice
+        let CommandCard::Notice { text } = probe_card("usage", &[], false) else {
+            panic!("expected a notice")
+        };
+        assert!(text.contains("no answer"));
+    }
+
+    #[test]
+    fn synthetic_detection_requires_synthetic_model() {
+        let synth = json!({ "message": { "model": "<synthetic>", "content": [{ "type": "text", "text": "Unknown command: /x" }] } });
+        assert_eq!(
+            synthetic_text(&synth).as_deref(),
+            Some("Unknown command: /x")
+        );
+        let real = json!({ "message": { "model": "claude-opus-4-8", "content": [{ "type": "text", "text": "hi" }] } });
+        assert!(synthetic_text(&real).is_none());
+        assert!(synthetic_text(&json!({})).is_none());
+    }
+
+    #[test]
+    fn classify_local_answer_follows_fr17_order() {
+        // (a) context turn → context card
+        assert!(matches!(
+            classify_local_answer(Some("context"), "**Tokens:** 1k / 2k (50%)"),
+            CommandCard::Context { .. }
+        ));
+        // (b) unknown / unavailable → notice, verbatim
+        let CommandCard::Notice { text } =
+            classify_local_answer(Some("frobnicate"), "Unknown command: /frobnicate")
+        else {
+            panic!("expected a notice card");
+        };
+        assert_eq!(text, "Unknown command: /frobnicate");
+        assert!(matches!(
+            classify_local_answer(
+                Some("status"),
+                "/status isn't available in this environment."
+            ),
+            CommandCard::Notice { .. }
+        ));
+        // (c) otherwise → text card with the turn's command token (or '')
+        let CommandCard::Text { command, text } =
+            classify_local_answer(Some("foo"), "some local output")
+        else {
+            panic!("expected a text card");
+        };
+        assert_eq!(
+            (command.as_str(), text.as_str()),
+            ("foo", "some local output")
+        );
+        let CommandCard::Text { command, .. } = classify_local_answer(None, "output") else {
+            panic!("expected a text card");
+        };
+        assert_eq!(command, "");
+    }
+
+    #[test]
+    fn fr18_fallback_truth_table() {
+        assert!(command_fallback_fires(
+            true,
+            false,
+            false,
+            Some("Unknown command: /x")
+        ));
+        assert!(!command_fallback_fires(false, false, false, Some("x"))); // turn not a success
+        assert!(!command_fallback_fires(true, true, false, Some("x"))); // synthetic already carded
+        assert!(!command_fallback_fires(true, false, true, Some("x"))); // real blocks streamed
+        assert!(!command_fallback_fires(true, false, false, Some(""))); // empty result
+        assert!(!command_fallback_fires(true, false, false, None));
+    }
+
+    #[test]
+    fn command_event_members_serialize_to_contract_shape() {
+        let started = serde_json::to_value(SessionEvent::CommandStarted {
+            session_id: "s1".into(),
+            block_id: "b1".into(),
+            command: "usage".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            started,
+            json!({ "type": "command.started", "sessionId": "s1", "blockId": "b1", "command": "usage" })
+        );
+        let card = serde_json::to_value(CommandCard::Notice {
+            text: "a usage check is already running".into(),
+        })
+        .unwrap();
+        let output = serde_json::to_value(SessionEvent::CommandOutput {
+            session_id: "s1".into(),
+            block_id: "b2".into(),
+            card,
+        })
+        .unwrap();
+        assert_eq!(
+            output,
+            json!({ "type": "command.output", "sessionId": "s1", "blockId": "b2",
+            "card": { "kind": "notice", "text": "a usage check is already running" } })
+        );
+    }
+
+    #[test]
+    fn command_card_kinds_serialize_to_contract_shape() {
+        let usage = serde_json::to_value(CommandCard::Usage {
+            command: "cost".into(),
+            meters: vec![UsageMeter {
+                label: "Current session".into(),
+                percent_used: 14,
+                resets_at: "Jul 22, 5:29pm (Europe/Paris)".into(),
+            }],
+            tail: "tail".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            usage,
+            json!({ "kind": "usage", "command": "cost", "tail": "tail",
+            "meters": [{ "label": "Current session", "percentUsed": 14, "resetsAt": "Jul 22, 5:29pm (Europe/Paris)" }] })
+        );
+
+        // context nulls serialize as JSON null (contract: number | null), never omitted
+        let ctx = serde_json::to_value(CommandCard::Context {
+            percent_used: None,
+            used_label: None,
+            limit_label: None,
+            body: "b".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            ctx,
+            json!({ "kind": "context", "percentUsed": null, "usedLabel": null, "limitLabel": null, "body": "b" })
+        );
+
+        let model_card = serde_json::to_value(CommandCard::Model {
+            models: vec![model("opus", "Opus")],
+            current_id: "opus".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            model_card,
+            json!({ "kind": "model", "currentId": "opus", "models": [{ "id": "opus", "label": "Opus" }] })
+        );
+
+        let help = serde_json::to_value(CommandCard::Help {
+            entries: help_entries(),
+        })
+        .unwrap();
+        assert_eq!(help["kind"], "help");
+        assert_eq!(help["entries"].as_array().unwrap().len(), 6);
+        assert_eq!(
+            help["entries"][0],
+            json!({ "command": "usage", "description": "plan usage limits (session + weekly)" })
+        );
+
+        let text = serde_json::to_value(CommandCard::Text {
+            command: "".into(),
+            text: "raw".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            text,
+            json!({ "kind": "text", "command": "", "text": "raw" })
+        );
+
+        let status = serde_json::to_value(CommandCard::Status {
+            meta: test_session().meta(),
+        })
+        .unwrap();
+        assert_eq!(status["kind"], "status");
+        assert_eq!(status["meta"]["permissionMode"], "default");
+        assert_eq!(status["meta"]["contextLimitTokens"], 200_000);
+    }
+
+    #[test]
+    fn classify_block_maps_pending_and_finalized_command() {
+        let mut s = test_session();
+        s.buf_command_pending("c1", "usage");
+        let pending = classify_block(&s.block_buffer[0]);
+        assert_eq!(
+            pending,
+            json!({ "kind": "command", "blockId": "c1", "isStreaming": true, "command": "usage" })
+        );
+
+        s.buf_command_output("c1", "usage", json!({ "kind": "notice", "text": "n" }));
+        assert_eq!(s.block_buffer.len(), 1); // upsert, not append (FR-20 semantics)
+        let done = classify_block(&s.block_buffer[0]);
+        assert_eq!(
+            done,
+            json!({ "kind": "command", "blockId": "c1", "isStreaming": false, "command": "usage",
+            "card": { "kind": "notice", "text": "n" } })
+        );
+    }
+
+    #[test]
+    fn command_output_without_started_inserts_block() {
+        // the FR-11/FR-13 instant-notice cases arrive without a command.started
+        let mut s = test_session();
+        s.buf_command_output(
+            "c9",
+            "model",
+            json!({ "kind": "notice", "text": "model \u{2192} Opus" }),
+        );
+        assert_eq!(s.block_buffer.len(), 1);
+        assert!(!s.block_buffer[0].streaming);
+        assert_eq!(s.block_buffer[0].tool, "model");
+    }
+
+    #[test]
+    fn persisted_command_block_roundtrips() {
+        let mut s = test_session();
+        s.buf_command_pending("c1", "cost");
+        s.buf_command_output(
+            "c1",
+            "cost",
+            json!({ "kind": "usage", "command": "cost", "meters": [], "tail": "" }),
+        );
+        let line = serde_json::to_string(&persisted_block_json(&s.block_buffer[0])).unwrap();
+        let back = parse_persisted_block(&line).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Command));
+        assert_eq!(back.tool, "cost"); // command token rides in `tool`
+        assert!(!back.streaming);
+        assert_eq!(
+            back.card,
+            Some(json!({ "kind": "usage", "command": "cost", "meters": [], "tail": "" }))
+        );
+    }
+
+    #[test]
+    fn persisted_command_block_requires_card() {
+        // FR-24: pending blocks are never persisted → a card-less command line is malformed
+        assert!(
+            parse_persisted_block(r#"{"blockId":"c1","kind":"command","command":"usage"}"#)
+                .is_none()
+        );
+        assert!(parse_persisted_block(
+            r#"{"blockId":"c1","kind":"command","command":"usage","card":null}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn probe_guard_is_single_flight_per_session() {
+        let mut s = test_session();
+        assert!(s.reserve_probe("b1").is_some());
+        assert!(s.reserve_probe("b2").is_none()); // FR-11: at most one in-flight probe
+        s.pending_probe = None; // probe finalized
+        assert!(s.reserve_probe("b3").is_some());
+    }
+
+    #[test]
+    fn model_arg_resolution_id_then_label_case_insensitive() {
+        let models = vec![
+            model("claude-opus-4-8", "Opus 4.8"),
+            model("sonnet", "Sonnet"),
+        ];
+        // exact id
+        assert_eq!(
+            resolve_model_arg(&models, "claude-opus-4-8").unwrap().label,
+            "Opus 4.8"
+        );
+        // label, case-insensitive (FR-13)
+        assert_eq!(
+            resolve_model_arg(&models, "opus 4.8").unwrap().id,
+            "claude-opus-4-8"
+        );
+        assert_eq!(resolve_model_arg(&models, "SONNET").unwrap().id, "sonnet");
+        // id match wins over a label collision
+        let tricky = vec![model("sonnet", "Opus"), model("opus", "Opus")];
+        assert_eq!(resolve_model_arg(&tricky, "opus").unwrap().id, "opus");
+        // unknown
+        assert!(resolve_model_arg(&models, "gpt-5").is_none());
     }
 }
