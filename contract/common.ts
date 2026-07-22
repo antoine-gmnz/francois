@@ -33,6 +33,7 @@ export type ErrorCode =
   | 'AGENT_NOT_FOUND'
   | 'APP_NOT_RUNNING' // CLI companion: no app instance to talk to
   | 'USAGE_UNAVAILABLE' // usage bar: the CLI ran but returned no parseable meters
+  | 'QUESTION_NOT_PENDING' // session-questions: answer arrived for a question that is not pending
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -174,6 +175,39 @@ export type CommandCard =
   /** Generic CLI-local output that fits no richer card. */
   | { kind: 'text'; command: string; text: string };
 
+// ---------- session questions ----------
+// Shared vocabulary for session-questions (the SessionEvent union below needs
+// these, and this file never imports from feature files — spec §5.3 placement
+// rule). contract/session-questions.ts re-exports them. Shapes mirror the CLI's
+// AskUserQuestion tool input verbatim.
+
+export interface QuestionOption {
+  label: string; // display text, also the canonical answer value
+  description: string; // what choosing it means
+  preview?: string; // optional monospace preview content
+}
+
+export interface SessionQuestion {
+  question: string; // full question text — also the key in the answers map
+  header: string; // short chip label (nominally ≤ 12 chars; render verbatim)
+  options: QuestionOption[]; // 2–4 in practice; render whatever arrives
+  multiSelect: boolean; // true → answers joined with ', '
+}
+
+// ---------- slash menu ----------
+// Shared vocabulary for slash-menu (the SessionEvent union below needs it —
+// same placement rule as SessionQuestion). contract/slash-menu.ts re-exports.
+
+export type SlashCommandSource = 'builtin' | 'skill' | 'cli';
+
+export interface SlashCommandInfo {
+  name: string; // without the leading '/'; rendering adds it
+  description: string; // '' when the source provides none (cli)
+  source: SlashCommandSource;
+  /** skill entries only: the SkillInfo scope, shown as the source tag. */
+  scope?: 'project' | 'user' | 'plugin';
+}
+
 // ---------- session event stream ----------
 // Emitted by session-engine on channel 'francois:session:event'.
 // The session-engine spec is the authority on emission semantics; consumers
@@ -191,6 +225,9 @@ export type SessionEvent =
   | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string } // e.g. '128 lines', '+34 −19'
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)
+  | { type: 'question.asked'; sessionId: SessionId; blockId: BlockId; questions: SessionQuestion[] } // session-questions FR-6: a question parked the turn
+  | { type: 'question.resolved'; sessionId: SessionId; blockId: BlockId; state: 'answered' | 'cancelled'; answers?: Record<string, string> } // session-questions FR-11/13: exactly one per asked
+  | { type: 'session.commands'; sessionId: SessionId; commands: SlashCommandInfo[] } // slash-menu FR-2: merged registry after an init changed the cli set
   | { type: 'agent.update'; agent: AgentInfo }
   | { type: 'mcp.update'; sessionId: SessionId; server: McpServerInfo }
   | { type: 'context.usage'; sessionId: SessionId; usedTokens: number; limitTokens: number }

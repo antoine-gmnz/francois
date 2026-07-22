@@ -5,7 +5,7 @@
 // Every rule is a keyed upsert on blockId: replaying an event is a no-op or an
 // identical replace, and out-of-order arrivals insert rather than drop.
 
-import type { CommandCard, Result } from '../contract/common';
+import type { CommandCard, Result, SessionQuestion } from '../contract/common';
 import {
   assistantColors,
   classifyToolStart,
@@ -13,6 +13,7 @@ import {
   type UserConversationBlock,
 } from '../contract/conversation-view';
 import type { CommandConversationBlock } from '../contract/interactive-commands';
+import type { QuestionConversationBlock } from '../contract/session-questions';
 
 export interface TranscriptState {
   blocks: ConversationBlock[];
@@ -28,6 +29,8 @@ export type TranscriptAction =
   | { t: 'toolDone'; blockId: string; meta: string }
   | { t: 'commandStarted'; blockId: string; command: string } // interactive-commands FR-20
   | { t: 'commandOutput'; blockId: string; card: CommandCard } // interactive-commands FR-20
+  | { t: 'questionAsked'; blockId: string; questions: SessionQuestion[] } // session-questions FR-16
+  | { t: 'questionResolved'; blockId: string; state: 'answered' | 'cancelled'; answers?: Record<string, string> } // session-questions FR-16
   | { t: 'remove'; blockId: string };
 
 /** Command token (without '/') a card answers — for insert-if-unseen outputs. */
@@ -141,6 +144,56 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       const b = state.blocks[i];
       if (b.kind !== 'command') return state;
       return replace(i, { ...b, card: a.card, isStreaming: false });
+    }
+    case 'questionAsked': {
+      // FR-16: keyed idempotent insert; replay is a no-op. The one upsert case:
+      // a resolved-first block (out-of-order insert, questions: []) gets its
+      // verbatim questions filled in without reviving its resolution.
+      const i = idx(a.blockId);
+      if (i === -1) {
+        const b: QuestionConversationBlock = {
+          kind: 'question',
+          blockId: a.blockId,
+          isStreaming: true, // FR-15: true iff pending
+          questions: a.questions,
+          state: 'pending',
+        };
+        return { blocks: [...state.blocks, b] };
+      }
+      const b = state.blocks[i];
+      if (b.kind !== 'question') return state;
+      if (b.questions.length === 0 && a.questions.length > 0) {
+        return replace(i, { ...b, questions: a.questions });
+      }
+      return state;
+    }
+    case 'questionResolved': {
+      // FR-16: update state/answers in place; resolve arriving before the
+      // insert (out-of-order) inserts the resolved block (questions fill in
+      // later via questionAsked). answers present iff answered (§5.2).
+      const i = idx(a.blockId);
+      if (i === -1) {
+        const b: QuestionConversationBlock = {
+          kind: 'question',
+          blockId: a.blockId,
+          isStreaming: false,
+          questions: [],
+          state: a.state,
+          ...(a.answers !== undefined ? { answers: a.answers } : {}),
+        };
+        return { blocks: [...state.blocks, b] };
+      }
+      const b = state.blocks[i];
+      if (b.kind !== 'question') return state;
+      const next: QuestionConversationBlock = {
+        kind: 'question',
+        blockId: b.blockId,
+        isStreaming: false,
+        questions: b.questions,
+        state: a.state,
+        ...(a.answers !== undefined ? { answers: a.answers } : {}),
+      };
+      return replace(i, next);
     }
     case 'remove': {
       const i = idx(a.blockId);

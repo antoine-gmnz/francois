@@ -1,8 +1,10 @@
 // session.rs — the Francois session engine (specs/session-engine.md).
 //
 // Owns the registry of Claude Code sessions, spawns `claude -p --output-format
-// stream-json --include-partial-messages --verbose` per turn, parses the NDJSON
-// stream, and normalizes it to the SessionEvent stream on francois://session/event.
+// stream-json --input-format stream-json --permission-prompt-tool stdio
+// --include-partial-messages --verbose` per turn (the turn text rides stdin as an
+// NDJSON user line — session-questions), parses the NDJSON stream, and normalizes
+// it to the SessionEvent stream on francois://session/event.
 // Backend-only; every UI feature is a client of this engine.
 //
 // Build notes / honest v1 deviations (flagged for spec reconciliation):
@@ -18,11 +20,11 @@ use crate::ipc::{err, ok, AppError, IpcResult};
 // in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
 // is unchanged — these are the same functions, imported instead of defined.
 use crate::usage::{parse_meter_line, probe_answer, synthetic_text, UsageMeter};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -494,6 +496,137 @@ enum CommandCard {
     Text { command: String, text: String },
 }
 
+// ---------- session questions (specs/session-questions.md) ----------
+//
+// The stdio control channel: every session turn runs with `--input-format
+// stream-json --permission-prompt-tool stdio`, so the CLI emits `control_request`
+// lines instead of silently stripping AskUserQuestion from the toolset. Only
+// AskUserQuestion parks a turn (FR-6); every other permission ask is denied
+// instantly (FR-8) and unknown subtypes get an error response (FR-9), so the CLI
+// can never park on something Francois does not render.
+
+/// Mirrors QuestionOption in contract/common.ts. Lenient on missing fields (FR-7).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+struct QuestionOption {
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
+}
+
+/// Mirrors SessionQuestion in contract/common.ts. multiSelect defaults to false
+/// when absent (FR-7); everything renders verbatim.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+struct SessionQuestion {
+    #[serde(default)]
+    question: String,
+    #[serde(default)]
+    header: String,
+    #[serde(default)]
+    options: Vec<QuestionOption>,
+    #[serde(rename = "multiSelect", default)]
+    multi_select: bool,
+}
+
+/// FR-8: the deny message for any non-AskUserQuestion permission ask.
+const PERMISSION_DENY_MSG: &str = "Francois declined: interactive permission prompts are not supported yet — adjust the session's permission mode.";
+
+/// A parked AskUserQuestion awaiting its answer, keyed by blockId in the turn's
+/// pending map (§6). `input` is the VERBATIM tool input — the allow response must
+/// echo it unmodified plus the answers map (FR-11/FR-12).
+struct PendingQuestion {
+    request_id: String,
+    input: Value,
+}
+
+/// FR-7: parse the AskUserQuestion input leniently. None ⇔ no non-empty
+/// `questions` array (or unparseable entries) → auto-deny, no card.
+fn parse_questions(input: &Value) -> Option<Vec<SessionQuestion>> {
+    let arr = input.get("questions")?.as_array()?;
+    if arr.is_empty() {
+        return None;
+    }
+    arr.iter()
+        .map(|q| serde_json::from_value(q.clone()).ok())
+        .collect()
+}
+
+/// §5.5 allow response: `updatedInput` = verbatim original input + the answers map.
+fn allow_response(request_id: &str, input: &Value, answers: &Value) -> Value {
+    let mut updated = input.clone();
+    if let Some(obj) = updated.as_object_mut() {
+        obj.insert("answers".into(), answers.clone());
+    }
+    serde_json::json!({ "type": "control_response", "response": {
+        "subtype": "success", "request_id": request_id,
+        "response": { "behavior": "allow", "updatedInput": updated } } })
+}
+
+/// §5.5 deny response (FR-7 malformed / FR-8 other tools / FR-13 best-effort).
+fn deny_response(request_id: &str, message: &str) -> Value {
+    serde_json::json!({ "type": "control_response", "response": {
+        "subtype": "success", "request_id": request_id,
+        "response": { "behavior": "deny", "message": message } } })
+}
+
+/// §5.5 error response for unsupported control_request subtypes (FR-9).
+fn error_response(request_id: &str) -> Value {
+    serde_json::json!({ "type": "control_response", "response": {
+        "subtype": "error", "request_id": request_id, "error": "unsupported control request" } })
+}
+
+/// What to do with an inbound `control_request` line. Pure; unit-tested.
+enum ControlDecision {
+    /// AskUserQuestion with well-formed input: park it (FR-6).
+    Ask {
+        request_id: String,
+        input: Value,
+        questions: Vec<SessionQuestion>,
+    },
+    /// Answer immediately with this control_response payload (FR-7/8/9).
+    Respond(Value),
+}
+
+fn decide_control_request(v: &Value) -> ControlDecision {
+    let request_id = v
+        .get("request_id")
+        .and_then(|r| r.as_str())
+        .unwrap_or("")
+        .to_string();
+    let req = v.get("request");
+    let subtype = req
+        .and_then(|r| r.get("subtype"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    if subtype != "can_use_tool" {
+        return ControlDecision::Respond(error_response(&request_id));
+    }
+    let tool = req
+        .and_then(|r| r.get("tool_name"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    if tool != "AskUserQuestion" {
+        return ControlDecision::Respond(deny_response(&request_id, PERMISSION_DENY_MSG));
+    }
+    let input = req
+        .and_then(|r| r.get("input"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    match parse_questions(&input) {
+        Some(questions) => ControlDecision::Ask {
+            request_id,
+            input,
+            questions,
+        },
+        None => ControlDecision::Respond(deny_response(
+            &request_id,
+            "malformed AskUserQuestion input",
+        )),
+    }
+}
+
 // ---------- SessionEvent (contract/common.ts, reproduced) ----------
 
 #[derive(Serialize, Clone)]
@@ -568,6 +701,31 @@ enum SessionEvent {
         block_id: String,
         card: Value,
     },
+    #[serde(rename = "question.asked")]
+    QuestionAsked {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        questions: Vec<SessionQuestion>,
+    },
+    #[serde(rename = "question.resolved")]
+    QuestionResolved {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        state: String, // "answered" | "cancelled"
+        /// Present iff answered — omitted (never null) otherwise (§9).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        answers: Option<Value>,
+    },
+    #[serde(rename = "session.commands")]
+    Commands {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        commands: Vec<SlashCommandInfo>,
+    },
     #[serde(rename = "agent.update")]
     AgentUpdate { agent: AgentInfo },
     #[serde(rename = "mcp.update")]
@@ -612,7 +770,8 @@ enum BlockKind {
     Assistant,
     Tool,
     Subagent,
-    Command, // interactive-commands: a slash-command response card
+    Command,  // interactive-commands: a slash-command response card
+    Question, // session-questions: an AskUserQuestion card
 }
 
 #[derive(Clone)]
@@ -633,6 +792,14 @@ struct BufBlock {
 struct TurnHandle {
     child: Arc<Mutex<Child>>,
     interrupted: Arc<AtomicBool>,
+    /// session-questions FR-2: the turn's stdin writer. Lives for the whole turn;
+    /// None once the turn ends (closing it is what lets the CLI exit). ALL writes
+    /// go through this mutex — never while holding Engine.sessions (a blocking
+    /// pipe write must not stall every command).
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
+    /// session-questions FR-6: blockId → parked AskUserQuestion. Removing an entry
+    /// CLAIMS it — that atomic claim is what makes resolution exactly-once (FR-13).
+    pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
 }
 
 /// The single in-flight /usage-/cost side-spawn of a session (interactive-commands
@@ -672,6 +839,10 @@ struct Session {
     agent_order: Vec<String>,    // first-seen order for agents_list (FR-7)
     block_buffer: Vec<BufBlock>, // §6: read by conversation-view's getTranscript
     mcp: HashMap<String, McpServerInfo>,
+    // slash-menu FR-2: the CLI's slash_commands captured from the latest
+    // stream-json init (bare names, init order). In-memory only — never
+    // persisted; a fresh app relearns it on the next turn (spec §6).
+    cli_commands: Vec<String>,
 }
 
 impl Session {
@@ -774,6 +945,43 @@ impl Session {
         }
     }
 
+    /// session-questions FR-6: append a pending question block. `card` reuse: for
+    /// Question blocks it holds `{ questions, state, answers? }`.
+    fn buf_question(&mut self, block_id: &str, questions: Value) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::Question,
+            text: String::new(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: Some(serde_json::json!({ "questions": questions, "state": "pending" })),
+            streaming: true,
+        });
+    }
+
+    /// session-questions FR-11/FR-13: flip a question block to its resolved state
+    /// in place. Returns the updated block (for persistence) or None if unknown.
+    fn buf_question_resolve(
+        &mut self,
+        block_id: &str,
+        state: &str,
+        answers: Option<&Value>,
+    ) -> Option<BufBlock> {
+        let b = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id && b.kind == BlockKind::Question)?;
+        if let Some(card) = b.card.as_mut() {
+            card["state"] = Value::String(state.into());
+            if let Some(a) = answers {
+                card["answers"] = a.clone();
+            }
+        }
+        b.streaming = false;
+        Some(b.clone())
+    }
+
     /// interactive-commands FR-11: reserve the single in-flight probe slot.
     /// Returns the (still empty) child slot, or None if a probe is already pending.
     fn reserve_probe(&mut self, block_id: &str) -> Option<Arc<Mutex<Option<Child>>>> {
@@ -869,6 +1077,20 @@ fn classify_block(b: &BufBlock) -> Value {
             }
             o
         }
+        BlockKind::Question => {
+            // QuestionConversationBlock (contract/session-questions.ts): isStreaming
+            // ⇔ pending (FR-15); `answers` present iff answered, never null.
+            let card = b.card.clone().unwrap_or_else(|| serde_json::json!({}));
+            let mut o = serde_json::json!({
+                "kind": "question", "blockId": b.block_id, "isStreaming": b.streaming,
+                "questions": card.get("questions").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
+                "state": card.get("state").cloned().unwrap_or_else(|| Value::String("pending".into())),
+            });
+            if let Some(a) = card.get("answers") {
+                o["answers"] = a.clone();
+            }
+            o
+        }
     }
 }
 
@@ -900,17 +1122,34 @@ impl Engine {
 
 /// Kill every in-flight turn's child process (called on app exit).
 pub fn kill_all(app: &AppHandle) {
-    if let Some(engine) = app.try_state::<Engine>() {
+    let Some(engine) = app.try_state::<Engine>() else {
+        return;
+    };
+    // session-questions FR-13 (app-exit teardown, §7#5): drain every parked
+    // question BEFORE killing its child, so the cancelled state is persisted
+    // synchronously here — the reader threads may never get to run again. The
+    // drain is the exactly-once claim; a reader that does run finds nothing.
+    let mut orphaned: Vec<(String, String)> = Vec::new(); // (session_id, block_id)
+    {
         let map = engine.sessions.lock().unwrap();
         for s in map.values() {
             if let Some(turn) = &s.current {
                 turn.interrupted.store(true, Ordering::SeqCst);
+                {
+                    let mut p = turn.pending_questions.lock().unwrap();
+                    for (bid, _) in p.drain() {
+                        orphaned.push((s.id.clone(), bid));
+                    }
+                }
                 let _ = turn.child.lock().unwrap().kill();
             }
             if let Some(p) = &s.pending_probe {
                 p.kill(); // interactive-commands: probes die with the app
             }
         }
+    }
+    for (sid, bid) in orphaned {
+        resolve_question(app, &sid, &bid, "cancelled", None);
     }
 }
 
@@ -953,6 +1192,20 @@ fn persisted_block_json(b: &BufBlock) -> Value {
             return serde_json::json!({
                 "blockId": b.block_id, "kind": "command", "command": b.tool, "card": b.card,
             });
+        }
+        BlockKind::Question => {
+            // session-questions FR-6/FR-13: persisted at ask (pending) and again at
+            // resolution — reload upserts by blockId (parse_transcript).
+            let card = b.card.clone().unwrap_or_else(|| serde_json::json!({}));
+            let mut o = serde_json::json!({
+                "blockId": b.block_id, "kind": "question",
+                "questions": card.get("questions").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
+                "state": card.get("state").cloned().unwrap_or_else(|| Value::String("pending".into())),
+            });
+            if let Some(a) = card.get("answers") {
+                o["answers"] = a.clone();
+            }
+            return o;
         }
     };
     serde_json::json!({
@@ -1010,6 +1263,33 @@ fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 streaming: false,
             });
         }
+        "question" => {
+            // session-questions §6: pending entries are memory-only, so a line still
+            // "pending" on disk can only be read back after a hard kill — and a dead
+            // process has no answerable questions. Normalize it to cancelled.
+            let questions = v
+                .get("questions")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new()));
+            let state = match v.get("state").and_then(|s| s.as_str()) {
+                Some("answered") => "answered",
+                _ => "cancelled",
+            };
+            let mut card = serde_json::json!({ "questions": questions, "state": state });
+            if let Some(a) = v.get("answers").filter(|a| !a.is_null()) {
+                card["answers"] = a.clone();
+            }
+            return Some(BufBlock {
+                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+                kind: BlockKind::Question,
+                text: String::new(),
+                tool: String::new(),
+                summary: String::new(),
+                meta: None,
+                card: Some(card),
+                streaming: false,
+            });
+        }
         _ => return None,
     };
     Some(BufBlock {
@@ -1036,6 +1316,20 @@ fn parse_persisted_block(line: &str) -> Option<BufBlock> {
     })
 }
 
+/// Fold persisted lines into blocks, upserting by blockId: the LAST line wins, at
+/// the FIRST occurrence's position. Question resolutions re-append their block
+/// (session-questions FR-15); everything else appends exactly once.
+fn parse_transcript(content: &str) -> Vec<BufBlock> {
+    let mut out: Vec<BufBlock> = Vec::new();
+    for b in content.lines().filter_map(parse_persisted_block) {
+        match out.iter_mut().find(|e| e.block_id == b.block_id) {
+            Some(slot) => *slot = b,
+            None => out.push(b),
+        }
+    }
+    out
+}
+
 /// Read a session's persisted transcript back into a block buffer (FR-5).
 fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
     let Some(path) = transcript_path(app, session_id) else {
@@ -1044,7 +1338,7 @@ fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
     let Ok(content) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
-    content.lines().filter_map(parse_persisted_block).collect()
+    parse_transcript(&content)
 }
 
 fn persist(app: &AppHandle, engine: &Engine) {
@@ -1197,6 +1491,7 @@ pub fn load_persisted(app: &AppHandle) {
                 agent_order: Vec::new(),
                 block_buffer,
                 mcp: HashMap::new(),
+                cli_commands: Vec::new(),
             },
         );
     }
@@ -2159,6 +2454,117 @@ pub fn skills_run(
     }
 }
 
+// ---------- slash menu (specs/slash-menu.md) ----------
+//
+// One merged per-session command registry (FR-1): builtins (help_entries,
+// verbatim) > installed skills/commands (discover_skills) > the CLI's own
+// slash_commands captured from the stream-json init event (FR-2). Dedup by
+// name, first source wins; order per FR-3. Served by session_list_commands
+// and pushed as one session.commands event whenever an init CHANGES the
+// captured cli set.
+
+/// Mirrors SlashCommandInfo in contract/common.ts.
+#[derive(Serialize, Clone)]
+pub struct SlashCommandInfo {
+    name: String,         // without the leading '/'; rendering adds it
+    description: String,  // "" when the source provides none (cli)
+    source: &'static str, // "builtin" | "skill" | "cli" (contract SlashCommandSource)
+    /// skill entries only: the SkillInfo scope (project | user | plugin).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
+}
+
+/// FR-1/FR-3 merge, pure: builtins first (help order), then installed skills
+/// (discovery order; both kinds — skills and command files are all invoked as
+/// /<name>), then cli names (init order). First occurrence of a name wins.
+fn merge_commands(
+    builtins: &[HelpEntry],
+    skills: &[SkillInfo],
+    cli: &[String],
+) -> Vec<SlashCommandInfo> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for h in builtins {
+        if seen.insert(h.command.to_string()) {
+            out.push(SlashCommandInfo {
+                name: h.command.to_string(),
+                description: h.description.to_string(),
+                source: "builtin",
+                scope: None,
+            });
+        }
+    }
+    for s in skills {
+        if !s.installed {
+            continue; // spec §2 non-goal: only what is runnable now
+        }
+        if seen.insert(s.name.clone()) {
+            out.push(SlashCommandInfo {
+                name: s.name.clone(),
+                description: s.description.clone(),
+                source: "skill",
+                scope: s.scope.clone(),
+            });
+        }
+    }
+    for name in cli {
+        if seen.insert(name.clone()) {
+            out.push(SlashCommandInfo {
+                name: name.clone(),
+                description: String::new(),
+                source: "cli",
+                scope: None,
+            });
+        }
+    }
+    out
+}
+
+/// FR-2: an init event's slash_commands, normalized to bare names (a leading
+/// '/' is stripped — FR-3 stores without it; non-strings skipped). None when
+/// the array is absent (→ no change to the capture).
+fn parse_init_slash_commands(v: &Value) -> Option<Vec<String>> {
+    let arr = v.get("slash_commands")?.as_array()?;
+    Some(
+        arr.iter()
+            .filter_map(|x| x.as_str())
+            .map(|s| s.strip_prefix('/').unwrap_or(s).to_string())
+            .collect(),
+    )
+}
+
+/// FR-2 change detection: replace the in-memory capture; true iff it differed
+/// (→ the caller emits one session.commands with the merged registry).
+fn capture_cli_commands(session: &mut Session, names: Vec<String>) -> bool {
+    if session.cli_commands == names {
+        return false;
+    }
+    session.cli_commands = names;
+    true
+}
+
+/// francois:session:listCommands (slash-menu FR-1/FR-4): the merged registry.
+/// Snapshot under the lock, then scan the disk with it dropped — never holds
+/// Engine.sessions across fs work, never touches a running turn.
+#[tauri::command(async)]
+pub fn session_list_commands(
+    engine: State<'_, Engine>,
+    session_id: String,
+) -> IpcResult<Vec<SlashCommandInfo>> {
+    let (cwd, cli) = {
+        let map = engine.sessions.lock().unwrap();
+        let Some(s) = map.get(&session_id) else {
+            return err("SESSION_NOT_FOUND", "no such session");
+        };
+        (s.cwd.clone(), s.cli_commands.clone())
+    };
+    ok(merge_commands(
+        &help_entries(),
+        &discover_skills(&cwd),
+        &cli,
+    ))
+}
+
 /// francois:conversation:getTranscript — owned by conversation-view (spec §5).
 /// Returns the session's in-memory transcript buffer as ConversationBlock[].
 #[tauri::command(async)]
@@ -2291,6 +2697,7 @@ pub fn session_create(
         agent_order: Vec::new(),
         block_buffer: Vec::new(),
         mcp: HashMap::new(),
+        cli_commands: Vec::new(),
     };
     let meta = session.meta();
     engine.sessions.lock().unwrap().insert(id.clone(), session);
@@ -2388,7 +2795,66 @@ pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcRe
         let _ = turn.child.lock().unwrap().kill();
     }
     // The turn's reader thread observes the kill, closes the open block, and
-    // routes completion (drain queue or go idle) — FR-24.
+    // routes completion (drain queue or go idle) — FR-24. A pending question is
+    // cancelled by the same reader-thread teardown (session-questions FR-13).
+    ok(None)
+}
+
+/// francois:session:answerQuestion (session-questions FR-11/FR-12, §5.4).
+/// Writes the §5.5 allow control_response (verbatim input + answers) to the
+/// parked turn's stdin, then resolves the block as answered. Never resolves `ok`
+/// unless the response reached the child's stdin.
+#[tauri::command(async)]
+pub fn session_answer_question(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    block_id: String,
+    answers: HashMap<String, String>,
+) -> IpcResult<Option<()>> {
+    if answers.is_empty() {
+        return err("INVALID_INPUT", "answers is empty");
+    }
+    // Snapshot the turn's shared handles, then RELEASE the sessions lock — the
+    // stdin write below can block and must never stall every other command.
+    let handles = {
+        let map = engine.sessions.lock().unwrap();
+        match map.get(&session_id) {
+            None => return err("SESSION_NOT_FOUND", "no such session"),
+            Some(s) => s
+                .current
+                .as_ref()
+                .map(|t| (t.stdin.clone(), t.pending_questions.clone())),
+        }
+    };
+    let Some((stdin, pending)) = handles else {
+        // No turn in flight ⇒ nothing can be pending (turn over).
+        return err("QUESTION_NOT_PENDING", "that question is no longer pending");
+    };
+    // Claim the entry — removal is the exactly-once guarantee (FR-13): a concurrent
+    // cancel / turn-end that got there first already resolved this question.
+    let claimed = {
+        let mut p = pending.lock().unwrap();
+        p.remove(&block_id)
+    };
+    let Some(q) = claimed else {
+        return err("QUESTION_NOT_PENDING", "that question is no longer pending");
+    };
+    let answers_value = serde_json::to_value(&answers).unwrap_or_else(|_| serde_json::json!({}));
+    let payload = allow_response(&q.request_id, &q.input, &answers_value);
+    if !write_control_line(&stdin, &payload) {
+        // §5.4: the child died between park and answer — FR-13 cancels the
+        // question, and the caller learns it is no longer pending.
+        resolve_question(&app, &session_id, &block_id, "cancelled", None);
+        return err("QUESTION_NOT_PENDING", "that question is no longer pending");
+    }
+    resolve_question(
+        &app,
+        &session_id,
+        &block_id,
+        "answered",
+        Some(&answers_value),
+    );
     ok(None)
 }
 
@@ -2554,7 +3020,7 @@ pub fn session_compact(
     // usage — FR-28. No transcript events are surfaced.
     let limit = context_limit(&model_id);
     let mut used: Option<u64> = None;
-    if let Ok(child) = spawn_claude(
+    if let Ok(mut child) = spawn_claude(
         &cwd,
         &model_id,
         resume.as_deref(),
@@ -2563,6 +3029,10 @@ pub fn session_compact(
         &permission_mode,
         &runtime,
     ) {
+        // session-questions FR-5: /compact rides the stdin path like any turn, but a
+        // compaction can never park on a question — close the pipe right away; the
+        // EOF is what lets the CLI exit after its result (stream-json input mode).
+        drop(child.stdin.take());
         if let Some(out) = child_stdout_lines(child) {
             for line in out {
                 if let Ok(v) = serde_json::from_str::<Value>(&line) {
@@ -2617,20 +3087,23 @@ enum TurnMode {
     ResumeRetry,
 }
 
-fn spawn_claude(
-    cwd: &str,
+/// The claude argv for a session turn. session-questions FR-1: `-p` with NO
+/// positional prompt (the turn text rides stdin), plus the stdio control channel
+/// (`--input-format stream-json --permission-prompt-tool stdio`). Pure; unit-tested.
+fn turn_args(
     model_id: &str,
     resume: Option<&str>,
-    text: &str,
     effort: Option<&str>,
     permission_mode: &str,
-    runtime: &str,
-) -> std::io::Result<Child> {
+) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-p".into(),
-        text.into(),
         "--output-format".into(),
         "stream-json".into(),
+        "--input-format".into(),
+        "stream-json".into(),
+        "--permission-prompt-tool".into(),
+        "stdio".into(),
         "--include-partial-messages".into(),
         "--verbose".into(),
         "--model".into(),
@@ -2643,6 +3116,30 @@ fn spawn_claude(
     if let Some(r) = resume {
         args.extend(["--resume".into(), r.into()]);
     }
+    args
+}
+
+/// The §5.5 NDJSON user line carrying a turn's text over stdin (FR-1).
+fn user_line(text: &str) -> String {
+    let mut line = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": [{ "type": "text", "text": text }] }
+    })
+    .to_string();
+    line.push('\n');
+    line
+}
+
+fn spawn_claude(
+    cwd: &str,
+    model_id: &str,
+    resume: Option<&str>,
+    text: &str,
+    effort: Option<&str>,
+    permission_mode: &str,
+    runtime: &str,
+) -> std::io::Result<Child> {
+    let args = turn_args(model_id, resume, effort, permission_mode);
     let (program, argv) = claude_invocation(runtime, cwd, args);
     let mut cmd = Command::new(program);
     cmd.args(argv);
@@ -2650,10 +3147,28 @@ fn spawn_claude(
         cmd.current_dir(cwd); // wsl turns get their cwd via `--cd` inside the distro
     }
     no_window(&mut cmd);
-    cmd.stdin(Stdio::null())
+    // session-questions FR-1: stdin is piped — the turn text goes down it as one
+    // NDJSON user line, and the stdio control channel (question answers /
+    // permission denies) rides the same pipe for the rest of the turn.
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    cmd.spawn()
+    let mut child = cmd.spawn()?;
+    let wrote = {
+        use std::io::Write as _;
+        match child.stdin.as_mut() {
+            Some(w) => w
+                .write_all(user_line(text).as_bytes())
+                .and_then(|_| w.flush()),
+            None => Ok(()),
+        }
+    };
+    if let Err(e) = wrote {
+        // The child died before reading its prompt — surface it as a spawn failure.
+        let _ = child.kill();
+        return Err(e);
+    }
+    Ok(child)
 }
 
 fn child_stdout_lines(mut child: Child) -> Option<Vec<String>> {
@@ -2740,7 +3255,7 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
         );
     }
 
-    let child = match spawn_claude(
+    let mut child = match spawn_claude(
         &cwd,
         &model_id,
         resume.as_deref(),
@@ -2760,6 +3275,12 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
             return;
         }
     };
+    // session-questions FR-2: the stdin writer joins the turn state for the whole
+    // turn — the reader thread (denies) and session_answer_question (answers)
+    // share it; it closes only when the turn ends.
+    let stdin = Arc::new(Mutex::new(child.stdin.take()));
+    let pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     let child = Arc::new(Mutex::new(child));
     let interrupted = Arc::new(AtomicBool::new(false));
     {
@@ -2769,6 +3290,8 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
             s.current = Some(TurnHandle {
                 child: child.clone(),
                 interrupted: interrupted.clone(),
+                stdin: stdin.clone(),
+                pending_questions: pending_questions.clone(),
             });
         }
     }
@@ -2782,6 +3305,8 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
             sid,
             child,
             interrupted,
+            stdin,
+            pending_questions,
             model_id,
             resume_used,
             block_id,
@@ -2804,6 +3329,8 @@ fn run_reader(
     session_id: String,
     child: Arc<Mutex<Child>>,
     interrupted: Arc<AtomicBool>,
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
+    pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
     model_id: String,
     resume_used: bool,
     block_id: String,
@@ -2863,6 +3390,30 @@ fn run_reader(
                         persist(&app, &engine);
                     }
                     emit_mcp_from_init(&app, &session_id, &v);
+                    // slash-menu FR-2: capture the CLI's own slash_commands; on a
+                    // CHANGE emit one session.commands carrying the merged
+                    // registry. Absent array → no change, identical set → silent.
+                    if let Some(names) = parse_init_slash_commands(&v) {
+                        let changed = {
+                            let engine = app.state::<Engine>();
+                            let mut map = engine.sessions.lock().unwrap();
+                            map.get_mut(&session_id)
+                                .is_some_and(|s| capture_cli_commands(s, names.clone()))
+                        };
+                        if changed {
+                            // Engine.sessions dropped — the skills disk scan must
+                            // never run under it (lock rules).
+                            let commands =
+                                merge_commands(&help_entries(), &discover_skills(&cwd), &names);
+                            emit(
+                                &app,
+                                SessionEvent::Commands {
+                                    session_id: session_id.clone(),
+                                    commands,
+                                },
+                            );
+                        }
+                    }
                 }
             }
             "stream_event" => {
@@ -2920,13 +3471,58 @@ fn run_reader(
                 if let Some(u) = v.get("usage") {
                     pending_used = Some(compute_used(u));
                 }
+                // session-questions FR-2: the result ends the turn — dropping the
+                // stdin writer is what lets the CLI exit (stream-json input mode
+                // waits for EOF otherwise). No question can be pending past its
+                // result: a parked request blocks it.
+                *stdin.lock().unwrap() = None;
             }
-            _ => {}
+            "control_request" => {
+                // session-questions FR-6..FR-9 (stdio control channel).
+                handle_control_request(&app, &session_id, &v, &stdin, &pending_questions);
+            }
+            "control_cancel_request" => {
+                // session-questions FR-10: the CLI withdrew a parked request (e.g. a
+                // user-configured auto-continue). Unmatched ids are ignored.
+                if let Some(rid) = v.get("request_id").and_then(|r| r.as_str()) {
+                    let claimed = {
+                        let mut p = pending_questions.lock().unwrap();
+                        let key = p
+                            .iter()
+                            .find(|(_, q)| q.request_id == rid)
+                            .map(|(k, _)| k.clone());
+                        key.and_then(|k| p.remove(&k).map(|q| (k, q)))
+                    };
+                    if let Some((bid, q)) = claimed {
+                        // FR-13: best-effort deny for the (live) child, then cancel.
+                        let _ = write_control_line(
+                            &stdin,
+                            &deny_response(&q.request_id, "question cancelled"),
+                        );
+                        resolve_question(&app, &session_id, &bid, "cancelled", None);
+                    }
+                }
+            }
+            _ => {} // keep_alive & any unrecognized top-level type stay ignored (FR-4)
         }
     }
 
+    // session-questions FR-2: stdout is gone (result, child death, or interrupt) —
+    // drop the stdin writer before wait() so the CLI can never linger on an open pipe.
+    *stdin.lock().unwrap() = None;
     let _ = child.lock().unwrap().wait();
     let was_interrupted = interrupted.load(Ordering::SeqCst);
+
+    // session-questions FR-13: any question still parked when the turn dies resolves
+    // as cancelled, exactly once — this drain is the claim; kill_all's own drain and
+    // an in-flight answer can never double-resolve. No control_response: child is gone.
+    let orphaned: Vec<String> = {
+        let mut p = pending_questions.lock().unwrap();
+        p.drain().map(|(k, _)| k).collect()
+    };
+    for bid in orphaned {
+        resolve_question(&app, &session_id, &bid, "cancelled", None);
+    }
 
     // Resume-fail (FR-8/9): Claude rejected the stale --resume id before starting a
     // thread. Tell the UI and transparently re-run the same message on a fresh thread
@@ -3016,6 +3612,104 @@ fn run_reader(
             .unwrap_or_else(|| "the Claude Code process ended unexpectedly".to_string());
         finish_turn(&app, &session_id, true, Some(msg));
     }
+}
+
+/// Serialize + write one NDJSON control line to the turn's stdin. Every stdin
+/// write goes through the handle's own mutex (reader-thread denies vs.
+/// command-thread answers) and is NEVER made while holding Engine.sessions.
+/// false ⇔ the pipe is gone (turn over / child dead).
+fn write_control_line(stdin: &Arc<Mutex<Option<ChildStdin>>>, payload: &Value) -> bool {
+    use std::io::Write as _;
+    let mut line = payload.to_string();
+    line.push('\n');
+    let mut guard = stdin.lock().unwrap();
+    match guard.as_mut() {
+        Some(w) => w.write_all(line.as_bytes()).and_then(|_| w.flush()).is_ok(),
+        None => false,
+    }
+}
+
+/// Apply a `control_request` line (session-questions FR-6..FR-9): park an
+/// AskUserQuestion as a pending entry + question block + question.asked event, or
+/// answer everything else on the spot.
+fn handle_control_request(
+    app: &AppHandle,
+    session_id: &str,
+    v: &Value,
+    stdin: &Arc<Mutex<Option<ChildStdin>>>,
+    pending: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
+) {
+    match decide_control_request(v) {
+        ControlDecision::Respond(payload) => {
+            let _ = write_control_line(stdin, &payload); // FR-7/8/9: no event, no card
+        }
+        ControlDecision::Ask {
+            request_id,
+            input,
+            questions,
+        } => {
+            let question_block_id = uuid();
+            pending.lock().unwrap().insert(
+                question_block_id.clone(),
+                PendingQuestion { request_id, input },
+            );
+            let questions_value =
+                serde_json::to_value(&questions).unwrap_or_else(|_| Value::Array(Vec::new()));
+            let block = {
+                let engine = app.state::<Engine>();
+                let mut map = engine.sessions.lock().unwrap();
+                match map.get_mut(session_id) {
+                    Some(s) => {
+                        s.buf_question(&question_block_id, questions_value);
+                        s.block_buffer.last().cloned()
+                    }
+                    None => None,
+                }
+            };
+            if let Some(b) = &block {
+                append_transcript(app, session_id, b); // FR-6: persisted while pending
+            }
+            emit(
+                app,
+                SessionEvent::QuestionAsked {
+                    session_id: session_id.into(),
+                    block_id: question_block_id,
+                    questions,
+                },
+            );
+        }
+    }
+}
+
+/// session-questions FR-11/FR-13: flip a question block to its resolved state,
+/// persist it, and emit exactly one question.resolved. Callers must have CLAIMED
+/// the pending entry first (removed it from the turn's map) — that removal is
+/// what makes resolution exactly-once.
+fn resolve_question(
+    app: &AppHandle,
+    session_id: &str,
+    block_id: &str,
+    state: &str,
+    answers: Option<&Value>,
+) {
+    let block = {
+        let engine = app.state::<Engine>();
+        let mut map = engine.sessions.lock().unwrap();
+        map.get_mut(session_id)
+            .and_then(|s| s.buf_question_resolve(block_id, state, answers))
+    };
+    if let Some(b) = &block {
+        append_transcript(app, session_id, b);
+    }
+    emit(
+        app,
+        SessionEvent::QuestionResolved {
+            session_id: session_id.into(),
+            block_id: block_id.into(),
+            state: state.into(),
+            answers: answers.cloned(),
+        },
+    );
 }
 
 /// Route turn completion (FR-20): drain the queue or go idle; or mark error.
@@ -4706,6 +5400,7 @@ mod tests {
             agent_order: Vec::new(),
             block_buffer: Vec::new(),
             mcp: HashMap::new(),
+            cli_commands: Vec::new(),
         }
     }
 
@@ -5182,5 +5877,456 @@ mod tests {
         assert_eq!(resolve_model_arg(&tricky, "opus").unwrap().id, "opus");
         // unknown
         assert!(resolve_model_arg(&models, "gpt-5").is_none());
+    }
+
+    // ---------- session-questions (specs/session-questions.md) ----------
+
+    #[test]
+    fn turn_args_enable_stdio_control_channel_without_positional_prompt() {
+        // FR-1: -p with NO positional prompt, plus the two new flags; every
+        // pre-existing flag intact; permission-mode/effort/resume still appended.
+        let args = turn_args("sonnet", Some("thread-1"), Some("high"), "plan");
+        assert_eq!(args[0], "-p");
+        assert!(
+            args[1].starts_with("--"),
+            "no positional prompt after -p: {args:?}"
+        );
+        let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
+        assert!(has_pair("--output-format", "stream-json"));
+        assert!(has_pair("--input-format", "stream-json"));
+        assert!(has_pair("--permission-prompt-tool", "stdio"));
+        assert!(args.iter().any(|a| a == "--include-partial-messages"));
+        assert!(args.iter().any(|a| a == "--verbose"));
+        assert!(has_pair("--model", "sonnet"));
+        assert!(has_pair("--permission-mode", "plan"));
+        assert!(has_pair("--effort", "high"));
+        assert!(has_pair("--resume", "thread-1"));
+    }
+
+    #[test]
+    fn user_line_matches_wire_shape() {
+        // §5.5: the turn text rides stdin as ONE NDJSON user line.
+        let line = user_line("fix the bug");
+        assert!(line.ends_with('\n'));
+        let v: Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(
+            v,
+            json!({ "type": "user", "message": { "role": "user",
+                "content": [{ "type": "text", "text": "fix the bug" }] } })
+        );
+    }
+
+    /// The §5.5 question-arrival fixture, verbatim.
+    fn ask_fixture() -> Value {
+        json!({
+            "type": "control_request",
+            "request_id": "req-1",
+            "request": {
+                "subtype": "can_use_tool",
+                "tool_name": "AskUserQuestion",
+                "display_name": "AskUserQuestion",
+                "input": { "questions": [{
+                    "question": "Which color do you prefer?",
+                    "header": "Color",
+                    "options": [
+                        { "label": "Red", "description": "The color red" },
+                        { "label": "Blue", "description": "The color blue" }
+                    ],
+                    "multiSelect": false
+                }] },
+                "tool_use_id": "toolu_1"
+            }
+        })
+    }
+
+    #[test]
+    fn control_request_ask_user_question_parks_with_verbatim_questions() {
+        // FR-6/FR-7: AskUserQuestion parks — request_id + verbatim input kept for
+        // the eventual allow response, questions parsed verbatim for the card.
+        let ControlDecision::Ask {
+            request_id,
+            input,
+            questions,
+        } = decide_control_request(&ask_fixture())
+        else {
+            panic!("expected Ask");
+        };
+        assert_eq!(request_id, "req-1");
+        assert_eq!(input, ask_fixture()["request"]["input"]); // verbatim (FR-11)
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].question, "Which color do you prefer?");
+        assert_eq!(questions[0].header, "Color");
+        assert!(!questions[0].multi_select);
+        assert_eq!(questions[0].options[1].label, "Blue");
+        assert_eq!(questions[0].options[1].description, "The color blue");
+        assert_eq!(questions[0].options[1].preview, None);
+    }
+
+    #[test]
+    fn control_request_parsing_is_lenient_on_optional_fields() {
+        // FR-7: multiSelect defaults to false when absent; preview passes through.
+        let v = json!({ "type": "control_request", "request_id": "r", "request": {
+            "subtype": "can_use_tool", "tool_name": "AskUserQuestion",
+            "input": { "questions": [{ "question": "Q", "header": "H",
+                "options": [{ "label": "A", "description": "d", "preview": "p" }] }] } } });
+        let ControlDecision::Ask { questions, .. } = decide_control_request(&v) else {
+            panic!("expected Ask");
+        };
+        assert!(!questions[0].multi_select);
+        assert_eq!(questions[0].options[0].preview.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn control_request_other_tool_denies_instantly() {
+        // FR-8: any other tool → deny control_response, §5.5 shape, exact message.
+        let v = json!({ "type": "control_request", "request_id": "req-9", "request": {
+            "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": "rm -rf /" } } });
+        let ControlDecision::Respond(payload) = decide_control_request(&v) else {
+            panic!("expected Respond");
+        };
+        assert_eq!(
+            payload,
+            json!({ "type": "control_response", "response": {
+                "subtype": "success", "request_id": "req-9", "response": { "behavior": "deny",
+                "message": "Francois declined: interactive permission prompts are not supported yet — adjust the session's permission mode." } } })
+        );
+    }
+
+    #[test]
+    fn control_request_unknown_subtype_gets_error_response() {
+        // FR-9: never let the CLI park on something we don't render.
+        let v = json!({ "type": "control_request", "request_id": "req-2",
+            "request": { "subtype": "hook_callback" } });
+        let ControlDecision::Respond(payload) = decide_control_request(&v) else {
+            panic!("expected Respond");
+        };
+        assert_eq!(
+            payload,
+            json!({ "type": "control_response", "response": {
+                "subtype": "error", "request_id": "req-2", "error": "unsupported control request" } })
+        );
+    }
+
+    #[test]
+    fn control_request_malformed_questions_denies() {
+        // FR-7: an input with no non-empty questions array is auto-denied, no card.
+        for input in [
+            json!({}),
+            json!({ "questions": [] }),
+            json!({ "questions": "x" }),
+        ] {
+            let v = json!({ "type": "control_request", "request_id": "r", "request": {
+                "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": input } });
+            let ControlDecision::Respond(payload) = decide_control_request(&v) else {
+                panic!("expected Respond");
+            };
+            assert_eq!(payload["response"]["response"]["behavior"], "deny");
+            assert_eq!(
+                payload["response"]["response"]["message"],
+                "malformed AskUserQuestion input"
+            );
+        }
+    }
+
+    #[test]
+    fn allow_response_merges_verbatim_input_with_answers() {
+        // FR-11/FR-12 + §5.5: updatedInput = verbatim original input + answers map.
+        let input = ask_fixture()["request"]["input"].clone();
+        let answers = json!({ "Which color do you prefer?": "Blue" });
+        let payload = allow_response("req-1", &input, &answers);
+        let mut expected_input = input.clone();
+        expected_input["answers"] = answers.clone();
+        assert_eq!(
+            payload,
+            json!({ "type": "control_response", "response": {
+                "subtype": "success", "request_id": "req-1",
+                "response": { "behavior": "allow", "updatedInput": expected_input } } })
+        );
+    }
+
+    #[test]
+    fn question_event_members_serialize_to_contract_shape() {
+        let questions = vec![SessionQuestion {
+            question: "Q".into(),
+            header: "H".into(),
+            options: vec![QuestionOption {
+                label: "A".into(),
+                description: "d".into(),
+                preview: None,
+            }],
+            multi_select: true,
+        }];
+        let asked = serde_json::to_value(SessionEvent::QuestionAsked {
+            session_id: "s1".into(),
+            block_id: "q1".into(),
+            questions,
+        })
+        .unwrap();
+        assert_eq!(
+            asked,
+            json!({ "type": "question.asked", "sessionId": "s1", "blockId": "q1",
+                "questions": [{ "question": "Q", "header": "H", "multiSelect": true,
+                    "options": [{ "label": "A", "description": "d" }] }] })
+        );
+
+        // cancelled: absent answers is OMITTED, never null (§9)
+        let cancelled = serde_json::to_value(SessionEvent::QuestionResolved {
+            session_id: "s1".into(),
+            block_id: "q1".into(),
+            state: "cancelled".into(),
+            answers: None,
+        })
+        .unwrap();
+        assert_eq!(
+            cancelled,
+            json!({ "type": "question.resolved", "sessionId": "s1",
+                "blockId": "q1", "state": "cancelled" })
+        );
+
+        let answered = serde_json::to_value(SessionEvent::QuestionResolved {
+            session_id: "s1".into(),
+            block_id: "q1".into(),
+            state: "answered".into(),
+            answers: Some(json!({ "Q": "A" })),
+        })
+        .unwrap();
+        assert_eq!(
+            answered,
+            json!({ "type": "question.resolved", "sessionId": "s1",
+                "blockId": "q1", "state": "answered", "answers": { "Q": "A" } })
+        );
+    }
+
+    #[test]
+    fn question_block_lifecycle_pending_answered() {
+        // FR-6/FR-15: pending block streams; resolution updates IN PLACE; the
+        // answers key exists only once answered.
+        let mut s = test_session();
+        let qs = json!([{ "question": "Q", "header": "H", "options": [], "multiSelect": false }]);
+        s.buf_question("q1", qs.clone());
+        let pending = classify_block(&s.block_buffer[0]);
+        assert_eq!(
+            pending,
+            json!({ "kind": "question", "blockId": "q1", "isStreaming": true,
+                "questions": qs, "state": "pending" })
+        );
+
+        let answers = json!({ "Q": "A" });
+        let resolved = s
+            .buf_question_resolve("q1", "answered", Some(&answers))
+            .expect("resolve");
+        assert_eq!(s.block_buffer.len(), 1); // upsert, not append
+        assert!(!resolved.streaming);
+        let done = classify_block(&s.block_buffer[0]);
+        assert_eq!(
+            done,
+            json!({ "kind": "question", "blockId": "q1", "isStreaming": false,
+                "questions": qs, "state": "answered", "answers": { "Q": "A" } })
+        );
+        // unknown blockId resolves nothing (FR-13 exactly-once claims handle the rest)
+        assert!(s.buf_question_resolve("nope", "cancelled", None).is_none());
+    }
+
+    #[test]
+    fn persisted_question_block_roundtrips_cancelled() {
+        let mut s = test_session();
+        let qs = json!([{ "question": "Q", "header": "H", "options": [], "multiSelect": false }]);
+        s.buf_question("q1", qs.clone());
+        s.buf_question_resolve("q1", "cancelled", None);
+        let v = persisted_block_json(&s.block_buffer[0]);
+        assert_eq!(
+            v,
+            json!({ "blockId": "q1", "kind": "question", "questions": qs, "state": "cancelled" })
+        );
+        let back = parse_persisted_block(&v.to_string()).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Question));
+        assert!(!back.streaming);
+        assert_eq!(classify_block(&back)["state"], "cancelled");
+    }
+
+    #[test]
+    fn persisted_pending_question_reloads_as_cancelled() {
+        // §6: pending entries are memory-only — a persisted "pending" line can only
+        // be read back after a hard kill, and a dead process has no answerable
+        // questions, so reload normalizes it to cancelled.
+        let line = r#"{"blockId":"q1","kind":"question","questions":[],"state":"pending"}"#;
+        let back = parse_persisted_block(line).expect("parse");
+        assert!(!back.streaming);
+        assert_eq!(classify_block(&back)["state"], "cancelled");
+    }
+
+    #[test]
+    fn transcript_upserts_by_block_id_on_reload() {
+        // FR-15: exactly one block per blockId — the LAST line wins, at the FIRST
+        // occurrence's position (the durable-sessions upsert rule).
+        let content = concat!(
+            r#"{"blockId":"u1","kind":"user","text":"hi","tool":"","summary":"","meta":null}"#,
+            "\n",
+            r#"{"blockId":"q1","kind":"question","questions":[{"question":"Q","header":"H","options":[],"multiSelect":false}],"state":"pending"}"#,
+            "\n",
+            r#"{"blockId":"a1","kind":"assistant","text":"ok","tool":"","summary":"","meta":null}"#,
+            "\n",
+            r#"{"blockId":"q1","kind":"question","questions":[{"question":"Q","header":"H","options":[],"multiSelect":false}],"state":"answered","answers":{"Q":"A"}}"#,
+            "\n",
+        );
+        let blocks = parse_transcript(content);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[1].block_id, "q1"); // position of the first occurrence
+        let q = classify_block(&blocks[1]);
+        assert_eq!(q["state"], "answered");
+        assert_eq!(q["answers"], json!({ "Q": "A" }));
+    }
+
+    // ---------- slash-menu (specs/slash-menu.md) ----------
+
+    #[test]
+    fn merge_commands_builtins_first_verbatim() {
+        // §9: builtins come from help_entries() verbatim (name + description),
+        // source "builtin", no scope — before any turn (no skills, no cli).
+        let merged = merge_commands(&help_entries(), &[], &[]);
+        let builtins = help_entries();
+        assert_eq!(merged.len(), builtins.len());
+        for (m, h) in merged.iter().zip(builtins.iter()) {
+            assert_eq!(m.name, h.command);
+            assert_eq!(m.description, h.description);
+            assert_eq!(m.source, "builtin");
+            assert_eq!(m.scope, None);
+        }
+    }
+
+    #[test]
+    fn merge_commands_dedup_precedence_and_fr3_order() {
+        // FR-1/FR-3: builtin > skill > cli on a name collision; order = builtins
+        // (help order), then installed skills (discovery order), then cli (init
+        // order); installed:false skills are excluded; cli description is "".
+        let skills = vec![
+            skill_entry(
+                "usage".into(),
+                "skill usage".into(),
+                true,
+                "project",
+                "skill",
+                None,
+            ),
+            skill_entry(
+                "deploy".into(),
+                "ship it".into(),
+                true,
+                "user",
+                "command",
+                None,
+            ),
+            skill_entry(
+                "hidden".into(),
+                "not enabled".into(),
+                false,
+                "plugin",
+                "skill",
+                None,
+            ),
+        ];
+        let cli = vec![
+            "usage".to_string(),
+            "deploy".to_string(),
+            "compact".to_string(),
+        ];
+        let merged = merge_commands(&help_entries(), &skills, &cli);
+
+        let mut expected: Vec<String> = help_entries()
+            .iter()
+            .map(|h| h.command.to_string())
+            .collect();
+        expected.push("deploy".into());
+        expected.push("compact".into());
+        let names: Vec<String> = merged.iter().map(|c| c.name.clone()).collect();
+        assert_eq!(names, expected);
+
+        let usage = merged.iter().find(|c| c.name == "usage").unwrap();
+        assert_eq!(usage.source, "builtin"); // edge #4: builtin wins over skill+cli
+        let deploy = merged.iter().find(|c| c.name == "deploy").unwrap();
+        assert_eq!(deploy.source, "skill"); // skill wins over cli
+        assert_eq!(deploy.description, "ship it");
+        assert_eq!(deploy.scope.as_deref(), Some("user"));
+        let compact = merged.iter().find(|c| c.name == "compact").unwrap();
+        assert_eq!(compact.source, "cli");
+        assert_eq!(compact.description, ""); // '' when the source provides none
+        assert_eq!(compact.scope, None);
+        assert!(!merged.iter().any(|c| c.name == "hidden")); // installed:false excluded
+    }
+
+    #[test]
+    fn init_slash_commands_parse_and_change_detection() {
+        // FR-2: absent array → None (no change); present → bare names (a leading
+        // '/' is stripped, non-strings skipped — FR-3 stores without the slash).
+        let no_arr = json!({ "type": "system", "subtype": "init", "session_id": "abc" });
+        assert_eq!(parse_init_slash_commands(&no_arr), None);
+        let with = json!({ "slash_commands": ["compact", "/clear", 7] });
+        assert_eq!(
+            parse_init_slash_commands(&with),
+            Some(vec!["compact".to_string(), "clear".to_string()])
+        );
+
+        // capture: first init changes (→ one session.commands), an identical
+        // second init does not (§9 acceptance / edge #5), a different set does.
+        let mut s = test_session();
+        assert!(capture_cli_commands(
+            &mut s,
+            vec!["compact".into(), "clear".into()]
+        ));
+        assert_eq!(
+            s.cli_commands,
+            vec!["compact".to_string(), "clear".to_string()]
+        );
+        assert!(!capture_cli_commands(
+            &mut s,
+            vec!["compact".into(), "clear".into()]
+        ));
+        assert!(capture_cli_commands(&mut s, vec!["compact".into()]));
+        assert_eq!(s.cli_commands, vec!["compact".to_string()]);
+    }
+
+    #[test]
+    fn session_commands_event_serializes_to_contract_shape() {
+        // §5.3: { type: 'session.commands', sessionId, commands } with
+        // SlashCommandInfo camelCase; `scope` omitted (not null) when absent.
+        let ev = SessionEvent::Commands {
+            session_id: "s1".into(),
+            commands: vec![
+                SlashCommandInfo {
+                    name: "usage".into(),
+                    description: "plan usage limits (session + weekly)".into(),
+                    source: "builtin",
+                    scope: None,
+                },
+                SlashCommandInfo {
+                    name: "deploy".into(),
+                    description: "ship it".into(),
+                    source: "skill",
+                    scope: Some("project".into()),
+                },
+                SlashCommandInfo {
+                    name: "compact".into(),
+                    description: String::new(),
+                    source: "cli",
+                    scope: None,
+                },
+            ],
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "session.commands");
+        assert_eq!(v["sessionId"], "s1");
+        let cmds = v["commands"].as_array().unwrap();
+        assert_eq!(cmds.len(), 3);
+        assert_eq!(cmds[0]["name"], "usage");
+        assert_eq!(
+            cmds[0]["description"],
+            "plan usage limits (session + weekly)"
+        );
+        assert_eq!(cmds[0]["source"], "builtin");
+        assert!(cmds[0].get("scope").is_none()); // omitted when absent
+        assert_eq!(cmds[1]["source"], "skill");
+        assert_eq!(cmds[1]["scope"], "project");
+        assert_eq!(cmds[2]["source"], "cli");
+        assert_eq!(cmds[2]["description"], ""); // always present, empty for cli
     }
 }
