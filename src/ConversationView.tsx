@@ -1,14 +1,10 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import type { SessionEvent } from '../contract/common';
-import {
-  assistantColors,
-  classifyToolStart,
-  toolBody,
-  type ConversationBlock,
-  type UserConversationBlock,
-} from '../contract/conversation-view';
+import { toolBody, type ConversationBlock } from '../contract/conversation-view';
 import { displayWslCwd } from '../contract/wsl-filesystem';
 import { getTranscript, onSessionEvent, sessionSend } from './api';
+import CommandBlock from './CommandCard';
+import { transcriptReducer } from './conversation-blocks';
 import { useStore } from './store';
 
 const C = {
@@ -22,90 +18,7 @@ const C = {
   queued: '#c2b06a',
 };
 
-// ---------- reducer ----------
-
-interface State {
-  blocks: ConversationBlock[];
-}
-
-type Action =
-  | { t: 'seed'; blocks: ConversationBlock[] }
-  | { t: 'optimisticUser'; blockId: string; text: string }
-  | { t: 'msgUser'; blockId: string; text: string }
-  | { t: 'delta'; blockId: string; text: string }
-  | { t: 'assistantDone'; blockId: string }
-  | { t: 'toolStart'; blockId: string; tool: string; summary: string }
-  | { t: 'toolDone'; blockId: string; meta: string }
-  | { t: 'remove'; blockId: string };
-
-function reducer(state: State, a: Action): State {
-  const idx = (id: string) => state.blocks.findIndex((b) => b.blockId === id);
-  const replace = (i: number, b: ConversationBlock) => {
-    const next = state.blocks.slice();
-    next[i] = b;
-    return { blocks: next };
-  };
-  switch (a.t) {
-    case 'seed':
-      return { blocks: a.blocks };
-    case 'optimisticUser': {
-      if (idx(a.blockId) !== -1) return state;
-      const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text, queued: true };
-      return { blocks: [...state.blocks, b] };
-    }
-    case 'msgUser': {
-      const i = idx(a.blockId);
-      if (i !== -1) {
-        const b = state.blocks[i];
-        if (b.kind !== 'user') return state;
-        return replace(i, { ...b, text: a.text, queued: false });
-      }
-      const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text, queued: false };
-      return { blocks: [...state.blocks, b] };
-    }
-    case 'delta': {
-      const i = idx(a.blockId);
-      if (i !== -1) {
-        const b = state.blocks[i];
-        if (b.kind !== 'assistant') return state;
-        return replace(i, { ...b, text: b.text + a.text });
-      }
-      const { glyphColor, bodyColor } = assistantColors(true);
-      return {
-        blocks: [
-          ...state.blocks,
-          { kind: 'assistant', blockId: a.blockId, isStreaming: true, glyph: '●', glyphColor, bodyColor, text: a.text },
-        ],
-      };
-    }
-    case 'assistantDone': {
-      const i = idx(a.blockId);
-      if (i === -1) return state;
-      const b = state.blocks[i];
-      if (b.kind !== 'assistant') return state;
-      const { glyphColor, bodyColor } = assistantColors(false);
-      return replace(i, { ...b, isStreaming: false, glyphColor, bodyColor });
-    }
-    case 'toolStart': {
-      if (idx(a.blockId) !== -1) return state;
-      return { blocks: [...state.blocks, classifyToolStart(a.tool, a.summary, a.blockId)] };
-    }
-    case 'toolDone': {
-      const i = idx(a.blockId);
-      if (i === -1) return state;
-      const b = state.blocks[i];
-      if (b.kind !== 'tool' && b.kind !== 'subagent') return state;
-      return replace(i, { ...b, meta: a.meta, isStreaming: false });
-    }
-    case 'remove': {
-      const i = idx(a.blockId);
-      if (i === -1) return state;
-      const next = state.blocks.slice();
-      next.splice(i, 1);
-      return { blocks: next };
-    }
-  }
-}
+// Block apply rules (reducer) live in ./conversation-blocks — pure + unit-tested.
 
 function eventSessionId(e: SessionEvent): string | null {
   if (e.type === 'session.meta') return e.meta.id;
@@ -115,7 +28,7 @@ function eventSessionId(e: SessionEvent): string | null {
 
 export default function ConversationView({ sessionId }: { sessionId: string }) {
   const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
-  const [state, dispatch] = useReducer(reducer, { blocks: [] });
+  const [state, dispatch] = useReducer(transcriptReducer, { blocks: [] });
   const [hydrated, setHydrated] = useState(false);
   const [hydrationError, setHydrationError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>(meta?.status ?? 'idle');
@@ -173,6 +86,14 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
           break;
         case 'tool.done':
           dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta });
+          break;
+        case 'command.started':
+          // interactive-commands FR-20: pending command block (loading card)
+          dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command });
+          break;
+        case 'command.output':
+          // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
+          dispatch({ t: 'commandOutput', blockId: e.blockId, card: e.card });
           break;
         default:
           break;
@@ -317,7 +238,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
               <div style={{ fontSize: 12.5, color: C.faint, marginTop: 10 }}>waiting for your first prompt</div>
             </Centered>
           ) : (
-            state.blocks.map((b) => <Block key={b.blockId} b={b} />)
+            state.blocks.map((b) => <Block key={b.blockId} b={b} sessionId={sessionId} />)
           )}
         </div>
 
@@ -425,7 +346,11 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Block({ b }: { b: ConversationBlock }) {
+function Block({ b, sessionId }: { b: ConversationBlock; sessionId: string }) {
+  // interactive-commands: command cards (and notice one-liners) have their own renderer (§8)
+  if (b.kind === 'command') {
+    return <CommandBlock b={b} sessionId={sessionId} />;
+  }
   if (b.kind === 'user') {
     return (
       <div style={{ background: '#1b1d23', borderLeft: '2px solid #c8a15a', borderRadius: '0 4px 4px 0', padding: '10px 13px' }}>

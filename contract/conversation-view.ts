@@ -7,6 +7,7 @@
 // `conversation_get_transcript`.
 
 import type { SessionId, BlockId, Result } from './common';
+import type { CommandConversationBlock } from './interactive-commands';
 
 // ---------- francois:conversation:getTranscript ----------
 
@@ -15,7 +16,7 @@ export interface GetTranscriptRequest {
 }
 
 export type ConversationGlyph = '●' | '⧉' | '⌕' | '✎' | '⇉' | '';
-export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent';
+export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent' | 'command';
 
 interface ConversationBlockBase {
   blockId: BlockId;
@@ -59,7 +60,8 @@ export type ConversationBlock =
   | UserConversationBlock
   | AssistantConversationBlock
   | ToolConversationBlock
-  | SubagentConversationBlock;
+  | SubagentConversationBlock
+  | CommandConversationBlock; // interactive-commands (contract/interactive-commands.ts)
 
 // resolves Result<ConversationBlock[]>; error: SESSION_NOT_FOUND
 export type GetTranscriptResponse = Result<ConversationBlock[]>;

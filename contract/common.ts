@@ -133,6 +133,46 @@ export interface SkillInfo {
   pluginId?: string; // for plugin entries: '<plugin>@<marketplace>' (enabling target)
 }
 
+// ---------- interactive commands ----------
+// Card payloads for slash-command responses rendered in the SESSION transcript.
+// Emitted by the engine via the command.started / command.output events below;
+// rendered by conversation-view as CommandConversationBlock
+// (contract/interactive-commands.ts). Spec: specs/interactive-commands.md §5.
+
+/** One plan-limit meter parsed from the CLI's /usage output. */
+export interface UsageMeter {
+  label: string; // e.g. 'Current session', 'Current week (all models)'
+  percentUsed: number; // 0–100 integer
+  resetsAt: string; // verbatim reset text, e.g. 'Jul 22, 5:29pm (Europe/Paris)'
+}
+
+export interface HelpEntry {
+  command: string; // without the leading '/', e.g. 'usage'
+  description: string;
+}
+
+export type CommandCard =
+  /** /usage & /cost, parsed. meters non-empty; tail = remaining lines, preformatted. */
+  | { kind: 'usage'; command: 'usage' | 'cost'; meters: UsageMeter[]; tail: string }
+  /** /context. percentUsed/usedLabel/limitLabel null when the tokens line didn't parse. */
+  | {
+      kind: 'context';
+      percentUsed: number | null;
+      usedLabel: string | null; // e.g. '26.4k'
+      limitLabel: string | null; // e.g. '200k'
+      body: string; // normalized markdown, preformatted
+    }
+  /** /model bare. currentId is a snapshot; the live marker derives from SessionMeta. */
+  | { kind: 'model'; models: ModelInfo[]; currentId: string }
+  /** /status. */
+  | { kind: 'status'; meta: SessionMeta }
+  /** /help. */
+  | { kind: 'help'; entries: HelpEntry[] }
+  /** Dim one-liner: unknown command, unavailable command, probe failure, model switch ack. */
+  | { kind: 'notice'; text: string }
+  /** Generic CLI-local output that fits no richer card. */
+  | { kind: 'text'; command: string; text: string };
+
 // ---------- session event stream ----------
 // Emitted by session-engine on channel 'francois:session:event'.
 // The session-engine spec is the authority on emission semantics; consumers
@@ -148,6 +188,8 @@ export type SessionEvent =
   | { type: 'assistant.done'; sessionId: SessionId; blockId: BlockId }
   | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string } // e.g. tool 'Read', summary 'src/auth/middleware.ts'
   | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string } // e.g. '128 lines', '+34 −19'
+  | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
+  | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)
   | { type: 'agent.update'; agent: AgentInfo }
   | { type: 'mcp.update'; sessionId: SessionId; server: McpServerInfo }
   | { type: 'context.usage'; sessionId: SessionId; usedTokens: number; limitTokens: number }
