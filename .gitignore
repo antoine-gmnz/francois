@@ -7,3 +7,4 @@ src-tauri/gen/
 # OS / editor cruft
 .DS_Store
 Thumbs.db
+.serena/

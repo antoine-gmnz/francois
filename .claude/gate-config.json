@@ -1,0 +1,13 @@
+{
+  "deny": [
+    "git push --force",
+    "git push -f"
+  ],
+  "ask": [
+    "git commit",
+    "git push",
+    "git merge",
+    "git rebase",
+    "git reset"
+  ]
+}

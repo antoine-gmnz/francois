@@ -2,6 +2,122 @@
 
 Project: **Francois** — a desktop terminal app that orchestrates Claude Code sessions (named after Claude François, the French singer). Product description: `PROJECT.md`. Visual source of truth: `Claude Terminal.dc.html` + `screenshots/`.
 
+> **Machine block first, prose after.** The fenced `yaml pipeline-profile` block below is the
+> deterministic contract pipeline commands parse (`/build`, `/review`, …). The prose sections after it
+> carry the conventions agents read — they are authoritative for anything the block abbreviates.
+> Kept current by `/update-pipeline` (reconcile: new fields topped up, values never overwritten).
+> Rendered agent files (`.claude/agents/frontend.md`, `core.md`) are regenerated from this profile on
+> every reconcile — customize agents through §Conventions here, never by editing the agent files.
+
+```yaml pipeline-profile
+# ── identity ────────────────────────────────────────────────────────────────
+name: Francois
+one_liner: Native desktop terminal app (Tauri 2) that orchestrates Claude Code sessions
+ui_language: English
+package_manager: npm                          # frontend tooling; the Rust core builds with cargo
+
+# ── vcs ─────────────────────────────────────────────────────────────────────
+vcs:
+  host: github
+  remote: antoine-gmnz/francois
+  default_branch: main
+  feature_branch_prefix: feat/
+
+# ── repo shape ──────────────────────────────────────────────────────────────
+repo:
+  layout: single
+  workspace_tool: none
+
+# ── code retrieval ──────────────────────────────────────────────────────────
+retrieval:
+  provider: serena                            # coexists with Cartograph (SessionStart map hook + custom global agents)
+
+# ── surfaces ────────────────────────────────────────────────────────────────
+surfaces:
+  - key: frontend
+    path: src
+    label: frontend (React 18 + Vite + TypeScript)
+    agent: frontend
+    tools: [Read, Write, Edit, Bash, Grep, Glob, DesignSync, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
+    model: inherit
+    test_cmd: npm test
+    lint_cmd: ""                              # no eslint configured; tsc is the static gate
+    format_cmd: ""
+    typecheck_cmd: npx tsc --noEmit
+    build_cmd: npm run build
+    uses_design: true
+  - key: core
+    path: src-tauri
+    label: core (Rust / Tauri 2)
+    agent: core
+    tools: [Read, Write, Edit, Bash, Grep, Glob, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
+    model: inherit
+    test_cmd: cd src-tauri && cargo test
+    lint_cmd: ""
+    format_cmd: cd src-tauri && cargo fmt
+    typecheck_cmd: cd src-tauri && cargo check
+    build_cmd: ""                             # release builds via tauri build / CI matrix
+    uses_design: false
+
+# ── contract (the only cross-surface sync channel) ──────────────────────────
+contract:
+  enabled: true
+  mechanism: shared-types                     # plain TS type files (no zod) — see §contract prose; Rust mirrors with serde
+  path: contract
+  ext: ts
+  index: ""                                   # no barrel — one file per feature + common.ts
+  authored_by: lead
+
+# ── repo-wide commands ──────────────────────────────────────────────────────
+commands:
+  install: npm install
+  dev: npm run dev:app
+  lint: ""
+  format: ""
+  typecheck: npx tsc --noEmit
+  test: npm test && cd src-tauri && cargo test
+  migrate: ""                                 # no DB
+  make_migration: ""
+
+# ── rbac ────────────────────────────────────────────────────────────────────
+rbac:
+  enabled: false
+  hierarchy: []
+
+# ── design ──────────────────────────────────────────────────────────────────
+design:
+  enabled: true
+  provider: claude-design
+  design_system_project: "Claude terminal interface"
+  design_project: none
+  snapshot_dir: ""                            # local mirror lives at the repo root: Claude Terminal.dc.html + screenshots/
+  direction: design-to-code
+  ui_kit_path: src
+  tokens_path: src/styles.css
+  
+# ── isolation ───────────────────────────────────────────────────────────────
+isolation:
+  enabled: false                              # features build in the main checkout on feat/<id> branches
+  unit: git-worktree
+  db_per_worktree: false
+  db_name_pattern: ""
+  port_base: {}
+  compose_file: ""
+  registry: ""
+
+# ── gate (drives .claude/gate-config.json) ──────────────────────────────────
+gate:
+  deny:
+    - "git push --force"
+    - "git push -f"
+  ask:
+    - "git commit"
+    - "git push"
+    - "git merge"
+    - "git rebase"
+    - "git reset"
+```
+
 ## Stack (decided)
 
 - **Runtime**: Tauri 2 — a **native desktop app, not a web app**. Backend "core" in Rust; frontend React 18 + Vite + TypeScript rendered in the Tauri webview.
@@ -49,6 +165,11 @@ Project: **Francois** — a desktop terminal app that orchestrates Claude Code s
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
 - **Errors**: `AppError { code, message, detail? }` with codes from `ErrorCode` in `contract/common.ts`; extend the union in a feature contract only for feature-specific codes.
+
+## Testing — strict TDD (red → green → refactor)
+
+- **frontend** (`vitest`, `npm test`): cover zustand stores, hooks, and the contract-typed `invoke` wrappers / event handlers (pure logic — no DOM component framework is wired). Layout and visuals are not unit-testable; the design mirror governs those.
+- **core** (`cargo test` in `src-tauri`): cover command handlers against the contract shapes (serde round-trips of payloads and the tagged event unions), NDJSON stream parsing, and git operations against throwaway temp repos. No shared global state between tests.
 
 ## Feature map
 
