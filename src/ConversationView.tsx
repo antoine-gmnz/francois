@@ -5,6 +5,7 @@ import { displayWslCwd } from '../contract/wsl-filesystem';
 import { getTranscript, onSessionEvent, sessionListCommands, sessionSend } from './api';
 import CommandBlock from './CommandCard';
 import { transcriptReducer } from './conversation-blocks';
+import Markdown from './MarkdownView';
 import { composerPlaceholder, hasPendingQuestionBlock } from './question-card';
 import QuestionCard from './QuestionCard';
 import {
@@ -484,33 +485,38 @@ function Block({ b, sessionId }: { b: ConversationBlock; sessionId: string }) {
     );
   }
 
+  // Assistant replies arrive as Markdown source — render it formatted (own
+  // container, so the shared pre-wrap wrapper below never touches it). The
+  // streaming caret trails the rendered content.
+  if (b.kind === 'assistant') {
+    return (
+      <div style={{ display: 'flex', gap: 10 }}>
+        <span style={{ width: 16, flexShrink: 0, textAlign: 'center', fontSize: 12, color: b.glyphColor, marginTop: 1 }}>{b.glyph}</span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <Markdown text={b.text} color={b.bodyColor} />
+          {b.isStreaming && (
+            <span
+              style={{
+                display: 'inline-block',
+                width: 8,
+                height: 15,
+                background: C.accent,
+                verticalAlign: 'text-bottom',
+                marginLeft: 2,
+                animation: 'blink 1s step-end infinite',
+              }}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   let glyph = '';
   let glyphColor = C.dim;
   let bodyColor = C.primary;
   let body: React.ReactNode = '';
-  if (b.kind === 'assistant') {
-    glyph = b.glyph;
-    glyphColor = b.glyphColor;
-    bodyColor = b.bodyColor;
-    body = (
-      <>
-        {b.text}
-        {b.isStreaming && (
-          <span
-            style={{
-              display: 'inline-block',
-              width: 8,
-              height: 15,
-              background: C.accent,
-              verticalAlign: 'text-bottom',
-              marginLeft: 2,
-              animation: 'blink 1s step-end infinite',
-            }}
-          />
-        )}
-      </>
-    );
-  } else if (b.kind === 'tool') {
+  if (b.kind === 'tool') {
     glyph = b.glyph;
     glyphColor = b.glyphColor;
     bodyColor = b.bodyColor;
