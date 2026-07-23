@@ -2,16 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from '../contract/common';
 
 const C = {
-  accent: '#c8a15a',
-  dim: '#868a93',
-  faint: '#565a63',
-  primary: '#c4c7ce',
-  bright: '#dfe2e8',
+  accent: 'var(--accent)',
+  dim: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  primary: 'var(--text)',
+  bright: 'var(--text-bright)',
 };
 
 const fieldStyle: React.CSSProperties = {
-  background: '#1a1c22',
-  border: '1px solid #2a2c33',
+  background: 'var(--bg-panel)',
+  border: '1px solid var(--border-2)',
   borderRadius: 4,
   height: 32,
   color: C.primary,
@@ -25,8 +25,8 @@ const fieldStyle: React.CSSProperties = {
 
 // No overflow:hidden here — the submenu must be able to fly out to the side.
 const panelStyle: React.CSSProperties = {
-  background: '#191b21',
-  border: '1px solid #34363f',
+  background: 'var(--bg-panel)',
+  border: '1px solid var(--bg-hover-2)',
   borderRadius: 6,
   boxShadow: '0 20px 50px -18px rgba(0,0,0,0.85)',
 };
@@ -126,7 +126,7 @@ export default function ModelPicker({
                   alignItems: 'center',
                   gap: 8,
                   padding: '8px 10px',
-                  background: active ? '#26282f' : 'transparent',
+                  background: active ? 'var(--bg-hover)' : 'transparent',
                   borderLeft: `2px solid ${familySelected ? C.accent : 'transparent'}`,
                 }}
               >
@@ -161,11 +161,11 @@ export default function ModelPicker({
                           style={{
                             padding: '8px 11px',
                             cursor: 'pointer',
-                            background: isSel ? '#20222a' : 'transparent',
+                            background: isSel ? 'var(--bg-raised)' : 'transparent',
                             borderLeft: `2px solid ${isSel ? C.accent : 'transparent'}`,
                           }}
                           onMouseEnter={(e) => {
-                            if (!isSel) e.currentTarget.style.background = '#26282f';
+                            if (!isSel) e.currentTarget.style.background = 'var(--bg-hover)';
                           }}
                           onMouseLeave={(e) => {
                             if (!isSel) e.currentTarget.style.background = 'transparent';

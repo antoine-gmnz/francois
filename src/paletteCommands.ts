@@ -187,4 +187,15 @@ export function registerBuiltinCommands(): void {
       requestUsageRefresh();
     },
   });
+
+  // 12 — Toggle theme (app-shell): flip light/dark, same action as the status-bar glyph.
+  registerPaletteCommand({
+    id: 'toggle-theme',
+    glyph: '☾',
+    name: 'Toggle theme',
+    hint: () => (useStore.getState().theme === 'dark' ? 'switch to light' : 'switch to dark'),
+    run: () => {
+      useStore.getState().toggleTheme();
+    },
+  });
 }

@@ -17,26 +17,26 @@ import { useStore } from './store';
 
 // §8 tokens
 const T = {
-  cardBg: '#17191f',
-  border: '#24262d',
-  accent: '#c8a15a',
-  name: '#868a93',
-  faint: '#565a63',
-  dim: '#868a93',
-  body: '#b9bcc4',
-  bright: '#dfe2e8',
-  value: '#c4c7ce',
-  error: '#c46b62',
-  loading: '#c2b06a',
-  hover: '#20222a',
-  green: '#7fa07a',
+  cardBg: 'var(--bg-deep)',
+  border: 'var(--border)',
+  accent: 'var(--accent)',
+  name: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  dim: 'var(--text-dim)',
+  body: 'var(--text-2)',
+  bright: 'var(--text-bright)',
+  value: 'var(--text)',
+  error: 'var(--error)',
+  loading: 'var(--warn)',
+  hover: 'var(--bg-raised)',
+  green: 'var(--success)',
 };
 
 const STATUS_COLOR: Record<SessionStatus, string> = {
-  running: '#c8a15a',
-  idle: '#7fa07a',
-  done: '#565a63',
-  error: '#c46b62',
+  running: 'var(--accent)',
+  idle: 'var(--success)',
+  done: 'var(--text-faint)',
+  error: 'var(--error)',
 };
 
 export default function CommandBlock({ b, sessionId }: { b: CommandConversationBlock; sessionId: string }) {

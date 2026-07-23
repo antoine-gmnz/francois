@@ -69,6 +69,13 @@ export interface DiffStageAllRequest {
 export interface DiffCommitRequest {
   sessionId: SessionId;
   message: string; // non-blank after trim; enforced by the frontend before invoke (FR-24)
+  /**
+   * Repo-relative paths (DiffFileSummary.path) to commit. When non-empty, ONLY these
+   * files are committed (`git add -- <paths>` then `git commit -- <paths>`), leaving
+   * every other change in the working tree untouched. An empty array commits the
+   * current index as-is (legacy stage-all → commit flow).
+   */
+  paths: string[];
 }
 
 // ---------- IPC channels (frontend -> core, invoke/Result) ----------
@@ -76,6 +83,7 @@ export interface DiffCommitRequest {
 // 'francois:diff:getFileDiff'  (DiffGetFileDiffRequest)  -> Promise<Result<FileDiff>>
 // 'francois:diff:stageAll'     (DiffStageAllRequest)     -> Promise<Result<void>>
 // 'francois:diff:commit'       (DiffCommitRequest)       -> Promise<Result<CommitResult>>
+//   paths: [] commits the index; paths: [...] commits only those files
 
 export type DiffSummaryResponse = Result<DiffSummary>;
 export type DiffFileDiffResponse = Result<FileDiff>;

@@ -17,8 +17,8 @@ import { freshnessLabel, isMeterHigh, meterFillPercent, meterTooltip } from '../
 import { appGetUsage, appRefreshUsage, onAppEvent } from './api';
 
 /** §8 tokens shared by the bar's chrome and its derivations. */
-export const USAGE_ACCENT = '#c8a15a';
-export const USAGE_ERROR = '#c46b62';
+export const USAGE_ACCENT = 'var(--accent)';
+export const USAGE_ERROR = 'var(--error)';
 
 /** Everything one meter chip needs to render. Order/labels are never touched (FR-23). */
 export interface MeterChipView {

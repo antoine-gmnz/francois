@@ -33,6 +33,7 @@ export const sessionListCommands = (sessionId: SessionId) =>
 export const sessionSwitchModel = (sessionId: SessionId, modelId: string) =>
   ipc<Result<SessionMeta>>('session_switch_model', { sessionId, modelId });
 export const sessionCompact = (sessionId: SessionId) => ipc<Result<null>>('session_compact', { sessionId });
+export const sessionClear = (sessionId: SessionId) => ipc<Result<null>>('session_clear', { sessionId });
 
 export const agentsList = (sessionId: SessionId) => ipc<Result<AgentInfo[]>>('agents_list', { sessionId });
 export const agentsDispatch = (sessionId: SessionId, task: string) =>
@@ -61,8 +62,8 @@ export const diffGetSummary = (sessionId: SessionId) => ipc<Result<DiffSummary>>
 export const diffGetFileDiff = (sessionId: SessionId, path: string) =>
   ipc<Result<FileDiff>>('diff_get_file_diff', { sessionId, path });
 export const diffStageAll = (sessionId: SessionId) => ipc<Result<null>>('diff_stage_all', { sessionId });
-export const diffCommit = (sessionId: SessionId, message: string) =>
-  ipc<Result<CommitResult>>('diff_commit', { sessionId, message });
+export const diffCommit = (sessionId: SessionId, message: string, paths: string[] = []) =>
+  ipc<Result<CommitResult>>('diff_commit', { sessionId, message, paths });
 
 /** Subscribe to francois://diff/event (diff.changed). */
 export function onDiffEvent(cb: (e: DiffEvent) => void): Promise<UnlistenFn> {

@@ -30,6 +30,32 @@ const LEFT_KEY = 'francois.showLeftPane';
 const RIGHT_KEY = 'francois.showRightPane';
 const RIGHT_PANES: readonly Pane[] = ['agents', 'mcp', 'skills'];
 
+export type Theme = 'light' | 'dark';
+const THEME_KEY = 'francois.theme';
+
+// Theme persistence — mirrors loadPane/persistPane. Degrades to 'dark' if storage
+// throws (restricted env / node test env). The DOM write is guarded so the node
+// test env (no `document`) does not crash.
+function loadTheme(): Theme {
+  try {
+    return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+function persistTheme(theme: Theme): void {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    /* ignore */
+  }
+}
+function applyTheme(theme: Theme): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.theme = theme;
+  }
+}
+
 interface AppState {
   // session cache (owned/written by sessions-sidebar, read by all)
   sessions: SessionMeta[];
@@ -42,6 +68,12 @@ interface AppState {
   // main-pane active tab (minimal app-shell)
   mainTab: MainTab;
   setMainTab: (t: MainTab) => void;
+
+  // light/dark theme (§theme). Initialized from localStorage; setter/toggle both
+  // persist and apply data-theme to <html>.
+  theme: Theme;
+  setTheme: (t: Theme) => void;
+  toggleTheme: () => void;
 
   // sessions-sidebar store slice (§5)
   activeSessionId: SessionId | null;
@@ -102,6 +134,20 @@ export const useStore = create<AppState>((set) => ({
 
   mainTab: 'session',
   setMainTab: (mainTab) => set({ mainTab }),
+
+  theme: loadTheme(),
+  setTheme: (theme) => {
+    persistTheme(theme);
+    applyTheme(theme);
+    set({ theme });
+  },
+  toggleTheme: () =>
+    set((s) => {
+      const theme: Theme = s.theme === 'dark' ? 'light' : 'dark';
+      persistTheme(theme);
+      applyTheme(theme);
+      return { theme };
+    }),
 
   activeSessionId: null,
   setActiveSessionId: (activeSessionId) => set({ activeSessionId }),

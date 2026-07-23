@@ -33,6 +33,11 @@ export interface NewSessionRequest {
   permissionMode?: PermissionMode;
   /** omit for 'native'; 'wsl' runs claude inside WSL (Windows only). */
   runtime?: ClaudeRuntime;
+  /**
+   * When true, Francois auto-approves `git`/`gh` commands the session's agent
+   * runs (instead of denying every permission prompt) — lets it commit/push
+   * without bypassing all permissions. Omit for false. */
+  allowGit?: boolean;
 }
 
 // ---------- consumed (owned by session-engine; pinned here for build-ability) ----------

@@ -7,17 +7,17 @@ import { parseMarkdown, type MdBlock, type MdInline, type TableAlign } from './m
 // plugin is wired) — the full URL rides in the title tooltip.
 
 const M = {
-  accent: '#c8a15a',
-  bright: '#dfe2e8',
-  dim: '#868a93',
-  faint: '#565a63',
-  border: '#24262d',
-  codeBg: '#16171c',
-  codeBorder: '#24262d',
-  inlineBg: '#20222a',
-  inlineFg: '#d8b878',
-  quoteBar: '#3a3d45',
-  langTag: '#6b7079',
+  accent: 'var(--accent)',
+  bright: 'var(--text-bright)',
+  dim: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  border: 'var(--border)',
+  codeBg: 'var(--bg-deep)',
+  codeBorder: 'var(--border)',
+  inlineBg: 'var(--bg-raised)',
+  inlineFg: 'var(--accent-bright)',
+  quoteBar: 'var(--text-disabled)',
+  langTag: 'var(--text-muted)',
 };
 
 function Inline({ nodes }: { nodes: MdInline[] }) {
@@ -162,7 +162,7 @@ function TableView({ b, mt }: { b: Extract<MdBlock, { type: 'table' }>; mt: numb
         <thead>
           <tr>
             {b.header.map((h, i) => (
-              <th key={i} style={cell({ textAlign: align(b.align[i]), fontWeight: 700, color: M.bright, background: '#1b1d23' })}>
+              <th key={i} style={cell({ textAlign: align(b.align[i]), fontWeight: 700, color: M.bright, background: 'var(--bg-elevated)' })}>
                 <Inline nodes={h} />
               </th>
             ))}

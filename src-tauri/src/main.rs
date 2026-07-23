@@ -54,7 +54,11 @@ struct Ring {
 
 impl Ring {
     fn new() -> Self {
-        Ring { chunks: VecDeque::new(), bytes: 0, lines: 0 }
+        Ring {
+            chunks: VecDeque::new(),
+            bytes: 0,
+            lines: 0,
+        }
     }
 
     fn push(&mut self, chunk: &str) {
@@ -74,10 +78,12 @@ impl Ring {
     }
 
     fn replay(&self) -> String {
-        self.chunks.iter().fold(String::with_capacity(self.bytes), |mut acc, c| {
-            acc.push_str(c);
-            acc
-        })
+        self.chunks
+            .iter()
+            .fold(String::with_capacity(self.bytes), |mut acc, c| {
+                acc.push_str(c);
+                acc
+            })
     }
 }
 
@@ -125,10 +131,16 @@ fn on_path(name: &str) -> bool {
 
 fn resolve_shell() -> (String, Vec<String>, String) {
     if cfg!(target_os = "windows") {
-        let exe = if on_path("pwsh.exe") { "pwsh.exe" } else { "powershell.exe" };
+        let exe = if on_path("pwsh.exe") {
+            "pwsh.exe"
+        } else {
+            "powershell.exe"
+        };
         (exe.to_string(), vec![], basename_no_ext(exe))
     } else {
-        let candidate = std::env::var("SHELL").ok().filter(|s| std::path::Path::new(s).exists());
+        let candidate = std::env::var("SHELL")
+            .ok()
+            .filter(|s| std::path::Path::new(s).exists());
         let exe = candidate
             .or_else(|| some_if_exists("/bin/zsh"))
             .or_else(|| some_if_exists("/bin/bash"))
@@ -147,7 +159,11 @@ fn some_if_exists(p: &str) -> Option<String> {
 }
 
 fn basename_no_ext(p: &str) -> String {
-    std::path::Path::new(p).file_stem().and_then(|s| s.to_str()).unwrap_or(p).to_string()
+    std::path::Path::new(p)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(p)
+        .to_string()
 }
 
 // ---------- per-session spawn matrix (wsl-filesystem FR-10..12) ----------
@@ -159,7 +175,9 @@ fn basename_no_ext(p: &str) -> String {
 /// live it's rejected outright (`Wsl/E_INVALIDARG`) — so unlike drive paths it MUST
 /// be pre-translated here.
 fn wsl_cd_target(cwd: &str) -> String {
-    crate::wsl::wsl_unc_to_linux(cwd).map(|(_, linux)| linux).unwrap_or_else(|| cwd.to_string())
+    crate::wsl::wsl_unc_to_linux(cwd)
+        .map(|(_, linux)| linux)
+        .unwrap_or_else(|| cwd.to_string())
 }
 
 /// (program, args, shellName, spawnCwd) for a session's shell under its runtime
@@ -176,7 +194,12 @@ fn shell_spawn_target(runtime: &str, cwd: &str) -> (String, Vec<String>, String,
     if runtime == "wsl" {
         let dir = wsl_cd_target(cwd);
         let shell_name = crate::wsl::wsl_distro_name().unwrap_or_else(|| "wsl".to_string());
-        ("wsl.exe".to_string(), vec!["--cd".to_string(), dir], shell_name, None)
+        (
+            "wsl.exe".to_string(),
+            vec!["--cd".to_string(), dir],
+            shell_name,
+            None,
+        )
     } else {
         let (exe, args, shell_name) = resolve_shell();
         (exe, args, shell_name, Some(cwd.to_string()))
@@ -213,13 +236,20 @@ fn shell_ensure(
     let Some(cwd) = engine.cwd_of(&session_id) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
-    let runtime = engine.runtime_of(&session_id).unwrap_or_else(|| "native".to_string());
+    let runtime = engine
+        .runtime_of(&session_id)
+        .unwrap_or_else(|| "native".to_string());
 
     let (cols, rows) = (80u16, 24u16);
     let (exe, args, shell_name, spawn_cwd) = shell_spawn_target(&runtime, &cwd);
 
     let pty_system = native_pty_system();
-    let pair = match pty_system.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
+    let pair = match pty_system.openpty(PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }) {
         Ok(p) => p,
         Err(e) => return err("PTY_ERROR", format!("could not open a pty: {e}")),
     };
@@ -244,7 +274,13 @@ fn shell_ensure(
         let merged = match wslenv {
             // Already forwarded (any flag variant counts) → leave the list untouched;
             // otherwise trim a trailing ':' so we never emit an empty entry.
-            Some(existing) if existing.split(':').any(|e| e == "TERM/u" || e.starts_with("TERM/")) => existing,
+            Some(existing)
+                if existing
+                    .split(':')
+                    .any(|e| e == "TERM/u" || e.starts_with("TERM/")) =>
+            {
+                existing
+            }
             Some(existing) => format!("{}:TERM/u", existing.trim_end_matches(':')),
             None => "TERM/u".to_string(),
         };
@@ -267,7 +303,12 @@ fn shell_ensure(
         Err(e) => return err("PTY_ERROR", format!("could not open shell output: {e}")),
     };
 
-    let shared = Arc::new(Mutex::new(Shared { alive: true, exit_code: None, disposed: false, ring: Ring::new() }));
+    let shared = Arc::new(Mutex::new(Shared {
+        alive: true,
+        exit_code: None,
+        disposed: false,
+        ring: Ring::new(),
+    }));
 
     {
         let shared = shared.clone();
@@ -287,7 +328,13 @@ fn shell_ensure(
                             }
                             s.ring.push(&chunk);
                         }
-                        let _ = app.emit(EVENT_CHANNEL, ShellEvent::Data { session_id: sid.clone(), data: chunk });
+                        let _ = app.emit(
+                            EVENT_CHANNEL,
+                            ShellEvent::Data {
+                                session_id: sid.clone(),
+                                data: chunk,
+                            },
+                        );
                     }
                 }
             }
@@ -299,16 +346,38 @@ fn shell_ensure(
                 return;
             }
             drop(s);
-            let _ = app.emit(EVENT_CHANNEL, ShellEvent::Exit { session_id: sid.clone(), exit_code: code });
+            let _ = app.emit(
+                EVENT_CHANNEL,
+                ShellEvent::Exit {
+                    session_id: sid.clone(),
+                    exit_code: code,
+                },
+            );
         });
     }
 
     map.insert(
         session_id,
-        ShellEntry { master: pair.master, writer, killer, shell_name: shell_name.clone(), cwd: cwd.clone(), cols, rows, shared },
+        ShellEntry {
+            master: pair.master,
+            writer,
+            killer,
+            shell_name: shell_name.clone(),
+            cwd: cwd.clone(),
+            cols,
+            rows,
+            shared,
+        },
     );
 
-    ok(EnsureData { cols, rows, scrollback_replay: String::new(), exit_code: None, shell_name, cwd })
+    ok(EnsureData {
+        cols,
+        rows,
+        scrollback_replay: String::new(),
+        exit_code: None,
+        shell_name,
+        cwd,
+    })
 }
 
 #[tauri::command(async)]
@@ -321,7 +390,11 @@ fn shell_write(reg: State<'_, Registry>, session_id: String, data: String) -> Ip
             if !alive {
                 return ok(());
             }
-            match entry.writer.write_all(data.as_bytes()).and_then(|_| entry.writer.flush()) {
+            match entry
+                .writer
+                .write_all(data.as_bytes())
+                .and_then(|_| entry.writer.flush())
+            {
                 Ok(()) => ok(()),
                 Err(e) => err("SESSION_NOT_FOUND", format!("shell input closed: {e}")),
             }
@@ -330,7 +403,12 @@ fn shell_write(reg: State<'_, Registry>, session_id: String, data: String) -> Ip
 }
 
 #[tauri::command(async)]
-fn shell_resize(reg: State<'_, Registry>, session_id: String, cols: u16, rows: u16) -> IpcResult<()> {
+fn shell_resize(
+    reg: State<'_, Registry>,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> IpcResult<()> {
     if cols == 0 || rows == 0 {
         return err("INVALID_INPUT", "cols and rows must be positive");
     }
@@ -342,7 +420,12 @@ fn shell_resize(reg: State<'_, Registry>, session_id: String, cols: u16, rows: u
             entry.rows = rows;
             let alive = entry.shared.lock().unwrap().alive;
             if alive {
-                let _ = entry.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+                let _ = entry.master.resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                });
             }
             ok(())
         }
@@ -354,7 +437,9 @@ fn shell_resize(reg: State<'_, Registry>, session_id: String, cols: u16, rows: u
 /// Shared by the `shell_dispose` command and `session_remove` (session.rs) — a
 /// removed session must never leave an orphan PTY running.
 pub fn dispose_session_shell(app: &AppHandle, session_id: &str) -> bool {
-    let Some(reg) = app.try_state::<Registry>() else { return false };
+    let Some(reg) = app.try_state::<Registry>() else {
+        return false;
+    };
     let mut map = reg.0.lock().unwrap();
     match map.remove(session_id) {
         Some(mut entry) => {
@@ -396,7 +481,9 @@ fn kill_all_shells(app: &AppHandle) {
 /// closed" report) and this file is the only trace it leaves; a background-thread
 /// panic is otherwise completely silent. Best-effort — never panics itself.
 fn install_panic_log(app: &AppHandle) {
-    let Ok(dir) = app.path().app_data_dir() else { return };
+    let Ok(dir) = app.path().app_data_dir() else {
+        return;
+    };
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("panic.log");
     let default_hook = std::panic::take_hook();
@@ -405,8 +492,15 @@ fn install_panic_log(app: &AppHandle) {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0);
-        let thread = std::thread::current().name().unwrap_or("<unnamed>").to_string();
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("<unnamed>")
+            .to_string();
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let _ = writeln!(f, "[{ts}] panic on thread '{thread}': {info}");
         }
         default_hook(info);
@@ -486,6 +580,7 @@ fn main() {
             session::session_answer_question,
             session::session_switch_model,
             session::session_compact,
+            session::session_clear,
             session::session_list_commands,
             session::session_models,
             session::session_pick_directory,
@@ -529,7 +624,10 @@ mod tests {
         // UNC must be pre-translated (wsl.exe rejects it raw — confirmed live,
         // Wsl/E_INVALIDARG); a drive path is handed to wsl.exe verbatim, which maps
         // it to /mnt/… itself (confirmed live: --cd D:\francois -> /mnt/d/francois).
-        assert_eq!(wsl_cd_target("\\\\wsl$\\Ubuntu\\home\\u\\api"), "/home/u/api");
+        assert_eq!(
+            wsl_cd_target("\\\\wsl$\\Ubuntu\\home\\u\\api"),
+            "/home/u/api"
+        );
         assert_eq!(wsl_cd_target("D:\\acme-api"), "D:\\acme-api");
     }
 
@@ -546,7 +644,8 @@ mod tests {
 
     #[test]
     fn shell_spawn_target_wsl_translates_unc_cwd_and_sets_no_process_cwd() {
-        let (exe, args, _name, spawn_cwd) = shell_spawn_target("wsl", "\\\\wsl$\\Ubuntu\\home\\u\\api");
+        let (exe, args, _name, spawn_cwd) =
+            shell_spawn_target("wsl", "\\\\wsl$\\Ubuntu\\home\\u\\api");
         assert_eq!(exe, "wsl.exe");
         assert_eq!(args, vec!["--cd", "/home/u/api"]);
         assert_eq!(spawn_cwd, None); // `--cd` alone positions it (FR-11)

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -14,6 +14,7 @@ import type {
   ShellDisposePayload,
 } from '../contract/shell-terminal';
 import { DEFAULT_SESSION_ID, setShellState } from './shellStore';
+import { useStore } from './store';
 
 const FAINT = '\x1b[38;2;86;90;99m'; // #565a63 (spec §8)
 const RESET = '\x1b[0m';
@@ -24,28 +25,59 @@ function ipc<T>(cmd: string, args: object): Promise<T> {
   return invoke<T>(cmd, args as Record<string, unknown>);
 }
 
-// ANSI 16-color mapping — specs/shell-terminal.md §8 FR-24.
-const ANSI_THEME = {
-  black: '#1a1c22',
-  red: '#c46b62',
-  green: '#7fa07a',
-  yellow: '#c8a15a',
-  blue: '#a9adb6',
-  magenta: '#a97fa0',
-  cyan: '#6f9c9a',
-  white: '#c4c7ce',
-  brightBlack: '#6b7079',
-  brightRed: '#d68f86',
-  brightGreen: '#9dbb98',
-  brightYellow: '#d0a45c',
-  brightBlue: '#c3c6cf',
-  brightMagenta: '#c29fbb',
-  brightCyan: '#8fbab8',
-  brightWhite: '#dfe2e8',
-} as const;
+// xterm renders to a canvas and CANNOT resolve CSS var(...)/color-mix(...) — so
+// every theme color is resolved to a concrete string at runtime from the CSS
+// variables (owned by src/styles.css). Rebuilt on each light/dark switch below.
+function cssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// Selection tint = the accent at 25% (was rgba(200,161,90,0.25)). The accent
+// resolves to a hex, so convert to rgba to keep the alpha the theme can't carry.
+function accentSelection(): string {
+  const h = cssVar('--accent').replace('#', '');
+  if (h.length < 6) return 'rgba(200,161,90,0.25)';
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, 0.25)`;
+}
+
+// Full xterm theme (base + ANSI 16-color mapping — specs/shell-terminal.md §8
+// FR-24), resolved from the CSS variables at call time.
+function buildTheme(): ITheme {
+  return {
+    background: cssVar('--bg-app'),
+    foreground: cssVar('--text-bright'),
+    cursor: cssVar('--accent'),
+    cursorAccent: cssVar('--bg-app'),
+    selectionBackground: accentSelection(),
+    black: cssVar('--bg-panel'),
+    red: cssVar('--error'),
+    green: cssVar('--success'),
+    yellow: cssVar('--accent'),
+    blue: cssVar('--text-hint'),
+    magenta: cssVar('--hue-purple-soft'),
+    cyan: cssVar('--hue-teal'),
+    white: cssVar('--text'),
+    brightBlack: cssVar('--text-muted'),
+    brightRed: cssVar('--error-bright'),
+    brightGreen: cssVar('--success-bright'),
+    brightYellow: cssVar('--accent-2'),
+    brightBlue: cssVar('--text-strong'),
+    brightMagenta: cssVar('--hue-purple-soft'),
+    brightCyan: cssVar('--hue-teal'),
+    brightWhite: cssVar('--text-bright'),
+  };
+}
 
 export default function ShellTerminal({ sessionId = DEFAULT_SESSION_ID }: { sessionId?: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  // Re-theme the live terminal when the app theme flips (store-owned by the
+  // theme slice). We only need the value to trigger the effect — buildTheme()
+  // reads the freshly-applied CSS variables from the DOM.
+  const theme = useStore((s) => (s as unknown as { theme?: string }).theme);
 
   useEffect(() => {
     const term = new Terminal({
@@ -58,15 +90,9 @@ export default function ShellTerminal({ sessionId = DEFAULT_SESSION_ID }: { sess
       cursorBlink: true,
       cursorStyle: 'block',
       scrollback: 10000,
-      theme: {
-        background: '#0f1015',
-        foreground: '#dfe2e8',
-        cursor: '#c8a15a',
-        cursorAccent: '#0f1015',
-        selectionBackground: 'rgba(200,161,90,0.25)',
-        ...ANSI_THEME,
-      },
+      theme: buildTheme(),
     });
+    termRef.current = term;
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(hostRef.current!);
@@ -189,8 +215,16 @@ export default function ShellTerminal({ sessionId = DEFAULT_SESSION_ID }: { sess
       dataDisp.dispose();
       void unlisten.then((u) => u());
       term.dispose();
+      termRef.current = null;
     };
   }, [sessionId]);
+
+  // Light/dark switch: rebuild the theme from the now-current CSS variables and
+  // apply it to the live terminal (canvas can't observe the var change itself).
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.theme = buildTheme();
+  }, [theme]);
 
   return <div ref={hostRef} style={{ position: 'absolute', inset: '14px 16px' }} />;
 }

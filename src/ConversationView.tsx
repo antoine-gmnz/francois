@@ -2,9 +2,9 @@ import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } fro
 import type { SessionEvent, SlashCommandInfo } from '../contract/common';
 import { toolBody, type ConversationBlock } from '../contract/conversation-view';
 import { displayWslCwd } from '../contract/wsl-filesystem';
-import { getTranscript, onSessionEvent, sessionListCommands, sessionSend } from './api';
+import { getTranscript, onSessionEvent, sessionClear, sessionListCommands, sessionSend } from './api';
 import CommandBlock from './CommandCard';
-import { transcriptReducer } from './conversation-blocks';
+import { isClearCommand, transcriptReducer } from './conversation-blocks';
 import Markdown from './MarkdownView';
 import { composerPlaceholder, hasPendingQuestionBlock } from './question-card';
 import QuestionCard from './QuestionCard';
@@ -24,14 +24,14 @@ import SlashMenu from './SlashMenu';
 import { useStore } from './store';
 
 const C = {
-  accent: '#c8a15a',
-  faint: '#565a63',
-  dim: '#868a93',
-  primary: '#c4c7ce',
-  bright: '#dfe2e8',
-  userBody: '#d3d6dc',
-  error: '#c46b62',
-  queued: '#c2b06a',
+  accent: 'var(--accent)',
+  faint: 'var(--text-faint)',
+  dim: 'var(--text-dim)',
+  primary: 'var(--text)',
+  bright: 'var(--text-bright)',
+  userBody: 'var(--text-strong)',
+  error: 'var(--error)',
+  queued: 'var(--warn)',
 };
 
 // Block apply rules (reducer) live in ./conversation-blocks — pure + unit-tested.
@@ -97,6 +97,12 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
           break;
         case 'session.resumeFailed':
           setResumeFailed(true); // the --resume was rejected; core continued fresh (FR-9/14)
+          break;
+        case 'session.cleared':
+          // /clear full reset: drop every block (context.usage 0 resets the meter)
+          dispatch({ t: 'clear' });
+          setResumeFailed(false);
+          setPinned(true);
           break;
         case 'assistant.delta':
           dispatch({ t: 'delta', blockId: e.blockId, text: e.text });
@@ -242,6 +248,18 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   const send = async (textArg?: string) => {
     const text = textArg ?? input;
     if (!text.trim() || disabled) return;
+    // /clear full reset: never enqueues a turn, never creates a user block. The
+    // core wipes the transcript + context and echoes session.cleared (below).
+    if (isClearCommand(text)) {
+      setInput('');
+      if (inputRef.current) inputRef.current.style.height = 'auto';
+      const res = await sessionClear(sessionId);
+      if (!res.ok) {
+        setSendError(res.error.message);
+        setTimeout(() => setSendError(null), 4000);
+      }
+      return;
+    }
     const blockId = crypto.randomUUID();
     dispatch({ t: 'optimisticUser', blockId, text });
     setPinned(true); // FR-20
@@ -301,8 +319,8 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
             display: 'flex',
             alignItems: 'center',
             gap: 9,
-            background: '#20222a',
-            borderLeft: '2px solid #c2b06a',
+            background: 'var(--bg-raised)',
+            borderLeft: '2px solid var(--warn)',
             borderRadius: 4,
             padding: '8px 11px',
             margin: '6px 8px',
@@ -310,7 +328,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
             animation: 'fadeIn 120ms ease-out',
           }}
         >
-          <span style={{ fontSize: 11.5, color: '#a9adb6', flex: 1 }}>previous thread unavailable — continuing fresh</span>
+          <span style={{ fontSize: 11.5, color: 'var(--text-hint)', flex: 1 }}>previous thread unavailable — continuing fresh</span>
           <span onClick={() => setResumeFailed(false)} style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }} title="dismiss">
             ✕
           </span>
@@ -358,14 +376,14 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
               transform: 'translateX(-50%)',
               padding: '5px 12px',
               borderRadius: 12,
-              background: '#20222a',
-              border: '1px solid #2a2c33',
+              background: 'var(--bg-raised)',
+              border: '1px solid var(--border-2)',
               fontSize: 10.5,
               color: C.accent,
               cursor: 'pointer',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = '#26282f')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = '#20222a')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--bg-raised)')}
           >
             ↓ jump to latest
           </div>
@@ -386,7 +404,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
               left: 14,
               right: 14,
               marginBottom: 4,
-              background: 'rgba(196,107,98,0.09)',
+              background: 'color-mix(in srgb, var(--error) 9%, transparent)',
               color: C.error,
               fontSize: 11,
               borderRadius: 4,
@@ -399,13 +417,13 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid #24262d',
+            borderTop: '1px solid var(--border)',
             display: 'flex',
             alignItems: 'flex-start',
             gap: 10,
           }}
         >
-          <span style={{ color: disabled ? '#3a3d45' : C.accent, fontSize: 13, marginTop: 2 }}>›</span>
+          <span style={{ color: disabled ? 'var(--text-disabled)' : C.accent, fontSize: 13, marginTop: 2 }}>›</span>
           <textarea
             ref={inputRef}
             value={input}
@@ -431,7 +449,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
               padding: 0,
             }}
           />
-          <span style={{ fontSize: 10, color: '#3a3d45', marginTop: 3 }}>⌘K palette</span>
+          <span style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 3 }}>⌘K palette</span>
         </div>
       </div>
     </div>
@@ -467,7 +485,7 @@ function Block({ b, sessionId }: { b: ConversationBlock; sessionId: string }) {
   }
   if (b.kind === 'user') {
     return (
-      <div style={{ background: '#1b1d23', borderLeft: '2px solid #c8a15a', borderRadius: '0 4px 4px 0', padding: '10px 13px' }}>
+      <div style={{ background: 'var(--bg-elevated)', borderLeft: '2px solid var(--accent)', borderRadius: '0 4px 4px 0', padding: '10px 13px' }}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 5 }}>
           <span style={{ fontSize: 10, letterSpacing: '0.12em', color: C.accent }}>YOU</span>
           <span style={{ flex: 1 }} />

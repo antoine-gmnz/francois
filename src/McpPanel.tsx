@@ -5,15 +5,15 @@ import { mcpAttach, mcpDetach, mcpDetail, mcpList, mcpReconnect, mcpRegistry, on
 import { useStore } from './store';
 
 const C = {
-  connected: '#7fa07a',
-  connecting: '#c2b06a',
-  error: '#c46b62',
-  accent: '#c8a15a',
-  dim: '#868a93',
-  faint: '#565a63',
-  primary: '#c4c7ce',
-  bright: '#dfe2e8',
-  hint: '#a9adb6',
+  connected: 'var(--success)',
+  connecting: 'var(--warn)',
+  error: 'var(--error)',
+  accent: 'var(--accent)',
+  dim: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  primary: 'var(--text)',
+  bright: 'var(--text-bright)',
+  hint: 'var(--text-hint)',
 };
 
 const dotColor: Record<string, string> = {
@@ -23,9 +23,9 @@ const dotColor: Record<string, string> = {
 };
 
 const scopeColor: Record<string, string> = {
-  project: '#8a8f9a',
-  local: '#7c8aa0',
-  user: '#6b7079',
+  project: 'var(--text-dim)',
+  local: 'var(--hue-slate)',
+  user: 'var(--text-muted)',
 };
 
 const scopeText = (scope: string): string =>
@@ -43,7 +43,7 @@ function scopeBadge(scope: string): React.CSSProperties {
     letterSpacing: '0.05em',
     textTransform: 'uppercase',
     color: scopeColor[scope] ?? C.faint,
-    border: '1px solid #2a2c33',
+    border: '1px solid var(--border-2)',
     borderRadius: 3,
     padding: '1px 4px',
     flexShrink: 0,
@@ -159,8 +159,8 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
       style={{
         display: 'flex',
         flexDirection: 'column',
-        background: '#16171c',
-        border: `1px solid ${focused ? C.accent : '#2a2c33'}`,
+        background: 'var(--bg-deep)',
+        border: `1px solid ${focused ? C.accent : 'var(--border-2)'}`,
         borderRadius: 5,
         overflow: 'hidden',
         minHeight: 0,
@@ -173,7 +173,7 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '9px 12px',
-          borderBottom: '1px solid #24262d',
+          borderBottom: '1px solid var(--border)',
           flexShrink: 0,
         }}
       >
@@ -222,8 +222,8 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
                   alignItems: 'center',
                   gap: 9,
                   padding: '7px 6px',
-                  borderBottom: '1px solid #1d1f25',
-                  background: sel ? '#20222a' : 'transparent',
+                  borderBottom: '1px solid var(--bg-elevated)',
+                  background: sel ? 'var(--bg-raised)' : 'transparent',
                   cursor: 'pointer',
                   transition: 'background 120ms ease',
                 }}
@@ -352,15 +352,15 @@ function DetailPopover({
         top,
         left,
         width: 280,
-        background: '#191b21',
-        border: '1px solid #34363f',
+        background: 'var(--bg-panel)',
+        border: '1px solid var(--bg-hover-2)',
         borderRadius: 6,
         boxShadow: '0 20px 50px -15px rgba(0,0,0,0.75)',
         zIndex: 40,
         overflow: 'hidden',
       }}
     >
-      <div style={{ padding: '11px 13px', borderBottom: '1px solid #24262d', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ padding: '11px 13px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor[status] ?? C.dim }} />
         <span style={{ fontSize: 13, color: C.bright, flex: 1 }}>{name}</span>
         <span style={{ fontSize: 10, color: dotColor[status] ?? C.dim }}>{status}</span>
@@ -386,7 +386,7 @@ function DetailPopover({
       </div>
 
       {data && (
-        <div style={{ padding: '9px 13px', borderTop: '1px solid #24262d', display: 'flex', gap: 14, justifyContent: 'flex-end' }}>
+        <div style={{ padding: '9px 13px', borderTop: '1px solid var(--border)', display: 'flex', gap: 14, justifyContent: 'flex-end' }}>
           {confirming ? (
             <>
               <span style={{ fontSize: 10.5, color: C.faint, flex: 1 }}>detach '{name}' from .mcp.json?</span>
@@ -415,7 +415,7 @@ function DetailPopover({
   );
 }
 
-const btnStyle: React.CSSProperties = { fontSize: 11, color: '#a9adb6', cursor: 'pointer' };
+const btnStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-hint)', cursor: 'pointer' };
 
 function Field({ label, value, mono, color }: { label: string; value: string; mono?: boolean; color?: string }) {
   return (
@@ -560,11 +560,11 @@ function AttachOverlay({ sessionId, existing, onClose }: { sessionId: string; ex
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 588, background: '#191b21', border: '1px solid #34363f', borderRadius: 8, overflow: 'hidden', boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)' }}
+        style={{ width: 588, background: 'var(--bg-panel)', border: '1px solid var(--bg-hover-2)', borderRadius: 8, overflow: 'hidden', boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)' }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: '1px solid #24262d' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
           <span style={{ color: C.accent, fontSize: 15 }}>⊞</span>
-          <span style={{ fontSize: 14, color: '#d3d6dc', flex: 1 }}>
+          <span style={{ fontSize: 14, color: 'var(--text-strong)', flex: 1 }}>
             {step === 'registry' ? 'attach MCP server' : selected === 'custom' ? 'custom server' : `configure ${(selected as McpRegistryEntry).name}`}
           </span>
           <span style={{ fontSize: 10, color: C.faint }}>esc</span>
@@ -581,7 +581,7 @@ function AttachOverlay({ sessionId, existing, onClose }: { sessionId: string; ex
                   key={isCustom ? 'custom' : row.name}
                   onMouseEnter={() => setSelIndex(i)}
                   onClick={() => advance(row)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 5, background: sel ? '#26282f' : 'transparent', cursor: 'pointer' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 5, background: sel ? 'var(--bg-hover)' : 'transparent', cursor: 'pointer' }}
                 >
                   <span style={{ width: 16, textAlign: 'center', fontSize: 12, color: sel ? C.accent : C.dim }}>{isCustom ? '+' : '⊞'}</span>
                   <span style={{ fontSize: 13, color: sel ? C.bright : C.primary, flexShrink: 0 }}>{isCustom ? 'custom…' : row.name}</span>
@@ -625,7 +625,7 @@ function AttachOverlay({ sessionId, existing, onClose }: { sessionId: string; ex
             )}
 
             {submitError && (
-              <div style={{ background: 'rgba(196,107,98,0.09)', color: C.error, fontSize: 11, borderRadius: 4, padding: '8px 10px' }}>
+              <div style={{ background: 'color-mix(in srgb, var(--error) 9%, transparent)', color: C.error, fontSize: 11, borderRadius: 4, padding: '8px 10px' }}>
                 {submitError.message}
               </div>
             )}
@@ -636,7 +636,7 @@ function AttachOverlay({ sessionId, existing, onClose }: { sessionId: string; ex
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid #24262d', fontSize: 10, color: C.faint }}>
+        <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid var(--border)', fontSize: 10, color: C.faint }}>
           {step === 'registry' ? (
             <>
               <span>
@@ -695,8 +695,8 @@ function FormField({
         style={{
           marginTop: 5,
           width: '100%',
-          background: '#16171c',
-          border: '1px solid #24262d',
+          background: 'var(--bg-deep)',
+          border: '1px solid var(--border)',
           borderRadius: 4,
           height: 32,
           color: C.primary,
@@ -716,8 +716,8 @@ function pill(sel: boolean): React.CSSProperties {
     padding: '4px 10px',
     borderRadius: 4,
     cursor: 'pointer',
-    border: `1px solid ${sel ? C.accent : '#2a2c33'}`,
-    background: sel ? 'rgba(200,161,90,0.12)' : '#16171c',
+    border: `1px solid ${sel ? C.accent : 'var(--border-2)'}`,
+    background: sel ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'var(--bg-deep)',
     color: sel ? C.accent : C.dim,
   };
 }
@@ -733,7 +733,7 @@ function submitStyle(enabled: boolean): React.CSSProperties {
     fontSize: 12.5,
     fontWeight: 500,
     cursor: enabled ? 'pointer' : 'default',
-    background: enabled ? '#26282f' : '#1b1d23',
+    background: enabled ? 'var(--bg-hover)' : 'var(--bg-elevated)',
     color: enabled ? C.accent : C.faint,
   };
 }

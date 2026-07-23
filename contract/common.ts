@@ -232,4 +232,5 @@ export type SessionEvent =
   | { type: 'mcp.update'; sessionId: SessionId; server: McpServerInfo }
   | { type: 'context.usage'; sessionId: SessionId; usedTokens: number; limitTokens: number }
   | { type: 'session.resumeFailed'; sessionId: SessionId } // a --resume turn was rejected; the core continued on a fresh thread (durable-sessions FR-9/14)
+  | { type: 'session.cleared'; sessionId: SessionId } // /clear: transcript wiped + context reset (full reset)
   | { type: 'session.error'; sessionId: SessionId; error: AppError };
