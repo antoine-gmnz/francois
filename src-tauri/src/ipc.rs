@@ -24,6 +24,9 @@ pub fn ok<T: Serialize>(data: T) -> IpcResult<T> {
 pub fn err<T: Serialize>(code: &str, message: impl Into<String>) -> IpcResult<T> {
     IpcResult::Err {
         ok: false,
-        error: AppError { code: code.into(), message: message.into() },
+        error: AppError {
+            code: code.into(),
+            message: message.into(),
+        },
     }
 }

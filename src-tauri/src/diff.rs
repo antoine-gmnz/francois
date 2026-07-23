@@ -152,7 +152,9 @@ impl GitHost {
 /// every call site can just pass "whatever dir it has" — the session cwd on the
 /// first probe, the cached root afterwards — without tracking which form it is.
 fn wsl_cd_target(dir: &str) -> String {
-    wsl::wsl_unc_to_linux(dir).map(|(_, linux)| linux).unwrap_or_else(|| dir.to_string())
+    wsl::wsl_unc_to_linux(dir)
+        .map(|(_, linux)| linux)
+        .unwrap_or_else(|| dir.to_string())
 }
 
 /// Pure: the exact (program, argv) `git_routed` runs for `dir` under `host`
@@ -162,9 +164,17 @@ fn wsl_cd_target(dir: &str) -> String {
 /// wraps as `wsl.exe --cd <dir> -- git <args…>`.
 fn git_program(host: GitHost, dir: &str, args: &[&str]) -> (String, Vec<String>) {
     match host {
-        GitHost::Native => ("git".to_string(), args.iter().map(|s| s.to_string()).collect()),
+        GitHost::Native => (
+            "git".to_string(),
+            args.iter().map(|s| s.to_string()).collect(),
+        ),
         GitHost::Wsl => {
-            let mut argv = vec!["--cd".to_string(), wsl_cd_target(dir), "--".to_string(), "git".to_string()];
+            let mut argv = vec![
+                "--cd".to_string(),
+                wsl_cd_target(dir),
+                "--".to_string(),
+                "git".to_string(),
+            ];
             argv.extend(args.iter().map(|s| s.to_string()));
             ("wsl.exe".to_string(), argv)
         }
@@ -242,7 +252,8 @@ fn repo_root(host: GitHost, cwd: &str) -> String {
 /// holds `Some("HEAD")` once a commit exists (HEAD never reverts to no-commits in
 /// practice, so it's safe to pin); for a commit-less repo it stays `None` and the base
 /// is recomputed each call (cheap, rare, and self-corrects to `HEAD` on the first commit).
-static REPO_CACHE: OnceLock<Mutex<HashMap<String, (GitHost, String, Option<String>)>>> = OnceLock::new();
+static REPO_CACHE: OnceLock<Mutex<HashMap<String, (GitHost, String, Option<String>)>>> =
+    OnceLock::new();
 
 /// `(host, root, base)` for a cwd, or `None` if it isn't a git worktree. Serves the
 /// common case (a repo with commits) entirely from cache after the first call — zero
@@ -262,7 +273,10 @@ fn repo_info(cwd: &str) -> Option<(GitHost, String, String)> {
     let root = repo_root(host, cwd);
     let base = diff_base(host, &root);
     let stable = (base == "HEAD").then(|| "HEAD".to_string());
-    cache.lock().unwrap().insert(cwd.to_string(), (host, root.clone(), stable));
+    cache
+        .lock()
+        .unwrap()
+        .insert(cwd.to_string(), (host, root.clone(), stable));
     Some((host, root, base))
 }
 
@@ -398,22 +412,40 @@ fn parse_unified_diff(text: &str) -> Vec<DiffHunk> {
             let (os, ns) = parse_hunk_header(line);
             old_no = os;
             new_no = ns;
-            hunks.push(DiffHunk { header: line.to_string(), lines: Vec::new() });
+            hunks.push(DiffHunk {
+                header: line.to_string(),
+                lines: Vec::new(),
+            });
             continue;
         }
         let Some(h) = hunks.last_mut() else { continue }; // still in preamble
         match line.as_bytes().first().copied() {
             Some(b' ') => {
-                h.lines.push(DiffLine { kind: "ctx", old_no: Some(old_no), new_no: Some(new_no), text: line[1..].to_string() });
+                h.lines.push(DiffLine {
+                    kind: "ctx",
+                    old_no: Some(old_no),
+                    new_no: Some(new_no),
+                    text: line[1..].to_string(),
+                });
                 old_no += 1;
                 new_no += 1;
             }
             Some(b'+') if !line.starts_with("+++") => {
-                h.lines.push(DiffLine { kind: "add", old_no: None, new_no: Some(new_no), text: line[1..].to_string() });
+                h.lines.push(DiffLine {
+                    kind: "add",
+                    old_no: None,
+                    new_no: Some(new_no),
+                    text: line[1..].to_string(),
+                });
                 new_no += 1;
             }
             Some(b'-') if !line.starts_with("---") => {
-                h.lines.push(DiffLine { kind: "del", old_no: Some(old_no), new_no: None, text: line[1..].to_string() });
+                h.lines.push(DiffLine {
+                    kind: "del",
+                    old_no: Some(old_no),
+                    new_no: None,
+                    text: line[1..].to_string(),
+                });
                 old_no += 1;
             }
             _ => {} // `\ No newline`, blank tail, or stray line — dropped
@@ -481,7 +513,11 @@ fn untracked_counts_in_process(file: &Path) -> (u64, u64) {
 /// spawn per untracked file, routed into the distro (correct, slower — the
 /// pre-round-3 shape, WSL-only; native repos always take the in-process path above).
 fn untracked_counts_wsl_fallback(root: &str, path: &str) -> (u64, u64) {
-    let Ok(out) = git_routed(GitHost::Wsl, root, &["diff", "--no-index", "--numstat", "--", "/dev/null", path]) else {
+    let Ok(out) = git_routed(
+        GitHost::Wsl,
+        root,
+        &["diff", "--no-index", "--numstat", "--", "/dev/null", path],
+    ) else {
         return (0, 0);
     };
     // `--no-index` exits 1 on a real diff (success); only >=2 is a genuine failure.
@@ -489,9 +525,14 @@ fn untracked_counts_wsl_fallback(root: &str, path: &str) -> (u64, u64) {
         return (0, 0);
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    let Some(line) = text.lines().next() else { return (0, 0) };
+    let Some(line) = text.lines().next() else {
+        return (0, 0);
+    };
     let mut parts = line.splitn(3, '\t');
-    (num(parts.next().unwrap_or("")), num(parts.next().unwrap_or("")))
+    (
+        num(parts.next().unwrap_or("")),
+        num(parts.next().unwrap_or("")),
+    )
 }
 
 fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
@@ -500,10 +541,27 @@ fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
     let Some((host, root, base)) = repo_info(cwd) else {
         return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
     };
-    let st = git_routed(host, &root, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--renames"])
-        .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    let st = git_routed(
+        host,
+        &root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--renames",
+        ],
+    )
+    .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
     if st.code != 0 {
-        return Err(("GIT_ERROR".into(), if st.stderr.is_empty() { "git status failed".into() } else { st.stderr }));
+        return Err((
+            "GIT_ERROR".into(),
+            if st.stderr.is_empty() {
+                "git status failed".into()
+            } else {
+                st.stderr
+            },
+        ));
     }
     let numstat = git_routed(host, &root, &["diff", &base, "-M", "-z", "--numstat"])
         .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
@@ -519,13 +577,24 @@ fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
                 counts.get(&path).copied().unwrap_or((0, 0))
             };
             let (dir, name) = split_path(&path);
-            DiffFileSummary { path, dir, name, additions, deletions, status }
+            DiffFileSummary {
+                path,
+                dir,
+                name,
+                additions,
+                deletions,
+                status,
+            }
         })
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let total_add = files.iter().map(|f| f.additions).sum();
     let total_del = files.iter().map(|f| f.deletions).sum();
-    Ok(DiffSummary { files, total_add, total_del })
+    Ok(DiffSummary {
+        files,
+        total_add,
+        total_del,
+    })
 }
 
 fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
@@ -535,33 +604,81 @@ fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
     // Targeted status for just this path — avoids re-running the whole summary (which
     // costs a full `git status` + numstat + a diff per untracked file). Big win on a
     // large repo where every chip click otherwise re-scans everything.
-    let st = git_routed(host, &root, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", path])
-        .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    let st = git_routed(
+        host,
+        &root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            path,
+        ],
+    )
+    .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
     if st.code != 0 {
-        return Err(("GIT_ERROR".into(), if st.stderr.is_empty() { "git status failed".into() } else { st.stderr }));
+        return Err((
+            "GIT_ERROR".into(),
+            if st.stderr.is_empty() {
+                "git status failed".into()
+            } else {
+                st.stderr
+            },
+        ));
     }
     // A path with no porcelain entry is not a currently-changed file → stale selection.
-    let Some((xy, _)) = parse_porcelain_z(&st.stdout).into_iter().find(|(_, p)| p == path) else {
-        return Err(("INVALID_INPUT".into(), format!("'{path}' is not in the current changes")));
+    let Some((xy, _)) = parse_porcelain_z(&st.stdout)
+        .into_iter()
+        .find(|(_, p)| p == path)
+    else {
+        return Err((
+            "INVALID_INPUT".into(),
+            format!("'{path}' is not in the current changes"),
+        ));
     };
     let status = map_status(&xy);
     let out = if status == DiffFileStatus::Untracked {
-        git_routed(host, &root, &["diff", "--no-index", "--", "/dev/null", path])
+        git_routed(
+            host,
+            &root,
+            &["diff", "--no-index", "--", "/dev/null", path],
+        )
     } else {
         git_routed(host, &root, &["diff", &base, "-M", "--", path])
     }
     .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
 
     // `--no-index` exit 1 = "files differ" (success); only >=2 is a real failure (FR-8).
-    let failed = if status == DiffFileStatus::Untracked { out.code >= 2 } else { out.code != 0 };
+    let failed = if status == DiffFileStatus::Untracked {
+        out.code >= 2
+    } else {
+        out.code != 0
+    };
     if failed {
-        return Err(("GIT_ERROR".into(), if out.stderr.is_empty() { "git diff failed".into() } else { out.stderr }));
+        return Err((
+            "GIT_ERROR".into(),
+            if out.stderr.is_empty() {
+                "git diff failed".into()
+            } else {
+                out.stderr
+            },
+        ));
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    if text.lines().any(|l| l.starts_with("Binary files") && l.contains("differ")) {
-        return Ok(FileDiff { hunks: Vec::new(), binary: true });
+    if text
+        .lines()
+        .any(|l| l.starts_with("Binary files") && l.contains("differ"))
+    {
+        return Ok(FileDiff {
+            hunks: Vec::new(),
+            binary: true,
+        });
     }
-    Ok(FileDiff { hunks: parse_unified_diff(&text), binary: false })
+    Ok(FileDiff {
+        hunks: parse_unified_diff(&text),
+        binary: false,
+    })
 }
 
 // ---------- per-session git serialization (FR-14) ----------
@@ -569,8 +686,13 @@ fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
 static GIT_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 
 fn git_lock(session_id: &str) -> Arc<Mutex<()>> {
-    let mut m = GIT_LOCKS.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
-    m.entry(session_id.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
+    let mut m = GIT_LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    m.entry(session_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
 
 // ---------- event broadcast (FR-17) ----------
@@ -609,7 +731,10 @@ fn schedule_recompute(app: &AppHandle, session_id: &str, cwd: &str) {
     let states = RECOMPUTES.get_or_init(|| Mutex::new(HashMap::new()));
     {
         let mut m = states.lock().unwrap();
-        let st = m.entry(session_id.to_string()).or_insert(RecomputeState { running: false, dirty: false });
+        let st = m.entry(session_id.to_string()).or_insert(RecomputeState {
+            running: false,
+            dirty: false,
+        });
         if st.running {
             st.dirty = true; // fold into the in-flight run's trailing recompute
             return;
@@ -658,18 +783,28 @@ fn is_ignored_path(p: &Path, root: &Path) -> bool {
     // Match only the path *below* the watched root: a session whose cwd itself lives
     // under a dir named e.g. `build`/`vendor`/`.cache` must not have EVERY event
     // ignored — that would silently disable the watcher entirely (H1).
-    p.strip_prefix(root)
-        .unwrap_or(p)
-        .components()
-        .any(|c| {
-            matches!(
-                c.as_os_str().to_str(),
-                Some(
-                    ".git" | "node_modules" | "target" | "dist" | "build" | ".next" | ".nuxt" | ".svelte-kit"
-                        | ".venv" | "venv" | "__pycache__" | ".turbo" | ".cache" | ".gradle" | "vendor"
-                )
+    p.strip_prefix(root).unwrap_or(p).components().any(|c| {
+        matches!(
+            c.as_os_str().to_str(),
+            Some(
+                ".git"
+                    | "node_modules"
+                    | "target"
+                    | "dist"
+                    | "build"
+                    | ".next"
+                    | ".nuxt"
+                    | ".svelte-kit"
+                    | ".venv"
+                    | "venv"
+                    | "__pycache__"
+                    | ".turbo"
+                    | ".cache"
+                    | ".gradle"
+                    | "vendor"
             )
-        })
+        )
+    })
 }
 
 /// Start a recursive watcher on a session's cwd (idempotent). On any relevant event,
@@ -692,17 +827,21 @@ pub fn watch_session(app: &AppHandle, session_id: &str, cwd: &str) {
     }
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let root = Path::new(cwd).to_path_buf();
-    let mut watcher = match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if let Ok(ev) = res {
-            if ev.paths.iter().any(|p| !is_ignored_path(p, &root)) {
-                let _ = tx.send(());
+    let mut watcher =
+        match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(ev) = res {
+                if ev.paths.iter().any(|p| !is_ignored_path(p, &root)) {
+                    let _ = tx.send(());
+                }
             }
-        }
-    }) {
-        Ok(w) => w,
-        Err(_) => return,
-    };
-    if watcher.watch(Path::new(cwd), RecursiveMode::Recursive).is_err() {
+        }) {
+            Ok(w) => w,
+            Err(_) => return,
+        };
+    if watcher
+        .watch(Path::new(cwd), RecursiveMode::Recursive)
+        .is_err()
+    {
         return;
     }
 
@@ -743,8 +882,13 @@ pub fn unwatch_session(session_id: &str) {
 
 // ---------- commands (francois:diff:<verb>) ----------
 
-fn cwd_or_err<T: Serialize>(engine: &State<'_, Engine>, session_id: &str) -> Result<String, IpcResult<T>> {
-    engine.cwd_of(session_id).ok_or_else(|| err("SESSION_NOT_FOUND", "no such session"))
+fn cwd_or_err<T: Serialize>(
+    engine: &State<'_, Engine>,
+    session_id: &str,
+) -> Result<String, IpcResult<T>> {
+    engine
+        .cwd_of(session_id)
+        .ok_or_else(|| err("SESSION_NOT_FOUND", "no such session"))
 }
 
 // All diff commands are `async` so Tauri executes them on the async runtime — a
@@ -775,7 +919,11 @@ pub async fn diff_get_summary(app: AppHandle, session_id: String) -> IpcResult<D
 }
 
 #[tauri::command]
-pub async fn diff_get_file_diff(app: AppHandle, session_id: String, path: String) -> IpcResult<FileDiff> {
+pub async fn diff_get_file_diff(
+    app: AppHandle,
+    session_id: String,
+    path: String,
+) -> IpcResult<FileDiff> {
     let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
@@ -805,13 +953,38 @@ pub async fn diff_stage_all(app: AppHandle, session_id: String) -> IpcResult<Opt
     let root = repo_root(host, &cwd);
     match git_routed(host, &root, &["add", "-A"]) {
         Ok(o) if o.code == 0 => ok(None), // succeeds even with nothing to stage (FR-10)
-        Ok(o) => err("GIT_ERROR", if o.stderr.is_empty() { "git add failed".into() } else { o.stderr }),
+        Ok(o) => err(
+            "GIT_ERROR",
+            if o.stderr.is_empty() {
+                "git add failed".into()
+            } else {
+                o.stderr
+            },
+        ),
         Err(e) => err("GIT_ERROR", e.to_string()),
     }
 }
 
+/// Pure: the `git commit` argv for `message` + selected `paths`. With no paths we
+/// commit whatever is already in the index (legacy stage-all flow). With paths we
+/// pin the commit to exactly those files — `git commit -m <msg> -- <paths…>` — so
+/// anything else already staged is left in the index, not committed.
+fn commit_args<'a>(message: &'a str, paths: &'a [String]) -> Vec<&'a str> {
+    let mut args = vec!["commit", "-m", message];
+    if !paths.is_empty() {
+        args.push("--");
+        args.extend(paths.iter().map(|p| p.as_str()));
+    }
+    args
+}
+
 #[tauri::command]
-pub async fn diff_commit(app: AppHandle, session_id: String, message: String) -> IpcResult<CommitResult> {
+pub async fn diff_commit(
+    app: AppHandle,
+    session_id: String,
+    message: String,
+    paths: Vec<String>,
+) -> IpcResult<CommitResult> {
     let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
@@ -828,22 +1001,67 @@ pub async fn diff_commit(app: AppHandle, session_id: String, message: String) ->
     let _g = lock.lock().unwrap();
     let root = repo_root(host, &cwd);
 
-    // FR-11: nothing staged → `git diff --cached --quiet` exits 0.
-    match git_routed(host, &root, &["diff", "--cached", "--quiet"]) {
-        Ok(o) if o.code == 0 => return err("GIT_ERROR", "nothing staged to commit — stage changes first"),
-        Ok(_) => {}
-        Err(e) => return err("GIT_ERROR", e.to_string()),
+    let message = message.trim();
+    if paths.is_empty() {
+        // Legacy flow: commit the current index. Guard nothing-staged (FR-11) —
+        // `git diff --cached --quiet` exits 0 when the index is empty.
+        match git_routed(host, &root, &["diff", "--cached", "--quiet"]) {
+            Ok(o) if o.code == 0 => {
+                return err(
+                    "GIT_ERROR",
+                    "nothing staged to commit — stage changes first",
+                )
+            }
+            Ok(_) => {}
+            Err(e) => return err("GIT_ERROR", e.to_string()),
+        }
+    } else {
+        // Selected-files flow: stage exactly the chosen paths first so untracked
+        // files and deletions are picked up (`git add -- <paths>`), then the
+        // path-scoped commit below records only them. `git add` succeeds with a
+        // no-op when a path has nothing to stage.
+        let mut add = vec!["add", "--"];
+        add.extend(paths.iter().map(|p| p.as_str()));
+        match git_routed(host, &root, &add) {
+            Ok(o) if o.code == 0 => {}
+            Ok(o) => {
+                return err(
+                    "GIT_ERROR",
+                    if o.stderr.is_empty() {
+                        "git add failed".into()
+                    } else {
+                        o.stderr
+                    },
+                )
+            }
+            Err(e) => return err("GIT_ERROR", e.to_string()),
+        }
     }
+
     // FR-9: commit identity/hooks are the distro's own git config for WSL repos
-    // (documented, not managed — spec §4).
-    match git_routed(host, &root, &["commit", "-m", message.trim()]) {
+    // (documented, not managed — spec §4). With paths, git itself errors if none of
+    // the selected files have anything to commit.
+    match git_routed(host, &root, &commit_args(message, &paths)) {
         Ok(o) if o.code == 0 => {}
-        Ok(o) => return err("GIT_ERROR", if o.stderr.is_empty() { "git commit failed".into() } else { o.stderr }),
+        Ok(o) => {
+            return err(
+                "GIT_ERROR",
+                if o.stderr.is_empty() {
+                    "git commit failed".into()
+                } else {
+                    o.stderr
+                },
+            )
+        }
         Err(e) => return err("GIT_ERROR", e.to_string()),
     }
     match git_routed(host, &root, &["rev-parse", "HEAD"]) {
-        Ok(o) if o.code == 0 => ok(CommitResult { commit_hash: String::from_utf8_lossy(&o.stdout).trim().to_string() }),
-        _ => ok(CommitResult { commit_hash: String::new() }),
+        Ok(o) if o.code == 0 => ok(CommitResult {
+            commit_hash: String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        }),
+        _ => ok(CommitResult {
+            commit_hash: String::new(),
+        }),
     }
 }
 
@@ -894,8 +1112,14 @@ mod tests {
 
     #[test]
     fn split_path_repo_root_and_nested() {
-        assert_eq!(split_path("file.rs"), ("".to_string(), "file.rs".to_string()));
-        assert_eq!(split_path("src/auth/mw.ts"), ("src/auth".to_string(), "mw.ts".to_string()));
+        assert_eq!(
+            split_path("file.rs"),
+            ("".to_string(), "file.rs".to_string())
+        );
+        assert_eq!(
+            split_path("src/auth/mw.ts"),
+            ("src/auth".to_string(), "mw.ts".to_string())
+        );
     }
 
     #[test]
@@ -906,11 +1130,23 @@ mod tests {
         assert_eq!(hunks[0].header, "@@ -1,3 +1,4 @@");
         let l = &hunks[0].lines;
         assert_eq!(l.len(), 5); // ctx, del, add, add, ctx  ('\ No newline' dropped)
-        assert_eq!((l[0].kind, l[0].old_no, l[0].new_no), ("ctx", Some(1), Some(1)));
-        assert_eq!((l[1].kind, l[1].old_no, l[1].new_no, l[1].text.as_str()), ("del", Some(2), None, "line2"));
-        assert_eq!((l[2].kind, l[2].old_no, l[2].new_no, l[2].text.as_str()), ("add", None, Some(2), "CHANGED"));
+        assert_eq!(
+            (l[0].kind, l[0].old_no, l[0].new_no),
+            ("ctx", Some(1), Some(1))
+        );
+        assert_eq!(
+            (l[1].kind, l[1].old_no, l[1].new_no, l[1].text.as_str()),
+            ("del", Some(2), None, "line2")
+        );
+        assert_eq!(
+            (l[2].kind, l[2].old_no, l[2].new_no, l[2].text.as_str()),
+            ("add", None, Some(2), "CHANGED")
+        );
         assert_eq!((l[3].kind, l[3].new_no), ("add", Some(3)));
-        assert_eq!((l[4].kind, l[4].old_no, l[4].new_no), ("ctx", Some(3), Some(4)));
+        assert_eq!(
+            (l[4].kind, l[4].old_no, l[4].new_no),
+            ("ctx", Some(3), Some(4))
+        );
     }
 
     #[test]
@@ -922,7 +1158,10 @@ mod tests {
     #[test]
     fn hunk_header_ignores_context_with_plus_minus_tokens() {
         // trailing function-context containing '-'/'+' tokens must not hijack the counters (M6)
-        assert_eq!(parse_hunk_header("@@ -10,6 +20,6 @@ def f(a - b + c):"), (10, 20));
+        assert_eq!(
+            parse_hunk_header("@@ -10,6 +20,6 @@ def f(a - b + c):"),
+            (10, 20)
+        );
         assert_eq!(parse_hunk_header("@@ -1,4 +1,5 @@ - bullet + item"), (1, 1));
     }
 
@@ -932,12 +1171,35 @@ mod tests {
         let hunks = parse_unified_diff(patch);
         assert_eq!(hunks.len(), 2);
         // first hunk starts at old 1 / new 1
-        assert_eq!((hunks[0].lines[0].old_no, hunks[0].lines[0].new_no), (Some(1), Some(1)));
-        assert_eq!((hunks[0].lines[1].kind, hunks[0].lines[1].old_no), ("del", Some(2)));
+        assert_eq!(
+            (hunks[0].lines[0].old_no, hunks[0].lines[0].new_no),
+            (Some(1), Some(1))
+        );
+        assert_eq!(
+            (hunks[0].lines[1].kind, hunks[0].lines[1].old_no),
+            ("del", Some(2))
+        );
         // second hunk resets to old 50 / new 80
-        assert_eq!((hunks[1].lines[0].kind, hunks[1].lines[0].old_no, hunks[1].lines[0].new_no), ("ctx", Some(50), Some(80)));
-        assert_eq!((hunks[1].lines[1].kind, hunks[1].lines[1].new_no), ("add", Some(81)));
-        assert_eq!((hunks[1].lines[2].kind, hunks[1].lines[2].old_no, hunks[1].lines[2].new_no), ("ctx", Some(51), Some(82)));
+        assert_eq!(
+            (
+                hunks[1].lines[0].kind,
+                hunks[1].lines[0].old_no,
+                hunks[1].lines[0].new_no
+            ),
+            ("ctx", Some(50), Some(80))
+        );
+        assert_eq!(
+            (hunks[1].lines[1].kind, hunks[1].lines[1].new_no),
+            ("add", Some(81))
+        );
+        assert_eq!(
+            (
+                hunks[1].lines[2].kind,
+                hunks[1].lines[2].old_no,
+                hunks[1].lines[2].new_no
+            ),
+            ("ctx", Some(51), Some(82))
+        );
     }
 
     #[test]
@@ -957,14 +1219,39 @@ mod tests {
         assert_eq!(untracked_counts(GitHost::Native, &root, "two.txt"), (2, 0));
         // final line without trailing newline still counts (git numstat semantics)
         std::fs::write(dir.join("noeol.txt"), "one\ntwo").unwrap();
-        assert_eq!(untracked_counts(GitHost::Native, &root, "noeol.txt"), (2, 0));
+        assert_eq!(
+            untracked_counts(GitHost::Native, &root, "noeol.txt"),
+            (2, 0)
+        );
         std::fs::write(dir.join("empty.txt"), "").unwrap();
-        assert_eq!(untracked_counts(GitHost::Native, &root, "empty.txt"), (0, 0));
+        assert_eq!(
+            untracked_counts(GitHost::Native, &root, "empty.txt"),
+            (0, 0)
+        );
         // NUL in the first 8 KiB → binary → 0/0, like numstat's `-`
         std::fs::write(dir.join("bin.dat"), b"ab\0cd\n\n").unwrap();
         assert_eq!(untracked_counts(GitHost::Native, &root, "bin.dat"), (0, 0));
         // unreadable/missing → 0/0 (best-effort, matches the old spawn-failure path)
-        assert_eq!(untracked_counts(GitHost::Native, &root, "missing.txt"), (0, 0));
+        assert_eq!(
+            untracked_counts(GitHost::Native, &root, "missing.txt"),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn commit_args_no_paths_commits_the_index() {
+        // Empty selection → legacy flow: commit whatever is staged, no pathspec.
+        assert_eq!(commit_args("msg", &[]), vec!["commit", "-m", "msg"]);
+    }
+
+    #[test]
+    fn commit_args_pins_the_commit_to_selected_paths() {
+        // Selected files → path-scoped commit so other staged changes are left alone.
+        let paths = vec!["src/a.ts".to_string(), "b.rs".to_string()];
+        assert_eq!(
+            commit_args("msg", &paths),
+            vec!["commit", "-m", "msg", "--", "src/a.ts", "b.rs"]
+        );
     }
 
     // ---- wsl-filesystem FR-5 routing ----
@@ -975,7 +1262,10 @@ mod tests {
         // looks at the cwd string.
         assert_eq!(GitHost::of("D:\\repo"), GitHost::Native);
         assert_eq!(GitHost::of("\\\\wsl$\\Ubuntu\\home\\u\\api"), GitHost::Wsl);
-        assert_eq!(GitHost::of("\\\\wsl.localhost\\Ubuntu\\home\\u"), GitHost::Wsl);
+        assert_eq!(
+            GitHost::of("\\\\wsl.localhost\\Ubuntu\\home\\u"),
+            GitHost::Wsl
+        );
         assert_eq!(GitHost::of("/mnt/c/Users/u"), GitHost::Native); // not a WSL UNC path (FR-1)
     }
 
@@ -983,16 +1273,34 @@ mod tests {
     fn git_program_native_is_byte_identical_to_pre_wsl_filesystem_argv() {
         // Regression pin (spec §9 last bullet): native-runtime drive-letter sessions
         // must keep producing byte-identical git invocations.
-        let (prog, args) = git_program(GitHost::Native, "D:\\repo", &["status", "--porcelain=v1", "-z"]);
+        let (prog, args) = git_program(
+            GitHost::Native,
+            "D:\\repo",
+            &["status", "--porcelain=v1", "-z"],
+        );
         assert_eq!(prog, "git");
         assert_eq!(args, vec!["status", "--porcelain=v1", "-z"]);
     }
 
     #[test]
     fn git_program_wsl_wraps_with_cd_and_translates_a_unc_cwd() {
-        let (prog, args) = git_program(GitHost::Wsl, "\\\\wsl$\\Ubuntu\\home\\u\\api", &["status", "--porcelain=v1"]);
+        let (prog, args) = git_program(
+            GitHost::Wsl,
+            "\\\\wsl$\\Ubuntu\\home\\u\\api",
+            &["status", "--porcelain=v1"],
+        );
         assert_eq!(prog, "wsl.exe");
-        assert_eq!(args, vec!["--cd", "/home/u/api", "--", "git", "status", "--porcelain=v1"]);
+        assert_eq!(
+            args,
+            vec![
+                "--cd",
+                "/home/u/api",
+                "--",
+                "git",
+                "status",
+                "--porcelain=v1"
+            ]
+        );
     }
 
     #[test]
@@ -1002,12 +1310,18 @@ mod tests {
         // WSL UNC prefixes anyway, so this is also just wsl_cd_target's idempotence).
         let (prog, args) = git_program(GitHost::Wsl, "/home/u/api", &["diff", "--numstat"]);
         assert_eq!(prog, "wsl.exe");
-        assert_eq!(args, vec!["--cd", "/home/u/api", "--", "git", "diff", "--numstat"]);
+        assert_eq!(
+            args,
+            vec!["--cd", "/home/u/api", "--", "git", "diff", "--numstat"]
+        );
     }
 
     #[test]
     fn wsl_cd_target_translates_unc_and_passes_linux_paths_through() {
-        assert_eq!(wsl_cd_target("\\\\wsl$\\Ubuntu\\home\\u\\api"), "/home/u/api");
+        assert_eq!(
+            wsl_cd_target("\\\\wsl$\\Ubuntu\\home\\u\\api"),
+            "/home/u/api"
+        );
         assert_eq!(wsl_cd_target("/home/u/api"), "/home/u/api");
     }
 
@@ -1017,19 +1331,46 @@ mod tests {
         let root = Path::new("/home/u/proj");
         // heavy build/dependency dirs *inside* the repo are skipped so their churn can't storm the watcher
         assert!(is_ignored_path(Path::new("/home/u/proj/.git/index"), root));
-        assert!(is_ignored_path(Path::new("/home/u/proj/a/b/.git/HEAD"), root));
-        assert!(is_ignored_path(Path::new("/home/u/proj/node_modules/pkg/index.js"), root));
-        assert!(is_ignored_path(Path::new("/home/u/proj/target/debug/francois.exe"), root));
-        assert!(is_ignored_path(Path::new("/home/u/proj/dist/bundle.js"), root));
-        assert!(is_ignored_path(Path::new("/home/u/proj/a/b/__pycache__/x.pyc"), root));
+        assert!(is_ignored_path(
+            Path::new("/home/u/proj/a/b/.git/HEAD"),
+            root
+        ));
+        assert!(is_ignored_path(
+            Path::new("/home/u/proj/node_modules/pkg/index.js"),
+            root
+        ));
+        assert!(is_ignored_path(
+            Path::new("/home/u/proj/target/debug/francois.exe"),
+            root
+        ));
+        assert!(is_ignored_path(
+            Path::new("/home/u/proj/dist/bundle.js"),
+            root
+        ));
+        assert!(is_ignored_path(
+            Path::new("/home/u/proj/a/b/__pycache__/x.pyc"),
+            root
+        ));
         // ordinary source paths are watched
-        assert!(!is_ignored_path(Path::new("/home/u/proj/src/main.rs"), root));
-        assert!(!is_ignored_path(Path::new("/home/u/proj/contract/common.ts"), root));
+        assert!(!is_ignored_path(
+            Path::new("/home/u/proj/src/main.rs"),
+            root
+        ));
+        assert!(!is_ignored_path(
+            Path::new("/home/u/proj/contract/common.ts"),
+            root
+        ));
         // H1 regression: when the repo ROOT path itself contains an ignored segment
         // (the project lives under `.../build/plugin`), only segments BELOW the root
         // count — its files must still be watched, not all silently ignored.
         let nested = Path::new("/home/u/build/plugin");
-        assert!(!is_ignored_path(Path::new("/home/u/build/plugin/src/main.rs"), nested));
-        assert!(is_ignored_path(Path::new("/home/u/build/plugin/target/x"), nested));
+        assert!(!is_ignored_path(
+            Path::new("/home/u/build/plugin/src/main.rs"),
+            nested
+        ));
+        assert!(is_ignored_path(
+            Path::new("/home/u/build/plugin/target/x"),
+            nested
+        ));
     }
 }

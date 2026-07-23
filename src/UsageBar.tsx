@@ -19,12 +19,12 @@ import { requestUsageRefresh, startUsageFeed, usageBarView, type MeterChipView }
 const T = {
   // App-root shell color: the OS caption is DWM-tinted to the same value
   // (src-tauri/src/main.rs), so caption + bar read as one continuous surface.
-  bg: '#0f1015',
-  border: '#24262d',
-  track: '#24262d',
-  label: '#868a93',
-  faint: '#565a63',
-  error: '#c46b62',
+  bg: 'var(--bg-app)',
+  border: 'var(--border)',
+  track: 'var(--border)',
+  label: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  error: 'var(--error)',
 };
 
 function MeterChip({ chip }: { chip: MeterChipView }) {

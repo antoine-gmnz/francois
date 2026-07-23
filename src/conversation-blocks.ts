@@ -31,7 +31,13 @@ export type TranscriptAction =
   | { t: 'commandOutput'; blockId: string; card: CommandCard } // interactive-commands FR-20
   | { t: 'questionAsked'; blockId: string; questions: SessionQuestion[] } // session-questions FR-16
   | { t: 'questionResolved'; blockId: string; state: 'answered' | 'cancelled'; answers?: Record<string, string> } // session-questions FR-16
+  | { t: 'clear' } // /clear: full reset — drop every block
   | { t: 'remove'; blockId: string };
+
+/** True iff `text` is exactly the bare `/clear` command (no argument). */
+export function isClearCommand(text: string): boolean {
+  return /^\/clear\s*$/i.test(text.trim());
+}
 
 /** Command token (without '/') a card answers — for insert-if-unseen outputs. */
 export function commandFromCard(card: CommandCard): string {
@@ -195,6 +201,8 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       };
       return replace(i, next);
     }
+    case 'clear':
+      return { blocks: [] };
     case 'remove': {
       const i = idx(a.blockId);
       if (i === -1) return state;
@@ -217,8 +225,8 @@ export function liveCurrentModelId(storeModelId: string | undefined, snapshotId:
 }
 
 /** §8: usage meter fill — gold below 80%, error red at ≥ 80%. */
-export function meterFillColor(percentUsed: number): '#c8a15a' | '#c46b62' {
-  return percentUsed >= 80 ? '#c46b62' : '#c8a15a';
+export function meterFillColor(percentUsed: number): string {
+  return percentUsed >= 80 ? 'var(--error)' : 'var(--accent)';
 }
 
 export interface ModelSwitchArgs {

@@ -6,24 +6,24 @@ import { diffCommit, diffGetFileDiff, diffGetSummary, diffStageAll, onDiffEvent 
 import { useStore } from './store';
 
 const C = {
-  accent: '#c8a15a',
-  add: '#7fa07a',
-  del: '#c46b62',
-  name: '#c4c7ce',
-  bright: '#dfe2e8',
-  base: '#6b7079',
-  faint: '#565a63',
-  inert: '#3a3d45',
-  hint: '#a9adb6',
-  border: '#24262d',
+  accent: 'var(--accent)',
+  add: 'var(--success)',
+  del: 'var(--error)',
+  name: 'var(--text)',
+  bright: 'var(--text-bright)',
+  base: 'var(--text-muted)',
+  faint: 'var(--text-faint)',
+  inert: 'var(--text-disabled)',
+  hint: 'var(--text-hint)',
+  border: 'var(--border)',
 };
 
 // per-kind diff-row tokens (spec §8 dstyle table)
 const KIND: Record<string, { bg: string; fg: string; sign: string; signFg: string; noFg: string }> = {
-  hunk: { bg: '#1b1d23', fg: '#c8a15a', sign: '', signFg: '', noFg: '' },
-  add: { bg: 'rgba(127,160,122,0.09)', fg: '#a7c2a2', sign: '+', signFg: '#7fa07a', noFg: '#5f7a5b' },
-  del: { bg: 'rgba(196,107,98,0.09)', fg: '#d5a39d', sign: '-', signFg: '#c46b62', noFg: '#8a5751' },
-  ctx: { bg: 'transparent', fg: '#868a93', sign: ' ', signFg: '#565a63', noFg: '#565a63' },
+  hunk: { bg: 'var(--bg-elevated)', fg: 'var(--accent)', sign: '', signFg: '', noFg: '' },
+  add: { bg: 'color-mix(in srgb, var(--success) 9%, transparent)', fg: 'var(--success-bright)', sign: '+', signFg: 'var(--success)', noFg: 'var(--success-dim)' },
+  del: { bg: 'color-mix(in srgb, var(--error) 9%, transparent)', fg: 'var(--error-bright)', sign: '-', signFg: 'var(--error)', noFg: 'var(--error-dim)' },
+  ctx: { bg: 'transparent', fg: 'var(--text-dim)', sign: ' ', signFg: 'var(--text-faint)', noFg: 'var(--text-faint)' },
 };
 
 // Diff rows are single-line (white-space: pre, no wrap), so each is a fixed height:
@@ -47,6 +47,11 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const [summary, setSummary] = useState<DiffSummary | null>(null);
   const [summaryError, setSummaryError] = useState<AppError | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Commit selection. We track the paths the user EXPLICITLY unchecked (not the
+  // checked ones) so every newly-appearing change defaults to selected without any
+  // reconciliation on summary reload — a path simply drops out of the set when the
+  // user re-checks it, and stale entries are harmless.
+  const [deselected, setDeselected] = useState<Set<string>>(new Set());
   const [fileDiff, setFileDiff] = useState<FileDiff | null>(null);
   const [fileDiffError, setFileDiffError] = useState<AppError | null>(null);
   const [fileDiffLoading, setFileDiffLoading] = useState(false);
@@ -74,6 +79,27 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
 
   const notRepo = summaryError?.code === 'NOT_A_GIT_REPO';
   const files = summary?.files ?? [];
+
+  // Paths that will actually be committed (everything not explicitly unchecked).
+  const selectedPaths = useMemo(() => files.filter((f) => !deselected.has(f.path)).map((f) => f.path), [files, deselected]);
+  const selectedCount = selectedPaths.length;
+  const allSelected = files.length > 0 && selectedCount === files.length;
+  const selectedPathsRef = useRef<string[]>([]);
+  selectedPathsRef.current = selectedPaths; // read by doCommit without re-creating it
+
+  const toggleFile = useCallback((path: string) => {
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  // Header checkbox: all-checked → uncheck every current file, otherwise select all.
+  const toggleAll = useCallback(() => {
+    setDeselected((prev) => (files.length > 0 && files.every((f) => !prev.has(f.path)) ? new Set(files.map((f) => f.path)) : new Set()));
+  }, [files]);
 
   // Load summary, preserving selection when the selected path survives (FR-19).
   const loadSummary = useCallback((sid: string) => {
@@ -194,10 +220,10 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   }, [requestBusy, notRepo, files.length, sessionId, loadSummary]);
 
   const openCommit = useCallback(() => {
-    if (requestBusy || notRepo) return; // FR-23 inert (note: allowed even when files.length === 0)
+    if (requestBusy || notRepo || selectedCount === 0) return; // FR-23 inert; nothing selected → nothing to commit
     setCommit({ open: true, message: '', error: null, success: null });
     requestAnimationFrame(() => commitInputRef.current?.focus());
-  }, [requestBusy, notRepo]);
+  }, [requestBusy, notRepo, selectedCount]);
 
   const closeCommit = useCallback(() => setCommit({ open: false, message: '', error: null, success: null }), []);
 
@@ -206,9 +232,10 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
     // of updaters can't fire the commit twice (N2). Read latest state from the ref.
     const c = commitRef.current;
     const msg = c.message.trim();
-    if (!c.open || !msg || busy) return; // FR-24 blank = no-op
+    const paths = selectedPathsRef.current;
+    if (!c.open || !msg || busy || paths.length === 0) return; // FR-24 blank / no selection = no-op
     setBusy(true);
-    void diffCommit(sessionId, msg)
+    void diffCommit(sessionId, msg, paths)
       .then((res) => {
         if (res.ok) {
           const short = res.data.commitHash.slice(0, 7);
@@ -260,7 +287,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   // ---------- render ----------
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: '#131419' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-deep)' }}>
       {/* main area: vertical file selector (left) + diff body (right) */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* file list — a vertical selector (replaces the horizontal chip strip, which
@@ -270,8 +297,23 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
             className="scz"
             style={{ width: 236, flexShrink: 0, overflowY: 'auto', borderRight: `1px solid ${C.border}`, padding: '8px 6px' }}
           >
+            <div
+              onClick={toggleAll}
+              title={allSelected ? 'deselect all' : 'select all'}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 8px 6px', cursor: 'pointer', color: C.base, fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.4 }}
+            >
+              <Checkbox checked={allSelected} indeterminate={selectedCount > 0 && !allSelected} />
+              <span>{selectedCount} of {files.length} selected</span>
+            </div>
             {files.map((f) => (
-              <FileRow key={f.path} f={f} selected={f.path === selectedPath} onClick={() => setSelectedPath(f.path)} />
+              <FileRow
+                key={f.path}
+                f={f}
+                selected={f.path === selectedPath}
+                checked={!deselected.has(f.path)}
+                onClick={() => setSelectedPath(f.path)}
+                onToggle={() => toggleFile(f.path)}
+              />
             ))}
           </div>
         )}
@@ -302,6 +344,8 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
           onOpenCommit={openCommit}
           inputRef={commitInputRef}
           stageInert={requestBusy || files.length === 0}
+          commitInert={requestBusy || selectedCount === 0}
+          selectedCount={selectedCount}
         />
       )}
     </div>
@@ -310,16 +354,45 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
 
 // per-status glyph + color for the vertical file list (spec §8 status set).
 const STATUS: Record<DiffFileStatus, { ch: string; color: string }> = {
-  modified: { ch: 'M', color: '#c8a15a' },
-  added: { ch: 'A', color: '#7fa07a' },
-  deleted: { ch: 'D', color: '#c46b62' },
-  untracked: { ch: 'U', color: '#6b8fb0' },
-  renamed: { ch: 'R', color: '#9a86c4' },
+  modified: { ch: 'M', color: 'var(--accent)' },
+  added: { ch: 'A', color: 'var(--success)' },
+  deleted: { ch: 'D', color: 'var(--error)' },
+  untracked: { ch: 'U', color: 'var(--hue-blue)' },
+  renamed: { ch: 'R', color: 'var(--hue-purple)' },
 };
 
-// One row in the vertical file selector: status glyph · filename · +add/−del.
-// Full repo-relative path shows on hover (title); the dir is elided to keep rows dense.
-function FileRow({ f, selected, onClick }: { f: DiffFileSummary; selected: boolean; onClick: () => void }) {
+// A small terminal-styled checkbox: an accent-filled box with a ✓ when checked, a
+// hollow box when unchecked, and a dash when indeterminate (the header's mixed state).
+function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?: boolean }) {
+  const on = checked || indeterminate;
+  return (
+    <span
+      style={{
+        width: 13,
+        height: 13,
+        flexShrink: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 3,
+        border: `1px solid ${on ? C.accent : C.base}`,
+        background: checked ? C.accent : 'transparent',
+        color: 'var(--bg-deep)',
+        fontSize: 10,
+        lineHeight: 1,
+        userSelect: 'none',
+      }}
+    >
+      {checked ? '✓' : indeterminate ? <span style={{ width: 6, height: 1.5, background: C.accent }} /> : ''}
+    </span>
+  );
+}
+
+// One row in the vertical file selector: [✓] · status glyph · filename · +add/−del.
+// The checkbox toggles whether the file is committed; clicking elsewhere views its
+// diff. Full repo-relative path shows on hover (title); the dir is elided to keep
+// rows dense.
+function FileRow({ f, selected, checked, onClick, onToggle }: { f: DiffFileSummary; selected: boolean; checked: boolean; onClick: () => void; onToggle: () => void }) {
   const st = STATUS[f.status] ?? STATUS.modified;
   return (
     <div
@@ -333,10 +406,19 @@ function FileRow({ f, selected, onClick }: { f: DiffFileSummary; selected: boole
         borderRadius: 4,
         cursor: 'pointer',
         marginBottom: 1,
-        background: selected ? '#20222a' : 'transparent',
+        background: selected ? 'var(--bg-raised)' : 'transparent',
         borderLeft: `2px solid ${selected ? C.accent : 'transparent'}`,
       }}
     >
+      <span
+        onClick={(e) => {
+          e.stopPropagation(); // toggle selection without changing which diff is shown
+          onToggle();
+        }}
+        style={{ display: 'inline-flex', flexShrink: 0 }}
+      >
+        <Checkbox checked={checked} />
+      </span>
       <span style={{ width: 9, flexShrink: 0, fontSize: 9.5, fontWeight: 700, textAlign: 'center', color: st.color }}>{st.ch}</span>
       <span style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selected ? C.bright : C.name }}>
         {f.name}
@@ -466,6 +548,8 @@ function Footer({
   onOpenCommit,
   inputRef,
   stageInert,
+  commitInert,
+  selectedCount,
 }: {
   summary: DiffSummary | null;
   commit: CommitState;
@@ -476,6 +560,8 @@ function Footer({
   onOpenCommit: () => void;
   inputRef: React.RefObject<HTMLInputElement>;
   stageInert: boolean;
+  commitInert: boolean;
+  selectedCount: number;
 }) {
   const totalAdd = summary?.totalAdd ?? 0;
   const totalDel = summary?.totalDel ?? 0;
@@ -516,8 +602,8 @@ function Footer({
           <span onClick={() => !stageInert && onStage()} style={{ color: hintColor(stageInert), cursor: stageInert ? 'default' : 'pointer' }}>
             [s] stage all
           </span>
-          <span onClick={onOpenCommit} style={{ color: C.hint, cursor: 'pointer' }}>
-            [c] commit…
+          <span onClick={() => !commitInert && onOpenCommit()} style={{ color: hintColor(commitInert), cursor: commitInert ? 'default' : 'pointer' }}>
+            [c] commit {selectedCount > 0 ? `${selectedCount} ` : ''}…
           </span>
         </>
       )}

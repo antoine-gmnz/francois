@@ -5,13 +5,13 @@ import { setPaletteSkills } from './paletteData';
 import { useStore } from './store';
 
 const C = {
-  accent: '#c8a15a',
-  dim: '#868a93',
-  faint: '#565a63',
-  primary: '#c4c7ce',
-  bright: '#dfe2e8',
-  installed: '#7fa07a',
-  error: '#c46b62',
+  accent: 'var(--accent)',
+  dim: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  primary: 'var(--text)',
+  bright: 'var(--text-bright)',
+  installed: 'var(--success)',
+  error: 'var(--error)',
 };
 
 const scopeTag: Record<string, string> = { project: 'proj', user: 'user', plugin: 'plugin' };
@@ -22,7 +22,7 @@ function badgeStyle(color: string): React.CSSProperties {
     letterSpacing: '0.05em',
     textTransform: 'uppercase',
     color,
-    border: '1px solid #2a2c33',
+    border: '1px solid var(--border-2)',
     borderRadius: 3,
     padding: '1px 4px',
     flexShrink: 0,
@@ -155,8 +155,8 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
       style={{
         display: 'flex',
         flexDirection: 'column',
-        background: '#16171c',
-        border: `1px solid ${focused ? C.accent : '#2a2c33'}`,
+        background: 'var(--bg-deep)',
+        border: `1px solid ${focused ? C.accent : 'var(--border-2)'}`,
         borderRadius: 5,
         overflow: 'hidden',
         minHeight: 0,
@@ -169,7 +169,7 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '9px 12px',
-          borderBottom: '1px solid #24262d',
+          borderBottom: '1px solid var(--border)',
           flexShrink: 0,
         }}
       >
@@ -187,7 +187,7 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
               alignItems: 'center',
               gap: 8,
               padding: '6px 8px',
-              borderBottom: '1px solid #24262d',
+              borderBottom: '1px solid var(--border)',
               margin: '-6px -8px 6px',
             }}
           >
@@ -200,15 +200,15 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
                 setQuery(e.target.value);
                 setSelected(0);
               }}
-              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: '#d3d6dc', fontSize: 11.5, fontFamily: 'inherit' }}
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontSize: 11.5, fontFamily: 'inherit' }}
             />
-            <span style={{ fontSize: 9, color: '#3a3d45' }}>esc clear</span>
+            <span style={{ fontSize: 9, color: 'var(--text-disabled)' }}>esc clear</span>
           </div>
         )}
 
         {status === 'error' ? (
           <div
-            style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 6px', background: '#20222a', borderLeft: '2px solid #c46b62' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 6px', background: 'var(--bg-raised)', borderLeft: '2px solid var(--error)' }}
           >
             <span style={{ width: 14, textAlign: 'center', fontSize: 11, color: C.error }}>⚠</span>
             <span style={{ fontSize: 11, color: C.error, flex: 1 }}>{listError?.message ?? 'failed to load skills'} · ⏎ retry</span>
@@ -267,9 +267,9 @@ function Row({ s, selected, onClick }: { s: SkillInfo; selected: boolean; onClic
         alignItems: 'center',
         gap: 9,
         padding: selected ? '8px 6px 8px 4px' : '8px 6px',
-        borderBottom: '1px solid #1d1f25',
-        borderLeft: selected ? '2px solid #c8a15a' : 'none',
-        background: selected ? '#20222a' : hover ? '#1a1c22' : 'transparent',
+        borderBottom: '1px solid var(--bg-elevated)',
+        borderLeft: selected ? '2px solid var(--accent)' : 'none',
+        background: selected ? 'var(--bg-raised)' : hover ? 'var(--bg-panel)' : 'transparent',
         cursor: 'pointer',
       }}
     >
@@ -286,7 +286,7 @@ function Row({ s, selected, onClick }: { s: SkillInfo; selected: boolean; onClic
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        {s.kind === 'command' && <span style={badgeStyle('#7c8aa0')}>cmd</span>}
+        {s.kind === 'command' && <span style={badgeStyle('var(--hue-slate)')}>cmd</span>}
         {s.scope && <span style={badgeStyle(C.faint)}>{scopeTag[s.scope] ?? s.scope}</span>}
         {!s.installed && <span style={{ fontSize: 9.5, letterSpacing: '0.04em', color: C.accent }}>enable</span>}
       </div>
@@ -302,7 +302,7 @@ function ModalShell({ width, children, onClose }: { width: number; children: Rea
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width, background: '#191b21', border: '1px solid #34363f', borderRadius: 8, overflow: 'hidden', boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)' }}
+        style={{ width, background: 'var(--bg-panel)', border: '1px solid var(--bg-hover-2)', borderRadius: 8, overflow: 'hidden', boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)' }}
       >
         {children}
       </div>
@@ -312,7 +312,7 @@ function ModalShell({ width, children, onClose }: { width: number; children: Rea
 
 function Footer({ hints }: { hints: [string, string][] }) {
   return (
-    <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid #24262d', fontSize: 10, color: C.faint }}>
+    <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid var(--border)', fontSize: 10, color: C.faint }}>
       {hints.map(([k, label]) => (
         <span key={label}>
           <span style={{ color: C.dim }}>{k}</span> {label}
@@ -358,9 +358,9 @@ function RunModal({ sessionId, name, onClose }: { sessionId: string; name: strin
 
   return (
     <ModalShell width={380} onClose={onClose}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid #24262d' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         <span style={{ color: C.accent, fontSize: 13 }}>✦</span>
-        <span style={{ fontSize: 14, color: '#d3d6dc', flex: 1 }}>Run {name}</span>
+        <span style={{ fontSize: 14, color: 'var(--text-strong)', flex: 1 }}>Run {name}</span>
         <span style={{ fontSize: 10, color: C.faint }}>esc</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '12px 16px' }}>
@@ -371,7 +371,7 @@ function RunModal({ sessionId, name, onClose }: { sessionId: string; name: strin
           disabled={pending}
           placeholder="arguments (optional)"
           onChange={(e) => setArgs(e.target.value)}
-          style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: '#d3d6dc', fontSize: 12.5, fontFamily: 'inherit', opacity: pending ? 0.6 : 1 }}
+          style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontSize: 12.5, fontFamily: 'inherit', opacity: pending ? 0.6 : 1 }}
         />
       </div>
       {error && <div style={{ padding: '0 16px 10px', fontSize: 10.5, color: C.error }}>{error}</div>}
@@ -438,7 +438,7 @@ function InstallModal({
           void confirm(key); // act on the clicked option, not the render-time choice
         }}
         onMouseEnter={() => setChoice(key)}
-        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 5, background: sel ? '#26282f' : 'transparent', cursor: 'pointer', opacity: pending ? 0.5 : 1 }}
+        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 5, background: sel ? 'var(--bg-hover)' : 'transparent', cursor: 'pointer', opacity: pending ? 0.5 : 1 }}
       >
         <span style={{ width: 16, textAlign: 'center', fontSize: 12, color: sel ? C.accent : C.faint }}>{glyph}</span>
         <span style={{ fontSize: 13, color: sel ? C.bright : C.primary }}>{label}</span>
@@ -448,10 +448,10 @@ function InstallModal({
 
   return (
     <ModalShell width={380} onClose={onClose}>
-      <div style={{ padding: '14px 16px', borderBottom: '1px solid #24262d' }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ color: C.faint, fontSize: 13 }}>◇</span>
-          <span style={{ fontSize: 14, color: '#d3d6dc' }}>Enable {name}?</span>
+          <span style={{ fontSize: 14, color: 'var(--text-strong)' }}>Enable {name}?</span>
         </div>
         {description && <div style={{ fontSize: 11, color: C.dim, marginTop: 3, marginLeft: 23 }}>{description}</div>}
         <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, marginLeft: 23 }}>

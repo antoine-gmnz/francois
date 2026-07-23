@@ -12,13 +12,13 @@ import { useStore } from './store';
 // (specs/fleet-board.md). Preserves every sessions-sidebar behaviour.
 
 const C = {
-  accent: '#c8a15a',
-  dim: '#868a93',
-  faint: '#565a63',
-  primary: '#c4c7ce',
-  bright: '#dfe2e8',
-  meta: '#a9adb6',
-  error: '#c46b62',
+  accent: 'var(--accent)',
+  dim: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  primary: 'var(--text)',
+  bright: 'var(--text-bright)',
+  meta: 'var(--text-hint)',
+  error: 'var(--error)',
 };
 
 function abbreviate(cwd: string, home: string): string {
@@ -285,8 +285,8 @@ export default function Sidebar({ home }: { home: string }) {
       style={{
         display: 'flex',
         flexDirection: 'column',
-        background: '#16171c',
-        border: `1px solid ${focused ? C.accent : '#24262d'}`,
+        background: 'var(--bg-deep)',
+        border: `1px solid ${focused ? C.accent : 'var(--border)'}`,
         borderRadius: 5,
         overflow: 'hidden',
         minHeight: 0,
@@ -300,7 +300,7 @@ export default function Sidebar({ home }: { home: string }) {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '9px 12px',
-          borderBottom: '1px solid #24262d',
+          borderBottom: '1px solid var(--border)',
           flexShrink: 0,
         }}
       >
@@ -312,7 +312,7 @@ export default function Sidebar({ home }: { home: string }) {
 
       {/* filter */}
       {sidebarFilter !== null && (
-        <div style={{ padding: '6px 8px', borderBottom: '1px solid #1d1f25', flexShrink: 0 }}>
+        <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--bg-elevated)', flexShrink: 0 }}>
           <input
             ref={filterRef}
             value={sidebarFilter}
@@ -320,8 +320,8 @@ export default function Sidebar({ home }: { home: string }) {
             onChange={(e) => setSidebarFilter(e.target.value)}
             style={{
               width: '100%',
-              background: '#1a1c22',
-              border: '1px solid #2a2c33',
+              background: 'var(--bg-panel)',
+              border: '1px solid var(--border-2)',
               borderRadius: 4,
               padding: '6px 8px',
               color: C.primary,
@@ -378,14 +378,14 @@ export default function Sidebar({ home }: { home: string }) {
         onClick={() => useStore.getState().setNewSessionOpen(true)}
         style={{
           padding: '8px 12px',
-          borderTop: '1px solid #24262d',
+          borderTop: '1px solid var(--border)',
           fontSize: 10.5,
           color: C.faint,
           flexShrink: 0,
           cursor: 'pointer',
         }}
       >
-        + new session <span style={{ color: '#3a3d45' }}>[n]</span>
+        + new session <span style={{ color: 'var(--text-disabled)' }}>[n]</span>
       </div>
 
       {/* context menu */}
@@ -396,8 +396,8 @@ export default function Sidebar({ home }: { home: string }) {
             position: 'fixed',
             left: menu.x,
             top: menu.y,
-            background: '#1a1c22',
-            border: '1px solid #2a2c33',
+            background: 'var(--bg-panel)',
+            border: '1px solid var(--border-2)',
             borderRadius: 5,
             minWidth: 160,
             boxShadow: '0 12px 30px -10px rgba(0,0,0,0.7)',
@@ -411,7 +411,7 @@ export default function Sidebar({ home }: { home: string }) {
             <div
               onClick={() => setMenu({ ...menu, confirming: true })}
               style={{ padding: '8px 10px', fontSize: 12, color: C.primary, cursor: 'pointer' }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = '#26282f')}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
             >
               Remove session
@@ -445,7 +445,7 @@ function Centered({ children }: { children: React.ReactNode }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: '#565a63',
+        color: 'var(--text-faint)',
         fontSize: 11.5,
         textAlign: 'center',
         padding: 12,
@@ -510,8 +510,8 @@ function SessionCard({
         borderRadius: 4,
         cursor: 'pointer',
         marginBottom: 3,
-        background: selected ? '#20222a' : hover ? '#1b1d23' : 'transparent',
-        outline: cursor ? '1px solid #3a3d45' : 'none',
+        background: selected ? 'var(--bg-raised)' : hover ? 'var(--bg-elevated)' : 'transparent',
+        outline: cursor ? '1px solid var(--text-disabled)' : 'none',
         outlineOffset: -1,
       }}
     >
@@ -554,7 +554,7 @@ function SessionCard({
         {fileCount != null && fileCount > 0 && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
             <span style={{ color: C.faint }}>≡</span>
-            <span style={{ background: '#26282f', color: C.meta, fontSize: 9, fontWeight: 500, letterSpacing: 0, padding: '1px 5px', borderRadius: 8 }}>{fileCount}</span>
+            <span style={{ background: 'var(--bg-hover)', color: C.meta, fontSize: 9, fontWeight: 500, letterSpacing: 0, padding: '1px 5px', borderRadius: 8 }}>{fileCount}</span>
           </span>
         )}
         {agents > 0 && <span style={{ color: C.accent }}>⇉ {agents}</span>}

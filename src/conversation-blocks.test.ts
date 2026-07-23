@@ -10,6 +10,7 @@ import { classifyToolStart, type ConversationBlock } from '../contract/conversat
 import {
   cardHeaderLabel,
   commandFromCard,
+  isClearCommand,
   liveCurrentModelId,
   meterFillColor,
   switchModelFromCard,
@@ -115,10 +116,10 @@ describe('liveCurrentModelId (FR-21)', () => {
 
 describe('meterFillColor (§8 high-usage threshold)', () => {
   it('is gold below 80% and error red at ≥ 80%', () => {
-    expect(meterFillColor(0)).toBe('#c8a15a');
-    expect(meterFillColor(79)).toBe('#c8a15a');
-    expect(meterFillColor(80)).toBe('#c46b62');
-    expect(meterFillColor(100)).toBe('#c46b62');
+    expect(meterFillColor(0)).toBe('var(--accent)');
+    expect(meterFillColor(79)).toBe('var(--accent)');
+    expect(meterFillColor(80)).toBe('var(--error)');
+    expect(meterFillColor(100)).toBe('var(--error)');
   });
 });
 
@@ -346,6 +347,24 @@ describe('transcriptReducer — question.asked / question.resolved (session-ques
   });
 });
 
+describe('isClearCommand (/clear full-reset detector)', () => {
+  it('is true for the bare command (trimmed, case-insensitive)', () => {
+    expect(isClearCommand('/clear')).toBe(true);
+    expect(isClearCommand('  /clear  ')).toBe(true);
+    expect(isClearCommand('/CLEAR')).toBe(true);
+    expect(isClearCommand('/Clear\n')).toBe(true);
+  });
+
+  it('is false for anything with an argument or a different token', () => {
+    expect(isClearCommand('/clear foo')).toBe(false);
+    expect(isClearCommand('/cleared')).toBe(false);
+    expect(isClearCommand('clear')).toBe(false);
+    expect(isClearCommand('/clearx')).toBe(false);
+    expect(isClearCommand('')).toBe(false);
+    expect(isClearCommand('/clear now')).toBe(false);
+  });
+});
+
 describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior identity)', () => {
   const user = (blockId: string, text: string, queued: boolean): ConversationBlock => ({
     kind: 'user',
@@ -501,6 +520,14 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
 
     it('is a no-op for an unknown blockId', () => {
       expect(transcriptReducer(S0, { t: 'toolDone', blockId: 'nope', meta: 'x' })).toBe(S0);
+    });
+  });
+
+  describe('clear', () => {
+    it('drops every block (full reset from a non-empty state)', () => {
+      const s1: TranscriptState = { blocks: [user('u1', 'hi', false), user('u2', 'there', false)] };
+      const s2 = transcriptReducer(s1, { t: 'clear' });
+      expect(s2).toEqual({ blocks: [] });
     });
   });
 

@@ -13,6 +13,15 @@ const syncHidden = () => {
 syncHidden();
 document.addEventListener('visibilitychange', syncHidden);
 
+// Apply the persisted theme before first paint so there's no flash of the wrong
+// theme (styles.css keys every token off :root[data-theme]). Guarded like the
+// store's own loadTheme — a restricted storage env degrades to the dark default.
+try {
+  document.documentElement.dataset.theme = localStorage.getItem('francois.theme') === 'light' ? 'light' : 'dark';
+} catch {
+  document.documentElement.dataset.theme = 'dark';
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />

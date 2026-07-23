@@ -33,7 +33,9 @@ fn backslashed(p: &str) -> String {
 /// contract/wsl-filesystem.ts::isWslUncPath EXACTLY (FR-1).
 pub fn is_wsl_unc_path(p: &str) -> bool {
     let n = backslashed(p).to_lowercase();
-    WSL_PREFIXES.iter().any(|pre| n.starts_with(*pre) && n.len() > pre.len())
+    WSL_PREFIXES
+        .iter()
+        .any(|pre| n.starts_with(*pre) && n.len() > pre.len())
 }
 
 /// `\\wsl$\Ubuntu\home\u\api` -> `("Ubuntu", "/home/u/api")`. Distro case is
@@ -44,7 +46,10 @@ pub fn is_wsl_unc_path(p: &str) -> bool {
 pub fn wsl_unc_to_linux(p: &str) -> Option<(String, String)> {
     let n = backslashed(p); // original case preserved
     let lower = n.to_lowercase();
-    let pre = WSL_PREFIXES.iter().copied().find(|pre| lower.starts_with(*pre) && n.len() > pre.len())?;
+    let pre = WSL_PREFIXES
+        .iter()
+        .copied()
+        .find(|pre| lower.starts_with(*pre) && n.len() > pre.len())?;
     let rest = &n[pre.len()..]; // ASCII prefix — byte offset == char offset in n too
     let sep = rest.find('\\');
     let distro = match sep {
@@ -181,13 +186,22 @@ mod tests {
 
     #[test]
     fn wsl_unc_to_linux_maps_root_only_path_to_slash() {
-        assert_eq!(wsl_unc_to_linux("\\\\wsl$\\Ubuntu"), Some(("Ubuntu".to_string(), "/".to_string())));
-        assert_eq!(wsl_unc_to_linux("\\\\wsl$\\Ubuntu\\"), Some(("Ubuntu".to_string(), "/".to_string())));
+        assert_eq!(
+            wsl_unc_to_linux("\\\\wsl$\\Ubuntu"),
+            Some(("Ubuntu".to_string(), "/".to_string()))
+        );
+        assert_eq!(
+            wsl_unc_to_linux("\\\\wsl$\\Ubuntu\\"),
+            Some(("Ubuntu".to_string(), "/".to_string()))
+        );
     }
 
     #[test]
     fn wsl_unc_to_linux_tolerates_trailing_separators_and_forward_slashes() {
-        assert_eq!(wsl_unc_to_linux("//wsl$/Ubuntu/home/u/"), Some(("Ubuntu".to_string(), "/home/u".to_string())));
+        assert_eq!(
+            wsl_unc_to_linux("//wsl$/Ubuntu/home/u/"),
+            Some(("Ubuntu".to_string(), "/home/u".to_string()))
+        );
     }
 
     #[test]
@@ -201,8 +215,14 @@ mod tests {
 
     #[test]
     fn join_unc_root_strips_leading_slash_and_flips_separators() {
-        assert_eq!(join_unc_root("\\\\wsl.localhost\\Ubuntu\\", "/home/u/api"), "\\\\wsl.localhost\\Ubuntu\\home\\u\\api");
-        assert_eq!(join_unc_root("\\\\wsl.localhost\\Ubuntu\\", "/"), "\\\\wsl.localhost\\Ubuntu\\");
+        assert_eq!(
+            join_unc_root("\\\\wsl.localhost\\Ubuntu\\", "/home/u/api"),
+            "\\\\wsl.localhost\\Ubuntu\\home\\u\\api"
+        );
+        assert_eq!(
+            join_unc_root("\\\\wsl.localhost\\Ubuntu\\", "/"),
+            "\\\\wsl.localhost\\Ubuntu\\"
+        );
     }
 
     #[test]
@@ -212,6 +232,9 @@ mod tests {
         // the root string — exercised directly here against the exact shape
         // `wsl.exe -- wslpath -w /` returns (confirmed live on a dev machine:
         // `\\wsl.localhost\Debian\`).
-        assert_eq!(wsl_unc_to_linux("\\\\wsl.localhost\\Debian\\").map(|(d, _)| d), Some("Debian".to_string()));
+        assert_eq!(
+            wsl_unc_to_linux("\\\\wsl.localhost\\Debian\\").map(|(d, _)| d),
+            Some("Debian".to_string())
+        );
     }
 }

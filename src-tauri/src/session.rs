@@ -577,6 +577,26 @@ fn error_response(request_id: &str) -> Value {
         "subtype": "error", "request_id": request_id, "error": "unsupported control request" } })
 }
 
+/// Allow response for a non-question tool (the `allowGit` auto-approve path):
+/// echo the original input verbatim as `updatedInput` with behavior "allow".
+fn allow_tool_response(request_id: &str, input: &Value) -> Value {
+    serde_json::json!({ "type": "control_response", "response": {
+        "subtype": "success", "request_id": request_id,
+        "response": { "behavior": "allow", "updatedInput": input } } })
+}
+
+/// True iff a Bash `can_use_tool` input invokes git/gh directly — the first
+/// whitespace token of `input.command` is `git` or `gh`. Compound commands
+/// (`cd x && git …`) are intentionally NOT matched: only the leading program
+/// counts, so nothing else can ride along on an auto-approval.
+fn is_git_command(input: &Value) -> bool {
+    input
+        .get("command")
+        .and_then(|c| c.as_str())
+        .map(|cmd| matches!(cmd.split_whitespace().next(), Some("git") | Some("gh")))
+        .unwrap_or(false)
+}
+
 /// What to do with an inbound `control_request` line. Pure; unit-tested.
 enum ControlDecision {
     /// AskUserQuestion with well-formed input: park it (FR-6).
@@ -589,7 +609,7 @@ enum ControlDecision {
     Respond(Value),
 }
 
-fn decide_control_request(v: &Value) -> ControlDecision {
+fn decide_control_request(v: &Value, allow_git: bool) -> ControlDecision {
     let request_id = v
         .get("request_id")
         .and_then(|r| r.as_str())
@@ -607,13 +627,17 @@ fn decide_control_request(v: &Value) -> ControlDecision {
         .and_then(|r| r.get("tool_name"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
-    if tool != "AskUserQuestion" {
-        return ControlDecision::Respond(deny_response(&request_id, PERMISSION_DENY_MSG));
-    }
     let input = req
         .and_then(|r| r.get("input"))
         .cloned()
         .unwrap_or(Value::Null);
+    if tool != "AskUserQuestion" {
+        // allowGit: auto-approve a direct git/gh Bash call instead of denying it.
+        if allow_git && tool == "Bash" && is_git_command(&input) {
+            return ControlDecision::Respond(allow_tool_response(&request_id, &input));
+        }
+        return ControlDecision::Respond(deny_response(&request_id, PERMISSION_DENY_MSG));
+    }
     match parse_questions(&input) {
         Some(questions) => ControlDecision::Ask {
             request_id,
@@ -748,6 +772,11 @@ enum SessionEvent {
         #[serde(rename = "sessionId")]
         session_id: String,
     },
+    #[serde(rename = "session.cleared")]
+    Cleared {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+    },
     #[serde(rename = "session.error")]
     Error {
         #[serde(rename = "sessionId")]
@@ -828,9 +857,13 @@ struct Session {
     started_at: u64,
     last_activity_at: u64,
     error_message: Option<String>,
-    effort: Option<String>,            // --effort level (None = model default)
+    effort: Option<String>,  // --effort level (None = model default)
     permission_mode: String, // contract PermissionMode; "default" = inherit ~/.claude settings
     runtime: String,         // contract ClaudeRuntime; "native" | "wsl"
+    /// When true, Francois auto-approves `git`/`gh` tool calls on the stdio
+    /// control channel instead of denying them (NewSessionRequest.allowGit) —
+    /// lets a session run git commit/push without bypassing every permission.
+    allow_git: bool,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
@@ -1235,6 +1268,14 @@ fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
     }
 }
 
+/// /clear: remove the session's persisted transcript so a reload starts empty.
+/// Best-effort — a missing file or remove error is ignored.
+fn clear_transcript(app: &AppHandle, session_id: &str) {
+    if let Some(path) = transcript_path(app, session_id) {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 /// Parse one PersistedBlock line back into a BufBlock. Returns None for a malformed
 /// or partial line so reload can skip it (FR-15).
 fn parse_persisted_block(line: &str) -> Option<BufBlock> {
@@ -1354,6 +1395,7 @@ fn persist(app: &AppHandle, engine: &Engine) {
             serde_json::json!({
                 "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
                 "permissionMode": s.permission_mode, "runtime": s.runtime,
+                "allowGit": s.allow_git,
                 "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
                 "lastActivityAt": s.last_activity_at,
                 "contextUsedTokens": s.context_used_tokens,
@@ -1387,6 +1429,7 @@ struct PersistedMeta {
     effort: Option<String>,
     permission_mode: String, // "default" when absent (pre-feature records)
     runtime: String,         // "native" when absent, or when "wsl" off-Windows
+    allow_git: bool,         // false when absent (pre-feature records)
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
@@ -1431,6 +1474,10 @@ fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
             .filter(|r| valid_runtime(r) && (cfg!(windows) || *r != "wsl"))
             .unwrap_or("native")
             .to_string(),
+        allow_git: rec
+            .get("allowGit")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         claude_session_id: rec
             .get("claudeSessionId")
             .and_then(|v| v.as_str())
@@ -1483,6 +1530,7 @@ pub fn load_persisted(app: &AppHandle) {
                 effort: m.effort,
                 permission_mode: m.permission_mode,
                 runtime: m.runtime,
+                allow_git: m.allow_git,
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
@@ -2619,6 +2667,7 @@ pub fn session_create(
     effort: Option<String>,
     permission_mode: Option<String>,
     runtime: Option<String>,
+    allow_git: Option<bool>,
 ) -> IpcResult<Value> {
     // FR-7: cwd must exist and be a directory.
     let meta = std::fs::metadata(&cwd);
@@ -2689,6 +2738,7 @@ pub fn session_create(
         effort,
         permission_mode,
         runtime,
+        allow_git: allow_git.unwrap_or(false),
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,
@@ -3070,6 +3120,80 @@ pub fn session_compact(
         SessionEvent::Status {
             session_id,
             status: "idle".into(),
+        },
+    );
+    ok(None)
+}
+
+/// Outcome of the /clear full-reset mutation, applied under the sessions lock.
+enum ClearOutcome {
+    NotFound,
+    Running,
+    /// Reset succeeded; carries `context_limit_tokens` for the follow-up usage event.
+    Cleared {
+        limit: u64,
+    },
+}
+
+/// /clear FULL RESET, applied under `engine.sessions`: wipe the transcript buffer,
+/// drop the resume anchor (fresh Claude context next turn), and zero the context
+/// counter. Refuses while a turn is running so it never races the resume anchor.
+fn apply_clear(map: &mut HashMap<String, Session>, session_id: &str) -> ClearOutcome {
+    let Some(s) = map.get_mut(session_id) else {
+        return ClearOutcome::NotFound;
+    };
+    if s.status == "running" {
+        return ClearOutcome::Running;
+    }
+    s.block_buffer.clear();
+    s.claude_session_id = None;
+    s.context_used_tokens = 0;
+    s.last_activity_at = now_ms();
+    ClearOutcome::Cleared {
+        limit: s.context_limit_tokens,
+    }
+}
+
+/// francois:session:clear — /clear performs a FULL RESET: wipe the transcript
+/// (in-memory buffer + on-disk file), reset the context token counter, and drop
+/// the resume anchor so the next turn starts a fresh Claude context. It never
+/// spawns a turn and leaves no echo/command card behind (the frontend intercepts
+/// `/clear` and calls this instead of session_send).
+#[tauri::command(async)]
+pub fn session_clear(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+) -> IpcResult<Option<()>> {
+    // Mutate under the lock, then release it before any fs / persist / emit work.
+    let limit = {
+        let mut map = engine.sessions.lock().unwrap();
+        match apply_clear(&mut map, &session_id) {
+            ClearOutcome::NotFound => return err("SESSION_NOT_FOUND", "no such session"),
+            ClearOutcome::Running => {
+                return err(
+                    "SESSION_ALREADY_RUNNING",
+                    "finish or interrupt the current turn before clearing",
+                )
+            }
+            ClearOutcome::Cleared { limit } => limit,
+        }
+    };
+    clear_transcript(&app, &session_id);
+    persist(&app, &engine); // claude_session_id changed → must survive restart
+    emit(
+        &app,
+        SessionEvent::Cleared {
+            session_id: session_id.clone(),
+        },
+    );
+    // Reset the context/usage UI to empty.
+    emit(
+        &app,
+        SessionEvent::ContextUsage {
+            session_id,
+            used_tokens: 0,
+            limit_tokens: limit,
         },
     );
     ok(None)
@@ -3639,7 +3763,12 @@ fn handle_control_request(
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
     pending: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
 ) {
-    match decide_control_request(v) {
+    let allow_git = {
+        let engine = app.state::<Engine>();
+        let map = engine.sessions.lock().unwrap();
+        map.get(session_id).map(|s| s.allow_git).unwrap_or(false)
+    };
+    match decide_control_request(v, allow_git) {
         ControlDecision::Respond(payload) => {
             let _ = write_control_line(stdin, &payload); // FR-7/8/9: no event, no card
         }
@@ -4449,6 +4578,10 @@ fn help_entries() -> Vec<HelpEntry> {
         HelpEntry {
             command: "help",
             description: "this list",
+        },
+        HelpEntry {
+            command: "clear",
+            description: "clear this session's transcript and reset context",
         },
     ]
 }
@@ -5392,6 +5525,7 @@ mod tests {
             effort: None,
             permission_mode: "default".into(),
             runtime: "native".into(),
+            allow_git: false,
             queue: VecDeque::new(),
             claude_session_id: None,
             current: None,
@@ -5402,6 +5536,97 @@ mod tests {
             mcp: HashMap::new(),
             cli_commands: Vec::new(),
         }
+    }
+
+    fn test_engine_with(session: Session) -> Engine {
+        let mut map = HashMap::new();
+        map.insert(session.id.clone(), session);
+        Engine {
+            sessions: Mutex::new(map),
+        }
+    }
+
+    #[test]
+    fn clear_full_reset_on_idle_session() {
+        // /clear FULL RESET: transcript buffer emptied, resume anchor dropped,
+        // context counter zeroed.
+        let mut s = test_session();
+        s.status = "idle".into();
+        s.claude_session_id = Some("abc-resume".into());
+        s.context_used_tokens = 42_000;
+        s.buf_user("b1", "hello".into());
+        s.buf_assistant("b2", "hi".into());
+        assert_eq!(s.block_buffer.len(), 2);
+
+        let engine = test_engine_with(s);
+        let outcome = {
+            let mut map = engine.sessions.lock().unwrap();
+            apply_clear(&mut map, "s1")
+        };
+        assert!(matches!(outcome, ClearOutcome::Cleared { limit: 200_000 }));
+
+        let map = engine.sessions.lock().unwrap();
+        let s = map.get("s1").unwrap();
+        assert!(s.block_buffer.is_empty());
+        assert_eq!(s.claude_session_id, None);
+        assert_eq!(s.context_used_tokens, 0);
+    }
+
+    #[test]
+    fn clear_refuses_running_session_without_mutating() {
+        // A full reset must not race a live turn / mutate the resume anchor mid-stream.
+        let mut s = test_session();
+        s.status = "running".into();
+        s.claude_session_id = Some("abc-resume".into());
+        s.context_used_tokens = 42_000;
+        s.buf_user("b1", "hello".into());
+
+        let engine = test_engine_with(s);
+        let outcome = {
+            let mut map = engine.sessions.lock().unwrap();
+            apply_clear(&mut map, "s1")
+        };
+        assert!(matches!(outcome, ClearOutcome::Running));
+
+        let map = engine.sessions.lock().unwrap();
+        let s = map.get("s1").unwrap();
+        assert_eq!(s.block_buffer.len(), 1); // untouched
+        assert_eq!(s.claude_session_id.as_deref(), Some("abc-resume"));
+        assert_eq!(s.context_used_tokens, 42_000);
+    }
+
+    #[test]
+    fn clear_missing_session_reports_not_found() {
+        let engine = test_engine_with(test_session());
+        let mut map = engine.sessions.lock().unwrap();
+        assert!(matches!(
+            apply_clear(&mut map, "nope"),
+            ClearOutcome::NotFound
+        ));
+    }
+
+    #[test]
+    fn session_cleared_event_serializes_to_contract_shape() {
+        let ev = serde_json::to_value(SessionEvent::Cleared {
+            session_id: "s1".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            ev,
+            serde_json::json!({ "type": "session.cleared", "sessionId": "s1" })
+        );
+    }
+
+    #[test]
+    fn help_and_merge_include_clear_builtin() {
+        // /clear is discoverable via /help and the merged slash-command registry,
+        // but is NOT in the intercept set (the frontend calls session_clear).
+        assert!(help_entries().iter().any(|h| h.command == "clear"));
+        let merged = merge_commands(&help_entries(), &[], &[]);
+        let clear = merged.iter().find(|c| c.name == "clear").unwrap();
+        assert_eq!(clear.source, "builtin");
+        assert!(!INTERCEPTED_COMMANDS.contains(&"clear"));
+        assert_eq!(INTERCEPTED_COMMANDS.len(), 5); // unchanged
     }
 
     #[test]
@@ -5754,7 +5979,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(help["kind"], "help");
-        assert_eq!(help["entries"].as_array().unwrap().len(), 6);
+        assert_eq!(help["entries"].as_array().unwrap().len(), 7);
         assert_eq!(
             help["entries"][0],
             json!({ "command": "usage", "description": "plan usage limits (session + weekly)" })
@@ -5947,7 +6172,7 @@ mod tests {
             request_id,
             input,
             questions,
-        } = decide_control_request(&ask_fixture())
+        } = decide_control_request(&ask_fixture(), false)
         else {
             panic!("expected Ask");
         };
@@ -5969,7 +6194,7 @@ mod tests {
             "subtype": "can_use_tool", "tool_name": "AskUserQuestion",
             "input": { "questions": [{ "question": "Q", "header": "H",
                 "options": [{ "label": "A", "description": "d", "preview": "p" }] }] } } });
-        let ControlDecision::Ask { questions, .. } = decide_control_request(&v) else {
+        let ControlDecision::Ask { questions, .. } = decide_control_request(&v, false) else {
             panic!("expected Ask");
         };
         assert!(!questions[0].multi_select);
@@ -5981,7 +6206,7 @@ mod tests {
         // FR-8: any other tool → deny control_response, §5.5 shape, exact message.
         let v = json!({ "type": "control_request", "request_id": "req-9", "request": {
             "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": "rm -rf /" } } });
-        let ControlDecision::Respond(payload) = decide_control_request(&v) else {
+        let ControlDecision::Respond(payload) = decide_control_request(&v, false) else {
             panic!("expected Respond");
         };
         assert_eq!(
@@ -5993,11 +6218,48 @@ mod tests {
     }
 
     #[test]
+    fn allow_git_auto_approves_only_direct_git_and_gh_calls() {
+        let bash = |cmd: &str| {
+            json!({ "type": "control_request", "request_id": "g", "request": {
+                "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": cmd } } })
+        };
+        let behavior = |v: &Value, allow_git: bool| -> String {
+            let ControlDecision::Respond(payload) = decide_control_request(v, allow_git) else {
+                panic!("expected Respond for a Bash tool");
+            };
+            payload["response"]["response"]["behavior"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        // allowGit on: a direct git/gh call is allowed with the input echoed verbatim.
+        let commit = bash("git commit -m \"x\"");
+        let ControlDecision::Respond(payload) = decide_control_request(&commit, true) else {
+            panic!("expected Respond");
+        };
+        assert_eq!(payload["response"]["response"]["behavior"], "allow");
+        assert_eq!(
+            payload["response"]["response"]["updatedInput"],
+            commit["request"]["input"]
+        );
+        assert_eq!(behavior(&bash("gh pr create"), true), "allow");
+
+        // allowGit on but NOT a direct git call → still denied (nothing rides along).
+        assert_eq!(behavior(&bash("rm -rf /"), true), "deny");
+        assert_eq!(behavior(&bash("cd x && git push"), true), "deny");
+        assert_eq!(behavior(&bash("github-cli status"), true), "deny");
+
+        // allowGit off → even a git call is denied (default behavior unchanged).
+        assert_eq!(behavior(&bash("git commit -m x"), false), "deny");
+    }
+
+    #[test]
     fn control_request_unknown_subtype_gets_error_response() {
         // FR-9: never let the CLI park on something we don't render.
         let v = json!({ "type": "control_request", "request_id": "req-2",
             "request": { "subtype": "hook_callback" } });
-        let ControlDecision::Respond(payload) = decide_control_request(&v) else {
+        let ControlDecision::Respond(payload) = decide_control_request(&v, false) else {
             panic!("expected Respond");
         };
         assert_eq!(
@@ -6017,7 +6279,7 @@ mod tests {
         ] {
             let v = json!({ "type": "control_request", "request_id": "r", "request": {
                 "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": input } });
-            let ControlDecision::Respond(payload) = decide_control_request(&v) else {
+            let ControlDecision::Respond(payload) = decide_control_request(&v, false) else {
                 panic!("expected Respond");
             };
             assert_eq!(payload["response"]["response"]["behavior"], "deny");

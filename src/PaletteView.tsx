@@ -5,18 +5,18 @@ import { getPaletteRunningAgents, usePaletteDataRev } from './paletteData';
 import { useStore } from './store';
 
 const C = {
-  accent: '#c8a15a',
-  text: '#d3d6dc',
-  name: '#c4c7ce',
-  bright: '#dfe2e8',
-  glyph: '#868a93',
-  hint: '#565a63',
-  faint: '#565a63',
-  pill: '#26282f',
-  pillText: '#a9adb6',
-  border: '#24262d',
-  add: '#7fa07a',
-  del: '#c46b62',
+  accent: 'var(--accent)',
+  text: 'var(--text-strong)',
+  name: 'var(--text)',
+  bright: 'var(--text-bright)',
+  glyph: 'var(--text-dim)',
+  hint: 'var(--text-faint)',
+  faint: 'var(--text-faint)',
+  pill: 'var(--bg-hover)',
+  pillText: 'var(--text-hint)',
+  border: 'var(--border)',
+  add: 'var(--success)',
+  del: 'var(--error)',
 };
 
 // ---------- palette overlay + toast host (rendered once at the app root) ----------
@@ -145,8 +145,8 @@ function Palette() {
         onMouseDown={(e) => e.stopPropagation()}
         style={{
           width: 'min(588px, calc(100vw - 32px))',
-          background: '#191b21',
-          border: '1px solid #34363f',
+          background: 'var(--bg-panel)',
+          border: '1px solid var(--bg-hover-2)',
           borderRadius: 8,
           boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)',
           overflow: 'hidden',
@@ -267,9 +267,9 @@ function FooterHint({ k, label }: { k: string; label: string }) {
 // ---------- toasts (FR-24/FR-25) ----------
 
 const TOAST_GLYPH: Record<string, { glyph: string; color: string; border: string }> = {
-  error: { glyph: '✕', color: '#c46b62', border: '1px solid rgba(196,107,98,0.4)' },
-  info: { glyph: '●', color: '#868a93', border: '1px solid #34363f' },
-  success: { glyph: '●', color: '#7fa07a', border: '1px solid rgba(127,160,122,0.4)' },
+  error: { glyph: '✕', color: 'var(--error)', border: '1px solid color-mix(in srgb, var(--error) 40%, transparent)' },
+  info: { glyph: '●', color: 'var(--text-dim)', border: '1px solid var(--bg-hover-2)' },
+  success: { glyph: '●', color: 'var(--success)', border: '1px solid color-mix(in srgb, var(--success) 40%, transparent)' },
 };
 
 function ToastHost() {
@@ -289,7 +289,7 @@ function ToastHost() {
               display: 'flex',
               alignItems: 'center',
               gap: 10,
-              background: '#1b1d23',
+              background: 'var(--bg-elevated)',
               borderRadius: 6,
               padding: '10px 16px',
               fontSize: 12,

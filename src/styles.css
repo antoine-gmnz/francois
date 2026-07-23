@@ -14,6 +14,97 @@
 html[data-hidden='1'] [style*='animation'] {
   animation-play-state: paused !important;
 }
+/* ── Theme tokens ───────────────────────────────────────────────────────────
+   :root holds the DARK palette (the app's original, byte-identical hex values).
+   :root[data-theme='light'] overrides them with a cohesive light palette.
+   Every component references these via var(--…); main.tsx sets data-theme before
+   first paint and store.ts flips it at runtime. */
+:root {
+  /* backgrounds */
+  --bg-app: #0f1015;
+  --bg-deep: #131419;
+  --bg-panel: #191b21;
+  --bg-elevated: #1b1d23;
+  --bg-raised: #20222a;
+  --bg-hover: #26282f;
+  --bg-hover-2: #34363f;
+  /* borders */
+  --border: #24262d;
+  --border-2: #2a2c33;
+  /* text */
+  --text-bright: #dfe2e8;
+  --text-strong: #d3d6dc;
+  --text: #c4c7ce;
+  --text-2: #b9bcc4;
+  --text-hint: #a9adb6;
+  --text-dim: #868a93;
+  --text-muted: #6b7079;
+  --text-faint: #565a63;
+  --text-disabled: #3a3d45;
+  /* accent */
+  --accent: #c8a15a;
+  --accent-2: #d0a45c;
+  --accent-bright: #d8b878;
+  --accent-soft-bg: #3a3325;
+  --warn: #c2b06a;
+  /* green */
+  --success: #7fa07a;
+  --success-bright: #9dbb98;
+  --success-dim: #5f7a5b;
+  /* red */
+  --error: #c46b62;
+  --error-bright: #d68f86;
+  --error-dim: #8a5751;
+  /* hues */
+  --hue-purple: #9a86c4;
+  --hue-purple-soft: #c29fbb;
+  --hue-teal: #8fbab8;
+  --hue-blue: #6b8fb0;
+  --hue-slate: #7c8aa0;
+}
+:root[data-theme='light'] {
+  /* backgrounds — near-white layered surfaces, panels whitest */
+  --bg-app: #f5f6f8;
+  --bg-deep: #eef0f3;
+  --bg-panel: #ffffff;
+  --bg-elevated: #fbfcfd;
+  --bg-raised: #f2f4f7;
+  --bg-hover: #e9ebef;
+  --bg-hover-2: #dce0e6;
+  /* borders — light grays */
+  --border: #dcdfe4;
+  --border-2: #c9cdd4;
+  /* text — inverted ladder: bright is darkest, disabled lightest */
+  --text-bright: #1b1d23;
+  --text-strong: #262931;
+  --text: #33363e;
+  --text-2: #3f434c;
+  --text-hint: #4e525b;
+  --text-dim: #6b7079;
+  --text-muted: #868b94;
+  --text-faint: #9ca1aa;
+  --text-disabled: #c3c7ce;
+  /* accent — gold darkened for contrast on light */
+  --accent: #a97e2c;
+  --accent-2: #a67b28;
+  --accent-bright: #8c661d;
+  --accent-soft-bg: #f4ead0;
+  --warn: #8f7f2e;
+  /* green — shifted darker for legibility */
+  --success: #4d7a48;
+  --success-bright: #3b6636;
+  --success-dim: #7e9b79;
+  /* red */
+  --error: #b0463d;
+  --error-bright: #97362e;
+  --error-dim: #c98d87;
+  /* hues — darkened for contrast on light */
+  --hue-purple: #6a55a0;
+  --hue-purple-soft: #92678b;
+  --hue-teal: #3f8582;
+  --hue-blue: #416b8f;
+  --hue-slate: #566480;
+}
 * {
   box-sizing: border-box;
 }
@@ -27,7 +118,7 @@ body,
 body {
   /* Same as the App root shell — body is only visible before React mounts, and a
      darker value there flashes as a black band against the tinted caption bar. */
-  background: #0f1015;
+  background: var(--bg-app);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -35,7 +126,7 @@ body {
   cursor: default;
 }
 a {
-  color: #c8a15a;
+  color: var(--accent);
   text-decoration: none;
 }
 @keyframes blink {
@@ -87,14 +178,14 @@ a {
   }
 }
 .diff-commit-input::placeholder {
-  color: #565a63;
+  color: var(--text-faint);
 }
 .scz::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 .scz::-webkit-scrollbar-thumb {
-  background: #2a2c33;
+  background: var(--border-2);
   border-radius: 4px;
 }
 .scz::-webkit-scrollbar-track {
@@ -104,7 +195,7 @@ a {
   width: 8px;
 }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-  background: #2a2c33;
+  background: var(--border-2);
   border-radius: 4px;
 }
 .xterm .xterm-viewport::-webkit-scrollbar-track {
@@ -114,13 +205,13 @@ a {
    animation, no transition anywhere in these rules (state changes are instant
    swaps). Tokens pinned by specs/session-questions.md §8. */
 .qcard {
-  background: #12141a;
-  border: 1px solid #24262d;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 10px 12px;
 }
 .qcard-pending {
-  border-left: 2px solid #c8a15a;
+  border-left: 2px solid var(--accent);
 }
 .qcard-cancelled {
   opacity: 0.55;
@@ -135,26 +226,26 @@ a {
   gap: 6px;
 }
 .qcard-label {
-  color: #565a63;
+  color: var(--text-faint);
   font-size: 9.5px;
   letter-spacing: 0.08em;
 }
 .qcard-chip {
-  color: #c8a15a;
-  border: 1px solid #3a3325;
+  color: var(--accent);
+  border: 1px solid var(--accent-soft-bg);
   border-radius: 3px;
   padding: 0 6px;
   font-size: 9.5px;
 }
 .qcard-cancelled-note {
-  color: #565a63;
+  color: var(--text-faint);
   font-size: 9.5px;
 }
 .qcard-section + .qcard-section {
   margin-top: 12px;
 }
 .qcard-q {
-  color: #c4c7ce;
+  color: var(--text);
   margin: 8px 0 6px;
   font-size: 12.5px;
   line-height: 1.5;
@@ -170,28 +261,28 @@ a {
   cursor: pointer;
 }
 .qopt-interactive:hover {
-  background: #1a1d24;
+  background: var(--bg-elevated);
 }
 .qopt-glyph {
   width: 14px;
   flex-shrink: 0;
   text-align: center;
   font-size: 11px;
-  color: #565a63;
+  color: var(--text-faint);
 }
 .qopt-glyph-on {
-  color: #c8a15a;
+  color: var(--accent);
 }
 .qopt-label {
-  color: #dfe2e8;
+  color: var(--text-bright);
   font-size: 12px;
   flex-shrink: 0;
 }
 .qopt-label-on {
-  color: #c8a15a;
+  color: var(--accent);
 }
 .qopt-desc {
-  color: #868a93;
+  color: var(--text-dim);
   font-size: 11px;
   min-width: 0;
 }
@@ -199,14 +290,14 @@ a {
   opacity: 0.45;
 }
 .qother {
-  color: #565a63;
+  color: var(--text-faint);
   font-style: italic;
   font-size: 12px;
 }
 .qother-input {
-  background: #0f1015;
-  border: 1px solid #24262d;
-  color: #dfe2e8;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  color: var(--text-bright);
   padding: 2px 6px;
   width: 100%;
   font-family: inherit;
@@ -214,13 +305,13 @@ a {
   outline: none;
 }
 .qprev {
-  background: #0f1015;
-  border: 1px solid #24262d;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
   padding: 8px;
   white-space: pre;
   overflow-x: auto;
   font-size: 10.5px;
-  color: #b9bcc4;
+  color: var(--text-2);
   margin-top: 6px;
 }
 .qcard-submit {
@@ -228,7 +319,7 @@ a {
   text-align: right;
 }
 .qsubmit {
-  color: #c8a15a;
+  color: var(--accent);
   font-size: 11px;
   cursor: pointer;
 }
@@ -246,8 +337,8 @@ a {
   left: 14px;
   right: 14px;
   margin-bottom: 4px;
-  background: #12141a;
-  border: 1px solid #24262d;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
   border-radius: 4px;
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
   max-height: 224px;
@@ -263,23 +354,23 @@ a {
   font-size: 11.5px;
 }
 .slash-row-sel {
-  background: #1a1d24;
+  background: var(--bg-elevated);
 }
 .slash-name {
-  color: #dfe2e8;
+  color: var(--text-bright);
 }
 .slash-row-sel .slash-name {
-  color: #c8a15a;
+  color: var(--accent);
 }
 .slash-desc {
-  color: #868a93;
+  color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
 }
 .slash-tag {
-  color: #565a63;
+  color: var(--text-faint);
   font-size: 9.5px;
   flex: 0 0 auto;
 }

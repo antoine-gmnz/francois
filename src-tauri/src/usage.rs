@@ -439,8 +439,8 @@ fn settle(app: &AppHandle, generation: u64, outcome: ProbeOutcome) -> Option<Chi
     let child = inner.probe.take();
     apply_outcome(&mut inner.snapshot, outcome, now_ms());
     emit_snapshot(app, &inner.snapshot); // FR-16 — exactly one outcome event
-    // Retire this generation so the watchdog, if it fires between our lock release
-    // and its own acquisition, finds a mismatch and stays silent (FR-16).
+                                         // Retire this generation so the watchdog, if it fires between our lock release
+                                         // and its own acquisition, finds a mismatch and stays silent (FR-16).
     inner.generation = inner.generation.wrapping_add(1);
     child
 }
@@ -860,7 +860,13 @@ mod tests {
         let argv: Vec<&str> = args.iter().map(String::as_str).collect();
         assert_eq!(
             argv,
-            ["-p", "/usage", "--output-format", "stream-json", "--verbose"]
+            [
+                "-p",
+                "/usage",
+                "--output-format",
+                "stream-json",
+                "--verbose"
+            ]
         );
         // FR-5: no --resume, no --model, no permission flags.
         for banned in [

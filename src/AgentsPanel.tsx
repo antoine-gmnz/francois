@@ -6,15 +6,15 @@ import { setPaletteAgents } from './paletteData';
 import { useStore } from './store';
 
 const C = {
-  running: '#d0a45c',
-  idle: '#6b7079',
-  done: '#7fa07a',
-  error: '#c46b62',
-  accent: '#c8a15a',
-  dim: '#868a93',
-  faint: '#565a63',
-  primary: '#c4c7ce',
-  bright: '#d3d6dc',
+  running: 'var(--accent-2)',
+  idle: 'var(--text-muted)',
+  done: 'var(--success)',
+  error: 'var(--error)',
+  accent: 'var(--accent)',
+  dim: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  primary: 'var(--text)',
+  bright: 'var(--text-strong)',
 };
 
 const statusColor: Record<string, string> = {
@@ -191,8 +191,8 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
       style={{
         display: 'flex',
         flexDirection: 'column',
-        background: '#16171c',
-        border: `1px solid ${focused ? C.accent : '#24262d'}`,
+        background: 'var(--bg-deep)',
+        border: `1px solid ${focused ? C.accent : 'var(--border)'}`,
         borderRadius: 5,
         overflow: 'hidden',
         minHeight: 0,
@@ -205,7 +205,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '9px 12px',
-          borderBottom: '1px solid #24262d',
+          borderBottom: '1px solid var(--border)',
           flexShrink: 0,
         }}
       >
@@ -220,7 +220,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
           <div style={{ padding: '12px 4px', fontSize: 11, color: C.error }}>{listError.message}</div>
         ) : loading ? null : list.length === 0 ? (
           <div style={{ padding: '24px 12px', fontSize: 11, color: C.faint }}>
-            no agents yet · press <span style={{ color: '#a9adb6' }}>a</span>
+            no agents yet · press <span style={{ color: 'var(--text-hint)' }}>a</span>
           </div>
         ) : (
           list.map((a) => (
@@ -284,7 +284,7 @@ function Card({
         padding: 9,
         borderRadius: 4,
         marginBottom: 4,
-        background: selected ? '#20222a' : '#1a1c22',
+        background: selected ? 'var(--bg-raised)' : 'var(--bg-panel)',
         borderLeft: `2px solid ${selected ? C.accent : 'transparent'}`,
         opacity: pending ? 0.55 : 1,
         cursor: 'pointer',
@@ -324,7 +324,7 @@ function Card({
       <div
         style={{
           fontSize: 10.5,
-          color: '#6b7079',
+          color: 'var(--text-muted)',
           margin: '5px 0 4px 16px',
           ...(expanded
             ? { whiteSpace: 'normal' as const }
@@ -336,7 +336,7 @@ function Card({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 16, fontSize: 10, color: C.faint }}>
         <span style={{ color: a.status === 'running' ? sc : C.faint }}>{a.status === 'running' ? '◷' : '·'}</span>
         <span>{formatElapsed(elapsedMs)}</span>
-        {a.status === 'running' && <span style={{ color: '#3a3d45' }}>elapsed</span>}
+        {a.status === 'running' && <span style={{ color: 'var(--text-disabled)' }}>elapsed</span>}
       </div>
     </div>
   );
@@ -398,14 +398,14 @@ function NewAgentModal({ sessionId, onClose }: { sessionId: string; onClose: () 
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 420,
-          background: '#191b21',
-          border: '1px solid #34363f',
+          background: 'var(--bg-panel)',
+          border: '1px solid var(--bg-hover-2)',
           borderRadius: 8,
           overflow: 'hidden',
           boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: '1px solid #24262d' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
           <span style={{ color: C.accent, fontSize: 15 }}>›</span>
           <input
             ref={inputRef}
@@ -427,7 +427,7 @@ function NewAgentModal({ sessionId, onClose }: { sessionId: string; onClose: () 
           <span style={{ fontSize: 10, color: C.faint }}>esc</span>
         </div>
         {error && <div style={{ padding: '0 16px 10px', fontSize: 10.5, color: C.error }}>{error.message}</div>}
-        <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid #24262d', fontSize: 10, color: C.faint }}>
+        <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid var(--border)', fontSize: 10, color: C.faint }}>
           <span>
             <span style={{ color: C.dim }}>⏎</span> dispatch
           </span>

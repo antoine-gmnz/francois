@@ -25,16 +25,16 @@ import { registerBuiltinCommands } from './paletteCommands';
 registerBuiltinCommands();
 
 const C = {
-  accent: '#c8a15a',
-  dim: '#868a93',
-  faint: '#565a63',
-  primary: '#c4c7ce',
-  bright: '#dfe2e8',
-  hint: '#a9adb6',
-  running: '#d0a45c',
-  idle: '#6b7079',
-  done: '#7fa07a',
-  error: '#c46b62',
+  accent: 'var(--accent)',
+  dim: 'var(--text-dim)',
+  faint: 'var(--text-faint)',
+  primary: 'var(--text)',
+  bright: 'var(--text-bright)',
+  hint: 'var(--text-hint)',
+  running: 'var(--accent-2)',
+  idle: 'var(--text-muted)',
+  done: 'var(--success)',
+  error: 'var(--error)',
 };
 
 function abbreviate(cwd: string, home: string): string {
@@ -68,6 +68,8 @@ export default function App() {
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const mainTab = useStore((s) => s.mainTab);
   const setMainTab = useStore((s) => s.setMainTab);
+  const theme = useStore((s) => s.theme);
+  const toggleTheme = useStore((s) => s.toggleTheme);
   const showLeftPane = useStore((s) => s.showLeftPane);
   const showRightPane = useStore((s) => s.showRightPane);
   const toggleLeftPane = useStore((s) => s.toggleLeftPane);
@@ -220,7 +222,7 @@ export default function App() {
   });
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#0f1015' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-app)' }}>
       {/* usage bar: app-scoped plan limits, always mounted, fixed 28px, directly
           under the (same-colored) native caption — usage-bar FR-1/FR-2/§8 */}
       <UsageBar />
@@ -251,8 +253,8 @@ export default function App() {
             gridRow: 1,
             display: 'flex',
             flexDirection: 'column',
-            background: '#131419',
-            border: `1px solid ${mainFocused ? C.accent : '#24262d'}`,
+            background: 'var(--bg-deep)',
+            border: `1px solid ${mainFocused ? C.accent : 'var(--border)'}`,
             borderRadius: 5,
             overflow: 'hidden',
             minHeight: 0,
@@ -265,7 +267,7 @@ export default function App() {
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '9px 14px',
-              borderBottom: '1px solid #24262d',
+              borderBottom: '1px solid var(--border)',
               flexShrink: 0,
             }}
           >
@@ -276,7 +278,7 @@ export default function App() {
               <span onClick={() => setMainTab('diff')} style={{ ...tabStyle(mainTab === 'diff'), display: 'flex', alignItems: 'center', gap: 6 }}>
                 DIFF
                 {diffCount > 0 && (
-                  <span style={{ background: '#26282f', color: '#a9adb6', fontSize: 9, padding: '1px 5px', borderRadius: 8, fontWeight: 500, letterSpacing: 0 }}>
+                  <span style={{ background: 'var(--bg-hover)', color: 'var(--text-hint)', fontSize: 9, padding: '1px 5px', borderRadius: 8, fontWeight: 500, letterSpacing: 0 }}>
                     {diffCount}
                   </span>
                 )}
@@ -334,20 +336,20 @@ export default function App() {
               </div>
             )
           ) : active ? (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: '#0f1015' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-app)' }}>
               <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
                 <ShellTerminal key={active.id} sessionId={active.id} />
               </div>
               <div
                 style={{
                   padding: '10px 14px',
-                  borderTop: '1px solid #24262d',
+                  borderTop: '1px solid var(--border)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 14,
                   fontSize: 11,
-                  color: '#6b7079',
-                  background: '#0f1015',
+                  color: 'var(--text-muted)',
+                  background: 'var(--bg-app)',
                   flexShrink: 0,
                 }}
               >
@@ -401,11 +403,11 @@ export default function App() {
             alignItems: 'center',
             gap: 16,
             padding: '0 12px',
-            background: '#16171c',
-            border: '1px solid #24262d',
+            background: 'var(--bg-deep)',
+            border: '1px solid var(--border)',
             borderRadius: 5,
             fontSize: 10.5,
-            color: '#6b7079',
+            color: 'var(--text-muted)',
           }}
         >
           <span style={{ color: C.dim }}>
@@ -436,6 +438,13 @@ export default function App() {
             <span style={{ color: C.accent }}>⌘K</span> commands
           </span>
           <span style={{ flex: 1 }} />
+          <span
+            onClick={toggleTheme}
+            style={{ cursor: 'pointer', color: C.dim }}
+            title={theme === 'dark' ? 'switch to light theme' : 'switch to dark theme'}
+          >
+            <span style={{ color: C.accent }}>{theme === 'dark' ? '☾' : '☀'}</span> {theme}
+          </span>
           <span>
             focus: <span style={{ color: C.accent }}>{focusedPane}</span>
           </span>

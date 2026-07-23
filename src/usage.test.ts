@@ -282,8 +282,8 @@ describe('requestUsageRefresh (FR-27/28)', () => {
 
 describe('meterChipView (FR-23/24/29, §7 #11)', () => {
   it('is accent below 80% and error red at 80% — fill and number matching (FR-24)', () => {
-    expect(meterChipView(meter('a', 79)).color).toBe('#c8a15a');
-    expect(meterChipView(meter('a', 80)).color).toBe('#c46b62');
+    expect(meterChipView(meter('a', 79)).color).toBe('var(--accent)');
+    expect(meterChipView(meter('a', 80)).color).toBe('var(--error)');
     expect(meterChipView(meter('a', 79)).fillPercent).toBe(79);
   });
 
@@ -291,7 +291,7 @@ describe('meterChipView (FR-23/24/29, §7 #11)', () => {
     const chip = meterChipView(meter('Current session', 130));
     expect(chip.fillPercent).toBe(100);
     expect(chip.percentText).toBe('130%');
-    expect(chip.color).toBe('#c46b62');
+    expect(chip.color).toBe('var(--error)');
   });
 
   it('clamps a negative fill to 0% and prints it verbatim', () => {
