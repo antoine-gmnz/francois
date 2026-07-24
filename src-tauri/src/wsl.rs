@@ -346,7 +346,10 @@ mod tests {
 
     #[test]
     fn decode_wsl_output_reads_utf8_and_utf16le() {
-        assert_eq!(decode_wsl_output(b"fatal: not a git repository\n"), "fatal: not a git repository");
+        assert_eq!(
+            decode_wsl_output(b"fatal: not a git repository\n"),
+            "fatal: not a git repository"
+        );
         // wsl.exe's own errors are UTF-16LE (the `wsl -l -q` trap): every char
         // interleaved with a NUL under a UTF-8 read.
         let utf16: Vec<u8> = "\u{feff}There is no distribution with the supplied name.\r\n"

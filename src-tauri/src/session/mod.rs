@@ -1,0 +1,719 @@
+// session.rs — the Francois session engine (specs/session-engine.md).
+//
+// Owns the registry of Claude Code sessions, spawns `claude -p --output-format
+// stream-json --input-format stream-json --permission-prompt-tool stdio
+// --include-partial-messages --verbose` per turn (the turn text rides stdin as an
+// NDJSON user line — session-questions), parses the NDJSON stream, and normalizes
+// it to the SessionEvent stream on francois://session/event.
+// Backend-only; every UI feature is a client of this engine.
+//
+// Build notes / honest v1 deviations (flagged for spec reconciliation):
+//  * Primary path only (per-turn stream-json CLI). The SDK-sidecar escape hatch
+//    is not built, so `done` status is unreachable in v1 (spec FR-2 anticipates
+//    this) — sessions leave the live set only via `remove` or `error`.
+//  * create-time spawn check = `claude --version` (catches "not found"). A live
+//    auth failure surfaces on the first `send` as a turn error (session.error),
+//    matching FR-19's lazy-error path rather than failing `create`.
+
+mod agents;
+mod blocks;
+mod commands;
+mod control;
+mod events;
+mod interactive;
+mod mcp;
+mod models;
+mod persistence;
+mod skills;
+mod slash;
+mod stdio;
+mod stream;
+mod tools;
+mod turn;
+
+pub(crate) use agents::*;
+pub(crate) use blocks::*;
+pub(crate) use commands::*;
+pub(crate) use control::*;
+pub(crate) use events::*;
+pub(crate) use interactive::*;
+pub(crate) use mcp::*;
+pub(crate) use models::*;
+pub(crate) use persistence::*;
+pub(crate) use skills::*;
+pub(crate) use slash::*;
+pub(crate) use stdio::*;
+pub(crate) use stream::*;
+pub(crate) use tools::*;
+pub(crate) use turn::*;
+
+#[cfg(test)]
+mod testutil;
+
+// permission-guardrails: the settings.json / rule-pattern half of the feature
+// lives in permissions.rs; this file owns only the control-channel wiring
+// (parking an ask, writing the control_response) — spec §6.
+use crate::permissions::PermissionAsk;
+// usage-bar §6: the /usage meter grammar + stream-json answer extraction now live
+// in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
+// is unchanged — these are the same functions, imported instead of defined.
+use crate::usage::{parse_meter_line, probe_answer, synthetic_text, UsageMeter};
+use serde::Serialize;
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
+use std::process::{Child, ChildStdin, Command};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager};
+
+const EVENT_CHANNEL: &str = "francois://session/event";
+const QUEUE_CAP: usize = 20;
+const DEFAULT_MODEL: &str = "sonnet";
+/// interactive-commands FR-10: a /usage//cost probe is killed after this long.
+/// Reused by the app-scoped usage-bar probe (usage.rs, usage-bar FR-8).
+pub(crate) const PROBE_TIMEOUT_SECS: u64 = 30;
+
+fn valid_effort(e: &str) -> bool {
+    matches!(e, "low" | "medium" | "high" | "xhigh" | "max")
+}
+
+/// contract/common.ts PermissionMode. The CLI's `auto`/`dontAsk` are deliberately
+/// excluded (auto aborts headless -p runs on classifier blocks; dontAsk needs a
+/// paired allowedTools list).
+fn valid_permission_mode(m: &str) -> bool {
+    matches!(m, "default" | "plan" | "acceptEdits" | "bypassPermissions")
+}
+
+/// contract/common.ts ClaudeRuntime. 'wsl' is only accepted on Windows (create-time check).
+fn valid_runtime(r: &str) -> bool {
+    matches!(r, "native" | "wsl")
+}
+
+/// `--permission-mode` args for a turn. 'default' adds NOTHING — the turn inherits
+/// the user's ~/.claude settings (permissions.defaultMode / allow rules), exactly
+/// the pre-feature behavior. The flag does not persist across --resume, so every
+/// invocation passes it explicitly.
+fn permission_args(mode: &str) -> Vec<String> {
+    match mode {
+        "plan" | "acceptEdits" | "bypassPermissions" => {
+            vec!["--permission-mode".into(), mode.into()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// (program, argv) launching `claude <claude_args>` under a session's runtime.
+/// wsl: `wsl.exe [-d <distro>] --cd <dir> -- claude …` via `wsl_base_args` — a
+/// WSL UNC cwd targets the distro named in the path (bare wsl.exe hits the
+/// DEFAULT distro, wrong on multi-distro machines) with its pre-translated Linux
+/// path (`--cd '\\wsl.localhost\…'` fails with Wsl/E_INVALIDARG — verified
+/// live); a drive-letter cwd passes verbatim (wsl.exe maps it to /mnt/… itself).
+/// native: plain `claude …`; the caller sets current_dir.
+fn claude_invocation(runtime: &str, cwd: &str, claude_args: Vec<String>) -> (String, Vec<String>) {
+    if runtime == "wsl" {
+        let mut argv = crate::wsl::wsl_base_args(cwd);
+        argv.push("--".to_string());
+        argv.push("claude".to_string());
+        argv.extend(claude_args);
+        ("wsl.exe".into(), argv)
+    } else {
+        ("claude".into(), claude_args)
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash (esp. wsl.exe)
+}
+#[cfg(not(windows))]
+pub(crate) fn no_window(_cmd: &mut Command) {}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct SessionMeta {
+    id: String,
+    name: String,
+    cwd: String,
+    model: ModelInfo,
+    status: String, // running | idle | done | error
+    #[serde(rename = "contextUsedTokens")]
+    context_used_tokens: u64,
+    #[serde(rename = "contextLimitTokens")]
+    context_limit_tokens: u64,
+    #[serde(rename = "startedAt")]
+    started_at: u64,
+    #[serde(rename = "lastActivityAt")]
+    last_activity_at: u64,
+    #[serde(rename = "errorMessage", skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
+    #[serde(rename = "permissionMode")]
+    permission_mode: String,
+    runtime: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AgentInfo {
+    id: String,
+    #[serde(rename = "sessionId")]
+    session_id: String,
+    name: String,
+    task: String,
+    status: String, // running | idle | done | error
+    #[serde(rename = "startedAt")]
+    started_at: u64,
+    #[serde(rename = "endedAt", skip_serializing_if = "Option::is_none")]
+    ended_at: Option<u64>,
+    /// async-agents FR-2: true when the dispatch was asynchronous. For these the
+    /// dispatch's tool_result is a spawn ack and NEVER stamps `ended_at` (FR-5).
+    background: bool,
+    /// async-agents FR-10: label of the newest AgentStep; absent until the first.
+    #[serde(rename = "lastActivity", skip_serializing_if = "Option::is_none")]
+    last_activity: Option<String>,
+    /// async-agents FR-12: total steps ever observed — may exceed the trail window.
+    #[serde(rename = "stepCount")]
+    step_count: u32,
+}
+
+/// contract AgentStep (async-agents §5) — one entry of an agent's activity trail.
+#[derive(Serialize, Clone, PartialEq, Debug)]
+pub struct AgentStep {
+    /// Strictly increasing per agent, starting at 1 (FR-12).
+    seq: u32,
+    kind: String, // text | tool | notice
+    at: u64,
+    /// kind 'tool' only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool: Option<String>,
+    label: String,
+    /// kind 'tool' only, once the step's tool_result arrived.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    meta: Option<String>,
+}
+
+/// async-agents FR-12: the trail is a bounded window; the oldest step is dropped
+/// on overflow while `seq` and `step_count` keep growing.
+const AGENT_TRAIL_CAP: usize = 200;
+
+/// async-agents FR-9: one tool_use observed INSIDE a subagent. `seq` is spec §6's
+/// `agent_inner_tools` value; `tool`/`input` ride along so the meta fill can reuse
+/// the exact same `tool_meta` derivation as a top-level tool.done (§5.4).
+#[derive(Clone)]
+pub(crate) struct InnerTool {
+    seq: u32,
+    tool: String,
+    input: Value,
+}
+
+/// What an async-agents state mutation asks its caller to emit, in order. Keeping
+/// the mutation pure over `Session` is what makes the whole feature unit-testable:
+/// the AppHandle wrappers only lock → mutate → drop the lock → emit.
+#[derive(Clone)]
+pub(crate) enum AgentEmission {
+    Step { agent_id: String, step: AgentStep },
+    Update { agent: AgentInfo },
+}
+
+/// Tool names that dispatch a subagent. Claude Code's stock CLI uses `Task`;
+/// some harnesses expose it as `Agent`. Mirrored in classifyToolStart (TS).
+fn is_subagent_tool(tool: &str) -> bool {
+    matches!(tool, "Task" | "Agent")
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct McpServerInfo {
+    name: String,
+    status: String, // connected | connecting | error
+    #[serde(rename = "toolCount", skip_serializing_if = "Option::is_none")]
+    tool_count: Option<u32>,
+    #[serde(rename = "errorMessage", skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<String>, // project | local | user — set by mcp_list; None on runtime updates
+}
+
+/// A parked AskUserQuestion awaiting its answer, keyed by blockId in the turn's
+/// pending map (§6). `input` is the VERBATIM tool input — the allow response must
+/// echo it unmodified plus the answers map (FR-11/FR-12).
+pub(crate) struct PendingQuestion {
+    request_id: String,
+    input: Value,
+}
+
+/// A parked permission ask awaiting its decision, keyed by blockId in the turn's
+/// pending map. `input` is the VERBATIM tool input — an allow response must echo
+/// it unmodified (permission-guardrails FR-3).
+pub(crate) struct PendingPermission {
+    request_id: String,
+    input: Value,
+    ask: PermissionAsk,
+}
+
+// ---------- internal registry ----------
+
+// In-memory transcript buffer (§6). Read by conversation-view's getTranscript
+// channel; mirrors the ConversationBlock shape in contract/conversation-view.ts.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum BlockKind {
+    User,
+    Assistant,
+    Tool,
+    Subagent,
+    Command,    // interactive-commands: a slash-command response card
+    Question,   // session-questions: an AskUserQuestion card
+    Permission, // permission-guardrails: a gated tool call awaiting approval
+}
+
+#[derive(Clone)]
+pub(crate) struct BufBlock {
+    block_id: String,
+    kind: BlockKind,
+    text: String,
+    // Field reuse per kind (precedent: the subagent name lives in `summary`):
+    // `tool` holds the tool name for Tool blocks and the command token for Command blocks.
+    tool: String,
+    summary: String,
+    meta: Option<String>,
+    /// interactive-commands: serialized CommandCard (Command kind; None while pending).
+    card: Option<Value>,
+    streaming: bool,
+}
+
+pub(crate) struct TurnHandle {
+    child: Arc<Mutex<Child>>,
+    interrupted: Arc<AtomicBool>,
+    /// session-questions FR-2: the turn's stdin writer. Lives for the whole turn;
+    /// None once the turn ends (closing it is what lets the CLI exit). ALL writes
+    /// go through this mutex — never while holding Engine.sessions (a blocking
+    /// pipe write must not stall every command).
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
+    /// session-questions FR-6: blockId → parked AskUserQuestion. Removing an entry
+    /// CLAIMS it — that atomic claim is what makes resolution exactly-once (FR-13).
+    pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
+    /// permission-guardrails FR-2: blockId → parked tool call awaiting approval.
+    /// A sibling of `pending_questions` with the SAME claim-to-resolve discipline
+    /// (FR-10) — kept separate because the two resolve to different events.
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+}
+
+/// The single in-flight /usage-/cost side-spawn of a session (interactive-commands
+/// FR-11). The child slot is filled once spawned; killed on session remove & app exit.
+pub(crate) struct ProbeHandle {
+    block_id: String,
+    child: Arc<Mutex<Option<Child>>>,
+}
+
+impl ProbeHandle {
+    fn kill(&self) {
+        if let Some(c) = self.child.lock().unwrap().as_mut() {
+            let _ = c.kill();
+        }
+    }
+}
+
+pub(crate) struct Session {
+    id: String,
+    name: String,
+    cwd: String,
+    model_id: String,
+    status: String,
+    context_used_tokens: u64,
+    context_limit_tokens: u64,
+    started_at: u64,
+    last_activity_at: u64,
+    error_message: Option<String>,
+    effort: Option<String>,  // --effort level (None = model default)
+    permission_mode: String, // contract PermissionMode; "default" = inherit ~/.claude settings
+    runtime: String,         // contract ClaudeRuntime; "native" | "wsl"
+    /// When true, Francois auto-approves `git`/`gh` tool calls on the stdio
+    /// control channel instead of denying them (NewSessionRequest.allowGit) —
+    /// lets a session run git commit/push without bypassing every permission.
+    allow_git: bool,
+    queue: VecDeque<(String, String)>, // (client blockId, text)
+    claude_session_id: Option<String>,
+    current: Option<TurnHandle>,
+    pending_probe: Option<ProbeHandle>, // interactive-commands FR-11: single in-flight side-spawn
+    agents: HashMap<String, AgentInfo>,
+    agent_order: Vec<String>, // first-seen order for agents_list (FR-7)
+    // ---- async-agents §6 (none of this is serialized; cleared with the session) ----
+    /// FR-1 correlation key: dispatch tool_use_id → agentId. Lives on the session
+    /// (not the turn-local `tools` map) so FR-13/FR-16 reach it after the call closed.
+    agent_by_tool: HashMap<String, String>,
+    /// FR-12: the ≤200-step trail per agent.
+    agent_steps: HashMap<String, VecDeque<AgentStep>>,
+    /// FR-12: next `seq` per agent (1-based).
+    agent_step_seq: HashMap<String, u32>,
+    /// FR-9: per-agent inner tool index — deliberately separate from the parent
+    /// turn's `tools` map so the two can never collide.
+    agent_inner_tools: HashMap<String, HashMap<String, InnerTool>>,
+    /// FR-5: the spawn ack's text, for FR-14 matching.
+    agent_backend_ref: HashMap<String, String>,
+    block_buffer: Vec<BufBlock>, // §6: read by conversation-view's getTranscript
+    mcp: HashMap<String, McpServerInfo>,
+    // slash-menu FR-2: the CLI's slash_commands captured from the latest
+    // stream-json init (bare names, init order). In-memory only — never
+    // persisted; a fresh app relearns it on the next turn (spec §6).
+    cli_commands: Vec<String>,
+}
+
+impl Session {
+    fn meta(&self) -> SessionMeta {
+        let label = label_for(&self.model_id);
+        SessionMeta {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            cwd: self.cwd.clone(),
+            model: model(&self.model_id, &label),
+            status: self.status.clone(),
+            context_used_tokens: self.context_used_tokens,
+            context_limit_tokens: self.context_limit_tokens,
+            started_at: self.started_at,
+            last_activity_at: self.last_activity_at,
+            error_message: self.error_message.clone(),
+            permission_mode: self.permission_mode.clone(),
+            runtime: self.runtime.clone(),
+        }
+    }
+
+    fn buf_user(&mut self, block_id: &str, text: String) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::User,
+            text,
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+        });
+    }
+
+    fn buf_assistant(&mut self, block_id: &str, text: String) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::Assistant,
+            text,
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+        });
+    }
+
+    fn buf_tool(&mut self, block_id: &str, tool: String, summary: String, is_task: bool) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: if is_task {
+                BlockKind::Subagent
+            } else {
+                BlockKind::Tool
+            },
+            text: String::new(),
+            tool,
+            summary,
+            meta: None,
+            card: None,
+            streaming: true,
+        });
+    }
+
+    /// interactive-commands FR-6: append a pending command block (loading card).
+    fn buf_command_pending(&mut self, block_id: &str, command: &str) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::Command,
+            text: String::new(),
+            tool: command.into(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: true,
+        });
+    }
+
+    /// interactive-commands FR-9/20: finalize the pending command block in place, or
+    /// append a finalized one when the flow had no command.started (instant cards).
+    fn buf_command_output(&mut self, block_id: &str, command: &str, card: Value) {
+        if let Some(b) = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id)
+        {
+            b.card = Some(card);
+            b.streaming = false;
+        } else {
+            self.block_buffer.push(BufBlock {
+                block_id: block_id.into(),
+                kind: BlockKind::Command,
+                text: String::new(),
+                tool: command.into(),
+                summary: String::new(),
+                meta: None,
+                card: Some(card),
+                streaming: false,
+            });
+        }
+    }
+
+    /// session-questions FR-6: append a pending question block. `card` reuse: for
+    /// Question blocks it holds `{ questions, state, answers? }`.
+    fn buf_question(&mut self, block_id: &str, questions: Value) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::Question,
+            text: String::new(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: Some(serde_json::json!({ "questions": questions, "state": "pending" })),
+            streaming: true,
+        });
+    }
+
+    /// session-questions FR-11/FR-13: flip a question block to its resolved state
+    /// in place. Returns the updated block (for persistence) or None if unknown.
+    fn buf_question_resolve(
+        &mut self,
+        block_id: &str,
+        state: &str,
+        answers: Option<&Value>,
+    ) -> Option<BufBlock> {
+        let b = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id && b.kind == BlockKind::Question)?;
+        if let Some(card) = b.card.as_mut() {
+            card["state"] = Value::String(state.into());
+            if let Some(a) = answers {
+                card["answers"] = a.clone();
+            }
+        }
+        b.streaming = false;
+        Some(b.clone())
+    }
+
+    /// permission-guardrails FR-2: append a pending permission block. `card`
+    /// reuse (as for Question blocks): it holds `{ ask, state, rule? }`.
+    fn buf_permission(&mut self, block_id: &str, ask: Value) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::Permission,
+            text: String::new(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: Some(serde_json::json!({ "ask": ask, "state": "pending" })),
+            streaming: true,
+        });
+    }
+
+    /// permission-guardrails FR-8/FR-10: flip a permission block to its resolved
+    /// state in place. Returns the updated block (for persistence) or None if
+    /// unknown.
+    fn buf_permission_resolve(
+        &mut self,
+        block_id: &str,
+        state: &str,
+        rule: Option<&Value>,
+    ) -> Option<BufBlock> {
+        let b = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id && b.kind == BlockKind::Permission)?;
+        if let Some(card) = b.card.as_mut() {
+            card["state"] = Value::String(state.into());
+            if let Some(r) = rule {
+                card["rule"] = r.clone();
+            }
+        }
+        b.streaming = false;
+        Some(b.clone())
+    }
+
+    /// interactive-commands FR-11: reserve the single in-flight probe slot.
+    /// Returns the (still empty) child slot, or None if a probe is already pending.
+    fn reserve_probe(&mut self, block_id: &str) -> Option<Arc<Mutex<Option<Child>>>> {
+        if self.pending_probe.is_some() {
+            return None;
+        }
+        let child = Arc::new(Mutex::new(None));
+        self.pending_probe = Some(ProbeHandle {
+            block_id: block_id.into(),
+            child: child.clone(),
+        });
+        Some(child)
+    }
+
+    fn buf_tool_done(&mut self, block_id: &str, meta: String) {
+        if let Some(b) = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id)
+        {
+            b.meta = Some(meta);
+            b.streaming = false;
+        }
+    }
+
+    fn insert_agent(&mut self, a: AgentInfo) {
+        if !self.agents.contains_key(&a.id) {
+            self.agent_order.push(a.id.clone());
+        }
+        self.agents.insert(a.id.clone(), a);
+    }
+}
+
+#[derive(Default)]
+pub struct Engine {
+    sessions: Mutex<HashMap<String, Session>>,
+}
+
+impl Engine {
+    /// The working directory of a session (used by the `diff` domain, FR-1). None if unknown.
+    pub fn cwd_of(&self, session_id: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(|s| s.cwd.clone())
+    }
+
+    /// The claude runtime ("native" | "wsl") of a session — used by the `shell`
+    /// domain's per-session spawn matrix (wsl-filesystem FR-10/FR-11). None if unknown.
+    pub fn runtime_of(&self, session_id: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(|s| s.runtime.clone())
+    }
+}
+
+/// Kill every in-flight turn's child process (called on app exit).
+pub fn kill_all(app: &AppHandle) {
+    let Some(engine) = app.try_state::<Engine>() else {
+        return;
+    };
+    // session-questions FR-13 (app-exit teardown, §7#5): drain every parked
+    // question BEFORE killing its child, so the cancelled state is persisted
+    // synchronously here — the reader threads may never get to run again. The
+    // drain is the exactly-once claim; a reader that does run finds nothing.
+    let mut orphaned: Vec<(String, String)> = Vec::new(); // (session_id, block_id)
+    let mut orphaned_perms: Vec<(String, String)> = Vec::new(); // permission-guardrails FR-10
+    {
+        let map = engine.sessions.lock().unwrap();
+        for s in map.values() {
+            if let Some(turn) = &s.current {
+                turn.interrupted.store(true, Ordering::SeqCst);
+                {
+                    let mut p = turn.pending_questions.lock().unwrap();
+                    for (bid, _) in p.drain() {
+                        orphaned.push((s.id.clone(), bid));
+                    }
+                }
+                {
+                    // permission-guardrails FR-10 (§7 #8): the same synchronous
+                    // drain for parked approval cards.
+                    let mut p = turn.pending_permissions.lock().unwrap();
+                    for (bid, _) in p.drain() {
+                        orphaned_perms.push((s.id.clone(), bid));
+                    }
+                }
+                let _ = turn.child.lock().unwrap().kill();
+            }
+            if let Some(p) = &s.pending_probe {
+                p.kill(); // interactive-commands: probes die with the app
+            }
+        }
+    }
+    for (sid, bid) in orphaned {
+        resolve_question(app, &sid, &bid, "cancelled", None);
+    }
+    for (sid, bid) in orphaned_perms {
+        resolve_permission(app, &sid, &bid, "cancelled", None);
+    }
+}
+
+// ---------- helpers ----------
+
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn uuid() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+fn basename(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_args_only_for_explicit_modes() {
+        assert!(permission_args("default").is_empty()); // inherit ~/.claude settings — no flag
+        assert!(permission_args("garbage").is_empty());
+        assert_eq!(permission_args("plan"), vec!["--permission-mode", "plan"]);
+        assert_eq!(
+            permission_args("acceptEdits"),
+            vec!["--permission-mode", "acceptEdits"]
+        );
+        assert_eq!(
+            permission_args("bypassPermissions"),
+            vec!["--permission-mode", "bypassPermissions"]
+        );
+    }
+
+    #[test]
+    fn claude_invocation_wraps_wsl() {
+        let (prog, args) = claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()]);
+        assert_eq!(prog, "claude");
+        assert_eq!(args, vec!["-p", "hi"]);
+        // wsl + drive cwd: wsl.exe maps it to /mnt/… itself — passed verbatim,
+        // no -d (no distro info → default distro is the only sane target)
+        let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()]);
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
+        // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG
+        // live) AND target the distro named in the path — bare wsl.exe hits the
+        // default distro, which need not be the one holding the repo.
+        let (prog, args) = claude_invocation(
+            "wsl",
+            "\\\\wsl.localhost\\Ubuntu\\home\\u\\api",
+            vec!["-p".into(), "hi".into()],
+        );
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(
+            args,
+            vec![
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/home/u/api",
+                "--",
+                "claude",
+                "-p",
+                "hi"
+            ]
+        );
+    }
+
+    #[test]
+    fn subagent_tool_recognizes_task_and_agent() {
+        assert!(is_subagent_tool("Task"));
+        assert!(is_subagent_tool("Agent")); // this harness's subagent tool name
+        assert!(!is_subagent_tool("Read"));
+        assert!(!is_subagent_tool("Bash"));
+    }
+}

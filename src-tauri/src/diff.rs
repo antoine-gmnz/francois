@@ -1340,7 +1340,16 @@ mod tests {
         assert_eq!(prog, "wsl.exe");
         assert_eq!(
             args,
-            vec!["-d", "Ubuntu", "--cd", "/home/u/api", "--", "git", "diff", "--numstat"]
+            vec![
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/home/u/api",
+                "--",
+                "git",
+                "diff",
+                "--numstat"
+            ]
         );
     }
 

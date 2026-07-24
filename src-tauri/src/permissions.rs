@@ -283,18 +283,18 @@ pub fn generate_pattern(tool: &str, input: &Value, cwd: &str) -> String {
         return format!("Bash({prefix}:*)");
     }
     if tool == "WebFetch" {
-        if let Some(host) = input
-            .get("url")
-            .and_then(|u| u.as_str())
-            .and_then(url_host)
-        {
+        if let Some(host) = input.get("url").and_then(|u| u.as_str()).and_then(url_host) {
             return format!("WebFetch(domain:{host})");
         }
         return "WebFetch".to_string();
     }
     if let Some(keys) = path_key(tool) {
         for k in keys {
-            if let Some(p) = input.get(*k).and_then(|v| v.as_str()).filter(|p| !p.is_empty()) {
+            if let Some(p) = input
+                .get(*k)
+                .and_then(|v| v.as_str())
+                .filter(|p| !p.is_empty())
+            {
                 return format!("{tool}({})", path_relative_to_cwd(p, cwd));
             }
         }
@@ -523,9 +523,7 @@ fn effect_array<'a>(doc: &'a mut Value, effect: &str) -> Option<&'a mut Vec<Valu
         *perms = Value::Object(Map::new());
     }
     let po = perms.as_object_mut()?;
-    let arr = po
-        .entry(effect)
-        .or_insert_with(|| Value::Array(Vec::new()));
+    let arr = po.entry(effect).or_insert_with(|| Value::Array(Vec::new()));
     if !arr.is_array() {
         *arr = Value::Array(Vec::new());
     }
@@ -619,9 +617,7 @@ fn write_disabled(settings: &Path, entries: &[(String, String)]) -> Result<(), S
 
 fn set_disabled(settings: &Path, effect: &str, pattern: &str, on: bool) -> Result<(), String> {
     let mut entries = read_disabled(settings);
-    let present = entries
-        .iter()
-        .any(|(e, p)| e == effect && p == pattern);
+    let present = entries.iter().any(|(e, p)| e == effect && p == pattern);
     if on == present {
         return Ok(());
     }
@@ -680,7 +676,9 @@ fn make_rule(tier: &str, effect: &str, pattern: &str, enabled: bool) -> Permissi
 /// within a tier (enabled entries first, then the sidecar's disabled ones).
 pub fn list_rules(local: &Path, global: Option<&Path>) -> Vec<PermissionRule> {
     let l = rules_of_tier("local", local);
-    let g = global.map(|p| rules_of_tier("global", p)).unwrap_or_default();
+    let g = global
+        .map(|p| rules_of_tier("global", p))
+        .unwrap_or_default();
     let mut out = Vec::new();
     for effect in EFFECT_ORDER {
         out.extend(l.iter().filter(|r| r.effect == effect).cloned());
@@ -695,7 +693,12 @@ pub fn list_rules(local: &Path, global: Option<&Path>) -> Vec<PermissionRule> {
 /// `PermissionRule` (already-present is a success — §7 #1). Any failure leaves
 /// the file untouched, which is what lets `permissions_decide` fail before it
 /// claims anything (FR-7).
-pub fn write_rule(settings: &Path, tier: &str, effect: &str, pattern: &str) -> Result<PermissionRule, String> {
+pub fn write_rule(
+    settings: &Path,
+    tier: &str,
+    effect: &str,
+    pattern: &str,
+) -> Result<PermissionRule, String> {
     let mut doc = read_json_object(settings)?;
     if merge_pattern(&mut doc, effect, pattern) {
         write_json_atomic(settings, &doc)?;
@@ -758,7 +761,9 @@ fn drop_rule(settings: &Path, effect: &str, pattern: &str) -> Result<(), String>
 /// shows local only, and a global write reports SETTINGS_WRITE_FAILED.
 fn tiers_for(engine: &Engine, session_id: &str) -> Option<(PathBuf, Option<PathBuf>)> {
     let cwd = engine.cwd_of(session_id)?;
-    let runtime = engine.runtime_of(session_id).unwrap_or_else(|| "native".into());
+    let runtime = engine
+        .runtime_of(session_id)
+        .unwrap_or_else(|| "native".into());
     Some((
         local_settings_path(&cwd),
         global_settings_path(&cwd, &runtime),
@@ -959,9 +964,35 @@ mod tests {
         // "always allow" on a test run silently granting `bun install`, `bun x`,
         // `bun run <script>`. Pin the whole FR-5 list, not just a sample.
         const FR5: [&str; 30] = [
-            "git", "gh", "npm", "npx", "pnpm", "yarn", "cargo", "docker", "kubectl", "go", "make",
-            "uv", "pip", "pip3", "poetry", "dotnet", "bundle", "rails", "terraform", "aws",
-            "gcloud", "brew", "apt", "apt-get", "systemctl", "python", "python3", "node", "deno",
+            "git",
+            "gh",
+            "npm",
+            "npx",
+            "pnpm",
+            "yarn",
+            "cargo",
+            "docker",
+            "kubectl",
+            "go",
+            "make",
+            "uv",
+            "pip",
+            "pip3",
+            "poetry",
+            "dotnet",
+            "bundle",
+            "rails",
+            "terraform",
+            "aws",
+            "gcloud",
+            "brew",
+            "apt",
+            "apt-get",
+            "systemctl",
+            "python",
+            "python3",
+            "node",
+            "deno",
             "bun",
         ];
         for prog in FR5 {
@@ -1028,7 +1059,11 @@ mod tests {
             "Read(src/a.ts)"
         );
         assert_eq!(
-            generate_pattern("Edit", &json!({ "file_path": "D:\\repo\\src\\a.ts" }), "D:\\repo"),
+            generate_pattern(
+                "Edit",
+                &json!({ "file_path": "D:\\repo\\src\\a.ts" }),
+                "D:\\repo"
+            ),
             "Edit(src/a.ts)"
         );
         // Outside the cwd: verbatim (with / separators) — a weak rule, but the
@@ -1042,7 +1077,11 @@ mod tests {
             "Grep(src)"
         );
         assert_eq!(
-            generate_pattern("NotebookEdit", &json!({ "notebook_path": "/repo/n.ipynb" }), "/repo"),
+            generate_pattern(
+                "NotebookEdit",
+                &json!({ "notebook_path": "/repo/n.ipynb" }),
+                "/repo"
+            ),
             "NotebookEdit(n.ipynb)"
         );
         // No path key at all → the bare tool name.
@@ -1052,9 +1091,18 @@ mod tests {
     #[test]
     fn webfetch_scopes_to_the_url_host() {
         let p = |url: &str| generate_pattern("WebFetch", &json!({ "url": url }), "/repo");
-        assert_eq!(p("https://example.com/a/b?c=1"), "WebFetch(domain:example.com)");
-        assert_eq!(p("http://user:pw@Docs.Example.COM:8080/x"), "WebFetch(domain:docs.example.com)");
-        assert_eq!(generate_pattern("WebFetch", &json!({}), "/repo"), "WebFetch");
+        assert_eq!(
+            p("https://example.com/a/b?c=1"),
+            "WebFetch(domain:example.com)"
+        );
+        assert_eq!(
+            p("http://user:pw@Docs.Example.COM:8080/x"),
+            "WebFetch(domain:docs.example.com)"
+        );
+        assert_eq!(
+            generate_pattern("WebFetch", &json!({}), "/repo"),
+            "WebFetch"
+        );
     }
 
     #[test]
@@ -1063,7 +1111,10 @@ mod tests {
         // `https://evil.com\@good.com/x` FETCHES evil.com. Splitting on `/` alone
         // reported `good.com` — the card would have read "fetch from good.com"
         // and offered that domain as the rule for a call going elsewhere.
-        assert_eq!(url_host("https://evil.com\\@good.com/x").as_deref(), Some("evil.com"));
+        assert_eq!(
+            url_host("https://evil.com\\@good.com/x").as_deref(),
+            Some("evil.com")
+        );
         // Anything still delimiter-ish after the split is refused, not guessed at.
         assert_eq!(url_host("https://a b.com/x"), None);
         assert_eq!(url_host("https://[::1]/x"), None);
@@ -1072,24 +1123,48 @@ mod tests {
 
     #[test]
     fn mcp_and_unknown_tools_pattern_as_themselves() {
-        assert_eq!(generate_pattern("mcp__ctx7__query", &json!({}), "/r"), "mcp__ctx7__query");
+        assert_eq!(
+            generate_pattern("mcp__ctx7__query", &json!({}), "/r"),
+            "mcp__ctx7__query"
+        );
         assert_eq!(generate_pattern("mcp__ctx7", &json!({}), "/r"), "mcp__ctx7");
-        assert_eq!(generate_pattern("WebSearch", &json!({ "query": "x" }), "/r"), "WebSearch");
-        assert_eq!(generate_pattern("Frobnicate", &json!({ "x": 1 }), "/r"), "Frobnicate");
+        assert_eq!(
+            generate_pattern("WebSearch", &json!({ "query": "x" }), "/r"),
+            "WebSearch"
+        );
+        assert_eq!(
+            generate_pattern("Frobnicate", &json!({ "x": 1 }), "/r"),
+            "Frobnicate"
+        );
     }
 
     // ---- FR-5/FR-17: labels ----
 
     #[test]
     fn labels_read_back_from_the_raw_pattern() {
-        assert_eq!(label_for_pattern("Bash(npm test:*)"), "npm test (any arguments)");
-        assert_eq!(label_for_pattern("Bash(cd x && ls)"), "run exactly this command");
+        assert_eq!(
+            label_for_pattern("Bash(npm test:*)"),
+            "npm test (any arguments)"
+        );
+        assert_eq!(
+            label_for_pattern("Bash(cd x && ls)"),
+            "run exactly this command"
+        );
         assert_eq!(label_for_pattern("Read(src/a.ts)"), "read src/a.ts");
         assert_eq!(label_for_pattern("Edit(src/a.ts)"), "edit src/a.ts");
         assert_eq!(label_for_pattern("Grep(src)"), "search src");
-        assert_eq!(label_for_pattern("WebFetch(domain:example.com)"), "fetch from example.com");
-        assert_eq!(label_for_pattern("mcp__ctx7__query"), "query on the ctx7 MCP server");
-        assert_eq!(label_for_pattern("mcp__ctx7"), "any tool on the ctx7 MCP server");
+        assert_eq!(
+            label_for_pattern("WebFetch(domain:example.com)"),
+            "fetch from example.com"
+        );
+        assert_eq!(
+            label_for_pattern("mcp__ctx7__query"),
+            "query on the ctx7 MCP server"
+        );
+        assert_eq!(
+            label_for_pattern("mcp__ctx7"),
+            "any tool on the ctx7 MCP server"
+        );
         assert_eq!(label_for_pattern("WebSearch"), "any WebSearch call");
     }
 
@@ -1097,13 +1172,25 @@ mod tests {
 
     #[test]
     fn summary_picks_the_tool_s_what_key_and_json_is_truncated() {
-        assert_eq!(summarize_input("Bash", &json!({ "command": "npm test" })), "npm test");
-        assert_eq!(summarize_input("Read", &json!({ "file_path": "/a/b" })), "/a/b");
-        assert_eq!(summarize_input("WebFetch", &json!({ "url": "https://x" })), "https://x");
+        assert_eq!(
+            summarize_input("Bash", &json!({ "command": "npm test" })),
+            "npm test"
+        );
+        assert_eq!(
+            summarize_input("Read", &json!({ "file_path": "/a/b" })),
+            "/a/b"
+        );
+        assert_eq!(
+            summarize_input("WebFetch", &json!({ "url": "https://x" })),
+            "https://x"
+        );
         assert_eq!(summarize_input("Frobnicate", &json!({ "x": 1 })), "");
         let big = json!({ "command": "x".repeat(9000) });
         let out = input_json(&big);
-        assert!(out.chars().count() <= 4002, "truncated to 4000 + the … marker");
+        assert!(
+            out.chars().count() <= 4002,
+            "truncated to 4000 + the … marker"
+        );
         assert!(out.ends_with('…'));
     }
 
@@ -1121,7 +1208,14 @@ mod tests {
     fn permission_ask_serializes_to_the_contract_shape() {
         let v = serde_json::to_value(build_ask("Bash", &json!({ "command": "ls" }), "/r")).unwrap();
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
-        for k in ["toolName", "summary", "inputJson", "cwd", "pattern", "patternLabel"] {
+        for k in [
+            "toolName",
+            "summary",
+            "inputJson",
+            "cwd",
+            "pattern",
+            "patternLabel",
+        ] {
             assert!(keys.contains(&k), "missing {k} in {keys:?}");
         }
         assert_eq!(keys.len(), 6);
@@ -1171,7 +1265,10 @@ mod tests {
         let mut doc = json!({ "permissions": { "allow": ["A", 7, { "x": 1 }] } });
         assert_eq!(patterns_of(&doc, "allow"), vec!["A".to_string()]);
         merge_pattern(&mut doc, "allow", "B");
-        assert_eq!(doc["permissions"]["allow"], json!(["A", 7, { "x": 1 }, "B"]));
+        assert_eq!(
+            doc["permissions"]["allow"],
+            json!(["A", 7, { "x": 1 }, "B"])
+        );
     }
 
     // ---- FR-14: read/write on disk ----
@@ -1360,7 +1457,11 @@ mod tests {
         }
         // ASCII case folding still scopes (the case Francois actually hits).
         assert_eq!(
-            generate_pattern("Read", &json!({ "file_path": "D:/Repo/src/a.ts" }), "d:\\repo"),
+            generate_pattern(
+                "Read",
+                &json!({ "file_path": "D:/Repo/src/a.ts" }),
+                "d:\\repo"
+            ),
             "Read(src/a.ts)"
         );
     }
@@ -1407,7 +1508,10 @@ mod tests {
 
         let rules = list_rules(&settings, None);
         assert_eq!(rules.len(), 1, "listed twice: {rules:?}");
-        assert!(rules[0].enabled, "settings.json wins — it is what Claude enforces");
+        assert!(
+            rules[0].enabled,
+            "settings.json wins — it is what Claude enforces"
+        );
         let ids: std::collections::HashSet<&str> = rules.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids.len(), rules.len());
         std::fs::remove_dir_all(&dir).ok();
@@ -1425,7 +1529,10 @@ mod tests {
         std::fs::create_dir_all(sidecar_path(&settings)).unwrap();
 
         let outcome = park_rule(&settings, "allow", "Bash(ls:*)");
-        assert!(outcome.is_err(), "the failure must surface, not be swallowed");
+        assert!(
+            outcome.is_err(),
+            "the failure must surface, not be swallowed"
+        );
         // FR-15 ordering: the sidecar write is attempted FIRST, so a failure
         // leaves the rule visible in settings.json rather than gone from both.
         assert_eq!(
