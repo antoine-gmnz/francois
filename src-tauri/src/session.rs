@@ -358,22 +358,17 @@ fn permission_args(mode: &str) -> Vec<String> {
 }
 
 /// (program, argv) launching `claude <claude_args>` under a session's runtime.
-/// wsl: `wsl.exe --cd <dir> -- claude …`. Drive-letter cwds pass through verbatim
-/// (wsl.exe maps them to /mnt/… itself — verified live), but a WSL UNC cwd MUST be
-/// pre-translated to its Linux path: `--cd '\\wsl.localhost\…'` fails with
-/// Wsl/E_INVALIDARG (verified live; wsl-filesystem FR-2/FR-11 rationale).
+/// wsl: `wsl.exe [-d <distro>] --cd <dir> -- claude …` via `wsl_base_args` — a
+/// WSL UNC cwd targets the distro named in the path (bare wsl.exe hits the
+/// DEFAULT distro, wrong on multi-distro machines) with its pre-translated Linux
+/// path (`--cd '\\wsl.localhost\…'` fails with Wsl/E_INVALIDARG — verified
+/// live); a drive-letter cwd passes verbatim (wsl.exe maps it to /mnt/… itself).
 /// native: plain `claude …`; the caller sets current_dir.
 fn claude_invocation(runtime: &str, cwd: &str, claude_args: Vec<String>) -> (String, Vec<String>) {
     if runtime == "wsl" {
-        let cd = crate::wsl::wsl_unc_to_linux(cwd)
-            .map(|(_, p)| p)
-            .unwrap_or_else(|| cwd.to_string());
-        let mut argv = vec![
-            "--cd".to_string(),
-            cd,
-            "--".to_string(),
-            "claude".to_string(),
-        ];
+        let mut argv = crate::wsl::wsl_base_args(cwd);
+        argv.push("--".to_string());
+        argv.push("claude".to_string());
         argv.extend(claude_args);
         ("wsl.exe".into(), argv)
     } else {
@@ -2628,14 +2623,20 @@ pub fn conversation_get_transcript(
 }
 
 /// francois:session:pickDirectory — owned by sessions-sidebar (spec §5).
-/// Opens the native OS directory dialog. `data: null` = user cancelled.
+/// Opens the native OS directory dialog. `data: null` = user cancelled. A picked
+/// item WITHOUT a filesystem path (shell-namespace nodes — e.g. the "Linux"
+/// entry itself in Explorer's sidebar) is an ERROR, not a cancel: silently doing
+/// nothing after a successful pick reads as a dead Browse button.
 #[tauri::command(async)]
 pub fn session_pick_directory(app: AppHandle) -> IpcResult<Option<Value>> {
     use tauri_plugin_dialog::DialogExt;
     match app.dialog().file().blocking_pick_folder() {
         Some(fp) => match fp.as_path().map(|p| p.to_string_lossy().to_string()) {
             Some(path) => ok(Some(serde_json::json!({ "path": path }))),
-            None => ok(None),
+            None => err(
+                "INVALID_INPUT",
+                "that location has no filesystem path — pick a folder inside it, or paste its path (e.g. \\\\wsl$\\<distro>\\…) into the directory field",
+            ),
         },
         None => ok(None),
     }
@@ -5232,11 +5233,14 @@ mod tests {
         let (prog, args) = claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()]);
         assert_eq!(prog, "claude");
         assert_eq!(args, vec!["-p", "hi"]);
-        // wsl + drive cwd: wsl.exe maps it to /mnt/… itself — passed verbatim
+        // wsl + drive cwd: wsl.exe maps it to /mnt/… itself — passed verbatim,
+        // no -d (no distro info → default distro is the only sane target)
         let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()]);
         assert_eq!(prog, "wsl.exe");
         assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
-        // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG live)
+        // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG
+        // live) AND target the distro named in the path — bare wsl.exe hits the
+        // default distro, which need not be the one holding the repo.
         let (prog, args) = claude_invocation(
             "wsl",
             "\\\\wsl.localhost\\Ubuntu\\home\\u\\api",
@@ -5245,7 +5249,7 @@ mod tests {
         assert_eq!(prog, "wsl.exe");
         assert_eq!(
             args,
-            vec!["--cd", "/home/u/api", "--", "claude", "-p", "hi"]
+            vec!["-d", "Ubuntu", "--cd", "/home/u/api", "--", "claude", "-p", "hi"]
         );
     }
 

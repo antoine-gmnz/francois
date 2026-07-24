@@ -13,7 +13,7 @@ import type {
   ShellWritePayload,
   ShellDisposePayload,
 } from '../contract/shell-terminal';
-import { DEFAULT_SESSION_ID, setShellState } from './shellStore';
+import { setShellState } from './shellStore';
 import { useStore } from './store';
 
 const FAINT = '\x1b[38;2;86;90;99m'; // #565a63 (spec §8)
@@ -71,7 +71,9 @@ function buildTheme(): ITheme {
   };
 }
 
-export default function ShellTerminal({ sessionId = DEFAULT_SESSION_ID }: { sessionId?: string }) {
+// sessionId is REQUIRED — the pre-wsl-filesystem global default-session shell is
+// gone; a silent fallback here could resurrect it from a future call site.
+export default function ShellTerminal({ sessionId }: { sessionId: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   // Re-theme the live terminal when the app theme flips (store-owned by the
