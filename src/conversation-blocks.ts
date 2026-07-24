@@ -5,14 +5,16 @@
 // Every rule is a keyed upsert on blockId: replaying an event is a no-op or an
 // identical replace, and out-of-order arrivals insert rather than drop.
 
-import type { CommandCard, Result, SessionQuestion } from '../contract/common';
+import type { CommandCard, PermissionAsk, PermissionRule, Result, SessionQuestion } from '../contract/common';
 import {
   assistantColors,
   classifyToolStart,
   type ConversationBlock,
+  type ToolConversationBlock,
   type UserConversationBlock,
 } from '../contract/conversation-view';
 import type { CommandConversationBlock } from '../contract/interactive-commands';
+import type { PermissionConversationBlock } from '../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../contract/session-questions';
 
 export interface TranscriptState {
@@ -31,6 +33,8 @@ export type TranscriptAction =
   | { t: 'commandOutput'; blockId: string; card: CommandCard } // interactive-commands FR-20
   | { t: 'questionAsked'; blockId: string; questions: SessionQuestion[] } // session-questions FR-16
   | { t: 'questionResolved'; blockId: string; state: 'answered' | 'cancelled'; answers?: Record<string, string> } // session-questions FR-16
+  | { t: 'permissionAsked'; blockId: string; ask: PermissionAsk } // permission-guardrails FR-24
+  | { t: 'permissionResolved'; blockId: string; state: 'allowed' | 'denied' | 'cancelled'; rule?: PermissionRule } // permission-guardrails FR-24
   | { t: 'clear' } // /clear: full reset — drop every block
   | { t: 'remove'; blockId: string };
 
@@ -67,6 +71,20 @@ export function cardHeaderLabel(card: CommandCard | undefined, blockCommand: str
   const token = (card && commandFromCard(card)) || blockCommand;
   return (token || 'output').toUpperCase();
 }
+
+/**
+ * FR-24: the placeholder a resolved-before-asked permission block carries until
+ * its `permission.asked` arrives. Every field empty so the card renders inert
+ * chrome rather than misleading content, and so the fill-in check is unambiguous.
+ */
+const EMPTY_ASK: PermissionAsk = {
+  toolName: '',
+  summary: '',
+  inputJson: '',
+  cwd: '',
+  pattern: '',
+  patternLabel: '',
+};
 
 export function transcriptReducer(state: TranscriptState, a: TranscriptAction): TranscriptState {
   const idx = (id: string) => state.blocks.findIndex((b) => b.blockId === id);
@@ -201,6 +219,57 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       };
       return replace(i, next);
     }
+    case 'permissionAsked': {
+      // FR-24: keyed idempotent insert; replay is a no-op. The one upsert case
+      // mirrors questionAsked — a resolved-first block (out-of-order insert,
+      // placeholder ask) gets its real ask filled in without reviving its
+      // resolution.
+      const i = idx(a.blockId);
+      if (i === -1) {
+        const b: PermissionConversationBlock = {
+          kind: 'permission',
+          blockId: a.blockId,
+          isStreaming: true, // FR-25: true iff pending
+          ask: a.ask,
+          state: 'pending',
+        };
+        return { blocks: [...state.blocks, b] };
+      }
+      const b = state.blocks[i];
+      if (b.kind !== 'permission') return state;
+      if (b.ask.toolName === '' && a.ask.toolName !== '') {
+        return replace(i, { ...b, ask: a.ask });
+      }
+      return state;
+    }
+    case 'permissionResolved': {
+      // FR-24: update state/rule in place; a resolve arriving before the insert
+      // (out-of-order) inserts the resolved block with a placeholder ask, which
+      // a later permissionAsked fills in. `rule` present iff one was written.
+      const i = idx(a.blockId);
+      if (i === -1) {
+        const b: PermissionConversationBlock = {
+          kind: 'permission',
+          blockId: a.blockId,
+          isStreaming: false,
+          ask: EMPTY_ASK,
+          state: a.state,
+          ...(a.rule !== undefined ? { rule: a.rule } : {}),
+        };
+        return { blocks: [...state.blocks, b] };
+      }
+      const b = state.blocks[i];
+      if (b.kind !== 'permission') return state;
+      const next: PermissionConversationBlock = {
+        kind: 'permission',
+        blockId: b.blockId,
+        isStreaming: false,
+        ask: b.ask,
+        state: a.state,
+        ...(a.rule !== undefined ? { rule: a.rule } : {}),
+      };
+      return replace(i, next);
+    }
     case 'clear':
       return { blocks: [] };
     case 'remove': {
@@ -211,6 +280,54 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       return { blocks: next };
     }
   }
+}
+
+// ---------- render-time compaction of duplicate tool rows ----------
+
+/** The core's tool_meta line-change shape: `+N −M` (U+2212 minus). */
+const LINE_CHANGE_META = /^\+(\d+) −(\d+)$/;
+
+/**
+ * Collapse runs of consecutive tool blocks that are identical except for their
+ * meta (e.g. repeated `Edit  src/a.ts` rows) into one row. Line-change metas
+ * (`+N −M`) sum across the run; other metas keep the newest value. Render-time
+ * only — reducer state stays one block per event so blockId-keyed upserts
+ * (toolDone replay, out-of-order arrivals) are untouched.
+ *
+ * The newest block represents the run: its blockId keys the row and its
+ * streaming state wins (a still-streaming edit shows the run total so far).
+ * An `error` meta never merges — it stays its own visible row and breaks the
+ * run on both sides.
+ */
+export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] {
+  const out: ConversationBlock[] = [];
+  for (const b of blocks) {
+    const prev = out[out.length - 1];
+    if (
+      b.kind === 'tool' &&
+      prev !== undefined &&
+      prev.kind === 'tool' &&
+      prev.tool === b.tool &&
+      prev.summary === b.summary &&
+      prev.meta !== 'error' &&
+      b.meta !== 'error'
+    ) {
+      out[out.length - 1] = mergeToolRun(prev, b);
+      continue;
+    }
+    out.push(b);
+  }
+  return out;
+}
+
+function mergeToolRun(acc: ToolConversationBlock, b: ToolConversationBlock): ToolConversationBlock {
+  const am = acc.meta !== undefined ? LINE_CHANGE_META.exec(acc.meta) : null;
+  const bm = b.meta !== undefined ? LINE_CHANGE_META.exec(b.meta) : null;
+  const meta =
+    am && bm
+      ? `+${Number(am[1]) + Number(bm[1])} −${Number(am[2]) + Number(bm[2])}`
+      : (b.meta ?? acc.meta);
+  return meta !== undefined ? { ...b, meta } : { ...b };
 }
 
 // ---------- model card helpers (interactive-commands FR-21) ----------

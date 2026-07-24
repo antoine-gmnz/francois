@@ -16,6 +16,10 @@
 //    matching FR-19's lazy-error path rather than failing `create`.
 
 use crate::ipc::{err, ok, AppError, IpcResult};
+// permission-guardrails: the settings.json / rule-pattern half of the feature
+// lives in permissions.rs; this file owns only the control-channel wiring
+// (parking an ask, writing the control_response) — spec §6.
+use crate::permissions::{PermissionAsk, PermissionRule};
 // usage-bar §6: the /usage meter grammar + stream-json answer extraction now live
 // in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
 // is unchanged — these are the same functions, imported instead of defined.
@@ -525,8 +529,10 @@ struct SessionQuestion {
     multi_select: bool,
 }
 
-/// FR-8: the deny message for any non-AskUserQuestion permission ask.
-const PERMISSION_DENY_MSG: &str = "Francois declined: interactive permission prompts are not supported yet — adjust the session's permission mode.";
+/// permission-guardrails FR-12: what the CLI is told when the user denies a call.
+/// (Replaces session-questions' blanket "not supported yet" deny — every gated
+/// call now parks on an approval card instead.)
+const PERMISSION_DENY_MSG: &str = "Francois: the user denied this tool call.";
 
 /// A parked AskUserQuestion awaiting its answer, keyed by blockId in the turn's
 /// pending map (§6). `input` is the VERBATIM tool input — the allow response must
@@ -592,15 +598,31 @@ fn is_git_command(input: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// A parked permission ask awaiting its decision, keyed by blockId in the turn's
+/// pending map. `input` is the VERBATIM tool input — an allow response must echo
+/// it unmodified (permission-guardrails FR-3).
+struct PendingPermission {
+    request_id: String,
+    input: Value,
+    ask: PermissionAsk,
+}
+
 /// What to do with an inbound `control_request` line. Pure; unit-tested.
 enum ControlDecision {
-    /// AskUserQuestion with well-formed input: park it (FR-6).
+    /// AskUserQuestion with well-formed input: park it (session-questions FR-6).
     Ask {
         request_id: String,
         input: Value,
         questions: Vec<SessionQuestion>,
     },
-    /// Answer immediately with this control_response payload (FR-7/8/9).
+    /// Any other gated tool call: park an approval card (permission-guardrails
+    /// FR-1(d)) — this is what replaced session-questions' blanket deny.
+    Permission {
+        request_id: String,
+        tool_name: String,
+        input: Value,
+    },
+    /// Answer immediately with this control_response payload (FR-7/9 + allowGit).
     Respond(Value),
 }
 
@@ -627,11 +649,18 @@ fn decide_control_request(v: &Value, allow_git: bool) -> ControlDecision {
         .cloned()
         .unwrap_or(Value::Null);
     if tool != "AskUserQuestion" {
-        // allowGit: auto-approve a direct git/gh Bash call instead of denying it.
+        // permission-guardrails FR-1(c): the allowGit fast path is evaluated
+        // BEFORE parking, so an allowGit session still auto-approves a direct
+        // git/gh Bash call with no card (pre-feature parity, §3 flow 8).
         if allow_git && tool == "Bash" && is_git_command(&input) {
             return ControlDecision::Respond(allow_tool_response(&request_id, &input));
         }
-        return ControlDecision::Respond(deny_response(&request_id, PERMISSION_DENY_MSG));
+        // FR-1(d): everything else parks an approval card.
+        return ControlDecision::Permission {
+            request_id,
+            tool_name: tool.to_string(),
+            input,
+        };
     }
     match parse_questions(&input) {
         Some(questions) => ControlDecision::Ask {
@@ -739,6 +768,25 @@ enum SessionEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         answers: Option<Value>,
     },
+    #[serde(rename = "permission.asked")]
+    PermissionAsked {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        ask: PermissionAsk,
+    },
+    #[serde(rename = "permission.resolved")]
+    PermissionResolved {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        state: String, // "allowed" | "denied" | "cancelled"
+        /// Present iff the decision wrote a rule — omitted (never null) otherwise.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rule: Option<PermissionRule>,
+    },
     #[serde(rename = "session.commands")]
     Commands {
         #[serde(rename = "sessionId")]
@@ -794,8 +842,9 @@ enum BlockKind {
     Assistant,
     Tool,
     Subagent,
-    Command,  // interactive-commands: a slash-command response card
-    Question, // session-questions: an AskUserQuestion card
+    Command,    // interactive-commands: a slash-command response card
+    Question,   // session-questions: an AskUserQuestion card
+    Permission, // permission-guardrails: a gated tool call awaiting approval
 }
 
 #[derive(Clone)]
@@ -824,6 +873,10 @@ struct TurnHandle {
     /// session-questions FR-6: blockId → parked AskUserQuestion. Removing an entry
     /// CLAIMS it — that atomic claim is what makes resolution exactly-once (FR-13).
     pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
+    /// permission-guardrails FR-2: blockId → parked tool call awaiting approval.
+    /// A sibling of `pending_questions` with the SAME claim-to-resolve discipline
+    /// (FR-10) — kept separate because the two resolve to different events.
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
 }
 
 /// The single in-flight /usage-/cost side-spawn of a session (interactive-commands
@@ -1010,6 +1063,44 @@ impl Session {
         Some(b.clone())
     }
 
+    /// permission-guardrails FR-2: append a pending permission block. `card`
+    /// reuse (as for Question blocks): it holds `{ ask, state, rule? }`.
+    fn buf_permission(&mut self, block_id: &str, ask: Value) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::Permission,
+            text: String::new(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: Some(serde_json::json!({ "ask": ask, "state": "pending" })),
+            streaming: true,
+        });
+    }
+
+    /// permission-guardrails FR-8/FR-10: flip a permission block to its resolved
+    /// state in place. Returns the updated block (for persistence) or None if
+    /// unknown.
+    fn buf_permission_resolve(
+        &mut self,
+        block_id: &str,
+        state: &str,
+        rule: Option<&Value>,
+    ) -> Option<BufBlock> {
+        let b = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id && b.kind == BlockKind::Permission)?;
+        if let Some(card) = b.card.as_mut() {
+            card["state"] = Value::String(state.into());
+            if let Some(r) = rule {
+                card["rule"] = r.clone();
+            }
+        }
+        b.streaming = false;
+        Some(b.clone())
+    }
+
     /// interactive-commands FR-11: reserve the single in-flight probe slot.
     /// Returns the (still empty) child slot, or None if a probe is already pending.
     fn reserve_probe(&mut self, block_id: &str) -> Option<Arc<Mutex<Option<Child>>>> {
@@ -1119,6 +1210,20 @@ fn classify_block(b: &BufBlock) -> Value {
             }
             o
         }
+        BlockKind::Permission => {
+            // PermissionConversationBlock (contract/permission-guardrails.ts):
+            // isStreaming ⇔ pending (FR-25); `rule` present iff one was written.
+            let card = b.card.clone().unwrap_or_else(|| serde_json::json!({}));
+            let mut o = serde_json::json!({
+                "kind": "permission", "blockId": b.block_id, "isStreaming": b.streaming,
+                "ask": card.get("ask").cloned().unwrap_or_else(|| serde_json::json!({})),
+                "state": card.get("state").cloned().unwrap_or_else(|| Value::String("pending".into())),
+            });
+            if let Some(r) = card.get("rule") {
+                o["rule"] = r.clone();
+            }
+            o
+        }
     }
 }
 
@@ -1158,6 +1263,7 @@ pub fn kill_all(app: &AppHandle) {
     // synchronously here — the reader threads may never get to run again. The
     // drain is the exactly-once claim; a reader that does run finds nothing.
     let mut orphaned: Vec<(String, String)> = Vec::new(); // (session_id, block_id)
+    let mut orphaned_perms: Vec<(String, String)> = Vec::new(); // permission-guardrails FR-10
     {
         let map = engine.sessions.lock().unwrap();
         for s in map.values() {
@@ -1169,6 +1275,14 @@ pub fn kill_all(app: &AppHandle) {
                         orphaned.push((s.id.clone(), bid));
                     }
                 }
+                {
+                    // permission-guardrails FR-10 (§7 #8): the same synchronous
+                    // drain for parked approval cards.
+                    let mut p = turn.pending_permissions.lock().unwrap();
+                    for (bid, _) in p.drain() {
+                        orphaned_perms.push((s.id.clone(), bid));
+                    }
+                }
                 let _ = turn.child.lock().unwrap().kill();
             }
             if let Some(p) = &s.pending_probe {
@@ -1178,6 +1292,9 @@ pub fn kill_all(app: &AppHandle) {
     }
     for (sid, bid) in orphaned {
         resolve_question(app, &sid, &bid, "cancelled", None);
+    }
+    for (sid, bid) in orphaned_perms {
+        resolve_permission(app, &sid, &bid, "cancelled", None);
     }
 }
 
@@ -1232,6 +1349,20 @@ fn persisted_block_json(b: &BufBlock) -> Value {
             });
             if let Some(a) = card.get("answers") {
                 o["answers"] = a.clone();
+            }
+            return o;
+        }
+        BlockKind::Permission => {
+            // permission-guardrails FR-2/FR-8: persisted at ask (pending) and
+            // again at resolution — reload upserts by blockId (parse_transcript).
+            let card = b.card.clone().unwrap_or_else(|| serde_json::json!({}));
+            let mut o = serde_json::json!({
+                "blockId": b.block_id, "kind": "permission",
+                "ask": card.get("ask").cloned().unwrap_or_else(|| serde_json::json!({})),
+                "state": card.get("state").cloned().unwrap_or_else(|| Value::String("pending".into())),
+            });
+            if let Some(r) = card.get("rule") {
+                o["rule"] = r.clone();
             }
             return o;
         }
@@ -1318,6 +1449,34 @@ fn parse_persisted_block(line: &str) -> Option<BufBlock> {
             return Some(BufBlock {
                 block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
                 kind: BlockKind::Question,
+                text: String::new(),
+                tool: String::new(),
+                summary: String::new(),
+                meta: None,
+                card: Some(card),
+                streaming: false,
+            });
+        }
+        "permission" => {
+            // permission-guardrails FR-25: same rule as questions — pending
+            // entries are memory-only, so a line still "pending" on disk can only
+            // be read back after a hard kill, and a dead process has no
+            // answerable asks. Normalize it to cancelled.
+            let ask = v
+                .get("ask")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let state = match v.get("state").and_then(|s| s.as_str()) {
+                Some(s @ ("allowed" | "denied")) => s,
+                _ => "cancelled",
+            };
+            let mut card = serde_json::json!({ "ask": ask, "state": state });
+            if let Some(r) = v.get("rule").filter(|r| !r.is_null()) {
+                card["rule"] = r.clone();
+            }
+            return Some(BufBlock {
+                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+                kind: BlockKind::Permission,
                 text: String::new(),
                 tool: String::new(),
                 summary: String::new(),
@@ -2909,6 +3068,107 @@ pub fn session_answer_question(
     ok(None)
 }
 
+/// francois:permissions:decide (permission-guardrails FR-6..FR-9, §5.4).
+///
+/// Ordering matters and is spec'd (FR-7): an `*Always` decision writes the RULE
+/// FIRST, and a write failure claims nothing, decides nothing and writes no
+/// control_response — the card stays pending so the user can retry or fall back
+/// to a once-decision. Nothing half-applies.
+#[tauri::command(async)]
+pub fn permissions_decide(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    block_id: String,
+    decision: String,
+    tier: Option<String>,
+) -> IpcResult<Option<()>> {
+    let Some((allow, remember)) = crate::permissions::decide_outcome(&decision) else {
+        return err("INVALID_INPUT", "unknown decision");
+    };
+    // Snapshot the turn's shared handles, then RELEASE the sessions lock — the
+    // stdin write below can block and must never stall every other command.
+    let handles = {
+        let map = engine.sessions.lock().unwrap();
+        match map.get(&session_id) {
+            None => return err("SESSION_NOT_FOUND", "no such session"),
+            Some(s) => s
+                .current
+                .as_ref()
+                .map(|t| (t.stdin.clone(), t.pending_permissions.clone())),
+        }
+    };
+    let Some((stdin, pending)) = handles else {
+        // No turn in flight ⇒ nothing can be pending (§7 #16).
+        return err("PERMISSION_NOT_PENDING", "that request is no longer pending");
+    };
+
+    // FR-7: PEEK (don't claim) to learn the pattern, write the rule, and only
+    // then claim. A concurrent decide could write the same rule twice — the merge
+    // is idempotent (§7 #1) — but only one of them can claim the entry.
+    let mut rule: Option<PermissionRule> = None;
+    if remember {
+        let pattern = {
+            let p = pending.lock().unwrap();
+            match p.get(&block_id) {
+                Some(q) => q.ask.pattern.clone(),
+                None => {
+                    return err("PERMISSION_NOT_PENDING", "that request is no longer pending")
+                }
+            }
+        };
+        // FR-6: local by default. VALIDATED — `tier_path` treats anything ≠
+        // "global" as local, so an unvalidated string used to flow on into the
+        // emitted PermissionRule's `tier`/`id`, violating the PermissionTier
+        // union and minting an id `permissions_list` can never produce (so the
+        // editor could never act on that rule).
+        let tier = tier.unwrap_or_else(|| "local".into());
+        if !crate::permissions::is_valid_tier(&tier) {
+            return err("INVALID_INPUT", "unknown tier");
+        }
+        let path = match crate::permissions::tier_path(&engine, &session_id, &tier) {
+            Ok(p) => p,
+            Err((code, msg)) => return err(code, msg),
+        };
+        let effect = if allow { "allow" } else { "deny" };
+        match crate::permissions::write_rule(&path, &tier, effect, &pattern) {
+            Ok(r) => rule = Some(r),
+            Err(msg) => return err("SETTINGS_WRITE_FAILED", msg),
+        }
+    }
+
+    // FR-8: claim the entry — removal is the exactly-once guarantee (FR-10). A
+    // concurrent cancel / turn-end that got there first already resolved this ask.
+    let Some(q) = claim_pending(&pending, &block_id) else {
+        // Lost the race after the rule was already written (the peek→claim gap).
+        // The rule IS on disk and the card is about to render `cancelled`, so say
+        // where it went rather than leaving it invisible until the editor is opened.
+        if let Some(r) = &rule {
+            eprintln!(
+                "permission-guardrails: wrote rule {} but the request was cancelled first",
+                r.id
+            );
+        }
+        return err("PERMISSION_NOT_PENDING", "that request is no longer pending");
+    };
+    let payload = if allow {
+        allow_tool_response(&q.request_id, &q.input) // FR-3: verbatim updatedInput
+    } else {
+        deny_response(&q.request_id, PERMISSION_DENY_MSG) // FR-12
+    };
+    if !write_control_line(&stdin, &payload) {
+        // FR-9: the child died between park and decision. The rule (if any) was
+        // already written, so it rides along on the cancelled resolution — FR-22's
+        // "rule written: …" line must still render, or an "always allow" would
+        // take effect on disk with no trace anywhere in the transcript.
+        resolve_permission(&app, &session_id, &block_id, "cancelled", rule.as_ref());
+        return err("PERMISSION_NOT_PENDING", "that request is no longer pending");
+    }
+    let state = if allow { "allowed" } else { "denied" };
+    resolve_permission(&app, &session_id, &block_id, state, rule.as_ref());
+    ok(None)
+}
+
 #[derive(Serialize)]
 pub struct SendOutput {
     queued: bool,
@@ -3406,6 +3666,8 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
     let stdin = Arc::new(Mutex::new(child.stdin.take()));
     let pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    let pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     let child = Arc::new(Mutex::new(child));
     let interrupted = Arc::new(AtomicBool::new(false));
     {
@@ -3417,6 +3679,7 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
                 interrupted: interrupted.clone(),
                 stdin: stdin.clone(),
                 pending_questions: pending_questions.clone(),
+                pending_permissions: pending_permissions.clone(),
             });
         }
     }
@@ -3432,6 +3695,7 @@ fn begin_turn(app: &AppHandle, session_id: &str, block_id: String, text: String,
             interrupted,
             stdin,
             pending_questions,
+            pending_permissions,
             model_id,
             resume_used,
             block_id,
@@ -3456,6 +3720,7 @@ fn run_reader(
     interrupted: Arc<AtomicBool>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     model_id: String,
     resume_used: bool,
     block_id: String,
@@ -3603,12 +3868,19 @@ fn run_reader(
                 *stdin.lock().unwrap() = None;
             }
             "control_request" => {
-                // session-questions FR-6..FR-9 (stdio control channel).
-                handle_control_request(&app, &session_id, &v, &stdin, &pending_questions);
+                // session-questions FR-6..FR-9 + permission-guardrails FR-1/FR-2.
+                handle_control_request(
+                    &app,
+                    &session_id,
+                    &v,
+                    &stdin,
+                    &pending_questions,
+                    &pending_permissions,
+                );
             }
             "control_cancel_request" => {
-                // session-questions FR-10: the CLI withdrew a parked request (e.g. a
-                // user-configured auto-continue). Unmatched ids are ignored.
+                // session-questions FR-10 / permission-guardrails FR-10: the CLI
+                // withdrew a parked request. Unmatched ids are ignored.
                 if let Some(rid) = v.get("request_id").and_then(|r| r.as_str()) {
                     let claimed = {
                         let mut p = pending_questions.lock().unwrap();
@@ -3625,6 +3897,21 @@ fn run_reader(
                             &deny_response(&q.request_id, "question cancelled"),
                         );
                         resolve_question(&app, &session_id, &bid, "cancelled", None);
+                    }
+                    let claimed_perm = {
+                        let mut p = pending_permissions.lock().unwrap();
+                        let key = p
+                            .iter()
+                            .find(|(_, q)| q.request_id == rid)
+                            .map(|(k, _)| k.clone());
+                        key.and_then(|k| p.remove(&k).map(|q| (k, q)))
+                    };
+                    if let Some((bid, q)) = claimed_perm {
+                        let _ = write_control_line(
+                            &stdin,
+                            &deny_response(&q.request_id, "request cancelled"),
+                        );
+                        resolve_permission(&app, &session_id, &bid, "cancelled", None);
                     }
                 }
             }
@@ -3647,6 +3934,15 @@ fn run_reader(
     };
     for bid in orphaned {
         resolve_question(&app, &session_id, &bid, "cancelled", None);
+    }
+    // permission-guardrails FR-10: identical drain for parked approval cards —
+    // an ask never outlives the turn it parked, and the claim is exactly-once.
+    let orphaned_perms: Vec<String> = {
+        let mut p = pending_permissions.lock().unwrap();
+        p.drain().map(|(k, _)| k).collect()
+    };
+    for bid in orphaned_perms {
+        resolve_permission(&app, &session_id, &bid, "cancelled", None);
     }
 
     // Resume-fail (FR-8/9): Claude rejected the stale --resume id before starting a
@@ -3763,13 +4059,58 @@ fn handle_control_request(
     v: &Value,
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
     pending: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
+    pending_perms: &Arc<Mutex<HashMap<String, PendingPermission>>>,
 ) {
-    let allow_git = {
+    let (allow_git, cwd) = {
         let engine = app.state::<Engine>();
         let map = engine.sessions.lock().unwrap();
-        map.get(session_id).map(|s| s.allow_git).unwrap_or(false)
+        match map.get(session_id) {
+            Some(s) => (s.allow_git, s.cwd.clone()),
+            None => (false, String::new()),
+        }
     };
     match decide_control_request(v, allow_git) {
+        ControlDecision::Permission {
+            request_id,
+            tool_name,
+            input,
+        } => {
+            // permission-guardrails FR-2: park the ask — mint a block, record the
+            // pending entry, persist it pending, and let the card decide.
+            let ask = crate::permissions::build_ask(&tool_name, &input, &cwd);
+            let ask_value = serde_json::to_value(&ask).unwrap_or_else(|_| serde_json::json!({}));
+            let block_id = uuid();
+            pending_perms.lock().unwrap().insert(
+                block_id.clone(),
+                PendingPermission {
+                    request_id,
+                    input,
+                    ask: ask.clone(),
+                },
+            );
+            let block = {
+                let engine = app.state::<Engine>();
+                let mut map = engine.sessions.lock().unwrap();
+                match map.get_mut(session_id) {
+                    Some(s) => {
+                        s.buf_permission(&block_id, ask_value);
+                        s.block_buffer.last().cloned()
+                    }
+                    None => None,
+                }
+            };
+            if let Some(b) = &block {
+                append_transcript(app, session_id, b); // FR-2: persisted while pending
+            }
+            emit(
+                app,
+                SessionEvent::PermissionAsked {
+                    session_id: session_id.into(),
+                    block_id,
+                    ask,
+                },
+            );
+        }
         ControlDecision::Respond(payload) => {
             let _ = write_control_line(stdin, &payload); // FR-7/8/9: no event, no card
         }
@@ -3838,6 +4179,47 @@ fn resolve_question(
             block_id: block_id.into(),
             state: state.into(),
             answers: answers.cloned(),
+        },
+    );
+}
+
+/// permission-guardrails FR-8/FR-10: CLAIM a parked ask. The `HashMap::remove`
+/// under the map's own mutex IS the exactly-once guarantee — whoever removes the
+/// entry owns the resolution, and every other path (a concurrent decide, a
+/// `control_cancel_request`, the turn-end drain, `kill_all`) then finds nothing.
+/// Extracted so that discipline is unit-testable without an `AppHandle`.
+fn claim_pending<T>(pending: &Arc<Mutex<HashMap<String, T>>>, block_id: &str) -> Option<T> {
+    pending.lock().unwrap().remove(block_id)
+}
+
+/// permission-guardrails FR-8/FR-10: flip a permission block to its resolved
+/// state, persist it, and emit exactly one permission.resolved. Callers must have
+/// CLAIMED the pending entry first (removed it from the turn's map) — that
+/// removal is what makes resolution exactly-once.
+fn resolve_permission(
+    app: &AppHandle,
+    session_id: &str,
+    block_id: &str,
+    state: &str,
+    rule: Option<&PermissionRule>,
+) {
+    let rule_value = rule.and_then(|r| serde_json::to_value(r).ok());
+    let block = {
+        let engine = app.state::<Engine>();
+        let mut map = engine.sessions.lock().unwrap();
+        map.get_mut(session_id)
+            .and_then(|s| s.buf_permission_resolve(block_id, state, rule_value.as_ref()))
+    };
+    if let Some(b) = &block {
+        append_transcript(app, session_id, b);
+    }
+    emit(
+        app,
+        SessionEvent::PermissionResolved {
+            session_id: session_id.into(),
+            block_id: block_id.into(),
+            state: state.into(),
+            rule: rule.cloned(),
         },
     );
 }
@@ -6206,18 +6588,31 @@ mod tests {
     }
 
     #[test]
-    fn control_request_other_tool_denies_instantly() {
-        // FR-8: any other tool → deny control_response, §5.5 shape, exact message.
+    fn control_request_other_tool_parks_a_permission_ask() {
+        // permission-guardrails FR-1(d): what session-questions FR-8 used to deny
+        // outright now parks an approval card, carrying the request verbatim.
         let v = json!({ "type": "control_request", "request_id": "req-9", "request": {
-            "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": "rm -rf /" } } });
-        let ControlDecision::Respond(payload) = decide_control_request(&v, false) else {
-            panic!("expected Respond");
+            "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": "npm test" } } });
+        let ControlDecision::Permission {
+            request_id,
+            tool_name,
+            input,
+        } = decide_control_request(&v, false)
+        else {
+            panic!("expected Permission");
         };
+        assert_eq!(request_id, "req-9");
+        assert_eq!(tool_name, "Bash");
+        assert_eq!(input, json!({ "command": "npm test" })); // FR-3: verbatim
+    }
+
+    #[test]
+    fn permission_deny_message_is_the_fr12_text() {
         assert_eq!(
-            payload,
+            deny_response("r", PERMISSION_DENY_MSG),
             json!({ "type": "control_response", "response": {
-                "subtype": "success", "request_id": "req-9", "response": { "behavior": "deny",
-                "message": "Francois declined: interactive permission prompts are not supported yet — adjust the session's permission mode." } } })
+                "subtype": "success", "request_id": "r", "response": { "behavior": "deny",
+                "message": "Francois: the user denied this tool call." } } })
         );
     }
 
@@ -6227,14 +6622,14 @@ mod tests {
             json!({ "type": "control_request", "request_id": "g", "request": {
                 "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": cmd } } })
         };
-        let behavior = |v: &Value, allow_git: bool| -> String {
-            let ControlDecision::Respond(payload) = decide_control_request(v, allow_git) else {
-                panic!("expected Respond for a Bash tool");
-            };
-            payload["response"]["response"]["behavior"]
-                .as_str()
-                .unwrap()
-                .to_string()
+        // permission-guardrails FR-1(c): allowGit is evaluated BEFORE parking, so
+        // it still answers instantly; everything else now parks a card instead of
+        // being denied.
+        let parks = |v: &Value, allow_git: bool| -> bool {
+            matches!(
+                decide_control_request(v, allow_git),
+                ControlDecision::Permission { .. }
+            )
         };
 
         // allowGit on: a direct git/gh call is allowed with the input echoed verbatim.
@@ -6247,15 +6642,15 @@ mod tests {
             payload["response"]["response"]["updatedInput"],
             commit["request"]["input"]
         );
-        assert_eq!(behavior(&bash("gh pr create"), true), "allow");
+        assert!(!parks(&bash("gh pr create"), true));
 
-        // allowGit on but NOT a direct git call → still denied (nothing rides along).
-        assert_eq!(behavior(&bash("rm -rf /"), true), "deny");
-        assert_eq!(behavior(&bash("cd x && git push"), true), "deny");
-        assert_eq!(behavior(&bash("github-cli status"), true), "deny");
+        // allowGit on but NOT a direct git call → no fast path; the user decides.
+        assert!(parks(&bash("rm -rf /"), true));
+        assert!(parks(&bash("cd x && git push"), true)); // nothing rides along
+        assert!(parks(&bash("github-cli status"), true));
 
-        // allowGit off → even a git call is denied (default behavior unchanged).
-        assert_eq!(behavior(&bash("git commit -m x"), false), "deny");
+        // allowGit off → even a git call goes to a card.
+        assert!(parks(&bash("git commit -m x"), false));
     }
 
     #[test]
@@ -6441,6 +6836,144 @@ mod tests {
         let q = classify_block(&blocks[1]);
         assert_eq!(q["state"], "answered");
         assert_eq!(q["answers"], json!({ "Q": "A" }));
+    }
+
+    // ---------- permission-guardrails (specs/permission-guardrails.md) ----------
+
+    fn perm_session() -> Session {
+        let mut s = test_session();
+        s.cwd = "/repo".into();
+        s
+    }
+
+    fn sample_rule() -> PermissionRule {
+        PermissionRule {
+            id: "local|allow|Bash(npm test:*)".into(),
+            pattern: "Bash(npm test:*)".into(),
+            effect: "allow".into(),
+            tier: "local".into(),
+            enabled: true,
+            label: "npm test (any arguments)".into(),
+        }
+    }
+
+    #[test]
+    fn permission_event_members_serialize_to_contract_shape() {
+        let ask = crate::permissions::build_ask("Bash", &json!({ "command": "ls" }), "/repo");
+        let asked = serde_json::to_value(SessionEvent::PermissionAsked {
+            session_id: "s1".into(),
+            block_id: "p1".into(),
+            ask,
+        })
+        .unwrap();
+        assert_eq!(asked["type"], "permission.asked");
+        assert_eq!(asked["sessionId"], "s1");
+        assert_eq!(asked["blockId"], "p1");
+        assert_eq!(asked["ask"]["toolName"], "Bash");
+        assert_eq!(asked["ask"]["pattern"], "Bash(ls:*)");
+
+        // `rule` is OMITTED (never null) when no rule was written (§9).
+        let cancelled = serde_json::to_value(SessionEvent::PermissionResolved {
+            session_id: "s1".into(),
+            block_id: "p1".into(),
+            state: "cancelled".into(),
+            rule: None,
+        })
+        .unwrap();
+        assert_eq!(
+            cancelled,
+            json!({ "type": "permission.resolved", "sessionId": "s1", "blockId": "p1",
+                "state": "cancelled" })
+        );
+
+        let allowed = serde_json::to_value(SessionEvent::PermissionResolved {
+            session_id: "s1".into(),
+            block_id: "p1".into(),
+            state: "allowed".into(),
+            rule: Some(sample_rule()),
+        })
+        .unwrap();
+        assert_eq!(allowed["rule"]["pattern"], "Bash(npm test:*)");
+        assert_eq!(allowed["rule"]["tier"], "local");
+        assert_eq!(allowed["rule"]["enabled"], true);
+    }
+
+    #[test]
+    fn permission_block_buffers_pending_then_resolves_in_place() {
+        // FR-2/FR-8: isStreaming ⇔ pending (FR-25); `rule` present iff written.
+        let mut s = perm_session();
+        let ask = serde_json::to_value(crate::permissions::build_ask(
+            "Bash",
+            &json!({ "command": "npm test" }),
+            "/repo",
+        ))
+        .unwrap();
+        s.buf_permission("p1", ask);
+        let pending = classify_block(&s.block_buffer[0]);
+        assert_eq!(pending["kind"], "permission");
+        assert_eq!(pending["state"], "pending");
+        assert_eq!(pending["isStreaming"], true);
+        assert_eq!(pending["ask"]["patternLabel"], "npm test (any arguments)");
+        assert!(pending.get("rule").is_none());
+
+        let rule = serde_json::to_value(sample_rule()).unwrap();
+        let updated = s
+            .buf_permission_resolve("p1", "allowed", Some(&rule))
+            .expect("resolves");
+        let done = classify_block(&updated);
+        assert_eq!(done["state"], "allowed");
+        assert_eq!(done["isStreaming"], false);
+        assert_eq!(done["rule"]["pattern"], "Bash(npm test:*)");
+        assert_eq!(s.block_buffer.len(), 1, "resolved in place, never appended");
+
+        // An unknown blockId resolves nothing (the exactly-once claim lives in the
+        // pending map, not here).
+        assert!(s.buf_permission_resolve("nope", "denied", None).is_none());
+    }
+
+    #[test]
+    fn permission_block_round_trips_through_the_transcript() {
+        let mut s = perm_session();
+        let ask = serde_json::to_value(crate::permissions::build_ask(
+            "Bash",
+            &json!({ "command": "ls" }),
+            "/repo",
+        ))
+        .unwrap();
+        s.buf_permission("p1", ask);
+        let rule = serde_json::to_value(sample_rule()).unwrap();
+        let resolved = s
+            .buf_permission_resolve("p1", "denied", Some(&rule))
+            .unwrap();
+        let line = persisted_block_json(&resolved);
+        let back = parse_persisted_block(&line.to_string()).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Permission));
+        assert!(!back.streaming);
+        let v = classify_block(&back);
+        assert_eq!(v["state"], "denied");
+        assert_eq!(v["ask"]["summary"], "ls");
+        assert_eq!(v["rule"]["id"], "local|allow|Bash(npm test:*)");
+    }
+
+    #[test]
+    fn persisted_pending_permission_reloads_as_cancelled() {
+        // FR-25 / §7 #9: pending entries are memory-only, so a "pending" line on
+        // disk can only come from a hard kill — a dead process has no answerable
+        // asks. `allowed`/`denied` survive verbatim.
+        let pending = r#"{"blockId":"p1","kind":"permission","ask":{},"state":"pending"}"#;
+        let back = parse_persisted_block(pending).expect("parse");
+        assert!(!back.streaming);
+        assert_eq!(classify_block(&back)["state"], "cancelled");
+
+        for state in ["allowed", "denied"] {
+            let line = format!(
+                r#"{{"blockId":"p1","kind":"permission","ask":{{}},"state":"{state}"}}"#
+            );
+            assert_eq!(
+                classify_block(&parse_persisted_block(&line).expect("parse"))["state"],
+                state
+            );
+        }
     }
 
     // ---------- slash-menu (specs/slash-menu.md) ----------

@@ -3,13 +3,15 @@
 // and the model-card switch error path. Pure logic only (no DOM).
 
 import { describe, expect, it, vi } from 'vitest';
-import type { CommandCard, Result, SessionQuestion } from '../contract/common';
+import type { CommandCard, PermissionAsk, PermissionRule, Result, SessionQuestion } from '../contract/common';
 import type { CommandConversationBlock } from '../contract/interactive-commands';
+import type { PermissionConversationBlock } from '../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../contract/session-questions';
 import { classifyToolStart, type ConversationBlock } from '../contract/conversation-view';
 import {
   cardHeaderLabel,
   commandFromCard,
+  compactBlocks,
   isClearCommand,
   liveCurrentModelId,
   meterFillColor,
@@ -347,6 +349,99 @@ describe('transcriptReducer — question.asked / question.resolved (session-ques
   });
 });
 
+describe('transcriptReducer — permission.asked / permission.resolved (permission-guardrails FR-24)', () => {
+  const ask: PermissionAsk = {
+    toolName: 'Bash',
+    summary: 'npm test',
+    inputJson: '{"command":"npm test"}',
+    cwd: '/repo',
+    pattern: 'Bash(npm test:*)',
+    patternLabel: 'npm test (any arguments)',
+  };
+  const rule: PermissionRule = {
+    id: 'local|allow|Bash(npm test:*)',
+    pattern: 'Bash(npm test:*)',
+    effect: 'allow',
+    tier: 'local',
+    enabled: true,
+    label: 'npm test (any arguments)',
+  };
+
+  function permBlock(s: TranscriptState, blockId: string): PermissionConversationBlock {
+    const b = s.blocks.find((x) => x.blockId === blockId);
+    if (!b || b.kind !== 'permission') throw new Error(`no permission block ${blockId}`);
+    return b;
+  }
+
+  it('permissionAsked inserts a pending block (FR-25: isStreaming iff pending)', () => {
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'go', queued: false };
+    const s = transcriptReducer({ blocks: [user] }, { t: 'permissionAsked', blockId: 'p1', ask });
+    expect(s.blocks).toHaveLength(2);
+    expect(s.blocks[1]).toEqual({ kind: 'permission', blockId: 'p1', isStreaming: true, ask, state: 'pending' });
+    expect(permBlock(s, 'p1')).not.toHaveProperty('rule');
+  });
+
+  it('permissionAsked is idempotent on replay', () => {
+    const s1 = transcriptReducer(S0, { t: 'permissionAsked', blockId: 'p1', ask });
+    const s2 = transcriptReducer(s1, { t: 'permissionAsked', blockId: 'p1', ask });
+    expect(s2).toBe(s1); // no-op, not a duplicate insert
+  });
+
+  it('permissionResolved allowed: updates state + rule in place, clears isStreaming', () => {
+    const s1 = transcriptReducer(S0, { t: 'permissionAsked', blockId: 'p1', ask });
+    const s2 = transcriptReducer(s1, { t: 'permissionResolved', blockId: 'p1', state: 'allowed', rule });
+    expect(s2.blocks).toHaveLength(1);
+    expect(permBlock(s2, 'p1')).toEqual({
+      kind: 'permission',
+      blockId: 'p1',
+      isStreaming: false,
+      ask,
+      state: 'allowed',
+      rule,
+    });
+  });
+
+  it('a once-decision resolves without a rule property', () => {
+    const s1 = transcriptReducer(S0, { t: 'permissionAsked', blockId: 'p1', ask });
+    const s2 = transcriptReducer(s1, { t: 'permissionResolved', blockId: 'p1', state: 'denied' });
+    expect(permBlock(s2, 'p1').state).toBe('denied');
+    expect(permBlock(s2, 'p1')).not.toHaveProperty('rule');
+  });
+
+  it('cancelled (interrupt / turn end / app exit) resolves the card in place', () => {
+    const s1 = transcriptReducer(S0, { t: 'permissionAsked', blockId: 'p1', ask });
+    const s2 = transcriptReducer(s1, { t: 'permissionResolved', blockId: 'p1', state: 'cancelled' });
+    expect(permBlock(s2, 'p1')).toEqual({
+      kind: 'permission',
+      blockId: 'p1',
+      isStreaming: false,
+      ask,
+      state: 'cancelled',
+    });
+  });
+
+  it('resolved arriving first inserts resolved; a later asked fills the ask in without reviving it', () => {
+    const s1 = transcriptReducer(S0, { t: 'permissionResolved', blockId: 'p1', state: 'denied' });
+    expect(permBlock(s1, 'p1').state).toBe('denied');
+    expect(permBlock(s1, 'p1').ask.toolName).toBe(''); // placeholder
+    const s2 = transcriptReducer(s1, { t: 'permissionAsked', blockId: 'p1', ask });
+    expect(permBlock(s2, 'p1').ask).toEqual(ask);
+    expect(permBlock(s2, 'p1').state).toBe('denied'); // resolution survives
+    expect(permBlock(s2, 'p1').isStreaming).toBe(false);
+  });
+
+  it('never touches a block of another kind sharing the id', () => {
+    const s1 = transcriptReducer(S0, { t: 'commandStarted', blockId: 'x', command: 'usage' });
+    expect(transcriptReducer(s1, { t: 'permissionResolved', blockId: 'x', state: 'allowed' })).toBe(s1);
+    expect(transcriptReducer(s1, { t: 'permissionAsked', blockId: 'x', ask })).toBe(s1);
+  });
+
+  it('/clear drops permission blocks like every other block', () => {
+    const s1 = transcriptReducer(S0, { t: 'permissionAsked', blockId: 'p1', ask });
+    expect(transcriptReducer(s1, { t: 'clear' }).blocks).toEqual([]);
+  });
+});
+
 describe('isClearCommand (/clear full-reset detector)', () => {
   it('is true for the bare command (trimmed, case-insensitive)', () => {
     expect(isClearCommand('/clear')).toBe(true);
@@ -543,5 +638,105 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
       const s2 = transcriptReducer(s1, { t: 'remove', blockId: 'nope' });
       expect(s2).toBe(s1);
     });
+  });
+});
+
+describe('compactBlocks (render-time merge of duplicate consecutive tool rows)', () => {
+  const tool = (blockId: string, name: string, summary: string, meta?: string): ConversationBlock => ({
+    ...classifyToolStart(name, summary, blockId),
+    isStreaming: meta === undefined,
+    ...(meta !== undefined ? { meta } : {}),
+  });
+
+  it('merges consecutive edits of the same file, summing the +N −M metas', () => {
+    const out = compactBlocks([
+      tool('t1', 'Edit', 'src/a.ts', '+3 −1'),
+      tool('t2', 'Edit', 'src/a.ts', '+5 −2'),
+    ]);
+    expect(out).toHaveLength(1);
+    const b = out[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.blockId).toBe('t2'); // newest block keys the row
+    expect(b.meta).toBe('+8 −3');
+  });
+
+  it('accumulates across a run of three', () => {
+    const out = compactBlocks([
+      tool('t1', 'Edit', 'src/a.ts', '+3 −1'),
+      tool('t2', 'Edit', 'src/a.ts', '+5 −2'),
+      tool('t3', 'Edit', 'src/a.ts', '+2 −0'),
+    ]);
+    expect(out).toHaveLength(1);
+    const b = out[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.meta).toBe('+10 −3');
+  });
+
+  it('keeps the last meta when metas are not line-change shaped', () => {
+    const out = compactBlocks([
+      tool('t1', 'Read', 'src/a.ts', '50 lines'),
+      tool('t2', 'Read', 'src/a.ts', '412 lines'),
+    ]);
+    expect(out).toHaveLength(1);
+    const b = out[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.meta).toBe('412 lines');
+  });
+
+  it('does not merge different files or different tools', () => {
+    const out = compactBlocks([
+      tool('t1', 'Edit', 'src/a.ts', '+3 −1'),
+      tool('t2', 'Edit', 'src/b.ts', '+5 −2'),
+      tool('t3', 'Write', 'src/b.ts', '12 lines'),
+    ]);
+    expect(out).toHaveLength(3);
+  });
+
+  it('does not merge across an intervening non-tool block', () => {
+    const assistant: ConversationBlock = {
+      kind: 'assistant',
+      blockId: 'a1',
+      isStreaming: false,
+      glyph: '●',
+      glyphColor: '#868a93',
+      bodyColor: '#c4c7ce',
+      text: 'now the second edit',
+    };
+    const out = compactBlocks([
+      tool('t1', 'Edit', 'src/a.ts', '+3 −1'),
+      assistant,
+      tool('t2', 'Edit', 'src/a.ts', '+5 −2'),
+    ]);
+    expect(out).toHaveLength(3);
+  });
+
+  it('never merges an error row (errors stay visible and break the run)', () => {
+    const out = compactBlocks([
+      tool('t1', 'Edit', 'src/a.ts', '+3 −1'),
+      tool('t2', 'Edit', 'src/a.ts', 'error'),
+      tool('t3', 'Edit', 'src/a.ts', '+5 −2'),
+    ]);
+    expect(out).toHaveLength(3);
+  });
+
+  it('a still-streaming newest edit keeps the run total and the streaming state', () => {
+    const out = compactBlocks([
+      tool('t1', 'Edit', 'src/a.ts', '+3 −1'),
+      tool('t2', 'Edit', 'src/a.ts'),
+    ]);
+    expect(out).toHaveLength(1);
+    const b = out[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.blockId).toBe('t2');
+    expect(b.isStreaming).toBe(true);
+    expect(b.meta).toBe('+3 −1');
+  });
+
+  it('leaves subagent blocks alone even with identical names', () => {
+    const out = compactBlocks([
+      tool('t1', 'Task', 'explorer', 'done in 4s'),
+      tool('t2', 'Task', 'explorer', 'done in 2s'),
+    ]);
+    expect(out).toHaveLength(2);
   });
 });

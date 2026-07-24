@@ -34,6 +34,9 @@ export type ErrorCode =
   | 'APP_NOT_RUNNING' // CLI companion: no app instance to talk to
   | 'USAGE_UNAVAILABLE' // usage bar: the CLI ran but returned no parseable meters
   | 'QUESTION_NOT_PENDING' // session-questions: answer arrived for a question that is not pending
+  | 'PERMISSION_NOT_PENDING' // permission-guardrails: decision arrived for an ask that is not pending
+  | 'SETTINGS_WRITE_FAILED' // permission-guardrails: settings.json could not be read-merged-written
+  | 'RULE_NOT_FOUND' // permission-guardrails: editor mutation addressed an unknown rule id
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -194,6 +197,38 @@ export interface SessionQuestion {
   multiSelect: boolean; // true → answers joined with ', '
 }
 
+// ---------- permission guardrails ----------
+// Shared vocabulary for permission-guardrails (the SessionEvent union below
+// needs both types — same placement rule as SessionQuestion).
+// contract/permission-guardrails.ts re-exports them. Spec §5.2.
+
+/** Where a permission rule is written. 'local' = <cwd>/.claude/settings.local.json. */
+export type PermissionTier = 'local' | 'global';
+
+/** The three effect buckets of Claude Code's `permissions` settings object. */
+export type PermissionEffect = 'allow' | 'deny' | 'ask';
+
+/** A gated tool call parked on the stdio control channel (FR-2..FR-5). */
+export interface PermissionAsk {
+  toolName: string; // verbatim from the control request, e.g. 'Bash'
+  summary: string; // one-line human rendering (command / path / url); '' when none
+  inputJson: string; // whole tool input, pretty JSON, truncated to 4000 chars
+  cwd: string; // the session's working directory
+  pattern: string; // the Claude rule an "always" decision would write, e.g. 'Bash(npm test:*)'
+  patternLabel: string; // human reading of that pattern, e.g. 'npm test (any arguments)'
+}
+
+/** One permission rule as it exists on disk (FR-16/FR-17). */
+export interface PermissionRule {
+  id: string; // `${tier}|${effect}|${pattern}` — derived, never stored, stable across reads
+  pattern: string; // raw Claude pattern
+  effect: PermissionEffect;
+  tier: PermissionTier;
+  /** false ⇔ parked in the Francois-owned francois-permissions.json sidecar (FR-15). */
+  enabled: boolean;
+  label: string; // human reading of the pattern
+}
+
 // ---------- slash menu ----------
 // Shared vocabulary for slash-menu (the SessionEvent union below needs it —
 // same placement rule as SessionQuestion). contract/slash-menu.ts re-exports.
@@ -227,6 +262,8 @@ export type SessionEvent =
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)
   | { type: 'question.asked'; sessionId: SessionId; blockId: BlockId; questions: SessionQuestion[] } // session-questions FR-6: a question parked the turn
   | { type: 'question.resolved'; sessionId: SessionId; blockId: BlockId; state: 'answered' | 'cancelled'; answers?: Record<string, string> } // session-questions FR-11/13: exactly one per asked
+  | { type: 'permission.asked'; sessionId: SessionId; blockId: BlockId; ask: PermissionAsk } // permission-guardrails FR-2: a gated tool call parked the turn
+  | { type: 'permission.resolved'; sessionId: SessionId; blockId: BlockId; state: 'allowed' | 'denied' | 'cancelled'; rule?: PermissionRule } // permission-guardrails FR-8/10: exactly one per asked
   | { type: 'session.commands'; sessionId: SessionId; commands: SlashCommandInfo[] } // slash-menu FR-2: merged registry after an init changed the cli set
   | { type: 'agent.update'; agent: AgentInfo }
   | { type: 'mcp.update'; sessionId: SessionId; server: McpServerInfo }

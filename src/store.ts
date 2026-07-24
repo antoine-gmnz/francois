@@ -98,6 +98,9 @@ interface AppState {
   // mcp-panel attach overlay — lifted to the store so the command palette can open it (FR-23)
   mcpAttachOpen: boolean;
   setMcpAttachOpen: (o: boolean) => void;
+  // permission-guardrails FR-26: the rules editor modal, opened from the palette.
+  permissionsOpen: boolean;
+  setPermissionsOpen: (o: boolean) => void;
 
   // usage-bar slice (§6): ONE app-scoped snapshot, written by the
   // francois://app/event subscription (and the mount-time cache seed). Nothing
@@ -193,6 +196,8 @@ export const useStore = create<AppState>((set) => ({
   setNewAgentOpen: (newAgentOpen) => set({ newAgentOpen }),
   mcpAttachOpen: false,
   setMcpAttachOpen: (mcpAttachOpen) => set({ mcpAttachOpen }),
+  permissionsOpen: false,
+  setPermissionsOpen: (permissionsOpen) => set({ permissionsOpen }),
 
   usage: EMPTY_USAGE,
   setUsage: (usage) => set({ usage }),

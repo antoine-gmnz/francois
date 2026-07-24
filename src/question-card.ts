@@ -170,10 +170,20 @@ export function hasPendingQuestionBlock(blocks: ConversationBlock[]): boolean {
  * FR-20: the composer placeholder swaps while a pending card exists and
  * reverts when none is. Ended/errored sessions keep their placeholders (a dead
  * turn has no pending questions anyway — FR-13).
+ *
+ * permission-guardrails FR-23 adds the approval hint on the same line. A pending
+ * QUESTION wins over a pending approval so the two hints never fight; both mean
+ * "the turn is parked and typed messages queue", which is the part that matters.
  */
-export function composerPlaceholder(status: string, errorMessage: string | undefined, pendingQuestion: boolean): string {
+export function composerPlaceholder(
+  status: string,
+  errorMessage: string | undefined,
+  pendingQuestion: boolean,
+  pendingPermission = false,
+): string {
   if (status === 'done') return 'session ended — press n for a new one';
   if (status === 'error') return errorMessage || 'session error';
   if (pendingQuestion) return 'answer the question above — typed messages will queue';
+  if (pendingPermission) return 'approve or deny the request above — typed messages will queue';
   return 'send a follow-up, or run a command…';
 }

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { homeDir } from '@tauri-apps/api/path';
-import { getName } from '@tauri-apps/api/app';
+import { getName, getVersion } from '@tauri-apps/api/app';
 import ShellTerminal from './ShellTerminal';
 import Sidebar from './Sidebar';
 import NewSessionModal from './NewSessionModal';
+import PermissionsModal from './PermissionsModal';
 import ConversationView from './ConversationView';
 import DiffView from './DiffView';
 import AgentsPanel from './AgentsPanel';
@@ -78,6 +79,8 @@ export default function App() {
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
+  const permissionsOpen = useStore((s) => s.permissionsOpen);
+  const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
 
@@ -94,9 +97,15 @@ export default function App() {
   // (document-first, so the taskbar and alt-tab show the session, not a constant
   // prefix). The app name comes from the bundle so the dev channel stays "Francois Dev".
   const [appName, setAppName] = useState('Francois');
+  // Status-bar version — read from the bundle (tauri.conf.json), never hardcoded, so a
+  // release bumps it on its own. Empty until it resolves, so no stale number ever flashes.
+  const [appVersion, setAppVersion] = useState('');
   useEffect(() => {
     void getName()
       .then(setAppName)
+      .catch(() => {});
+    void getVersion()
+      .then(setAppVersion)
       .catch(() => {});
   }, []);
   useEffect(() => {
@@ -172,7 +181,9 @@ export default function App() {
       const ae = document.activeElement as HTMLElement | null;
       const inInput = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
       const inTerminal = !!ae && ae.closest('.xterm') !== null;
-      if (newSessionOpen || newAgentOpen || inInput || inTerminal) return;
+      // permission-guardrails FR-29: the rules editor suppresses the single-letter
+      // globals too, exactly like the other modals.
+      if (newSessionOpen || newAgentOpen || permissionsOpen || inInput || inTerminal) return;
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
         setNewSessionOpen(true);
@@ -207,7 +218,15 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newSessionOpen, newAgentOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab]);
+  }, [newSessionOpen, newAgentOpen, permissionsOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab]);
+
+  // permission-guardrails: the rules editor needs a session (the local tier is
+  // its cwd). If the last session is removed while it is open the modal unmounts
+  // without ever calling onClose, so `permissionsOpen` would stay true and keep
+  // suppressing the single-letter globals with nothing on screen.
+  useEffect(() => {
+    if (permissionsOpen && !activeSessionId) setPermissionsOpen(false);
+  }, [permissionsOpen, activeSessionId, setPermissionsOpen]);
 
   const mainFocused = focusedPane === 'main';
 
@@ -454,7 +473,7 @@ export default function App() {
           <span>
             focus: <span style={{ color: C.accent }}>{focusedPane}</span>
           </span>
-          <span style={{ color: C.faint }}>francois 0.2.1</span>
+          <span style={{ color: C.faint }}>francois{appVersion && ` ${appVersion}`}</span>
         </div>
       </div>
 
@@ -466,6 +485,12 @@ export default function App() {
             if (useStore.getState().newSessionOpen) setActiveSessionId(m.id);
           }}
         />
+      )}
+
+      {/* permission-guardrails FR-26: the rules editor. Needs a session (the
+          local tier is its cwd), so it closes itself if the session goes away. */}
+      {permissionsOpen && activeSessionId && (
+        <PermissionsModal sessionId={activeSessionId} onClose={() => setPermissionsOpen(false)} />
       )}
 
       <PaletteRoot />

@@ -7,6 +7,7 @@
 
 mod diff;
 mod ipc;
+mod permissions;
 mod session;
 mod usage;
 mod wsl;
@@ -600,6 +601,11 @@ fn main() {
             session::skills_list,
             session::skills_install,
             session::skills_run,
+            session::permissions_decide,
+            permissions::permissions_list,
+            permissions::permissions_set_enabled,
+            permissions::permissions_remove,
+            permissions::permissions_set_tier,
             app_set_window_theme,
             usage::app_get_usage,
             usage::app_refresh_usage,
