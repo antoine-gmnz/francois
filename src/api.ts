@@ -15,6 +15,10 @@ function ipc<T>(cmd: string, args?: object): Promise<T> {
   return invoke<T>(cmd, args as Record<string, unknown> | undefined);
 }
 
+// francois:app:setWindowTheme — repaint the native caption bar to match the theme.
+export const appSetWindowTheme = (theme: 'light' | 'dark') =>
+  ipc<Result<null>>('app_set_window_theme', { theme });
+
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
 export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
 export const sessionCreate = (req: NewSessionRequest) => ipc<Result<SessionMeta>>('session_create', req);

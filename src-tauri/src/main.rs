@@ -497,7 +497,7 @@ fn install_panic_log(app: &AppHandle) {
 /// Windows 11 (build 22000+) only; older builds ignore the attributes and keep the
 /// plain dark caption from `"theme": "Dark"`.
 #[cfg(windows)]
-fn tint_window_chrome(window: &tauri::WebviewWindow) {
+fn tint_window_chrome(window: &tauri::WebviewWindow, theme: &str) {
     use windows_sys::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
     };
@@ -506,17 +506,21 @@ fn tint_window_chrome(window: &tauri::WebviewWindow) {
     const fn colorref(rgb: u32) -> u32 {
         ((rgb & 0xff) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 0xff)
     }
-    // The app shell, NOT body's #08090b — the root <div> in App.tsx covers body, so
-    // #0f1015 is the surface the caption actually has to disappear into.
-    const CAPTION: u32 = colorref(0x0f_10_15);
-    const TEXT: u32 = colorref(0xa9_ad_b6); // secondary foreground
-    const BORDER: u32 = CAPTION; // no seam between the caption and the window edge
+    // Match the caption to --bg-app for the active theme so the OS chrome disappears
+    // into the window instead of reading as a strip on top of it. The values mirror
+    // styles.css: dark #0f1015 / light #f5f6f8, with the theme's secondary text hue.
+    let (caption, text) = if theme == "light" {
+        (colorref(0xf5_f6_f8), colorref(0x4e_52_5b)) // --bg-app / --text-hint (light)
+    } else {
+        (colorref(0x0f_10_15), colorref(0xa9_ad_b6)) // --bg-app / --text-hint (dark)
+    };
+    let border = caption; // no seam between the caption and the window edge
 
     let Ok(hwnd) = window.hwnd() else { return };
     for (attr, color) in [
-        (DWMWA_CAPTION_COLOR, CAPTION),
-        (DWMWA_TEXT_COLOR, TEXT),
-        (DWMWA_BORDER_COLOR, BORDER),
+        (DWMWA_CAPTION_COLOR, caption),
+        (DWMWA_TEXT_COLOR, text),
+        (DWMWA_BORDER_COLOR, border),
     ] {
         // SAFETY: hwnd is live (we hold the window), and the attribute payload is the
         // COLORREF u32 the DWM docs specify for these three attributes.
@@ -531,6 +535,19 @@ fn tint_window_chrome(window: &tauri::WebviewWindow) {
     }
 }
 
+/// francois:app:setWindowTheme — repaint the native caption bar for the given theme
+/// ("light" | "dark"). The webview calls this on mount and whenever the theme toggles
+/// so the OS chrome tracks --bg-app. Best-effort: a no-op on non-Windows / older builds.
+#[tauri::command(async)]
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn app_set_window_theme(_app: AppHandle, theme: String) -> IpcResult<()> {
+    #[cfg(windows)]
+    if let Some(w) = _app.get_webview_window("main") {
+        tint_window_chrome(&w, &theme);
+    }
+    ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -541,9 +558,11 @@ fn main() {
         .manage(usage::UsageState::default())
         .setup(|app| {
             install_panic_log(app.handle());
+            // Tint with the dark caption up front; the webview re-tints with the
+            // persisted theme (app_set_window_theme) once it mounts. See §theme.
             #[cfg(windows)]
             if let Some(w) = app.get_webview_window("main") {
-                tint_window_chrome(&w);
+                tint_window_chrome(&w, "dark");
             }
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
@@ -581,6 +600,7 @@ fn main() {
             session::skills_list,
             session::skills_install,
             session::skills_run,
+            app_set_window_theme,
             usage::app_get_usage,
             usage::app_refresh_usage,
             diff::diff_get_summary,
