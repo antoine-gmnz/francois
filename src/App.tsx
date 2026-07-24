@@ -15,7 +15,7 @@ import { initShellEvents, useShellState } from './shellStore';
 import { useStore } from './store';
 import { formatContextTokens, formatElapsed } from '../contract/conversation-view';
 import { displayWslCwd } from '../contract/wsl-filesystem';
-import { diffGetSummary, onDiffEvent } from './api';
+import { appSetWindowTheme, diffGetSummary, onDiffEvent } from './api';
 import PaletteRoot from './PaletteView';
 import { dismissPalette, isPaletteOpen, togglePalette } from './palette';
 import { setPaletteDiffCount } from './paletteData';
@@ -104,6 +104,12 @@ export default function App() {
       .setTitle(active ? `${active.name} — ${appName}` : appName)
       .catch(() => {});
   }, [active?.name, appName]);
+
+  // Keep the native caption bar painted to match --bg-app for the active theme
+  // (white in light, dark otherwise). Runs on mount and every toggle; no-op off Windows.
+  useEffect(() => {
+    void appSetWindowTheme(theme).catch(() => {});
+  }, [theme]);
 
   // DIFF-tab badge: fileCount for the active session, seeded by getSummary and
   // kept current by diff.changed events (diff-view FR-18).

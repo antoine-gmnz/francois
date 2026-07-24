@@ -15,6 +15,10 @@ function ipc<T>(cmd: string, args?: object): Promise<T> {
   return invoke<T>(cmd, args as Record<string, unknown> | undefined);
 }
 
+// francois:app:setWindowTheme — repaint the native caption bar to match the theme.
+export const appSetWindowTheme = (theme: 'light' | 'dark') =>
+  ipc<Result<null>>('app_set_window_theme', { theme });
+
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
 export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
 export const sessionCreate = (req: NewSessionRequest) => ipc<Result<SessionMeta>>('session_create', req);
@@ -22,6 +26,9 @@ export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('sessio
 export const sessionPickDirectory = () => ipc<Result<PickDirectoryData>>('session_pick_directory');
 export const sessionSend = (sessionId: SessionId, blockId: string, text: string) =>
   ipc<Result<{ queued: boolean; queuePosition?: number }>>('session_send', { sessionId, blockId, text });
+// Kill the running turn (⌃C). No-op if the session isn't running (core FR-23).
+export const sessionInterrupt = (sessionId: SessionId) =>
+  ipc<Result<null>>('session_interrupt', { sessionId });
 export const getTranscript = (sessionId: SessionId) =>
   ipc<Result<ConversationBlock[]>>('conversation_get_transcript', { sessionId });
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>

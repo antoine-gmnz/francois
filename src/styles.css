@@ -74,16 +74,17 @@ html[data-hidden='1'] [style*='animation'] {
   /* borders — light grays */
   --border: #dcdfe4;
   --border-2: #c9cdd4;
-  /* text — inverted ladder: bright is darkest, disabled lightest */
-  --text-bright: #1b1d23;
-  --text-strong: #262931;
-  --text: #33363e;
-  --text-2: #3f434c;
-  --text-hint: #4e525b;
-  --text-dim: #6b7079;
-  --text-muted: #868b94;
-  --text-faint: #9ca1aa;
-  --text-disabled: #c3c7ce;
+  /* text — inverted ladder: bright is darkest, disabled lightest.
+     Darkened for legibility on white (lighter steps carried too little contrast). */
+  --text-bright: #14161b;
+  --text-strong: #1c1f26;
+  --text: #292c33;
+  --text-2: #33373f;
+  --text-hint: #42464e;
+  --text-dim: #565a63;
+  --text-muted: #6d717a;
+  --text-faint: #878c95;
+  --text-disabled: #b6bac2;
   /* accent — gold darkened for contrast on light */
   --accent: #a97e2c;
   --accent-2: #a67b28;

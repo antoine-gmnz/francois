@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } fro
 import type { SessionEvent, SlashCommandInfo } from '../contract/common';
 import { toolBody, type ConversationBlock } from '../contract/conversation-view';
 import { displayWslCwd } from '../contract/wsl-filesystem';
-import { getTranscript, onSessionEvent, sessionClear, sessionListCommands, sessionSend } from './api';
+import { getTranscript, onSessionEvent, sessionClear, sessionInterrupt, sessionListCommands, sessionSend } from './api';
 import CommandBlock from './CommandCard';
 import { isClearCommand, transcriptReducer } from './conversation-blocks';
 import Markdown from './MarkdownView';
@@ -278,6 +278,17 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   };
 
   const onInputKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // ⌃C interrupts the running turn (kills the current claude prompt). Only when
+    // nothing is selected in the composer, so ⌃C still copies a selection; Cmd+C
+    // (macOS copy) is left untouched. No-op path is handled by the core (FR-23).
+    if (e.key === 'c' && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      const el = e.currentTarget;
+      if (status === 'running' && el.selectionStart === el.selectionEnd) {
+        e.preventDefault();
+        void sessionInterrupt(sessionId);
+        return;
+      }
+    }
     // slash-menu FR-8/9: while the popup is rendered its keys preempt the
     // composer defaults (Enter-to-send included); everything else falls through.
     if (popupOpen) {
@@ -456,7 +467,14 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
               padding: 0,
             }}
           />
-          <span style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 3 }}>⌘K palette</span>
+          <span style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 3, display: 'flex', gap: 10, flexShrink: 0 }}>
+            {status === 'running' && (
+              <span>
+                <span style={{ color: C.accent }}>⌃C</span> interrupt
+              </span>
+            )}
+            <span>⌘K palette</span>
+          </span>
         </div>
       </div>
     </div>
