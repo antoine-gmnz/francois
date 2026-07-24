@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, McpServerInfo, SkillInfo, SlashCommandInfo } from '../contract/common';
+import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo } from '../contract/common';
 import type { PermissionDecision, PermissionRule, PermissionTier } from '../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../contract/sessions-sidebar';
 import type { ConversationBlock } from '../contract/conversation-view';
@@ -65,6 +65,9 @@ export const agentsList = (sessionId: SessionId) => ipc<Result<AgentInfo[]>>('ag
 export const agentsDispatch = (sessionId: SessionId, task: string) =>
   ipc<Result<{ agentId: string }>>('agents_dispatch', { sessionId, task });
 export const agentsKill = (agentId: string) => ipc<Result<null>>('agents_kill', { agentId });
+// async-agents §5: the agent's activity trail (≤200 steps, FR-12 window).
+export const agentsActivity = (agentId: string) =>
+  ipc<Result<AgentStep[]>>('agents_activity', { agentId });
 
 export const mcpList = (sessionId: SessionId) => ipc<Result<McpServerInfo[]>>('mcp_list', { sessionId });
 export const mcpDetail = (sessionId: SessionId, name: string) => ipc<Result<McpServerDetail>>('mcp_detail', { sessionId, name });

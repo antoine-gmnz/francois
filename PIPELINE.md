@@ -189,3 +189,4 @@ gate:
 | `session-questions` | SESSION tab: AskUserQuestion cards over the stdio control channel | session-engine, conversation-view |
 | `slash-menu` | SESSION composer: "/" command autocomplete popup + per-session command registry | session-engine, conversation-view, interactive-commands, skills-panel |
 | `permission-guardrails` | SESSION tab: approval cards for gated tool calls + a rules editor over Claude Code's own `settings.json` | session-engine, conversation-view, session-questions, command-palette |
+| `async-agents` | pane [3]: async subagent lifecycle (real elapsed time, no spawn-ack completion) + per-agent activity trail from `parent_tool_use_id` | session-engine, agents-panel, conversation-view |

@@ -1,7 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AgentInfo, AppError, SessionEvent } from '../contract/common';
+import type { AgentInfo, AgentStep, AppError, SessionEvent } from '../contract/common';
 import { formatElapsed } from '../contract/conversation-view';
-import { agentsDispatch, agentsKill, agentsList, onSessionEvent } from './api';
+import { agentsActivity, agentsDispatch, agentsKill, agentsList, onSessionEvent } from './api';
+import {
+  ASYNC_MARKER,
+  COLLAPSED_TRAIL,
+  STEP_GLYPH,
+  STEP_GLYPH_COLOR,
+  TRAIL_EMPTY_LABEL,
+  TRAIL_MAX_HEIGHT_PX,
+  type TrailState,
+  activitySuffix,
+  collapseTrail,
+  dropsCardOnTrailError,
+  earlierStepsNotice,
+  isAtBottom,
+  receiveTrailActivity,
+  receiveTrailStep,
+  showAsyncMarker,
+  stepMetaColor,
+  stepToolPrefix,
+  toggleTrail,
+} from './agent-trail';
 import { setPaletteAgents } from './paletteData';
 import { useStore } from './store';
 
@@ -43,7 +63,8 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<AppError | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // The expanded card + its activity trail (async-agents FR-19..FR-22).
+  const [trail, setTrail] = useState<TrailState>(COLLAPSED_TRAIL);
   const [pendingKill, setPendingKill] = useState<Set<string>>(new Set());
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -68,7 +89,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
   useEffect(() => {
     setAgents(new Map());
     setSelectedId(null);
-    setExpandedId(null);
+    setTrail(collapseTrail); // FR-23: trails go with the agent map
     setPendingKill(new Set());
     setListError(null);
     if (!sessionId) {
@@ -96,6 +117,12 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
     };
 
     void onSessionEvent((e: SessionEvent) => {
+      if (e.type === 'agent.step') {
+        // async-agents FR-20/FR-22: only the expanded card consumes steps.
+        if (e.sessionId !== sessionId) return;
+        setTrail((t) => receiveTrailStep(t, e.agentId, e.step));
+        return;
+      }
       if (e.type !== 'agent.update') return;
       if (e.agent.sessionId !== sessionId) return; // FR-3
       if (!hydrated) buffer.push(e.agent);
@@ -150,6 +177,28 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
     // success: pendingKill cleared on the next agent.update for this id (FR-20)
   };
 
+  // async-agents FR-19: hydrate the expanded card's trail. A stale response (the
+  // card was collapsed or re-expanded meanwhile) is dropped by its reqId.
+  const loadTrail = async (agentId: string, reqId: number) => {
+    const res = await agentsActivity(agentId);
+    setTrail((prev) => receiveTrailActivity(prev, reqId, res));
+    if (!res.ok && dropsCardOnTrailError(res.error)) {
+      setAgents((prev) => {
+        if (!prev.has(agentId)) return prev;
+        const n = new Map(prev);
+        n.delete(agentId);
+        return n;
+      });
+    }
+  };
+
+  // FR-19/FR-22: ⏎ (or the same card again) toggles; expanding re-issues the fetch.
+  const toggleExpand = (agentId: string) => {
+    const next = toggleTrail(trail, agentId);
+    setTrail(next);
+    if (next.agentId !== null) void loadTrail(next.agentId, next.reqId);
+  };
+
   // Keyboard for pane [3] (FR-12/13/19).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -162,19 +211,19 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
         const i = Math.min(cur < 0 ? 0 : cur + 1, list.length - 1);
         if (list[i]) {
           setSelectedId(list[i].id);
-          setExpandedId(null);
+          setTrail(collapseTrail);
         }
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         const i = Math.max(cur < 0 ? 0 : cur - 1, 0);
         if (list[i]) {
           setSelectedId(list[i].id);
-          setExpandedId(null);
+          setTrail(collapseTrail);
         }
       } else if (e.key === 'Enter') {
         if (selectedId) {
           e.preventDefault();
-          setExpandedId((x) => (x === selectedId ? null : selectedId));
+          toggleExpand(selectedId);
         }
       } else if (e.key === 'x' || e.key === 'X') {
         const a = agents.get(selectedId ?? '');
@@ -183,7 +232,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [focused, newAgentOpen, list, selectedId, agents, pendingKill]);
+  }, [focused, newAgentOpen, list, selectedId, agents, pendingKill, trail]);
 
   return (
     <section
@@ -229,16 +278,17 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
               a={a}
               now={clockNow}
               selected={a.id === selectedId}
-              expanded={a.id === expandedId}
+              trail={a.id === trail.agentId ? trail : null}
               hover={a.id === hoverId}
               pending={pendingKill.has(a.id)}
               onClick={() => {
+                if (a.id !== trail.agentId) setTrail(collapseTrail); // FR-13: selection collapses
                 setSelectedId(a.id);
-                setExpandedId(null);
                 setFocusedPane('agents');
               }}
               onHover={(h) => setHoverId(h ? a.id : null)}
               onKill={() => void doKill(a.id)}
+              onAtBottom={(v) => setTrail((t) => (t.atBottom === v ? t : { ...t, atBottom: v }))}
             />
           ))
         )}
@@ -255,26 +305,31 @@ function Card({
   a,
   now,
   selected,
-  expanded,
+  trail,
   hover,
   pending,
   onClick,
   onHover,
   onKill,
+  onAtBottom,
 }: {
   a: AgentInfo;
   now: number;
   selected: boolean;
-  expanded: boolean;
+  /** The expanded card's trail state, or null when this card is collapsed. */
+  trail: TrailState | null;
   hover: boolean;
   pending: boolean;
   onClick: () => void;
   onHover: (h: boolean) => void;
   onKill: () => void;
+  onAtBottom: (v: boolean) => void;
 }) {
   const sc = statusColor[a.status] ?? C.idle;
   const elapsedMs = Math.max(0, (a.endedAt ?? now) - a.startedAt);
   const showKill = a.status === 'running' && hover && !pending;
+  const expanded = trail !== null;
+  const activity = activitySuffix(a); // FR-17: rendered for every status
   return (
     <div
       onClick={onClick}
@@ -304,6 +359,21 @@ function Card({
         <span style={{ fontSize: 12, color: C.primary, fontWeight: 500, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {a.name}
         </span>
+        {showAsyncMarker(a) && (
+          <span
+            style={{
+              fontSize: 9,
+              letterSpacing: '0.08em',
+              color: C.faint,
+              padding: '1px 5px',
+              borderRadius: 8,
+              background: 'var(--bg-raised)',
+              flexShrink: 0,
+            }}
+          >
+            {ASYNC_MARKER}
+          </span>
+        )}
         {showKill ? (
           <span
             onClick={(e) => {
@@ -334,10 +404,115 @@ function Card({
         {a.task}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 16, fontSize: 10, color: C.faint }}>
-        <span style={{ color: a.status === 'running' ? sc : C.faint }}>{a.status === 'running' ? '◷' : '·'}</span>
-        <span>{formatElapsed(elapsedMs)}</span>
-        {a.status === 'running' && <span style={{ color: 'var(--text-disabled)' }}>elapsed</span>}
+        <span style={{ flexShrink: 0, color: a.status === 'running' ? sc : C.faint }}>
+          {a.status === 'running' ? '◷' : '·'}
+        </span>
+        <span style={{ flexShrink: 0 }}>{formatElapsed(elapsedMs)}</span>
+        {a.status === 'running' && <span style={{ flexShrink: 0, color: 'var(--text-disabled)' }}>elapsed</span>}
+        {activity !== null && (
+          <>
+            <span style={{ flexShrink: 0, color: 'var(--text-disabled)' }}>·</span>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                color: 'var(--text-muted)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {activity}
+            </span>
+          </>
+        )}
       </div>
+      {trail && <Trail state={trail} stepCount={a.stepCount} onAtBottom={onAtBottom} />}
+    </div>
+  );
+}
+
+/** The expanded card's activity trail (FR-19..FR-21, §8). */
+function Trail({
+  state,
+  stepCount,
+  onAtBottom,
+}: {
+  state: TrailState;
+  stepCount: number;
+  onAtBottom: (v: boolean) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const steps = state.steps;
+  const newest = steps.length > 0 ? steps[steps.length - 1].seq : 0;
+
+  // FR-21: jump to the newest step unless the user scrolled up inside the trail.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !state.atBottom) return;
+    el.scrollTop = el.scrollHeight;
+  }, [newest, steps.length, state.atBottom]);
+
+  if (state.loading) return null; // FR-19: nothing while the request is in flight
+
+  const earlier = earlierStepsNotice(stepCount, steps.length);
+  return (
+    <div
+      ref={ref}
+      className="scz"
+      onScroll={(e) => onAtBottom(isAtBottom(e.currentTarget))}
+      onWheel={(e) => e.stopPropagation()} // scrolling the trail never reaches the pane
+      style={{
+        marginLeft: 16,
+        marginTop: 6,
+        borderTop: '1px solid var(--border)',
+        paddingTop: 6,
+        maxHeight: TRAIL_MAX_HEIGHT_PX,
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+      }}
+    >
+      {state.error ? (
+        <div style={{ fontSize: 10, color: C.error, padding: '4px 0' }}>{state.error.message}</div>
+      ) : steps.length === 0 ? (
+        <div style={{ fontSize: 10, color: 'var(--text-disabled)', padding: '4px 0' }}>{TRAIL_EMPTY_LABEL}</div>
+      ) : (
+        <>
+          {earlier && (
+            <div style={{ fontSize: 10, color: 'var(--text-disabled)', padding: '2px 0 4px' }}>{earlier}</div>
+          )}
+          {steps.map((s) => (
+            <StepRow key={s.seq} step={s} />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function StepRow({ step }: { step: AgentStep }) {
+  const prefix = stepToolPrefix(step);
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, padding: '2px 0', fontSize: 10 }}>
+      <span style={{ width: 10, flexShrink: 0, textAlign: 'center', color: STEP_GLYPH_COLOR[step.kind] }}>
+        {STEP_GLYPH[step.kind]}
+      </span>
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          color: 'var(--text-muted)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {prefix !== null && <span style={{ color: C.dim }}>{prefix} </span>}
+        {step.label}
+      </span>
+      {step.kind === 'tool' && step.meta !== undefined && (
+        <span style={{ fontSize: 9.5, color: stepMetaColor(step.meta), flexShrink: 0 }}>{step.meta}</span>
+      )}
     </div>
   );
 }
