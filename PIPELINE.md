@@ -166,6 +166,26 @@ gate:
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
 - **Errors**: `AppError { code, message, detail? }` with codes from `ErrorCode` in `contract/common.ts`; extend the union in a feature contract only for feature-specific codes.
 
+### Code layout
+
+Both surfaces group by **feature**, not by technical kind. New code goes in the folder
+that owns the feature — never in a new top-level file.
+
+- **frontend** (`src/`): `src/features/<feature>/` holds that feature's panel, its pure
+  helpers, and its tests together (`agents`, `commands`, `conversation`, `diff`, `mcp`,
+  `palette`, `permissions`, `questions`, `sessions`, `shell`, `skills`, `usage`).
+  `src/lib/` holds only what every feature imports (`api.ts`, `store.ts`); `src/app/`
+  holds the shell. `main.tsx` and `styles.css` stay at the root. No barrel files — import
+  the module directly.
+- **core** (`src-tauri/src/`): each large domain is a module directory (`session/`,
+  `diff/`, `permissions/`). Its `mod.rs` owns the **shared data model** — the types whose
+  fields the whole domain touches — and declares the child modules; each child owns one
+  concern plus its own `#[cfg(test)] mod tests`. Keeping the model in `mod.rs` is
+  deliberate: Rust lets a child read an ancestor's private fields, so children need no
+  widened visibility. Shared test fixtures live in a `#[cfg(test)] mod testutil`.
+- **Size**: no source file over ~1000 lines. Past that, split by concern rather than
+  growing the file — and move each test with the code it covers.
+
 ## Testing — strict TDD (red → green → refactor)
 
 - **frontend** (`vitest`, `npm test`): cover zustand stores, hooks, and the contract-typed `invoke` wrappers / event handlers (pure logic — no DOM component framework is wired). Layout and visuals are not unit-testable; the design mirror governs those.
