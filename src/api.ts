@@ -26,6 +26,9 @@ export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('sessio
 export const sessionPickDirectory = () => ipc<Result<PickDirectoryData>>('session_pick_directory');
 export const sessionSend = (sessionId: SessionId, blockId: string, text: string) =>
   ipc<Result<{ queued: boolean; queuePosition?: number }>>('session_send', { sessionId, blockId, text });
+// Kill the running turn (⌃C). No-op if the session isn't running (core FR-23).
+export const sessionInterrupt = (sessionId: SessionId) =>
+  ipc<Result<null>>('session_interrupt', { sessionId });
 export const getTranscript = (sessionId: SessionId) =>
   ipc<Result<ConversationBlock[]>>('conversation_get_transcript', { sessionId });
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
