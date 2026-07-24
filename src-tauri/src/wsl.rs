@@ -182,6 +182,55 @@ pub fn linux_to_wsl_unc(distro: Option<&str>, linux_path: &str) -> Option<String
     wsl_unc_root(distro).map(|root| join_unc_root(&root, linux_path))
 }
 
+// ---------- distro $HOME (permission-guardrails FR-13) ----------
+
+/// `$HOME` per distro, keyed lowercase ("" = the default distro). Successes only,
+/// same policy as WSL_UNC_ROOTS: a probe that fails during a cold boot must not
+/// poison the cache for the rest of the app run.
+static WSL_HOMES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+/// A distro's Linux `$HOME`, via `wsl.exe [-d <distro>] -- printenv HOME`.
+/// UTF-8 stdout (a program inside the distro prints it) — the UTF-16 trap only
+/// applies to wsl.exe's OWN errors, which surface as a non-zero exit here.
+fn wsl_home_linux(distro: Option<&str>) -> Option<String> {
+    let key = distro.map(str::to_lowercase).unwrap_or_default();
+    let cache = WSL_HOMES.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(home) = cache.lock().unwrap().get(&key).cloned() {
+        return Some(home);
+    }
+    let mut cmd = Command::new("wsl.exe");
+    if let Some(d) = distro {
+        cmd.args(["-d", d]);
+    }
+    cmd.args(["--", "printenv", "HOME"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    no_window(&mut cmd);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let home = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if home.is_empty() || !home.starts_with('/') {
+        return None;
+    }
+    cache.lock().unwrap().insert(key, home.clone());
+    Some(home)
+}
+
+/// permission-guardrails FR-13: the home directory of the distro a WSL session's
+/// `claude` runs in, as a Windows-reachable UNC path — that is where its
+/// `~/.claude/settings.json` actually lives. A Windows `%USERPROFILE%\.claude` is
+/// a file that session's CLI never reads, so the global tier MUST resolve here.
+/// `None` when the distro's `$HOME` or the FR-3 UNC root cannot be discovered
+/// (the global tier is then unavailable — spec §7 #4).
+pub fn wsl_home_unc(cwd: &str) -> Option<String> {
+    let distro = wsl_unc_to_linux(cwd).map(|(d, _)| d);
+    let home = wsl_home_linux(distro.as_deref())?;
+    linux_to_wsl_unc(distro.as_deref(), &home)
+}
+
 /// The distro a session's shell/claude lands in (FR-12's wsl `shellName`): for a
 /// WSL UNC cwd the distro named in the path (pure — no spawn); otherwise the
 /// DEFAULT distro's name from its FR-3 root. `None` if the root could not be

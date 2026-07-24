@@ -4,6 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, McpServerInfo, SkillInfo, SlashCommandInfo } from '../contract/common';
+import type { PermissionDecision, PermissionRule, PermissionTier } from '../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../contract/sessions-sidebar';
 import type { ConversationBlock } from '../contract/conversation-view';
 import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../contract/mcp-panel';
@@ -33,6 +34,24 @@ export const getTranscript = (sessionId: SessionId) =>
   ipc<Result<ConversationBlock[]>>('conversation_get_transcript', { sessionId });
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
   ipc<Result<null>>('session_answer_question', { sessionId, blockId, answers });
+// permission-guardrails (§5.1). decide answers a parked approval card; the other
+// four are the rules editor and each RETURNS THE FRESHLY RE-READ LIST (FR-18),
+// so the editor never renders a stale view.
+export const permissionsDecide = (
+  sessionId: SessionId,
+  blockId: string,
+  decision: PermissionDecision,
+  tier?: PermissionTier,
+) => ipc<Result<null>>('permissions_decide', { sessionId, blockId, decision, tier });
+export const permissionsList = (sessionId: SessionId) =>
+  ipc<Result<PermissionRule[]>>('permissions_list', { sessionId });
+export const permissionsSetEnabled = (sessionId: SessionId, ruleId: string, enabled: boolean) =>
+  ipc<Result<PermissionRule[]>>('permissions_set_enabled', { sessionId, ruleId, enabled });
+export const permissionsRemove = (sessionId: SessionId, ruleId: string) =>
+  ipc<Result<PermissionRule[]>>('permissions_remove', { sessionId, ruleId });
+export const permissionsSetTier = (sessionId: SessionId, ruleId: string, tier: PermissionTier) =>
+  ipc<Result<PermissionRule[]>>('permissions_set_tier', { sessionId, ruleId, tier });
+
 // slash-menu FR-1/4: merged per-session command registry (francois:session:listCommands)
 export const sessionListCommands = (sessionId: SessionId) =>
   ipc<Result<SlashCommandInfo[]>>('session_list_commands', { sessionId });

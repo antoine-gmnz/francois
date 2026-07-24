@@ -12,7 +12,12 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: serde_json::Map is a BTreeMap by default, so every surgical
+# write of a user's settings.json would alphabetically REORDER all of its keys.
+# permission-guardrails FR-14 promises to preserve what it does not touch, and a
+# three-writer, hand-maintained file being reshuffled on the first "always allow"
+# breaks that promise. Also stabilizes sessions.json and the transcript writes.
+serde_json = { version = "1", features = ["preserve_order"] }
 portable-pty = "0.8"
 dirs = "5"
 uuid = { version = "1", features = ["v4"] }

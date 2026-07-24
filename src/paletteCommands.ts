@@ -188,7 +188,21 @@ export function registerBuiltinCommands(): void {
     },
   });
 
-  // 12 — Toggle theme (app-shell): flip light/dark, same action as the status-bar glyph.
+  // 12 — Manage permissions (permission-guardrails FR-26): the only place the
+  // rules written by "always allow/deny" are visible, since Claude enforces them
+  // upstream and those calls never reach a card again.
+  registerPaletteCommand({
+    id: 'manage-permissions',
+    glyph: '⚿',
+    name: 'Manage permissions',
+    hint: () => 'view & edit rules',
+    enabled: (ctx) => ctx.activeSessionId !== null,
+    run: () => {
+      useStore.getState().setPermissionsOpen(true);
+    },
+  });
+
+  // 13 — Toggle theme (app-shell): flip light/dark, same action as the status-bar glyph.
   registerPaletteCommand({
     id: 'toggle-theme',
     glyph: '☾',

@@ -8,6 +8,7 @@
 
 import type { SessionId, BlockId, Result } from './common';
 import type { CommandConversationBlock } from './interactive-commands';
+import type { PermissionConversationBlock } from './permission-guardrails';
 import type { QuestionConversationBlock } from './session-questions';
 
 // ---------- francois:conversation:getTranscript ----------
@@ -17,7 +18,7 @@ export interface GetTranscriptRequest {
 }
 
 export type ConversationGlyph = '●' | '⧉' | '⌕' | '✎' | '⇉' | '';
-export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent' | 'command' | 'question';
+export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent' | 'command' | 'question' | 'permission';
 
 interface ConversationBlockBase {
   blockId: BlockId;
@@ -63,7 +64,8 @@ export type ConversationBlock =
   | ToolConversationBlock
   | SubagentConversationBlock
   | CommandConversationBlock // interactive-commands (contract/interactive-commands.ts)
-  | QuestionConversationBlock; // session-questions (contract/session-questions.ts)
+  | QuestionConversationBlock // session-questions (contract/session-questions.ts)
+  | PermissionConversationBlock; // permission-guardrails (contract/permission-guardrails.ts)
 
 // resolves Result<ConversationBlock[]>; error: SESSION_NOT_FOUND
 export type GetTranscriptResponse = Result<ConversationBlock[]>;

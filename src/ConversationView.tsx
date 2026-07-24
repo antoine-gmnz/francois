@@ -4,8 +4,10 @@ import { toolBody, type ConversationBlock } from '../contract/conversation-view'
 import { displayWslCwd } from '../contract/wsl-filesystem';
 import { getTranscript, onSessionEvent, sessionClear, sessionInterrupt, sessionListCommands, sessionSend } from './api';
 import CommandBlock from './CommandCard';
-import { isClearCommand, transcriptReducer } from './conversation-blocks';
+import { compactBlocks, isClearCommand, transcriptReducer } from './conversation-blocks';
 import Markdown from './MarkdownView';
+import { hasPendingPermissionBlock } from './permission-card';
+import PermissionCard from './PermissionCard';
 import { composerPlaceholder, hasPendingQuestionBlock } from './question-card';
 import QuestionCard from './QuestionCard';
 import {
@@ -131,6 +133,14 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         case 'question.resolved':
           // session-questions FR-11/13/16: flip to answered/cancelled in place
           dispatch({ t: 'questionResolved', blockId: e.blockId, state: e.state, answers: e.answers });
+          break;
+        case 'permission.asked':
+          // permission-guardrails FR-2/24: insert the pending approval card
+          dispatch({ t: 'permissionAsked', blockId: e.blockId, ask: e.ask });
+          break;
+        case 'permission.resolved':
+          // permission-guardrails FR-8/10/24: flip to allowed/denied/cancelled in place
+          dispatch({ t: 'permissionResolved', blockId: e.blockId, state: e.state, rule: e.rule });
           break;
         case 'session.commands':
           // slash-menu FR-10: idempotent replace — an open popup refilters in place
@@ -320,9 +330,15 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     el.style.height = Math.min(el.scrollHeight, 130) + 'px';
   };
 
-  // session-questions FR-20: the placeholder swaps while a pending question
-  // card exists in this session's transcript and reverts when none is.
-  const placeholder = composerPlaceholder(status, errorMessage, hasPendingQuestionBlock(state.blocks));
+  // session-questions FR-20 / permission-guardrails FR-23: the placeholder swaps
+  // while a pending question or approval card exists in this session's
+  // transcript and reverts when none is.
+  const placeholder = composerPlaceholder(
+    status,
+    errorMessage,
+    hasPendingQuestionBlock(state.blocks),
+    hasPendingPermissionBlock(state.blocks),
+  );
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -380,7 +396,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
               <div style={{ fontSize: 12.5, color: C.faint, marginTop: 10 }}>waiting for your first prompt</div>
             </Centered>
           ) : (
-            state.blocks.map((b) => <Block key={b.blockId} b={b} sessionId={sessionId} />)
+            compactBlocks(state.blocks).map((b) => <Block key={b.blockId} b={b} sessionId={sessionId} />)
           )}
         </div>
 
@@ -507,6 +523,10 @@ function Block({ b, sessionId }: { b: ConversationBlock; sessionId: string }) {
   // session-questions: interactive question cards (spec §8)
   if (b.kind === 'question') {
     return <QuestionCard b={b} sessionId={sessionId} />;
+  }
+  // permission-guardrails: approval cards for gated tool calls (spec §8)
+  if (b.kind === 'permission') {
+    return <PermissionCard b={b} sessionId={sessionId} />;
   }
   if (b.kind === 'user') {
     return (
