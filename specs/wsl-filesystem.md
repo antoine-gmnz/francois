@@ -1,7 +1,7 @@
 ---
 id: wsl-filesystem
 title: WSL filesystem integration — git, shells & paths for WSL sessions
-status: frozen
+status: shipped
 created: 2026-07-21
 depends_on: [session-engine, diff-view, shell-terminal, sessions-sidebar, app-shell]
 ---
@@ -349,4 +349,31 @@ footer never wraps (existing rules). No other changes.
 
 ## Remediation
 
-(Empty until a review returns findings.)
+**2026-07-24 — multi-distro correctness (user report: "the path is never correct").**
+The frozen "default distro only" scope hid a correctness hole: every `wsl.exe`
+spawn was bare, so it targeted the machine's **default** distro even when the
+session cwd's UNC path named another one (canonical case: `docker-desktop` as
+default after a Docker Desktop install) — `--cd <linux-path>` then pointed into
+the wrong distro for git, the shell, and claude alike. Amendments, all
+behavior-only (§5 still holds — no new IPC/event/ErrorCode):
+
+- **Distro targeting**: a WSL UNC cwd now spawns `wsl.exe -d <distro> --cd
+  <linux-path>` everywhere (`wsl::wsl_base_args`; `GitHost::Wsl` carries the
+  distro). The distro comes from the path itself — still no distro picker.
+  Drive-letter cwds with the wsl runtime keep targeting the default distro
+  (no distro information exists).
+- **FR-3 root cache** is now per-distro and only caches successes — a probe
+  failing during a cold WSL boot retries on the next call instead of degrading
+  the whole app run. FR-12's `shellName` for a UNC cwd is read purely from the
+  path (no probe).
+- **Readable wsl.exe errors**: wsl.exe reports its own failures in UTF-16LE (the
+  `wsl -l -q` trap, but on spawn output); `wsl::decode_wsl_output` sniffs NULs
+  and decodes, so GIT_ERROR text for a bad distro/path is no longer garbage.
+- **Modal directory field is editable** (type/paste a path, Browse still
+  offered) — on setups where the native picker can't reach `\\wsl$`, typing is
+  the fallback. FR-16's auto-suggest now follows typed paths in both directions
+  while the runtime chips are untouched. `session_pickDirectory` returns
+  INVALID_INPUT (existing code) instead of a silent cancel when the picked item
+  has no filesystem path (shell-namespace nodes).
+- `ShellTerminal` takes a required `sessionId`; the dead `DEFAULT_SESSION_ID`
+  fallback (pre-FR-10 global shell) is deleted.

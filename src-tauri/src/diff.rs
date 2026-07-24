@@ -128,19 +128,22 @@ type GitErr = (String, String); // (ErrorCode, message)
 // cached root (from `--show-toplevel`, a Linux path like `/home/u/api`) would
 // misclassify as Native if you asked `is_wsl_unc_path` about it directly.
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum GitHost {
     Native,
-    Wsl,
+    /// The repo lives in the named distro (from the UNC cwd). Carried here so
+    /// every spawn passes `-d <distro>` — bare `wsl.exe` targets the machine's
+    /// DEFAULT distro, which is wrong whenever the repo lives in another one
+    /// (docker-desktop-as-default machines, multi-distro setups).
+    Wsl(String),
 }
 
 impl GitHost {
     /// Derived once from the session cwd — see the module note above.
     fn of(cwd: &str) -> Self {
-        if wsl::is_wsl_unc_path(cwd) {
-            GitHost::Wsl
-        } else {
-            GitHost::Native
+        match wsl::wsl_unc_to_linux(cwd) {
+            Some((distro, _)) => GitHost::Wsl(distro),
+            None => GitHost::Native,
         }
     }
 }
@@ -161,15 +164,18 @@ fn wsl_cd_target(dir: &str) -> String {
 /// (FR-5). Native is untouched — `("git", args)` — matching exactly what the
 /// pre-existing `git()` runner spawns with `current_dir(dir)` (regression-pinned
 /// by tests: the native branch must stay byte-identical to v0.2.1, spec §9). Wsl
-/// wraps as `wsl.exe --cd <dir> -- git <args…>`.
-fn git_program(host: GitHost, dir: &str, args: &[&str]) -> (String, Vec<String>) {
+/// wraps as `wsl.exe -d <distro> --cd <dir> -- git <args…>` — `-d` because bare
+/// wsl.exe targets the default distro, not necessarily the repo's.
+fn git_program(host: &GitHost, dir: &str, args: &[&str]) -> (String, Vec<String>) {
     match host {
         GitHost::Native => (
             "git".to_string(),
             args.iter().map(|s| s.to_string()).collect(),
         ),
-        GitHost::Wsl => {
+        GitHost::Wsl(distro) => {
             let mut argv = vec![
+                "-d".to_string(),
+                distro.clone(),
                 "--cd".to_string(),
                 wsl_cd_target(dir),
                 "--".to_string(),
@@ -186,31 +192,40 @@ fn git_program(host: GitHost, dir: &str, args: &[&str]) -> (String, Vec<String>)
 /// spawns `git_program`'s argv with NO `current_dir` set: `dir` is a Linux path,
 /// meaningless as wsl.exe's own Windows-side working directory (confirmed live: a
 /// WSL UNC path handed to `--cd` raw is rejected with `Wsl/E_INVALIDARG`) — `--cd`
-/// alone positions the git invocation inside the distro.
-fn git_routed(host: GitHost, dir: &str, args: &[&str]) -> std::io::Result<GitOut> {
+/// alone positions the git invocation inside the distro. Output decoding: git
+/// inside the distro prints UTF-8, but wsl.exe reports its OWN failures (unknown
+/// distro, bad --cd, WSL not installed) in UTF-16LE — and on stdout — so a failed
+/// spawn with an empty stderr surfaces the decoded stdout as the error text
+/// instead of NUL-interleaved garbage (or nothing).
+fn git_routed(host: &GitHost, dir: &str, args: &[&str]) -> std::io::Result<GitOut> {
     match host {
         GitHost::Native => git(dir, args),
-        GitHost::Wsl => {
+        GitHost::Wsl(_) => {
             let (program, argv) = git_program(host, dir, args);
             let mut c = Command::new(program);
             c.args(&argv).stdin(Stdio::null());
             no_window(&mut c);
             let out = c.output()?;
+            let code = out.status.code().unwrap_or(-1);
+            let mut stderr = wsl::decode_wsl_output(&out.stderr);
+            if code != 0 && stderr.is_empty() && out.stdout.contains(&0) {
+                stderr = wsl::decode_wsl_output(&out.stdout);
+            }
             Ok(GitOut {
-                code: out.status.code().unwrap_or(-1),
+                code,
                 stdout: out.stdout,
-                stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                stderr,
             })
         }
     }
 }
 
-fn is_git_repo(host: GitHost, cwd: &str) -> bool {
+fn is_git_repo(host: &GitHost, cwd: &str) -> bool {
     matches!(git_routed(host, cwd, &["rev-parse", "--is-inside-work-tree"]), Ok(o) if o.code == 0 && String::from_utf8_lossy(&o.stdout).trim() == "true")
 }
 
 /// HEAD when the repo has a commit, else the empty-tree object (FR-2).
-fn diff_base(host: GitHost, cwd: &str) -> String {
+fn diff_base(host: &GitHost, cwd: &str) -> String {
     match git_routed(host, cwd, &["rev-parse", "--verify", "-q", "HEAD"]) {
         Ok(o) if o.code == 0 => "HEAD".into(),
         _ => EMPTY_TREE.into(),
@@ -222,13 +237,13 @@ fn diff_base(host: GitHost, cwd: &str) -> String {
 /// Falls back to cwd if resolution fails. For a WSL repo this is a **Linux** path
 /// (wsl-filesystem FR-6) — stored verbatim by `repo_info` and reused directly as
 /// the `--cd` target for every subsequent op on that repo.
-fn repo_root(host: GitHost, cwd: &str) -> String {
+fn repo_root(host: &GitHost, cwd: &str) -> String {
     // Fallbacks return the cwd in the HOST's path dialect: for a Wsl host the
     // "root is a Linux path" invariant must hold even here — untracked_counts
     // joins `<root>/<path>` and translates via linux_to_wsl_unc, which would
     // produce garbage from a raw \\wsl$ UNC cwd (review finding, wsl-filesystem).
     let fallback = || match host {
-        GitHost::Wsl => wsl_cd_target(cwd),
+        GitHost::Wsl(_) => wsl_cd_target(cwd),
         GitHost::Native => cwd.to_string(),
     };
     match git_routed(host, cwd, &["rev-parse", "--show-toplevel"]) {
@@ -263,20 +278,20 @@ static REPO_CACHE: OnceLock<Mutex<HashMap<String, (GitHost, String, Option<Strin
 fn repo_info(cwd: &str) -> Option<(GitHost, String, String)> {
     let cache = REPO_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some((host, root, stable_base)) = cache.lock().unwrap().get(cwd).cloned() {
-        let base = stable_base.unwrap_or_else(|| diff_base(host, &root));
+        let base = stable_base.unwrap_or_else(|| diff_base(&host, &root));
         return Some((host, root, base));
     }
     let host = GitHost::of(cwd);
-    if !is_git_repo(host, cwd) {
+    if !is_git_repo(&host, cwd) {
         return None;
     }
-    let root = repo_root(host, cwd);
-    let base = diff_base(host, &root);
+    let root = repo_root(&host, cwd);
+    let base = diff_base(&host, &root);
     let stable = (base == "HEAD").then(|| "HEAD".to_string());
     cache
         .lock()
         .unwrap()
-        .insert(cwd.to_string(), (host, root.clone(), stable));
+        .insert(cwd.to_string(), (host.clone(), root.clone(), stable));
     Some((host, root, base))
 }
 
@@ -463,13 +478,15 @@ fn parse_unified_diff(text: &str) -> Vec<DiffHunk> {
 /// happy path — the whole point of the round-3 perf fix this preserves). If the
 /// FR-3 root couldn't be discovered, fall back to a per-file `wsl.exe` numstat
 /// spawn (§7 — correct, slower, WSL-only).
-fn untracked_counts(host: GitHost, root: &str, path: &str) -> (u64, u64) {
+fn untracked_counts(host: &GitHost, root: &str, path: &str) -> (u64, u64) {
     match host {
         GitHost::Native => untracked_counts_in_process(&Path::new(root).join(path)),
-        GitHost::Wsl => match wsl::linux_to_wsl_unc(&format!("{root}/{path}")) {
-            Some(unc) => untracked_counts_in_process(Path::new(&unc)),
-            None => untracked_counts_wsl_fallback(root, path), // FR-3 root unavailable (§7)
-        },
+        GitHost::Wsl(distro) => {
+            match wsl::linux_to_wsl_unc(Some(distro), &format!("{root}/{path}")) {
+                Some(unc) => untracked_counts_in_process(Path::new(&unc)),
+                None => untracked_counts_wsl_fallback(distro, root, path), // FR-3 root unavailable (§7)
+            }
+        }
     }
 }
 
@@ -512,9 +529,9 @@ fn untracked_counts_in_process(file: &Path) -> (u64, u64) {
 /// §7 fallback when the FR-3 UNC root is unavailable: one `git --no-index --numstat`
 /// spawn per untracked file, routed into the distro (correct, slower — the
 /// pre-round-3 shape, WSL-only; native repos always take the in-process path above).
-fn untracked_counts_wsl_fallback(root: &str, path: &str) -> (u64, u64) {
+fn untracked_counts_wsl_fallback(distro: &str, root: &str, path: &str) -> (u64, u64) {
     let Ok(out) = git_routed(
-        GitHost::Wsl,
+        &GitHost::Wsl(distro.to_string()),
         root,
         &["diff", "--no-index", "--numstat", "--", "/dev/null", path],
     ) else {
@@ -542,7 +559,7 @@ fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
         return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
     };
     let st = git_routed(
-        host,
+        &host,
         &root,
         &[
             "status",
@@ -563,7 +580,7 @@ fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
             },
         ));
     }
-    let numstat = git_routed(host, &root, &["diff", &base, "-M", "-z", "--numstat"])
+    let numstat = git_routed(&host, &root, &["diff", &base, "-M", "-z", "--numstat"])
         .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
     let counts = parse_numstat_z(&numstat.stdout);
 
@@ -572,7 +589,7 @@ fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
         .map(|(xy, path)| {
             let status = map_status(&xy);
             let (additions, deletions) = if status == DiffFileStatus::Untracked {
-                untracked_counts(host, &root, &path)
+                untracked_counts(&host, &root, &path)
             } else {
                 counts.get(&path).copied().unwrap_or((0, 0))
             };
@@ -605,7 +622,7 @@ fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
     // costs a full `git status` + numstat + a diff per untracked file). Big win on a
     // large repo where every chip click otherwise re-scans everything.
     let st = git_routed(
-        host,
+        &host,
         &root,
         &[
             "status",
@@ -640,12 +657,12 @@ fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
     let status = map_status(&xy);
     let out = if status == DiffFileStatus::Untracked {
         git_routed(
-            host,
+            &host,
             &root,
             &["diff", "--no-index", "--", "/dev/null", path],
         )
     } else {
-        git_routed(host, &root, &["diff", &base, "-M", "--", path])
+        git_routed(&host, &root, &["diff", &base, "-M", "--", path])
     }
     .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
 
@@ -945,13 +962,13 @@ pub async fn diff_stage_all(app: AppHandle, session_id: String) -> IpcResult<Opt
         Err(e) => return e,
     };
     let host = GitHost::of(&cwd); // wsl-filesystem FR-9: same routing as every other git op
-    if !is_git_repo(host, &cwd) {
+    if !is_git_repo(&host, &cwd) {
         return err("NOT_A_GIT_REPO", NOT_A_REPO_MSG);
     }
     let lock = git_lock(&session_id);
     let _g = lock.lock().unwrap();
-    let root = repo_root(host, &cwd);
-    match git_routed(host, &root, &["add", "-A"]) {
+    let root = repo_root(&host, &cwd);
+    match git_routed(&host, &root, &["add", "-A"]) {
         Ok(o) if o.code == 0 => ok(None), // succeeds even with nothing to stage (FR-10)
         Ok(o) => err(
             "GIT_ERROR",
@@ -994,18 +1011,18 @@ pub async fn diff_commit(
         return err("INVALID_INPUT", "commit message is empty"); // defense in depth (FR-24)
     }
     let host = GitHost::of(&cwd); // wsl-filesystem FR-9: same routing as every other git op
-    if !is_git_repo(host, &cwd) {
+    if !is_git_repo(&host, &cwd) {
         return err("NOT_A_GIT_REPO", NOT_A_REPO_MSG);
     }
     let lock = git_lock(&session_id);
     let _g = lock.lock().unwrap();
-    let root = repo_root(host, &cwd);
+    let root = repo_root(&host, &cwd);
 
     let message = message.trim();
     if paths.is_empty() {
         // Legacy flow: commit the current index. Guard nothing-staged (FR-11) —
         // `git diff --cached --quiet` exits 0 when the index is empty.
-        match git_routed(host, &root, &["diff", "--cached", "--quiet"]) {
+        match git_routed(&host, &root, &["diff", "--cached", "--quiet"]) {
             Ok(o) if o.code == 0 => {
                 return err(
                     "GIT_ERROR",
@@ -1022,7 +1039,7 @@ pub async fn diff_commit(
         // no-op when a path has nothing to stage.
         let mut add = vec!["add", "--"];
         add.extend(paths.iter().map(|p| p.as_str()));
-        match git_routed(host, &root, &add) {
+        match git_routed(&host, &root, &add) {
             Ok(o) if o.code == 0 => {}
             Ok(o) => {
                 return err(
@@ -1041,7 +1058,7 @@ pub async fn diff_commit(
     // FR-9: commit identity/hooks are the distro's own git config for WSL repos
     // (documented, not managed — spec §4). With paths, git itself errors if none of
     // the selected files have anything to commit.
-    match git_routed(host, &root, &commit_args(message, &paths)) {
+    match git_routed(&host, &root, &commit_args(message, &paths)) {
         Ok(o) if o.code == 0 => {}
         Ok(o) => {
             return err(
@@ -1055,7 +1072,7 @@ pub async fn diff_commit(
         }
         Err(e) => return err("GIT_ERROR", e.to_string()),
     }
-    match git_routed(host, &root, &["rev-parse", "HEAD"]) {
+    match git_routed(&host, &root, &["rev-parse", "HEAD"]) {
         Ok(o) if o.code == 0 => ok(CommitResult {
             commit_hash: String::from_utf8_lossy(&o.stdout).trim().to_string(),
         }),
@@ -1216,24 +1233,24 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let root = dir.to_string_lossy().to_string();
         std::fs::write(dir.join("two.txt"), "one\ntwo\n").unwrap();
-        assert_eq!(untracked_counts(GitHost::Native, &root, "two.txt"), (2, 0));
+        assert_eq!(untracked_counts(&GitHost::Native, &root, "two.txt"), (2, 0));
         // final line without trailing newline still counts (git numstat semantics)
         std::fs::write(dir.join("noeol.txt"), "one\ntwo").unwrap();
         assert_eq!(
-            untracked_counts(GitHost::Native, &root, "noeol.txt"),
+            untracked_counts(&GitHost::Native, &root, "noeol.txt"),
             (2, 0)
         );
         std::fs::write(dir.join("empty.txt"), "").unwrap();
         assert_eq!(
-            untracked_counts(GitHost::Native, &root, "empty.txt"),
+            untracked_counts(&GitHost::Native, &root, "empty.txt"),
             (0, 0)
         );
         // NUL in the first 8 KiB → binary → 0/0, like numstat's `-`
         std::fs::write(dir.join("bin.dat"), b"ab\0cd\n\n").unwrap();
-        assert_eq!(untracked_counts(GitHost::Native, &root, "bin.dat"), (0, 0));
+        assert_eq!(untracked_counts(&GitHost::Native, &root, "bin.dat"), (0, 0));
         // unreadable/missing → 0/0 (best-effort, matches the old spawn-failure path)
         assert_eq!(
-            untracked_counts(GitHost::Native, &root, "missing.txt"),
+            untracked_counts(&GitHost::Native, &root, "missing.txt"),
             (0, 0)
         );
     }
@@ -1261,10 +1278,15 @@ mod tests {
         // "the claude runtime is irrelevant" (spec FR-5) — GitHost::of only ever
         // looks at the cwd string.
         assert_eq!(GitHost::of("D:\\repo"), GitHost::Native);
-        assert_eq!(GitHost::of("\\\\wsl$\\Ubuntu\\home\\u\\api"), GitHost::Wsl);
+        // The distro rides along in the host (multi-distro remediation): -d must
+        // name the repo's distro, not whatever the machine's default happens to be.
         assert_eq!(
-            GitHost::of("\\\\wsl.localhost\\Ubuntu\\home\\u"),
-            GitHost::Wsl
+            GitHost::of("\\\\wsl$\\Ubuntu\\home\\u\\api"),
+            GitHost::Wsl("Ubuntu".into())
+        );
+        assert_eq!(
+            GitHost::of("\\\\wsl.localhost\\Debian\\home\\u"),
+            GitHost::Wsl("Debian".into())
         );
         assert_eq!(GitHost::of("/mnt/c/Users/u"), GitHost::Native); // not a WSL UNC path (FR-1)
     }
@@ -1274,7 +1296,7 @@ mod tests {
         // Regression pin (spec §9 last bullet): native-runtime drive-letter sessions
         // must keep producing byte-identical git invocations.
         let (prog, args) = git_program(
-            GitHost::Native,
+            &GitHost::Native,
             "D:\\repo",
             &["status", "--porcelain=v1", "-z"],
         );
@@ -1283,9 +1305,9 @@ mod tests {
     }
 
     #[test]
-    fn git_program_wsl_wraps_with_cd_and_translates_a_unc_cwd() {
+    fn git_program_wsl_wraps_with_distro_and_cd_and_translates_a_unc_cwd() {
         let (prog, args) = git_program(
-            GitHost::Wsl,
+            &GitHost::Wsl("Ubuntu".into()),
             "\\\\wsl$\\Ubuntu\\home\\u\\api",
             &["status", "--porcelain=v1"],
         );
@@ -1293,6 +1315,8 @@ mod tests {
         assert_eq!(
             args,
             vec![
+                "-d",
+                "Ubuntu",
                 "--cd",
                 "/home/u/api",
                 "--",
@@ -1308,11 +1332,15 @@ mod tests {
         // A repo root returned by a prior `--show-toplevel` (FR-6) is already Linux —
         // it must NOT be run through FR-2 translation again (it wouldn't match the
         // WSL UNC prefixes anyway, so this is also just wsl_cd_target's idempotence).
-        let (prog, args) = git_program(GitHost::Wsl, "/home/u/api", &["diff", "--numstat"]);
+        let (prog, args) = git_program(
+            &GitHost::Wsl("Ubuntu".into()),
+            "/home/u/api",
+            &["diff", "--numstat"],
+        );
         assert_eq!(prog, "wsl.exe");
         assert_eq!(
             args,
-            vec!["--cd", "/home/u/api", "--", "git", "diff", "--numstat"]
+            vec!["-d", "Ubuntu", "--cd", "/home/u/api", "--", "git", "diff", "--numstat"]
         );
     }
 

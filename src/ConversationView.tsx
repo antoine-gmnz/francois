@@ -200,6 +200,9 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (dist > 32 && pinnedRef.current) setPinned(false); // FR-19
+    // Scrolling back within the same band re-pins — the "jump to latest" chip
+    // must clear on a manual return to the bottom, not only via its own click.
+    else if (dist <= 32 && !pinnedRef.current) setPinned(true);
   };
 
   const jumpToLatest = () => {
@@ -349,6 +352,10 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
             display: 'flex',
             flexDirection: 'column',
             gap: 14,
+            // The app root disables selection (styles.css body rule) for chrome;
+            // the transcript is CONTENT — copying out of it must work.
+            userSelect: 'text',
+            cursor: 'auto',
           }}
         >
           {hydrationError ? (

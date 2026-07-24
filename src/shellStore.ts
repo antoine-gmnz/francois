@@ -8,9 +8,6 @@ import { useSyncExternalStore } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import type { ShellEvent } from '../contract/shell-terminal';
 
-// No session-engine in this build: a single implicit default session.
-export const DEFAULT_SESSION_ID = 'default';
-
 export interface ShellUiState {
   alive: boolean;
   exitCode?: number;

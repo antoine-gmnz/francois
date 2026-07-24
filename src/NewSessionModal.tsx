@@ -96,6 +96,16 @@ export default function NewSessionModal({
     if (effort && !modelEfforts.includes(effort)) setEffort('');
   }, [modelId, models]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Shared by Browse and direct typing: keep the derived name and the FR-16
+  // runtime auto-suggest in sync with the path. The suggest follows the path in
+  // BOTH directions (wsl for a WSL UNC path, back to native otherwise) but only
+  // while the user hasn't explicitly clicked a runtime chip this modal-open.
+  const applyCwd = (path: string) => {
+    setCwd(path);
+    if (!nameTouched) setName(basename(path));
+    if (IS_WINDOWS && !runtimeTouched) setRuntime(isWslUncPath(path) ? 'wsl' : 'native');
+  };
+
   const browse = async () => {
     if (picking) return;
     setPicking(true);
@@ -107,12 +117,7 @@ export default function NewSessionModal({
       return;
     }
     if (res.data === null) return; // cancelled
-    const path = res.data.path;
-    setCwd(path);
-    if (!nameTouched) setName(basename(path));
-    // FR-16: auto-suggest the wsl runtime for a WSL UNC pick, unless the user
-    // already touched a runtime chip this modal-open — still freely editable.
-    if (IS_WINDOWS && !runtimeTouched && isWslUncPath(path)) setRuntime('wsl');
+    applyCwd(res.data.path);
   };
 
   const canCreate = cwd.trim() !== '' && name.trim() !== '' && modelId !== '' && !submitting;
@@ -125,7 +130,7 @@ export default function NewSessionModal({
     setSubmitting(true);
     setSubmitError(null);
     const res = await sessionCreate({
-      cwd,
+      cwd: cwd.trim(),
       name,
       modelId,
       effort: effort || undefined,
@@ -197,22 +202,15 @@ export default function NewSessionModal({
           <div>
             <label style={labelStyle}>DIRECTORY</label>
             <div style={{ display: 'flex', gap: 8 }}>
-              <div
-                onClick={browse}
-                style={{
-                  ...fieldStyle,
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  color: cwd ? C.primary : C.faint,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {cwd || 'choose a working directory…'}
-              </div>
+              {/* Editable, not browse-only: on some setups the native picker can't
+                  reach a location (e.g. WSL's Linux section on older Windows
+                  builds) — typing/pasting the path must always work as a fallback. */}
+              <input
+                style={{ ...fieldStyle, flex: 1 }}
+                value={cwd}
+                placeholder="type a path or browse…"
+                onChange={(e) => applyCwd(e.target.value)}
+              />
               <button onClick={browse} disabled={picking} style={btn(false)}>
                 {picking ? '…' : 'Browse…'}
               </button>

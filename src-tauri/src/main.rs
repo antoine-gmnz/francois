@@ -168,38 +168,22 @@ fn basename_no_ext(p: &str) -> String {
 
 // ---------- per-session spawn matrix (wsl-filesystem FR-10..12) ----------
 
-/// FR-11's `<dir>` for a wsl spawn: FR-2 translation of a WSL UNC cwd, else the
-/// Windows path verbatim — `wsl.exe` maps a drive-letter path to `/mnt/…` itself
-/// (confirmed live: `wsl.exe --cd D:\francois -- pwd` -> `/mnt/d/francois`). A WSL
-/// UNC path handed to `--cd` raw is NOT auto-translated the same way — confirmed
-/// live it's rejected outright (`Wsl/E_INVALIDARG`) — so unlike drive paths it MUST
-/// be pre-translated here.
-fn wsl_cd_target(cwd: &str) -> String {
-    crate::wsl::wsl_unc_to_linux(cwd)
-        .map(|(_, linux)| linux)
-        .unwrap_or_else(|| cwd.to_string())
-}
-
 /// (program, args, shellName, spawnCwd) for a session's shell under its runtime
 /// (FR-11/FR-12 — the claude runtime, not the diff domain's FR-5). native: the
 /// existing `resolve_shell()` (pwsh/PowerShell/zsh/bash per platform), spawned with
 /// the session cwd verbatim — a WSL UNC cwd is legal here (pwsh supports a UNC
 /// cwd); it's the user's explicit mismatch choice (spec story C), never blocked.
-/// wsl: `wsl.exe --cd <dir>` launching the distro's default shell with NO process
-/// cwd set — `<dir>` alone positions it, and the raw cwd string (UNC or Linux) is
-/// meaningless as wsl.exe's own Windows-side working directory. `shellName` is the
-/// FR-3 distro name, falling back to the literal "wsl" if root discovery failed
-/// (spec §7).
+/// wsl: `wsl.exe [-d <distro>] --cd <dir>` (wsl_base_args — a WSL UNC cwd targets
+/// the distro named in the path, not the machine's default) launching that
+/// distro's default shell with NO process cwd set — `--cd` alone positions it,
+/// and the raw cwd string (UNC or Linux) is meaningless as wsl.exe's own
+/// Windows-side working directory. `shellName` is the cwd's distro when the path
+/// names one, else the default distro (FR-3), else the literal "wsl" (spec §7).
 fn shell_spawn_target(runtime: &str, cwd: &str) -> (String, Vec<String>, String, Option<String>) {
     if runtime == "wsl" {
-        let dir = wsl_cd_target(cwd);
-        let shell_name = crate::wsl::wsl_distro_name().unwrap_or_else(|| "wsl".to_string());
-        (
-            "wsl.exe".to_string(),
-            vec!["--cd".to_string(), dir],
-            shell_name,
-            None,
-        )
+        let args = crate::wsl::wsl_base_args(cwd);
+        let shell_name = crate::wsl::wsl_distro_name(cwd).unwrap_or_else(|| "wsl".to_string());
+        ("wsl.exe".to_string(), args, shell_name, None)
     } else {
         let (exe, args, shell_name) = resolve_shell();
         (exe, args, shell_name, Some(cwd.to_string()))
@@ -620,18 +604,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wsl_cd_target_translates_unc_cwd_and_passes_drive_paths_through() {
-        // UNC must be pre-translated (wsl.exe rejects it raw — confirmed live,
-        // Wsl/E_INVALIDARG); a drive path is handed to wsl.exe verbatim, which maps
-        // it to /mnt/… itself (confirmed live: --cd D:\francois -> /mnt/d/francois).
-        assert_eq!(
-            wsl_cd_target("\\\\wsl$\\Ubuntu\\home\\u\\api"),
-            "/home/u/api"
-        );
-        assert_eq!(wsl_cd_target("D:\\acme-api"), "D:\\acme-api");
-    }
-
-    #[test]
     fn shell_spawn_target_native_uses_resolve_shell_and_session_cwd() {
         // Regression pin (spec §9 last bullet): a native-runtime session's shell
         // spawn must stay byte-identical to the pre-wsl-filesystem resolve_shell()
@@ -643,11 +615,15 @@ mod tests {
     }
 
     #[test]
-    fn shell_spawn_target_wsl_translates_unc_cwd_and_sets_no_process_cwd() {
-        let (exe, args, _name, spawn_cwd) =
+    fn shell_spawn_target_wsl_targets_the_cwds_distro_and_sets_no_process_cwd() {
+        // The distro comes from the UNC path itself (-d) — bare wsl.exe would hit
+        // the machine's DEFAULT distro, wrong whenever the repo lives elsewhere
+        // (docker-desktop-as-default being the canonical open-source-user case).
+        let (exe, args, name, spawn_cwd) =
             shell_spawn_target("wsl", "\\\\wsl$\\Ubuntu\\home\\u\\api");
         assert_eq!(exe, "wsl.exe");
-        assert_eq!(args, vec!["--cd", "/home/u/api"]);
+        assert_eq!(args, vec!["-d", "Ubuntu", "--cd", "/home/u/api"]);
+        assert_eq!(name, "Ubuntu"); // FR-12: pure — from the path, no wsl.exe probe
         assert_eq!(spawn_cwd, None); // `--cd` alone positions it (FR-11)
     }
 
