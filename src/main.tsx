@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+import App from './app/App';
 import './styles.css';
 
 // Mark the document hidden while the window is minimized/occluded so CSS can pause all
