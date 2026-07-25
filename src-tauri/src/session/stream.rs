@@ -1,7 +1,5 @@
 //! the per-turn NDJSON reader and its stream-event handlers.
 
-//! turn execution: spawning the CLI and reading its NDJSON stream.
-
 use super::*;
 
 use serde_json::Value;
@@ -70,18 +68,26 @@ pub(crate) fn run_reader(
         let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        // async-agents FR-8: a line carrying a non-null parent_tool_use_id belongs
-        // to a subagent. It is attributed to that agent and NEVER passed to the
-        // parent-turn handlers, so the SESSION transcript stays a record of the
-        // parent turn only. An unknown correlation key is ignored entirely.
-        if let Some(ptuid) = parent_tool_use_id(&v) {
-            attribute_inner_line(&app, &session_id, &ptuid, &v, &cwd);
-            continue;
-        }
-        // async-agents FR-13: a harness-injected task-notification closes its
-        // background agent and never reaches the transcript.
-        if handle_task_notification(&app, &session_id, &v) {
-            continue;
+        // async-agents FR-8/FR-9: a line carrying a non-null parent_tool_use_id on
+        // an assistant/user/stream_event type belongs to a subagent. It is
+        // attributed to that agent and NEVER passed to the parent-turn handlers,
+        // so the SESSION transcript stays a record of the parent turn only. An
+        // unknown correlation key is ignored entirely. Any other type (e.g. a
+        // control_request) is never diverted, even if it carries a stray
+        // parent_tool_use_id — it must still reach its normal handler.
+        match route_line(&v) {
+            LineRoute::Attributed(ptuid) => {
+                attribute_inner_line(&app, &session_id, &ptuid, &v, &cwd);
+                continue;
+            }
+            LineRoute::Notice => {
+                // async-agents FR-13: a harness-injected task-notification closes
+                // its background agent and never reaches the transcript.
+                if handle_task_notification(&app, &session_id, &v) {
+                    continue;
+                }
+            }
+            LineRoute::Parent => {}
         }
         let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
         match ty {
@@ -615,18 +621,9 @@ pub(crate) fn handle_stream_event(
                     // tool: finalize input (accumulated json overrides start input), derive summary, emit tool.start
                     let tuid = slot;
                     if let Some(rec) = tools.get_mut(&tuid) {
-                        if let Some(acc) = rec.input.get("__acc").and_then(|a| a.as_str()) {
-                            if !acc.is_empty() {
-                                if let Ok(parsed) = serde_json::from_str::<Value>(acc) {
-                                    // preserve __agentId if present
-                                    let agent_id = rec.input.get("__agentId").cloned();
-                                    rec.input = parsed;
-                                    if let Some(aid) = agent_id {
-                                        rec.input["__agentId"] = aid;
-                                    }
-                                }
-                            }
-                        }
+                        // async-agents FR-2: the accumulated __acc json becomes the
+                        // real input; __agentId survives the reparse (Finding 5).
+                        rec.input = finalize_tool_input(&rec.input);
                         let summary = tool_summary(&rec.tool, &rec.input, cwd);
                         // async-agents FR-2: the input JSON is complete now — resolve
                         // the dispatch kind and tell the panel.
@@ -798,6 +795,4 @@ mod tests {
         assert!(!s.block_buffer[0].streaming);
         assert_eq!(s.block_buffer[0].tool, "model");
     }
-
-    // ---------- session-questions (specs/session-questions.md) ----------
 }

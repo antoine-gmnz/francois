@@ -1,7 +1,7 @@
 ---
 id: async-agents
 title: Async agents — correct lifecycle + activity trail
-status: frozen
+status: shipped
 created: 2026-07-25
 depends_on: [session-engine, agents-panel, conversation-view]
 ---
@@ -156,8 +156,11 @@ and a scrollable trail in the expanded card.
 ### Async completion notice
 
 - **FR-13.** A top-level line (`parent_tool_use_id` null or absent) of type `user` whose text content
-  contains the substring `task-notification` (case-insensitive) is a background-agent completion
-  notice.
+  contains the substring `task-notification` (case-insensitive) **and which carries no `tool_result`**
+  is a background-agent completion notice. The `tool_result` exclusion is deliberate: such a line is a
+  real tool response that must reach the transcript, so it can never be consumed as a notice. A harness
+  that shipped the notice *alongside* a `tool_result` would therefore be missed — cost is elapsed
+  truncated to turn end, per FR-16.
 - **FR-14.** The engine resolves a notice to an agent by trying, in order, and stopping at the first
   hit:
   1. a `background` agent of this session, still `running`, whose `backendRef` (FR-5) appears
@@ -329,11 +332,19 @@ None of this is serialized. `sessions.json` and the transcript file are untouche
 after a restart an agent's trail is gone and its card is gone with it (agents are already
 session-lifetime-only, agents-panel §6).
 
-**Frontend** (`src/AgentsPanel.tsx`), added to the existing per-session state:
+**Frontend** (`src/features/agents/AgentsPanel.tsx`), added to the existing per-session state.
+The state below is held as a single `TrailState` value in `src/features/agents/agent-trail.ts`
+rather than as separate fields — a strict superset of what this section originally specified:
 
-- `trail: AgentStep[]` — the expanded card's steps, ordered by `seq`.
-- `trailLoading: boolean`, `trailError: AppError | null` — the FR-19 request's state.
-- `trailAtBottom: boolean` — FR-21's auto-scroll latch.
+- `steps: AgentStep[]` — the expanded card's steps, ordered by `seq`.
+- `loading: boolean`, `error: AppError | null` — the FR-19 request's state.
+- `atBottom: boolean` — FR-21's auto-scroll latch.
+- `agentId: string | null` — which card is expanded (null ⇔ collapsed).
+- `reqId: number` — monotonic; stamps each FR-19 request so a stale response is dropped.
+- `buffer: AgentStep[]`, `hydrated: boolean` — live `agent.step` events that arrived while the
+  request was in flight, and whether the response has landed. These two are what make FR-20's
+  race rule correct: buffered events are applied *after* the response and are never overwritten
+  by it.
 
 All discarded on collapse (FR-22) and on session switch (FR-23). Derived, not stored: the meta-row
 string (`elapsed` + `lastActivity`), and the `async` marker (`agent.background`).
@@ -348,6 +359,10 @@ string (`elapsed` + `lastActivity`), and the `async` marker (`agent.background`)
   (`claude -p --output-format stream-json --include-partial-messages --verbose`) that dispatches a
   background agent, confirm the notice line's shape, and tighten FR-13/FR-14 to it — the FR-14 ladder
   is written so that step 3 alone already handles the common single-agent case.
+  > **DEFERRED (review, 2026-07-25).** This capture was **not** performed. The notice fixtures in
+  > `session/agents.rs`'s tests are hand-authored from the assumed shape, not from captured output,
+  > so FR-13/FR-14 remain **inferred**. FR-16 keeps a miss from being a correctness bug, so this is
+  > precision debt, not breakage. Do the capture before treating FR-13's grammar as settled.
 - **FR-2 infers wrong (a `Task` that was actually async, or an `Agent` that was sync).** Either way
   FR-11 corrects it the moment inner activity contradicts the inferred completion, and FR-16 closes it
   at turn end. The visible cost is a card that briefly reads `done` and returns to `running`.
@@ -359,7 +374,7 @@ string (`elapsed` + `lastActivity`), and the `async` marker (`agent.background`)
 - **`agent.step` arrives for a collapsed or unknown card.** Ignored by the panel (FR-22); the core's
   trail is authoritative and FR-19 will serve it on expand.
 - **`activity` returns 200 steps but `stepCount` is 640.** The trail is a window (FR-12). The expanded
-  card renders a single dim leading row — `… {stepCount - trail.length} earlier steps` — so the
+  card renders a single dim leading row — `… {stepCount - trail.length} earlier step(s)` — so the
   truncation is never silent.
 - **`activity` fails with `AGENT_NOT_FOUND`.** The expanded card shows the inline error line (§8) and,
   per agents-panel §7's existing rule for `kill`, the card is removed from the local map on the next
@@ -401,7 +416,7 @@ already uses (`src/styles.css`), with the mock's hex in parentheses.
   (aligned with the task line, past the status dot), `margin-top: 6px`,
   `border-top: 1px solid var(--border)` (`#24262d`), `padding-top: 6px`, `max-height: 180px`,
   `overflow-y: auto`, using the app-wide `.scz` thin scrollbar.
-  - **Truncation row** (only when `stepCount > trail.length`): `… {N} earlier steps`, `font-size: 10px`,
+  - **Truncation row** (only when `stepCount > trail.length`): `… {N} earlier step(s)` (singular `step` when N is 1), `font-size: 10px`,
     `color: var(--text-disabled)`, `padding: 2px 0 4px`.
   - **Step row**: `display: flex; align-items: baseline; gap: 7px; padding: 2px 0; font-size: 10px`.
     - Glyph, `width: 10px; flex-shrink: 0; text-align: center`, per kind:
@@ -432,7 +447,7 @@ pending-kill, expanded, empty, loading, list-error). Added:
 | expanded, trail loading | task text wraps; trail area renders nothing |
 | expanded, trail loaded, ≥1 step | step rows, newest last, scrolled to bottom |
 | expanded, trail loaded, 0 steps | `no activity yet` |
-| expanded, trail windowed | leading `… N earlier steps` row |
+| expanded, trail windowed | leading `… N earlier step(s)` row |
 | expanded, trail errored | inline error row in `var(--error)` |
 
 A **pending-kill** card at `opacity: 0.55` dims the trail with it (it is inside the card) — no separate
@@ -508,4 +523,51 @@ treatment.
 
 ## Remediation
 
-(Empty until a review returns findings.)
+### Round 1 — review 2026-07-25 (verdict SHIP · 0 critical · 0 security · 1 high · 7 medium · 12 low)
+
+Two read-only reviewers, one per surface. All findings applied; the spec edits above (FR-13's
+`tool_result` exclusion, §6's `TrailState` shape, §7's deferral note, §8's plural copy) are part of
+this round. Re-verified after the fixes: `cargo test` 199 passed, `npm test` 296 passed,
+`cargo check --tests` and `npx tsc --noEmit` clean, `cargo fmt --check` clean.
+
+**core** (`src-tauri/`)
+
+- [x] **HIGH** `session/turn.rs` — `fail_session` never called `finalize_agents`, so an agent still
+  `running` when a session errored kept `endedAt: None` forever (a live clock against a dead
+  session), contradicting FR-16 and FR-7. Extracted `apply_fail_session` and emitted the
+  finalization *before* the terminal `session.error`/`session.status`, mirroring `finish_turn`.
+- [x] **MEDIUM** `session/agents.rs` — `agent_inner_tools` grew unbounded, each entry pinning a full
+  clone of the inner tool's `input` JSON, while `agent_steps` was bounded at 200 (FR-12). Now pruned
+  on meta-fill and on trail eviction, so the window guarantee extends to the memory it costs.
+- [x] **MEDIUM** `session/stream.rs` — the FR-8 diversion ran before the type match, so a
+  `control_request` carrying `parent_tool_use_id` would have been swallowed with no
+  `control_response` ever written, hanging the turn. Now gated to `assistant`/`user`/`stream_event`.
+- [x] **MEDIUM** `session/stream.rs` — its async-agents wiring had no tests at all. Extracted
+  `route_line` (`LineRoute`) and `finalize_tool_input` as pure functions in `agents.rs` and covered
+  both — including that `__agentId` survives the `__acc` reparse, whose regression would silently
+  reintroduce the exact bug this feature fixes with every other test still green.
+- [x] **MEDIUM** §7's mandated NDJSON capture — **deferred, not done**. Recorded in §7 above;
+  FR-13/FR-14 remain inferred.
+- [x] **LOW** `apply_notice` blank-label fallback · FR-13 `tool_result` exclusion documented ·
+  split artifacts (duplicated `//!` lines in `turn.rs`/`stream.rs`, orphaned test header) ·
+  inverted word-boundary comment.
+- [ ] **LOW, declined** `agents.rs` (1082) and `interactive.rs` (1028) sit just over the ~1000-line
+  convention. Judged not worth the churn; both are single coherent domains.
+
+**frontend** (`src/`)
+
+- [x] **MEDIUM** `features/agents/AgentsPanel.tsx` — `loadTrail` had no `try`/`catch` and was a
+  floating `void` promise; `ipc()` *rejects* on transport failure rather than resolving a `Result`,
+  so `trail.loading` stuck `true` forever with no error row and no recovery. Rejection now funnels
+  through the same `Result` path.
+- [x] **MEDIUM** `lib/api.ts` — `agentsActivity` had no test; the command string and arg key are the
+  contract binding and exactly what `tsc` cannot check. Covered with a mocked `invoke`.
+- [x] **MEDIUM** `features/agents/` — `agent.step` routing extracted to `routeSessionEventToTrail`
+  so the session-filter decision is testable without a DOM.
+- [x] **LOW** `AGENT_NOT_FOUND` card-drop deferred one commit so §7's error row actually paints ·
+  a live step after a failed hydration clears the error · dead `onWheel` removed
+  (`overscrollBehavior` is what implements the rule) · `… 1 earlier step` pluralized ·
+  four test gaps closed · stale path comments fixed.
+- [ ] **LOW, open** `receiveTrailActivity` does not dedupe a duplicate `seq` *within one response*,
+  which would collide on `<StepRow key={s.seq}>`. Unreachable — the core mints `seq` from a
+  monotonic per-agent counter — so current behaviour is documented in a test rather than changed.

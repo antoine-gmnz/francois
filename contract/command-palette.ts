@@ -3,9 +3,9 @@
 //
 // This feature owns NO IPC channels (the `francois:palette:*` domain is reserved
 // but unused). These are the registry/runtime TYPES; the runtime functions with
-// the signatures documented below live in `src/palette.ts` (a frontend-only
+// the signatures documented below live in `src/features/palette/palette.ts` (a frontend-only
 // module — there is no core boundary to mirror). Consumers import the types from
-// here and the functions from `src/palette`.
+// here and the functions from `src/features/palette/palette`.
 
 import type { SessionId } from './common';
 
@@ -61,9 +61,9 @@ export interface PaletteCommand {
 
 export type ToastKind = 'error' | 'info' | 'success';
 
-// ---------- runtime API (implemented in src/palette.ts) ----------
+// ---------- runtime API (implemented in src/features/palette/palette.ts) ----------
 // The following are the exported runtime functions (documented here as the
-// feature's public surface; see src/palette.ts for the implementations):
+// feature's public surface; see src/features/palette/palette.ts for the implementations):
 //
 //   registerPaletteCommand(command: PaletteCommand): void   // throws if id already registered (FR-6/7)
 //   unregisterPaletteCommand(id: string): void              // no-op if absent

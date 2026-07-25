@@ -8,7 +8,7 @@
 // repaints forever). Its height is a fixed 28px in every state (FR-2), so no
 // state change ever reflows the grid below.
 //
-// All logic lives in ./usage (covered by src/usage.test.ts); this file only maps
+// All logic lives in ./usage (covered by src/features/usage/usage.test.ts); this file only maps
 // the view model onto §8's tokens.
 
 import { useEffect, useState } from 'react';

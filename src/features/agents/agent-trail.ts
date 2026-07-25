@@ -3,7 +3,7 @@
 // latch (FR-21), the collapse/expand lifecycle (FR-19/FR-22) and the §8 step
 // vocabulary are unit-testable without the DOM.
 
-import type { AgentInfo, AgentStep, AgentStepKind, AppError, Result } from '../../../contract/common';
+import type { AgentInfo, AgentStep, AgentStepKind, AppError, Result, SessionEvent } from '../../../contract/common';
 
 // ---------- §8 vocabulary ----------
 
@@ -55,12 +55,24 @@ export function activitySuffix(a: AgentInfo): string | null {
 /** §7: the leading dim row when the 200-step window dropped older steps (FR-12). */
 export function earlierStepsNotice(stepCount: number, trailLength: number): string | null {
   const dropped = stepCount - trailLength;
-  return dropped > 0 ? `… ${dropped} earlier steps` : null;
+  return dropped > 0 ? `… ${dropped} earlier step${dropped === 1 ? '' : 's'}` : null;
 }
 
 /** §7: `AGENT_NOT_FOUND` drops the card from the local map, like `kill` does. */
 export function dropsCardOnTrailError(error: AppError): boolean {
   return error.code === 'AGENT_NOT_FOUND';
+}
+
+/**
+ * §7: the pure decision behind AgentsPanel's delayed card-drop — the agent id
+ * to remove from the agent map, or null. Split out from `dropsCardOnTrailError`
+ * so the "which agent, if any, right now" question is itself unit-testable: the
+ * card must drop only ONE commit after the trail's error row has painted, never
+ * in the same batch as the error being set (otherwise the row never renders).
+ */
+export function agentIdToDropForTrailError(trail: TrailState): string | null {
+  if (trail.agentId === null || trail.error === null) return null;
+  return dropsCardOnTrailError(trail.error) ? trail.agentId : null;
 }
 
 // ---------- FR-21 auto-scroll latch ----------
@@ -150,7 +162,22 @@ export function mergeStep(list: AgentStep[], step: AgentStep): AgentStep[] {
 export function receiveTrailStep(prev: TrailState, agentId: string, step: AgentStep): TrailState {
   if (prev.agentId === null || prev.agentId !== agentId) return prev; // collapsed / other card
   if (!prev.hydrated) return { ...prev, buffer: mergeStep(prev.buffer, step) };
-  return { ...prev, steps: mergeStep(prev.steps, step) };
+  // A live step still arriving proves the agent is not dead — clear a stored
+  // hydration error so the panel renders the step list again instead of being
+  // stuck on the error branch until the user collapses/re-expands (Finding 5).
+  return { ...prev, steps: mergeStep(prev.steps, step), error: null };
+}
+
+/**
+ * async-agents FR-20/FR-22: route a raw SessionEvent into the trail. Only
+ * `agent.step` events matter here, and only when they belong to this session —
+ * everything else (including foreign-session steps) passes the trail through
+ * unchanged. Extracted so the routing decision is unit-testable without a DOM.
+ */
+export function routeSessionEventToTrail(trail: TrailState, sessionId: string, e: SessionEvent): TrailState {
+  if (e.type !== 'agent.step') return trail;
+  if (e.sessionId !== sessionId) return trail;
+  return receiveTrailStep(trail, e.agentId, e.step);
 }
 
 /**

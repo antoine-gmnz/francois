@@ -11,12 +11,12 @@ import {
   TRAIL_MAX_HEIGHT_PX,
   type TrailState,
   activitySuffix,
+  agentIdToDropForTrailError,
   collapseTrail,
-  dropsCardOnTrailError,
   earlierStepsNotice,
   isAtBottom,
   receiveTrailActivity,
-  receiveTrailStep,
+  routeSessionEventToTrail,
   showAsyncMarker,
   stepMetaColor,
   stepToolPrefix,
@@ -119,8 +119,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
     void onSessionEvent((e: SessionEvent) => {
       if (e.type === 'agent.step') {
         // async-agents FR-20/FR-22: only the expanded card consumes steps.
-        if (e.sessionId !== sessionId) return;
-        setTrail((t) => receiveTrailStep(t, e.agentId, e.step));
+        setTrail((t) => routeSessionEventToTrail(t, sessionId, e));
         return;
       }
       if (e.type !== 'agent.update') return;
@@ -178,19 +177,34 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
   };
 
   // async-agents FR-19: hydrate the expanded card's trail. A stale response (the
-  // card was collapsed or re-expanded meanwhile) is dropped by its reqId.
+  // card was collapsed or re-expanded meanwhile) is dropped by its reqId. `ipc()`
+  // rejects (rather than resolving a Result) on transport-level failures — funnel
+  // that through the same Result path so `trail.loading` never sticks forever.
   const loadTrail = async (agentId: string, reqId: number) => {
-    const res = await agentsActivity(agentId);
-    setTrail((prev) => receiveTrailActivity(prev, reqId, res));
-    if (!res.ok && dropsCardOnTrailError(res.error)) {
-      setAgents((prev) => {
-        if (!prev.has(agentId)) return prev;
-        const n = new Map(prev);
-        n.delete(agentId);
-        return n;
-      });
+    try {
+      const res = await agentsActivity(agentId);
+      setTrail((prev) => receiveTrailActivity(prev, reqId, res));
+    } catch (e) {
+      setTrail((prev) =>
+        receiveTrailActivity(prev, reqId, { ok: false, error: { code: 'INTERNAL', message: String(e) } }),
+      );
     }
   };
+
+  // async-agents §7: AGENT_NOT_FOUND drops the card, but one render pass AFTER
+  // the trail's error row has painted — setTrail (above) and this setAgents must
+  // NOT land in the same React batch, or the card unmounts before the "expanded,
+  // trail errored" row (§8) is ever visible.
+  useEffect(() => {
+    const dropId = agentIdToDropForTrailError(trail);
+    if (!dropId) return;
+    setAgents((prev) => {
+      if (!prev.has(dropId)) return prev;
+      const n = new Map(prev);
+      n.delete(dropId);
+      return n;
+    });
+  }, [trail]);
 
   // FR-19/FR-22: ⏎ (or the same card again) toggles; expanding re-issues the fetch.
   const toggleExpand = (agentId: string) => {
@@ -461,7 +475,6 @@ function Trail({
       ref={ref}
       className="scz"
       onScroll={(e) => onAtBottom(isAtBottom(e.currentTarget))}
-      onWheel={(e) => e.stopPropagation()} // scrolling the trail never reaches the pane
       style={{
         marginLeft: 16,
         marginTop: 6,
@@ -469,6 +482,9 @@ function Trail({
         paddingTop: 6,
         maxHeight: TRAIL_MAX_HEIGHT_PX,
         overflowY: 'auto',
+        // overscrollBehavior — not a wheel handler — is what keeps the trail's
+        // scroll from bubbling to the pane: native scroll chaining ignores React's
+        // synthetic event propagation, so stopPropagation() on onWheel is a no-op.
         overscrollBehavior: 'contain',
       }}
     >

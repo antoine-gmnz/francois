@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import type { AgentInfo, AgentStep } from '../../../contract/common';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AgentInfo, AgentStep, SessionEvent } from '../../../contract/common';
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+
+import { agentsActivity } from '../../lib/api';
 import {
   ASYNC_MARKER,
   COLLAPSED_TRAIL,
@@ -8,6 +13,7 @@ import {
   TRAIL_BOTTOM_THRESHOLD_PX,
   TRAIL_EMPTY_LABEL,
   activitySuffix,
+  agentIdToDropForTrailError,
   collapseTrail,
   dropsCardOnTrailError,
   earlierStepsNotice,
@@ -16,6 +22,7 @@ import {
   mergeStep,
   receiveTrailActivity,
   receiveTrailStep,
+  routeSessionEventToTrail,
   showAsyncMarker,
   stepMetaColor,
   stepToolPrefix,
@@ -57,6 +64,10 @@ describe('mergeStep', () => {
   it('inserts an out-of-order seq at its sorted position', () => {
     const out = mergeStep([step(1), step(4)], step(2));
     expect(out.map((s) => s.seq)).toEqual([1, 2, 4]);
+  });
+  it('inserts a seq before the head of the list', () => {
+    const out = mergeStep([step(3), step(4)], step(1));
+    expect(out.map((s) => s.seq)).toEqual([1, 3, 4]);
   });
   it('does not mutate the input list', () => {
     const base = [step(1)];
@@ -133,6 +144,25 @@ describe('receiveTrailStep', () => {
     expect(t.steps.map((s) => s.seq)).toEqual([1, 2, 3]);
     expect(t.steps[1].meta).toBe('128 lines');
   });
+
+  it('clears a stored hydration error once a live step lands, so the panel stops rendering the error branch (Finding 5)', () => {
+    let t = expandTrail(COLLAPSED_TRAIL, 'a1');
+    t = receiveTrailActivity(t, t.reqId, { ok: false, error: { code: 'AGENT_NOT_FOUND', message: 'no such agent' } });
+    expect(t.error).not.toBeNull();
+    t = receiveTrailStep(t, 'a1', step(1));
+    expect(t.error).toBeNull();
+    expect(t.steps.map((s) => s.seq)).toEqual([1]);
+  });
+
+  it('merges a live step even though the agent card was already dropped from the (separate) agent map', () => {
+    // The trail is independent React state — it has no notion of the agents Map
+    // AgentsPanel keeps alongside it, so a step for an id no longer present there
+    // still merges normally until the trail itself is collapsed.
+    let t = expandTrail(COLLAPSED_TRAIL, 'a1');
+    t = receiveTrailActivity(t, t.reqId, { ok: true, data: [step(1)] });
+    t = receiveTrailStep(t, 'a1', step(2));
+    expect(t.steps.map((s) => s.seq)).toEqual([1, 2]);
+  });
 });
 
 // ---------- hydration race (FR-20) ----------
@@ -181,6 +211,86 @@ describe('receiveTrailActivity', () => {
     expect(dropsCardOnTrailError({ code: 'AGENT_NOT_FOUND', message: 'x' })).toBe(true);
     expect(dropsCardOnTrailError({ code: 'INTERNAL', message: 'x' })).toBe(false);
   });
+
+  it('keeps a duplicate seq within a single response as separate entries, stably ordered (no implicit dedupe)', () => {
+    let t = expandTrail(COLLAPSED_TRAIL, 'a1');
+    t = receiveTrailActivity(t, t.reqId, {
+      ok: true,
+      data: [step(1), step(2, { label: 'first' }), step(2, { label: 'second' })],
+    });
+    expect(t.steps.map((s) => s.seq)).toEqual([1, 2, 2]);
+    expect(t.steps.map((s) => s.label)).toEqual(['step 1', 'first', 'second']);
+  });
+});
+
+// ---------- delayed card-drop decision (§7, Finding 4) ----------
+
+describe('agentIdToDropForTrailError', () => {
+  it('is null while collapsed, while loading, and while errorless', () => {
+    expect(agentIdToDropForTrailError(COLLAPSED_TRAIL)).toBeNull();
+    expect(agentIdToDropForTrailError(expandTrail(COLLAPSED_TRAIL, 'a1'))).toBeNull();
+  });
+
+  it('names the agent id once AGENT_NOT_FOUND lands, so the drop can be deferred a commit', () => {
+    let t = expandTrail(COLLAPSED_TRAIL, 'a1');
+    t = receiveTrailActivity(t, t.reqId, { ok: false, error: { code: 'AGENT_NOT_FOUND', message: 'no such agent' } });
+    expect(agentIdToDropForTrailError(t)).toBe('a1');
+  });
+
+  it('is null for an error the panel does not drop the card for', () => {
+    let t = expandTrail(COLLAPSED_TRAIL, 'a1');
+    t = receiveTrailActivity(t, t.reqId, { ok: false, error: { code: 'INTERNAL', message: 'boom' } });
+    expect(agentIdToDropForTrailError(t)).toBeNull();
+  });
+});
+
+// ---------- routing a raw SessionEvent into the trail (FR-20/FR-22, Finding 3) ----------
+
+describe('routeSessionEventToTrail', () => {
+  const agentStepEvent = (over: Partial<Extract<SessionEvent, { type: 'agent.step' }>> = {}): SessionEvent => ({
+    type: 'agent.step',
+    sessionId: 's1',
+    agentId: 'a1',
+    step: step(1),
+    ...over,
+  });
+
+  it('drops non-agent.step events untouched', () => {
+    const t = expandTrail(COLLAPSED_TRAIL, 'a1');
+    const e: SessionEvent = { type: 'agent.update', agent: agent() };
+    expect(routeSessionEventToTrail(t, 's1', e)).toBe(t);
+  });
+
+  it('drops an agent.step event for a foreign session', () => {
+    const t = expandTrail(COLLAPSED_TRAIL, 'a1');
+    expect(routeSessionEventToTrail(t, 's1', agentStepEvent({ sessionId: 's2' }))).toBe(t);
+  });
+
+  it('applies an agent.step event for the expanded agent in this session', () => {
+    let t = expandTrail(COLLAPSED_TRAIL, 'a1');
+    t = receiveTrailActivity(t, t.reqId, { ok: true, data: [] });
+    const next = routeSessionEventToTrail(t, 's1', agentStepEvent());
+    expect(next.steps.map((s) => s.seq)).toEqual([1]);
+  });
+});
+
+// ---------- agentsActivity wrapper (contract binding, Finding 2) ----------
+
+describe('agentsActivity (contract-typed invoke wrapper)', () => {
+  beforeEach(() => invokeMock.mockReset());
+
+  it('invokes agents_activity with the agentId arg and returns the Result verbatim', async () => {
+    invokeMock.mockResolvedValue({ ok: true, data: [step(1)] });
+    await expect(agentsActivity('a1')).resolves.toEqual({ ok: true, data: [step(1)] });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith('agents_activity', { agentId: 'a1' });
+  });
+
+  it('passes an ok:false Result through untouched', async () => {
+    invokeMock.mockResolvedValue({ ok: false, error: { code: 'AGENT_NOT_FOUND', message: 'no such agent' } });
+    const res = await agentsActivity('a1');
+    expect(res).toEqual({ ok: false, error: { code: 'AGENT_NOT_FOUND', message: 'no such agent' } });
+  });
 });
 
 // ---------- auto-scroll latch (FR-21) ----------
@@ -202,7 +312,7 @@ describe('isAtBottom', () => {
 describe('earlierStepsNotice', () => {
   it('reports the dropped steps when the trail is a window', () => {
     expect(earlierStepsNotice(250, 200)).toBe('… 50 earlier steps');
-    expect(earlierStepsNotice(201, 200)).toBe('… 1 earlier steps');
+    expect(earlierStepsNotice(201, 200)).toBe('… 1 earlier step');
   });
   it('is null when the trail holds every step', () => {
     expect(earlierStepsNotice(12, 12)).toBeNull();

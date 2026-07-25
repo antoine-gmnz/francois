@@ -23,6 +23,36 @@ pub(crate) fn parent_tool_use_id(v: &Value) -> Option<String> {
         .map(String::from)
 }
 
+/// FR-8/FR-9 + FR-13's routing decision for one top-level stream line, computed
+/// BEFORE any per-type dispatch.
+pub(crate) enum LineRoute {
+    /// Attributed to a subagent (FR-8): carries its `parent_tool_use_id`
+    /// correlation key. Only `assistant`/`user`/`stream_event` can be
+    /// attributed — FR-9 assigns no meaning to any other type, so e.g. a
+    /// `control_request` that happens to carry a stray `parent_tool_use_id`
+    /// must still reach its normal handler (the permission/question control
+    /// channel), never be diverted and silently dropped.
+    Attributed(String),
+    /// A resolved FR-13 task-notification — never reaches the transcript.
+    Notice,
+    /// Belongs to the parent turn; dispatch on its own `type` as usual.
+    Parent,
+}
+
+/// Pure classifier used by the NDJSON reader before its per-type `match`.
+pub(crate) fn route_line(v: &Value) -> LineRoute {
+    let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if matches!(ty, "assistant" | "user" | "stream_event") {
+        if let Some(ptuid) = parent_tool_use_id(v) {
+            return LineRoute::Attributed(ptuid);
+        }
+    }
+    if is_task_notification(v) {
+        return LineRoute::Notice;
+    }
+    LineRoute::Parent
+}
+
 /// FR-2 ladder: an explicit `run_in_background` boolean wins; otherwise the tool
 /// name decides — the stock `Task` tool is synchronous, the harness's `Agent` tool
 /// runs in the background unless told otherwise. FR-11 is the safety net.
@@ -31,6 +61,29 @@ pub(crate) fn resolve_background(input: &Value, tool: &str) -> bool {
         Some(b) => b,
         None => tool == "Agent",
     }
+}
+
+/// FR-2: once a tool's input JSON has fully accumulated as `__acc` (the
+/// concatenated `input_json_delta` fragments), replace the placeholder
+/// `input` with the parsed whole — but keep `__agentId` (stashed at
+/// `content_block_start`, §5.4), since it never rides the accumulated JSON
+/// and would otherwise be lost, silently completing every `Agent` dispatch
+/// as `background: false` (the exact bug this feature fixes). A missing or
+/// unparsable `__acc` leaves `input` unchanged.
+pub(crate) fn finalize_tool_input(input: &Value) -> Value {
+    let Some(acc) = input.get("__acc").and_then(|a| a.as_str()) else {
+        return input.clone();
+    };
+    if acc.is_empty() {
+        return input.clone();
+    }
+    let Ok(mut parsed) = serde_json::from_str::<Value>(acc) else {
+        return input.clone();
+    };
+    if let Some(aid) = input.get("__agentId").cloned() {
+        parsed["__agentId"] = aid;
+    }
+    parsed
 }
 
 /// First non-blank line of `text`, trimmed and truncated to `n` chars.
@@ -72,8 +125,22 @@ pub(crate) fn push_step(
     };
     let trail = s.agent_steps.entry(agent_id.to_string()).or_default();
     trail.push_back(step.clone());
+    let mut evicted_seq: Option<u32> = None;
     while trail.len() > AGENT_TRAIL_CAP {
-        trail.pop_front(); // FR-12: the trail is a window; seq/stepCount keep growing
+        // FR-12: the trail is a window; seq/stepCount keep growing. Remember the
+        // newest evicted seq (they come off oldest-first, so it's the max).
+        if let Some(old) = trail.pop_front() {
+            evicted_seq = Some(old.seq);
+        }
+    }
+    if let Some(evicted) = evicted_seq {
+        // Finding 2: a step past the window can never be filled again (the
+        // fill path above already no-ops once its seq is gone) — drop its
+        // dead InnerTool entry too, so the per-agent index doesn't outlive
+        // what it can serve.
+        if let Some(inner) = s.agent_inner_tools.get_mut(agent_id) {
+            inner.retain(|_, it| it.seq > evicted);
+        }
     }
     let mut out = vec![AgentEmission::Step {
         agent_id: agent_id.to_string(),
@@ -92,6 +159,7 @@ pub(crate) fn push_step(
 pub(crate) fn fill_step_meta(
     s: &mut Session,
     agent_id: &str,
+    tool_use_id: &str,
     seq: u32,
     meta: String,
 ) -> Vec<AgentEmission> {
@@ -103,10 +171,17 @@ pub(crate) fn fill_step_meta(
         return Vec::new();
     };
     step.meta = Some(meta);
-    vec![AgentEmission::Step {
+    let out = vec![AgentEmission::Step {
         agent_id: agent_id.to_string(),
         step: step.clone(),
-    }]
+    }];
+    // Finding 2: a tool_use_id gets exactly one result — once filled the entry
+    // is dead, so drop it instead of holding its InnerTool (a full `input`
+    // JSON clone) for the rest of the session's lifetime.
+    if let Some(inner) = s.agent_inner_tools.get_mut(agent_id) {
+        inner.remove(tool_use_id);
+    }
+    out
 }
 
 /// FR-11 liveness self-heal: observed inner activity outranks an inferred
@@ -274,7 +349,7 @@ pub(crate) fn apply_attributed_line(
                         &extract_result_text(item.get("content")),
                     )
                 };
-                out.extend(fill_step_meta(s, agent_id, inner.seq, meta));
+                out.extend(fill_step_meta(s, agent_id, tuid, inner.seq, meta));
             }
             _ => {} // thinking & any other block type → no step
         }
@@ -364,6 +439,15 @@ pub(crate) fn apply_notice(
     }
     let excerpt = first_nonblank_line(text, 80);
     let label = first_nonblank_line(text, 120);
+    // Finding 6: push_step is a no-op on an empty label — a blank notice would
+    // then close the agent with ZERO agent.update, leaving the panel showing a
+    // live clock on an agent the core already considers finished. A step and
+    // its paired update must always be emitted.
+    let label = if label.is_empty() {
+        "completed".to_string()
+    } else {
+        label
+    };
     let errored = notice_is_error(text);
     if let Some(a) = s.agents.get_mut(agent_id) {
         a.status = if errored { "error" } else { "done" }.into();
@@ -670,6 +754,77 @@ mod tests {
     }
 
     #[test]
+    fn route_line_classifies_attributed_notice_and_parent_lines() {
+        // Finding 5 (and Finding 3): pins the routing decision the reader
+        // gates on, including that a control_request bearing a parent id is
+        // NEVER attributed — diverting it would swallow the permission /
+        // question control channel and hang the turn.
+        assert!(matches!(
+            route_line(&json!({ "type": "assistant", "parent_tool_use_id": "toolu_1" })),
+            LineRoute::Attributed(id) if id == "toolu_1"
+        ));
+        assert!(matches!(
+            route_line(&json!({
+                "type": "user", "parent_tool_use_id": "toolu_1",
+                "message": { "content": [] }
+            })),
+            LineRoute::Attributed(id) if id == "toolu_1"
+        ));
+        assert!(matches!(
+            route_line(&json!({ "type": "stream_event", "parent_tool_use_id": "toolu_1" })),
+            LineRoute::Attributed(id) if id == "toolu_1"
+        ));
+        // Finding 3: a control_request with a stray parent_tool_use_id must
+        // still reach its normal handler.
+        assert!(matches!(
+            route_line(&json!({
+                "type": "control_request", "parent_tool_use_id": "toolu_1",
+                "request_id": "req-1"
+            })),
+            LineRoute::Parent
+        ));
+        // a top-level notice
+        assert!(matches!(
+            route_line(&json!({
+                "type": "user",
+                "message": { "content": "task-notification: agent done" }
+            })),
+            LineRoute::Notice
+        ));
+        // a plain top-level line
+        assert!(matches!(
+            route_line(&json!({
+                "type": "user",
+                "message": { "content": [ { "type": "text", "text": "hello" } ] }
+            })),
+            LineRoute::Parent
+        ));
+    }
+
+    #[test]
+    fn finalize_tool_input_keeps_agent_id_across_the_reparse() {
+        // Finding 5: the critical invariant — if __agentId is lost here, every
+        // Agent dispatch's __agentId lookup misses, resolve_background never
+        // runs, and the spawn ack silently completes the agent (the exact bug
+        // this feature fixes), with all pre-existing tests still green.
+        let input = json!({
+            "__agentId": "a1",
+            "__acc": "{\"run_in_background\":true}",
+        });
+        let finalized = finalize_tool_input(&input);
+        assert_eq!(finalized["__agentId"], "a1");
+        assert!(resolve_background(&finalized, "Agent"));
+
+        // no __acc → input is returned unchanged (start-input-only tool calls)
+        let no_acc = json!({ "description": "x" });
+        assert_eq!(finalize_tool_input(&no_acc), no_acc);
+
+        // unparsable __acc → left alone rather than losing the whole input
+        let bad = json!({ "__agentId": "a1", "__acc": "{not json" });
+        assert_eq!(finalize_tool_input(&bad), bad);
+    }
+
+    #[test]
     fn background_ladder_resolves_dispatch_kind() {
         // FR-2, in order: explicit false, explicit true, Agent default, Task default.
         assert!(!resolve_background(
@@ -825,7 +980,9 @@ mod tests {
             "type": "assistant", "parent_tool_use_id": "toolu_d",
             "message": { "content": [
                 { "type": "tool_use", "id": "toolu_i1", "name": "Read",
-                  "input": { "file_path": "/x/src/session.rs" } }
+                  "input": { "file_path": "/x/src/session.rs" } },
+                { "type": "tool_use", "id": "toolu_i2", "name": "Read",
+                  "input": { "file_path": "/x/src/other.rs" } }
             ]}
         });
         apply_attributed_line(&mut s, "a1", &assistant, "/x", 5_000);
@@ -842,18 +999,29 @@ mod tests {
         assert_eq!(steps[0].meta.as_deref(), Some("3 lines")); // same meta as tool.done
         assert!(emitted_updates(&ems).is_empty()); // a meta fill is not an update
         let a = s.agents.get("a1").unwrap();
-        assert_eq!(a.step_count, 1);
-        assert_eq!(s.agent_steps.get("a1").unwrap().len(), 1);
+        assert_eq!(a.step_count, 2);
+        assert_eq!(s.agent_steps.get("a1").unwrap().len(), 2);
 
-        // is_error wins over the derived meta
+        // is_error wins over the derived meta (a fresh tool_use_id — Finding 2
+        // already pruned toolu_i1's entry the moment its fill landed above)
         let errored = json!({
             "type": "user", "parent_tool_use_id": "toolu_d",
             "message": { "content": [
-                { "type": "tool_result", "tool_use_id": "toolu_i1", "is_error": true, "content": "boom" }
+                { "type": "tool_result", "tool_use_id": "toolu_i2", "is_error": true, "content": "boom" }
             ]}
         });
         let ems = apply_attributed_line(&mut s, "a1", &errored, "/x", 6_100);
         assert_eq!(emitted_steps(&ems)[0].meta.as_deref(), Some("error"));
+
+        // re-filling an already-filled (and now pruned, Finding 2) tool_use_id
+        // is a no-op — a tool_use_id gets exactly one result in practice
+        let refill = json!({
+            "type": "user", "parent_tool_use_id": "toolu_d",
+            "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "toolu_i1", "content": "late" }
+            ]}
+        });
+        assert!(apply_attributed_line(&mut s, "a1", &refill, "/x", 6_150).is_empty());
 
         // an unknown inner tool_use_id is ignored
         let unknown = json!({
@@ -863,6 +1031,94 @@ mod tests {
             ]}
         });
         assert!(apply_attributed_line(&mut s, "a1", &unknown, "/x", 6_200).is_empty());
+    }
+
+    #[test]
+    fn fill_step_meta_prunes_inner_tool_entry() {
+        // Finding 2(a): a tool_use_id gets exactly one result — the entry is
+        // dead once filled, so agent_inner_tools must not hold it forever.
+        let mut s = test_session();
+        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
+        let assistant = json!({
+            "type": "assistant", "parent_tool_use_id": "toolu_d",
+            "message": { "content": [
+                { "type": "tool_use", "id": "toolu_i1", "name": "Read",
+                  "input": { "file_path": "/x/src/session.rs" } }
+            ]}
+        });
+        apply_attributed_line(&mut s, "a1", &assistant, "/x", 5_000);
+        assert!(s
+            .agent_inner_tools
+            .get("a1")
+            .unwrap()
+            .contains_key("toolu_i1"));
+
+        let result = json!({
+            "type": "user", "parent_tool_use_id": "toolu_d",
+            "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "toolu_i1", "content": "a\nb" }
+            ]}
+        });
+        let ems = apply_attributed_line(&mut s, "a1", &result, "/x", 6_000);
+        // observable behaviour is unchanged: same seq re-emitted, meta filled.
+        let steps = emitted_steps(&ems);
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].seq, 1);
+        assert_eq!(steps[0].meta.as_deref(), Some("2 lines"));
+        // but the now-dead entry is gone, so the index no longer grows unbounded.
+        assert!(!s
+            .agent_inner_tools
+            .get("a1")
+            .unwrap()
+            .contains_key("toolu_i1"));
+    }
+
+    #[test]
+    fn push_step_eviction_prunes_dead_inner_tools() {
+        // Finding 2(b): once a step falls out of the 200-step window it can
+        // never be filled again (the fill path already no-ops on it), so its
+        // InnerTool entry must not outlive it either.
+        let mut s = test_session();
+        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
+        let first_tool = json!({
+            "type": "assistant", "parent_tool_use_id": "toolu_d",
+            "message": { "content": [
+                { "type": "tool_use", "id": "toolu_i1", "name": "Read",
+                  "input": { "file_path": "/x/src/session.rs" } }
+            ]}
+        });
+        apply_attributed_line(&mut s, "a1", &first_tool, "/x", 5_000);
+        assert!(s
+            .agent_inner_tools
+            .get("a1")
+            .unwrap()
+            .contains_key("toolu_i1"));
+
+        // Push 200 more steps so the tool_use step (seq 1) falls out of the window.
+        for i in 0..200 {
+            let line = json!({
+                "type": "assistant", "parent_tool_use_id": "toolu_d",
+                "message": { "content": [ { "type": "text", "text": format!("step {i}") } ]}
+            });
+            apply_attributed_line(&mut s, "a1", &line, "/x", 5_000 + i as u64);
+        }
+        assert_eq!(s.agent_steps.get("a1").unwrap().front().unwrap().seq, 2);
+        // seq 1's InnerTool entry is pruned along with the step it can no longer fill.
+        assert!(!s
+            .agent_inner_tools
+            .get("a1")
+            .unwrap()
+            .contains_key("toolu_i1"));
+
+        // No observable behaviour change: a late result for it is simply ignored,
+        // exactly as the existing "unknown tool_use_id" FR-9 rule already does.
+        let late_result = json!({
+            "type": "user", "parent_tool_use_id": "toolu_d",
+            "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "toolu_i1", "content": "too late" }
+            ]}
+        });
+        assert!(apply_attributed_line(&mut s, "a1", &late_result, "/x", 9_000).is_empty());
     }
 
     #[test]
@@ -1000,12 +1256,30 @@ mod tests {
         apply_notice(&mut s, "a1", "the task failed: no such file", 9_000);
         assert_eq!(s.agents.get("a1").unwrap().status, "error");
 
-        // word-boundary: 'failover' / 'errors' are matched as words, 'terror' is not
+        // word-boundary: only whole words fail/failed/failure/error match —
+        // 'failover' and 'errors' do NOT (nor does 'terror'/'terrorized').
         assert!(notice_is_error("Error: boom"));
         assert!(notice_is_error("it FAILED"));
         assert!(notice_is_error("failure while running"));
         assert!(!notice_is_error("terrorized the codebase"));
         assert!(!notice_is_error("all good"));
+    }
+
+    #[test]
+    fn notice_with_blank_text_still_emits_step_and_update() {
+        // Finding 6: a blank notice must not close the agent silently — always
+        // one step + its paired update, via the "completed" fallback label.
+        let mut s = test_session();
+        mint_agent(&mut s, "a1", "explorer", "toolu_1", true);
+        let ems = apply_notice(&mut s, "a1", "   \n  \n", 9_000);
+        let a = s.agents.get("a1").unwrap();
+        assert_eq!(a.status, "done");
+        assert_eq!(a.ended_at, Some(9_000));
+        assert_eq!(a.task, "look around"); // empty excerpt leaves task alone
+        let steps = emitted_steps(&ems);
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].label, "completed");
+        assert_eq!(emitted_updates(&ems).len(), 1);
     }
 
     #[test]

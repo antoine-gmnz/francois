@@ -1,7 +1,5 @@
 //! turn lifecycle: argv, spawn, begin/finish, and session failure.
 
-//! turn execution: spawning the CLI and reading its NDJSON stream.
-
 use super::*;
 
 use crate::ipc::AppError;
@@ -344,18 +342,33 @@ pub(crate) fn finish_turn(
     }
 }
 
+/// Pure state transition shared by `fail_session`: marks the session errored
+/// and finalizes (async-agents FR-16) any agent still `running` — a session
+/// error is a legitimate `endedAt` setter (FR-7), so a card never keeps
+/// ticking against a dead session. Returns the emissions the caller must send
+/// BEFORE the terminal `session.status` / `session.error` (FR-16 ordering).
+pub(crate) fn apply_fail_session(s: &mut Session, msg: &str, at: u64) -> Vec<AgentEmission> {
+    s.status = "error".into();
+    s.error_message = Some(msg.to_string());
+    s.current = None;
+    s.queue.clear();
+    finalize_agents(s, true, at)
+}
+
 pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &str) {
-    {
+    let agent_ems = {
         let engine = app.state::<Engine>();
         let mut map = engine.sessions.lock().unwrap();
-        if let Some(s) = map.get_mut(session_id) {
-            s.status = "error".into();
-            s.error_message = Some(msg.to_string());
-            s.current = None;
-            s.queue.clear();
+        match map.get_mut(session_id) {
+            Some(s) => apply_fail_session(s, msg, now_ms()),
+            None => Vec::new(),
         }
-    }
+    };
     crate::usage::note_turn_ended(app); // usage-bar FR-13: running → error
+
+    // async-agents FR-16 ordering rule: agent finalization is emitted BEFORE the
+    // turn's terminal session.error / session.status (mirrors finish_turn).
+    emit_agent_emissions(app, session_id, agent_ems);
     emit(
         app,
         SessionEvent::Error {
@@ -427,6 +440,34 @@ mod tests {
         assert!(has_pair("--permission-mode", "plan"));
         assert!(has_pair("--effort", "high"));
         assert!(has_pair("--resume", "thread-1"));
+    }
+
+    #[test]
+    fn fail_session_finalizes_running_agents_before_terminal_status() {
+        // Finding 1 / async-agents FR-16 & FR-7: a session error is a legitimate
+        // endedAt setter — no agent is left running (and therefore ticking)
+        // against a dead session, and the returned emissions (sent BEFORE the
+        // terminal session.error/session.status) already carry the finalized
+        // agent's Step-then-Update pair.
+        use crate::session::testutil::*;
+
+        let mut s = test_session();
+        mint_agent(&mut s, "a1", "explorer", "toolu_1", true);
+        let ems = apply_fail_session(&mut s, "spawn crashed", 9_000);
+
+        assert_eq!(s.status, "error");
+        assert_eq!(s.error_message.as_deref(), Some("spawn crashed"));
+
+        let a = s.agents.get("a1").unwrap();
+        assert_eq!(a.status, "error");
+        assert_eq!(a.ended_at, Some(9_000));
+        assert_eq!(a.last_activity.as_deref(), Some("ended with the turn"));
+
+        // ordering: the notice step precedes the agent.update that carries it —
+        // both must land before fail_session's own SessionEvent::Error/Status.
+        assert_eq!(ems.len(), 2);
+        assert!(matches!(ems[0], AgentEmission::Step { .. }));
+        assert!(matches!(ems[1], AgentEmission::Update { .. }));
     }
 
     #[test]
