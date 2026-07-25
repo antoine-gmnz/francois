@@ -1,0 +1,683 @@
+//! sessions.json + per-session transcript persistence (FR-42/43).
+
+use super::*;
+
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager};
+
+// ---------- persistence (FR-42/43) ----------
+
+pub(crate) fn sessions_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("sessions.json"))
+}
+
+// ---------- transcript persistence (durable-sessions) ----------
+
+/// A session id must be a uuid-charset token so it can never escape the transcripts
+/// dir (no `/`, `\`, `..`). Defense-in-depth against a tampered/legacy sessions.json.
+pub(crate) fn valid_session_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+pub(crate) fn transcript_path(app: &AppHandle, session_id: &str) -> Option<std::path::PathBuf> {
+    if !valid_session_id(session_id) {
+        return None;
+    }
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("transcripts").join(format!("{session_id}.jsonl")))
+}
+
+/// Serialize a finalized block to the on-disk PersistedBlock shape (durable-sessions §5).
+pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
+    let kind = match b.kind {
+        BlockKind::User => "user",
+        BlockKind::Assistant => "assistant",
+        BlockKind::Tool => "tool",
+        BlockKind::Subagent => "subagent",
+        BlockKind::Command => {
+            // interactive-commands FR-24: finalized command blocks persist the card as JSON.
+            return serde_json::json!({
+                "blockId": b.block_id, "kind": "command", "command": b.tool, "card": b.card,
+            });
+        }
+        BlockKind::Question => {
+            // session-questions FR-6/FR-13: persisted at ask (pending) and again at
+            // resolution — reload upserts by blockId (parse_transcript).
+            let card = b.card.clone().unwrap_or_else(|| serde_json::json!({}));
+            let mut o = serde_json::json!({
+                "blockId": b.block_id, "kind": "question",
+                "questions": card.get("questions").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
+                "state": card.get("state").cloned().unwrap_or_else(|| Value::String("pending".into())),
+            });
+            if let Some(a) = card.get("answers") {
+                o["answers"] = a.clone();
+            }
+            return o;
+        }
+        BlockKind::Permission => {
+            // permission-guardrails FR-2/FR-8: persisted at ask (pending) and
+            // again at resolution — reload upserts by blockId (parse_transcript).
+            let card = b.card.clone().unwrap_or_else(|| serde_json::json!({}));
+            let mut o = serde_json::json!({
+                "blockId": b.block_id, "kind": "permission",
+                "ask": card.get("ask").cloned().unwrap_or_else(|| serde_json::json!({})),
+                "state": card.get("state").cloned().unwrap_or_else(|| Value::String("pending".into())),
+            });
+            if let Some(r) = card.get("rule") {
+                o["rule"] = r.clone();
+            }
+            return o;
+        }
+    };
+    serde_json::json!({
+        "blockId": b.block_id, "kind": kind, "text": b.text,
+        "tool": b.tool, "summary": b.summary, "meta": b.meta,
+    })
+}
+
+/// Append one finalized block as a JSON line to the session's transcript (FR-1/2).
+/// Best-effort: a write failure is ignored so it never breaks the turn (§7).
+pub(crate) fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
+    use std::io::Write as _;
+    let Some(path) = transcript_path(app, session_id) else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let mut line = serde_json::to_string(&persisted_block_json(block)).unwrap_or_default();
+    line.push('\n');
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// /clear: remove the session's persisted transcript so a reload starts empty.
+/// Best-effort — a missing file or remove error is ignored.
+pub(crate) fn clear_transcript(app: &AppHandle, session_id: &str) {
+    if let Some(path) = transcript_path(app, session_id) {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Parse one PersistedBlock line back into a BufBlock. Returns None for a malformed
+/// or partial line so reload can skip it (FR-15).
+pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
+    let v: Value = serde_json::from_str(line).ok()?;
+    let kind = match v.get("kind").and_then(|k| k.as_str())? {
+        "user" => BlockKind::User,
+        "assistant" => BlockKind::Assistant,
+        "tool" => BlockKind::Tool,
+        "subagent" => BlockKind::Subagent,
+        "command" => {
+            // A persisted command block always carries its card (FR-24 — pending blocks
+            // are never persisted); treat a card-less line as malformed and skip it.
+            let card = v.get("card").filter(|c| !c.is_null())?.clone();
+            return Some(BufBlock {
+                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+                kind: BlockKind::Command,
+                text: String::new(),
+                tool: v
+                    .get("command")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                summary: String::new(),
+                meta: None,
+                card: Some(card),
+                streaming: false,
+            });
+        }
+        "question" => {
+            // session-questions §6: pending entries are memory-only, so a line still
+            // "pending" on disk can only be read back after a hard kill — and a dead
+            // process has no answerable questions. Normalize it to cancelled.
+            let questions = v
+                .get("questions")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new()));
+            let state = match v.get("state").and_then(|s| s.as_str()) {
+                Some("answered") => "answered",
+                _ => "cancelled",
+            };
+            let mut card = serde_json::json!({ "questions": questions, "state": state });
+            if let Some(a) = v.get("answers").filter(|a| !a.is_null()) {
+                card["answers"] = a.clone();
+            }
+            return Some(BufBlock {
+                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+                kind: BlockKind::Question,
+                text: String::new(),
+                tool: String::new(),
+                summary: String::new(),
+                meta: None,
+                card: Some(card),
+                streaming: false,
+            });
+        }
+        "permission" => {
+            // permission-guardrails FR-25: same rule as questions — pending
+            // entries are memory-only, so a line still "pending" on disk can only
+            // be read back after a hard kill, and a dead process has no
+            // answerable asks. Normalize it to cancelled.
+            let ask = v
+                .get("ask")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let state = match v.get("state").and_then(|s| s.as_str()) {
+                Some(s @ ("allowed" | "denied")) => s,
+                _ => "cancelled",
+            };
+            let mut card = serde_json::json!({ "ask": ask, "state": state });
+            if let Some(r) = v.get("rule").filter(|r| !r.is_null()) {
+                card["rule"] = r.clone();
+            }
+            return Some(BufBlock {
+                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+                kind: BlockKind::Permission,
+                text: String::new(),
+                tool: String::new(),
+                summary: String::new(),
+                meta: None,
+                card: Some(card),
+                streaming: false,
+            });
+        }
+        _ => return None,
+    };
+    Some(BufBlock {
+        block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+        kind,
+        text: v
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        tool: v
+            .get("tool")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        summary: v
+            .get("summary")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        meta: v.get("meta").and_then(|m| m.as_str()).map(String::from),
+        card: None,
+        streaming: false,
+    })
+}
+
+/// Fold persisted lines into blocks, upserting by blockId: the LAST line wins, at
+/// the FIRST occurrence's position. Question resolutions re-append their block
+/// (session-questions FR-15); everything else appends exactly once.
+pub(crate) fn parse_transcript(content: &str) -> Vec<BufBlock> {
+    let mut out: Vec<BufBlock> = Vec::new();
+    for b in content.lines().filter_map(parse_persisted_block) {
+        match out.iter_mut().find(|e| e.block_id == b.block_id) {
+            Some(slot) => *slot = b,
+            None => out.push(b),
+        }
+    }
+    out
+}
+
+/// Read a session's persisted transcript back into a block buffer (FR-5).
+pub(crate) fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
+    let Some(path) = transcript_path(app, session_id) else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    parse_transcript(&content)
+}
+
+pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
+    // One writer at a time: persist() is called from commands (async runtime) AND
+    // from run_reader threads, and every caller writes the SAME sessions.json.tmp
+    // before the atomic rename — two concurrent writers could rename a torn file.
+    static PERSIST_LOCK: Mutex<()> = Mutex::new(());
+    let _w = PERSIST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let map = engine.sessions.lock().unwrap();
+    let list: Vec<Value> = map
+        .values()
+        .map(|s| {
+            serde_json::json!({
+                "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
+                "permissionMode": s.permission_mode, "runtime": s.runtime,
+                "allowGit": s.allow_git,
+                "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
+                "lastActivityAt": s.last_activity_at,
+                "contextUsedTokens": s.context_used_tokens,
+            })
+        })
+        .collect();
+    if let Some(path) = sessions_json_path(app) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Atomic write (temp + rename) so a crash mid-write can't torn sessions.json —
+        // it now holds every session's claudeSessionId resume anchor (FR-10).
+        let bytes = serde_json::to_vec_pretty(&list).unwrap_or_default();
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, &bytes).is_ok() {
+            if std::fs::rename(&tmp, &path).is_err() {
+                let _ = std::fs::remove_file(&tmp);
+            }
+        }
+    }
+}
+
+/// Scalar fields parsed from a persisted session record. Backward-compatible:
+/// records from before durable-sessions lack claudeSessionId/lastActivityAt/
+/// contextUsedTokens → None / `now` / 0 (FR-3/4). Transcript is loaded separately.
+pub(crate) struct PersistedMeta {
+    id: String,
+    name: String,
+    cwd: String,
+    model_id: String,
+    effort: Option<String>,
+    permission_mode: String, // "default" when absent (pre-feature records)
+    runtime: String,         // "native" when absent, or when "wsl" off-Windows
+    allow_git: bool,         // false when absent (pre-feature records)
+    claude_session_id: Option<String>,
+    last_activity_at: u64,
+    context_used_tokens: u64,
+}
+
+pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
+    let id = rec.get("id")?.as_str()?.to_string();
+    let name = rec.get("name")?.as_str()?.to_string();
+    let cwd = rec.get("cwd")?.as_str()?.to_string();
+    let raw = rec
+        .get("modelId")
+        .and_then(|v| v.as_str())
+        .unwrap_or(DEFAULT_MODEL);
+    // Heal the two made-up ids from an earlier build; keep real ids verbatim.
+    let model_id = match raw {
+        "" => DEFAULT_MODEL,
+        "claude-opus-4" => "opus",
+        "claude-haiku-4" => "haiku",
+        other => other,
+    }
+    .to_string();
+    Some(PersistedMeta {
+        id,
+        name,
+        cwd,
+        model_id,
+        effort: rec
+            .get("effort")
+            .and_then(|v| v.as_str())
+            .filter(|e| valid_effort(e))
+            .map(String::from),
+        permission_mode: rec
+            .get("permissionMode")
+            .and_then(|v| v.as_str())
+            .filter(|m| valid_permission_mode(m))
+            .unwrap_or("default")
+            .to_string(),
+        // A sessions.json copied to a non-Windows machine degrades wsl → native.
+        runtime: rec
+            .get("runtime")
+            .and_then(|v| v.as_str())
+            .filter(|r| valid_runtime(r) && (cfg!(windows) || *r != "wsl"))
+            .unwrap_or("native")
+            .to_string(),
+        allow_git: rec
+            .get("allowGit")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        claude_session_id: rec
+            .get("claudeSessionId")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        last_activity_at: rec
+            .get("lastActivityAt")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(now),
+        context_used_tokens: rec
+            .get("contextUsedTokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+    })
+}
+
+pub fn load_persisted(app: &AppHandle) {
+    let Some(path) = sessions_json_path(app) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let Ok(list) = serde_json::from_slice::<Vec<Value>>(&bytes) else {
+        return;
+    };
+    let engine = app.state::<Engine>();
+    let mut watched: Vec<(String, String)> = Vec::new();
+    let mut map = engine.sessions.lock().unwrap();
+    for rec in list {
+        let now = now_ms();
+        let Some(m) = parse_session_record(&rec, now) else {
+            continue;
+        };
+        let block_buffer = read_transcript(app, &m.id); // FR-5
+        let limit = context_limit(&m.model_id);
+        watched.push((m.id.clone(), m.cwd.clone()));
+        map.insert(
+            m.id.clone(),
+            Session {
+                id: m.id,
+                name: m.name,
+                cwd: m.cwd,
+                model_id: m.model_id,
+                status: "idle".into(),
+                context_used_tokens: m.context_used_tokens,
+                context_limit_tokens: limit,
+                started_at: now,
+                last_activity_at: m.last_activity_at,
+                error_message: None,
+                effort: m.effort,
+                permission_mode: m.permission_mode,
+                runtime: m.runtime,
+                allow_git: m.allow_git,
+                queue: VecDeque::new(),
+                claude_session_id: m.claude_session_id,
+                current: None,
+                pending_probe: None,
+                agents: HashMap::new(),
+                agent_order: Vec::new(),
+                agent_by_tool: HashMap::new(),
+                agent_steps: HashMap::new(),
+                agent_step_seq: HashMap::new(),
+                agent_inner_tools: HashMap::new(),
+                agent_backend_ref: HashMap::new(),
+                block_buffer,
+                mcp: HashMap::new(),
+                cli_commands: Vec::new(),
+            },
+        );
+    }
+    drop(map);
+    // Start a diff watcher per restored session (FR-15).
+    for (id, cwd) in watched {
+        crate::diff::watch_session(app, &id, &cwd);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::testutil::*;
+    use serde_json::json;
+
+    #[test]
+    fn transcript_block_roundtrips_finalized() {
+        let b = BufBlock {
+            block_id: "b1".into(),
+            kind: BlockKind::Tool,
+            text: String::new(),
+            tool: "Edit".into(),
+            summary: "src/x.rs".into(),
+            meta: Some("+3 \u{2212}1".into()),
+            card: None,
+            streaming: true, // in-memory streaming flag must NOT round-trip
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        let back = parse_persisted_block(&line).expect("parse");
+        assert_eq!(back.block_id, "b1");
+        assert_eq!(back.tool, "Edit");
+        assert_eq!(back.summary, "src/x.rs");
+        assert_eq!(back.meta.as_deref(), Some("+3 \u{2212}1"));
+        assert!(!back.streaming); // reloaded blocks are always finalized (FR-5)
+        assert!(matches!(back.kind, BlockKind::Tool));
+    }
+
+    #[test]
+    fn transcript_user_block_has_null_meta() {
+        let b = BufBlock {
+            block_id: "u1".into(),
+            kind: BlockKind::User,
+            text: "hi".into(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        assert!(line.contains("\"meta\":null"));
+        let back = parse_persisted_block(&line).unwrap();
+        assert_eq!(back.text, "hi");
+        assert!(back.meta.is_none());
+        assert!(matches!(back.kind, BlockKind::User));
+    }
+
+    #[test]
+    fn transcript_skips_malformed_lines() {
+        assert!(parse_persisted_block("not json").is_none());
+        assert!(parse_persisted_block(r#"{"kind":"user"}"#).is_none()); // missing blockId
+        assert!(parse_persisted_block(r#"{"blockId":"x","kind":"bogus"}"#).is_none()); // unknown kind
+        assert!(parse_persisted_block("").is_none()); // partial/empty trailing line (FR-15)
+    }
+
+    #[test]
+    fn transcript_subagent_block_roundtrips() {
+        let b = BufBlock {
+            block_id: "s1".into(),
+            kind: BlockKind::Subagent,
+            text: String::new(),
+            tool: String::new(),
+            summary: "explorer".into(), // subagent name lives in `summary`
+            meta: Some("done".into()),
+            card: None,
+            streaming: false,
+        };
+        let back =
+            parse_persisted_block(&serde_json::to_string(&persisted_block_json(&b)).unwrap())
+                .unwrap();
+        assert!(matches!(back.kind, BlockKind::Subagent));
+        assert_eq!(back.summary, "explorer");
+        assert_eq!(back.meta.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn persisted_permission_and_runtime_defaults() {
+        // pre-feature record → defaults
+        let old = serde_json::json!({ "id": "a", "name": "n", "cwd": "/x" });
+        let m = parse_session_record(&old, 5).unwrap();
+        assert_eq!(m.permission_mode, "default");
+        assert_eq!(m.runtime, "native");
+        // valid persisted mode round-trips
+        let full = serde_json::json!({ "id": "a", "name": "n", "cwd": "/x", "permissionMode": "plan", "runtime": "native" });
+        assert_eq!(
+            parse_session_record(&full, 5).unwrap().permission_mode,
+            "plan"
+        );
+        // modes we don't offer (e.g. "auto") sanitize back to default
+        let bad =
+            serde_json::json!({ "id": "a", "name": "n", "cwd": "/x", "permissionMode": "auto" });
+        assert_eq!(
+            parse_session_record(&bad, 5).unwrap().permission_mode,
+            "default"
+        );
+    }
+
+    #[test]
+    fn session_record_backward_compat_and_full() {
+        // pre-durable-sessions record lacks the three new fields → safe defaults (FR-3/4)
+        let old = json!({ "id": "abc", "name": "proj", "cwd": "/x", "modelId": "opus" });
+        let m = parse_session_record(&old, 4242).expect("parse");
+        assert_eq!((m.id.as_str(), m.model_id.as_str()), ("abc", "opus"));
+        assert!(m.claude_session_id.is_none());
+        assert_eq!(m.context_used_tokens, 0);
+        assert_eq!(m.last_activity_at, 4242); // default `now`
+                                              // full record restores all three
+        let full = json!({ "id": "d", "name": "n", "cwd": "/y", "modelId": "sonnet",
+            "claudeSessionId": "cs-1", "lastActivityAt": 99u64, "contextUsedTokens": 512u64 });
+        let m2 = parse_session_record(&full, 0).unwrap();
+        assert_eq!(m2.claude_session_id.as_deref(), Some("cs-1"));
+        assert_eq!((m2.last_activity_at, m2.context_used_tokens), (99, 512));
+        // healing of a legacy made-up id
+        assert_eq!(
+            parse_session_record(
+                &json!({ "id": "z", "name": "n", "cwd": "/", "modelId": "claude-opus-4" }),
+                0
+            )
+            .unwrap()
+            .model_id,
+            "opus"
+        );
+        // missing required field → None
+        assert!(parse_session_record(&json!({ "name": "x" }), 0).is_none());
+    }
+
+    #[test]
+    fn valid_session_id_blocks_traversal() {
+        assert!(valid_session_id("11111111-2222-3333-4444-555555555555"));
+        assert!(!valid_session_id("../../etc/passwd"));
+        assert!(!valid_session_id("a/b"));
+        assert!(!valid_session_id("a\\b"));
+        assert!(!valid_session_id(""));
+    }
+
+    #[test]
+    fn persisted_command_block_roundtrips() {
+        let mut s = test_session();
+        s.buf_command_pending("c1", "cost");
+        s.buf_command_output(
+            "c1",
+            "cost",
+            json!({ "kind": "usage", "command": "cost", "meters": [], "tail": "" }),
+        );
+        let line = serde_json::to_string(&persisted_block_json(&s.block_buffer[0])).unwrap();
+        let back = parse_persisted_block(&line).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Command));
+        assert_eq!(back.tool, "cost"); // command token rides in `tool`
+        assert!(!back.streaming);
+        assert_eq!(
+            back.card,
+            Some(json!({ "kind": "usage", "command": "cost", "meters": [], "tail": "" }))
+        );
+    }
+
+    #[test]
+    fn persisted_command_block_requires_card() {
+        // FR-24: pending blocks are never persisted → a card-less command line is malformed
+        assert!(
+            parse_persisted_block(r#"{"blockId":"c1","kind":"command","command":"usage"}"#)
+                .is_none()
+        );
+        assert!(parse_persisted_block(
+            r#"{"blockId":"c1","kind":"command","command":"usage","card":null}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn persisted_question_block_roundtrips_cancelled() {
+        let mut s = test_session();
+        let qs = json!([{ "question": "Q", "header": "H", "options": [], "multiSelect": false }]);
+        s.buf_question("q1", qs.clone());
+        s.buf_question_resolve("q1", "cancelled", None);
+        let v = persisted_block_json(&s.block_buffer[0]);
+        assert_eq!(
+            v,
+            json!({ "blockId": "q1", "kind": "question", "questions": qs, "state": "cancelled" })
+        );
+        let back = parse_persisted_block(&v.to_string()).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Question));
+        assert!(!back.streaming);
+        assert_eq!(classify_block(&back)["state"], "cancelled");
+    }
+
+    #[test]
+    fn persisted_pending_question_reloads_as_cancelled() {
+        // §6: pending entries are memory-only — a persisted "pending" line can only
+        // be read back after a hard kill, and a dead process has no answerable
+        // questions, so reload normalizes it to cancelled.
+        let line = r#"{"blockId":"q1","kind":"question","questions":[],"state":"pending"}"#;
+        let back = parse_persisted_block(line).expect("parse");
+        assert!(!back.streaming);
+        assert_eq!(classify_block(&back)["state"], "cancelled");
+    }
+
+    #[test]
+    fn transcript_upserts_by_block_id_on_reload() {
+        // FR-15: exactly one block per blockId — the LAST line wins, at the FIRST
+        // occurrence's position (the durable-sessions upsert rule).
+        let content = concat!(
+            r#"{"blockId":"u1","kind":"user","text":"hi","tool":"","summary":"","meta":null}"#,
+            "\n",
+            r#"{"blockId":"q1","kind":"question","questions":[{"question":"Q","header":"H","options":[],"multiSelect":false}],"state":"pending"}"#,
+            "\n",
+            r#"{"blockId":"a1","kind":"assistant","text":"ok","tool":"","summary":"","meta":null}"#,
+            "\n",
+            r#"{"blockId":"q1","kind":"question","questions":[{"question":"Q","header":"H","options":[],"multiSelect":false}],"state":"answered","answers":{"Q":"A"}}"#,
+            "\n",
+        );
+        let blocks = parse_transcript(content);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[1].block_id, "q1"); // position of the first occurrence
+        let q = classify_block(&blocks[1]);
+        assert_eq!(q["state"], "answered");
+        assert_eq!(q["answers"], json!({ "Q": "A" }));
+    }
+
+    #[test]
+    fn permission_block_round_trips_through_the_transcript() {
+        let mut s = perm_session();
+        let ask = serde_json::to_value(crate::permissions::build_ask(
+            "Bash",
+            &json!({ "command": "ls" }),
+            "/repo",
+        ))
+        .unwrap();
+        s.buf_permission("p1", ask);
+        let rule = serde_json::to_value(sample_rule()).unwrap();
+        let resolved = s
+            .buf_permission_resolve("p1", "denied", Some(&rule))
+            .unwrap();
+        let line = persisted_block_json(&resolved);
+        let back = parse_persisted_block(&line.to_string()).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Permission));
+        assert!(!back.streaming);
+        let v = classify_block(&back);
+        assert_eq!(v["state"], "denied");
+        assert_eq!(v["ask"]["summary"], "ls");
+        assert_eq!(v["rule"]["id"], "local|allow|Bash(npm test:*)");
+    }
+
+    #[test]
+    fn persisted_pending_permission_reloads_as_cancelled() {
+        // FR-25 / §7 #9: pending entries are memory-only, so a "pending" line on
+        // disk can only come from a hard kill — a dead process has no answerable
+        // asks. `allowed`/`denied` survive verbatim.
+        let pending = r#"{"blockId":"p1","kind":"permission","ask":{},"state":"pending"}"#;
+        let back = parse_persisted_block(pending).expect("parse");
+        assert!(!back.streaming);
+        assert_eq!(classify_block(&back)["state"], "cancelled");
+
+        for state in ["allowed", "denied"] {
+            let line =
+                format!(r#"{{"blockId":"p1","kind":"permission","ask":{{}},"state":"{state}"}}"#);
+            assert_eq!(
+                classify_block(&parse_persisted_block(&line).expect("parse"))["state"],
+                state
+            );
+        }
+    }
+}

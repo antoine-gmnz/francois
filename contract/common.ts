@@ -98,6 +98,38 @@ export interface AgentInfo {
   startedAt: number;
   /** epoch ms when it reached done/error; absent while running (freezes the timer). */
   endedAt?: number;
+  /**
+   * true when the dispatch was asynchronous (async-agents FR-2). For these, the dispatch's
+   * tool_result is a spawn ack and never sets `endedAt` (FR-5) — the elapsed clock keeps running.
+   */
+  background: boolean;
+  /** Label of the newest AgentStep (async-agents FR-10); absent until the first step. */
+  lastActivity?: string;
+  /** Total steps ever observed for this agent — may exceed the 200-step trail window (FR-12). */
+  stepCount: number;
+}
+
+// ---------- agent activity trail ----------
+// async-agents §5: AgentStep rides on SessionEvent (agent.step), so it is shared
+// vocabulary and lives here. contract/async-agents.ts re-exports it.
+
+export type AgentStepKind =
+  | 'text' // the subagent said something
+  | 'tool' // the subagent called a tool
+  | 'notice'; // lifecycle marker minted by the engine (dispatch / completion / kill / turn end)
+
+export interface AgentStep {
+  /** Strictly increasing per agent, starting at 1 — stable sort key and React key (FR-12). */
+  seq: number;
+  kind: AgentStepKind;
+  /** epoch ms the step was observed. */
+  at: number;
+  /** Tool name for kind 'tool' (e.g. 'Read'); absent for the other kinds. */
+  tool?: string;
+  /** One line: tool summary, text excerpt, or notice text. Never empty. */
+  label: string;
+  /** kind 'tool' only: the derived meta once the step's tool_result arrived; absent while open. */
+  meta?: string;
 }
 
 // ---------- MCP ----------
@@ -266,6 +298,7 @@ export type SessionEvent =
   | { type: 'permission.resolved'; sessionId: SessionId; blockId: BlockId; state: 'allowed' | 'denied' | 'cancelled'; rule?: PermissionRule } // permission-guardrails FR-8/10: exactly one per asked
   | { type: 'session.commands'; sessionId: SessionId; commands: SlashCommandInfo[] } // slash-menu FR-2: merged registry after an init changed the cli set
   | { type: 'agent.update'; agent: AgentInfo }
+  | { type: 'agent.step'; sessionId: SessionId; agentId: AgentId; step: AgentStep } // async-agents FR-10: a trail step was appended, or an existing seq re-emitted with meta filled
   | { type: 'mcp.update'; sessionId: SessionId; server: McpServerInfo }
   | { type: 'context.usage'; sessionId: SessionId; usedTokens: number; limitTokens: number }
   | { type: 'session.resumeFailed'; sessionId: SessionId } // a --resume turn was rejected; the core continued on a fresh thread (durable-sessions FR-9/14)
