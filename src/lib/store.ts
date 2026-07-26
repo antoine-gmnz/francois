@@ -10,6 +10,8 @@ import type { ActivityEntry } from '../../contract/overview';
 import { appendActivity } from '../../contract/overview';
 import type { ProjectsState } from '../../contract/projects';
 import type { UsageSnapshot } from '../../contract/usage-bar';
+import type { RemoteControlStatus } from '../../contract/remote-control';
+import { applyRemoteResult, applyRemoteStatus, applySeedStatus, type RemoteMap } from '../features/remote/remote-control';
 import { loadActiveProjectId, persistActiveProjectId, reconcileActiveProjectId } from '../features/projects/projects';
 import { mintActivityId } from '../features/overview/overview';
 
@@ -80,6 +82,18 @@ interface AppState extends ProjectsState {
   patchError: (id: SessionId, message: string) => void;
   patchUsage: (id: SessionId, used: number, limit: number) => void;
   removeSession: (id: SessionId) => void;
+
+  // remote-control: sessionId → Remote Control host state. Sessions with no host
+  // are ABSENT rather than stored as `{phase:'off'}` (remote-control FR-15), so
+  // "is anything remote-controlled?" is a key count.
+  remote: RemoteMap;
+  mergeRemote: (status: RemoteControlStatus) => void;
+  /** Fold a mount-time `remote_get` seed — fills a hole only, never overwrites a
+   * live entry the event stream has since populated (remote-control H2 #1). */
+  mergeRemoteSeed: (status: RemoteControlStatus) => void;
+  /** Fold a `remote_start`/`remote_stop` command result, guarded against a stale
+   * response racing the event stream (remote-control H2 #2). */
+  mergeRemoteResult: (status: RemoteControlStatus) => void;
 
   // Per-session derived figures (diff file count + running agents). Owned by the
   // ONE session/diff event subscription in Sidebar, but held here because the
@@ -173,6 +187,11 @@ export const useStore = create<AppState>((set) => ({
       ),
     })),
   removeSession: (id) => set((s) => ({ sessions: s.sessions.filter((x) => x.id !== id) })),
+
+  remote: {},
+  mergeRemote: (status) => set((s) => ({ remote: applyRemoteStatus(s.remote, status) })),
+  mergeRemoteSeed: (status) => set((s) => ({ remote: applySeedStatus(s.remote, status) })),
+  mergeRemoteResult: (status) => set((s) => ({ remote: applyRemoteResult(s.remote, status) })),
 
   derived: new Map(),
   // Ignore a late resolution for a session no longer in the cache, so a removed

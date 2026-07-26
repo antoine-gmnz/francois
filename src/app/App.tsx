@@ -18,7 +18,8 @@ import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import { useStore } from '../lib/store';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
 import { displayWslCwd } from '../../contract/wsl-filesystem';
-import { appSetWindowTheme, diffGetSummary, onDiffEvent } from '../lib/api';
+import { appSetWindowTheme, diffGetSummary, onDiffEvent, onRemoteEvent } from '../lib/api';
+import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import PaletteRoot from '../features/palette/PaletteView';
 import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
 import { setPaletteDiffCount } from '../features/palette/paletteData';
@@ -124,6 +125,26 @@ export default function App() {
   useEffect(() => {
     void appSetWindowTheme(theme).catch(() => {});
   }, [theme]);
+
+  // remote-control: ONE app-wide subscription, not per-session — a host keeps
+  // running for a session the user has navigated away from, and `starting` →
+  // `active` (the URL landing) must be recorded whichever session is on screen.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let live = true;
+    void onRemoteEvent((e) => {
+      if (e.type === 'remote.status') {
+        useStore.getState().mergeRemote({ sessionId: e.sessionId, state: e.state });
+      }
+    }).then((u) => {
+      if (!live) u();
+      else unlisten = u;
+    });
+    return () => {
+      live = false;
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // DIFF-tab badge: fileCount for the active session, seeded by getSummary and
   // kept current by diff.changed events (diff-view FR-18).
@@ -350,6 +371,8 @@ export default function App() {
                   </span>
                 )}
                 {active.runtime === 'wsl' && <span style={{ color: C.faint }}>wsl</span>}
+                {/* remote-control: host this session on claude.ai/code + mobile */}
+                <RemoteControlBadge key={active.id} sessionId={active.id} />
                 <span>
                   <span style={{ color: C.faint }}>ctx </span>
                   <span style={{ color: C.bright }}>{formatContextTokens(active.contextUsedTokens)}</span>
