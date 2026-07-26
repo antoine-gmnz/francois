@@ -5,10 +5,16 @@
 
 import { create } from 'zustand';
 import type { SessionMeta, SessionId } from '../../contract/common';
+import type { SessionDerived } from '../../contract/fleet-board';
+import type { ActivityEntry } from '../../contract/overview';
+import { appendActivity } from '../../contract/overview';
+import type { ProjectsState } from '../../contract/projects';
 import type { UsageSnapshot } from '../../contract/usage-bar';
+import { loadActiveProjectId, persistActiveProjectId, reconcileActiveProjectId } from '../features/projects/projects';
+import { mintActivityId } from '../features/overview/overview';
 
 export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills';
-export type MainTab = 'session' | 'diff' | 'shell';
+export type MainTab = 'overview' | 'session' | 'diff' | 'shell';
 
 // localStorage persistence for the column toggles — guarded so a restricted
 // storage environment (or node test env) degrades to defaults silently.
@@ -56,14 +62,38 @@ function applyTheme(theme: Theme): void {
   }
 }
 
-interface AppState {
+// `extends ProjectsState` pins the projects slice to the contract's declaration
+// (contract/projects.ts §5) — a drift there breaks the build here.
+interface AppState extends ProjectsState {
   // session cache (owned/written by sessions-sidebar, read by all)
   sessions: SessionMeta[];
   setSessions: (s: SessionMeta[]) => void;
   upsertSession: (m: SessionMeta) => void;
   patchStatus: (id: SessionId, status: string) => void;
+  /**
+   * overview FR-28: record a `session.error` message onto the cached SessionMeta.
+   * The engine emits session.error and THEN session.status, and never a fresh
+   * session.meta — so without this the message is dropped, the activity feed logs
+   * an empty detail, and NEEDS ATTENTION falls back to the generic "session
+   * failed" for every live failure.
+   */
+  patchError: (id: SessionId, message: string) => void;
   patchUsage: (id: SessionId, used: number, limit: number) => void;
   removeSession: (id: SessionId) => void;
+
+  // Per-session derived figures (diff file count + running agents). Owned by the
+  // ONE session/diff event subscription in Sidebar, but held here because the
+  // OVERVIEW dashboard reads the same numbers — a second subscription would
+  // double every diff_get_summary seed (fleet-board FR-4/FR-6).
+  derived: Map<SessionId, SessionDerived>;
+  mergeDerived: (id: SessionId, partial: Partial<SessionDerived>) => void;
+  dropDerived: (id: SessionId) => void;
+
+  // overview: the cross-project activity feed — an in-memory ring buffer capped
+  // at MAX_ACTIVITY, fed by that same subscription. Never persisted: it starts
+  // empty at every launch and only ever accumulates forward.
+  activity: ActivityEntry[];
+  recordActivity: (e: Omit<ActivityEntry, 'id'>) => void;
 
   // main-pane active tab (minimal app-shell)
   mainTab: MainTab;
@@ -112,6 +142,11 @@ interface AppState {
 /** Pre-first-probe cache state, mirroring the core's own initial snapshot (FR-4). */
 const EMPTY_USAGE: UsageSnapshot = { status: 'empty', meters: [], fetchedAt: null, error: null };
 
+// Restored once, before the store exists, because the initial main tab depends
+// on it: launching into "All projects" lands on the OVERVIEW dashboard rather
+// than on whichever session happened to be first.
+const INITIAL_ACTIVE_PROJECT = loadActiveProjectId();
+
 export const useStore = create<AppState>((set) => ({
   sessions: [],
   setSessions: (sessions) => set({ sessions }),
@@ -127,6 +162,10 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({
       sessions: s.sessions.map((x) => (x.id === id ? { ...x, status: status as SessionMeta['status'] } : x)),
     })),
+  patchError: (id, message) =>
+    set((s) => ({
+      sessions: s.sessions.map((x) => (x.id === id ? { ...x, errorMessage: message } : x)),
+    })),
   patchUsage: (id, used, limit) =>
     set((s) => ({
       sessions: s.sessions.map((x) =>
@@ -135,7 +174,39 @@ export const useStore = create<AppState>((set) => ({
     })),
   removeSession: (id) => set((s) => ({ sessions: s.sessions.filter((x) => x.id !== id) })),
 
-  mainTab: 'session',
+  derived: new Map(),
+  // Ignore a late resolution for a session no longer in the cache, so a removed
+  // session can never leak an entry back in (fleet-board FR-7).
+  mergeDerived: (id, partial) =>
+    set((s) => {
+      if (!s.sessions.some((x) => x.id === id)) return {};
+      const current = s.derived.get(id) ?? { fileCount: null, runningAgentCount: 0 };
+      const merged = { ...current, ...partial };
+      // Bail on a no-op merge. `agent.update` fires per subagent STEP and Sidebar
+      // recomputes runningAgentCount unconditionally, so most merges change
+      // nothing — and minting a new Map anyway hands OVERVIEW a fresh `derived`
+      // reference, re-running its totals/rollup/attention memos and re-rendering
+      // the whole dashboard on every step of every session.
+      if (s.derived.has(id) && merged.fileCount === current.fileCount && merged.runningAgentCount === current.runningAgentCount) {
+        return {};
+      }
+      const next = new Map(s.derived);
+      next.set(id, merged);
+      return { derived: next };
+    }),
+  dropDerived: (id) =>
+    set((s) => {
+      if (!s.derived.has(id)) return {};
+      const next = new Map(s.derived);
+      next.delete(id);
+      return { derived: next };
+    }),
+
+  activity: [],
+  recordActivity: (e) =>
+    set((s) => ({ activity: appendActivity(s.activity, { ...e, id: mintActivityId(e.at) }) })),
+
+  mainTab: INITIAL_ACTIVE_PROJECT === null ? 'overview' : 'session',
   setMainTab: (mainTab) => set({ mainTab }),
 
   theme: loadTheme(),
@@ -198,6 +269,25 @@ export const useStore = create<AppState>((set) => ({
   setMcpAttachOpen: (mcpAttachOpen) => set({ mcpAttachOpen }),
   permissionsOpen: false,
   setPermissionsOpen: (permissionsOpen) => set({ permissionsOpen }),
+
+  // projects slice (contract/projects.ts ProjectsState). The registry cache is
+  // written by ProjectSwitcher / ProjectsModal after every project_list;
+  // activeProjectId (null = All) is restored from localStorage at launch and
+  // reconciled against the fetched list on every write (FR-26, §7 case 16).
+  projects: [],
+  setProjects: (projects) =>
+    set((s) => {
+      const activeProjectId = reconcileActiveProjectId(s.activeProjectId, projects);
+      if (activeProjectId !== s.activeProjectId) persistActiveProjectId(activeProjectId);
+      return { projects, activeProjectId };
+    }),
+  activeProjectId: INITIAL_ACTIVE_PROJECT,
+  setActiveProjectId: (activeProjectId) => {
+    persistActiveProjectId(activeProjectId);
+    set({ activeProjectId });
+  },
+  projectsOpen: false,
+  setProjectsOpen: (projectsOpen) => set({ projectsOpen }),
 
   usage: EMPTY_USAGE,
   setUsage: (usage) => set({ usage }),

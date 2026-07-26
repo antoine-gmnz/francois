@@ -37,6 +37,10 @@ export type ErrorCode =
   | 'PERMISSION_NOT_PENDING' // permission-guardrails: decision arrived for an ask that is not pending
   | 'SETTINGS_WRITE_FAILED' // permission-guardrails: settings.json could not be read-merged-written
   | 'RULE_NOT_FOUND' // permission-guardrails: editor mutation addressed an unknown rule id
+  | 'PROJECT_NOT_FOUND' // projects: a projectId that is not in the registry
+  | 'PROJECT_DUPLICATE_ROOT' // projects: another project already owns that normalized root
+  | 'PROJECT_ROOT_MISSING' // projects: the project's root no longer exists on disk
+  | 'STANDARDS_WRITE_FAILED' // projects: CLAUDE.md could not be read-merged-written
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -82,6 +86,33 @@ export interface SessionMeta {
   permissionMode: PermissionMode;
   /** CLI runtime for this session; 'wsl' spawns `wsl.exe -- claude …` (Windows only). */
   runtime: ClaudeRuntime;
+  /**
+   * The project this session was created under; absent when unlinked (projects FR-18).
+   * Set at creation ONLY — editing a project's defaults never changes a session
+   * (projects FR-24). Cleared, with a session.meta emission, when that project is
+   * removed (projects FR-9). A persisted value that no longer resolves to a registry
+   * entry is dropped on load.
+   */
+  projectId?: ProjectId;
+}
+
+// ---------- projects ----------
+
+export type ProjectId = string; // uuid v4
+
+/**
+ * Session settings a project pre-fills into the new-session modal (projects §5.1).
+ * Every field is optional: an absent field means "inherit" — the modal keeps its
+ * pre-feature default for that control. Defaults are a SNAPSHOT — they are copied onto
+ * the session at creation and never re-applied afterwards (projects FR-24).
+ */
+export interface ProjectDefaults {
+  modelId?: string;
+  /** low | medium | high | xhigh | max — nominally one the chosen model advertises. */
+  effort?: string;
+  permissionMode?: PermissionMode;
+  runtime?: ClaudeRuntime;
+  allowGit?: boolean;
 }
 
 // ---------- subagents ----------

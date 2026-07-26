@@ -3,7 +3,7 @@
 use super::*;
 
 use serde_json::Value;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
@@ -255,14 +255,21 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
     let list: Vec<Value> = map
         .values()
         .map(|s| {
-            serde_json::json!({
+            let mut rec = serde_json::json!({
                 "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
                 "permissionMode": s.permission_mode, "runtime": s.runtime,
                 "allowGit": s.allow_git,
                 "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
                 "lastActivityAt": s.last_activity_at,
                 "contextUsedTokens": s.context_used_tokens,
-            })
+            });
+            // projects FR-18: write projectId ONLY when linked. An unlinked session
+            // must omit the key entirely rather than emit null, so a record written
+            // here stays byte-compatible with a pre-projects build's reader.
+            if let Some(pid) = &s.project_id {
+                rec["projectId"] = Value::String(pid.clone());
+            }
+            rec
         })
         .collect();
     if let Some(path) = sessions_json_path(app) {
@@ -293,6 +300,9 @@ pub(crate) struct PersistedMeta {
     permission_mode: String, // "default" when absent (pre-feature records)
     runtime: String,         // "native" when absent, or when "wsl" off-Windows
     allow_git: bool,         // false when absent (pre-feature records)
+    /// projects FR-18: None when absent (every pre-projects record). Whether the
+    /// id still RESOLVES is decided at load, not here — parsing stays pure.
+    project_id: Option<String>,
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
@@ -341,6 +351,13 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .get("allowGit")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        // projects FR-18: a blank string is treated as absent so a hand-edited
+        // sessions.json can't mint an unlinkable id.
+        project_id: rec
+            .get("projectId")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(String::from),
         claude_session_id: rec
             .get("claudeSessionId")
             .and_then(|v| v.as_str())
@@ -356,6 +373,39 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
     })
 }
 
+/// projects FR-9: the removal side-effect on sessions. Clears `project_id` on every
+/// session that referenced the now-gone project, persists the pruned sessions.json,
+/// and emits one `session.meta` per affected session so the board and the main pane
+/// repaint. The sessions themselves keep running — they are merely unlinked (§7 #15),
+/// and NOTHING under the project's root is touched.
+///
+/// Called with the registry lock already released, so the engine lock is taken
+/// alone — the two are never held at once.
+/// projects FR-18: does a persisted `projectId` still resolve?
+///
+/// Extracted from `load_persisted` so the rule is testable — inline it needed an
+/// `AppHandle`, which made the central promise of FR-18 ("a persisted projectId
+/// pointing at a removed project is dropped on load", §9) unverifiable.
+///
+/// `None` in ⇒ `None` out (the pre-projects records). A link to a project the
+/// registry no longer knows is dropped, and the pruned value is written back by the
+/// next `persist` (§7 #14).
+pub(crate) fn resolve_link(persisted: Option<String>, known: &HashSet<String>) -> Option<String> {
+    persisted.filter(|id| known.contains(id))
+}
+
+pub(crate) fn unlink_project_sessions(app: &AppHandle, project_id: &str) {
+    let engine = app.state::<Engine>();
+    let changed = engine.clear_project(project_id);
+    if changed.is_empty() {
+        return;
+    }
+    persist(app, &engine);
+    for meta in changed {
+        emit(app, SessionEvent::Meta { meta });
+    }
+}
+
 pub fn load_persisted(app: &AppHandle) {
     let Some(path) = sessions_json_path(app) else {
         return;
@@ -367,6 +417,9 @@ pub fn load_persisted(app: &AppHandle) {
         return;
     };
     let engine = app.state::<Engine>();
+    // projects FR-18: read the registry ONCE for the whole load — main.rs runs
+    // project::load_projects before this, so it is already populated.
+    let known = crate::project::known_ids(app);
     let mut watched: Vec<(String, String)> = Vec::new();
     let mut map = engine.sessions.lock().unwrap();
     for rec in list {
@@ -394,6 +447,10 @@ pub fn load_persisted(app: &AppHandle) {
                 permission_mode: m.permission_mode,
                 runtime: m.runtime,
                 allow_git: m.allow_git,
+                // projects FR-18: a link whose project is gone from the registry is
+                // DROPPED here — the session loads unlinked and the pruned value is
+                // persisted by the next write (§7 #14).
+                project_id: resolve_link(m.project_id, &known),
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
@@ -679,5 +736,142 @@ mod tests {
                 state
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod project_link_tests {
+    //! projects FR-9/FR-18/FR-19/FR-20 — the session-linking layer. Before this
+    //! module the whole layer had zero coverage and FR-18's central rule lived
+    //! inline inside `load_persisted`, where an AppHandle made it untestable.
+
+    use super::*;
+    use crate::session::testutil::*;
+    use serde_json::json;
+
+    fn known(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn linked_session(id: &str, project_id: Option<&str>) -> Session {
+        let mut s = test_session();
+        s.id = id.to_string();
+        s.project_id = project_id.map(String::from);
+        s
+    }
+
+    // ---------- FR-18: does a persisted link still resolve? ----------
+
+    #[test]
+    fn resolve_link_keeps_a_live_project_and_drops_a_removed_one() {
+        let reg = known(&["p1", "p2"]);
+        assert_eq!(resolve_link(Some("p1".into()), &reg), Some("p1".into()));
+        // §7 #14 / §9: "a persisted projectId pointing at a removed project is dropped"
+        assert_eq!(resolve_link(Some("gone".into()), &reg), None);
+        // a pre-projects record has no link at all and must stay unlinked
+        assert_eq!(resolve_link(None, &reg), None);
+        // an EMPTY registry drops every link rather than trusting the file
+        assert_eq!(resolve_link(Some("p1".into()), &known(&[])), None);
+    }
+
+    // ---------- FR-18: the wire shape (absent, never null) ----------
+
+    #[test]
+    fn session_meta_omits_project_id_entirely_when_unlinked() {
+        let v = serde_json::to_value(linked_session("s1", None).meta()).unwrap();
+        assert!(
+            v.get("projectId").is_none(),
+            "FR-18: an unlinked session must OMIT the key, not send null: {v}"
+        );
+        let v = serde_json::to_value(linked_session("s1", Some("p1")).meta()).unwrap();
+        assert_eq!(v["projectId"], "p1");
+    }
+
+    #[test]
+    fn persisted_record_omits_project_id_when_unlinked_and_carries_it_when_linked() {
+        // §9: "SessionMeta.projectId round-trips through sessions.json"
+        for (project_id, expect) in [(None, None), (Some("p1"), Some("p1"))] {
+            let engine = test_engine_with(linked_session("s1", project_id));
+            let map = engine.sessions.lock().unwrap();
+            let s = map.get("s1").unwrap();
+            let mut rec = serde_json::json!({ "id": s.id });
+            if let Some(pid) = &s.project_id {
+                rec["projectId"] = Value::String(pid.clone());
+            }
+            assert_eq!(rec.get("projectId").and_then(|v| v.as_str()), expect);
+        }
+    }
+
+    // ---------- FR-18: parsing a record back ----------
+
+    #[test]
+    fn parse_session_record_reads_project_id_and_treats_blank_as_unlinked() {
+        let base = json!({ "id": "s1", "name": "n", "cwd": "/x" });
+        let with = |v: Value| {
+            let mut r = base.clone();
+            r["projectId"] = v;
+            parse_session_record(&r, 0).unwrap().project_id
+        };
+        // a pre-projects record simply has no key — §9's "loads unlinked"
+        assert_eq!(parse_session_record(&base, 0).unwrap().project_id, None);
+        assert_eq!(with(json!("p1")), Some("p1".to_string()));
+        // a hand-edited file must not mint an unlinkable id
+        assert_eq!(with(json!("")), None);
+        assert_eq!(with(json!("   ")), None);
+        assert_eq!(with(json!(null)), None);
+        assert_eq!(with(json!(42)), None);
+    }
+
+    // ---------- FR-9: removing a project unlinks exactly its own sessions ----------
+
+    #[test]
+    fn clear_project_unlinks_only_matching_sessions_and_reports_them() {
+        let engine = test_engine_with(linked_session("s1", Some("p1")));
+        {
+            let mut map = engine.sessions.lock().unwrap();
+            map.insert("s2".into(), linked_session("s2", Some("p2")));
+            map.insert("s3".into(), linked_session("s3", None));
+        }
+
+        let changed = engine.clear_project("p1");
+
+        // exactly the p1 session is reported, already carrying the cleared value
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].id, "s1");
+        assert_eq!(changed[0].project_id, None);
+
+        let map = engine.sessions.lock().unwrap();
+        assert_eq!(map.get("s1").unwrap().project_id, None);
+        // §7 #15: the other sessions keep running, untouched
+        assert_eq!(map.get("s2").unwrap().project_id.as_deref(), Some("p2"));
+        assert_eq!(map.get("s3").unwrap().project_id, None);
+        assert_eq!(map.len(), 3, "no session is ever removed by an unlink");
+    }
+
+    // ---------- the post-insert TOCTOU decision (session_create) ----------
+
+    #[test]
+    fn toctou_outcome_keeps_a_live_link_and_clears_a_vanished_one() {
+        use crate::session::commands::toctou_outcome;
+        // the project survived the window: keep the link exactly as given
+        assert_eq!(
+            toctou_outcome(Some("p1".into()), true),
+            Some("p1".to_string())
+        );
+        // project_remove landed between the pre-create check and the insert: unlink,
+        // so the live board never carries a dangling id (it would otherwise self-heal
+        // only at the next launch, via resolve_link above)
+        assert_eq!(toctou_outcome(Some("p1".into()), false), None);
+        // an unlinked session has nothing to lose either way
+        assert_eq!(toctou_outcome(None, true), None);
+        assert_eq!(toctou_outcome(None, false), None);
+    }
+
+    #[test]
+    fn clear_project_for_an_unreferenced_project_changes_nothing() {
+        let engine = test_engine_with(linked_session("s1", Some("p1")));
+        assert!(engine.clear_project("nobody").is_empty());
+        let map = engine.sessions.lock().unwrap();
+        assert_eq!(map.get("s1").unwrap().project_id.as_deref(), Some("p1"));
     }
 }

@@ -150,6 +150,12 @@ pub(crate) struct SessionMeta {
     #[serde(rename = "permissionMode")]
     permission_mode: String,
     runtime: String,
+    /// projects FR-18: the project this session was created under; ABSENT (never
+    /// null) when unlinked, so a pre-projects frontend and a pre-projects
+    /// sessions.json both read identically. Set at creation only (FR-19/FR-24);
+    /// cleared — with a session.meta emission — when that project is removed (FR-9).
+    #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
+    project_id: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -329,6 +335,10 @@ pub(crate) struct Session {
     /// control channel instead of denying them (NewSessionRequest.allowGit) —
     /// lets a session run git commit/push without bypassing every permission.
     allow_git: bool,
+    /// projects FR-18/FR-19: the project this session belongs to, stored VERBATIM
+    /// as `session_create` received it — the core does no auto-adoption and no
+    /// default merging, so what the modal showed is exactly what was created.
+    project_id: Option<String>,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
@@ -372,6 +382,7 @@ impl Session {
             error_message: self.error_message.clone(),
             permission_mode: self.permission_mode.clone(),
             runtime: self.runtime.clone(),
+            project_id: self.project_id.clone(),
         }
     }
 
@@ -577,6 +588,21 @@ impl Engine {
             .unwrap()
             .get(session_id)
             .map(|s| s.cwd.clone())
+    }
+
+    /// projects FR-9: clear `project_id` on every session that referenced the
+    /// removed project. Returns the fresh meta of each session that changed — one
+    /// `session.meta` emission each. Nothing under the project's root is touched;
+    /// the sessions themselves keep running, merely unlinked (§7 #15).
+    pub(crate) fn clear_project(&self, project_id: &str) -> Vec<SessionMeta> {
+        let mut map = self.sessions.lock().unwrap();
+        map.values_mut()
+            .filter(|s| s.project_id.as_deref() == Some(project_id))
+            .map(|s| {
+                s.project_id = None;
+                s.meta()
+            })
+            .collect()
     }
 
     /// The claude runtime ("native" | "wsl") of a session — used by the `shell`
