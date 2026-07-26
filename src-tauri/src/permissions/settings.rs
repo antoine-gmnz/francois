@@ -84,8 +84,12 @@ pub fn write_json_atomic(path: &Path, doc: &Value) -> Result<(), String> {
     bytes.push(b'\n');
     let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = path.with_extension(format!("json.{}.{seq}.tmp", std::process::id()));
-    write_private(&tmp, &bytes, path)
-        .map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
+    // Clean up on the WRITE failure too, not just the rename — a full disk takes
+    // this branch, and a leaked `.tmp` would sit next to the user's settings.json.
+    if let Err(e) = write_private(&tmp, &bytes, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("could not write {}: {e}", tmp.display()));
+    }
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("could not write {}: {e}", path.display())
