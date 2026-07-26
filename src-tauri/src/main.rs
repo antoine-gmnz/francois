@@ -252,25 +252,9 @@ fn shell_ensure(
     }
     cmd.env("TERM", "xterm-256color");
     if runtime == "wsl" {
-        // FR-14: forward TERM into the distro. Setting it on this (Windows-side)
-        // process env alone doesn't cross the wsl.exe boundary; WSLENV with the
-        // `/u` flag does. Append (':'-joined) rather than overwrite — the inherited
-        // environment may already carry a WSLENV list.
-        let wslenv = std::env::var("WSLENV").ok().filter(|v| !v.is_empty());
-        let merged = match wslenv {
-            // Already forwarded (any flag variant counts) → leave the list untouched;
-            // otherwise trim a trailing ':' so we never emit an empty entry.
-            Some(existing)
-                if existing
-                    .split(':')
-                    .any(|e| e == "TERM/u" || e.starts_with("TERM/")) =>
-            {
-                existing
-            }
-            Some(existing) => format!("{}:TERM/u", existing.trim_end_matches(':')),
-            None => "TERM/u".to_string(),
-        };
-        cmd.env("WSLENV", merged);
+        // FR-14: forward TERM into the distro (shared with remote-control's PTY
+        // host, which needs the identical merge — see `session::wsl_term_env`).
+        cmd.env("WSLENV", session::wsl_term_env());
     }
 
     let mut child = match pair.slave.spawn_command(cmd) {
@@ -558,6 +542,7 @@ fn main() {
         // projects §6: the registry is loaded once at startup (see setup below)
         // and is memory-authoritative thereafter — Francois is its only writer.
         .manage(project::ProjectRegistry::default())
+        .manage(session::RemoteRegistry::default())
         // usage-bar §6: the app-scoped usage cache lives in its OWN mutex, never
         // inside session::Engine — a leaf lock the probe path can take freely.
         .manage(usage::UsageState::default())
@@ -616,6 +601,9 @@ fn main() {
             session::skills_install,
             session::skills_run,
             session::permissions_decide,
+            session::remote_start,
+            session::remote_stop,
+            session::remote_get,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,
@@ -634,6 +622,10 @@ fn main() {
             if let RunEvent::Exit = event {
                 kill_all_shells(app);
                 session::kill_all(app);
+                // remote-control: the hosts are real interactive `claude`
+                // processes — leaking them leaves remote sessions live on the
+                // user's claude.ai account after Francois is gone.
+                session::kill_all_remote(app);
                 usage::kill_probe(app); // usage-bar §7 #9 — no orphan `claude`
             }
         });

@@ -24,6 +24,8 @@ mod interactive;
 mod mcp;
 mod models;
 mod persistence;
+mod remote;
+mod remote_discovery;
 mod skills;
 mod slash;
 mod stdio;
@@ -40,6 +42,8 @@ pub(crate) use interactive::*;
 pub(crate) use mcp::*;
 pub(crate) use models::*;
 pub(crate) use persistence::*;
+pub(crate) use remote::*;
+pub(crate) use remote_discovery::*;
 pub(crate) use skills::*;
 pub(crate) use slash::*;
 pub(crate) use stdio::*;
@@ -605,6 +609,24 @@ impl Engine {
             .collect()
     }
 
+    /// remote-control: everything the Remote Control host needs to spawn, in one
+    /// lock — `(cwd, runtime, name, claudeSessionId)`. The name is the default
+    /// remote session title; the claude session id (when present) is what lets the
+    /// host resume the REAL thread, so the phone continues the same conversation.
+    pub(crate) fn remote_target_of(
+        &self,
+        session_id: &str,
+    ) -> Option<(String, String, String, Option<String>)> {
+        self.sessions.lock().unwrap().get(session_id).map(|s| {
+            (
+                s.cwd.clone(),
+                s.runtime.clone(),
+                s.name.clone(),
+                s.claude_session_id.clone(),
+            )
+        })
+    }
+
     /// The claude runtime ("native" | "wsl") of a session — used by the `shell`
     /// domain's per-session spawn matrix (wsl-filesystem FR-10/FR-11). None if unknown.
     pub fn runtime_of(&self, session_id: &str) -> Option<String> {
@@ -668,6 +690,31 @@ pub(crate) fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// wsl.exe children need `TERM` forwarded across the distro boundary explicitly:
+/// setting it on this (Windows-side) process's own env does not cross wsl.exe's
+/// boundary; `WSLENV` with the `/u` flag does. Append (':'-joined) to any existing
+/// `WSLENV` list rather than overwrite it — the inherited environment may already
+/// carry one. Shared by shell-terminal's `shell_ensure` (main.rs) and
+/// remote-control's PTY host (remote.rs) — for the wsl runtime, remote-control's
+/// PTY stream is the feature's ONLY url source (spec §7 #7), so a missing `TERM`
+/// there breaks it outright, not just cosmetically.
+pub(crate) fn wsl_term_env() -> String {
+    let wslenv = std::env::var("WSLENV").ok().filter(|v| !v.is_empty());
+    match wslenv {
+        // Already forwarded (any flag variant counts) → leave the list untouched;
+        // otherwise trim a trailing ':' so we never emit an empty entry.
+        Some(existing)
+            if existing
+                .split(':')
+                .any(|e| e == "TERM/u" || e.starts_with("TERM/")) =>
+        {
+            existing
+        }
+        Some(existing) => format!("{}:TERM/u", existing.trim_end_matches(':')),
+        None => "TERM/u".to_string(),
+    }
 }
 
 fn uuid() -> String {

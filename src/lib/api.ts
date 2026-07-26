@@ -19,6 +19,7 @@ import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../
 import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
+import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
 
 function ipc<T>(cmd: string, args?: object): Promise<T> {
   return invoke<T>(cmd, args as Record<string, unknown> | undefined);
@@ -131,6 +132,22 @@ export const appRefreshUsage = () => ipc<Result<UsageRefreshAck>>('app_refresh_u
 /** Subscribe to francois://app/event (usage.state, extensible tagged union). */
 export function onAppEvent(cb: (e: AppEvent) => void): Promise<UnlistenFn> {
   return listen<AppEvent>('francois://app/event', (e) => cb(e.payload));
+}
+
+// remote-control: Francois HOSTS Claude Code's native Remote Control for a session
+// (an interactive `claude --remote-control` in a PTY the core owns), so the same
+// thread can be picked up from claude.ai/code or the Claude mobile app. `start`
+// resolves `starting` — the URL arrives later as a remote.status event.
+export const remoteStart = (sessionId: SessionId, name?: string) =>
+  ipc<Result<RemoteControlStatus>>('remote_start', { sessionId, name });
+export const remoteStop = (sessionId: SessionId) =>
+  ipc<Result<RemoteControlStatus>>('remote_stop', { sessionId });
+export const remoteGet = (sessionId: SessionId) =>
+  ipc<Result<RemoteControlStatus>>('remote_get', { sessionId });
+
+/** Subscribe to francois://remote/event (remote.status). */
+export function onRemoteEvent(cb: (e: RemoteControlEvent) => void): Promise<UnlistenFn> {
+  return listen<RemoteControlEvent>('francois://remote/event', (e) => cb(e.payload));
 }
 
 /** Subscribe to the core→frontend session event stream. */
