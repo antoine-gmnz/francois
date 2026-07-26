@@ -6,7 +6,9 @@ import ShellTerminal from '../features/shell/ShellTerminal';
 import Sidebar from '../features/sessions/Sidebar';
 import NewSessionModal from '../features/sessions/NewSessionModal';
 import PermissionsModal from '../features/permissions/PermissionsModal';
+import ProjectsModal from '../features/projects/ProjectsModal';
 import ConversationView from '../features/conversation/ConversationView';
+import OverviewView from '../features/overview/OverviewView';
 import DiffView from '../features/diff/DiffView';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import McpPanel from '../features/mcp/McpPanel';
@@ -79,8 +81,11 @@ export default function App() {
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
+  const activeProjectId = useStore((s) => s.activeProjectId);
   const permissionsOpen = useStore((s) => s.permissionsOpen);
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
+  const projectsOpen = useStore((s) => s.projectsOpen);
+  const setProjectsOpen = useStore((s) => s.setProjectsOpen);
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
 
@@ -181,9 +186,9 @@ export default function App() {
       const ae = document.activeElement as HTMLElement | null;
       const inInput = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
       const inTerminal = !!ae && ae.closest('.xterm') !== null;
-      // permission-guardrails FR-29: the rules editor suppresses the single-letter
-      // globals too, exactly like the other modals.
-      if (newSessionOpen || newAgentOpen || permissionsOpen || inInput || inTerminal) return;
+      // permission-guardrails FR-29 / projects FR-37: an open editor suppresses the
+      // single-letter globals too, exactly like the other modals.
+      if (newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || inInput || inTerminal) return;
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
         setNewSessionOpen(true);
@@ -210,6 +215,11 @@ export default function App() {
       } else if (e.key === 't' || e.key === 'T') {
         setFocusedPane('main');
         setMainTab(useStore.getState().mainTab === 'shell' ? 'session' : 'shell');
+      } else if (e.key === 'o' || e.key === 'O') {
+        // overview: same toggle grammar as d/t — press again to fall back to the
+        // conversation you came from.
+        setFocusedPane('main');
+        setMainTab(useStore.getState().mainTab === 'overview' ? 'session' : 'overview');
       } else if (e.key === '[') {
         useStore.getState().toggleLeftPane();
       } else if (e.key === ']') {
@@ -218,7 +228,17 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newSessionOpen, newAgentOpen, permissionsOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab]);
+  }, [newSessionOpen, newAgentOpen, permissionsOpen, projectsOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab]);
+
+  // overview: widening the board's scope back to "All projects" is a zoom-OUT —
+  // there is no longer one project in view, so the main pane goes back to the
+  // dashboard instead of whichever session was last selected. Scoping DOWN to a
+  // project leaves the tab alone (you may well be mid-conversation), and clicking
+  // any session card leaves OVERVIEW again (Sidebar.selectSession). This also
+  // covers §7 case 16 — the active project being removed falls back to All.
+  useEffect(() => {
+    if (activeProjectId === null) setMainTab('overview');
+  }, [activeProjectId, setMainTab]);
 
   // permission-guardrails: the rules editor needs a session (the local tier is
   // its cwd). If the last session is removed while it is open the modal unmounts
@@ -297,6 +317,12 @@ export default function App() {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              {/* overview: the cross-project dashboard. First in the strip because
+                  it is the zoomed-OUT view — the tabs read left-to-right from the
+                  whole fleet down to one session's files. */}
+              <span onClick={() => setMainTab('overview')} style={tabStyle(mainTab === 'overview')}>
+                OVERVIEW
+              </span>
               <span onClick={() => setMainTab('session')} style={tabStyle(mainTab === 'session')}>
                 SESSION
               </span>
@@ -335,7 +361,9 @@ export default function App() {
           </div>
 
           {/* body */}
-          {mainTab === 'session' ? (
+          {mainTab === 'overview' ? (
+            <OverviewView home={home} />
+          ) : mainTab === 'session' ? (
             active ? (
               <ConversationView key={active.id} sessionId={active.id} />
             ) : (
@@ -445,6 +473,9 @@ export default function App() {
             <span style={{ color: C.hint }}>⏎</span> send
           </span>
           <span>
+            <span style={{ color: C.accent }}>o</span> overview
+          </span>
+          <span>
             <span style={{ color: C.accent }}>d</span> diff
           </span>
           <span>
@@ -492,6 +523,11 @@ export default function App() {
       {permissionsOpen && activeSessionId && (
         <PermissionsModal sessionId={activeSessionId} onClose={() => setPermissionsOpen(false)} />
       )}
+
+      {/* projects FR-31: the Projects modal. Unlike the permissions editor it
+          needs NO session — a project is configured whether or not anything is
+          running — so it is gated on `projectsOpen` alone. */}
+      {projectsOpen && <ProjectsModal home={home} onClose={() => setProjectsOpen(false)} />}
 
       <PaletteRoot />
     </div>

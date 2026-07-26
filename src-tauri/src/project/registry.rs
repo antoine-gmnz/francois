@@ -1,0 +1,917 @@
+//! FR-1..FR-8: projects.json, root normalization, duplicate detection, ordering.
+
+use super::*;
+
+use serde_json::Value;
+use std::collections::HashSet;
+use std::path::{Component, Path, PathBuf};
+use tauri::{AppHandle, Manager};
+
+/// FR-8: the platform's own separator — the normalized form a root is STORED in.
+#[cfg(windows)]
+pub(crate) const SEP: char = '\\';
+#[cfg(not(windows))]
+pub(crate) const SEP: char = '/';
+
+/// FR-6: trimmed name bounds (contract MAX_PROJECT_NAME_LENGTH).
+const MAX_NAME_LENGTH: usize = 80;
+
+/// FR-6: an empty-after-trim or over-long name. Both are `INVALID_INPUT`.
+pub(crate) const BAD_NAME_MSG: &str = "a project name must be 1–80 characters";
+
+/// Windows extended-length / device path prefixes, stripped by `normalize_root` so
+/// a verbatim spelling and a plain one compare equal (FR-8).
+#[cfg(windows)]
+const VERBATIM_PREFIX: &str = r"\\?\";
+#[cfg(windows)]
+const DEVICE_PREFIX: &str = r"\\.\";
+
+// ---------- FR-8: root normalization ----------
+
+/// Resolve `.`/`..` LEXICALLY (never touching the filesystem — a root that does not
+/// exist yet must still normalize), unify separators to the platform's, strip
+/// trailing separators, and trim surrounding whitespace. A bare root (`D:\`, `/`)
+/// keeps its separator; everything else loses it. Idempotent by construction.
+///
+/// Off Windows a backslash is a legal filename character, never a separator —
+/// `Path::components` already draws that line per platform, so it does the work.
+pub(crate) fn normalize_root(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Strip a Windows verbatim / device prefix before walking components. The
+    // verbatim spelling of a path and its plain spelling name the SAME directory,
+    // but `Path::components` reports the prefix verbatim, so the two folded to
+    // different roots and BOTH could be registered — defeating FR-6's duplicate
+    // check. FR-8 forbids symlink resolution, so `canonicalize()` is not an option.
+    #[cfg(windows)]
+    let trimmed = {
+        // The UNC form re-enters as a plain `\\server\share` path.
+        match trimmed
+            .strip_prefix(VERBATIM_PREFIX)
+            .or_else(|| trimmed.strip_prefix(DEVICE_PREFIX))
+        {
+            Some(rest) => match rest.strip_prefix("UNC") {
+                Some(unc) => return normalize_root(&format!("{SEP}{unc}")),
+                None => rest,
+            },
+            None => trimmed,
+        }
+    };
+    let mut prefix = String::new(); // Windows drive or UNC share, e.g. `D:` / `\\wsl$\Ubuntu`
+    let mut rooted = false;
+    let mut parts: Vec<String> = Vec::new();
+    for comp in Path::new(trimmed).components() {
+        match comp {
+            Component::Prefix(p) => prefix = p.as_os_str().to_string_lossy().into_owned(),
+            Component::RootDir => rooted = true,
+            Component::CurDir => {}
+            // A `..` with nothing to pop is dropped: it cannot escape above the root.
+            Component::ParentDir => {
+                parts.pop();
+            }
+            Component::Normal(s) => parts.push(s.to_string_lossy().into_owned()),
+        }
+    }
+    let mut out = prefix;
+    if rooted {
+        out.push(SEP);
+    }
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push(SEP);
+        }
+        out.push_str(part);
+    }
+    out
+}
+
+/// A normalized root split into comparable components, case-folded on Windows and
+/// case-sensitive elsewhere (FR-8). Comparison is ALWAYS component-wise, so
+/// `D:\a\bc` is neither equal to nor inside `D:\a\b`.
+///
+/// The root marker (`D:\`, `\\share\`, `/`) is its own leading component, so two
+/// paths on different drives can never share a prefix.
+pub(crate) fn root_components(root: &str) -> Vec<String> {
+    let norm = normalize_root(root);
+    if norm.is_empty() {
+        return Vec::new();
+    }
+    fn fold(s: String) -> String {
+        if cfg!(windows) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut head = String::new();
+    for comp in Path::new(&norm).components() {
+        match comp {
+            Component::Prefix(p) => head = p.as_os_str().to_string_lossy().into_owned(),
+            Component::RootDir => {
+                head.push(SEP);
+                out.push(fold(std::mem::take(&mut head)));
+            }
+            Component::Normal(s) => out.push(fold(s.to_string_lossy().into_owned())),
+            Component::CurDir | Component::ParentDir => {}
+        }
+    }
+    // A prefix with no root dir (`D:relative`) must LEAD, not trail — appending it
+    // after the loop yielded ["foo", "d:"] for `D:foo`. Unreachable through the
+    // commands (validate_root rejects non-absolute paths) but same_root is public.
+    if !head.is_empty() {
+        out.insert(0, fold(head));
+    }
+    out
+}
+
+/// True when two roots name the SAME directory. An empty (invalid) root never
+/// matches anything — two unusable values must not collide in the duplicate check.
+pub(crate) fn same_root(a: &str, b: &str) -> bool {
+    let (ca, cb) = (root_components(a), root_components(b));
+    !ca.is_empty() && ca == cb
+}
+
+/// FR-2: `rootExists` — false when the path is absent or is not a directory.
+pub(crate) fn root_exists(root: &str) -> bool {
+    !root.is_empty() && Path::new(root).is_dir()
+}
+
+// ---------- FR-6: validation ----------
+
+/// FR-6 step 1. Returns the NORMALIZED root to store.
+pub(crate) fn validate_root(raw: &str) -> Result<String, &'static str> {
+    let norm = normalize_root(raw);
+    // Order matters only for the message: every failure here is the same code.
+    if norm.is_empty() || !Path::new(&norm).is_absolute() || !root_exists(&norm) {
+        return Err(BAD_ROOT_MSG);
+    }
+    Ok(norm)
+}
+
+/// FR-6: `name` defaults to the basename of `root`; a supplied name is trimmed and
+/// must be non-empty and ≤ 80 chars. Names are NOT unique (§7 #25).
+pub(crate) fn resolve_name(name: Option<&str>, root: &str) -> Result<String, &'static str> {
+    let candidate = match name {
+        Some(n) => n.trim().to_string(),
+        // A bare root (`D:\`) has no basename — fall back to the root itself so the
+        // project is still nameable rather than rejected.
+        None => {
+            let norm = normalize_root(root);
+            Path::new(&norm)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or(norm)
+        }
+    };
+    if candidate.is_empty() {
+        return Err(BAD_NAME_MSG);
+    }
+    // Count CHARS, not bytes — an 80-emoji name is 80 characters to the user.
+    if candidate.chars().count() > MAX_NAME_LENGTH {
+        return Err(BAD_NAME_MSG);
+    }
+    Ok(candidate)
+}
+
+// ---------- FR-2/FR-5: listing ----------
+
+pub(crate) fn meta_of(p: &Project) -> ProjectMeta {
+    ProjectMeta {
+        id: p.id.clone(),
+        name: p.name.clone(),
+        root: p.root.clone(),
+        defaults: p.defaults.clone(),
+        created_at: p.created_at,
+        last_used_at: p.last_used_at,
+        // FR-2: derived on every read, never persisted.
+        root_exists: root_exists(&p.root),
+    }
+}
+
+/// FR-5: `lastUsedAt` descending, ties broken by `name` ascending
+/// (case-insensitive), with `rootExists` derived per entry (FR-2).
+pub(crate) fn list_metas(projects: &[Project]) -> Vec<ProjectMeta> {
+    let mut metas: Vec<ProjectMeta> = projects.iter().map(meta_of).collect();
+    metas.sort_by(|a, b| {
+        b.last_used_at
+            .cmp(&a.last_used_at)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    metas
+}
+
+// ---------- FR-6/FR-7: pure decision functions behind the command glue ----------
+//
+// The handlers in commands.rs are lock -> delegate -> map-error glue; every actual
+// decision lives here so it can be unit-tested without a Tauri AppHandle (Cargo does
+// not enable tauri's `test` feature, so handler-level tests are not available).
+//
+// Both take an ALREADY-NORMALIZED, already-stat'ed root: the filesystem check runs
+// in the handler BEFORE the registry lock is taken, so a dead UNC share can never
+// stall every other project command while holding the mutex.
+
+/// FR-6: the duplicate check + name resolution + entry construction.
+pub(crate) fn create_entry(
+    projects: &[Project],
+    root: &str,
+    name: Option<&str>,
+    defaults: Option<ProjectDefaults>,
+    id: String,
+    now: u64,
+) -> Result<Project, (&'static str, &'static str)> {
+    if projects.iter().any(|p| same_root(&p.root, root)) {
+        return Err(("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG)); // §7 #2
+    }
+    let name = resolve_name(name, root).map_err(|m| ("INVALID_INPUT", m))?;
+    Ok(Project {
+        id,
+        name,
+        root: root.to_string(),
+        defaults: defaults.unwrap_or_default(),
+        created_at: now,
+        last_used_at: now, // FR-4: set on creation, then only FR-20 touches it
+    })
+}
+
+/// FR-7: patch only the present fields, returning `(index, patched)`.
+/// A present `defaults` REPLACES the whole object — that is how "inherit" is restored.
+pub(crate) fn patch_entry(
+    projects: &[Project],
+    id: &str,
+    name: Option<&str>,
+    root: Option<&str>,
+    defaults: Option<ProjectDefaults>,
+) -> Result<(usize, Project), (&'static str, &'static str)> {
+    let idx = projects
+        .iter()
+        .position(|p| p.id == id)
+        .ok_or(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))?;
+    let mut patched = projects[idx].clone();
+    if let Some(root) = root {
+        // The duplicate check EXCLUDES the project itself, so re-saving a project
+        // with its own root must succeed (FR-7).
+        if projects
+            .iter()
+            .enumerate()
+            .any(|(i, p)| i != idx && same_root(&p.root, root))
+        {
+            return Err(("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG));
+        }
+        patched.root = root.to_string();
+    }
+    if let Some(raw) = name {
+        // Names are not unique (§7 #25) — only shape is validated.
+        patched.name = resolve_name(Some(raw), &patched.root).map_err(|m| ("INVALID_INPUT", m))?;
+    }
+    if let Some(d) = defaults {
+        patched.defaults = d;
+    }
+    Ok((idx, patched))
+}
+
+/// The root a standards read/write should target. `PROJECT_NOT_FOUND` takes
+/// precedence over `PROJECT_ROOT_MISSING` (§7 #13).
+pub(crate) fn root_of(
+    projects: &[Project],
+    id: &str,
+) -> Result<String, (&'static str, &'static str)> {
+    let p = projects
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))?;
+    if !root_exists(&p.root) {
+        return Err(("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG));
+    }
+    Ok(p.root.clone())
+}
+
+// ---------- FR-19: the session link check ----------
+
+pub(crate) fn validate_link(
+    projects: &[Project],
+    id: &str,
+) -> Result<(), (&'static str, &'static str)> {
+    // §7 #13: an id removed a moment earlier reports NOT_FOUND, not ROOT_MISSING.
+    let Some(p) = projects.iter().find(|p| p.id == id) else {
+        return Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG));
+    };
+    if !root_exists(&p.root) {
+        return Err(("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG));
+    }
+    Ok(())
+}
+
+// ---------- FR-1/FR-3: persistence ----------
+
+pub(crate) fn projects_json_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("projects.json"))
+}
+
+/// FR-3: a missing, empty or unparseable document yields an EMPTY registry and is
+/// not an error; a single undeserializable entry is skipped, not fatal.
+pub(crate) fn parse_registry(bytes: &[u8]) -> Vec<Project> {
+    // Anything that is not our `{ version, projects: [...] }` shape — including a
+    // bare array from some other tool — reads as empty rather than throwing.
+    let Ok(doc) = serde_json::from_slice::<Value>(bytes) else {
+        return Vec::new();
+    };
+    let Some(list) = doc.get("projects").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|entry| serde_json::from_value::<Project>(entry.clone()).ok())
+        .collect()
+}
+
+pub(crate) fn load_from(path: &Path) -> Vec<Project> {
+    std::fs::read(path)
+        .map(|b| parse_registry(&b))
+        .unwrap_or_default()
+}
+
+/// FR-1: `{ "version": 1, "projects": [ … ] }`, written atomically through the
+/// same helper permission-guardrails uses.
+pub(crate) fn save_to(path: &Path, projects: &[Project]) -> Result<(), String> {
+    let doc = serde_json::json!({ "version": 1, "projects": projects });
+    crate::permissions::write_json_atomic(path, &doc)
+}
+
+pub(crate) fn persist_registry(app: &AppHandle, projects: &[Project]) -> Result<(), String> {
+    let path = projects_json_path(app)
+        .ok_or_else(|| "could not resolve the app data directory".to_string())?;
+    save_to(&path, projects)
+}
+
+/// Load the registry once, at startup. Must run BEFORE `session::load_persisted`,
+/// which prunes session links against it (FR-18).
+pub fn load_projects(app: &AppHandle) {
+    let Some(path) = projects_json_path(app) else {
+        return;
+    };
+    let loaded = load_from(&path);
+    if let Some(state) = app.try_state::<ProjectRegistry>() {
+        *state.projects.lock().unwrap() = loaded;
+    }
+}
+
+/// The ids the registry currently knows — FR-18's "does this link still resolve".
+pub fn known_ids(app: &AppHandle) -> HashSet<String> {
+    app.try_state::<ProjectRegistry>()
+        .map(|s| {
+            s.projects
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|p| p.id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// FR-20: refresh `lastUsedAt` after a session was created under this project.
+/// A persist failure is logged and IGNORED — it must never fail session creation.
+pub fn touch_last_used(app: &AppHandle, project_id: &str) {
+    let Some(state) = app.try_state::<ProjectRegistry>() else {
+        return;
+    };
+    let mut projects = state.projects.lock().unwrap();
+    let Some(p) = projects.iter_mut().find(|p| p.id == project_id) else {
+        return;
+    };
+    // Roll back on a persist failure, matching commit()'s "memory and disk agree"
+    // contract. FR-20 requires the CALL not to fail, not that the bump be kept —
+    // keeping it would silently reorder project_list (FR-5) against a disk that
+    // never recorded it.
+    let previous = p.last_used_at;
+    p.last_used_at = crate::session::now_ms();
+    if let Err(msg) = persist_registry(app, &projects) {
+        eprintln!("projects: could not persist lastUsedAt: {msg}");
+        if let Some(p) = projects.iter_mut().find(|p| p.id == project_id) {
+            p.last_used_at = previous;
+        }
+    }
+}
+
+/// FR-19: validate a `session_create` link against the live registry.
+pub fn check_session_link(
+    app: &AppHandle,
+    project_id: &str,
+) -> Result<(), (&'static str, &'static str)> {
+    match app.try_state::<ProjectRegistry>() {
+        Some(state) => validate_link(&state.projects.lock().unwrap(), project_id),
+        None => Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::testutil::*;
+    use serde_json::json;
+
+    // ---- FR-8: normalization ----
+
+    #[test]
+    fn normalization_resolves_dot_segments_and_strips_trailing_separators() {
+        let sep = SEP.to_string();
+        let base = if cfg!(windows) { "D:\\a\\b" } else { "/a/b" };
+        for raw in [
+            format!("{base}{sep}"),
+            format!("{base}{sep}{sep}"),
+            format!("{base}{sep}.{sep}"),
+            format!("{base}{sep}c{sep}..{sep}"),
+            format!("  {base}  "),
+        ] {
+            assert_eq!(normalize_root(&raw), base, "raw: {raw:?}");
+        }
+        // idempotent — the stored form normalizes to itself
+        assert_eq!(normalize_root(&normalize_root(base)), base);
+        assert_eq!(normalize_root(""), "");
+        assert_eq!(normalize_root("   "), "");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_normalization_unifies_separators_and_keeps_unc_prefixes() {
+        assert_eq!(normalize_root("D:/a/b/"), "D:\\a\\b");
+        assert_eq!(
+            normalize_root("\\\\wsl$\\Ubuntu\\home\\u\\"),
+            "\\\\wsl$\\Ubuntu\\home\\u"
+        );
+        assert_eq!(normalize_root("D:\\"), "D:\\");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_normalization_keeps_the_root_and_never_touches_backslashes() {
+        assert_eq!(normalize_root("/"), "/");
+        // a backslash is a legal filename character off Windows — never a separator
+        assert_eq!(normalize_root("/a/b\\c"), "/a/b\\c");
+    }
+
+    #[test]
+    fn root_comparison_is_component_wise() {
+        // §9 / FR-8: `D:\a\bc` is NOT `D:\a\b`, and is not inside it either.
+        let (short, long) = if cfg!(windows) {
+            ("D:\\a\\b", "D:\\a\\bc")
+        } else {
+            ("/a/b", "/a/bc")
+        };
+        assert!(!same_root(short, long));
+        assert!(!root_components(long).starts_with(&root_components(short)));
+        // a real child IS component-wise inside its parent
+        let child = format!("{short}{SEP}c");
+        assert!(root_components(&child).starts_with(&root_components(short)));
+        // equality survives a denormalized spelling
+        assert!(same_root(short, &format!("{short}{SEP}c{SEP}..")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_root_comparison_is_case_insensitive() {
+        // §7 #21: `D:\Repo` and `D:\repo` are the same directory on Windows.
+        assert!(same_root("D:\\Repo", "D:\\repo"));
+        assert!(same_root("d:/REPO/sub/", "D:\\repo\\Sub"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_root_comparison_is_case_sensitive() {
+        // §7 #21: on Linux/macOS `/Repo` and `/repo` are two distinct directories.
+        assert!(!same_root("/Repo", "/repo"));
+        assert!(same_root("/repo", "/repo/sub/.."));
+    }
+
+    // ---- FR-6: validation ----
+
+    #[test]
+    fn root_validation_requires_an_existing_absolute_directory() {
+        let dir = tmp_root("validate");
+        let raw = dir.to_string_lossy().to_string();
+        assert_eq!(validate_root(&raw), Ok(normalize_root(&raw)));
+        // trailing separator and dot segments are accepted and normalized away
+        assert_eq!(
+            validate_root(&format!("{raw}{SEP}")),
+            Ok(normalize_root(&raw))
+        );
+
+        assert_eq!(validate_root(""), Err(BAD_ROOT_MSG));
+        assert_eq!(validate_root("   "), Err(BAD_ROOT_MSG));
+        assert_eq!(validate_root("relative/path"), Err(BAD_ROOT_MSG));
+        assert_eq!(validate_root(&missing_root("validate")), Err(BAD_ROOT_MSG));
+
+        // a FILE is not a directory
+        let file = dir.join("CLAUDE.md");
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(
+            validate_root(&file.to_string_lossy()),
+            Err(BAD_ROOT_MSG),
+            "a file is not a project root"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn name_defaults_to_the_basename_and_is_trimmed_and_bounded() {
+        let root = if cfg!(windows) {
+            "D:\\code\\francois"
+        } else {
+            "/code/francois"
+        };
+        assert_eq!(resolve_name(None, root), Ok("francois".to_string()));
+        assert_eq!(resolve_name(Some("  core  "), root), Ok("core".to_string()));
+        assert!(resolve_name(Some("   "), root).is_err());
+        assert!(resolve_name(Some(&"x".repeat(80)), root).is_ok());
+        assert!(resolve_name(Some(&"x".repeat(81)), root).is_err());
+    }
+
+    // ---- FR-3: load tolerance ----
+
+    #[test]
+    fn a_missing_empty_or_corrupt_registry_loads_as_empty() {
+        // §7 #1: never an error — the app starts, the first write recreates the file.
+        let dir = tmp_root("tolerant");
+        assert!(load_from(&dir.join("nope.json")).is_empty());
+        assert!(parse_registry(b"").is_empty());
+        assert!(parse_registry(b"   \n").is_empty());
+        assert!(parse_registry(b"{ not json").is_empty());
+        assert!(
+            parse_registry(b"[]").is_empty(),
+            "the array shape is not ours"
+        );
+        assert!(parse_registry(br#"{"version":1}"#).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn one_undeserializable_entry_is_skipped_not_fatal() {
+        let good = if cfg!(windows) { "D:\\a" } else { "/a" };
+        let doc = json!({
+            "version": 1,
+            "projects": [
+                { "id": "p1", "name": "keep", "root": good, "createdAt": 1, "lastUsedAt": 2 },
+                { "name": "no id at all", "root": good },
+                "not even an object",
+                { "id": "p2", "name": "also keep", "root": good },
+            ]
+        });
+        let loaded = parse_registry(doc.to_string().as_bytes());
+        assert_eq!(
+            loaded.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            vec!["p1", "p2"]
+        );
+        // missing timestamps degrade to 0 rather than dropping the entry
+        assert_eq!(loaded[1].last_used_at, 0);
+    }
+
+    // ---- FR-1/FR-2: the persisted document ----
+
+    #[test]
+    fn the_registry_round_trips_and_never_persists_root_exists() {
+        let dir = tmp_root("roundtrip");
+        let path = dir.join("projects.json");
+        let projects = vec![
+            project_fixture("p1", "francois", &dir.to_string_lossy(), 40),
+            project_fixture("p2", "api", &dir.to_string_lossy(), 10),
+        ];
+        save_to(&path, &projects).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let doc: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(doc["version"], 1);
+        assert_eq!(doc["projects"].as_array().unwrap().len(), 2);
+        assert_eq!(doc["projects"][0]["createdAt"], 1_000);
+        assert_eq!(doc["projects"][0]["lastUsedAt"], 40);
+        assert!(
+            !raw.contains("rootExists"),
+            "FR-2: rootExists is derived, never persisted:\n{raw}"
+        );
+        // defaults with every field unset serialize as an empty object ("inherit")
+        assert_eq!(doc["projects"][0]["defaults"], json!({}));
+        assert_eq!(load_from(&path), projects);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn project_meta_serializes_to_the_contract_shape() {
+        let dir = tmp_root("meta");
+        let mut p = project_fixture("p1", "francois", &dir.to_string_lossy(), 40);
+        p.defaults = ProjectDefaults {
+            model_id: Some("opus".into()),
+            effort: None,
+            permission_mode: Some("acceptEdits".into()),
+            runtime: None,
+            allow_git: Some(true),
+        };
+        let v = serde_json::to_value(meta_of(&p)).unwrap();
+        assert_eq!(v["id"], "p1");
+        assert_eq!(v["name"], "francois");
+        assert_eq!(v["createdAt"], 1_000);
+        assert_eq!(v["lastUsedAt"], 40);
+        assert_eq!(v["rootExists"], true);
+        assert_eq!(v["defaults"]["modelId"], "opus");
+        assert_eq!(v["defaults"]["permissionMode"], "acceptEdits");
+        assert_eq!(v["defaults"]["allowGit"], true);
+        // an unset default is an OMITTED key, never null — that is how the modal
+        // tells "inherit" from "explicitly set".
+        assert!(v["defaults"].get("effort").is_none());
+        assert!(v["defaults"].get("runtime").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- FR-2/FR-5: listing ----
+
+    #[test]
+    fn listing_orders_by_last_used_desc_then_name_asc_and_derives_root_exists() {
+        let dir = tmp_root("listing");
+        let live = dir.to_string_lossy().to_string();
+        let gone = missing_root("listing");
+        let projects = vec![
+            project_fixture("p1", "zulu", &live, 100),
+            project_fixture("p2", "Bravo", &live, 500),
+            project_fixture("p3", "alpha", &gone, 500),
+            project_fixture("p4", "mike", &live, 900),
+        ];
+        let metas = list_metas(&projects);
+        assert_eq!(
+            metas.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["p4", "p3", "p2", "p1"],
+            "lastUsedAt desc, then name asc case-insensitively"
+        );
+        assert!(metas[0].root_exists);
+        assert!(
+            !metas[1].root_exists,
+            "a renamed-away folder reports missing"
+        );
+
+        // a FILE at the root path is not a directory either
+        let file = dir.join("CLAUDE.md");
+        std::fs::write(&file, "x").unwrap();
+        let as_file = vec![project_fixture("p5", "f", &file.to_string_lossy(), 1)];
+        assert!(!list_metas(&as_file)[0].root_exists);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- FR-19: the session link check ----
+
+    #[test]
+    fn session_link_validation_reports_not_found_then_root_missing() {
+        let dir = tmp_root("link");
+        let projects = vec![
+            project_fixture("p1", "live", &dir.to_string_lossy(), 1),
+            project_fixture("p2", "gone", &missing_root("link"), 1),
+        ];
+        assert_eq!(validate_link(&projects, "p1"), Ok(()));
+        assert_eq!(
+            validate_link(&projects, "p2"),
+            Err(("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG))
+        );
+        // §7 #13: removed a moment earlier
+        assert_eq!(
+            validate_link(&projects, "nope"),
+            Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod decision_tests {
+    //! FR-6/FR-7 command decisions + the FR-8 comparison edges the first suite
+    //! left on faith. These are what commands.rs used to inline.
+
+    use super::*;
+    use crate::project::testutil::*;
+
+    fn defaults_with_model(id: &str) -> ProjectDefaults {
+        ProjectDefaults {
+            model_id: Some(id.into()),
+            ..Default::default()
+        }
+    }
+
+    // ---------- FR-6: create ----------
+
+    #[test]
+    fn create_rejects_a_root_another_project_already_owns() {
+        let dir = tmp_root("create-dup");
+        let root = normalize_root(&dir.to_string_lossy());
+        let existing = vec![project_fixture("p1", "first", &root, 1)];
+
+        // section 9: "Two projects cannot share a root"
+        let err = create_entry(&existing, &root, None, None, "new".into(), 5).unwrap_err();
+        assert_eq!(err, ("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG));
+
+        // a DIFFERENT root is fine, and names are not unique (section 7 #25)
+        let other = format!("{root}{SEP}sub");
+        let made = create_entry(&existing, &other, Some("first"), None, "new".into(), 5).unwrap();
+        assert_eq!(made.name, "first");
+        assert_eq!(made.root, other);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn create_duplicate_check_is_case_insensitive_on_windows() {
+        // section 9: "on Windows the check is case-insensitive"
+        let existing = vec![project_fixture("p1", "a", "D:\\Repo", 1)];
+        assert_eq!(
+            create_entry(&existing, "D:\\repo", None, None, "n".into(), 0).unwrap_err(),
+            ("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG)
+        );
+    }
+
+    #[test]
+    fn create_defaults_the_name_stamps_both_timestamps_and_keeps_defaults_verbatim() {
+        let root = if cfg!(windows) {
+            "D:\\code\\francois"
+        } else {
+            "/code/francois"
+        };
+        let p = create_entry(
+            &[],
+            root,
+            None,
+            Some(defaults_with_model("opus")),
+            "id1".into(),
+            77,
+        )
+        .unwrap();
+        assert_eq!(p.name, "francois", "FR-6: name defaults to the basename");
+        assert_eq!(p.id, "id1");
+        // FR-4: both stamped on creation; only FR-20 moves last_used_at afterwards
+        assert_eq!((p.created_at, p.last_used_at), (77, 77));
+        assert_eq!(p.defaults.model_id.as_deref(), Some("opus"));
+        // omitted defaults stay unset ("inherit"), never invented
+        assert_eq!(p.defaults.effort, None);
+    }
+
+    #[test]
+    fn create_rejects_a_bad_name() {
+        let root = if cfg!(windows) { "D:\\a" } else { "/a" };
+        assert_eq!(
+            create_entry(&[], root, Some("   "), None, "i".into(), 0).unwrap_err(),
+            ("INVALID_INPUT", BAD_NAME_MSG)
+        );
+        assert!(create_entry(&[], root, Some(&"x".repeat(81)), None, "i".into(), 0).is_err());
+        assert!(create_entry(&[], root, Some(&"x".repeat(80)), None, "i".into(), 0).is_ok());
+    }
+
+    // ---------- FR-7: update ----------
+
+    #[test]
+    fn patch_touches_only_the_fields_present() {
+        let root = if cfg!(windows) { "D:\\a" } else { "/a" };
+        let mut p = project_fixture("p1", "old", root, 9);
+        p.defaults = defaults_with_model("opus");
+        let list = vec![p];
+
+        // name only
+        let (i, patched) = patch_entry(&list, "p1", Some("  new  "), None, None).unwrap();
+        assert_eq!(i, 0);
+        assert_eq!(patched.name, "new", "trimmed");
+        assert_eq!(patched.root, list[0].root, "root untouched");
+        assert_eq!(
+            patched.defaults.model_id.as_deref(),
+            Some("opus"),
+            "defaults untouched"
+        );
+        // FR-4: a patch never restamps createdAt/lastUsedAt
+        assert_eq!(
+            (patched.created_at, patched.last_used_at),
+            (list[0].created_at, 9)
+        );
+
+        // defaults REPLACE wholesale, which is how "inherit" is restored (FR-7)
+        let (_, cleared) =
+            patch_entry(&list, "p1", None, None, Some(ProjectDefaults::default())).unwrap();
+        assert_eq!(cleared.defaults, ProjectDefaults::default());
+        assert_eq!(cleared.name, "old", "name untouched");
+    }
+
+    #[test]
+    fn patch_excludes_the_project_itself_from_the_duplicate_check() {
+        // FR-7: re-saving a project with its OWN root must succeed.
+        let root = if cfg!(windows) { "D:\\a" } else { "/a" };
+        let other = if cfg!(windows) { "D:\\b" } else { "/b" };
+        let list = vec![
+            project_fixture("p1", "one", root, 1),
+            project_fixture("p2", "two", other, 1),
+        ];
+        assert!(patch_entry(&list, "p1", None, Some(root), None).is_ok());
+        // but taking ANOTHER project's root is still rejected
+        assert_eq!(
+            patch_entry(&list, "p1", None, Some(other), None).unwrap_err(),
+            ("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG)
+        );
+    }
+
+    #[test]
+    fn patch_reports_not_found_for_an_unknown_id() {
+        assert_eq!(
+            patch_entry(&[], "nope", Some("x"), None, None).unwrap_err(),
+            ("PROJECT_NOT_FOUND", NOT_FOUND_MSG)
+        );
+    }
+
+    // ---------- root_of: the standards target ----------
+
+    #[test]
+    fn root_of_prefers_not_found_over_root_missing() {
+        let dir = tmp_root("root-of");
+        let list = vec![
+            project_fixture("p1", "live", &dir.to_string_lossy(), 1),
+            project_fixture("p2", "gone", &missing_root("root-of"), 1),
+        ];
+        assert_eq!(
+            root_of(&list, "p1").unwrap(),
+            normalize_root(&dir.to_string_lossy())
+        );
+        assert_eq!(
+            root_of(&list, "p2").unwrap_err(),
+            ("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG)
+        );
+        // section 7 #13: an id removed a moment earlier is NOT_FOUND, not ROOT_MISSING
+        assert_eq!(
+            root_of(&list, "nope").unwrap_err(),
+            ("PROJECT_NOT_FOUND", NOT_FOUND_MSG)
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---------- FR-8 edges the first suite took on faith ----------
+
+    #[test]
+    fn two_unusable_roots_never_collide() {
+        // the !ca.is_empty() guard in same_root, whose whole purpose was unexercised
+        assert!(!same_root("", ""));
+        assert!(!same_root("   ", ""));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn different_drives_never_match_or_nest() {
+        // the justification for making the root marker its own component
+        assert!(!same_root("D:\\a", "C:\\a"));
+        assert!(!root_components("C:\\a\\b").starts_with(&root_components("D:\\a")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unc_roots_compare_case_insensitively_and_a_bare_share_survives() {
+        assert!(same_root(
+            "\\\\wsl$\\Ubuntu\\home\\u",
+            "\\\\wsl$\\ubuntu\\home\\U"
+        ));
+        assert!(same_root("\\\\server\\share", "\\\\SERVER\\Share"));
+        // A share root is a BARE root, so like `D:\` it keeps its separator. What
+        // matters is that both spellings agree and the form is idempotent — not
+        // which of the two spellings wins.
+        let with = normalize_root("\\\\server\\share\\");
+        let without = normalize_root("\\\\server\\share");
+        assert_eq!(with, without);
+        assert_eq!(normalize_root(&with), with, "idempotent");
+        // ...and a real child still nests inside it component-wise
+        assert!(root_components("\\\\server\\share\\dir").starts_with(&root_components(&with)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_verbatim_prefix_names_the_same_directory_as_the_plain_spelling() {
+        // otherwise the same folder could be registered twice (FR-6)
+        assert!(same_root("\\\\?\\D:\\repo", "D:\\repo"));
+        assert_eq!(normalize_root("\\\\?\\D:\\repo\\"), "D:\\repo");
+        assert!(same_root("\\\\?\\UNC\\server\\share", "\\\\server\\share"));
+    }
+
+    #[test]
+    fn parent_segments_cannot_escape_above_the_root() {
+        // the parts.pop()-on-empty branch, documented in a comment and asserted nowhere
+        let (root, deep) = if cfg!(windows) {
+            ("D:\\", "D:\\a\\..\\..\\..\\b")
+        } else {
+            ("/", "/a/../../../b")
+        };
+        assert_eq!(normalize_root(deep), format!("{root}b"));
+        assert!(normalize_root(&format!("{root}..")).starts_with(root));
+    }
+
+    #[test]
+    fn a_prefixed_relative_path_keeps_its_prefix_leading() {
+        // regression: the tail-append branch emitted ["foo", "d:"] for `D:foo`
+        #[cfg(windows)]
+        {
+            let c = root_components("D:foo");
+            assert_eq!(c.first().map(String::as_str), Some("d:"));
+            assert_eq!(c.last().map(String::as_str), Some("foo"));
+        }
+        // a relative path is never a valid root either way
+        assert!(validate_root("relative/path").is_err());
+    }
+}

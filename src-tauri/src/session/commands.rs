@@ -61,6 +61,19 @@ pub fn session_list(app: AppHandle, engine: State<'_, Engine>) -> IpcResult<Vec<
         .collect())
 }
 
+/// projects: the decision half of `session_create`'s post-insert TOCTOU re-check.
+///
+/// `project_remove` can commit and run its unlink between the pre-create link check
+/// and the engine insert, which would leave a brand-new session pointing at a
+/// project that no longer exists — self-healing only at the next launch (FR-18's
+/// drop-on-load), so the live board would carry a dangling link all run.
+///
+/// Pure so the branching is testable: the handler owns the two lock acquisitions,
+/// this owns the decision. Returns the project id to KEEP, or `None` to unlink.
+pub(crate) fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> Option<String> {
+    project_id.filter(|_| still_linked)
+}
+
 #[tauri::command(async)]
 pub fn session_create(
     app: AppHandle,
@@ -72,6 +85,7 @@ pub fn session_create(
     permission_mode: Option<String>,
     runtime: Option<String>,
     allow_git: Option<bool>,
+    project_id: Option<String>,
 ) -> IpcResult<Value> {
     // FR-7: cwd must exist and be a directory.
     let meta = std::fs::metadata(&cwd);
@@ -124,6 +138,17 @@ pub fn session_create(
         Err(_) => return err("SPAWN_FAILED", "Claude Code CLI not found. Install it and ensure `claude` is on PATH."),
     }
 
+    // projects FR-19: a link must resolve to a live registry entry. The core does
+    // NO auto-adoption and NO default merging — the frontend resolved the project
+    // and applied its defaults, so what the modal showed is exactly what is created.
+    // A blank string is treated as "unlinked" rather than as a bad id.
+    let project_id = project_id.filter(|p| !p.trim().is_empty());
+    if let Some(pid) = &project_id {
+        if let Err((code, msg)) = crate::project::check_session_link(&app, pid) {
+            return err(code, msg);
+        }
+    }
+
     let effort = effort.filter(|e| valid_effort(e));
     let now = now_ms();
     let id = uuid();
@@ -143,6 +168,7 @@ pub fn session_create(
         permission_mode,
         runtime,
         allow_git: allow_git.unwrap_or(false),
+        project_id: project_id.clone(),
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,
@@ -158,9 +184,37 @@ pub fn session_create(
         mcp: HashMap::new(),
         cli_commands: Vec::new(),
     };
-    let meta = session.meta();
+    let meta_before = session.meta();
     engine.sessions.lock().unwrap().insert(id.clone(), session);
+
+    // projects: close the TOCTOU window. `project_remove` can commit and run its
+    // unlink between the link check above and this insert, leaving a session
+    // pointing at a project that no longer exists. That self-heals only at the next
+    // launch (FR-18's drop-on-load), so the live board would carry a dangling link
+    // for the whole run. Re-check now that the session is visible and unlink it
+    // here if the project went away. One registry read; the two locks never overlap.
+    let still_linked = match &project_id {
+        Some(pid) => crate::project::check_session_link(&app, pid).is_ok(),
+        None => true, // an unlinked session has nothing to lose
+    };
+    let linked = toctou_outcome(project_id.clone(), still_linked);
+    if linked.is_none() && project_id.is_some() {
+        let mut map = engine.sessions.lock().unwrap();
+        if let Some(s) = map.get_mut(&id) {
+            s.project_id = None;
+        }
+    }
+    let meta = {
+        let map = engine.sessions.lock().unwrap();
+        map.get(&id).map(|s| s.meta()).unwrap_or(meta_before)
+    };
+
     persist(&app, &engine);
+    // projects FR-20: the project just backed a session. A persist failure here is
+    // logged inside touch_last_used and IGNORED — it must never fail creation.
+    if let Some(pid) = &linked {
+        crate::project::touch_last_used(&app, pid);
+    }
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
     crate::diff::watch_session(&app, &id, &cwd); // FR-15: watch the session's cwd
     ok(serde_json::to_value(meta).unwrap())

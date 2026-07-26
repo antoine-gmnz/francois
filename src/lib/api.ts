@@ -3,7 +3,15 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo } from '../../contract/common';
+import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId } from '../../contract/common';
+import type {
+  ProjectAwareSessionCreateRequest,
+  ProjectCreateRequest,
+  ProjectMeta,
+  ProjectStandards,
+  ProjectUpdateRequest,
+  StandardsRead,
+} from '../../contract/projects';
 import type { PermissionDecision, PermissionRule, PermissionTier } from '../../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { ConversationBlock } from '../../contract/conversation-view';
@@ -22,7 +30,10 @@ export const appSetWindowTheme = (theme: 'light' | 'dark') =>
 
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
 export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
-export const sessionCreate = (req: NewSessionRequest) => ipc<Result<SessionMeta>>('session_create', req);
+// projects FR-19: session_create gained an optional projectId, stored verbatim —
+// the frontend (NewSessionModal) resolves the project and applies its defaults.
+export const sessionCreate = (req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'>) =>
+  ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
 export const sessionPickDirectory = () => ipc<Result<PickDirectoryData>>('session_pick_directory');
 export const sessionSend = (sessionId: SessionId, blockId: string, text: string) =>
@@ -51,6 +62,19 @@ export const permissionsRemove = (sessionId: SessionId, ruleId: string) =>
   ipc<Result<PermissionRule[]>>('permissions_remove', { sessionId, ruleId });
 export const permissionsSetTier = (sessionId: SessionId, ruleId: string, tier: PermissionTier) =>
   ipc<Result<PermissionRule[]>>('permissions_set_tier', { sessionId, ruleId, tier });
+
+// projects (§5.3). Six commands, no event channel: every mutation resolves with
+// the new state. getStandards/setStandards read and write the managed block in
+// <root>/CLAUDE.md; setStandards resolves a FRESH RE-READ of the file (FR-16),
+// never the payload it was given.
+export const projectList = () => ipc<Result<ProjectMeta[]>>('project_list');
+export const projectCreate = (req: ProjectCreateRequest) => ipc<Result<ProjectMeta>>('project_create', req);
+export const projectUpdate = (req: ProjectUpdateRequest) => ipc<Result<ProjectMeta>>('project_update', req);
+export const projectRemove = (projectId: ProjectId) => ipc<Result<null>>('project_remove', { projectId });
+export const projectGetStandards = (projectId: ProjectId) =>
+  ipc<Result<StandardsRead>>('project_get_standards', { projectId });
+export const projectSetStandards = (projectId: ProjectId, standards: ProjectStandards) =>
+  ipc<Result<StandardsRead>>('project_set_standards', { projectId, standards });
 
 // slash-menu FR-1/4: merged per-session command registry (francois:session:listCommands)
 export const sessionListCommands = (sessionId: SessionId) =>

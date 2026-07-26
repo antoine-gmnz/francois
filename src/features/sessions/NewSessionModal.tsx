@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppError, ClaudeRuntime, ModelInfo, PermissionMode, SessionMeta } from '../../../contract/common';
 import { isWslUncPath } from '../../../contract/wsl-filesystem';
-import { sessionCreate, sessionModels, sessionPickDirectory } from '../../lib/api';
+import type { ProjectMeta } from '../../../contract/projects';
+import { projectList, sessionCreate, sessionModels, sessionPickDirectory } from '../../lib/api';
+import {
+  PROJECT_ROOT_MISSING_LINE,
+  applyProjectDefaults,
+  baseFormValues,
+  newSessionProjectOptions,
+  safeCall,
+} from '../projects/projects';
+import { useStore } from '../../lib/store';
 import ModelPicker from './ModelPicker';
 
 // PermissionMode choices (contract/common.ts): label + the plain-language consequence.
@@ -59,6 +68,14 @@ export default function NewSessionModal({
   const [cwd, setCwd] = useState('');
   const [name, setName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
+  // projects: the session's project. '' = unlinked, which restores the whole
+  // pre-projects form (an explicit DIRECTORY row and no inherited defaults).
+  const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [projectId, setProjectId] = useState('');
+  // §7 case 22: a project default naming a model the catalog no longer lists.
+  // The picker falls back to its own default and we say so rather than silently
+  // rewriting the project's configuration.
+  const [staleModelId, setStaleModelId] = useState<string | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelId, setModelId] = useState('');
@@ -77,17 +94,86 @@ export default function NewSessionModal({
   const openRef = useRef(true);
 
   useEffect(() => {
+    // RE-ARM on every mount. StrictMode runs mount → cleanup → mount on the same
+    // instance, so without this the cleanup's `false` survives into the second
+    // mount and any effect that guards on openRef before setState silently does
+    // nothing (this is exactly what swallowed the project list).
+    openRef.current = true;
     void sessionModels().then((res) => {
       setModelsLoading(false);
       if (res.ok) {
         setModels(res.data);
-        if (res.data[0]) setModelId(res.data[0].id);
+        // Seed the picker ONLY while nothing has chosen a model yet. StrictMode
+        // fires this fetch twice and the second resolve lands AFTER the project
+        // defaults are applied — an unconditional set here silently reverted the
+        // project's model back to the catalog's first entry.
+        setModelId((cur) => cur || res.data[0]?.id || '');
       }
     });
     return () => {
       openRef.current = false;
     };
   }, []);
+
+  // projects FR-30: opening the modal while the board is scoped to a project
+  // starts in that project — "inside a project, a new session belongs to it".
+  const activeProjectId = useStore((s) => s.activeProjectId);
+  const preselectedRef = useRef(false);
+
+  useEffect(() => {
+    void safeCall(projectList()).then((res) => {
+      if (!openRef.current || !res.ok) return;
+      setProjects(res.data);
+      if (preselectedRef.current) return;
+      preselectedRef.current = true;
+      // A project whose root vanished can't back a session (FR-23) — don't
+      // preselect it, or the modal opens already blocked.
+      const active = res.data.find((p) => p.id === activeProjectId && p.rootExists);
+      if (active) setProjectId(active.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const project = projects.find((p) => p.id === projectId) ?? null;
+  const projectRootMissing = project !== null && !project.rootExists;
+
+  // FR-21/FR-22: applying a project overwrites every field it declares and
+  // leaves the rest at the pre-feature default. It runs ONLY on a project
+  // change (tracked by appliedRef), so a manual edit afterwards always wins —
+  // and it waits for the model catalog, since effort and modelId are validated
+  // against it.
+  const appliedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (modelsLoading) return;
+    if (appliedRef.current === projectId) return;
+    appliedRef.current = projectId;
+
+    const base = baseFormValues(models);
+    const applied = applyProjectDefaults(base, project?.defaults, { models, allowWsl: IS_WINDOWS });
+    setModelId(applied.values.modelId);
+    setEffort(applied.values.effort);
+    setPermissionMode(applied.values.permissionMode);
+    setAllowGit(applied.values.allowGit);
+    setStaleModelId(applied.staleModelId);
+
+    // Runtime: the project's explicit default wins. When it declares none, fall back
+    // to the SAME WSL auto-suggest the unlinked path gets from applyCwd (FR-16) —
+    // the project path sets cwd directly and so used to bypass it entirely, creating
+    // a `native` session against a \\wsl.localhost\… root while the modal was already
+    // rendering its own "expect slow git" warning for that path.
+    if (project && project.defaults.runtime === undefined && IS_WINDOWS && !runtimeTouched) {
+      setRuntime(isWslUncPath(project.root) ? 'wsl' : 'native');
+    } else {
+      setRuntime(applied.values.runtime);
+    }
+
+    // The project OWNS the working directory — there is no directory row while
+    // one is selected, so the root is the cwd. Clearing back to '' on "none"
+    // restores the pre-projects flow rather than stranding the old root.
+    setCwd(project ? project.root : '');
+    if (!nameTouched) setName(project ? basename(project.root) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, project, models, modelsLoading]);
 
   const modelEfforts = models.find((m) => m.id === modelId)?.efforts ?? [];
 
@@ -120,7 +206,10 @@ export default function NewSessionModal({
     applyCwd(res.data.path);
   };
 
-  const canCreate = cwd.trim() !== '' && name.trim() !== '' && modelId !== '' && !submitting;
+  // FR-23: a project whose root is gone blocks creation until another project
+  // (or "none") is chosen — the core would reject it with PROJECT_ROOT_MISSING.
+  const canCreate =
+    cwd.trim() !== '' && name.trim() !== '' && modelId !== '' && !submitting && !projectRootMissing;
   // FR-16/17: whether the picked directory is a WSL UNC path, drives the
   // auto-suggest + mismatch hints below the CLAUDE RUNTIME row.
   const cwdIsWsl = isWslUncPath(cwd);
@@ -137,6 +226,9 @@ export default function NewSessionModal({
       permissionMode: permissionMode !== 'default' ? permissionMode : undefined,
       runtime: runtime !== 'native' ? runtime : undefined,
       allowGit: allowGit || undefined,
+      // FR-19: sent verbatim; the core does no default merging, so what is on
+      // screen right now is exactly what gets created.
+      projectId: projectId || undefined,
     });
     if (!openRef.current) {
       // Modal was cancelled mid-flight: still real, upsert but don't force-select.
@@ -149,6 +241,16 @@ export default function NewSessionModal({
       onClose();
     } else {
       setSubmitError(res.error);
+      // §7 case 13: the project was removed (or its root vanished) between opening
+      // the modal and submitting. Re-read the registry and drop back to "— none —",
+      // otherwise the select keeps offering a project that no longer exists and every
+      // retry fails identically with no cue that the fix is to pick none.
+      if (res.error.code === 'PROJECT_NOT_FOUND' || res.error.code === 'PROJECT_ROOT_MISSING') {
+        const fresh = await safeCall(projectList());
+        if (!openRef.current) return;
+        if (fresh.ok) setProjects(fresh.data);
+        setProjectId('');
+      }
     }
   };
 
@@ -199,24 +301,68 @@ export default function NewSessionModal({
         </div>
 
         <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div>
-            <label style={labelStyle}>DIRECTORY</label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {/* Editable, not browse-only: on some setups the native picker can't
-                  reach a location (e.g. WSL's Linux section on older Windows
-                  builds) — typing/pasting the path must always work as a fallback. */}
-              <input
-                style={{ ...fieldStyle, flex: 1 }}
-                value={cwd}
-                placeholder="type a path or browse…"
-                onChange={(e) => applyCwd(e.target.value)}
-              />
-              <button onClick={browse} disabled={picking} style={btn(false)}>
-                {picking ? '…' : 'Browse…'}
-              </button>
+          {/* projects: the project comes FIRST — picking one settles the working
+              directory and every default below, so it is the decision the rest
+              of the form hangs off. Hidden entirely when no project exists yet,
+              so the pre-projects form is untouched until you make one. */}
+          {projects.length > 0 && (
+            <div>
+              <label style={labelStyle}>PROJECT</label>
+              <select
+                style={{ ...fieldStyle, width: '100%' }}
+                value={projectId}
+                onChange={(e) => {
+                  setProjectId(e.target.value);
+                  // A project change re-applies defaults (FR-22), and the name is
+                  // derived again unless it was hand-edited.
+                }}
+              >
+                {newSessionProjectOptions(projects).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.missing ? `${o.label} (missing)` : o.label}
+                  </option>
+                ))}
+              </select>
+              {projectRootMissing && (
+                <div style={{ fontSize: 10.5, color: C.error, marginTop: 4 }}>{PROJECT_ROOT_MISSING_LINE}</div>
+              )}
+              {/* Where it will actually run. Deliberately a dim read-only line and
+                  NOT a field — the project owns the path, so there is nothing to
+                  edit here. */}
+              {project && !projectRootMissing && (
+                <div style={{ fontSize: 10.5, color: C.faint, marginTop: 4 }}>runs in {project.root}</div>
+              )}
+              {staleModelId && (
+                <div style={{ fontSize: 10.5, color: C.faint, marginTop: 4 }}>
+                  this project's default model ({staleModelId}) is no longer available — using the default
+                </div>
+              )}
             </div>
-            {pickerError && <div style={{ fontSize: 10.5, color: C.error, marginTop: 4 }}>{pickerError.message}</div>}
-          </div>
+          )}
+
+          {/* The DIRECTORY row exists only for an unlinked session. With a project
+              selected the root IS the working directory, so an editable path here
+              would be a second source of truth for the same value. */}
+          {project === null && (
+            <div>
+              <label style={labelStyle}>DIRECTORY</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {/* Editable, not browse-only: on some setups the native picker can't
+                    reach a location (e.g. WSL's Linux section on older Windows
+                    builds) — typing/pasting the path must always work as a fallback. */}
+                <input
+                  style={{ ...fieldStyle, flex: 1 }}
+                  value={cwd}
+                  placeholder="type a path or browse…"
+                  onChange={(e) => applyCwd(e.target.value)}
+                />
+                <button onClick={browse} disabled={picking} style={btn(false)}>
+                  {picking ? '…' : 'Browse…'}
+                </button>
+              </div>
+              {pickerError && <div style={{ fontSize: 10.5, color: C.error, marginTop: 4 }}>{pickerError.message}</div>}
+            </div>
+          )}
 
           <div>
             <label style={labelStyle}>NAME</label>

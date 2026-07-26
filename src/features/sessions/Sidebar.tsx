@@ -3,8 +3,12 @@ import type { AppError, SessionMeta, SessionStatus } from '../../../contract/com
 import { STATUS_COLOR, STATUS_LABEL, countRunning, formatRelativeTime, statusPulses, type SessionDerived } from '../../../contract/fleet-board';
 import { formatContextTokens } from '../../../contract/conversation-view';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
+import { filterSessionsByProject } from '../../../contract/projects';
+import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
 import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList, sessionRemove } from '../../lib/api';
 import { prunePaletteSession } from '../palette/paletteData';
+import ProjectSwitcher from '../projects/ProjectSwitcher';
+import { filteredEmptyLabel, visibleSessions } from '../projects/projects';
 import { useStore } from '../../lib/store';
 
 // pane [1] — the fleet board (Mission Control). Evolves the sessions-sidebar row
@@ -41,6 +45,7 @@ export default function Sidebar({ home }: { home: string }) {
   const setSessions = useStore((s) => s.setSessions);
   const upsertSession = useStore((s) => s.upsertSession);
   const patchStatus = useStore((s) => s.patchStatus);
+  const patchError = useStore((s) => s.patchError);
   const patchUsage = useStore((s) => s.patchUsage);
   const removeSessionFromCache = useStore((s) => s.removeSession);
   const activeSessionId = useStore((s) => s.activeSessionId);
@@ -50,43 +55,81 @@ export default function Sidebar({ home }: { home: string }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
+  // projects FR-27: the board's project scope (null = All projects).
+  const activeProjectId = useStore((s) => s.activeProjectId);
+  const projects = useStore((s) => s.projects);
+  const projectsOpen = useStore((s) => s.projectsOpen);
+  const setMainTab = useStore((s) => s.setMainTab);
+  // Per-session derived figures NOT on SessionMeta: diff file count + running
+  // agents (FR-4). Written here (this pane owns the only session/diff event
+  // subscription) but HELD IN THE STORE — the OVERVIEW dashboard reads the same
+  // numbers and a second subscription would double every diff seed.
+  const derived = useStore((s) => s.derived);
+  const mergeDerived = useStore((s) => s.mergeDerived);
+  const dropDerivedFromCache = useStore((s) => s.dropDerived);
+  // overview: the cross-project activity feed is fed from this same subscription.
+  const recordActivity = useStore((s) => s.recordActivity);
 
   const [hydrationError, setHydrationError] = useState<AppError | null>(null);
   const [rowCursor, setRowCursor] = useState(0);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  // Per-session derived figures NOT on SessionMeta: diff file count + running agents (FR-4).
-  const [derived, setDerived] = useState<Map<string, SessionDerived>>(new Map());
   // Backing store for runningAgentCount: sessionId → (agentId → status) (FR-5).
   const agentStatusRef = useRef<Map<string, Map<string, SessionStatus>>>(new Map());
   const seededRef = useRef<Set<string>>(new Set()); // sessions whose diff badge was seeded once (FR-6)
+  // overview: ids this run has already accounted for in the activity feed. The
+  // session CACHE cannot answer "is this new?" — App's onCreated upserts a
+  // modal-created session before its session.meta event lands, and hydration
+  // fills the cache with sessions that started long ago. This set is seeded
+  // silently by hydration and written only here.
+  const startedRef = useRef<Set<string>>(new Set());
   const [, setTick] = useState(0); // forces relative-time re-render (FR-25)
   const filterRef = useRef<HTMLInputElement>(null);
 
-  const visible = useMemo(() => {
-    if (sidebarFilter === null || sidebarFilter === '') return sessions;
-    const q = sidebarFilter.toLowerCase();
-    return sessions.filter((s) => s.name.toLowerCase().includes(q) || s.cwd.toLowerCase().includes(q));
-  }, [sessions, sidebarFilter]);
+  // projects FR-27: the project filter applies BEFORE the '/' name/path filter —
+  // the two compose by AND, and the pane header count reflects both. The
+  // composition itself lives in visibleSessions() so it can be unit-tested.
+  const inProject = useMemo(
+    () => filterSessionsByProject(sessions, activeProjectId),
+    [sessions, activeProjectId],
+  );
 
-  // Merge a partial into a session's derived entry (FR-4). Ignore late resolutions
-  // for a session no longer in the cache so a removed session can't leak an entry (FR-7).
+  const visible = useMemo(
+    () => visibleSessions(sessions, activeProjectId, sidebarFilter),
+    [sessions, activeProjectId, sidebarFilter],
+  );
+
+  const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+
+  // Merge a partial into a session's derived entry (FR-4). The store drops late
+  // resolutions for a session no longer in the cache, so a removed session can't
+  // leak an entry back in (FR-7).
   const updateDerived = (id: string, partial: Partial<SessionDerived>) => {
-    if (!useStore.getState().sessions.some((x) => x.id === id)) return;
-    setDerived((prev) => {
-      const next = new Map(prev);
-      const cur = next.get(id) ?? { fileCount: null, runningAgentCount: 0 };
-      next.set(id, { ...cur, ...partial });
-      return next;
-    });
+    mergeDerived(id, partial);
   };
   const dropDerived = (id: string) => {
     agentStatusRef.current.delete(id);
     seededRef.current.delete(id);
-    setDerived((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Map(prev);
-      next.delete(id);
-      return next;
+    startedRef.current.delete(id);
+    dropDerivedFromCache(id);
+  };
+  // overview: picking a session while the dashboard is up means "drill into this
+  // one", so the main pane leaves OVERVIEW. Any OTHER tab is left alone — moving
+  // between sessions while reviewing diffs must not kick you out of DIFF.
+  const selectSession = (id: string) => {
+    setActiveSessionId(id);
+    if (useStore.getState().mainTab === 'overview') setMainTab('session');
+  };
+
+  // overview: one feed entry. The session's name and project are captured HERE,
+  // at record time, so a later rename or removal never rewrites history.
+  const logActivity = (s: SessionMeta, kind: ActivityKind, detail: string) => {
+    recordActivity({
+      at: Date.now(),
+      kind,
+      sessionId: s.id,
+      sessionName: s.name,
+      projectId: s.projectId,
+      detail,
     });
   };
   // Best-effort one-shot diff seed, deduped by id so it fires exactly once per session
@@ -104,7 +147,10 @@ export default function Sidebar({ home }: { home: string }) {
     setHydrationError(null);
     setSessions(data);
     if (useStore.getState().activeSessionId === null && data[0]) setActiveSessionId(data[0].id);
-    for (const s of data) seedDiff(s.id);
+    for (const s of data) {
+      seedDiff(s.id);
+      startedRef.current.add(s.id); // restored, not started — no feed entry (overview FR-28)
+    }
   };
 
   // Hydration + live event subscription (FR-2/FR-3/FR-5/FR-6/FR-7).
@@ -117,21 +163,53 @@ export default function Sidebar({ home }: { home: string }) {
       if (e.type === 'session.meta') {
         upsertSession(e.meta);
         seedDiff(e.meta.id); // FR-6 — seedDiff dedups, so this fires once even though App upserts first
+        // overview: the FIRST meta this run has seen for an id is a new session.
+        // Hydration pre-seeds startedRef, so restored sessions stay silent.
+        if (!startedRef.current.has(e.meta.id)) {
+          startedRef.current.add(e.meta.id);
+          logActivity(e.meta, 'session.started', '');
+        }
       } else if (e.type === 'session.status') {
+        // overview: read the OLD status before patching, so the feed can tell a
+        // finished turn from a session that merely settled.
+        const prev = useStore.getState().sessions.find((x) => x.id === e.sessionId);
         patchStatus(e.sessionId, e.status);
+        const kind = statusTransitionKind(prev?.status, e.status);
+        if (kind && prev) {
+          logActivity(prev, kind, kind === 'session.error' ? (prev.errorMessage ?? '') : '');
+        }
+      } else if (e.type === 'session.error') {
+        // overview FR-28/FR-17: the engine emits session.error and THEN
+        // session.status, and never a fresh session.meta — so this is the only
+        // place the failure message can be captured. Without it the activity feed
+        // logs an empty detail and NEEDS ATTENTION shows the generic "session
+        // failed" fallback for every live error, which defeats the point of
+        // naming the failure. Landing before the status event, this is already in
+        // the cache when the transition below reads `prev`.
+        patchError(e.sessionId, e.error.message);
       } else if (e.type === 'context.usage') {
         patchUsage(e.sessionId, e.usedTokens, e.limitTokens); // keeps the ctx figure live (FR-3)
       } else if (e.type === 'agent.update') {
         const a = e.agent;
-        if (!useStore.getState().sessions.some((x) => x.id === a.sessionId)) return; // drop post-removal (FR-7)
+        const owner = useStore.getState().sessions.find((x) => x.id === a.sessionId);
+        if (!owner) return; // drop post-removal (FR-7)
         let m = agentStatusRef.current.get(a.sessionId);
         if (!m) {
           m = new Map();
           agentStatusRef.current.set(a.sessionId, m);
         }
+        const prevStatus = m.get(a.id);
         m.set(a.id, a.status);
         updateDerived(a.sessionId, { runningAgentCount: countRunning(m) }); // FR-5
+        // overview: an agent SETTLING is feed-worthy; its intermediate updates
+        // (every step re-emits) are not — hence the transition guard.
+        if (prevStatus !== a.status) {
+          if (a.status === 'done') logActivity(owner, 'agent.finished', a.name);
+          else if (a.status === 'error') logActivity(owner, 'agent.failed', a.name);
+        }
       } else if (e.type === 'session.removed') {
+        const gone = useStore.getState().sessions.find((x) => x.id === e.sessionId);
+        if (gone) logActivity(gone, 'session.removed', '');
         handleRemovedEvent(e.sessionId);
       }
     }).then((u) => {
@@ -202,10 +280,19 @@ export default function Sidebar({ home }: { home: string }) {
     });
   }, [visible, activeSessionId]);
 
+  // projects FR-28: switching project resets the keyboard cursor to index 0 of
+  // the newly visible list — and NOTHING else. activeSessionId is untouched, so
+  // the active session stays active and stays rendered in the main pane even
+  // when the filter hides its card (§7 case 17). Declared after the clamp effect
+  // so this wins on a project change.
+  useEffect(() => {
+    setRowCursor(0);
+  }, [activeProjectId]);
+
   // Keyboard handling for pane [1] and the filter input (FR-16/17/20).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (newSessionOpen || menu) return;
+      if (newSessionOpen || projectsOpen || menu) return;
       const ae = document.activeElement as HTMLElement | null;
       const inFilter = ae === filterRef.current;
       const inOtherInput = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && !inFilter;
@@ -224,7 +311,7 @@ export default function Sidebar({ home }: { home: string }) {
         case 'Enter':
           if (visible.length > 0 && visible[rowCursor]) {
             e.preventDefault();
-            setActiveSessionId(visible[rowCursor].id);
+            selectSession(visible[rowCursor].id);
             setFocusedPane('main'); // FR-17: commit AND jump into the conversation
           }
           break;
@@ -246,7 +333,7 @@ export default function Sidebar({ home }: { home: string }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [focusedPane, visible, rowCursor, sidebarFilter, newSessionOpen, menu, setActiveSessionId, setSidebarFilter, setFocusedPane]);
+  }, [focusedPane, visible, rowCursor, sidebarFilter, newSessionOpen, projectsOpen, menu, setActiveSessionId, setSidebarFilter, setFocusedPane]);
 
   // Close the context menu on any outside interaction.
   useEffect(() => {
@@ -307,8 +394,12 @@ export default function Sidebar({ home }: { home: string }) {
         <span style={{ fontSize: 11, letterSpacing: '0.14em', color: focused ? C.accent : C.dim, fontWeight: 700 }}>
           SESSIONS
         </span>
-        <span style={{ fontSize: 10, color: C.faint }}>{sessions.length} · [1]</span>
+        {/* projects FR-27: the count is post-filter — project scope AND '/' query. */}
+        <span style={{ fontSize: 10, color: C.faint }}>{visible.length} · [1]</span>
       </div>
+
+      {/* projects FR-25: the switcher strip, above the cards */}
+      <ProjectSwitcher home={home} />
 
       {/* filter */}
       {sidebarFilter !== null && (
@@ -352,6 +443,19 @@ export default function Sidebar({ home }: { home: string }) {
           </div>
         ) : sessions.length === 0 ? (
           <Centered>no sessions yet · press n</Centered>
+        ) : activeProjectId !== null && inProject.length === 0 ? (
+          // projects FR-29: a project is active and owns no session — distinct
+          // from the global "no sessions yet" state.
+          //
+          // Keyed on the ID, not on the resolved object: `projects` is empty until
+          // the switcher's project_list lands (and stays empty forever if it fails),
+          // so keying on `activeProject` showed the '/'-filter message "no matches ·
+          // esc to clear" on first paint with no filter typed. filteredEmptyLabel
+          // degrades to a generic line for a null project.
+          <Centered>
+            {filteredEmptyLabel(activeProject)}
+            <div style={{ fontSize: 10, marginTop: 5 }}>press n to start one</div>
+          </Centered>
         ) : visible.length === 0 ? (
           <Centered>no matches · esc to clear</Centered>
         ) : (
@@ -364,7 +468,7 @@ export default function Sidebar({ home }: { home: string }) {
               cursor={focused && i === rowCursor}
               derived={derived.get(s.id)}
               onClick={() => {
-                setActiveSessionId(s.id);
+                selectSession(s.id);
                 setFocusedPane('sidebar');
               }}
               onContext={(x, y) => setMenu({ sessionId: s.id, x, y, confirming: false, error: null })}
@@ -443,6 +547,7 @@ function Centered({ children }: { children: React.ReactNode }) {
       style={{
         height: '100%',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         color: 'var(--text-faint)',

@@ -160,7 +160,7 @@ gate:
   - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`). Commands never reject for domain failures — every fallible call resolves to `Result`.
   - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in `contract/common.ts`).
   - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and reads as: the Tauri mapping above / "Rust core".
-- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `mcp` · `skills` · `palette` · `cli`
+- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `mcp` · `skills` · `palette` · `cli` · `project`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
@@ -210,3 +210,5 @@ that owns the feature — never in a new top-level file.
 | `slash-menu` | SESSION composer: "/" command autocomplete popup + per-session command registry | session-engine, conversation-view, interactive-commands, skills-panel |
 | `permission-guardrails` | SESSION tab: approval cards for gated tool calls + a rules editor over Claude Code's own `settings.json` | session-engine, conversation-view, session-questions, command-palette |
 | `async-agents` | pane [3]: async subagent lifecycle (real elapsed time, no spawn-ack completion) + per-agent activity trail from `parent_tool_use_id` | session-engine, agents-panel, conversation-view |
+| `projects` | project registry + session defaults + standards written into `<root>/CLAUDE.md`; pane [1] switcher + Projects modal | session-engine, sessions-sidebar, fleet-board, command-palette, durable-sessions, app-shell |
+| `overview` | main tab OVERVIEW: cross-project dashboard (fleet totals, needs-attention, per-project rollup, activity feed); auto-selected on "All projects" | projects, fleet-board, session-engine, sessions-sidebar, app-shell, diff-view, agents-panel, command-palette |

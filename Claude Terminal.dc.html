@@ -19,6 +19,7 @@
   a:hover { color: #e0bd77; }
   @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @keyframes dropIn { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: translateY(0); } }
   .scz::-webkit-scrollbar { width: 8px; height: 8px; }
   .scz::-webkit-scrollbar-thumb { background: #2a2c33; border-radius: 4px; }
   .scz::-webkit-scrollbar-track { background: transparent; }
@@ -47,12 +48,41 @@
     <div style="height:820px;display:grid;grid-template-columns:264px 1fr 336px;grid-template-rows:1fr 32px;gap:10px;padding:10px;">
 
       <!-- SIDEBAR / sessions -->
-      <section onClick="{{ focusSidebar }}" style="grid-column:1;grid-row:1;display:flex;flex-direction:column;background:#16171c;border:1px solid {{ ringSidebar }};border-radius:5px;overflow:hidden;">
+      <section onClick="{{ focusSidebar }}" style="position:relative;grid-column:1;grid-row:1;display:flex;flex-direction:column;background:#16171c;border:1px solid {{ ringSidebar }};border-radius:5px;">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid #24262d;">
           <span style="font-size:11px;letter-spacing:0.14em;color:{{ titleSidebar }};font-weight:700;">SESSIONS</span>
-          <span style="font-size:10px;color:#565a63;">5 · [1]</span>
+          <span style="font-size:10px;color:#565a63;">{{ sessCount }} · [1]</span>
         </div>
-        <div class="scz" style="flex:1;overflow:auto;padding:6px;">
+
+        <button type="button" onClick="{{ toggleSwitcher }}" aria-haspopup="listbox" aria-expanded="{{ swExpanded }}" style="height:26px;display:flex;align-items:center;gap:7px;padding:0 12px;background:#16171c;border:0;border-bottom:1px solid #24262d;cursor:pointer;font-family:inherit;text-align:left;width:100%;flex-shrink:0;" style-hover="background:#1b1c22;">
+          <span style="font-size:8px;line-height:1;color:{{ swChevronFg }};flex-shrink:0;">▾</span>
+          <span style="font-size:11px;color:{{ swFg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ swLabel }}</span>
+        </button>
+
+        <sc-if value="{{ switcherOpen }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ stop }}" role="listbox" class="scz" style="position:absolute;top:71px;left:0;right:0;z-index:40;background:#1b1c22;border:1px solid #2a2c33;border-radius:5px;box-shadow:0 6px 20px rgba(0,0,0,0.45);padding:4px 0;max-height:260px;overflow:auto;animation:dropIn 90ms ease-out;">
+            <sc-for list="{{ dropRows }}" as="r" hint-placeholder-count="5">
+              <div role="option" onClick="{{ r.onClick }}" style="height:24px;display:flex;align-items:center;gap:7px;padding:0 12px;cursor:pointer;" style-hover="background:#22242b;">
+                <span style="width:8px;flex-shrink:0;font-size:9px;color:#c8a15a;">{{ r.mark }}</span>
+                <span style="font-size:11px;color:{{ r.nameFg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ r.name }}</span>
+                <sc-if value="{{ r.missing }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:#c46b62;flex-shrink:0;">missing</span></sc-if>
+                <span style="flex:1;"></span>
+                <span style="font-size:10px;color:#565a63;flex-shrink:0;white-space:nowrap;">{{ r.root }}</span>
+              </div>
+            </sc-for>
+            <div style="border-top:1px solid #24262d;margin:4px 0 0;"></div>
+            <div onClick="{{ openManager }}" style="height:24px;display:flex;align-items:center;padding:0 12px;cursor:pointer;font-size:11px;color:#868a93;" style-hover="background:#22242b;color:#c8c5bd;">Manage projects…</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ emptyFiltered }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:20px;">
+            <span style="font-size:11px;color:#565a63;text-align:center;">{{ emptyLabel }}</span>
+            <span style="font-size:10px;color:#565a63;">press n to start one</span>
+          </div>
+        </sc-if>
+
+        <div class="scz" style="flex:{{ listFlex }};overflow:auto;padding:6px;min-height:0;">
           <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="5">
             <div onClick="{{ s.onClick }}" style="display:flex;gap:9px;padding:8px 9px;border-radius:4px;cursor:pointer;background:{{ s.bg }};border-left:2px solid {{ s.marker }};margin-bottom:2px;">
               <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:5px;background:{{ s.dot }};animation:{{ s.anim }};"></span>
@@ -64,7 +94,7 @@
             </div>
           </sc-for>
         </div>
-        <div style="padding:8px 12px;border-top:1px solid #24262d;font-size:10.5px;color:#565a63;">+ new session <span style="color:#3a3d45;">[n]</span></div>
+        <div onClick="{{ openNewSession }}" style="padding:8px 12px;border-top:1px solid #24262d;font-size:10.5px;color:#565a63;cursor:pointer;" style-hover="color:#c8a15a;">+ new session <span style="color:#3a3d45;">[n]</span></div>
       </section>
 
       <!-- MAIN / active session -->
@@ -258,8 +288,8 @@
             <span style="font-size:10px;color:#565a63;">esc</span>
           </div>
           <div style="padding:6px;">
-            <sc-for list="{{ commands }}" as="c" hint-placeholder-count="7">
-              <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:5px;background:{{ c.bg }};">
+            <sc-for list="{{ commands }}" as="c" hint-placeholder-count="8">
+              <div onClick="{{ c.onClick }}" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:5px;cursor:pointer;background:{{ c.bg }};" style-hover="background:#22242b;">
                 <span style="width:16px;text-align:center;font-size:12px;color:{{ c.glyphFg }};">{{ c.glyph }}</span>
                 <span style="font-size:13px;color:{{ c.nameFg }};flex-shrink:0;">{{ c.name }}</span>
                 <span style="font-size:11px;color:#565a63;flex:1;text-align:right;">{{ c.hint }}</span>
@@ -275,26 +305,242 @@
       </div>
     </sc-if>
 
+    <!-- PROJECTS MODAL -->
+    <sc-if value="{{ projectsOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeProjects }}" style="position:absolute;inset:0;z-index:60;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;">
+        <div onClick="{{ stop }}" role="dialog" aria-label="Projects" style="width:min(860px,94%);height:min(620px,88%);display:flex;flex-direction:column;background:#16171c;border:1px solid #2a2c33;border-radius:6px;overflow:hidden;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #24262d;flex-shrink:0;">
+            <span style="font-size:11px;font-weight:700;letter-spacing:0.14em;color:#c8a15a;">PROJECTS</span>
+            <span style="font-size:10px;color:#565a63;">{{ projCount }}</span>
+          </div>
+
+          <div style="flex:1;display:flex;min-height:0;">
+            <!-- left list -->
+            <div style="width:240px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid #24262d;min-height:0;">
+              <div class="scz" style="flex:1;overflow:auto;min-height:0;">
+                <sc-if value="{{ hasProjects }}" hint-placeholder-val="{{ true }}">
+                  <sc-for list="{{ projRows }}" as="p" hint-placeholder-count="4">
+                    <div onClick="{{ p.onClick }}" style="height:44px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:8px 12px;cursor:pointer;background:{{ p.bg }};border-left:2px solid {{ p.rail }};">
+                      <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-size:11.5px;color:{{ p.fg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ p.name }}</span>
+                        <sc-if value="{{ p.missing }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:#c46b62;flex-shrink:0;">missing</span></sc-if>
+                      </div>
+                      <span style="font-size:10px;color:#565a63;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ p.root }}</span>
+                    </div>
+                  </sc-for>
+                </sc-if>
+                <sc-if value="{{ noProjects }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:14px 12px;font-size:11px;color:#565a63;">no projects yet</div>
+                </sc-if>
+              </div>
+              <div onClick="{{ onAddProject }}" style="padding:10px 12px;border-top:1px solid #24262d;font-size:11px;color:#868a93;cursor:pointer;flex-shrink:0;" style-hover="color:#c8a15a;">+ New project</div>
+            </div>
+
+            <!-- right form -->
+            <sc-if value="{{ hasSel }}" hint-placeholder-val="{{ true }}">
+            <div class="scz" style="flex:1;overflow:auto;min-height:0;padding:14px 16px;display:flex;flex-direction:column;gap:18px;">
+
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <span style="font-size:10px;font-weight:700;letter-spacing:0.14em;color:#868a93;">IDENTITY</span>
+                <div style="display:flex;align-items:center;">
+                  <span style="width:120px;flex-shrink:0;font-size:10.5px;color:#6b7079;">name</span>
+                  <input value="{{ selName }}" onChange="{{ onName }}" style="flex:1;background:#131419;border:1px solid #2a2c33;border-radius:4px;padding:6px 8px;font-size:11px;color:#c8c5bd;font-family:inherit;outline:none;" style-focus="border-color:#c8a15a;">
+                </div>
+                <div style="display:flex;align-items:center;">
+                  <span style="width:120px;flex-shrink:0;font-size:10.5px;color:#6b7079;">root</span>
+                  <input value="{{ selRoot }}" onChange="{{ onRoot }}" style="flex:1;background:#131419;border:1px solid #2a2c33;border-radius:4px;padding:6px 8px;font-size:11px;color:#c8c5bd;font-family:inherit;outline:none;" style-focus="border-color:#c8a15a;">
+                </div>
+                <sc-if value="{{ nameError }}" hint-placeholder-val=""><div style="font-size:10.5px;color:#c46b62;padding-left:120px;">{{ nameError }}</div></sc-if>
+                <sc-if value="{{ missingRoot }}" hint-placeholder-val="{{ false }}"><div style="font-size:10.5px;color:#c46b62;padding-left:120px;">root missing — fix the path to edit this project</div></sc-if>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:8px;opacity:{{ dimStyle }};pointer-events:{{ dimEvents }};">
+                <span style="font-size:10px;font-weight:700;letter-spacing:0.14em;color:#868a93;">SESSION DEFAULTS</span>
+                <sc-for list="{{ defaultFields }}" as="f" hint-placeholder-count="5">
+                  <div style="display:flex;align-items:center;">
+                    <span style="width:120px;flex-shrink:0;font-size:10.5px;color:#6b7079;">{{ f.label }}</span>
+                    <select value="{{ f.value }}" onChange="{{ f.onChange }}" style="flex:1;background:#131419;border:1px solid #2a2c33;border-radius:4px;padding:6px 8px;font-size:11px;color:{{ f.fg }};font-family:inherit;outline:none;" style-focus="border-color:#c8a15a;">
+                      <sc-for list="{{ f.options }}" as="o" hint-placeholder-count="3">
+                        <option value="{{ o.v }}">{{ o.label }}</option>
+                      </sc-for>
+                    </select>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:8px;opacity:{{ dimStyle }};pointer-events:{{ dimEvents }};">
+                <span style="font-size:10px;font-weight:700;letter-spacing:0.14em;color:#868a93;">STANDARDS</span>
+                <textarea value="{{ notes }}" onChange="{{ onNotes }}" placeholder="notes for every session in this project…" style="min-height:64px;resize:vertical;background:#131419;border:1px solid #2a2c33;border-radius:4px;padding:6px 8px;font-size:11px;color:#c8c5bd;font-family:inherit;line-height:1.6;outline:none;" style-focus="border-color:#c8a15a;"></textarea>
+
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                  <sc-for list="{{ rules }}" as="r" hint-placeholder-count="3">
+                    <div style="min-height:26px;display:flex;align-items:center;gap:8px;background:#131419;border-radius:4px;padding:6px 8px;">
+                      <span style="color:#565a63;font-size:11px;flex-shrink:0;">-</span>
+                      <sc-if value="{{ r.editing }}" hint-placeholder-val="{{ false }}">
+                        <input value="{{ r.text }}" onBlur="{{ r.onCommit }}" onKeyDown="{{ r.onEditKey }}" autoFocus="{{ true }}" style="flex:1;background:#0f1015;border:1px solid #c8a15a;border-radius:3px;padding:2px 5px;font-size:11px;color:#e8e4dc;font-family:inherit;outline:none;">
+                      </sc-if>
+                      <sc-if value="{{ r.notEditing }}" hint-placeholder-val="{{ true }}">
+                        <span onClick="{{ r.onEdit }}" style="flex:1;font-size:11px;color:#c8c5bd;cursor:text;">{{ r.text }}</span>
+                      </sc-if>
+                      <span onClick="{{ r.onUp }}" role="button" aria-label="move rule up" style="font-size:10px;color:#565a63;cursor:pointer;flex-shrink:0;" style-hover="color:#c8a15a;">↑</span>
+                      <span onClick="{{ r.onDown }}" role="button" aria-label="move rule down" style="font-size:10px;color:#565a63;cursor:pointer;flex-shrink:0;" style-hover="color:#c8a15a;">↓</span>
+                      <span onClick="{{ r.onDrop }}" role="button" aria-label="remove rule" style="font-size:10px;color:#565a63;cursor:pointer;flex-shrink:0;" style-hover="color:#c46b62;">×</span>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{ noRules }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:10.5px;color:#565a63;">no rules yet</span>
+                  </sc-if>
+                  <input value="{{ newRule }}" onChange="{{ onNewRule }}" onKeyDown="{{ onNewRuleKey }}" onBlur="{{ commitNewRule }}" placeholder="add a rule…" style="background:#131419;border:1px solid #2a2c33;border-radius:4px;padding:6px 8px;font-size:11px;color:#c8c5bd;font-family:inherit;outline:none;" style-focus="border-color:#c8a15a;">
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:2px;font-size:10px;color:#565a63;">
+                  <span>{{ standardsPath }}</span>
+                  <span>content inside the markers is managed by francois</span>
+                </div>
+              </div>
+
+              <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;padding-top:4px;">
+                <sc-if value="{{ removeConfirm }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-size:10.5px;color:#c46b62;text-align:right;">{{ removePrompt }}</span>
+                  <span onClick="{{ cancelRemove }}" style="font-size:10.5px;color:#868a93;cursor:pointer;flex-shrink:0;" style-hover="color:#c8c5bd;">cancel</span>
+                  <span onClick="{{ doRemove }}" style="font-size:10.5px;color:#c46b62;cursor:pointer;flex-shrink:0;" style-hover="color:#d88178;">remove</span>
+                </sc-if>
+                <sc-if value="{{ notRemoving }}" hint-placeholder-val="{{ true }}">
+                  <span onClick="{{ askRemove }}" style="font-size:10.5px;color:#6b7079;cursor:pointer;" style-hover="color:#c46b62;">Remove</span>
+                </sc-if>
+              </div>
+            </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- NEW SESSION MODAL -->
+    <sc-if value="{{ newSessionOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeNewSession }}" style="position:absolute;inset:0;z-index:60;background:rgba(0,0,0,0.55);display:flex;align-items:flex-start;justify-content:center;padding-top:140px;">
+        <div onClick="{{ stop }}" role="dialog" aria-label="New session" style="width:520px;background:#16171c;border:1px solid #2a2c33;border-radius:6px;overflow:hidden;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #24262d;">
+            <span style="font-size:11px;font-weight:700;letter-spacing:0.14em;color:#c8a15a;">NEW SESSION</span>
+            <span style="font-size:10px;color:#565a63;">esc</span>
+          </div>
+          <div style="padding:14px 16px;display:flex;flex-direction:column;gap:9px;">
+            <div style="display:flex;align-items:center;">
+              <span style="width:120px;flex-shrink:0;font-size:10.5px;color:#6b7079;">project</span>
+              <select value="{{ nsValue }}" onChange="{{ onNsProject }}" style="flex:1;background:#131419;border:1px solid #2a2c33;border-radius:4px;padding:6px 8px;font-size:11px;color:#c8c5bd;font-family:inherit;outline:none;" style-focus="border-color:#c8a15a;">
+                <sc-for list="{{ nsOptions }}" as="o" hint-placeholder-count="4">
+                  <option value="{{ o.v }}">{{ o.label }}</option>
+                </sc-for>
+              </select>
+            </div>
+            <sc-if value="{{ nsMissing }}" hint-placeholder-val="{{ false }}">
+              <div style="font-size:10.5px;color:#c46b62;padding-left:120px;">project root is missing</div>
+            </sc-if>
+            <div style="display:flex;align-items:center;">
+              <span style="width:120px;flex-shrink:0;font-size:10.5px;color:#6b7079;">directory</span>
+              <span style="flex:1;background:#131419;border:1px solid #2a2c33;border-radius:4px;padding:6px 8px;font-size:11px;color:#c8c5bd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ nsDir }}</span>
+            </div>
+            <sc-for list="{{ nsFields }}" as="f" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;">
+                <span style="width:120px;flex-shrink:0;font-size:10.5px;color:#6b7079;">{{ f.label }}</span>
+                <span style="flex:1;background:#131419;border:1px solid #2a2c33;border-radius:4px;padding:6px 8px;font-size:11px;color:{{ f.fg }};">{{ f.value }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;padding:10px 16px;border-top:1px solid #24262d;font-size:10.5px;color:#565a63;">
+            <span>defaults inherited from the project</span>
+            <span style="flex:1;"></span>
+            <span onClick="{{ closeNewSession }}" style="color:#868a93;cursor:pointer;">cancel</span>
+            <span style="color:{{ nsSubmitFg }};cursor:pointer;">⏎ create session</span>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
   </div>
 </div>
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1360,&quot;height&quot;:864}}">
 class Component extends DCLogic {
-  state = { focused: 'main', selected: 0, paletteOpen: false, mainView: 'session' };
+  state = {
+    focused: 'main', selected: 0, paletteOpen: false, mainView: 'session',
+    switcherOpen: false, projectFilter: null,
+    projectsOpen: false, selProj: 'p1', removeConfirm: false, newRule: '', editRule: -1,
+    newSessionOpen: false, nsProject: 'p1',
+    projects: [
+      { id: 'p1', name: 'acme-api', root: '~/projects/acme-api', rootExists: true,
+        modelId: 'Sonnet 4.5', effort: 'high', permissionMode: 'acceptEdits', runtime: 'native', allowGit: 'yes',
+        notes: 'monorepo — pnpm workspaces. never touch generated/ by hand.',
+        rules: ['prefer named exports over default', 'every new endpoint needs a contract test', 'no console.log in src/ — use the logger'] },
+      { id: 'p2', name: 'billing-svc', root: '~/work/billing', rootExists: true,
+        modelId: 'Opus 4', effort: '', permissionMode: 'plan', runtime: '', allowGit: 'no',
+        notes: 'PCI scope — ask before adding any dependency.', rules: ['all money values in minor units'] },
+      { id: 'p3', name: 'docs-site', root: '~/sites/docs', rootExists: true,
+        modelId: '', effort: '', permissionMode: '', runtime: '', allowGit: '', notes: '', rules: [] },
+      { id: 'p4', name: 'infra-tf', root: '~/ops/infra', rootExists: false,
+        modelId: 'Sonnet 4.5', effort: 'medium', permissionMode: 'default', runtime: 'wsl', allowGit: 'no',
+        notes: 'terraform state is remote.', rules: ['never run apply without a plan review'] },
+    ],
+  };
 
   componentDidMount() {
     this._onKey = (e) => {
       const k = e.key;
+      const modal = this.state.projectsOpen || this.state.newSessionOpen;
       if ((e.metaKey || e.ctrlKey) && (k === 'k' || k === 'K')) { e.preventDefault(); this.setState(s => ({ paletteOpen: !s.paletteOpen })); return; }
-      if (k === 'Escape') { this.setState({ paletteOpen: false }); return; }
+      if (k === 'Escape') {
+        if (this.state.editRule > -1) { this.setState({ editRule: -1 }); return; }
+        this.setState({ paletteOpen: false, switcherOpen: false, projectsOpen: false, newSessionOpen: false, removeConfirm: false });
+        return;
+      }
+      if (modal) return;
       const map = { '1': 'sidebar', '2': 'main', '3': 'agents', '4': 'mcp', '5': 'skills' };
       if (map[k]) this.setState({ focused: map[k] });
       if (k === 'd' || k === 'D') this.setState(s => ({ focused: 'main', mainView: s.mainView === 'diff' ? 'session' : 'diff' }));
       if (k === 't' || k === 'T') this.setState(s => ({ focused: 'main', mainView: s.mainView === 'shell' ? 'session' : 'shell' }));
+      if (k === 'n' || k === 'N') this.setState({ newSessionOpen: true, paletteOpen: false });
     };
     window.addEventListener('keydown', this._onKey);
   }
   componentWillUnmount() { window.removeEventListener('keydown', this._onKey); }
+
+  patchProj(id, patch) {
+    this.setState(s => ({ projects: s.projects.map(p => p.id === id ? { ...p, ...patch } : p) }));
+  }
+  addProject() {
+    const id = 'p' + (Date.now() % 10000);
+    this.setState(s => ({
+      projects: s.projects.concat([{ id, name: 'new-service', root: '~/dev/new-service', rootExists: true,
+        modelId: '', effort: '', permissionMode: '', runtime: '', allowGit: '', notes: '', rules: [] }]),
+      selProj: id, removeConfirm: false,
+    }));
+  }
+  removeProject(id) {
+    this.setState(s => {
+      const rest = s.projects.filter(p => p.id !== id);
+      return { projects: rest, selProj: rest.length ? rest[0].id : null, removeConfirm: false,
+        projectFilter: s.projectFilter === id ? null : s.projectFilter };
+    });
+  }
+  addRule(id) {
+    const t = (this.state.newRule || '').trim();
+    if (!t) return;
+    const p = this.state.projects.find(x => x.id === id);
+    this.patchProj(id, { rules: p.rules.concat([t.slice(0, 500)]) });
+    this.setState({ newRule: '' });
+  }
+  moveRule(id, i, dir) {
+    const p = this.state.projects.find(x => x.id === id);
+    const j = i + dir;
+    if (j < 0 || j >= p.rules.length) return;
+    const r = p.rules.slice();
+    const tmp = r[i]; r[i] = r[j]; r[j] = tmp;
+    this.patchProj(id, { rules: r });
+  }
+  dropRule(id, i) {
+    const p = this.state.projects.find(x => x.id === id);
+    this.patchProj(id, { rules: p.rules.filter((_, k) => k !== i) });
+  }
 
   renderVals() {
     const C = {
@@ -306,13 +552,16 @@ class Component extends DCLogic {
     const title = p => focused === p ? C.accent : C.dim;
     const pulse = 'pulse 1.4s ease-in-out infinite';
 
-    const sessData = [
-      { name: 'acme-api', path: '~/projects/acme-api', model: 'Sonnet 4.5', status: 'running' },
-      { name: 'billing-svc', path: '~/work/billing', model: 'Opus 4', status: 'idle' },
-      { name: 'docs-site', path: '~/sites/docs', model: 'Haiku 4', status: 'done' },
-      { name: 'infra-tf', path: '~/ops/infra', model: 'Sonnet 4.5', status: 'error' },
-      { name: 'playground', path: '~/tmp/pg', model: 'Sonnet 4.5', status: 'idle' },
+    const allSess = [
+      { name: 'acme-api', path: '~/projects/acme-api', model: 'Sonnet 4.5', status: 'running', projectId: 'p1' },
+      { name: 'acme-api · hotfix', path: '~/projects/acme-api', model: 'Sonnet 4.5', status: 'idle', projectId: 'p1' },
+      { name: 'billing-svc', path: '~/work/billing', model: 'Opus 4', status: 'idle', projectId: 'p2' },
+      { name: 'docs-site', path: '~/sites/docs', model: 'Haiku 4', status: 'done', projectId: 'p3' },
+      { name: 'infra-tf', path: '~/ops/infra', model: 'Sonnet 4.5', status: 'error', projectId: 'p4' },
+      { name: 'playground', path: '~/tmp/pg', model: 'Sonnet 4.5', status: 'idle', projectId: null },
     ];
+    const pf = this.state.projectFilter;
+    const sessData = pf ? allSess.filter(s => s.projectId === pf) : allSess;
     const sessions = sessData.map((s, i) => {
       const sel = i === this.state.selected;
       return {
@@ -392,12 +641,16 @@ class Component extends DCLogic {
       { glyph: '≡', name: 'View diff', hint: '7 files changed' },
       { glyph: '⊙', name: 'Compact context', hint: '48.2K → summary' },
       { glyph: '⊗', name: 'Kill agent', hint: 'select running' },
+      { glyph: '⊟', name: 'Manage projects', hint: 'defaults & standards', act: 'projects' },
     ];
     const commands = cmdData.map(c => ({
       glyph: c.glyph, name: c.name, hint: c.hint,
       bg: c.sel ? '#26282f' : 'transparent',
       glyphFg: c.sel ? C.accent : C.dim,
       nameFg: c.sel ? '#dfe2e8' : C.primary,
+      onClick: c.act === 'projects'
+        ? () => this.setState({ projectsOpen: true, paletteOpen: false })
+        : (c.name === 'New session' ? () => this.setState({ newSessionOpen: true, paletteOpen: false }) : () => this.setState({ paletteOpen: false })),
     }));
 
     const mainView = this.state.mainView || 'session';
@@ -482,6 +735,76 @@ class Component extends DCLogic {
     });
     const tSession = tab(mainView === 'session'), tDiff = tab(isDiff), tShell = tab(isShell);
 
+    // ---- projects region ----
+    const P = this.state.projects;
+    const filtered = P.find(p => p.id === pf) || null;
+    const swLabel = filtered ? filtered.name : 'All projects';
+    const swFg = filtered ? C.accent : '#c8c5bd';
+
+    const dropRows = [{ id: null, name: 'All projects', root: '', rootExists: true, sel: !pf }]
+      .concat(P.map(p => ({ ...p, sel: p.id === pf })))
+      .map(r => ({
+        name: r.name, root: r.root || '',
+        missing: r.rootExists === false,
+        nameFg: r.rootExists === false ? '#6b7079' : '#c8c5bd',
+        mark: r.sel ? '✦' : '',
+        onClick: () => this.setState({ projectFilter: r.id, switcherOpen: false }),
+      }));
+
+    const sel = P.find(p => p.id === this.state.selProj) || null;
+    const missingRoot = !!sel && sel.rootExists === false;
+    const projRows = P.map(p => {
+      const on = sel && p.id === sel.id;
+      return {
+        name: p.name, root: p.root,
+        missing: p.rootExists === false,
+        bg: on ? '#1f2128' : 'transparent',
+        rail: on ? C.accent : 'transparent',
+        fg: on ? '#e8e4dc' : '#c8c5bd',
+        onClick: () => this.setState({ selProj: p.id, removeConfirm: false, editRule: -1 }),
+      };
+    });
+
+    const optSets = {
+      modelId: ['Sonnet 4.5', 'Opus 4', 'Haiku 4'],
+      effort: ['low', 'medium', 'high'],
+      permissionMode: ['default', 'plan', 'acceptEdits', 'bypassPermissions'],
+      runtime: ['native', 'wsl'],
+      allowGit: ['yes', 'no'],
+    };
+    const fieldDefs = [
+      { key: 'modelId', label: 'model' }, { key: 'effort', label: 'effort' },
+      { key: 'permissionMode', label: 'permission mode' }, { key: 'runtime', label: 'runtime' },
+      { key: 'allowGit', label: 'allow git' },
+    ];
+    const defaultFields = !sel ? [] : fieldDefs.map(f => ({
+      label: f.label,
+      value: sel[f.key] || '',
+      fg: sel[f.key] ? '#c8c5bd' : C.faint,
+      options: [{ v: '', label: 'inherit' }].concat(optSets[f.key].map(o => ({ v: o, label: o }))),
+      onChange: (e) => this.patchProj(sel.id, { [f.key]: e.target.value }),
+    }));
+
+    const rules = !sel ? [] : sel.rules.map((t, i) => ({
+      text: t, editing: this.state.editRule === i, notEditing: this.state.editRule !== i,
+      onEditKey: (e) => { if (e.key === 'Enter') e.target.blur(); },
+      onEdit: () => this.setState({ editRule: i }),
+      onCommit: (e) => { const v = e.target.value.trim(); const r = sel.rules.slice(); if (v) r[i] = v.slice(0, 500); this.patchProj(sel.id, { rules: r }); this.setState({ editRule: -1 }); },
+      onUp: () => this.moveRule(sel.id, i, -1),
+      onDown: () => this.moveRule(sel.id, i, 1),
+      onDrop: () => this.dropRule(sel.id, i),
+    }));
+
+    const nsProj = P.find(p => p.id === this.state.nsProject) || null;
+    const nsMissing = !!nsProj && nsProj.rootExists === false;
+    const nsFields = [
+      { label: 'model', value: (nsProj && nsProj.modelId) || 'Sonnet 4.5' },
+      { label: 'effort', value: (nsProj && nsProj.effort) || 'medium' },
+      { label: 'permission mode', value: (nsProj && nsProj.permissionMode) || 'default' },
+      { label: 'runtime', value: (nsProj && nsProj.runtime) || 'native' },
+      { label: 'allow git', value: (nsProj && nsProj.allowGit) || 'yes' },
+    ].map(f => ({ ...f, fg: nsProj ? '#c8c5bd' : C.faint }));
+
     const labels = { sidebar: 'sessions', main: 'session', agents: 'agents', mcp: 'mcp', skills: 'skills' };
 
     return {
@@ -504,6 +827,56 @@ class Component extends DCLogic {
       focusSkills: () => this.setState({ focused: 'skills' }),
       togglePalette: () => this.setState(s => ({ paletteOpen: !s.paletteOpen })),
       stop: (e) => { if (e && e.stopPropagation) e.stopPropagation(); },
+
+      // switcher
+      swLabel, swFg, swChevronFg: filtered ? C.accent : C.faint,
+      switcherOpen: this.state.switcherOpen,
+      toggleSwitcher: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState(s => ({ switcherOpen: !s.switcherOpen, focused: 'sidebar' })); },
+      swExpanded: this.state.switcherOpen ? 'true' : 'false',
+      dropRows,
+      openManager: () => this.setState({ switcherOpen: false, projectsOpen: true, paletteOpen: false }),
+      emptyFiltered: sessData.length === 0,
+      listFlex: sessData.length === 0 ? '0' : '1',
+      emptyLabel: filtered ? 'no sessions in ' + filtered.name : 'no sessions',
+      sessCount: sessData.length,
+
+      // projects modal
+      projectsOpen: this.state.projectsOpen,
+      closeProjects: () => this.setState({ projectsOpen: false, removeConfirm: false, editRule: -1 }),
+      projRows, projCount: P.length + ' projects', hasProjects: P.length > 0, noProjects: P.length === 0,
+      noRules: !!sel && sel.rules.length === 0, notRemoving: !this.state.removeConfirm,
+      hasSel: !!sel, selName: sel ? sel.name : '', selRoot: sel ? sel.root : '',
+      onName: (e) => sel && this.patchProj(sel.id, { name: e.target.value }),
+      onRoot: (e) => sel && this.patchProj(sel.id, { root: e.target.value }),
+      nameError: sel && !String(sel.name).trim() ? 'name cannot be empty' : '',
+      missingRoot,
+      dimStyle: missingRoot ? '0.45' : '1',
+      dimEvents: missingRoot ? 'none' : 'auto',
+      defaultFields, rules, hasRules: !!sel && sel.rules.length > 0,
+      notes: sel ? sel.notes : '',
+      onNotes: (e) => sel && this.patchProj(sel.id, { notes: e.target.value }),
+      newRule: this.state.newRule,
+      onNewRule: (e) => this.setState({ newRule: e.target.value }),
+      onNewRuleKey: (e) => { if (e.key === 'Enter' && sel) { e.preventDefault(); this.addRule(sel.id); } },
+      commitNewRule: () => sel && this.addRule(sel.id),
+      standardsPath: '→ ' + (sel ? sel.root : '') + '/CLAUDE.md · francois block',
+      onAddProject: () => this.addProject(),
+      removeConfirm: this.state.removeConfirm,
+      askRemove: () => this.setState({ removeConfirm: true }),
+      cancelRemove: () => this.setState({ removeConfirm: false }),
+      doRemove: () => sel && this.removeProject(sel.id),
+      removePrompt: sel ? 'remove project "' + sel.name + '"? sessions are kept; CLAUDE.md is not touched' : '',
+
+      // new-session modal
+      newSessionOpen: this.state.newSessionOpen,
+      openNewSession: () => this.setState({ newSessionOpen: true, paletteOpen: false }),
+      closeNewSession: () => this.setState({ newSessionOpen: false }),
+      nsValue: this.state.nsProject || '',
+      nsOptions: [{ v: '', label: '— none —' }].concat(P.map(p => ({ v: p.id, label: p.name }))),
+      onNsProject: (e) => this.setState({ nsProject: e.target.value }),
+      nsMissing, nsFields,
+      nsSubmitFg: nsMissing ? '#4a4d55' : C.accent,
+      nsDir: nsProj ? nsProj.root + '/apps/web' : '~/',
     };
   }
 }

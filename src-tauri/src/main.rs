@@ -8,6 +8,7 @@
 mod diff;
 mod ipc;
 mod permissions;
+mod project;
 mod session;
 mod usage;
 mod wsl;
@@ -554,6 +555,9 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Registry::default())
         .manage(session::Engine::default())
+        // projects §6: the registry is loaded once at startup (see setup below)
+        // and is memory-authoritative thereafter — Francois is its only writer.
+        .manage(project::ProjectRegistry::default())
         // usage-bar §6: the app-scoped usage cache lives in its OWN mutex, never
         // inside session::Engine — a leaf lock the probe path can take freely.
         .manage(usage::UsageState::default())
@@ -565,6 +569,9 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 tint_window_chrome(&w, "dark");
             }
+            // projects FR-1/FR-3: load the registry BEFORE sessions, so
+            // load_persisted can drop a projectId that no longer resolves (FR-18).
+            project::load_projects(app.handle());
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
             // usage-bar FR-11/FR-12: probe once now, then every 5 minutes.
@@ -588,6 +595,12 @@ fn main() {
             session::session_list_commands,
             session::session_models,
             session::session_pick_directory,
+            project::project_list,
+            project::project_create,
+            project::project_update,
+            project::project_remove,
+            project::project_get_standards,
+            project::project_set_standards,
             session::conversation_get_transcript,
             session::agents_list,
             session::agents_dispatch,

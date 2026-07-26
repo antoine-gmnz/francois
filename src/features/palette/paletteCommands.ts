@@ -111,6 +111,25 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // 5b — Overview (overview) — same toggle grammar as View diff, and the same
+  // transition app-shell's own `o` key performs.
+  registerPaletteCommand({
+    id: 'view-overview',
+    glyph: '▦',
+    name: 'Overview',
+    hint: () => {
+      const st = useStore.getState();
+      const n = st.activeProjectId === null ? st.sessions.length : st.sessions.filter((s) => s.projectId === st.activeProjectId).length;
+      return `${n} session${n === 1 ? '' : 's'} across projects`;
+    },
+    run: () => {
+      const st = useStore.getState();
+      st.setFocusedPane('main');
+      st.setMainTab(st.mainTab === 'overview' ? 'session' : 'overview');
+      requestBodyFocusOnClose(); // FR-16 exception: don't restore into a now-hidden pane
+    },
+  });
+
   // 6 — Compact context (session-engine)
   registerPaletteCommand({
     id: 'compact-context',
@@ -202,7 +221,20 @@ export function registerBuiltinCommands(): void {
     },
   });
 
-  // 13 — Toggle theme (app-shell): flip light/dark, same action as the status-bar glyph.
+  // 13 — Manage projects (projects FR-31): the other entry point to the modal,
+  // alongside the pane [1] switcher's own "Manage projects…" row. Needs NO
+  // session — a project is configured whether or not anything is running.
+  registerPaletteCommand({
+    id: 'manage-projects',
+    glyph: '⊟',
+    name: 'Manage projects',
+    hint: () => 'defaults & standards',
+    run: () => {
+      useStore.getState().setProjectsOpen(true);
+    },
+  });
+
+  // 14 — Toggle theme (app-shell): flip light/dark, same action as the status-bar glyph.
   registerPaletteCommand({
     id: 'toggle-theme',
     glyph: '☾',
