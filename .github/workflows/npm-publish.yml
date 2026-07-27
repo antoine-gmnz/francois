@@ -103,6 +103,14 @@ jobs:
           set -euo pipefail
           app=$(node -p "require('./src-tauri/tauri.conf.json').version")
           echo "app=$app" >> "$GITHUB_OUTPUT"
+          # The dev overlay renames the app, and the desktop integration names the
+          # Start Menu / Launchpad entry after it — so read it from the same config
+          # the build used rather than hardcoding it.
+          if [ "${{ steps.target.outputs.channel }}" = dev ]; then
+            echo "product=$(node -p "require('./src-tauri/tauri.dev.conf.json').productName")" >> "$GITHUB_OUTPUT"
+          else
+            echo "product=$(node -p "require('./src-tauri/tauri.conf.json').productName")" >> "$GITHUB_OUTPUT"
+          fi
           if [ "${{ steps.target.outputs.channel }}" = dev ]; then
             # run_number is monotonic, so every push to main gets a fresh, ordered
             # prerelease version — npm refuses to republish an existing one.
@@ -122,6 +130,7 @@ jobs:
           TAG: ${{ steps.target.outputs.tag }}
           CHANNEL: ${{ steps.target.outputs.channel }}
           APP_VERSION: ${{ steps.version.outputs.app }}
+          PRODUCT_NAME: ${{ steps.version.outputs.product }}
         run: |
           set -euo pipefail
           mkdir -p .assets
@@ -137,6 +146,7 @@ jobs:
             "tag": "$TAG",
             "channel": "$CHANNEL",
             "appVersion": "$APP_VERSION",
+            "productName": "$PRODUCT_NAME",
             "assets": {
               $(entry darwin-universal francois-darwin-universal.tar.gz),
               $(entry linux-x64 francois-linux-x64.tar.gz),

@@ -23,12 +23,16 @@
     "francois": "bin/francois.js"
   },
   "scripts": {
-    "postinstall": "node install.js"
+    "postinstall": "node install.js",
+    "preuninstall": "node uninstall.js"
   },
   "files": [
+    "assets/icon.png",
     "bin/",
+    "lib/desktop.js",
     "lib/platform.js",
     "install.js",
+    "uninstall.js",
     "manifest.json",
     "README.md"
   ],

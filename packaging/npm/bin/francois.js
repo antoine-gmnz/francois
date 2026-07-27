@@ -12,15 +12,24 @@
 const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
 
-const { assetKey, readManifest, resolveExecutable, supportedList } = require('../lib/platform.js');
+const desktop = require('../lib/desktop.js');
+const {
+  assetKey,
+  readInstallRecord,
+  readManifest,
+  resolveExecutable,
+  supportedList,
+} = require('../lib/platform.js');
 
 const USAGE = `francois — mission control for your Claude Code fleet
 
 Usage
-  francois              launch the app (returns to the shell immediately)
-  francois --attach     launch it in the foreground, keeping its output attached
-  francois --version    print the app + package versions
-  francois --help       this message
+  francois                     launch the app (returns to the shell immediately)
+  francois --attach            launch it in the foreground, keeping its output attached
+  francois --version           print the app + package versions
+  francois shortcut            re-register the Start Menu / Launchpad / menu entry
+  francois shortcut --remove   unregister it
+  francois --help              this message
 
 Anything else is forwarded to the app.
 `;
@@ -66,6 +75,23 @@ function main() {
     const manifest = readManifest();
     const pkg = require('../package.json');
     process.stdout.write(`francois ${manifest ? manifest.appVersion : 'unknown'} (npm ${pkg.version})\n`);
+    return;
+  }
+
+  // Re-runnable on demand: a shortcut can be deleted, or the postinstall can have
+  // run somewhere the desktop wasn't reachable (SSH, a container, a CI image).
+  if (argv[0] === 'shortcut') {
+    const record = readInstallRecord();
+    if (!record) die('nothing is installed yet — run `npm i -g francois` first.');
+
+    if (argv.includes('--remove')) {
+      desktop.remove(record);
+      process.stdout.write(`francois: removed the ${record.productName} shortcut.\n`);
+      return;
+    }
+
+    const { notes } = desktop.install(record);
+    for (const note of notes) process.stdout.write(`francois: ${note}\n`);
     return;
   }
 

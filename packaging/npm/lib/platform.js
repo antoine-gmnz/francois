@@ -24,6 +24,7 @@ const SUPPORTED = {
 const PACKAGE_ROOT = path.join(__dirname, '..');
 const VENDOR_DIR = path.join(PACKAGE_ROOT, 'vendor');
 const MANIFEST_PATH = path.join(PACKAGE_ROOT, 'manifest.json');
+const INSTALL_RECORD = 'install.json';
 
 /** The asset key for a platform/arch pair, or null when unsupported. */
 function assetKey(platform = process.platform, arch = process.arch) {
@@ -49,8 +50,25 @@ function readManifest(manifestPath = MANIFEST_PATH) {
 }
 
 /**
- * Locate the runnable binary inside an unpacked vendor/ directory. Returns an
- * absolute path, or null when the payload is missing or malformed.
+ * What the postinstall actually did: where the payload ended up and what it
+ * registered with the OS. macOS moves the bundle out to ~/Applications, so this
+ * is the only reliable way to find it afterwards.
+ */
+function readInstallRecord(vendorDir = VENDOR_DIR) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(vendorDir, INSTALL_RECORD), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeInstallRecord(record, vendorDir = VENDOR_DIR) {
+  fs.writeFileSync(path.join(vendorDir, INSTALL_RECORD), `${JSON.stringify(record, null, 2)}\n`);
+}
+
+/**
+ * Locate the runnable binary. Prefers what the postinstall recorded; falls back
+ * to scanning vendor/ so a payload unpacked by hand still runs.
  *
  * The macOS bundle name tracks Tauri's productName and so differs between the
  * stable ("Francois.app") and dev ("Francois Dev.app") channels — hence the
@@ -58,6 +76,9 @@ function readManifest(manifestPath = MANIFEST_PATH) {
  * the bundler, so we take whatever is in Contents/MacOS.
  */
 function resolveExecutable(vendorDir = VENDOR_DIR, platform = process.platform) {
+  const record = readInstallRecord(vendorDir);
+  if (record && record.executable && fs.existsSync(record.executable)) return record.executable;
+
   if (!fs.existsSync(vendorDir)) return null;
 
   if (platform === 'win32') {
@@ -86,12 +107,15 @@ function resolveExecutable(vendorDir = VENDOR_DIR, platform = process.platform) 
 }
 
 module.exports = {
+  INSTALL_RECORD,
   MANIFEST_PATH,
   PACKAGE_ROOT,
   SUPPORTED,
   VENDOR_DIR,
   assetKey,
+  readInstallRecord,
   readManifest,
   resolveExecutable,
   supportedList,
+  writeInstallRecord,
 };

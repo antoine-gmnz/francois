@@ -3,17 +3,29 @@
 **Mission control for your Claude Code fleet** — installed without an installer.
 
 ```sh
-npm i -g francois   # stable
-francois            # launch it
-```
-
-```sh
+npm i -g francois       # stable
 npm i -g francois@dev   # rolling build of main
 ```
 
+Then launch it **from the Start Menu, Launchpad or your applications menu** like
+any other app — or type `francois` in a terminal, whichever you prefer.
+
 This package ships no binaries. Its postinstall downloads the platform build from
-the matching [GitHub release](https://github.com/antoine-gmnz/francois/releases)
-and verifies it against a sha256 digest baked in at publish time.
+the matching [GitHub release](https://github.com/antoine-gmnz/francois/releases),
+verifies it against a sha256 digest baked in at publish time, and registers it
+with your desktop.
+
+## What gets installed where
+
+| | |
+|---|---|
+| **Windows** | a Start Menu shortcut, plus an entry in Settings → Installed apps |
+| **macOS** | the app bundle in `~/Applications` — Spotlight, Launchpad and the Dock all find it |
+| **Linux** | a `.desktop` launcher and icon under `~/.local/share` |
+
+All per-user: no administrator rights, no elevation prompt. `npm uninstall -g
+francois` removes them again, and `francois shortcut --remove` is the manual
+escape hatch.
 
 ## Why install this way
 
@@ -40,6 +52,8 @@ Prebuilt for macOS (universal), Windows x64 and Linux x64. On anything else,
 | `francois` | launch the app and return to the shell |
 | `francois --attach` | launch it in the foreground with its output attached |
 | `francois --version` | print the app + package versions |
+| `francois shortcut` | re-register the desktop entry (after deleting it, or a headless install) |
+| `francois shortcut --remove` | unregister it |
 | `francois --help` | usage |
 
 Environment: `FRANCOIS_SKIP_DOWNLOAD=1` skips the postinstall download,

@@ -65,6 +65,8 @@ npm i -g francois   # then: francois
 
 **No installer, and no security warnings.** SmartScreen and Gatekeeper key off the Mark-of-the-Web / `com.apple.quarantine` attribute that a *browser* attaches at download time — a binary fetched by npm never carries one, so the same unsigned build launches clean. The postinstall pulls the platform build from the matching release and checks it against a published sha256.
 
+It's still a **normal desktop app**, not just a terminal command: the install registers a Start Menu shortcut on Windows (with an entry in Settings → Installed apps), puts the bundle in `~/Applications` on macOS so Spotlight and Launchpad find it, and writes a `.desktop` launcher on Linux. All per-user, no admin rights. `npm uninstall -g francois` cleans up after itself.
+
 Add `@dev` for the rolling build of `main` (`npm i -g francois@dev`). It installs as **Francois Dev** — a separate app with its own data, safe to run side-by-side with a stable Francois.
 
 <details>

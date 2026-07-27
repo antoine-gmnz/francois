@@ -23,7 +23,25 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const { VENDOR_DIR, assetKey, readManifest, supportedList } = require('./lib/platform.js');
+const desktop = require('./lib/desktop.js');
+const {
+  VENDOR_DIR,
+  assetKey,
+  readManifest,
+  resolveExecutable,
+  supportedList,
+  writeInstallRecord,
+} = require('./lib/platform.js');
+
+/**
+ * The .app bundle an executable lives in (…/Francois.app/Contents/MacOS/francois
+ * → …/Francois.app), or null on platforms that ship a bare binary.
+ */
+function bundleOf(executable) {
+  const marker = `${path.sep}Contents${path.sep}MacOS${path.sep}`;
+  const at = executable.indexOf(marker);
+  return at === -1 ? null : executable.slice(0, at);
+}
 
 const DOWNLOAD_BASE = process.env.FRANCOIS_DOWNLOAD_BASE || 'https://github.com';
 const MAX_ATTEMPTS = 3;
@@ -175,7 +193,34 @@ async function main() {
       spawnSync('xattr', ['-dr', 'com.apple.quarantine', VENDOR_DIR], { stdio: 'ignore' });
     }
 
-    log('installed. Run `francois` to launch it.');
+    const unpacked = resolveExecutable();
+    if (!unpacked) fail(`the ${asset.name} archive did not contain the app.`);
+
+    // Register with the OS so Francois launches from the Start Menu / Launchpad /
+    // Applications menu like any installed app, not just from a terminal. This
+    // can relocate the payload (macOS moves the bundle to ~/Applications), so
+    // the returned paths — not the ones passed in — are what gets recorded.
+    const productName = manifest.productName || 'Francois';
+    const integration = desktop.install({
+      executable: unpacked,
+      bundle: bundleOf(unpacked),
+      productName,
+      channel: manifest.channel,
+      appVersion: manifest.appVersion,
+    });
+
+    writeInstallRecord({
+      executable: integration.executable,
+      bundle: integration.bundle,
+      productName,
+      channel: manifest.channel,
+      appVersion: manifest.appVersion,
+      tag: manifest.tag,
+    });
+
+    log('installed.');
+    for (const note of integration.notes) log(`  ${note}`);
+    log('  terminal: francois');
   } catch (error) {
     fail(`install failed: ${error.message}`);
   }

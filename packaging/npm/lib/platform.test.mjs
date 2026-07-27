@@ -7,7 +7,8 @@ import path from 'node:path';
 // platform.js is CommonJS on purpose (it runs inside npm's postinstall), so it
 // is pulled in through createRequire rather than a bare import.
 const require = createRequire(import.meta.url);
-const { assetKey, readManifest, resolveExecutable, supportedList } = require('./platform.js');
+const { assetKey, readInstallRecord, readManifest, resolveExecutable, supportedList, writeInstallRecord } =
+  require('./platform.js');
 
 /** A throwaway vendor/ directory; each test seeds only the layout it asserts on. */
 const tempDirs = [];
@@ -63,9 +64,42 @@ describe('readManifest', () => {
   });
 });
 
+describe('the install record', () => {
+  it('round-trips what the postinstall did', () => {
+    const vendor = tempDir();
+    writeInstallRecord({ executable: '/a/b', productName: 'Francois', channel: 'stable' }, vendor);
+    expect(readInstallRecord(vendor)).toEqual({
+      executable: '/a/b',
+      productName: 'Francois',
+      channel: 'stable',
+    });
+  });
+
+  it('returns null when nothing was ever installed', () => {
+    expect(readInstallRecord(tempDir())).toBeNull();
+  });
+});
+
 describe('resolveExecutable', () => {
   it('returns null when the payload was never unpacked', () => {
     expect(resolveExecutable(path.join(tempDir(), 'vendor'), 'linux')).toBeNull();
+  });
+
+  // macOS moves the bundle to ~/Applications, so the recorded path is the only
+  // way to find it — scanning vendor/ would come up empty.
+  it('follows the recorded path when the payload lives outside vendor/', () => {
+    const vendor = tempDir();
+    const elsewhere = path.join(tempDir(), 'francois-relocated');
+    fs.writeFileSync(elsewhere, '');
+    writeInstallRecord({ executable: elsewhere }, vendor);
+    expect(resolveExecutable(vendor, 'darwin')).toBe(elsewhere);
+  });
+
+  it('falls back to scanning when the recorded path has gone stale', () => {
+    const vendor = tempDir();
+    fs.writeFileSync(path.join(vendor, 'francois.exe'), '');
+    writeInstallRecord({ executable: path.join(vendor, 'deleted-by-hand.exe') }, vendor);
+    expect(resolveExecutable(vendor, 'win32')).toBe(path.join(vendor, 'francois.exe'));
   });
 
   it('finds the Windows executable', () => {
