@@ -91,7 +91,9 @@ jobs:
 
             Or skip the installers entirely — `npm i -g francois` fetches the same build with
             no SmartScreen or Gatekeeper prompt, because binaries downloaded by a CLI never
-            carry the browser's Mark-of-the-Web / quarantine attribute.
+            carry the browser's Mark-of-the-Web / quarantine attribute. It still registers a
+            Start Menu / Launchpad / applications-menu entry, so you open it like any
+            installed app.
 
             Builds are **unsigned** — Windows SmartScreen / macOS Gatekeeper may warn on first
             launch (on macOS: right-click → Open, or `xattr -cr` the app).
