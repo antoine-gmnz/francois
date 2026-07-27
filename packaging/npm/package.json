@@ -1,0 +1,43 @@
+{
+  "name": "francois",
+  "version": "0.0.0-dev",
+  "description": "Mission control for your Claude Code fleet — installs the Francois desktop app without an installer.",
+  "license": "AGPL-3.0-only",
+  "author": "Antoine Gimenez",
+  "homepage": "https://github.com/antoine-gmnz/francois#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/antoine-gmnz/francois.git",
+    "directory": "packaging/npm"
+  },
+  "bugs": "https://github.com/antoine-gmnz/francois/issues",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "anthropic",
+    "terminal",
+    "tauri",
+    "desktop"
+  ],
+  "bin": {
+    "francois": "bin/francois.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/",
+    "lib/platform.js",
+    "install.js",
+    "manifest.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "win32",
+    "linux"
+  ]
+}

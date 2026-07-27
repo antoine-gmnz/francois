@@ -1,0 +1,66 @@
+name: Portable archive
+description: >
+  Pack the freshly built app into a plain archive (no installer) and attach it to
+  a GitHub release. These are what the npm package (packaging/npm) downloads:
+  binaries fetched by a CLI never get the Mark-of-the-Web / com.apple.quarantine
+  attribute a browser attaches, so they launch without SmartScreen or Gatekeeper
+  warnings even though the builds are unsigned.
+
+inputs:
+  tag:
+    description: Release tag to attach the archive to (e.g. "dev" or "v0.9.0").
+    required: true
+  github-token:
+    description: Token with contents:write on this repository.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # lipo strips the ad-hoc signature the linker put on each slice, and an
+    # unsigned Mach-O will not execute at all on Apple Silicon. Re-sign ad-hoc so
+    # the bundle runs; this is not Developer ID and does not affect notarization.
+    - name: Pack the macOS bundle
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        app=$(find src-tauri/target -maxdepth 6 -type d -name '*.app' -path '*/bundle/macos/*' | head -n1)
+        [ -n "$app" ] || { echo "no .app bundle found"; exit 1; }
+        codesign --force --deep --sign - "$app"
+        codesign --verify --deep --strict "$app"
+        tar -czf francois-darwin-universal.tar.gz -C "$(dirname "$app")" "$(basename "$app")"
+
+    # The AppImage rather than the raw binary: it carries its own webkit2gtk, so
+    # it runs on distros that never installed the build dependencies.
+    - name: Pack the Linux AppImage
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        appimage=$(find src-tauri/target -type f -name '*.AppImage' -path '*/bundle/appimage/*' | head -n1)
+        [ -n "$appimage" ] || { echo "no AppImage found"; exit 1; }
+        cp "$appimage" francois.AppImage
+        chmod +x francois.AppImage
+        tar -czf francois-linux-x64.tar.gz francois.AppImage
+
+    - name: Pack the Windows executable
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $exe = 'src-tauri/target/release/francois.exe'
+        if (-not (Test-Path $exe)) { throw "$exe not found" }
+        Compress-Archive -Path $exe -DestinationPath francois-win32-x64.zip -Force
+
+    # Each matrix leg produces exactly one archive; --clobber lets a re-run
+    # replace it rather than fail on a name that is already attached.
+    - name: Attach it to the release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        files=(francois-*.tar.gz francois-*.zip)
+        [ ${#files[@]} -gt 0 ] || { echo "no portable archive was produced"; exit 1; }
+        gh release upload "${{ inputs.tag }}" "${files[@]}" --clobber

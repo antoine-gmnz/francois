@@ -9,7 +9,7 @@
 One window: every session, its transcript, its diff, its agents — and a real shell.
 
 [![build](https://github.com/antoine-gmnz/francois/actions/workflows/release-main.yml/badge.svg)](https://github.com/antoine-gmnz/francois/actions/workflows/release-main.yml)
-[![download](https://img.shields.io/badge/download-dev_build-c8a15a)](https://github.com/antoine-gmnz/francois/releases/tag/dev)
+[![install](https://img.shields.io/badge/npm_i_--g-francois-c8a15a)](https://www.npmjs.com/package/francois)
 [![platforms](https://img.shields.io/badge/Windows_·_macOS_·_Linux-16171c)](https://github.com/antoine-gmnz/francois/releases)
 [![stack](https://img.shields.io/badge/Tauri_2-Rust_core_·_React-24262d)](#under-the-hood)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-24262d)](LICENSE)
@@ -59,11 +59,25 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 
 ## Install
 
-**[⇓ Grab the latest dev build](https://github.com/antoine-gmnz/francois/releases/tag/dev)** — rebuilt on every push to `main`: Windows (`.exe`/`.msi`), macOS universal (`.dmg`, Apple Silicon + Intel), Linux (`.AppImage`/`.deb`). The dev channel installs as **Francois Dev** — a separate app with its own data, safe to run side-by-side with a stable Francois.
+```sh
+npm i -g francois   # then: francois
+```
 
-> Builds are currently **unsigned**: on Windows, SmartScreen → *More info → Run anyway*; on macOS, right-click the app → *Open* (or `xattr -cr /Applications/Francois.app`).
+**No installer, and no security warnings.** SmartScreen and Gatekeeper key off the Mark-of-the-Web / `com.apple.quarantine` attribute that a *browser* attaches at download time — a binary fetched by npm never carries one, so the same unsigned build launches clean. The postinstall pulls the platform build from the matching release and checks it against a published sha256.
+
+Add `@dev` for the rolling build of `main` (`npm i -g francois@dev`). It installs as **Francois Dev** — a separate app with its own data, safe to run side-by-side with a stable Francois.
+
+<details>
+<summary>Or use the native installers</summary>
+
+**[⇓ Grab the latest dev build](https://github.com/antoine-gmnz/francois/releases/tag/dev)** — rebuilt on every push to `main`: Windows (`.exe`/`.msi`), macOS universal (`.dmg`, Apple Silicon + Intel), Linux (`.AppImage`/`.deb`). Tagged stable versions live in [releases](https://github.com/antoine-gmnz/francois/releases).
+
+> These are **unsigned**, and the browser download marks them: on Windows, SmartScreen → *More info → Run anyway*; on macOS, right-click the app → *Open* (or `xattr -cr /Applications/Francois.app`).
+
+</details>
 
 **You need:**
+- [Node 18+](https://nodejs.org) — you already have it if Claude Code runs
 - [Claude Code](https://claude.com/claude-code) installed and authenticated — `claude` must be on your `PATH` (Francois spawns it per session)
 - `git` on your `PATH` (powers the DIFF tab)
 
@@ -86,7 +100,7 @@ separate data directories — run both at once, sessions never collide.
 - **Frontend**: React 18 + TypeScript (`strict`), zustand, xterm.js, plain CSS design tokens, JetBrains Mono.
 - **Contract-first**: every frontend↔core payload shape lives in [`contract/`](contract/) — the Rust core mirrors it with serde. No stringly-typed IPC.
 - **Spec-driven**: every feature ships from a frozen spec in [`specs/`](specs/), through an agent pipeline described in [`PIPELINE.md`](PIPELINE.md). The design reference lives in [`PROJECT.md`](PROJECT.md).
-- **CI**: typecheck + vitest + cargo test on every PR; every push to `main` refreshes the rolling [`dev` release](https://github.com/antoine-gmnz/francois/releases/tag/dev) for all three OSes.
+- **CI**: typecheck + vitest + cargo test on every PR; every push to `main` refreshes the rolling [`dev` release](https://github.com/antoine-gmnz/francois/releases/tag/dev) for all three OSes, attaches installer-free archives, and republishes the [`francois` npm package](packaging/npm) against them.
 
 ## Roadmap
 
