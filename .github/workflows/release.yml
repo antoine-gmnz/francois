@@ -61,6 +61,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # tauri-action substitutes __VERSION__ itself, but the portable-archive step
+      # needs the resolved tag too, so read it once here.
+      - name: Read the app version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Build app + attach to the GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -82,5 +89,19 @@ jobs:
             **Prerequisite:** the app orchestrates the Claude Code CLI, so the machine needs
             [`claude`](https://claude.ai/code) installed and authenticated on `PATH`.
 
+            Or skip the installers entirely — `npm i -g francois` fetches the same build with
+            no SmartScreen or Gatekeeper prompt, because binaries downloaded by a CLI never
+            carry the browser's Mark-of-the-Web / quarantine attribute. It still registers a
+            Start Menu / Launchpad / applications-menu entry, so you open it like any
+            installed app.
+
             Builds are **unsigned** — Windows SmartScreen / macOS Gatekeeper may warn on first
             launch (on macOS: right-click → Open, or `xattr -cr` the app).
+
+      # Installer-free payload for the npm package. Must run after tauri-action,
+      # which is what creates the (draft) release these get attached to.
+      - name: Attach the portable archive
+        uses: ./.github/actions/portable-archive
+        with:
+          tag: v${{ steps.version.outputs.version }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

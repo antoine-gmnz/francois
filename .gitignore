@@ -4,6 +4,10 @@ src-tauri/target/
 src-tauri/gen/
 .cartograph/
 
+# npm distribution package: both are produced at publish time (npm-publish.yml)
+packaging/npm/manifest.json
+packaging/npm/vendor/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
