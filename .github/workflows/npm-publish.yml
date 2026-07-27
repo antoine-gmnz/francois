@@ -190,8 +190,23 @@ jobs:
             npm config set "//registry.npmjs.org/:_authToken=$NPM_TOKEN"
           else
             echo "no NPM_TOKEN — authenticating over OIDC (trusted publishing)"
+            # TEMPORARY diagnostic: npm swallows OIDC-exchange failures at the
+            # default log level and reports a bare ENEEDAUTH. Print only whether
+            # the id-token vars exist — never their values.
+            echo "  id-token URL:   $([ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && echo present || echo MISSING)"
+            echo "  id-token TOKEN: $([ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] && echo present || echo MISSING)"
+            echo "  npm: $(npm --version)"
           fi
           npm version "${{ steps.version.outputs.npm }}" --no-git-tag-version --allow-same-version
           # --provenance signs a build attestation with the job's id-token, so anyone
           # can verify this tarball was built by this workflow from this commit.
-          npm publish --access public --provenance --tag "${{ steps.version.outputs.disttag }}"
+          # TEMPORARY: surface the OIDC-exchange failure npm hides at default
+          # verbosity. Only oidc/auth-related lines are echoed, so no token text
+          # from the verbose stream reaches the log.
+          set +e
+          npm publish --access public --provenance --tag "${{ steps.version.outputs.disttag }}" \
+            --loglevel verbose > /tmp/publish.log 2>&1
+          status=$?
+          set -e
+          grep -iE "oidc|trusted|exchange|audience|id.token|ENEEDAUTH|403|401" /tmp/publish.log | head -30 || true
+          exit $status
