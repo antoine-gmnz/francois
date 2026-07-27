@@ -86,14 +86,20 @@ jobs:
         with:
           ref: ${{ steps.target.outputs.ref }}
 
+      # Deliberately NO registry-url: that makes setup-node write an .npmrc
+      # pinning `_authToken=${NODE_AUTH_TOKEN}` and point NPM_CONFIG_USERCONFIG
+      # at it. With no token the entry resolves to empty, npm treats the registry
+      # as "auth configured but unusable", fails with ENEEDAUTH and never attempts
+      # the OIDC exchange. The publish step below configures auth itself instead.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://registry.npmjs.org
 
       # Node 20 ships npm 10; trusted publishing (OIDC) landed in npm 11.5.1.
       - name: Use an npm that speaks OIDC
-        run: npm install -g npm@^11
+        run: |
+          npm install -g npm@^11
+          echo "npm $(npm --version)"
 
       # The app version is the source of truth for both the npm version and the
       # string `francois --version` prints.
@@ -174,11 +180,14 @@ jobs:
       - name: Publish to npm
         working-directory: packaging/npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            # Bootstrap mode. Written here rather than by setup-node so that the
+            # no-token case leaves npm's auth config completely untouched.
             echo "authenticating with the NPM_TOKEN secret"
+            npm config set "//registry.npmjs.org/:_authToken=$NPM_TOKEN"
           else
             echo "no NPM_TOKEN — authenticating over OIDC (trusted publishing)"
           fi
