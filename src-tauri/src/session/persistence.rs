@@ -438,7 +438,10 @@ pub fn load_persisted(app: &AppHandle) {
                 cwd: m.cwd,
                 model_id: m.model_id,
                 status: "idle".into(),
-                context_used_tokens: m.context_used_tokens,
+                // Clamped: a record written by a build that mistook the turn's
+                // cost aggregate for the context could hold a figure larger than
+                // the window itself. Reloading heals it.
+                context_used_tokens: m.context_used_tokens.min(limit),
                 context_limit_tokens: limit,
                 started_at: now,
                 last_activity_at: m.last_activity_at,

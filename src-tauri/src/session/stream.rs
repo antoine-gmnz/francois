@@ -45,7 +45,7 @@ pub(crate) fn run_reader(
     let mut tools: HashMap<String, ToolRec> = HashMap::new(); // tool_use_id -> rec
     let mut text_accum: HashMap<String, String> = HashMap::new(); // blockId -> text
     let mut open_block: Option<(String, u8)> = None;
-    let mut pending_used: Option<u64> = None;
+    let mut ctx_usage = ContextTracker::default();
     let mut got_result = false;
     let mut got_init = false; // did the stream start (system/init)? — resume-fail detection (FR-8)
     let mut result_error: Option<String> = None;
@@ -144,7 +144,7 @@ pub(crate) fn run_reader(
                         &mut tools,
                         &mut text_accum,
                         &mut open_block,
-                        &mut pending_used,
+                        &mut ctx_usage,
                     );
                 }
             }
@@ -186,7 +186,7 @@ pub(crate) fn run_reader(
                     result_text = Some(r.to_string()); // interactive-commands FR-18
                 }
                 if let Some(u) = v.get("usage") {
-                    pending_used = Some(compute_used(u));
+                    ctx_usage.observe_result(u);
                 }
                 // session-questions FR-2: the result ends the turn — dropping the
                 // stdin writer is what lets the CLI exit (stream-json input mode
@@ -310,6 +310,7 @@ pub(crate) fn run_reader(
     }
 
     let limit = context_limit(&model_id);
+    let pending_used = ctx_usage.finish(limit);
     if got_result && result_error.is_none() {
         // interactive-commands FR-18 defensive fallback: a success turn with zero
         // assistant/tool blocks and no synthetic seen put its local answer only in
@@ -442,8 +443,9 @@ pub(crate) fn handle_stream_event(
     tools: &mut HashMap<String, ToolRec>,
     text_accum: &mut HashMap<String, String>,
     open_block: &mut Option<(String, u8)>,
-    _pending_used: &mut Option<u64>,
+    ctx_usage: &mut ContextTracker,
 ) {
+    ctx_usage.observe_stream_event(ev);
     let et = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match et {
         "content_block_start" => {
@@ -662,11 +664,6 @@ pub(crate) fn handle_stream_event(
                         );
                     }
                 }
-            }
-        }
-        "message_delta" => {
-            if let Some(u) = ev.get("usage") {
-                *_pending_used = Some(compute_used(u));
             }
         }
         _ => {}

@@ -649,7 +649,7 @@ pub fn session_compact(
     // Run a synchronous compaction turn ("/compact"), reading only its final
     // usage — FR-28. No transcript events are surfaced.
     let limit = context_limit(&model_id);
-    let mut used: Option<u64> = None;
+    let mut ctx_usage = ContextTracker::default();
     if let Ok(mut child) = spawn_claude(
         &cwd,
         &model_id,
@@ -665,16 +665,32 @@ pub fn session_compact(
         drop(child.stdin.take());
         if let Some(out) = child_stdout_lines(child) {
             for line in out {
-                if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                    if v.get("type").and_then(|t| t.as_str()) == Some("result") {
-                        if let Some(u) = v.get("usage") {
-                            used = Some(compute_used(u));
+                let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                // Same rule as a normal turn: per-request stream usage is the
+                // context, `result.usage` only a last resort (see ContextTracker).
+                // Subagent lines carry a parent_tool_use_id and are skipped.
+                if matches!(route_line(&v), LineRoute::Attributed(_)) {
+                    continue;
+                }
+                match v.get("type").and_then(|t| t.as_str()) {
+                    Some("stream_event") => {
+                        if let Some(ev) = v.get("event") {
+                            ctx_usage.observe_stream_event(ev);
                         }
                     }
+                    Some("result") => {
+                        if let Some(u) = v.get("usage") {
+                            ctx_usage.observe_result(u);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
     }
+    let used = ctx_usage.finish(limit);
     {
         let mut map = engine.sessions.lock().unwrap();
         if let Some(s) = map.get_mut(&session_id) {
