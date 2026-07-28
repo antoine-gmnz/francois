@@ -169,10 +169,24 @@ jobs:
         working-directory: packaging/npm
         run: |
           set -euo pipefail
-          # Presence only, never the values — the request token is a credential.
           echo "publishing over OIDC (trusted publishing)"
-          echo "  id-token URL:   $([ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && echo present || echo MISSING)"
-          echo "  id-token TOKEN: $([ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] && echo present || echo MISSING)"
+
+          # The exact claims npm matches against the registered trusted publisher.
+          # A refused exchange says nothing about WHICH field disagreed, so print
+          # them: every one is public repository metadata. The token itself is a
+          # credential and is never echoed.
+          claims=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" 2>/dev/null \
+            | node -e '
+              let raw = ""; process.stdin.on("data", d => raw += d).on("end", () => {
+                const jwt = JSON.parse(raw).value;
+                const p = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString());
+                for (const k of ["repository", "repository_owner", "workflow_ref", "job_workflow_ref", "environment", "ref"])
+                  console.log("  " + k + ": " + (p[k] ?? "(absent)"));
+              });
+            ' 2>/dev/null) || true
+          echo "${claims:-  (could not read id-token claims)}"
+
           npm version "${{ steps.version.outputs.npm }}" --no-git-tag-version --allow-same-version
 
           # --provenance signs a build attestation with the job's id-token, so anyone
