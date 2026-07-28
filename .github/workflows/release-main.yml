@@ -125,16 +125,18 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
   # Republish the npm package against the archives the matrix just attached.
+  #
+  # Dispatched rather than called with `uses:`. npm's trusted-publishing exchange
+  # validates the workflow the publishing job runs as, and a reusable call yields
+  # different OIDC claims than a direct trigger — so npm-publish.yml always runs
+  # as a top-level workflow, identically for dev and stable.
   npm:
     needs: publish
-    uses: ./.github/workflows/npm-publish.yml
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write # OIDC: trusted publishing + provenance
-    with:
-      tag: dev
-      channel: dev
-    # Explicitly NOT `secrets: inherit` — that hands the called workflow every
-    # secret in the repository. Pass the one credential it needs, and nothing else.
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      actions: write # dispatch npm-publish.yml
+    steps:
+      - name: Dispatch the npm publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run npm-publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag=dev -f channel=dev

@@ -13,33 +13,25 @@ name: npm-publish
 # inside release.yml: that workflow creates a DRAFT, and assets on a draft are not
 # publicly downloadable — an npm package pointing at one would install nothing.
 #
-# Credentials — two supported modes, in order of preference:
-#   1. npm trusted publishing (OIDC). Configure this repo + workflow as a trusted
-#      publisher on npmjs.com and there is NO stored credential at all; npm
-#      authenticates against the job's short-lived id-token. Leave NPM_TOKEN unset.
-#   2. An NPM_TOKEN secret (npm automation token, publish rights). Bootstrap mode —
-#      needed for the very first publish, since a trusted publisher can only be
-#      attached to a package that already exists.
+# Credentials: npm trusted publishing (OIDC) only — no token, no stored secret.
+# npm authenticates against the job's short-lived id-token, which requires a
+# trusted publisher registered on npmjs.com for the `francois` package with
+# EXACTLY these coordinates:
 #
-# The token is deliberately NOT inherited: callers pass NPM_TOKEN and nothing else,
-# it is scoped to the `npm` environment, and it is exposed to the single publish
-# step rather than to the job.
+#     Publisher    GitHub Actions
+#     Repository   antoine-gmnz/francois
+#     Workflow     npm-publish.yml
+#     Environment  npm-publish
+#
+# Those four must match the OIDC claims or the token exchange is refused.
+#
+# NOTE: this workflow is deliberately NOT reusable (no workflow_call). npm's
+# exchange validates the workflow the job actually runs as, and a `uses:` call
+# produces different claims from a direct trigger. release-main.yml therefore
+# dispatches this workflow rather than calling it, so every publish — dev and
+# stable alike — presents identical claims.
 
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: Release tag holding the portable archives.
-        required: true
-        type: string
-      channel:
-        description: '"dev" (prerelease, dist-tag dev) or "stable" (dist-tag latest).'
-        required: true
-        type: string
-    secrets:
-      NPM_TOKEN:
-        description: npm automation token. Omit entirely when using trusted publishing.
-        required: false
   release:
     types: [published]
   workflow_dispatch:
@@ -61,12 +53,11 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # Scopes the publish credential: NPM_TOKEN can live as an environment secret
-    # (optionally behind required reviewers or a branch rule) instead of being
-    # readable by every workflow in the repo. Auto-created on first run.
-    environment: npm
+    # Part of the trusted-publisher identity: this name is one of the OIDC claims
+    # npm checks, so it must match what is registered on npmjs.com exactly.
+    environment: npm-publish
     # The rolling dev release is deleted and recreated on every push to main, which
-    # fires `release: published` — but release-main.yml already calls this workflow
+    # fires `release: published` — but release-main.yml dispatches this workflow
     # once the archives are attached, so ignore the event for that tag.
     if: github.event_name != 'release' || github.event.release.tag_name != 'dev'
     steps:
@@ -86,20 +77,17 @@ jobs:
         with:
           ref: ${{ steps.target.outputs.ref }}
 
-      # Deliberately NO registry-url: that makes setup-node write an .npmrc
-      # pinning `_authToken=${NODE_AUTH_TOKEN}` and point NPM_CONFIG_USERCONFIG
-      # at it. With no token the entry resolves to empty, npm treats the registry
-      # as "auth configured but unusable", fails with ENEEDAUTH and never attempts
-      # the OIDC exchange. The publish step below configures auth itself instead.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+          registry-url: https://registry.npmjs.org
 
-      # Node 20 ships npm 10; trusted publishing (OIDC) landed in npm 11.5.1.
-      - name: Use an npm that speaks OIDC
+      # Trusted publishing needs npm >= 11.5.1. Node 24 already bundles npm 11+;
+      # take the latest anyway (npm 12 requires Node >= 22, hence 24 above).
+      - name: Ensure npm >= 11.5 for OIDC
         run: |
-          npm install -g npm@^11
-          echo "npm $(npm --version)"
+          npm install -g npm@latest
+          npm --version
 
       # The app version is the source of truth for both the npm version and the
       # string `francois --version` prints.
@@ -174,27 +162,17 @@ jobs:
           test -x "$(node -e "process.stdout.write(require('./lib/platform.js').resolveExecutable() || '')")"
           rm -rf vendor
 
-      # The credential is bound to this one step, not to the job, so nothing else —
-      # including the release download and the postinstall smoke test above — ever
-      # has it in its environment. Empty means "authenticate over OIDC instead".
+      # No token and no auth setup of any kind: npm negotiates the credential
+      # itself from the job's id-token. Anything written to npm's auth config
+      # here would stop it short of the OIDC exchange.
       - name: Publish to npm
         working-directory: packaging/npm
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            # Bootstrap mode. Written here rather than by setup-node so that the
-            # no-token case leaves npm's auth config completely untouched.
-            echo "authenticating with the NPM_TOKEN secret"
-            npm config set "//registry.npmjs.org/:_authToken=$NPM_TOKEN"
-          else
-            # Presence only, never the values — the request token is a credential.
-            echo "no NPM_TOKEN — authenticating over OIDC (trusted publishing)"
-            echo "  id-token URL:   $([ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && echo present || echo MISSING)"
-            echo "  id-token TOKEN: $([ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] && echo present || echo MISSING)"
-            echo "  npm: $(npm --version)"
-          fi
+          # Presence only, never the values — the request token is a credential.
+          echo "publishing over OIDC (trusted publishing)"
+          echo "  id-token URL:   $([ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && echo present || echo MISSING)"
+          echo "  id-token TOKEN: $([ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] && echo present || echo MISSING)"
           npm version "${{ steps.version.outputs.npm }}" --no-git-tag-version --allow-same-version
 
           # --provenance signs a build attestation with the job's id-token, so anyone
