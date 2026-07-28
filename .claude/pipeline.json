@@ -1,5 +1,5 @@
 {
-  "pipeline": "thebidouille-agents",
+  "pipeline": "cohorte",
   "mode": "global",
   "core_version": "1.1.0",
   "install": "npx cohorte install --global (without npm: curl -fsSL https://raw.githubusercontent.com/TheBidouilleAgency/cohorte/main/install.sh | sh -s -- --global)"

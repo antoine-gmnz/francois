@@ -83,6 +83,7 @@ commands:
 rbac:
   enabled: false
   hierarchy: []
+  note: ""                                    # rbac off — single-user desktop app, no roles
 
 # ── design ──────────────────────────────────────────────────────────────────
 design:
@@ -106,11 +107,18 @@ isolation:
   registry: ""
 
 # ── gate (drives .claude/gate-config.json) ──────────────────────────────────
+# Three tiers, matched against the FULL command string (so chained `cd x && …` forms are
+# caught): `deny` = hard-blocked on any branch · `ask` = confirm on any branch ·
+# `ask_on_default_branch` = confirm ONLY when the checked-out branch is `default_branch`,
+# free on feat/ branches. gate.py resolves the branch at run time; unknown branch
+# (no repo / detached) ⇒ gated.
 gate:
-  deny:
+  default_branch: main                        # protected branch (mirrors vcs.default_branch)
+  deny:                                       # never allowed, on any branch
     - "git push --force"
     - "git push -f"
-  ask:
+  ask: []                                     # always confirm, on any branch
+  ask_on_default_branch:                      # free on feat/<id>, confirm on main
     - "git commit"
     - "git push"
     - "git merge"
