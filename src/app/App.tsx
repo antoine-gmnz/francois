@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { homeDir } from '@tauri-apps/api/path';
 import { getName, getVersion } from '@tauri-apps/api/app';
@@ -15,12 +15,17 @@ import AgentView from '../features/agents/AgentView';
 import { agentIdFromTab, agentTabId, agentTabLabel, type AgentTabRef } from '../features/agents/agent-tab';
 import McpPanel from '../features/mcp/McpPanel';
 import SkillsPanel from '../features/skills/SkillsPanel';
+import PluginPane from '../features/plugins/PluginPane';
+import PluginsModal from '../features/plugins/PluginsModal';
+import { startPlugins } from '../features/plugins/plugin-events';
+import { usePluginsStore } from '../features/plugins/pluginsStore';
+import { pluginPaneHotkeys, pluginPanes, toneColor, visibleStatusItems } from '../features/plugins/plugins';
 import UsageBar from '../features/usage/UsageBar';
 import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import { useStore } from '../lib/store';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
 import { displayWslCwd } from '../../contract/wsl-filesystem';
-import { appSetWindowTheme, diffGetSummary, onDiffEvent, onRemoteEvent } from '../lib/api';
+import { appSetWindowTheme, diffGetSummary, onDiffEvent, onRemoteEvent, pluginsInvokeCommand } from '../lib/api';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import PaletteRoot from '../features/palette/PaletteView';
 import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
@@ -71,6 +76,11 @@ export default function App() {
   // ShellUiState until a session is active — never spawns a PTY on its own.
   const shell = useShellState(activeSessionId ?? '');
   const focusedPane = useStore((s) => s.focusedPane);
+  // plugin-system FR-76: the visible set is a function of the registry AND the
+  // sidebar's project filter, so switching the filter adds/removes panes,
+  // hotkeys and status items in one re-render.
+  const installedPlugins = usePluginsStore((s) => s.plugins);
+  const pluginStatusItems = usePluginsStore((s) => s.statusItems);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const mainTab = useStore((s) => s.mainTab);
   const setMainTab = useStore((s) => s.setMainTab);
@@ -85,6 +95,17 @@ export default function App() {
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
   const activeProjectId = useStore((s) => s.activeProjectId);
+  // FR-46/FR-47: visible panes in registry order; the first four get 6–9.
+  const visiblePluginPanes = useMemo(
+    () => pluginPanes(installedPlugins, activeProjectId),
+    [installedPlugins, activeProjectId],
+  );
+  const pluginHotkeys = useMemo(() => pluginPaneHotkeys(visiblePluginPanes), [visiblePluginPanes]);
+  // FR-49: at most three, right-aligned, in registry order.
+  const pluginBarItems = useMemo(
+    () => visibleStatusItems(installedPlugins, activeProjectId, pluginStatusItems),
+    [installedPlugins, activeProjectId, pluginStatusItems],
+  );
   const permissionsOpen = useStore((s) => s.permissionsOpen);
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
   const projectsOpen = useStore((s) => s.projectsOpen);
@@ -101,9 +122,17 @@ export default function App() {
 
   useEffect(() => {
     initShellEvents();
+    // plugin-system FR-69/FR-80: subscribe to the registry stream and load it
+    // once. The registry is app-scoped, not session-scoped, so this runs once
+    // for the app's lifetime rather than per session.
+    let stopPlugins: (() => void) | null = null;
+    void startPlugins().then((stop) => {
+      stopPlugins = stop;
+    });
     void homeDir()
       .then((h) => setHome(h.replace(/[\\/]$/, '')))
       .catch(() => {});
+    return () => stopPlugins?.();
   }, []);
 
   // Keep the native window title in sync with the active session, "<session> — <app>"
@@ -236,6 +265,11 @@ export default function App() {
         setFocusedPane('mcp');
       } else if (e.key === '5') {
         setFocusedPane('skills');
+      } else if (e.key >= '6' && e.key <= '9') {
+        // FR-47: 6–9 target the 1st–4th VISIBLE plugin panes. A key with no
+        // corresponding pane is a no-op, never a focus change to nothing.
+        const pane = visiblePluginPanes[Number(e.key) - 6];
+        if (pane) setFocusedPane(`plugin:${pane.manifest.id}`);
       } else if (e.key === 'd' || e.key === 'D') {
         // toggle diff↔session, identical to command-palette's view-diff.run (FR-23/FR-29)
         setFocusedPane('main');
@@ -527,6 +561,17 @@ export default function App() {
           <div style={{ flex: 1.05, minHeight: 0 }}>
             <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
+          {/* FR-46: plugin panes append BELOW skills, in registry order. */}
+          {visiblePluginPanes.map((p) => (
+            <div key={p.manifest.id} style={{ flex: 1, minHeight: 0 }}>
+              <PluginPane
+                plugin={p}
+                hotkey={pluginHotkeys[`plugin:${p.manifest.id}`] ?? null}
+                projectId={activeProjectId}
+                sessionId={activeSessionId}
+              />
+            </div>
+          ))}
         </div>
 
         {/* status bar */}
@@ -586,6 +631,53 @@ export default function App() {
           <span>
             focus: <span style={{ color: C.accent }}>{focusedPane}</span>
           </span>
+          {/* plugin-system FR-49: plugin status items, right-aligned, LEFT of
+              the version string, in registry order. `visibleStatusItems` already
+              caps them at three and drops the rest silently. Tone is the only
+              thing the plugin decides; every size and space here is ours. */}
+          {pluginBarItems.map(({ pluginId, item }) => (
+            <span
+              key={pluginId}
+              role={item.commandId ? 'button' : undefined}
+              onClick={() => {
+                if (item.commandId) {
+                  void pluginsInvokeCommand({
+                    pluginId,
+                    commandId: item.commandId,
+                    projectId: activeProjectId,
+                    sessionId: activeSessionId,
+                  });
+                }
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                fontSize: 10.5,
+                letterSpacing: '0.02em',
+                color: item.tone ? toneColor(item.tone) : C.dim,
+                cursor: item.commandId ? 'pointer' : 'default',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: 180,
+              }}
+            >
+              {item.badge && (
+                <span
+                  style={{
+                    fontSize: 9.5,
+                    padding: '0 5px',
+                    border: '1px solid var(--border-2)',
+                    borderRadius: 3,
+                  }}
+                >
+                  {item.badge}
+                </span>
+              )}
+              {item.text}
+            </span>
+          ))}
           <span style={{ color: C.faint }}>francois{appVersion && ` ${appVersion}`}</span>
         </div>
       </div>
@@ -610,6 +702,9 @@ export default function App() {
           needs NO session — a project is configured whether or not anything is
           running — so it is gated on `projectsOpen` alone. */}
       {projectsOpen && <ProjectsModal home={home} onClose={() => setProjectsOpen(false)} />}
+      {/* FR-51: opened by the `Manage plugins` palette command. Owns its own
+          visibility, so nothing here has to track it. */}
+      <PluginsModal />
 
       <PaletteRoot />
     </div>

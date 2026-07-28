@@ -134,3 +134,18 @@ pub(crate) const NOT_FOUND_MSG: &str = "no such project";
 pub(crate) const ROOT_MISSING_MSG: &str = "the project's root directory no longer exists";
 pub(crate) const BAD_ROOT_MSG: &str = "project root does not exist or is not a directory";
 pub(crate) const DUPLICATE_ROOT_MSG: &str = "another project already owns that directory";
+
+/// plugin-system FR-29: `PluginProjectInfo` (§5.5) — id, name, root and nothing
+/// else. Deliberately NOT `ProjectMeta`: the model, effort and permission mode a
+/// project runs under are not a plugin's business.
+pub fn plugin_projects(app: &tauri::AppHandle) -> Vec<serde_json::Value> {
+    use tauri::Manager as _;
+    let Some(state) = app.try_state::<ProjectRegistry>() else {
+        return Vec::new();
+    };
+    let projects = state.projects.lock().unwrap();
+    projects
+        .iter()
+        .map(|p| serde_json::json!({ "id": p.id, "name": p.name, "root": p.root }))
+        .collect()
+}

@@ -132,6 +132,9 @@ fn buf_block(
         summary,
         meta: None,
         card: None,
+        // A subagent's transcript never carries a plugin injection — plugin
+        // prompts land on the SESSION transcript only (plugin-system FR-58).
+        origin: None,
         streaming,
     }
 }

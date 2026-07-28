@@ -342,6 +342,8 @@ pub(crate) enum BlockKind {
     /// (dispatch / completion / kill / turn end). Only ever buffered per agent —
     /// never in a session's own `block_buffer`.
     Notice,
+    /// plugin-system FR-53: a plugin's prompt awaiting Approve/Deny.
+    PluginInjection,
 }
 
 #[derive(Clone)]
@@ -356,6 +358,10 @@ pub(crate) struct BufBlock {
     meta: Option<String>,
     /// interactive-commands: serialized CommandCard (Command kind; None while pending).
     card: Option<Value>,
+    /// plugin-system FR-58: the MessageOrigin on a User block, `None` when the
+    /// human typed it. Its own field rather than reusing `meta`, which is a
+    /// `String` slot other kinds already spoken for.
+    origin: Option<Value>,
     streaming: bool,
 }
 
@@ -413,7 +419,11 @@ pub(crate) struct Session {
     /// as `session_create` received it — the core does no auto-adoption and no
     /// default merging, so what the modal showed is exactly what was created.
     project_id: Option<String>,
-    queue: VecDeque<(String, String)>, // (client blockId, text)
+    // (client blockId, text, plugin-system FR-58 origin). The origin rides the
+    // queue because §7 #32 approves an injection while a turn is in flight —
+    // dropping it here would lose the attribution on exactly the path that
+    // most needs it.
+    queue: VecDeque<(String, String, Option<Value>)>,
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
     pending_probe: Option<ProbeHandle>, // interactive-commands FR-11: single in-flight side-spawn
@@ -469,7 +479,10 @@ impl Session {
         }
     }
 
-    fn buf_user(&mut self, block_id: &str, text: String) {
+    /// plugin-system FR-58: `origin` rides in `meta`, which is the BufBlock's
+    /// existing per-kind slot. It is persisted with the transcript, so the
+    /// `↳ via plugin` attribution survives a reload and a `--resume`.
+    fn buf_user(&mut self, block_id: &str, text: String, origin: Option<Value>) {
         self.block_buffer.push(BufBlock {
             block_id: block_id.into(),
             kind: BlockKind::User,
@@ -478,6 +491,7 @@ impl Session {
             summary: String::new(),
             meta: None,
             card: None,
+            origin,
             streaming: false,
         });
     }
@@ -491,6 +505,7 @@ impl Session {
             summary: String::new(),
             meta: None,
             card: None,
+            origin: None,
             streaming: false,
         });
     }
@@ -508,6 +523,7 @@ impl Session {
             summary,
             meta: None,
             card: None,
+            origin: None,
             streaming: true,
         });
     }
@@ -522,6 +538,7 @@ impl Session {
             summary: String::new(),
             meta: None,
             card: None,
+            origin: None,
             streaming: true,
         });
     }
@@ -545,6 +562,7 @@ impl Session {
                 summary: String::new(),
                 meta: None,
                 card: Some(card),
+                origin: None,
                 streaming: false,
             });
         }
@@ -561,6 +579,7 @@ impl Session {
             summary: String::new(),
             meta: None,
             card: Some(serde_json::json!({ "questions": questions, "state": "pending" })),
+            origin: None,
             streaming: true,
         });
     }
@@ -598,8 +617,38 @@ impl Session {
             summary: String::new(),
             meta: None,
             card: Some(serde_json::json!({ "ask": ask, "state": "pending" })),
+            origin: None,
             streaming: true,
         });
+    }
+
+    /// plugin-system FR-53: buffer the Approve/Deny card. `isStreaming` <=>
+    /// pending, mirroring the permission card it sits beside.
+    fn buf_plugin_injection(&mut self, block_id: &str, request: &Value) {
+        self.block_buffer.push(BufBlock {
+            block_id: block_id.into(),
+            kind: BlockKind::PluginInjection,
+            text: String::new(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: Some(serde_json::json!({ "request": request, "state": "pending" })),
+            origin: None,
+            streaming: true,
+        });
+    }
+
+    /// plugin-system FR-53/FR-55: flip the card to approved/denied/expired.
+    fn buf_plugin_injection_resolve(&mut self, block_id: &str, state: &str) -> Option<BufBlock> {
+        let b = self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id && b.kind == BlockKind::PluginInjection)?;
+        if let Some(card) = b.card.as_mut() {
+            card["state"] = Value::String(state.into());
+        }
+        b.streaming = false;
+        Some(b.clone())
     }
 
     /// permission-guardrails FR-8/FR-10: flip a permission block to its resolved

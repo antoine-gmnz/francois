@@ -21,6 +21,27 @@ import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
+import type {
+  InstalledPlugin,
+  PluginCheckUpdateInput,
+  PluginEvent,
+  PluginGetSettingsInput,
+  PluginInstallInput,
+  PluginInstallPreview,
+  PluginInvokeCommandInput,
+  PluginListOutput,
+  PluginRenderInput,
+  PluginRenderOutput,
+  PluginResolveInjectionInput,
+  PluginResolveInjectionOutput,
+  PluginResolveInput,
+  PluginSetEnablementInput,
+  PluginSetSettingsInput,
+  PluginSettingsView,
+  PluginUninstallInput,
+  PluginUpdateInfo,
+  PluginUpdateInput,
+} from '../../contract/plugin-system';
 
 function ipc<T>(cmd: string, args?: object): Promise<T> {
   return invoke<T>(cmd, args as Record<string, unknown> | undefined);
@@ -158,6 +179,48 @@ export const remoteGet = (sessionId: SessionId) =>
 /** Subscribe to francois://remote/event (remote.status). */
 export function onRemoteEvent(cb: (e: RemoteControlEvent) => void): Promise<UnlistenFn> {
   return listen<RemoteControlEvent>('francois://remote/event', (e) => cb(e.payload));
+}
+
+// plugin-system (§5.4). Twelve commands over the `plugins` domain. Every one is
+// a plain request/response — the frontend NEVER receives plugin code, only the
+// core-validated PanelSpec / StatusItemSpec JSON these resolve (FR-36).
+//
+// ARGUMENT BINDING: unlike every other command in this file, the plugins_*
+// handlers take a single struct parameter named `req` (see
+// src-tauri/src/plugin/commands.rs) rather than flattened fields. Tauri binds
+// command arguments BY PARAMETER NAME, so the payload must be wrapped as
+// { req }. Sending it flat leaves `req` unbound and the invoke REJECTS — which
+// is invisible to a mocked-invoke unit test and surfaced as a plugin pane stuck
+// on "rendering…". Do not "simplify" these back to a bare `req`.
+export const pluginsList = () => ipc<Result<PluginListOutput>>('plugins_list');
+export const pluginsResolve = (req: PluginResolveInput) =>
+  ipc<Result<PluginInstallPreview>>('plugins_resolve', { req });
+export const pluginsInstall = (req: PluginInstallInput) =>
+  ipc<Result<InstalledPlugin>>('plugins_install', { req });
+export const pluginsUninstall = (req: PluginUninstallInput) => ipc<Result<null>>('plugins_uninstall', { req });
+export const pluginsSetEnablement = (req: PluginSetEnablementInput) =>
+  ipc<Result<InstalledPlugin>>('plugins_set_enablement', { req });
+export const pluginsGetSettings = (req: PluginGetSettingsInput) =>
+  ipc<Result<PluginSettingsView>>('plugins_get_settings', { req });
+export const pluginsSetSettings = (req: PluginSetSettingsInput) =>
+  ipc<Result<InstalledPlugin>>('plugins_set_settings', { req });
+/** On-demand only (FR-72): mount, first appearance, refresh tick, invalidation. */
+export const pluginsRender = (req: PluginRenderInput) =>
+  ipc<Result<PluginRenderOutput>>('plugins_render', { req });
+export const pluginsInvokeCommand = (req: PluginInvokeCommandInput) =>
+  ipc<Result<null>>('plugins_invoke_command', { req });
+/** FR-57: `approve` sends through the SAME core path as session_send. */
+export const pluginsResolveInjection = (req: PluginResolveInjectionInput) =>
+  ipc<Result<PluginResolveInjectionOutput>>('plugins_resolve_injection', { req });
+/** FR-12: manual only — never mutates and never runs plugin code. */
+export const pluginsCheckUpdate = (req: PluginCheckUpdateInput) =>
+  ipc<Result<PluginUpdateInfo>>('plugins_check_update', { req });
+export const pluginsUpdate = (req: PluginUpdateInput) =>
+  ipc<Result<InstalledPlugin>>('plugins_update', { req });
+
+/** Subscribe to francois://plugins/event (registry, invalidated, error, install progress). */
+export function onPluginsEvent(cb: (e: PluginEvent) => void): Promise<UnlistenFn> {
+  return listen<PluginEvent>('francois://plugins/event', (e) => cb(e.payload));
 }
 
 /** Subscribe to the core→frontend session event stream. */

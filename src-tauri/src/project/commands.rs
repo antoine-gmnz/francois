@@ -131,6 +131,9 @@ pub fn project_remove(
         }
     } // the registry lock is released BEFORE the engine lock is taken
     crate::session::unlink_project_sessions(&app, &project_id);
+    // plugin-system FR-78 / §7 #45: the id also leaves every plugin's
+    // `projectIds`; an emptied set then behaves as `off` (FR-77).
+    crate::plugin::on_project_removed(&app, &project_id);
     ok(None)
 }
 

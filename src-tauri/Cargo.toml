@@ -23,6 +23,33 @@ dirs = "5"
 uuid = { version = "1", features = ["v4"] }
 ureq = { version = "2", features = ["json"] }
 notify = "6"
+# plugin-system FR-31: the allowlist is a SECURITY boundary — whether a URL's host
+# is `api.github.com` decides whether a plugin reaches it. Hand-rolled parsing is
+# how allowlists get bypassed (userinfo `@`, backslashes, IDN, embedded ports), so
+# the real parser does it. Already in the tree via ureq, so this costs no build time.
+url = "2"
+# plugin-system: the QuickJS isolate every plugin invocation runs in (FR-17..FR-24).
+# default-features off keeps the dependency tree to the C engine + the pieces we
+# actually use; `loader` is what lets us install a resolver that REJECTS every
+# import specifier (FR-19). No "futures": host I/O is synchronous on the isolate's
+# own blocking worker, which is exactly what makes the FR-20 CPU-deadline pause
+# expressible (see plugin/isolate.rs).
+rquickjs = { version = "0.12", default-features = false, features = [
+    "std",
+    "loader",
+    "classes",
+    "properties",
+] }
+# plugin-system FR-65/FR-66: settings-secret obfuscation at rest.
+chacha20poly1305 = "0.10"
+# plugin-system FR-4: npm `dist.integrity` (sha512) / `dist.shasum` (sha1) checks
+# and the base64 envelopes (secrets + integrity).
+sha2 = "0.10"
+sha1 = "0.10"
+base64 = "0.22"
+# plugin-system FR-4/FR-6: the npm tarball, unpacked under hard limits.
+tar = "0.4"
+flate2 = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }

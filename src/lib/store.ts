@@ -11,6 +11,7 @@ import { appendActivity } from '../../contract/overview';
 import type { ProjectsState } from '../../contract/projects';
 import type { UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlStatus } from '../../contract/remote-control';
+import { isPluginPaneId, type PluginPaneId } from '../../contract/plugin-system';
 import { applyRemoteResult, applyRemoteStatus, applySeedStatus, type RemoteMap } from '../features/remote/remote-control';
 import { loadActiveProjectId, persistActiveProjectId, reconcileActiveProjectId } from '../features/projects/projects';
 import {
@@ -24,7 +25,10 @@ import {
 } from '../features/agents/agent-tab';
 import { mintActivityId } from '../features/overview/overview';
 
-export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills';
+// plugin-system FR-45: a plugin panel claims a numbered pane `[6]+`, whose id is
+// `plugin:<pluginId>`. The SESSION/DIFF/SHELL/OVERVIEW main-tab spine is closed to
+// third parties in v1 (plugin-system §2) — only the pane strip is extensible.
+export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills' | PluginPaneId;
 /**
  * The main pane's active tab. The `agent:${string}` member is agent-tab FR-9's
  * dynamic tab — a template-literal member rather than a discriminated object so
@@ -51,6 +55,10 @@ function persistPane(key: string, visible: boolean): void {
 const LEFT_KEY = 'francois.showLeftPane';
 const RIGHT_KEY = 'francois.showRightPane';
 const RIGHT_PANES: readonly Pane[] = ['agents', 'mcp', 'skills'];
+/** Plugin panes append to the SAME right column, below skills (plugin-system FR-46). */
+function isRightPane(pane: Pane): boolean {
+  return RIGHT_PANES.includes(pane) || isPluginPaneId(pane);
+}
 
 export type Theme = 'light' | 'dark';
 const THEME_KEY = 'francois.theme';

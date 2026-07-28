@@ -50,6 +50,20 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
                 "blockId": b.block_id, "kind": "command", "command": b.tool, "card": b.card,
             });
         }
+        BlockKind::PluginInjection => {
+            // plugin-system FR-53: persisted at ask (pending) and again at
+            // resolution; reload upserts by blockId. §7 #30 rehydrates a still-
+            // pending card as `expired`, because pending state does not survive
+            // a restart (§6) and a card that could still send would be a lie.
+            let card = b.card.clone().unwrap_or_else(|| serde_json::json!({}));
+            let mut o = serde_json::json!({ "blockId": b.block_id, "kind": "pluginInjection" });
+            if let Some(map) = card.as_object() {
+                for (k, v) in map {
+                    o[k] = v.clone();
+                }
+            }
+            return o;
+        }
         BlockKind::Question => {
             // session-questions FR-6/FR-13: persisted at ask (pending) and again at
             // resolution — reload upserts by blockId (parse_transcript).
@@ -79,10 +93,17 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
             return o;
         }
     };
-    serde_json::json!({
+    let mut o = serde_json::json!({
         "blockId": b.block_id, "kind": kind, "text": b.text,
         "tool": b.tool, "summary": b.summary, "meta": b.meta,
-    })
+        // plugin-system FR-58. Omitted (not null) for a typed message, so an
+        // existing transcript stays byte-identical.
+        "origin": b.origin,
+    });
+    if b.origin.is_none() {
+        o.as_object_mut().map(|m| m.remove("origin"));
+    }
+    o
 }
 
 /// Append one finalized block as a JSON line to the session's transcript (FR-1/2).
@@ -139,6 +160,7 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 summary: String::new(),
                 meta: None,
                 card: Some(card),
+                origin: None,
                 streaming: false,
             });
         }
@@ -166,6 +188,7 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 summary: String::new(),
                 meta: None,
                 card: Some(card),
+                origin: None,
                 streaming: false,
             });
         }
@@ -194,6 +217,7 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 summary: String::new(),
                 meta: None,
                 card: Some(card),
+                origin: None,
                 streaming: false,
             });
         }
@@ -219,6 +243,9 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
             .to_string(),
         meta: v.get("meta").and_then(|m| m.as_str()).map(String::from),
         card: None,
+        // plugin-system FR-58: the attribution must survive a reload and a
+        // `--resume` — it is a record of what happened, not view state.
+        origin: v.get("origin").filter(|o| !o.is_null()).cloned(),
         streaming: false,
     })
 }
@@ -500,6 +527,7 @@ mod tests {
             summary: "src/x.rs".into(),
             meta: Some("+3 \u{2212}1".into()),
             card: None,
+            origin: None,
             streaming: true, // in-memory streaming flag must NOT round-trip
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
@@ -522,6 +550,7 @@ mod tests {
             summary: String::new(),
             meta: None,
             card: None,
+            origin: None,
             streaming: false,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
@@ -550,6 +579,7 @@ mod tests {
             summary: "explorer".into(), // subagent name lives in `summary`
             meta: Some("done".into()),
             card: None,
+            origin: None,
             streaming: false,
         };
         let back =

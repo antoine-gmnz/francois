@@ -8,6 +8,7 @@ import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './pa
 import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
 import { agentsKill, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { usePluginsStore } from '../plugins/pluginsStore';
 import { requestUsageRefresh } from '../usage/usage';
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
@@ -231,6 +232,19 @@ export function registerBuiltinCommands(): void {
     hint: () => 'defaults & standards',
     run: () => {
       useStore.getState().setProjectsOpen(true);
+    },
+  });
+
+  // plugin-system FR-51: the feature's one BUILT-IN palette command. Plugin
+  // commands themselves register dynamically under `plugin:<id>:<cmd>` (FR-50);
+  // this is Francois's own, and needs no session.
+  registerPaletteCommand({
+    id: 'manage-plugins',
+    glyph: '⌁',
+    name: 'Manage plugins',
+    hint: () => 'install & configure',
+    run: () => {
+      usePluginsStore.getState().openModal();
     },
   });
 

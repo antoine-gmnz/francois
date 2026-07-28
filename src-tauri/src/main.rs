@@ -8,6 +8,7 @@
 mod diff;
 mod ipc;
 mod permissions;
+mod plugin;
 mod project;
 mod session;
 mod usage;
@@ -546,6 +547,9 @@ fn main() {
         // usage-bar §6: the app-scoped usage cache lives in its OWN mutex, never
         // inside session::Engine — a leaf lock the probe path can take freely.
         .manage(usage::UsageState::default())
+        // plugin-system §6: the registry, the log rings, the pending
+        // injections and the isolate pool. `inner` is a LEAF lock.
+        .manage(plugin::PluginState::default())
         .setup(|app| {
             install_panic_log(app.handle());
             // Tint with the dark caption up front; the webview re-tints with the
@@ -561,6 +565,9 @@ fn main() {
             session::warm_model_cache(app.handle().clone());
             // usage-bar FR-11/FR-12: probe once now, then every 5 minutes.
             usage::start_timers(app.handle().clone());
+            // plugin-system FR-69: AFTER projects, so FR-77's prune compares
+            // against a real id set rather than an empty one.
+            plugin::load_plugins(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -616,6 +623,19 @@ fn main() {
             diff::diff_get_file_diff,
             diff::diff_stage_all,
             diff::diff_commit,
+            plugin::plugins_list,
+            plugin::plugins_logs,
+            plugin::plugins_resolve,
+            plugin::plugins_install,
+            plugin::plugins_uninstall,
+            plugin::plugins_set_enablement,
+            plugin::plugins_get_settings,
+            plugin::plugins_set_settings,
+            plugin::plugins_render,
+            plugin::plugins_invoke_command,
+            plugin::plugins_check_update,
+            plugin::plugins_update,
+            plugin::plugins_resolve_injection,
         ])
         .build(tauri::generate_context!())
         .expect("error while building francois")

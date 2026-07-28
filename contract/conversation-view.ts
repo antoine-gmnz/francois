@@ -6,9 +6,10 @@
 // Physical Tauri binding: `francois:conversation:getTranscript` → command
 // `conversation_get_transcript`.
 
-import type { SessionId, BlockId, Result } from './common';
+import type { SessionId, BlockId, Result, MessageOrigin } from './common';
 import type { CommandConversationBlock } from './interactive-commands';
 import type { PermissionConversationBlock } from './permission-guardrails';
+import type { PluginInjectionConversationBlock } from './plugin-system';
 import type { QuestionConversationBlock } from './session-questions';
 
 // ---------- francois:conversation:getTranscript ----------
@@ -18,7 +19,15 @@ export interface GetTranscriptRequest {
 }
 
 export type ConversationGlyph = '●' | '⧉' | '⌕' | '✎' | '⇉' | '';
-export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent' | 'command' | 'question' | 'permission';
+export type ConversationBlockKind =
+  | 'user'
+  | 'assistant'
+  | 'tool'
+  | 'subagent'
+  | 'command'
+  | 'question'
+  | 'permission'
+  | 'pluginInjection'; // plugin-system FR-53
 
 interface ConversationBlockBase {
   blockId: BlockId;
@@ -29,6 +38,12 @@ export interface UserConversationBlock extends ConversationBlockBase {
   kind: 'user';
   text: string;
   queued: boolean;
+  /**
+   * Set iff the message came from an APPROVED plugin injection (plugin-system FR-58).
+   * Persisted with the transcript, so the `↳ via plugin <name>` attribution survives a
+   * reload, a `--resume`, and the plugin's own uninstall. Absent for human-typed messages.
+   */
+  origin?: MessageOrigin;
 }
 
 export interface AssistantConversationBlock extends ConversationBlockBase {
@@ -65,7 +80,8 @@ export type ConversationBlock =
   | SubagentConversationBlock
   | CommandConversationBlock // interactive-commands (contract/interactive-commands.ts)
   | QuestionConversationBlock // session-questions (contract/session-questions.ts)
-  | PermissionConversationBlock; // permission-guardrails (contract/permission-guardrails.ts)
+  | PermissionConversationBlock // permission-guardrails (contract/permission-guardrails.ts)
+  | PluginInjectionConversationBlock; // plugin-system (contract/plugin-system.ts)
 
 // resolves Result<ConversationBlock[]>; error: SESSION_NOT_FOUND
 export type GetTranscriptResponse = Result<ConversationBlock[]>;

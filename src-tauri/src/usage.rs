@@ -888,3 +888,17 @@ mod tests {
         assert_eq!(probe_cwd(), dirs::home_dir());
     }
 }
+
+/// plugin-system FR-29: the current `UsageSnapshot`, or null when the probe has
+/// not produced one yet.
+pub fn plugin_usage(app: &tauri::AppHandle) -> serde_json::Value {
+    use tauri::Manager as _;
+    let Some(state) = app.try_state::<UsageState>() else {
+        return serde_json::Value::Null;
+    };
+    let snapshot = match state.0.lock() {
+        Ok(inner) => inner.snapshot.clone(),
+        Err(_) => return serde_json::Value::Null,
+    };
+    serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null)
+}

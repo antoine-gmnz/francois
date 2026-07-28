@@ -283,7 +283,14 @@ pub(crate) fn run_reader(
                 session_id: session_id.clone(),
             },
         );
-        begin_turn(&app, &session_id, block_id, text, TurnMode::ResumeRetry);
+        begin_turn(
+            &app,
+            &session_id,
+            block_id,
+            text,
+            None,
+            TurnMode::ResumeRetry,
+        );
         return;
     }
 
