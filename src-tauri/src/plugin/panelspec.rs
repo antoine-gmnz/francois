@@ -306,6 +306,67 @@ pub(crate) fn validate_status(raw: &Value) -> Result<StatusItemSpec, String> {
     })
 }
 
+/// FR-81: validate a `tab()` return.
+///
+/// The URL goes through `net::check_url` — the SAME gate `francois.fetch` uses.
+/// That is the whole security argument for this surface: a plugin can frame an
+/// origin exactly when it could already have fetched it, so contributing a tab
+/// widens no grant. Reimplementing a looser check here is how that would quietly
+/// stop being true, so it deliberately calls the one function.
+pub(crate) fn validate_tab(raw: &Value, allowlist: &[String]) -> Result<TabSpec, String> {
+    let obj = raw
+        .as_object()
+        .ok_or_else(|| "tab() must return an object or null".to_string())?;
+    let version = obj
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| "tab() must return { version, url } or { version, message }".to_string())?
+        as u32;
+
+    let url = opt_str(raw, "url", PANEL_MAX_TEXT).unwrap_or(None);
+    let message = opt_str(raw, "message", PANEL_MAX_TEXT).unwrap_or(None);
+
+    match (&url, &message) {
+        (Some(_), Some(_)) => {
+            // Ambiguous: framing the page and explaining why there is no page
+            // are opposite outcomes, and guessing which one the author meant
+            // would make the tab's behaviour depend on our tie-break.
+            return Err("tab() must return url OR message, not both".into());
+        }
+        (None, None) => return Err("tab() must return either url or message".into()),
+        _ => {}
+    }
+
+    let url = match url {
+        Some(u) => {
+            crate::plugin::net::check_url(&u, allowlist)?;
+            Some(u)
+        }
+        None => None,
+    };
+
+    let action = match raw.get("action") {
+        None | Some(Value::Null) => None,
+        Some(a) => {
+            let label = req_str(a, "label", PANEL_MAX_ACTION_LABEL);
+            let command_id = req_str(a, "commandId", PANEL_MAX_ACTION_LABEL);
+            match (label, command_id) {
+                (Some(label), Some(command_id)) => Some(TabAction { label, command_id }),
+                // A malformed action drops the action, never the whole tab —
+                // same degradation rule the optionals on a status item follow.
+                _ => None,
+            }
+        }
+    };
+
+    Ok(TabSpec {
+        version,
+        url,
+        message,
+        action,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,5 +732,104 @@ mod tests {
         assert_eq!(item.text, "ok");
         assert_eq!(item.tone, None);
         assert_eq!(item.badge, None);
+    }
+
+    // ---------- FR-81: the tab surface ----------
+
+    fn allow() -> Vec<String> {
+        vec!["127.0.0.1".to_string()]
+    }
+
+    #[test]
+    fn a_loopback_url_on_the_allowlist_validates() {
+        let spec = validate_tab(&json!({ "version": 1, "url": "http://127.0.0.1:4317" }), &allow())
+            .unwrap();
+        assert_eq!(spec.url.as_deref(), Some("http://127.0.0.1:4317"));
+        assert!(spec.message.is_none());
+    }
+
+    #[test]
+    fn a_host_outside_the_plugins_allowlist_is_refused() {
+        // The whole security argument for this surface: a plugin may FRAME an
+        // origin exactly when it could already have FETCHED it. If this ever
+        // passes, contributing a tab has silently widened a grant.
+        let err = validate_tab(&json!({ "version": 1, "url": "https://evil.example/x" }), &allow())
+            .unwrap_err();
+        assert!(err.contains("allowlist"), "{err}");
+    }
+
+    #[test]
+    fn a_non_loopback_http_url_is_refused_even_if_the_host_is_allowed() {
+        // Inherited from check_url: http is loopback-only. Framing a page
+        // fetched in clear text over a network is not something a manifest
+        // entry should be able to opt into.
+        let err = validate_tab(
+            &json!({ "version": 1, "url": "http://example.com/" }),
+            &vec!["example.com".to_string()],
+        )
+        .unwrap_err();
+        assert!(err.contains("https"), "{err}");
+    }
+
+    #[test]
+    fn data_and_blob_urls_are_refused_so_a_plugin_cannot_supply_the_document() {
+        // The line between "names a page" and "renders markup in the webview".
+        for url in [
+            "data:text/html,<script>alert(1)</script>",
+            "blob:http://127.0.0.1/abc",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+        ] {
+            assert!(
+                validate_tab(&json!({ "version": 1, "url": url }), &allow()).is_err(),
+                "{url} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_message_needs_no_allowlist_and_may_carry_an_action() {
+        let spec = validate_tab(
+            &json!({ "version": 1, "message": "not running",
+                     "action": { "label": "retry", "commandId": "refresh" } }),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(spec.message.as_deref(), Some("not running"));
+        assert!(spec.url.is_none());
+        assert_eq!(spec.action.unwrap().command_id, "refresh");
+    }
+
+    #[test]
+    fn url_and_message_together_are_refused_rather_than_tie_broken() {
+        let err = validate_tab(
+            &json!({ "version": 1, "url": "http://127.0.0.1:4317", "message": "down" }),
+            &allow(),
+        )
+        .unwrap_err();
+        assert!(err.contains("not both"), "{err}");
+    }
+
+    #[test]
+    fn neither_url_nor_message_is_refused() {
+        assert!(validate_tab(&json!({ "version": 1 }), &allow()).is_err());
+    }
+
+    #[test]
+    fn a_malformed_action_drops_the_action_not_the_whole_tab() {
+        let spec = validate_tab(
+            &json!({ "version": 1, "message": "down", "action": { "label": "retry" } }),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(spec.message.as_deref(), Some("down"));
+        assert!(spec.action.is_none());
+    }
+
+    #[test]
+    fn a_non_object_return_is_refused() {
+        for raw in [json!("http://127.0.0.1"), json!(3), json!([])] {
+            assert!(validate_tab(&raw, &allow()).is_err());
+        }
     }
 }

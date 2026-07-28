@@ -207,6 +207,9 @@ pub struct PluginContributes {
     /// `Record<string, never>` on the wire — an empty object claiming the surface.
     #[serde(rename = "statusBar", default, skip_serializing_if = "Option::is_none")]
     pub status_bar: Option<Map<String, Value>>,
+    /// FR-81: claims a main tab framing a URL the plugin's `tab()` returns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<PluginPanelContribution>,
 }
 
 impl PluginContributes {
@@ -327,6 +330,8 @@ pub enum PluginSurface {
     Panel,
     StatusBar,
     Command,
+    /// FR-81: the plugin's main tab — a URL the app frames.
+    Tab,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -504,6 +509,30 @@ pub struct StatusItemSpec {
     pub badge: Option<String>,
     #[serde(rename = "commandId", default, skip_serializing_if = "Option::is_none")]
     pub command_id: Option<String>,
+}
+
+/// FR-81 — what a `tab()` handler returns, after validation.
+///
+/// Exactly one of `url` / `message` is ever set. `url` has already been checked
+/// against the plugin's own `capabilities.network.hosts` by the same `check_url`
+/// that gates `francois.fetch`, so by the time this reaches the webview the
+/// origin is one the user consented to at install time.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TabSpec {
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<TabAction>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TabAction {
+    pub label: String,
+    #[serde(rename = "commandId")]
+    pub command_id: String,
 }
 
 // ---------- events (contract §5.4) ----------

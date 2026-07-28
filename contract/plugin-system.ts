@@ -81,6 +81,24 @@ export interface PluginContributes {
   panel?: { title: string }; // ≤ 18 chars after uppercasing/truncation
   /** Claims a status-bar item (FR-49). */
   statusBar?: Record<string, never>;
+  /**
+   * Claims a MAIN TAB that frames a web page the plugin names (FR-81).
+   *
+   * This is the one contribution that puts something in the webview which
+   * Francois did not draw, so it is the one to be careful about. Three things
+   * bound it:
+   *
+   *  * The plugin never supplies markup — only a URL, returned from `tab()`.
+   *  * The core rejects any URL whose host is not in
+   *    `capabilities.network.hosts`. The allowlist that already decides what a
+   *    plugin may FETCH now also decides what it may FRAME, so consenting to a
+   *    tab grants no origin the user had not already granted.
+   *  * The framed page is inert with respect to Francois: `francois.*` exists
+   *    only inside the isolate, so script in the frame reaches no session, diff
+   *    or project. A plugin drives sessions through `driveSessions` (FR-30),
+   *    where every prompt is human-confirmed — never through its own page.
+   */
+  tab?: { title: string }; // ≤ 18 chars after uppercasing/truncation
 }
 
 export type PluginSettingType = 'string' | 'number' | 'boolean' | 'select' | 'secret';
@@ -132,7 +150,7 @@ export type PluginEnablement =
   | { scope: 'all' }
   | { scope: 'projects'; projectIds: ProjectId[] };
 
-export type PluginSurface = 'panel' | 'statusBar' | 'command';
+export type PluginSurface = 'panel' | 'statusBar' | 'command' | 'tab';
 
 export interface PluginRuntimeError {
   at: number; // epoch ms
@@ -234,6 +252,27 @@ export interface StatusItemSpec {
   tone?: PanelTone;
   badge?: string; // ≤ STATUS_MAX_BADGE chars
   commandId?: string; // clicking fires it; absent ⇒ inert
+}
+
+/**
+ * What a `tab()` handler returns (FR-81).
+ *
+ * Exactly ONE of `url` / `message` — the core rejects both and neither. A
+ * plugin whose backing service is down returns `message`, not a URL it knows
+ * will fail to load, so the tab explains itself instead of framing a browser
+ * error page.
+ *
+ * There is deliberately no way to return markup, HTML, or a data:/blob: URL:
+ * `url` must be http(s) with a host on the plugin's own network allowlist.
+ */
+export interface TabSpec {
+  version: 1;
+  /** http(s) only, host ∈ capabilities.network.hosts. */
+  url?: string;
+  /** Why there is nothing to frame. ≤ PANEL_MAX_TEXT chars. */
+  message?: string;
+  /** Optional affordance under `message` — e.g. a retry. */
+  action?: { label: string; commandId: string };
 }
 
 // ---------- validation limits the CORE enforces (FR-36) ----------
@@ -343,7 +382,7 @@ export interface PluginSetSettingsInput {
 
 export interface PluginRenderInput {
   pluginId: string;
-  surface: 'panel' | 'statusBar';
+  surface: 'panel' | 'statusBar' | 'tab';
   /** The current visibility scope (FR-76); null under "All projects". */
   projectId: ProjectId | null;
   /** The app-shell active session, or null. */
@@ -352,7 +391,8 @@ export interface PluginRenderInput {
 
 export type PluginRenderOutput =
   | { surface: 'panel'; spec: PanelSpec | null } // null ⇒ handler returned nothing (FR-43)
-  | { surface: 'statusBar'; item: StatusItemSpec | null };
+  | { surface: 'statusBar'; item: StatusItemSpec | null }
+  | { surface: 'tab'; tab: TabSpec | null }; // null ⇒ handler returned nothing (FR-81)
 // invoke('plugins_render', req: PluginRenderInput): Promise<Result<PluginRenderOutput>>
 //   On-demand only (FR-72). Errors: 'PLUGIN_NOT_FOUND' | 'PLUGIN_RUNTIME_ERROR'
 //         | 'INVALID_INPUT' | 'INTERNAL'
@@ -498,7 +538,7 @@ export interface PluginHostApi {
 }
 
 export interface PluginRenderContext {
-  surface: 'panel' | 'statusBar';
+  surface: 'panel' | 'statusBar' | 'tab';
   projectId: ProjectId | null;
   sessionId: SessionId | null;
   now: number; // epoch ms, stamped by the core
@@ -517,6 +557,8 @@ export interface PluginCommandContext {
 export interface PluginModule {
   panel?(ctx: PluginRenderContext): PanelSpec | null | Promise<PanelSpec | null>;
   statusBar?(ctx: PluginRenderContext): StatusItemSpec | null | Promise<StatusItemSpec | null>;
+  /** FR-81: the URL to frame in this plugin's main tab, or why there is none. */
+  tab?(ctx: PluginRenderContext): TabSpec | null | Promise<TabSpec | null>;
   commands?: Record<string, (ctx: PluginCommandContext) => void | Promise<void>>;
 }
 
@@ -570,7 +612,7 @@ export interface PluginInjectionConversationBlock {
 // ============================================================================
 // `contract/app-shell.ts` does not exist in this repo; the frontend's `Pane` union
 // lives in src/lib/store.ts. It widens to `... | PluginPaneId` and imports these.
-// MainTab is UNCHANGED — no plugin main tab in v1.
+// MainTab widens to `... | PluginTabId` for FR-81 tab contributions.
 
 export type PluginPaneId = `plugin:${string}`;
 
@@ -592,6 +634,38 @@ export function isPluginPaneId(paneId: string): paneId is PluginPaneId {
 export function pluginPaneFocusLabel(paneId: string): string | null {
   return isPluginPaneId(paneId) ? paneId.slice(PLUGIN_PANE_PREFIX.length) : null;
 }
+
+// ---------- FR-81: plugin-contributed MAIN TABS ----------
+// A separate prefix from PLUGIN_PANE_PREFIX on purpose. `Pane` and `MainTab` are
+// distinct unions, and a plugin may contribute BOTH — sharing one prefix would
+// make `plugin:acme` ambiguous at every boundary that takes a bare string.
+
+export type PluginTabId = `plugintab:${string}`;
+
+export const PLUGIN_TAB_PREFIX = 'plugintab:';
+
+/** `'acme-ci'` → `'plugintab:acme-ci'`. */
+export function pluginTabId(pluginId: string): PluginTabId {
+  return `${PLUGIN_TAB_PREFIX}${pluginId}` as PluginTabId;
+}
+
+export function isPluginTabId(tabId: string): tabId is PluginTabId {
+  return tabId.startsWith(PLUGIN_TAB_PREFIX);
+}
+
+/** The plugin id inside a tab id, or null when it is one of the static tabs. */
+export function pluginIdOfTab(tabId: string): string | null {
+  return isPluginTabId(tabId) ? tabId.slice(PLUGIN_TAB_PREFIX.length) : null;
+}
+
+/**
+ * The URL schemes a `TabSpec.url` may use (FR-81).
+ *
+ * `data:` and `blob:` are excluded deliberately — either would let a plugin
+ * supply the DOCUMENT rather than merely point at one, which is the entire
+ * distinction between "names a page" and "renders markup in the webview".
+ */
+export const PLUGIN_TAB_SCHEMES = ['http:', 'https:'] as const;
 
 /** FR-47 — KeyAction gains these four; KEY_BINDINGS gains '6'..'9', scope 'suspended-in-text-input'. */
 export const PLUGIN_PANE_KEY_ACTIONS = [

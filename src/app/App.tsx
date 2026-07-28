@@ -19,7 +19,17 @@ import PluginPane from '../features/plugins/PluginPane';
 import PluginsModal from '../features/plugins/PluginsModal';
 import { startPlugins } from '../features/plugins/plugin-events';
 import { usePluginsStore } from '../features/plugins/pluginsStore';
-import { pluginPaneHotkeys, pluginPanes, toneColor, visibleStatusItems } from '../features/plugins/plugins';
+import PluginTab from '../features/plugins/PluginTab';
+import {
+  isTabStillVisible,
+  pluginPaneHotkeys,
+  pluginPanes,
+  pluginTabs,
+  tabTitle,
+  toneColor,
+  visibleStatusItems,
+} from '../features/plugins/plugins';
+import { pluginIdOfTab, pluginTabId } from '../../contract/plugin-system';
 import UsageBar from '../features/usage/UsageBar';
 import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import { useStore } from '../lib/store';
@@ -101,6 +111,11 @@ export default function App() {
     [installedPlugins, activeProjectId],
   );
   const pluginHotkeys = useMemo(() => pluginPaneHotkeys(visiblePluginPanes), [visiblePluginPanes]);
+  // FR-81: tabs follow the same enablement + registry order as panes.
+  const visiblePluginTabs = useMemo(
+    () => pluginTabs(installedPlugins, activeProjectId),
+    [installedPlugins, activeProjectId],
+  );
   // FR-49: at most three, right-aligned, in registry order.
   const pluginBarItems = useMemo(
     () => visibleStatusItems(installedPlugins, activeProjectId, pluginStatusItems),
@@ -317,6 +332,13 @@ export default function App() {
     }
   }, [activeProjectId, setMainTab, clearAgentTabs]);
 
+  // FR-81: a plugin tab can vanish under the user — the plugin is disabled,
+  // uninstalled, or scoped out by the project filter. Without this the main
+  // pane would render nothing at all, with no tab selected to get back from.
+  useEffect(() => {
+    if (!isTabStillVisible(mainTab, visiblePluginTabs)) setMainTab('session');
+  }, [mainTab, visiblePluginTabs, setMainTab]);
+
   // permission-guardrails: the rules editor needs a session (the local tier is
   // its cwd). If the last session is removed while it is open the modal unmounts
   // without ever calling onClose, so `permissionsOpen` would stay true and keep
@@ -439,6 +461,18 @@ export default function App() {
                   onClose={() => closeAgentTab(t.id)}
                 />
               ))}
+              {/* FR-81: plugin tabs APPEND after the static spine, in registry
+                  order. The title is the plugin's only say in the strip — it is
+                  uppercased and truncated like a pane title, and rendered as a
+                  text child, never as an attribute. */}
+              {visiblePluginTabs.map((p) => {
+                const id = pluginTabId(p.manifest.id);
+                return (
+                  <span key={id} onClick={() => setMainTab(id)} style={tabStyle(mainTab === id)}>
+                    {tabTitle(p.manifest.contributes.tab?.title ?? p.manifest.name)}
+                  </span>
+                );
+              })}
             </div>
             {mainTab === 'session' && active && (
               <div style={{ display: 'flex', gap: 14, fontSize: 10.5, color: C.dim, alignItems: 'center' }}>
@@ -504,6 +538,21 @@ export default function App() {
                 select a session
               </div>
             )
+          ) : pluginIdOfTab(mainTab) ? (
+            // FR-81. `visiblePluginTabs.find` rather than a lookup by id alone:
+            // the tab must not render for a plugin the current project filter
+            // hides, and the guard below already sends focus back if so.
+            (() => {
+              const p = visiblePluginTabs.find((x) => x.manifest.id === pluginIdOfTab(mainTab));
+              return p ? (
+                <PluginTab
+                  key={p.manifest.id}
+                  plugin={p}
+                  projectId={activeProjectId}
+                  sessionId={activeSessionId}
+                />
+              ) : null;
+            })()
           ) : active ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-app)' }}>
               <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>

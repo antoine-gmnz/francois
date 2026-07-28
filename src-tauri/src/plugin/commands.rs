@@ -841,6 +841,10 @@ pub enum RenderOutput {
         surface: &'static str,
         item: Option<StatusItemSpec>,
     },
+    Tab {
+        surface: &'static str,
+        tab: Option<TabSpec>,
+    },
 }
 
 #[tauri::command(async)]
@@ -848,10 +852,12 @@ pub async fn plugins_render(app: AppHandle, req: RenderInput) -> IpcResult<Rende
     let handler = match req.surface.as_str() {
         "panel" => isolate::Handler::Panel,
         "statusBar" => isolate::Handler::StatusBar,
-        _ => return err("INVALID_INPUT", "surface must be panel or statusBar"),
+        "tab" => isolate::Handler::Tab,
+        _ => return err("INVALID_INPUT", "surface must be panel, statusBar or tab"),
     };
     let surface = match handler {
         isolate::Handler::Panel => PluginSurface::Panel,
+        isolate::Handler::Tab => PluginSurface::Tab,
         _ => PluginSurface::StatusBar,
     };
     // FR-55: expire whatever ran out of time. The render tick is the only clock
@@ -882,6 +888,10 @@ pub async fn plugins_render(app: AppHandle, req: RenderInput) -> IpcResult<Rende
                 surface: "panel",
                 spec: None,
             },
+            PluginSurface::Tab => RenderOutput::Tab {
+                surface: "tab",
+                tab: None,
+            },
             _ => RenderOutput::Status {
                 surface: "statusBar",
                 item: None,
@@ -896,6 +906,14 @@ pub async fn plugins_render(app: AppHandle, req: RenderInput) -> IpcResult<Rende
                         surface: "panel",
                         spec: Some(spec),
                     })
+                }
+                PluginSurface::Tab => {
+                    panelspec::validate_tab(&value, &granted_hosts(&app, &req.plugin_id)).map(
+                        |tab| RenderOutput::Tab {
+                            surface: "tab",
+                            tab: Some(tab),
+                        },
+                    )
                 }
                 _ => panelspec::validate_status(&value).map(|item| RenderOutput::Status {
                     surface: "statusBar",
@@ -1006,6 +1024,18 @@ pub async fn plugins_invoke_command(
 
 /// The one path into the isolate. Gathers everything under the lock, releases it,
 /// then runs on a blocking worker (FR-22).
+/// The plugin's GRANTED network allowlist — what it consented to, never what its
+/// current manifest merely asks for. FR-81 gates the tab URL on this.
+fn granted_hosts(app: &AppHandle, plugin_id: &str) -> Vec<String> {
+    let Some(state) = app.try_state::<PluginState>() else {
+        return Vec::new();
+    };
+    let inner = state.inner.lock().unwrap();
+    find(&inner.plugins, plugin_id)
+        .map(|e| e.granted_capabilities.hosts().to_vec())
+        .unwrap_or_default()
+}
+
 async fn invoke(
     app: &AppHandle,
     plugin_id: &str,

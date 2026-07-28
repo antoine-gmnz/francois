@@ -40,6 +40,7 @@ import {
   SECRET_SENTINEL,
   SETTING_MAX_STRING,
   STATUS_ITEM_MAX_VISIBLE,
+  pluginIdOfTab,
   pluginPaletteCommandId,
   pluginPaneHotkey,
   pluginPaneId,
@@ -257,6 +258,37 @@ export function pluginPaneHotkeys(panes: InstalledPlugin[]): Record<PluginPaneId
 /** FR-46: `contributes.panel.title`, uppercased and truncated to 18 chars. */
 export function paneTitle(title: string): string {
   return title.toUpperCase().slice(0, PLUGIN_PANE_TITLE_MAX);
+}
+
+// ============================================================================
+// FR-81 — main tabs
+// ============================================================================
+
+/**
+ * The plugins contributing a main tab, in registry order — the same order and
+ * the same enablement rule the panes use, so a project filter adds and removes
+ * tabs exactly as it does panes.
+ */
+export function pluginTabs(plugins: InstalledPlugin[], scope: ProjectId | null): InstalledPlugin[] {
+  return activePlugins(plugins, scope).filter((p) => p.manifest.contributes.tab !== undefined);
+}
+
+/** FR-81: `contributes.tab.title`, uppercased and truncated like a pane title. */
+export function tabTitle(title: string): string {
+  return title.toUpperCase().slice(0, PLUGIN_PANE_TITLE_MAX);
+}
+
+/**
+ * Is `tab` still a tab some visible plugin contributes?
+ *
+ * The main tab is persisted-ish state that outlives a registry change: disabling
+ * a plugin, or switching the project filter, can pull the selected tab out from
+ * under the user. Without this the app would render a tab whose plugin is gone —
+ * a blank main pane with no way back.
+ */
+export function isTabStillVisible(tab: string, visible: InstalledPlugin[]): boolean {
+  const id = pluginIdOfTab(tab);
+  return id === null || visible.some((p) => p.manifest.id === id);
 }
 
 /** FR-46: the count the first TOP-LEVEL list reports, else the top-level node count. */

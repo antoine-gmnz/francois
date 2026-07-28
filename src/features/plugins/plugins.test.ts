@@ -28,8 +28,11 @@ import {
   REFRESH_INTERVAL_MIN_MS,
   SECRET_SENTINEL,
   STATUS_ITEM_MAX_VISIBLE,
+  isPluginTabId,
+  pluginIdOfTab,
   pluginPaletteCommandId,
   pluginPaneId,
+  pluginTabId,
 } from '../../../contract/plugin-system';
 import {
   CONSENT_PENDING_LINE,
@@ -62,6 +65,9 @@ import {
   pluginPaletteEntries,
   pluginPaneHotkeys,
   pluginPanes,
+  pluginTabs,
+  tabTitle,
+  isTabStillVisible,
   pluginRowSubtitle,
   pluginRowTags,
   queuedNote,
@@ -356,6 +362,58 @@ describe('plugin panes (FR-46/FR-47/FR-48)', () => {
   it('labels the pane header <n> · [<hotkey>], or <n> alone with no hotkey (§8·A1)', () => {
     expect(paneCountLabel(4, '6')).toBe('4 · [6]');
     expect(paneCountLabel(0, null)).toBe('0');
+  });
+});
+
+describe('plugin main tabs (FR-81)', () => {
+  const tab = { tab: { title: 'cohorte' } };
+  const list = [
+    plugin({ manifest: { id: 'a', contributes: tab } }),
+    plugin({ manifest: { id: 'b', contributes: { panel: { title: 'ci' } } } }), // pane only
+    plugin({ manifest: { id: 'c', contributes: tab }, enablement: { scope: 'off' } }),
+    plugin({ manifest: { id: 'd', contributes: tab } }),
+  ];
+
+  it('keeps registry order and drops non-contributors and inactive plugins', () => {
+    expect(pluginTabs(list, null).map((p) => p.manifest.id)).toEqual(['a', 'd']);
+  });
+
+  it('scopes tabs by project exactly as panes are scoped', () => {
+    const scoped = [
+      plugin({ manifest: { id: 'a', contributes: tab }, enablement: { scope: 'projects', projectIds: ['p1'] } }),
+    ];
+    expect(pluginTabs(scoped, 'p1')).toHaveLength(1);
+    expect(pluginTabs(scoped, 'p2')).toHaveLength(0);
+  });
+
+  it('uppercases and truncates the title like a pane title', () => {
+    expect(tabTitle('cohorte')).toBe('COHORTE');
+    expect(tabTitle('a-very-long-plugin-tab-title').length).toBeLessThanOrEqual(18);
+  });
+
+  it('uses a DIFFERENT prefix from pane ids so a bare string is never ambiguous', () => {
+    // A plugin may contribute both surfaces; one shared prefix would make
+    // 'plugin:acme' mean either at every boundary that takes a string.
+    expect(pluginTabId('acme')).not.toBe(pluginPaneId('acme'));
+    expect(isPluginTabId(pluginPaneId('acme'))).toBe(false);
+    expect(isPluginTabId(pluginTabId('acme'))).toBe(true);
+    expect(pluginIdOfTab(pluginTabId('acme'))).toBe('acme');
+  });
+
+  it('reports the static tabs as always visible', () => {
+    for (const t of ['overview', 'session', 'diff', 'shell']) {
+      expect(isTabStillVisible(t, [])).toBe(true);
+    }
+  });
+
+  it('reports a tab whose plugin disappeared as no longer visible', () => {
+    // The regression this pins: disabling a plugin (or filtering to another
+    // project) while its tab is selected would otherwise leave the main pane
+    // rendering nothing, with no tab selected to get back from.
+    const visible = pluginTabs(list, null);
+    expect(isTabStillVisible(pluginTabId('a'), visible)).toBe(true);
+    expect(isTabStillVisible(pluginTabId('c'), visible)).toBe(false);
+    expect(isTabStillVisible(pluginTabId('gone'), visible)).toBe(false);
   });
 });
 

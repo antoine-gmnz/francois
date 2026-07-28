@@ -310,6 +310,11 @@ fn validate_contributes(c: &PluginContributes) -> Result<(), String> {
             return Err("contributes.panel.title must not be empty".into());
         }
     }
+    if let Some(tab) = &c.tab {
+        if tab.title.trim().is_empty() {
+            return Err("contributes.tab.title must not be empty".into());
+        }
+    }
     let mut seen = std::collections::HashSet::new();
     for cmd in c.commands() {
         if cmd.id.trim().is_empty() || cmd.id.chars().count() > 64 {

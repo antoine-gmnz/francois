@@ -11,7 +11,7 @@ import { appendActivity } from '../../contract/overview';
 import type { ProjectsState } from '../../contract/projects';
 import type { UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlStatus } from '../../contract/remote-control';
-import { isPluginPaneId, type PluginPaneId } from '../../contract/plugin-system';
+import { isPluginPaneId, type PluginPaneId, type PluginTabId } from '../../contract/plugin-system';
 import { applyRemoteResult, applyRemoteStatus, applySeedStatus, type RemoteMap } from '../features/remote/remote-control';
 import { loadActiveProjectId, persistActiveProjectId, reconcileActiveProjectId } from '../features/projects/projects';
 import {
@@ -26,15 +26,18 @@ import {
 import { mintActivityId } from '../features/overview/overview';
 
 // plugin-system FR-45: a plugin panel claims a numbered pane `[6]+`, whose id is
-// `plugin:<pluginId>`. The SESSION/DIFF/SHELL/OVERVIEW main-tab spine is closed to
-// third parties in v1 (plugin-system §2) — only the pane strip is extensible.
+// `plugin:<pluginId>`.
 export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills' | PluginPaneId;
 /**
- * The main pane's active tab. The `agent:${string}` member is agent-tab FR-9's
- * dynamic tab — a template-literal member rather than a discriminated object so
- * every existing `mainTab === 'diff'` comparison keeps working untouched.
+ * The main pane's active tab. Both dynamic members are template-literal rather
+ * than discriminated objects so every existing `mainTab === 'diff'` comparison
+ * keeps working untouched:
+ *   - `agent:${string}` — agent-tab FR-9's per-subagent tab.
+ *   - `PluginTabId` (`plugintab:<id>`) — plugin-system FR-81's tab contribution.
+ * The four static tabs remain Francois's own and keep their order — a dynamic
+ * tab APPENDS to the strip, it never replaces or reorders the spine.
  */
-export type MainTab = 'overview' | 'session' | 'diff' | 'shell' | `agent:${string}`;
+export type MainTab = 'overview' | 'session' | 'diff' | 'shell' | `agent:${string}` | PluginTabId;
 
 // localStorage persistence for the column toggles — guarded so a restricted
 // storage environment (or node test env) degrades to defaults silently.
@@ -320,7 +323,7 @@ export const useStore = create<AppState>((set) => ({
         patch.showLeftPane = true;
         persistPane(LEFT_KEY, true);
       }
-      if (RIGHT_PANES.includes(focusedPane) && !s.showRightPane) {
+      if (isRightPane(focusedPane) && !s.showRightPane) {
         patch.showRightPane = true;
         persistPane(RIGHT_KEY, true);
       }
@@ -340,7 +343,7 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       const show = !s.showRightPane;
       persistPane(RIGHT_KEY, show);
-      const focusedPane = !show && RIGHT_PANES.includes(s.focusedPane) ? 'main' : s.focusedPane;
+      const focusedPane = !show && isRightPane(s.focusedPane) ? 'main' : s.focusedPane;
       return { showRightPane: show, focusedPane };
     }),
   newSessionOpen: false,

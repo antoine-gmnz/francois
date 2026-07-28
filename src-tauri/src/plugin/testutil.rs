@@ -44,6 +44,7 @@ pub(crate) fn manifest_fixture(id: &str) -> PluginManifest {
             }]),
             panel: Some(PluginPanelContribution { title: "CI".into() }),
             status_bar: None,
+            tab: None,
         },
         configuration: None,
         capabilities: PluginCapabilities::default(),

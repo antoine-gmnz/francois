@@ -42,6 +42,7 @@ pub(crate) const MSG_NO_DEFAULT: &str = "entry must export default an object";
 pub(crate) enum Handler {
     Panel,
     StatusBar,
+    Tab,
     Command(String),
 }
 
@@ -50,6 +51,7 @@ impl Handler {
         match self {
             Handler::Panel => "panel",
             Handler::StatusBar => "statusBar",
+            Handler::Tab => "tab",
             Handler::Command(_) => "command",
         }
     }
@@ -364,6 +366,9 @@ const PRELUDE: &str = r#"
       } else if (kind === 'statusBar') {
         if (typeof mod.statusBar !== 'function') throw new Error('plugin declares a status item but exports none');
         out = mod.statusBar(ctx);
+      } else if (kind === 'tab') {
+        if (typeof mod.tab !== 'function') throw new Error('plugin declares a tab but exports none');
+        out = mod.tab(ctx);
       } else {
         const fn = mod.commands && mod.commands[commandId];
         if (typeof fn !== 'function') throw new Error('the plugin does not implement this command');
