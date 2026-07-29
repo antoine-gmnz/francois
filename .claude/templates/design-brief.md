@@ -1,19 +1,35 @@
-# Design brief — <feature-id>
+# DESIGN BRIEF — <feature title> (`<feature_id>`)
 
-## Screens / regions
-Which part of the window this feature owns; reference the mock (`Claude Terminal.dc.html`) region.
+> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of the frozen
+> spec, standalone — `/spec` writes it to `specs/design/<feature_id>.md` on freeze. Omit entirely if
+> the project has no UI.
 
-## Components
-Each component with its variants.
+**Goal:** <one line — what the user accomplishes>
 
-## States
-Every visual state (default, focused, selected, running/pulsing, error, empty, loading, streaming…).
+**Design system:** use the existing UI kit (`PIPELINE.md` §design → `ui_kit_path`). Mobile-first.
 
-## Interactions
-Mouse + keyboard, hover/active/focus behavior, transitions between states.
+## Screens / views
 
-## Visual notes
-Exact tokens: colors (hex), typography (JetBrains Mono sizes/weights), spacing, radii, borders, animations (pulse 1.4s ease, blink 1s step).
+For each: purpose, who sees it (role, if RBAC), and the key elements.
 
-## Resize / responsive
-Behavior when the window or pane is resized; overflow, ellipsis, scroll rules.
+- **<screen name>** — <purpose> · roles: <…>
+  - Elements: <…>
+  - States: empty · loading · error · success
+
+## Flows
+
+<step-by-step of the main user journey, and any role-specific variation>
+
+## Responsive
+
+- Mobile (base): <layout>
+- Tablet (`md:`): <changes>
+- Desktop (`lg:`): <changes>
+
+## Data shown
+
+<what fields/values appear on screen — must match the contract in spec §5>
+
+## Notes / constraints
+
+<accessibility · copy in the profile's `ui_language` · edge cases · theming constraints>

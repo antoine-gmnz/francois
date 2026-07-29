@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# new-feature.sh — spin up an ISOLATED git worktree for one feature so features
+# can be built fully in parallel. Rendered from a template by /init-pipeline;
+# the __TOKENS__ below are substituted from PIPELINE.md §isolation.
+#
+# Usage:  scripts/new-feature.sh <feature_id>
+#
+# Creates a sibling worktree ../__PROJECT_SLUG__-<id> on branch
+# __BRANCH_PREFIX__<id> (off __DEFAULT_BRANCH__) with its own isolation slot:
+#   • its own database   __DB_NAME_PATTERN__   (if DB isolation is enabled)
+#   • its own API port   __API_PORT_BASE__ + slot
+#   • its own web port   __WEB_PORT_BASE__ + slot
+# The infra servers stay a SINGLE shared stack — only the logical db + ports
+# differ per worktree. Slot 0 = main checkout. New worktrees get slot >= 1.
+
+set -euo pipefail
+
+id="${1:-}"
+if [[ -z "$id" ]]; then
+  echo "usage: scripts/new-feature.sh <feature_id>" >&2
+  exit 1
+fi
+
+repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+branch="__BRANCH_PREFIX__${id}"
+worktree_dir="$(dirname "$repo_root")/__PROJECT_SLUG__-${id}"
+db_name="__PROJECT_SLUG___$(echo "$id" | tr -c 'a-zA-Z0-9' '_' | sed 's/_*$//')"
+
+registry_dir="$repo_root/.worktrees"
+registry="$registry_dir/slots.tsv"
+mkdir -p "$registry_dir"
+touch "$registry"
+
+if [[ -e "$worktree_dir" ]]; then
+  echo "error: $worktree_dir already exists" >&2
+  exit 1
+fi
+
+slot="$(awk -F'\t' -v id="$id" '$1==id{print $2}' "$registry" | head -n1)"
+if [[ -z "$slot" ]]; then
+  slot=1
+  while awk -F'\t' -v s="$slot" '$2==s{found=1} END{exit !found}' "$registry"; do
+    slot=$((slot + 1))
+  done
+  printf '%s\t%s\n' "$id" "$slot" >>"$registry"
+fi
+
+api_port=$((__API_PORT_BASE__ + slot))
+web_port=$((__WEB_PORT_BASE__ + slot))
+
+echo "→ feature '$id' → slot $slot   (db $db_name · api :$api_port · web :$web_port)"
+echo "→ creating worktree $worktree_dir on $branch (off __DEFAULT_BRANCH__)"
+git -C "$repo_root" fetch --quiet origin __DEFAULT_BRANCH__ || true
+git -C "$repo_root" worktree add -b "$branch" "$worktree_dir" __DEFAULT_BRANCH__
+
+# Replace (or append) KEY=VALUE in a dotenv file — one definitive line per key.
+set_env() {
+  local file="$1" key="$2" value="$3" tmp
+  if [[ -s "$file" && -n "$(tail -c1 "$file")" ]]; then printf '\n' >>"$file"; fi
+  tmp="$(mktemp)"
+  grep -vE "^${key}=" "$file" >"$tmp" || true
+  mv "$tmp" "$file"
+  printf '%s=%s\n' "$key" "$value" >>"$file"
+}
+
+# --- per-worktree env (init customizes these stanzas per surface) -----------
+# __ENV_STANZAS__
+
+# --- create the isolated database (if DB isolation enabled) -----------------
+# __DB_STANZA__
+
+echo "→ ${repo_root##*/} install (shared store)"
+( cd "$worktree_dir" && __INSTALL_CMD__ )
+
+cat <<EOF
+
+✓ worktree ready: $worktree_dir   (branch $branch, slot $slot)
+  api  http://localhost:$api_port
+  web  http://localhost:$web_port
+
+Fully isolated — run its dev + migrations alongside other worktrees:
+  cd $worktree_dir
+  __MIGRATE_CMD__
+  cd $worktree_dir && __DEV_CMD__
+  /brainstorm → /spec → (design) → /build $id → test → /review → /ship
+
+Tear down when merged:  scripts/remove-feature.sh $id
+EOF

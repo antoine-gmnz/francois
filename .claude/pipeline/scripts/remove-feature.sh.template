@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#
+# remove-feature.sh — tear down a feature's isolated worktree. Rendered from a
+# template by /init-pipeline (__TOKENS__ from PIPELINE.md §isolation).
+#
+# Usage:  scripts/remove-feature.sh <feature_id> [--drop-db]
+#
+# Removes the ../__PROJECT_SLUG__-<id> worktree, frees its slot, and (with
+# --drop-db) drops its database. The db is kept by default. The shared stack and
+# the main checkout are never touched.
+
+set -euo pipefail
+
+id="${1:-}"
+drop_db="no"
+[[ "${2:-}" == "--drop-db" ]] && drop_db="yes"
+
+if [[ -z "$id" ]]; then
+  echo "usage: scripts/remove-feature.sh <feature_id> [--drop-db]" >&2
+  exit 1
+fi
+
+repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+worktree_dir="$(dirname "$repo_root")/__PROJECT_SLUG__-${id}"
+db_name="__PROJECT_SLUG___$(echo "$id" | tr -c 'a-zA-Z0-9' '_' | sed 's/_*$//')"
+registry="$repo_root/.worktrees/slots.tsv"
+branch="__BRANCH_PREFIX__${id}"
+
+echo "→ removing worktree $worktree_dir"
+if git -C "$repo_root" worktree list | grep -q "$worktree_dir"; then
+  git -C "$repo_root" worktree remove "$worktree_dir" "${@:3}"
+else
+  echo "   (no such worktree registered — skipping)"
+fi
+
+if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
+  if git -C "$repo_root" branch -d "$branch" 2>/dev/null; then
+    echo "→ deleted merged branch $branch"
+  else
+    echo "   ! branch $branch is not fully merged — kept it." >&2
+    echo "     delete manually when ready:  git branch -D $branch" >&2
+  fi
+fi
+
+if [[ -f "$registry" ]]; then
+  tmp="$(mktemp)"
+  awk -F'\t' -v id="$id" '$1!=id' "$registry" >"$tmp" && mv "$tmp" "$registry"
+  echo "→ freed slot for '$id'"
+fi
+
+# __DB_DROP_STANZA__
+
+echo "✓ feature '$id' torn down"

@@ -1,0 +1,43 @@
+# ~/.claude/cohorte.config.yaml — GLOBAL, user-scoped config for the Cohorte
+# pipeline capabilities. One machine, every project. NOT tied to any project's PIPELINE.md.
+#
+# Seeded once by the installer (npx cohorte install) and never clobbered on update. Wired
+# interactively by /init-pipeline (new project) and /update-pipeline (existing project) —
+# you should never need to hand-edit it.
+#
+# The `# cfg:<key>` markers below are anchors the installer's interactive prompts write to;
+# leave them in place.
+
+enabled: true                 # cfg:enabled — master switch; false disables every capability below
+
+# ── obsidian ──────────────────────────────────────────────────────────────────
+# Local vault used by the kanban mirror — defined here ONCE so no capability ever duplicates
+# the path. Absolute path to the folder you open in Obsidian.
+obsidian:
+  vault_path: ""              # cfg:vault_path
+
+# ── kanban (dev pipeline mirror) ─────────────────────────────────────────────
+# Mirrors /brainstorm…/ship onto an Obsidian Kanban board — one board per project. The
+# board path points at your PERSONAL vault, so it is machine-specific and lives here (never
+# committed in a repo's PIPELINE.md). /init-pipeline + /update-pipeline write `boards` for you.
+# See SCHEMA.md §Kanban.
+kanban:
+  enabled: false              # cfg:kanban_enabled — master switch for the kanban mirror
+  # Default column mapping: pipeline stage → the EXACT board column heading. Shared by every
+  # board; a board may override its own `columns` inside boards[] below.
+  columns:
+    ideas: "Ideas"
+    brainstorm: "Brainstorm"
+    spec: "Spec"
+    ready: "Ready to build"
+    building: "Building"
+    review: "Review"
+    fix: "Fix"
+    ship: "Ship"
+    shipped: "Shipped"
+  # One entry per project, keyed by the project's PIPELINE.md `name` (e.g. SAMO). `board` is a
+  # path RELATIVE to obsidian.vault_path. Written by /init-pipeline + /update-pipeline.
+  boards: {}
+  #   SAMO:
+  #     board: "Samo/Tasks.md"
+  #     # columns: { ideas: "Idées", ... }   # optional per-board override of the defaults above
