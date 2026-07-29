@@ -82,6 +82,9 @@ pub(crate) fn spawn_claude(
     if runtime != "wsl" {
         cmd.current_dir(cwd); // wsl turns get their cwd via `--cd` inside the distro
     }
+    if let Some(path) = claude_path_env() {
+        cmd.env("PATH", path);
+    }
     no_window(&mut cmd);
     // session-questions FR-1: stdin is piped — the turn text goes down it as one
     // NDJSON user line, and the stdio control channel (question answers /

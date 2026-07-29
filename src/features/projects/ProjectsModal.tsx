@@ -23,6 +23,7 @@ import {
   sessionPickDirectory,
 } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { IS_WINDOWS } from '../../lib/platform';
 import {
   ROOT_MISSING_LINE,
   STANDARDS_FOOTER_NOTE,
@@ -343,7 +344,7 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
     if (alive.current) setBusy(false);
   };
 
-  const fieldDefs = defaultFieldDefs(models, selected?.defaults ?? {});
+  const fieldDefs = defaultFieldDefs(models, selected?.defaults ?? {}, IS_WINDOWS);
 
   return (
     <div

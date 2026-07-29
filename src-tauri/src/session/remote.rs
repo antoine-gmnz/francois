@@ -269,6 +269,9 @@ pub fn remote_start(
         cmd.env(k, v);
     }
     cmd.env("TERM", "xterm-256color");
+    if let Some(path) = claude_path_env() {
+        cmd.env("PATH", path);
+    }
     if runtime == "wsl" {
         // H4: forward TERM across the wsl.exe boundary. This is the ONLY URL
         // source for the wsl runtime (spec §7 #7), so a TUI degraded by a missing

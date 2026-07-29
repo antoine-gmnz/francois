@@ -11,6 +11,7 @@ import {
   safeCall,
 } from '../projects/projects';
 import { useStore } from '../../lib/store';
+import { IS_WINDOWS } from '../../lib/platform';
 import ModelPicker from './ModelPicker';
 
 // PermissionMode choices (contract/common.ts): label + the plain-language consequence.
@@ -20,8 +21,6 @@ const PERMISSION_OPTIONS: { mode: PermissionMode; label: string; hint: string }[
   { mode: 'acceptEdits', label: 'accept edits', hint: 'auto-approve file edits; other tools follow your settings' },
   { mode: 'bypassPermissions', label: 'bypass', hint: 'skip every permission check — full access' },
 ];
-
-const IS_WINDOWS = navigator.userAgent.includes('Windows');
 
 const C = {
   accent: 'var(--accent)',
