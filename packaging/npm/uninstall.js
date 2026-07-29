@@ -2,15 +2,18 @@
 'use strict';
 
 /**
- * preuninstall — unregister the desktop integration before npm deletes the
- * package directory.
+ * preuninstall — unregister the desktop integration before the package
+ * directory is deleted.
  *
  * This matters most on macOS, where the .app was moved out to ~/Applications and
- * would otherwise survive `npm uninstall -g francois` as an orphan.
+ * would otherwise survive an uninstall as an orphan.
  *
- * npm's uninstall lifecycle does not fire in every situation (a manually deleted
- * global folder, some CI teardowns), so `francois shortcut --remove` exists as
- * the explicit escape hatch. Never fails the uninstall.
+ * Current npm (v7+) never actually runs this — a long-standing, unfixed
+ * regression where `npm uninstall -g` skips preuninstall/postuninstall
+ * entirely — so `francois uninstall` (bin/francois.js) is the command that
+ * reliably does this cleanup with npm. This script still earns its keep under
+ * package managers that do honor the hook (yarn, pnpm). Never fails the
+ * uninstall either way.
  */
 
 const desktop = require('./lib/desktop.js');

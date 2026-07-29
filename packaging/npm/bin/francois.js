@@ -29,6 +29,7 @@ Usage
   francois --version           print the app + package versions
   francois shortcut            re-register the Start Menu / Launchpad / menu entry
   francois shortcut --remove   unregister it
+  francois uninstall           unregister the desktop entry, then npm-uninstall this package
   francois --help              this message
 
 Anything else is forwarded to the app.
@@ -93,6 +94,25 @@ function main() {
     const { notes } = desktop.install(record);
     for (const note of notes) process.stdout.write(`francois: ${note}\n`);
     return;
+  }
+
+  // Current npm (v7+) never runs preuninstall/postuninstall for `npm uninstall
+  // -g` — a long-standing, unfixed npm regression — so uninstall.js's preuninstall
+  // hook (still useful under yarn/pnpm, which do honor it) cannot be relied on
+  // with npm. This is the reliable path: remove the desktop entry (and, on
+  // macOS, the ~/Applications bundle) while the install record still exists,
+  // THEN hand off to npm — after which the record and this very script are gone.
+  if (argv[0] === 'uninstall') {
+    const record = readInstallRecord();
+    if (record) {
+      desktop.remove(record);
+      process.stdout.write(`francois: removed the ${record.productName} shortcut.\n`);
+    }
+    const pkg = require('../package.json');
+    process.stdout.write('francois: removing the npm package…\n');
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const result = spawnSync(npmCmd, ['uninstall', '-g', pkg.name], { stdio: 'inherit' });
+    process.exit(result.status === null ? 1 : result.status);
   }
 
   const executable = resolveExecutable();
