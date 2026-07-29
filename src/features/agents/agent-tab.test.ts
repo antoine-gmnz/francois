@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 
+import type { AgentStatus } from '../../../contract/common';
 import type { AgentBlock, AgentEvent } from '../../../contract/agent-tab';
 import { agentsTranscript } from '../../lib/api';
 import {
@@ -18,7 +19,6 @@ import {
   agentTabLabel,
   blockOrdinal,
   closeTab,
-  closeTranscript,
   earlierBlocksNotice,
   mainTabAfterClose,
   mergeAgentBlock,
@@ -31,7 +31,7 @@ import {
   type AgentTabRef,
 } from './agent-tab';
 
-function ref(id: string, status = 'running'): AgentTabRef {
+function ref(id: string, status: AgentStatus = 'running'): AgentTabRef {
   return { id, name: `agent-${id}`, status };
 }
 
@@ -146,7 +146,6 @@ describe('transcript state', () => {
     const t = openTranscript(CLOSED_TRANSCRIPT, 'a1');
     expect(t).toMatchObject({ agentId: 'a1', loading: true, hydrated: false, atBottom: true });
     expect(t.reqId).toBe(CLOSED_TRANSCRIPT.reqId + 1);
-    expect(closeTranscript(t).agentId).toBeNull();
   });
 
   it('orders blocks by the core ordinal, not lexically', () => {

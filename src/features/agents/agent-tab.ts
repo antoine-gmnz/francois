@@ -3,7 +3,7 @@
 // open/close/evict rules and the transcript hydration race live here so they are
 // unit-testable without the DOM.
 
-import type { AppError, Result } from '../../../contract/common';
+import type { AgentStatus, AppError, Result } from '../../../contract/common';
 import type { AgentBlock, AgentEvent, AgentTranscript } from '../../../contract/agent-tab';
 
 // ---------- tab identity (FR-9) ----------
@@ -31,8 +31,8 @@ export const AGENT_TAB_NAME_MAX = 14;
 export interface AgentTabRef {
   id: string;
   name: string;
-  /** AgentStatus — drives the strip's status dot (§8). */
-  status: string;
+  /** Drives the strip's status dot (§8). */
+  status: AgentStatus;
 }
 
 function sameRef(a: AgentTabRef, b: AgentTabRef): boolean {
@@ -122,10 +122,6 @@ export const CLOSED_TRANSCRIPT: TranscriptState = {
 /** FR-16: activating a tab starts an empty, loading, bottom-latched body. */
 export function openTranscript(prev: TranscriptState, agentId: string): TranscriptState {
   return { ...CLOSED_TRANSCRIPT, agentId, reqId: prev.reqId + 1, loading: true };
-}
-
-export function closeTranscript(prev: TranscriptState): TranscriptState {
-  return { ...CLOSED_TRANSCRIPT, reqId: prev.reqId + 1 };
 }
 
 /**

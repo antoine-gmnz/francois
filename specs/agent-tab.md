@@ -1,9 +1,11 @@
 ---
 id: agent-tab
 title: Agent tabs — a subagent's session in the main pane
-status: frozen
+status: shipped
 created: 2026-07-28
 depends_on: [async-agents, agents-panel, conversation-view, app-shell]
+reviewed_base: 7a8e8f82074639ef2c6fdda618e8e14cfb4a94a4
+reviewed_digest: c9df171c66729790
 ---
 
 # Agent tabs — a subagent's session in the main pane
@@ -263,25 +265,36 @@ the SESSION tab.
 
 ## 9. Acceptance criteria
 
-- [ ] An attributed `assistant` line with a text block produces an assistant block whose text is NOT
+- [x] An attributed `assistant` line with a text block produces an assistant block whose text is NOT
       truncated to 120 chars, alongside the existing 120-char step. (FR-1)
-- [ ] An attributed `tool_use` produces a tool block with the same summary as its step, and a
+- [x] An attributed `tool_use` produces a tool block with the same summary as its step, and a
       `Task`/`Agent` tool_use produces a `subagent` block. (FR-1)
-- [ ] An inner `tool_result` fills that block's `meta` and re-emits the same `blockId` without
+- [x] An inner `tool_result` fills that block's `meta` and re-emits the same `blockId` without
       appending. (FR-2, FR-3)
-- [ ] Every notice step has a matching notice block, for all four notice sites. (FR-4)
-- [ ] After 450 blocks, `agents_transcript` returns 400 blocks starting at ordinal 51 and
+- [x] Every notice step has a matching notice block, for all four notice sites. (FR-4)
+- [x] After 450 blocks, `agents_transcript` returns 400 blocks starting at ordinal 51 and
       `dropped: 50`. (FR-5, FR-20)
-- [ ] `agents_transcript` for an unknown `agentId` resolves `ok: false` with `AGENT_NOT_FOUND`. (FR-7)
+- [x] `agents_transcript` for an unknown `agentId` resolves `ok: false` with `AGENT_NOT_FOUND`. (FR-7)
 - [ ] Clicking a card in pane [3] opens and activates `agent:{id}`, moves focus to main, and clicking
-      it again does not duplicate the tab. (FR-10)
-- [ ] Opening a 7th agent tab closes the oldest, never the one being opened. (FR-11)
-- [ ] Closing the active agent tab activates SESSION; closing an inactive one does not. (FR-13)
-- [ ] Switching sessions closes every agent tab and falls back to SESSION. (FR-14)
-- [ ] Blocks buffered from `agent.block` before the transcript response survive it. (FR-17)
-- [ ] The body auto-scrolls to the newest block, but not while the user is scrolled up. (FR-18)
+      it again does not duplicate the tab. (FR-10) — open/activate/no-duplicate verified by
+      `agentTabStore.test.ts` + `agent-tab.test.ts`; the **focus-to-main** half is runtime-only and
+      needs a `/smoke`.
+- [x] Opening a 7th agent tab closes the oldest, never the one being opened. (FR-11)
+- [x] Closing the active agent tab activates SESSION; closing an inactive one does not. (FR-13)
+- [x] Switching sessions closes every agent tab and falls back to SESSION. (FR-14)
+- [x] Blocks buffered from `agent.block` before the transcript response survive it. (FR-17)
+- [ ] The body auto-scrolls to the newest block, but not while the user is scrolled up. (FR-18) —
+      runtime DOM behaviour, needs a `/smoke`.
 - [ ] `⏎` in pane [3] still expands the in-place trail; no agent tab is opened by the keyboard. (§2)
+      — runtime keyboard flow, needs a `/smoke`.
 
 ## Remediation
 
-(Empty until a review returns findings.)
+- 2026-07-29 — /review round 2: **SHIP** (frontend SHIP · core SHIP). 4 findings (1 MEDIUM,
+  3 LOW), none CRITICAL/HIGH or security — all parked in `specs/refactor-backlog.md` under
+  `deferred:agent-tab` rather than fixed. Gates green: tsc clean, 506 frontend tests, 321 core tests.
+- 2026-07-29 — /review round 1: 6 findings (1 CRITICAL, 3 MEDIUM, 2 LOW), all fixed.
+  frontend 5/5 (FR-14 `clearAgentTabs()` on scope-widen · `AgentView` reqId computed before
+  `setState` · tab-strip `overflowX` scroll container per §8 · `AgentTabRef.status: AgentStatus` ·
+  dead `closeTranscript` export removed) · core 1/1 (notice-block assertions added to the two
+  unpinned notice sites).

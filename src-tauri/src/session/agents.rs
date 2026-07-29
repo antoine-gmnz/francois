@@ -930,6 +930,10 @@ mod tests {
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].kind, "notice");
         assert_eq!(steps[0].label, "dispatched in background");
+        // agent.step FIRST, then its agent-tab notice block, then agent.update (FR-4).
+        assert!(matches!(ems[0], AgentEmission::Step { .. }));
+        assert!(matches!(ems[1], AgentEmission::Block { .. }));
+        assert!(matches!(ems[2], AgentEmission::Update { .. }));
         assert_eq!(emitted_updates(&ems).len(), 1);
     }
 
@@ -1412,6 +1416,10 @@ mod tests {
         let steps = emitted_steps(&ems);
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].label, "killed from the panel");
+        // agent.step FIRST, then its agent-tab notice block, then agent.update (FR-4).
+        assert!(matches!(ems[0], AgentEmission::Step { .. }));
+        assert!(matches!(ems[1], AgentEmission::Block { .. }));
+        assert!(matches!(ems[2], AgentEmission::Update { .. }));
         assert_eq!(emitted_updates(&ems).len(), 1);
         assert!(apply_kill(&mut s, "nope", 9_000).is_empty());
     }

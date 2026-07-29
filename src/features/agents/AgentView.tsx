@@ -67,12 +67,9 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
   useEffect(() => {
     let mounted = true;
     let unlisten: (() => void) | undefined;
-    let reqId = 0;
-    setState((prev) => {
-      const next = openTranscript(prev, agentId);
-      reqId = next.reqId;
-      return next;
-    });
+    const next = openTranscript(state, agentId);
+    const reqId = next.reqId;
+    setState(next);
     void onAgentEvent((e) => {
       setState((prev) => routeAgentEventToTranscript(prev, e));
     }).then((u) => (mounted ? (unlisten = u) : u()));

@@ -1,0 +1,803 @@
+diff --git a/src-tauri/src/main.rs b/src-tauri/src/main.rs
+index bc1787c..0dcc846 100644
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -591,6 +591,7 @@ fn main() {
+             session::agents_dispatch,
+             session::agents_kill,
+             session::agents_activity,
++            session::agents_transcript,
+             session::mcp_registry,
+             session::mcp_list,
+             session::mcp_detail,
+diff --git a/src-tauri/src/session/agent_transcript.rs b/src-tauri/src/session/agent_transcript.rs
+new file mode 100644
+index 0000000..27bde7a
+--- /dev/null
++++ b/src-tauri/src/session/agent_transcript.rs
+@@ -0,0 +1,411 @@
++//! agent-tab — the per-agent transcript behind the dynamic main-pane tab
++//! (specs/agent-tab.md §4 FR-1..FR-8).
++//!
++//! A second, richer projection of the lines async-agents already attributes to a
++//! subagent (FR-8 there): where `agents.rs` reduces each one to a 120-char
++//! `AgentStep`, this module buffers it as a full `BufBlock` — the same shape the
++//! session's own transcript uses, serialized through the same `classify_block` —
++//! so the tab body can reuse the SESSION tab's renderer verbatim.
++//!
++//! Everything here is PURE over `Session` and returns what its caller must emit,
++//! per the file-wide rule that no emit happens while `Engine.sessions` is held.
++
++use super::*;
++
++use crate::ipc::{err, ok, IpcResult};
++use serde::Serialize;
++use serde_json::Value;
++use std::collections::HashMap;
++use tauri::{AppHandle, Emitter, State};
++
++/// FR-5: the transcript is a bounded window; the oldest block is dropped on
++/// overflow and counted, so truncation is never silent.
++const AGENT_BLOCK_CAP: usize = 400;
++
++/// FR-1: per-block ceiling on assistant text. A subagent that dumps a whole file
++/// into one message must not pin it in memory for the session's lifetime.
++const AGENT_BLOCK_TEXT_CAP: usize = 8_000;
++
++// ---------- francois:agents:event (agent-tab §5) ----------
++
++#[derive(Serialize, Clone)]
++#[serde(tag = "type")]
++pub(crate) enum AgentEvent {
++    #[serde(rename = "agent.block")]
++    Block {
++        #[serde(rename = "sessionId")]
++        session_id: String,
++        #[serde(rename = "agentId")]
++        agent_id: String,
++        block: Value,
++    },
++}
++
++pub(crate) fn emit_agent_event(app: &AppHandle, ev: AgentEvent) {
++    let _ = app.emit(AGENT_EVENT_CHANNEL, ev);
++}
++
++// ---------- francois:agents:transcript (agent-tab §5) ----------
++
++#[derive(Serialize, Clone, PartialEq, Debug)]
++pub(crate) struct AgentTranscript {
++    blocks: Vec<Value>,
++    dropped: u32,
++}
++
++/// §5 `francois:agents:transcript`: the agent's windowed blocks + the eviction
++/// count. None ⇔ the agentId matches no agent in ANY session (AGENT_NOT_FOUND),
++/// the same rule as `activity_of`.
++pub(crate) fn transcript_of(
++    map: &HashMap<String, Session>,
++    agent_id: &str,
++) -> Option<AgentTranscript> {
++    map.values()
++        .find(|s| s.agents.contains_key(agent_id))
++        .map(|s| AgentTranscript {
++            blocks: s
++                .agent_blocks
++                .get(agent_id)
++                .map(|d| d.iter().map(classify_block).collect())
++                .unwrap_or_default(),
++            dropped: s.agent_blocks_dropped.get(agent_id).copied().unwrap_or(0),
++        })
++}
++
++// ---------- appending (FR-1..FR-5) ----------
++
++/// A freshly appended block: its id (so a `tool_use` can be filled later by its
++/// `tool_result`) and the emission its caller owes the frontend.
++pub(crate) struct NewAgentBlock {
++    pub(crate) block_id: String,
++    pub(crate) emission: AgentEmission,
++}
++
++/// FR-1/FR-5: append one block to an agent's transcript. Mints the `blockId`,
++/// evicts past the window (counting the eviction) and returns the emission. An
++/// unknown agent is a no-op, mirroring `push_step`.
++fn push_block(s: &mut Session, agent_id: &str, mut block: BufBlock) -> Option<NewAgentBlock> {
++    if !s.agents.contains_key(agent_id) {
++        return None;
++    }
++    let n = {
++        let n = s.agent_block_seq.entry(agent_id.to_string()).or_insert(0);
++        *n += 1;
++        *n
++    };
++    let block_id = format!("{agent_id}:{n}");
++    block.block_id = block_id.clone();
++    let buf = s.agent_blocks.entry(agent_id.to_string()).or_default();
++    buf.push_back(block);
++    let mut evicted = 0u32;
++    while buf.len() > AGENT_BLOCK_CAP {
++        buf.pop_front();
++        evicted += 1;
++    }
++    if evicted > 0 {
++        *s.agent_blocks_dropped
++            .entry(agent_id.to_string())
++            .or_insert(0) += evicted;
++    }
++    let block = classify_block(s.agent_blocks.get(agent_id)?.back()?);
++    Some(NewAgentBlock {
++        block_id,
++        emission: AgentEmission::Block {
++            agent_id: agent_id.to_string(),
++            block,
++        },
++    })
++}
++
++fn buf_block(
++    kind: BlockKind,
++    text: String,
++    tool: String,
++    summary: String,
++    streaming: bool,
++) -> BufBlock {
++    BufBlock {
++        block_id: String::new(), // minted by push_block
++        kind,
++        text,
++        tool,
++        summary,
++        meta: None,
++        card: None,
++        streaming,
++    }
++}
++
++/// Char-capped, NEWLINES PRESERVED — unlike `tools::truncate`, which collapses
++/// them because it builds one-line labels. The tab renders markdown, so a
++/// collapsed body would lose every list, heading and code fence.
++fn cap_chars(s: &str, n: usize) -> String {
++    if s.chars().count() > n {
++        s.chars().take(n).collect()
++    } else {
++        s.to_string()
++    }
++}
++
++/// FR-1: the subagent said something — the FULL text (capped), not the step's
++/// 120-char first line. Blank after trimming ⇒ no block, matching FR-9 there.
++pub(crate) fn push_agent_text(
++    s: &mut Session,
++    agent_id: &str,
++    text: &str,
++) -> Option<NewAgentBlock> {
++    let text = cap_chars(text.trim(), AGENT_BLOCK_TEXT_CAP);
++    if text.is_empty() {
++        return None;
++    }
++    push_block(
++        s,
++        agent_id,
++        buf_block(
++            BlockKind::Assistant,
++            text,
++            String::new(),
++            String::new(),
++            false,
++        ),
++    )
++}
++
++/// FR-1/FR-3: the subagent called a tool. Classified exactly as the parent
++/// transcript classifies a top-level tool.start, and left `isStreaming: true`
++/// until its `tool_result` fills the meta (FR-2).
++pub(crate) fn push_agent_tool(
++    s: &mut Session,
++    agent_id: &str,
++    tool: &str,
++    summary: &str,
++) -> Option<NewAgentBlock> {
++    let kind = if is_subagent_tool(tool) {
++        BlockKind::Subagent
++    } else {
++        BlockKind::Tool
++    };
++    push_block(
++        s,
++        agent_id,
++        buf_block(
++            kind,
++            String::new(),
++            tool.to_string(),
++            summary.to_string(),
++            true,
++        ),
++    )
++}
++
++/// FR-4: the block-level twin of a `notice` step. Minted from `push_step` so the
++/// two can never drift.
++pub(crate) fn push_agent_notice(
++    s: &mut Session,
++    agent_id: &str,
++    label: &str,
++) -> Option<NewAgentBlock> {
++    if label.is_empty() {
++        return None;
++    }
++    push_block(
++        s,
++        agent_id,
++        buf_block(
++            BlockKind::Notice,
++            label.to_string(),
++            String::new(),
++            String::new(),
++            false,
++        ),
++    )
++}
++
++/// FR-2/FR-3: a `tool_result` closes its block — fill `meta`, stop streaming and
++/// re-emit the SAME blockId. A block already evicted past the window (FR-5) is a
++/// no-op, exactly like `fill_step_meta` past the trail window.
++pub(crate) fn fill_agent_block_meta(
++    s: &mut Session,
++    agent_id: &str,
++    block_id: &str,
++    meta: &str,
++) -> Option<AgentEmission> {
++    let buf = s.agent_blocks.get_mut(agent_id)?;
++    let block = buf.iter_mut().find(|b| b.block_id == block_id)?;
++    block.meta = Some(meta.to_string());
++    block.streaming = false;
++    Some(AgentEmission::Block {
++        agent_id: agent_id.to_string(),
++        block: classify_block(block),
++    })
++}
++
++// ---------- command ----------
++
++/// `francois:agents:transcript` (agent-tab §5) — the agent's bounded transcript.
++/// AGENT_NOT_FOUND when the id is unknown everywhere, like `agents_activity`.
++#[tauri::command(async)]
++pub fn agents_transcript(
++    engine: State<'_, Engine>,
++    agent_id: String,
++) -> IpcResult<AgentTranscript> {
++    let map = engine.sessions.lock().unwrap();
++    match transcript_of(&map, &agent_id) {
++        Some(t) => ok(t),
++        None => err("AGENT_NOT_FOUND", "no such agent"),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::session::testutil::*;
++    use serde_json::json;
++
++    fn blocks_of(s: &Session, agent_id: &str) -> Vec<Value> {
++        s.agent_blocks
++            .get(agent_id)
++            .map(|d| d.iter().map(classify_block).collect())
++            .unwrap_or_default()
++    }
++
++    fn emitted_block(e: &AgentEmission) -> Value {
++        match e {
++            AgentEmission::Block { block, .. } => block.clone(),
++            _ => panic!("not a Block emission"),
++        }
++    }
++
++    #[test]
++    fn text_block_keeps_the_full_text_unlike_the_step_label() {
++        // FR-1: the whole point of the feature — the step is a 120-char first
++        // line, the block is everything.
++        let mut s = test_session();
++        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
++        let long = format!("first line\n{}", "x".repeat(300));
++        let nb = push_agent_text(&mut s, "a1", &long).expect("block");
++        assert_eq!(nb.block_id, "a1:1");
++        let b = emitted_block(&nb.emission);
++        assert_eq!(b["kind"], "assistant");
++        assert_eq!(b["isStreaming"], false);
++        assert_eq!(b["text"].as_str().unwrap(), long.trim());
++    }
++
++    #[test]
++    fn text_block_is_capped_and_blank_text_makes_none() {
++        let mut s = test_session();
++        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
++        assert!(push_agent_text(&mut s, "a1", "   \n  ").is_none());
++        let nb = push_agent_text(&mut s, "a1", &"y".repeat(AGENT_BLOCK_TEXT_CAP + 500)).unwrap();
++        let b = emitted_block(&nb.emission);
++        assert_eq!(
++            b["text"].as_str().unwrap().chars().count(),
++            AGENT_BLOCK_TEXT_CAP
++        );
++        // An unknown agent never buffers anything.
++        assert!(push_agent_text(&mut s, "nope", "hello").is_none());
++    }
++
++    #[test]
++    fn tool_block_streams_until_its_result_fills_the_meta() {
++        // FR-2/FR-3: fill in place, same blockId, no append.
++        let mut s = test_session();
++        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
++        let nb = push_agent_tool(&mut s, "a1", "Read", "src/session.rs").unwrap();
++        let open = emitted_block(&nb.emission);
++        assert_eq!(open["kind"], "tool");
++        assert_eq!(open["tool"], "Read");
++        assert_eq!(open["summary"], "src/session.rs");
++        assert_eq!(open["isStreaming"], true);
++        assert!(open.get("meta").is_none());
++
++        let em = fill_agent_block_meta(&mut s, "a1", &nb.block_id, "120 lines").unwrap();
++        let filled = emitted_block(&em);
++        assert_eq!(filled["blockId"], json!(nb.block_id));
++        assert_eq!(filled["isStreaming"], false);
++        assert_eq!(filled["meta"], "120 lines");
++        assert_eq!(blocks_of(&s, "a1").len(), 1); // filled, not appended
++                                                  // An unknown blockId (evicted, or never minted) is a no-op.
++        assert!(fill_agent_block_meta(&mut s, "a1", "a1:99", "x").is_none());
++    }
++
++    #[test]
++    fn a_nested_dispatch_becomes_a_subagent_block() {
++        // FR-1: one level deep — the nested Agent tool_use is a block in the
++        // PARENT agent's transcript, never an agent of its own.
++        let mut s = test_session();
++        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
++        let nb = push_agent_tool(&mut s, "a1", "Agent", "reviewer").unwrap();
++        let b = emitted_block(&nb.emission);
++        assert_eq!(b["kind"], "subagent");
++        assert_eq!(b["agentName"], "reviewer");
++    }
++
++    #[test]
++    fn notice_block_carries_the_label_and_never_streams() {
++        let mut s = test_session();
++        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
++        let nb = push_agent_notice(&mut s, "a1", "ended with the turn").unwrap();
++        assert_eq!(
++            emitted_block(&nb.emission),
++            json!({
++                "kind": "notice", "blockId": "a1:1", "isStreaming": false,
++                "text": "ended with the turn",
++            })
++        );
++        assert!(push_agent_notice(&mut s, "a1", "").is_none());
++    }
++
++    #[test]
++    fn transcript_windows_at_the_cap_and_counts_the_drops() {
++        // FR-5 + §7: 450 blocks in ⇒ 400 out, starting at ordinal 51, dropped 50.
++        let mut s = test_session();
++        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
++        for i in 0..(AGENT_BLOCK_CAP + 50) {
++            push_agent_text(&mut s, "a1", &format!("line {i}")).unwrap();
++        }
++        let mut map = HashMap::new();
++        map.insert(s.id.clone(), s);
++        let t = transcript_of(&map, "a1").expect("found");
++        assert_eq!(t.blocks.len(), AGENT_BLOCK_CAP);
++        assert_eq!(t.dropped, 50);
++        assert_eq!(t.blocks[0]["blockId"], "a1:51");
++        assert_eq!(t.blocks[0]["text"], "line 50");
++        assert_eq!(t.blocks[AGENT_BLOCK_CAP - 1]["blockId"], "a1:450");
++    }
++
++    #[test]
++    fn transcript_of_unknown_agent_is_none() {
++        // §5: AGENT_NOT_FOUND, the same rule as agents_activity.
++        let mut s = test_session();
++        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
++        let mut map = HashMap::new();
++        map.insert(s.id.clone(), s);
++        assert!(transcript_of(&map, "nope").is_none());
++        // A known agent with no activity yet is an EMPTY transcript, not an error.
++        assert_eq!(
++            transcript_of(&map, "a1"),
++            Some(AgentTranscript {
++                blocks: Vec::new(),
++                dropped: 0
++            })
++        );
++    }
++
++    #[test]
++    fn agent_block_event_serializes_to_the_contract_shape() {
++        // §5: the AgentEvent wire shape the frontend listens for.
++        let ev = AgentEvent::Block {
++            session_id: "s1".into(),
++            agent_id: "a1".into(),
++            block: json!({ "kind": "notice", "blockId": "a1:1", "isStreaming": false, "text": "n" }),
++        };
++        assert_eq!(
++            serde_json::to_value(&ev).unwrap(),
++            json!({
++                "type": "agent.block", "sessionId": "s1", "agentId": "a1",
++                "block": { "kind": "notice", "blockId": "a1:1", "isStreaming": false, "text": "n" },
++            })
++        );
++    }
++}
+diff --git a/src-tauri/src/session/agents.rs b/src-tauri/src/session/agents.rs
+index c60396f..e451090 100644
+--- a/src-tauri/src/session/agents.rs
++++ b/src-tauri/src/session/agents.rs
+@@ -146,6 +146,14 @@ pub(crate) fn push_step(
+         agent_id: agent_id.to_string(),
+         step: step.clone(),
+     }];
++    // agent-tab FR-4: every lifecycle notice is also a transcript block. Minted
++    // HERE rather than at the four notice call sites so step/block parity is
++    // structural — a new notice site cannot forget the tab.
++    if kind == "notice" {
++        if let Some(nb) = push_agent_notice(s, agent_id, &step.label) {
++            out.push(nb.emission);
++        }
++    }
+     if let Some(a) = s.agents.get_mut(agent_id) {
+         a.last_activity = Some(step.label);
+         a.step_count = a.step_count.saturating_add(1);
+@@ -276,11 +284,13 @@ pub(crate) fn apply_attributed_line(
+         let bt = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+         match (ty, bt) {
+             ("assistant", "text") => {
+-                let label = first_nonblank_line(
+-                    item.get("text").and_then(|t| t.as_str()).unwrap_or(""),
+-                    120,
+-                );
++                let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
++                let label = first_nonblank_line(text, 120);
+                 out.extend(push_step(s, agent_id, "text", None, &label, at));
++                // agent-tab FR-1: the same block again, untruncated, for the tab.
++                if let Some(nb) = push_agent_text(s, agent_id, text) {
++                    out.push(nb.emission);
++                }
+             }
+             ("assistant", "tool_use") => {
+                 let name = item
+@@ -305,8 +315,18 @@ pub(crate) fn apply_attributed_line(
+                     _ => None,
+                 });
+                 out.extend(ems);
++                // agent-tab FR-1: the tool card for the tab, classified like a
++                // top-level tool.start (a nested dispatch becomes a subagent block).
++                let block_id = match push_agent_tool(s, agent_id, &name, &label) {
++                    Some(nb) => {
++                        out.push(nb.emission);
++                        nb.block_id
++                    }
++                    None => String::new(),
++                };
+                 // FR-9: remember the inner tool_use_id against the step's seq, in a
+-                // PER-AGENT map — never the parent turn's tool index.
++                // PER-AGENT map — never the parent turn's tool index. `block_id`
++                // rides along so one tool_result fills both projections (agent-tab FR-2).
+                 if let (Some(seq), Some(tuid)) = (seq, item.get("id").and_then(|i| i.as_str())) {
+                     s.agent_inner_tools
+                         .entry(agent_id.to_string())
+@@ -317,6 +337,7 @@ pub(crate) fn apply_attributed_line(
+                                 seq,
+                                 tool: name,
+                                 input,
++                                block_id,
+                             },
+                         );
+                 }
+@@ -349,6 +370,11 @@ pub(crate) fn apply_attributed_line(
+                         &extract_result_text(item.get("content")),
+                     )
+                 };
++                // agent-tab FR-2: the same meta closes the transcript block, in
++                // place and under the same blockId — never a second block.
++                if !inner.block_id.is_empty() {
++                    out.extend(fill_agent_block_meta(s, agent_id, &inner.block_id, &meta));
++                }
+                 out.extend(fill_step_meta(s, agent_id, tuid, inner.seq, meta));
+             }
+             _ => {} // thinking & any other block type → no step
+@@ -527,6 +553,16 @@ pub(crate) fn emit_agent_emissions(app: &AppHandle, session_id: &str, ems: Vec<A
+                 },
+             ),
+             AgentEmission::Update { agent } => emit(app, SessionEvent::AgentUpdate { agent }),
++            // agent-tab FR-8: blocks ride the `agents` domain stream, not the
++            // session one (§5 — common.ts stays import-free).
++            AgentEmission::Block { agent_id, block } => emit_agent_event(
++                app,
++                AgentEvent::Block {
++                    session_id: session_id.into(),
++                    agent_id,
++                    block,
++                },
++            ),
+         }
+     }
+ }
+@@ -894,6 +930,10 @@ mod tests {
+         assert_eq!(steps.len(), 1);
+         assert_eq!(steps[0].kind, "notice");
+         assert_eq!(steps[0].label, "dispatched in background");
++        // agent.step FIRST, then its agent-tab notice block, then agent.update (FR-4).
++        assert!(matches!(ems[0], AgentEmission::Step { .. }));
++        assert!(matches!(ems[1], AgentEmission::Block { .. }));
++        assert!(matches!(ems[2], AgentEmission::Update { .. }));
+         assert_eq!(emitted_updates(&ems).len(), 1);
+     }
+ 
+@@ -954,6 +994,50 @@ mod tests {
+             .contains_key("toolu_i1"));
+     }
+ 
++    #[test]
++    fn attributed_line_also_builds_the_agent_tab_transcript() {
++        // agent-tab FR-1/FR-2/FR-3: the SAME line that produces steps produces
++        // blocks — untruncated text, a tool card that streams until its result
++        // fills the meta in place. This is the wiring the tab depends on, and it
++        // is the one thing agent_transcript.rs's pure tests cannot see.
++        let mut s = test_session();
++        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
++        let body = "Looking at the engine.\nsecond line";
++        let line = json!({
++            "type": "assistant",
++            "parent_tool_use_id": "toolu_d",
++            "message": { "content": [
++                { "type": "thinking", "thinking": "hmm" },
++                { "type": "text", "text": "   \n  " },
++                { "type": "text", "text": body },
++                { "type": "tool_use", "id": "toolu_i1", "name": "Read",
++                  "input": { "file_path": "/x/src/session.rs" } }
++            ]}
++        });
++        let blocks = emitted_blocks(&apply_attributed_line(&mut s, "a1", &line, "/x", 5_000));
++        assert_eq!(blocks.len(), 2); // thinking and blank text produce none
++        assert_eq!(blocks[0]["kind"], "assistant");
++        assert_eq!(blocks[0]["blockId"], "a1:1");
++        assert_eq!(blocks[0]["text"], body); // NOT the step's 120-char first line
++        assert_eq!(blocks[1]["kind"], "tool");
++        assert_eq!(blocks[1]["blockId"], "a1:2");
++        assert_eq!(blocks[1]["summary"], "src/session.rs");
++        assert_eq!(blocks[1]["isStreaming"], true);
++
++        let result = json!({
++            "type": "user", "parent_tool_use_id": "toolu_d",
++            "message": { "content": [
++                { "type": "tool_result", "tool_use_id": "toolu_i1", "content": "a\nb\nc" }
++            ]}
++        });
++        let filled = emitted_blocks(&apply_attributed_line(&mut s, "a1", &result, "/x", 5_100));
++        assert_eq!(filled.len(), 1);
++        assert_eq!(filled[0]["blockId"], "a1:2"); // filled in place, not appended
++        assert_eq!(filled[0]["isStreaming"], false);
++        assert!(filled[0]["meta"].is_string());
++        assert_eq!(s.agent_blocks.get("a1").unwrap().len(), 2);
++    }
++
+     #[test]
+     fn attributed_stream_event_is_dropped() {
+         // FR-9: partial-message lines carry the same content as the assistant line;
+@@ -1247,9 +1331,10 @@ mod tests {
+         assert_eq!(steps.len(), 1);
+         assert_eq!(steps[0].kind, "notice");
+         assert_eq!(steps[0].label, "explorer finished: 3 files reviewed");
+-        // agent.step FIRST, then agent.update
++        // agent.step FIRST, then its agent-tab notice block, then agent.update
+         assert!(matches!(ems[0], AgentEmission::Step { .. }));
+-        assert!(matches!(ems[1], AgentEmission::Update { .. }));
++        assert!(matches!(ems[1], AgentEmission::Block { .. }));
++        assert!(matches!(ems[2], AgentEmission::Update { .. }));
+ 
+         let mut s = test_session();
+         mint_agent(&mut s, "a1", "explorer", "toolu_1", true);
+@@ -1331,6 +1416,10 @@ mod tests {
+         let steps = emitted_steps(&ems);
+         assert_eq!(steps.len(), 1);
+         assert_eq!(steps[0].label, "killed from the panel");
++        // agent.step FIRST, then its agent-tab notice block, then agent.update (FR-4).
++        assert!(matches!(ems[0], AgentEmission::Step { .. }));
++        assert!(matches!(ems[1], AgentEmission::Block { .. }));
++        assert!(matches!(ems[2], AgentEmission::Update { .. }));
+         assert_eq!(emitted_updates(&ems).len(), 1);
+         assert!(apply_kill(&mut s, "nope", 9_000).is_empty());
+     }
+diff --git a/src-tauri/src/session/blocks.rs b/src-tauri/src/session/blocks.rs
+index 6f7e002..110885e 100644
+--- a/src-tauri/src/session/blocks.rs
++++ b/src-tauri/src/session/blocks.rs
+@@ -55,6 +55,12 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
+             }
+             o
+         }
++        BlockKind::Notice => serde_json::json!({
++            // agent-tab FR-4: AgentNoticeBlock — appended already final, so it
++            // never streams and carries no glyph/color (the tab owns those).
++            "kind": "notice", "blockId": b.block_id, "isStreaming": false,
++            "text": b.text,
++        }),
+         BlockKind::Command => {
+             // CommandConversationBlock (contract/interactive-commands.ts): `card` absent while pending.
+             let mut o = serde_json::json!({
+diff --git a/src-tauri/src/session/commands.rs b/src-tauri/src/session/commands.rs
+index 2b8eff8..2412544 100644
+--- a/src-tauri/src/session/commands.rs
++++ b/src-tauri/src/session/commands.rs
+@@ -180,6 +180,9 @@ pub fn session_create(
+         agent_step_seq: HashMap::new(),
+         agent_inner_tools: HashMap::new(),
+         agent_backend_ref: HashMap::new(),
++        agent_blocks: HashMap::new(),
++        agent_block_seq: HashMap::new(),
++        agent_blocks_dropped: HashMap::new(),
+         block_buffer: Vec::new(),
+         mcp: HashMap::new(),
+         cli_commands: Vec::new(),
+diff --git a/src-tauri/src/session/mod.rs b/src-tauri/src/session/mod.rs
+index 6dfc9ad..5717bd4 100644
+--- a/src-tauri/src/session/mod.rs
++++ b/src-tauri/src/session/mod.rs
+@@ -15,6 +15,7 @@
+ //    auth failure surfaces on the first `send` as a turn error (session.error),
+ //    matching FR-19's lazy-error path rather than failing `create`.
+ 
++mod agent_transcript;
+ mod agents;
+ mod blocks;
+ mod commands;
+@@ -33,6 +34,7 @@ mod stream;
+ mod tools;
+ mod turn;
+ 
++pub(crate) use agent_transcript::*;
+ pub(crate) use agents::*;
+ pub(crate) use blocks::*;
+ pub(crate) use commands::*;
+@@ -72,6 +74,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ use tauri::{AppHandle, Manager};
+ 
+ const EVENT_CHANNEL: &str = "francois://session/event";
++/// agent-tab §5: the `agents` domain event stream (`agent.block`). Separate from
++/// the session stream because AgentBlock builds on conversation-view's block
++/// types while contract/common.ts (which owns SessionEvent) is import-free.
++const AGENT_EVENT_CHANNEL: &str = "francois://agents/event";
+ const QUEUE_CAP: usize = 20;
+ const DEFAULT_MODEL: &str = "sonnet";
+ /// interactive-commands FR-10: a /usage//cost probe is killed after this long.
+@@ -213,6 +219,9 @@ pub(crate) struct InnerTool {
+     seq: u32,
+     tool: String,
+     input: Value,
++    /// agent-tab FR-2: the transcript block minted for the same tool_use, so one
++    /// `tool_result` fills the step's `meta` AND the block's in one pass.
++    block_id: String,
+ }
+ 
+ /// What an async-agents state mutation asks its caller to emit, in order. Keeping
+@@ -220,8 +229,19 @@ pub(crate) struct InnerTool {
+ /// the AppHandle wrappers only lock → mutate → drop the lock → emit.
+ #[derive(Clone)]
+ pub(crate) enum AgentEmission {
+-    Step { agent_id: String, step: AgentStep },
+-    Update { agent: AgentInfo },
++    Step {
++        agent_id: String,
++        step: AgentStep,
++    },
++    Update {
++        agent: AgentInfo,
++    },
++    /// agent-tab FR-8: a transcript block was appended, or an existing one was
++    /// re-emitted with its `meta` filled. Carries the serialized AgentBlock.
++    Block {
++        agent_id: String,
++        block: Value,
++    },
+ }
+ 
+ /// Tool names that dispatch a subagent. Claude Code's stock CLI uses `Task`;
+@@ -272,6 +292,10 @@ pub(crate) enum BlockKind {
+     Command,    // interactive-commands: a slash-command response card
+     Question,   // session-questions: an AskUserQuestion card
+     Permission, // permission-guardrails: a gated tool call awaiting approval
++    /// agent-tab FR-4: an engine lifecycle marker inside a subagent's transcript
++    /// (dispatch / completion / kill / turn end). Only ever buffered per agent —
++    /// never in a session's own `block_buffer`.
++    Notice,
+ }
+ 
+ #[derive(Clone)]
+@@ -362,6 +386,15 @@ pub(crate) struct Session {
+     agent_inner_tools: HashMap<String, HashMap<String, InnerTool>>,
+     /// FR-5: the spawn ack's text, for FR-14 matching.
+     agent_backend_ref: HashMap<String, String>,
++    // ---- agent-tab §6 (in-memory, cleared with the session — never serialized) ----
++    /// FR-5: the ≤400-block transcript window per agent, in the same BufBlock
++    /// shape (and through the same classify_block serializer) as the session's
++    /// own `block_buffer`.
++    agent_blocks: HashMap<String, VecDeque<BufBlock>>,
++    /// FR-5: next `blockId` ordinal per agent (1-based).
++    agent_block_seq: HashMap<String, u32>,
++    /// FR-5: blocks evicted past the window — the tab's `… N earlier blocks` row.
++    agent_blocks_dropped: HashMap<String, u32>,
+     block_buffer: Vec<BufBlock>, // §6: read by conversation-view's getTranscript
+     mcp: HashMap<String, McpServerInfo>,
+     // slash-menu FR-2: the CLI's slash_commands captured from the latest
+diff --git a/src-tauri/src/session/persistence.rs b/src-tauri/src/session/persistence.rs
+index 39ee272..34d3259 100644
+--- a/src-tauri/src/session/persistence.rs
++++ b/src-tauri/src/session/persistence.rs
+@@ -41,6 +41,9 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
+         BlockKind::Assistant => "assistant",
+         BlockKind::Tool => "tool",
+         BlockKind::Subagent => "subagent",
++        // agent-tab FR-6: notice blocks only ever live in a per-agent transcript,
++        // which is in-memory and never persisted — this arm is exhaustiveness only.
++        BlockKind::Notice => "notice",
+         BlockKind::Command => {
+             // interactive-commands FR-24: finalized command blocks persist the card as JSON.
+             return serde_json::json!({
+@@ -465,6 +468,9 @@ pub fn load_persisted(app: &AppHandle) {
+                 agent_step_seq: HashMap::new(),
+                 agent_inner_tools: HashMap::new(),
+                 agent_backend_ref: HashMap::new(),
++                agent_blocks: HashMap::new(),
++                agent_block_seq: HashMap::new(),
++                agent_blocks_dropped: HashMap::new(),
+                 block_buffer,
+                 mcp: HashMap::new(),
+                 cli_commands: Vec::new(),
+diff --git a/src-tauri/src/session/testutil.rs b/src-tauri/src/session/testutil.rs
+index d84aa77..84b2f72 100644
+--- a/src-tauri/src/session/testutil.rs
++++ b/src-tauri/src/session/testutil.rs
+@@ -39,6 +39,9 @@ pub(crate) fn test_session() -> Session {
+         agent_step_seq: HashMap::new(),
+         agent_inner_tools: HashMap::new(),
+         agent_backend_ref: HashMap::new(),
++        agent_blocks: HashMap::new(),
++        agent_block_seq: HashMap::new(),
++        agent_blocks_dropped: HashMap::new(),
+         block_buffer: Vec::new(),
+         mcp: HashMap::new(),
+         cli_commands: Vec::new(),
+@@ -134,6 +137,16 @@ pub(crate) fn emitted_steps(ems: &[AgentEmission]) -> Vec<AgentStep> {
+         .collect()
+ }
+ 
++/// agent-tab: the serialized AgentBlocks an emission list carries, in order.
++pub(crate) fn emitted_blocks(ems: &[AgentEmission]) -> Vec<Value> {
++    ems.iter()
++        .filter_map(|e| match e {
++            AgentEmission::Block { block, .. } => Some(block.clone()),
++            _ => None,
++        })
++        .collect()
++}
++
+ pub(crate) fn emitted_updates(ems: &[AgentEmission]) -> Vec<AgentInfo> {
+     ems.iter()
+         .filter_map(|e| match e {
+diff --git a/src-tauri/src/session/turn.rs b/src-tauri/src/session/turn.rs
+index 1403c55..c15f3b7 100644
+--- a/src-tauri/src/session/turn.rs
++++ b/src-tauri/src/session/turn.rs
+@@ -614,9 +614,11 @@ mod tests {
+ 
+         // ordering: the notice step precedes the agent.update that carries it —
+         // both must land before fail_session's own SessionEvent::Error/Status.
+-        assert_eq!(ems.len(), 2);
++        // (agent-tab FR-4 puts the notice's transcript block between the two.)
++        assert_eq!(ems.len(), 3);
+         assert!(matches!(ems[0], AgentEmission::Step { .. }));
+-        assert!(matches!(ems[1], AgentEmission::Update { .. }));
++        assert!(matches!(ems[1], AgentEmission::Block { .. }));
++        assert!(matches!(ems[2], AgentEmission::Update { .. }));
+     }
+ 
+     #[test]

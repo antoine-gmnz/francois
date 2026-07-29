@@ -5,10 +5,11 @@
 // wipes the tabs.
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { AgentTabRef } from '../features/agents/agent-tab';
 import { useStore } from './store';
 
-const A1 = { id: 'a1', name: 'explorer', status: 'running' };
-const A2 = { id: 'a2', name: 'reviewer', status: 'running' };
+const A1: AgentTabRef = { id: 'a1', name: 'explorer', status: 'running' };
+const A2: AgentTabRef = { id: 'a2', name: 'reviewer', status: 'running' };
 
 beforeEach(() => {
   useStore.setState({ agentTabs: [], mainTab: 'session', activeSessionId: null });

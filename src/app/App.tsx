@@ -94,6 +94,7 @@ export default function App() {
   // agent-tab FR-9: the dynamic per-subagent tabs, after SHELL in the strip.
   const agentTabs = useStore((s) => s.agentTabs);
   const closeAgentTab = useStore((s) => s.closeAgentTab);
+  const clearAgentTabs = useStore((s) => s.clearAgentTabs);
 
   const active = sessions.find((s) => s.id === activeSessionId) ?? null;
   const activeAgentId = agentIdFromTab(mainTab);
@@ -273,8 +274,14 @@ export default function App() {
   // any session card leaves OVERVIEW again (Sidebar.selectSession). This also
   // covers §7 case 16 — the active project being removed falls back to All.
   useEffect(() => {
-    if (activeProjectId === null) setMainTab('overview');
-  }, [activeProjectId, setMainTab]);
+    if (activeProjectId === null) {
+      // agent-tab FR-14: widening back to All projects closes every agent tab —
+      // their agentIds are scoped to whichever session was active, and none of
+      // that is still in view once the board zooms out.
+      clearAgentTabs();
+      setMainTab('overview'); // last: wins over clearAgentTabs' own 'session' fallback
+    }
+  }, [activeProjectId, setMainTab, clearAgentTabs]);
 
   // permission-guardrails: the rules editor needs a session (the local tier is
   // its cwd). If the last session is removed while it is open the modal unmounts
@@ -352,7 +359,20 @@ export default function App() {
               flexShrink: 0,
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            {/* §8: the strip scrolls horizontally past overflow rather than
+                clipping or squeezing tabs; it shrinks before the right-aligned
+                session meta cluster does. */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 16,
+                overflowX: 'auto',
+                flexShrink: 1,
+                minWidth: 0,
+              }}
+              className="scz"
+            >
               {/* overview: the cross-project dashboard. First in the strip because
                   it is the zoomed-OUT view — the tabs read left-to-right from the
                   whole fleet down to one session's files. */}
