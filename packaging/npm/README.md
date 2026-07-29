@@ -3,8 +3,7 @@
 **Mission control for your Claude Code fleet** — installed without an installer.
 
 ```sh
-npm i -g francois       # stable
-npm i -g francois@dev   # rolling build of main
+npm i -g francois
 ```
 
 Then launch it **from the Start Menu, Launchpad or your applications menu** like

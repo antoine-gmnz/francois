@@ -175,11 +175,7 @@ async function main() {
       fail(
         `checksum mismatch for ${asset.name}.\n` +
           `  expected ${asset.sha256}\n  actual   ${actual}\n` +
-          (manifest.channel === 'dev'
-            ? 'The rolling `dev` release is replaced on every push to main, so an older\n' +
-              'dev package points at binaries that no longer exist. Install the current\n' +
-              'one: npm i -g francois@dev'
-            : 'Refusing to install a binary that does not match the published release.'),
+          'Refusing to install a binary that does not match the published release.',
       );
     }
 

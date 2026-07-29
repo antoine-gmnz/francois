@@ -8,7 +8,7 @@
 
 One window: every session, its transcript, its diff, its agents — and a real shell.
 
-[![build](https://github.com/antoine-gmnz/francois/actions/workflows/release-main.yml/badge.svg)](https://github.com/antoine-gmnz/francois/actions/workflows/release-main.yml)
+[![build](https://github.com/antoine-gmnz/francois/actions/workflows/release.yml/badge.svg)](https://github.com/antoine-gmnz/francois/actions/workflows/release.yml)
 [![install](https://img.shields.io/badge/npm_i_--g-francois-c8a15a)](https://www.npmjs.com/package/francois)
 [![platforms](https://img.shields.io/badge/Windows_·_macOS_·_Linux-16171c)](https://github.com/antoine-gmnz/francois/releases)
 [![stack](https://img.shields.io/badge/Tauri_2-Rust_core_·_React-24262d)](#under-the-hood)
@@ -77,12 +77,12 @@ It really is installed, not just a command on your `PATH`:
 
 All per-user — no admin rights, no elevation prompt. The download is checked against a published sha256, and `npm uninstall -g francois` cleans up after itself.
 
-Add `@dev` for the rolling build of `main` (`npm i -g francois@dev`). It installs as **Francois Dev** — a separate app with its own data and its own shortcut, safe to run side-by-side with a stable Francois.
+Every push to `main` cuts a new version, so `npm i -g francois` is always the newest build — `npm update -g francois` to move up.
 
 <details>
 <summary>Or use the native installers</summary>
 
-**[⇓ Grab the latest dev build](https://github.com/antoine-gmnz/francois/releases/tag/dev)** — rebuilt on every push to `main`: Windows (`.exe`/`.msi`), macOS universal (`.dmg`, Apple Silicon + Intel), Linux (`.AppImage`/`.deb`). Tagged stable versions live in [releases](https://github.com/antoine-gmnz/francois/releases).
+**[⇓ Grab the latest release](https://github.com/antoine-gmnz/francois/releases/latest)** — Windows (`.exe`/`.msi`), macOS universal (`.dmg`, Apple Silicon + Intel), Linux (`.AppImage`/`.deb`). Every version ever shipped is in [releases](https://github.com/antoine-gmnz/francois/releases).
 
 > These are **unsigned**, and the browser download marks them: on Windows, SmartScreen → *More info → Run anyway*; on macOS, right-click the app → *Open* (or `xattr -cr /Applications/Francois.app`).
 
