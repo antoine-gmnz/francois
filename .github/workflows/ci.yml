@@ -1,7 +1,7 @@
 name: ci
 
-# Test gate for pull requests. Direct pushes to main are tested by the
-# release-main workflow (which then also builds + publishes the dev release).
+# Test gate for pull requests. Pushes to main are tested by the release workflow,
+# which then versions, tags, builds and publishes them.
 on:
   pull_request:
   workflow_dispatch:
