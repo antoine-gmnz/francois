@@ -21,24 +21,29 @@ dashboard's React app. Start the server yourself:
 cohorte dashboard          # binds 127.0.0.1:4317
 ```
 
-Until it is running the pane and the tab both say so and offer `retry`. A plugin
-has no way to spawn a process — that is the sandbox working as designed, not a
-gap, and it is why nothing here starts the server for you.
+Until it is running the pane says so and offers `retry`. A plugin has no way to
+spawn a process — that is the sandbox working as designed, not a gap, and it is
+why nothing here starts the server for you.
 
-## The COHORTE tab
+## Why there is no COHORTE tab
 
-`contributes.tab` claims a **main tab**, next to SESSION / DIFF / SHELL, and the
-plugin's `tab()` returns the URL Francois frames there — which is how the React
-cockpit this pane cannot render ends up on screen anyway.
+A plugin *can* contribute a main tab that frames a web page
+(`capabilities.webTab` + `contributes.tab`), and cohorte's React cockpit is
+exactly the kind of thing that would suit one. This plugin does not contribute
+one, for a reason worth stating rather than leaving as an omission:
 
-The plugin never supplies markup, only a URL, and Francois refuses any URL whose
-host is not in `capabilities.network.hosts`. So the tab reaches exactly the
-origins this plugin could already `fetch`; claiming a tab grants nothing new.
+**a framed tab must be `https:`, loopback included** (FR-82). `francois.fetch`
+is allowed to reach `http://127.0.0.1` because its response is inert bytes
+handed to the isolate; a framed page *executes* next to the app, and a plaintext
+loopback origin is one any other process on the machine can impersonate. Since
+`cohorte dashboard` serves plain HTTP on 127.0.0.1, it cannot be framed — so the
+pane renders the fleet from the JSON API instead, and the cockpit stays in a
+browser where it belongs.
 
-The framed page is inert with respect to Francois: `francois.*` exists only
-inside the isolate, so script in that page cannot touch a session, a diff or a
-project. Anything it wants from Francois goes through the pane's commands, and
-through the approval card.
+The tab is not a way around the sandbox in any case: `francois.*` exists only
+inside the isolate, the frame is opened cross-origin with no IPC, and its URL is
+fixed in the manifest at the moment you consent to it — a plugin cannot repoint
+its tab afterwards.
 
 ## Install
 
@@ -98,8 +103,7 @@ it is broader than what it uses.
 ## Keyboard
 
 `6`–`9` focus the first four plugin panes. Inside the pane, `↑`/`↓` move the
-selection and `⏎` opens the selected project's detail. The COHORTE tab is
-clicked, like every other main tab.
+selection and `⏎` opens the selected project's detail.
 
 ## Tests
 

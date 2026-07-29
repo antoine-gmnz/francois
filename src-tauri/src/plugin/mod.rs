@@ -20,7 +20,9 @@
 //   secrets.rs   — secret.key + XChaCha20-Poly1305 + the `enc:v1:` envelope (FR-65/66)
 //   injection.rs — pending prompt requests, rate limits, expiry, and the hand-off
 //                  into the EXISTING session send path (FR-53..FR-60)
-//   commands.rs  — the twelve Tauri commands, all `#[command(async)]`
+//   webtab.rs    — the framed main tab: static manifest data, validated once
+//                  at install/update, never a handler result (FR-81..FR-86)
+//   commands.rs  — the Tauri commands, all `#[command(async)]`
 
 mod commands;
 mod hostapi;
@@ -31,8 +33,8 @@ mod net;
 mod panelspec;
 mod registry;
 mod secrets;
+mod webtab;
 
-#[allow(unused_imports)]
 #[allow(unused_imports)]
 pub(crate) use commands::*;
 #[allow(unused_imports)]
@@ -51,6 +53,8 @@ pub(crate) use panelspec::*;
 pub(crate) use registry::*;
 #[allow(unused_imports)]
 pub(crate) use secrets::*;
+#[allow(unused_imports)]
+pub(crate) use webtab::*;
 
 #[cfg(test)]
 mod cohorte;
@@ -89,6 +93,14 @@ pub(crate) const PANEL_INVALID_NODE: &str = "\u{27e8}invalid node\u{27e9}";
 pub(crate) const PANEL_MAX_ARG_KEYS: usize = 16;
 pub(crate) const PANEL_MAX_ARG_KEY_LEN: usize = 64;
 pub(crate) const PANEL_MAX_ARG_VALUE_LEN: usize = 512;
+
+/// FR-81/FR-86 — a contributed main tab. The tab strip is narrow, so the title
+/// is bounded here rather than left to the renderer to hide.
+pub(crate) const TAB_MAX_TITLE: usize = 12;
+/// FR-82 — the ONLY scheme a framed tab may use. `http://127.0.0.1` is rejected
+/// even though `francois.fetch` allows it (FR-31): a fetch hands the isolate
+/// inert bytes, a frame executes them next to the app.
+pub(crate) const TAB_SCHEME: &str = "https";
 
 pub(crate) const STAGING_TTL_MS: u64 = 600_000;
 /// FR-73. Mirrored from the contract for completeness, but the FRONTEND owns
@@ -162,6 +174,12 @@ pub struct PluginCapabilities {
     pub drive_sessions: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<PluginNetwork>,
+    /// FR-81: frame ONE https origin as a main tab. Deliberately its own flag —
+    /// `network` grants a fetch, whose result is inert bytes handed to the
+    /// isolate; this grants EXECUTION next to the app, and gets its own consent
+    /// line. It narrows `network.hosts` rather than widening it.
+    #[serde(rename = "webTab", default, skip_serializing_if = "Option::is_none")]
+    pub web_tab: Option<bool>,
 }
 
 impl PluginCapabilities {
@@ -181,6 +199,9 @@ impl PluginCapabilities {
     pub(crate) fn has_network(&self) -> bool {
         self.network.is_some()
     }
+    pub(crate) fn web_tab(&self) -> bool {
+        self.web_tab == Some(true)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -198,6 +219,21 @@ pub struct PluginPanelContribution {
     pub title: String,
 }
 
+/// FR-81 — the STATIC declaration of a framed main tab.
+///
+/// The url lives here, in the manifest, and nowhere else. There is no `tab()`
+/// handler and the isolate never runs for this surface, so what the user
+/// consented to is what gets framed — permanently. A plugin that could return
+/// its tab's url at render time could repoint it after consent, which is the
+/// whole reason this is data rather than code.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct PluginTabContribution {
+    pub title: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct PluginContributes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -207,9 +243,9 @@ pub struct PluginContributes {
     /// `Record<string, never>` on the wire — an empty object claiming the surface.
     #[serde(rename = "statusBar", default, skip_serializing_if = "Option::is_none")]
     pub status_bar: Option<Map<String, Value>>,
-    /// FR-81: claims a main tab framing a URL the plugin's `tab()` returns.
+    /// FR-81: claims a main tab framing the manifest's own https url.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tab: Option<PluginPanelContribution>,
+    pub tab: Option<PluginTabContribution>,
 }
 
 impl PluginContributes {
@@ -324,14 +360,15 @@ impl Default for PluginEnablement {
     }
 }
 
+/// The surfaces plugin CODE can produce (contract §5.2). `Tab` is deliberately
+/// absent: a contributed tab is static manifest data (FR-81), so it is never
+/// rendered, never invalidated, and never a reason to start an isolate.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum PluginSurface {
     Panel,
     StatusBar,
     Command,
-    /// FR-81: the plugin's main tab — a URL the app frames.
-    Tab,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -511,30 +548,6 @@ pub struct StatusItemSpec {
     pub command_id: Option<String>,
 }
 
-/// FR-81 — what a `tab()` handler returns, after validation.
-///
-/// Exactly one of `url` / `message` is ever set. `url` has already been checked
-/// against the plugin's own `capabilities.network.hosts` by the same `check_url`
-/// that gates `francois.fetch`, so by the time this reaches the webview the
-/// origin is one the user consented to at install time.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct TabSpec {
-    pub version: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action: Option<TabAction>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct TabAction {
-    pub label: String,
-    #[serde(rename = "commandId")]
-    pub command_id: String,
-}
-
 // ---------- events (contract §5.4) ----------
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -583,6 +596,7 @@ pub(crate) fn emit(app: &AppHandle, ev: PluginEvent) {
 // ---------- managed state (§6) ----------
 
 /// A resolved-but-not-committed tree (FR-5). Swept after STAGING_TTL_MS.
+#[cfg_attr(test, derive(Debug))]
 pub(crate) struct StagedTree {
     pub dir: std::path::PathBuf,
     pub manifest: PluginManifest,
@@ -776,62 +790,58 @@ mod tests {
         let empty = PluginCapabilities::default();
         assert_eq!(serde_json::to_value(&empty).unwrap(), json!({}));
         assert!(!empty.read_state() && !empty.drive_sessions() && !empty.has_network());
+        assert!(!empty.web_tab());
         assert!(empty.hosts().is_empty());
     }
 
     #[test]
-    fn panel_node_union_round_trips_every_one_of_the_ten_types() {
-        // FR-35 (§9 · PanelSpec): the ten-member frozen vocabulary, tagged on `type`.
-        let nodes = json!([
-            { "type": "text", "value": "hi", "tone": "accent", "wrap": true },
-            { "type": "row", "children": [{ "type": "divider" }], "gap": "md", "align": "between" },
-            { "type": "stack", "children": [], "gap": "sm" },
-            { "type": "list", "items": [{ "type": "keyhint", "value": "⏎" }], "selectable": true, "emptyText": "none" },
-            { "type": "badge", "value": "ok", "tone": "success" },
-            { "type": "keyhint", "value": "⌘K" },
-            { "type": "divider" },
-            { "type": "action", "label": "open", "commandId": "open-run", "args": { "runId": "4821" }, "keyhint": "⏎" },
-            { "type": "progress", "percent": 42.0, "label": "half" },
-            { "type": "spinner", "label": "loading" }
-        ]);
-        let parsed: Vec<PanelNode> = serde_json::from_value(nodes.clone()).unwrap();
-        assert_eq!(parsed.len(), 10);
-        assert_eq!(serde_json::to_value(&parsed).unwrap(), nodes);
-
-        // absent optionals are OMITTED, never null
-        let bare: Vec<PanelNode> =
-            serde_json::from_value(json!([{ "type": "text", "value": "x" }])).unwrap();
+    fn web_tab_is_its_own_capability_flag() {
+        // FR-81: `webTab` is NOT implied by `network` and never implies it —
+        // they are separate keys with separate consent lines.
+        let caps: PluginCapabilities = serde_json::from_value(json!({
+            "network": { "hosts": ["dash.acme.dev"] },
+            "webTab": true,
+        }))
+        .unwrap();
+        assert!(caps.web_tab() && caps.has_network());
         assert_eq!(
-            serde_json::to_value(&bare).unwrap(),
-            json!([{ "type": "text", "value": "x" }])
+            serde_json::to_value(&caps).unwrap(),
+            json!({ "network": { "hosts": ["dash.acme.dev"] }, "webTab": true })
         );
+
+        let network_only: PluginCapabilities =
+            serde_json::from_value(json!({ "network": { "hosts": ["dash.acme.dev"] } })).unwrap();
+        assert!(!network_only.web_tab(), "network does not imply webTab");
     }
 
     #[test]
-    fn panel_and_status_specs_round_trip() {
-        let spec = PanelSpec {
-            version: 1,
-            title: Some("CI".into()),
-            nodes: vec![PanelNode::Divider],
-        };
-        let v = serde_json::to_value(&spec).unwrap();
-        assert_eq!(
-            v,
-            json!({ "version": 1, "title": "CI", "nodes": [{ "type": "divider" }] })
-        );
-        assert_eq!(serde_json::from_value::<PanelSpec>(v).unwrap(), spec);
+    fn a_contributed_tab_is_static_manifest_data() {
+        // FR-81 / §5.2: title + url + optional glyph, declared in the manifest.
+        // There is no `tab()` handler and no `tab` render surface, so the url a
+        // plugin was consented to is the url that gets framed, permanently.
+        let raw = json!({
+            "panel": { "title": "CI" },
+            "tab": { "title": "COHORTE", "url": "https://dash.acme.dev/", "glyph": "⊞" },
+        });
+        let c: PluginContributes = serde_json::from_value(raw.clone()).unwrap();
+        let tab = c.tab.as_ref().unwrap();
+        assert_eq!(tab.title, "COHORTE");
+        assert_eq!(tab.url, "https://dash.acme.dev/");
+        assert_eq!(serde_json::to_value(&c).unwrap(), raw);
+    }
 
-        let item = StatusItemSpec {
-            version: 1,
-            text: "3 failing".into(),
-            tone: Some(PanelTone::Error),
-            badge: None,
-            command_id: Some("open".into()),
-        };
-        assert_eq!(
-            serde_json::to_value(&item).unwrap(),
-            json!({ "version": 1, "text": "3 failing", "tone": "error", "commandId": "open" })
-        );
+    #[test]
+    fn the_plugin_surface_union_has_no_tab_member() {
+        // A tab is never rendered, so it can never be a runtime error's surface
+        // nor an invalidation target (contract §5.2).
+        assert!(serde_json::from_value::<PluginSurface>(json!("tab")).is_err());
+        for (v, expect) in [
+            (PluginSurface::Panel, "panel"),
+            (PluginSurface::StatusBar, "statusBar"),
+            (PluginSurface::Command, "command"),
+        ] {
+            assert_eq!(serde_json::to_value(v).unwrap(), json!(expect));
+        }
     }
 
     #[test]

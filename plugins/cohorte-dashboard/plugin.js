@@ -113,21 +113,25 @@ function samePath(a, b) {
 /**
  * Which session should receive a prompt about `projectPath`.
  *
- * Preference order: a session already open ON that project (the whole point —
- * the work belongs where the files are), then the session the user is looking
- * at. Never an arbitrary third session: sending a prompt about project A into
- * an unrelated project B's session is worse than doing nothing, even with the
- * approval card in front of it.
+ * ONLY a session already open on that project — the work belongs where the
+ * files are. Never an arbitrary other session: a prompt about project A landing
+ * in project B's session is worse than doing nothing, even with the approval
+ * card in front of it, because the card shows the TEXT and not the destination's
+ * working directory.
+ *
+ * The session the user happens to be looking at is not a fallback for the same
+ * reason: it is arbitrary with respect to `projectPath`. If nothing is open on
+ * the project, the answer is "no session", and the pane says so.
  */
 function pickSession(sessions, projectPath, ctxSessionId) {
   const onProject = sessions.filter((s) => samePath(s.cwd, projectPath));
-  if (onProject.length > 0) {
-    // Prefer one that is not mid-turn, so the prompt is not queued behind work.
-    const idle = onProject.find((s) => s.status === 'idle');
-    return (idle || onProject[0]).id;
-  }
-  if (ctxSessionId && sessions.some((s) => s.id === ctxSessionId)) return ctxSessionId;
-  return null;
+  if (onProject.length === 0) return null;
+  // Prefer one that is not mid-turn, so the prompt is not queued behind work…
+  const idle = onProject.find((s) => s.status === 'idle');
+  if (idle) return idle.id;
+  // …and among busy ones, the session the user is actually looking at.
+  const focused = onProject.find((s) => s.id === ctxSessionId);
+  return (focused || onProject[0]).id;
 }
 
 /**
@@ -275,33 +279,6 @@ export default {
     }
 
     return { version: 1, nodes };
-  },
-
-  /**
-   * The COHORTE main tab: cohorte's own React cockpit, framed.
-   *
-   * This is the one place the React half DOES run — not here in the isolate, but
-   * in a frame the app opens at the URL below. The plugin never sees that page
-   * and cannot script it; it only names it, and Francois refuses any host
-   * outside `capabilities.network.hosts`.
-   *
-   * The probe is not ceremony. Returning a URL for a server that is down would
-   * frame a browser connection-error page, which tells the user nothing about
-   * what to do; the message does.
-   */
-  async tab() {
-    const probe = await getJson('/api/versions');
-    if (!probe.ok) {
-      return {
-        version: 1,
-        message:
-          'cohorte dashboard is not running.\n\nStart it with `cohorte dashboard`, ' +
-          'then retry. Francois cannot start it for you — no plugin can cause a ' +
-          'process to run.',
-        action: { label: 'retry', commandId: 'refresh' },
-      };
-    }
-    return { version: 1, url: baseUrl() };
   },
 
   async statusBar() {

@@ -8,6 +8,7 @@ import CommandBlock from '../commands/CommandCard';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import PluginInjectionCard from '../plugins/PluginInjectionCard';
+import { pluginAttributionLine } from '../plugins/plugins';
 import QuestionCard from '../questions/QuestionCard';
 
 const C = {
@@ -57,8 +58,17 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
             Persisted with the transcript, so it survives a reload and a resume —
             it is a record of what happened, not view state. */}
         {b.origin && (
-          <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 4 }}>
-            ↳ via plugin {b.origin.pluginName}
+          <div
+            style={{
+              fontSize: 10.5,
+              color: 'var(--text-faint)',
+              marginTop: 4,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {pluginAttributionLine(b.origin)}
           </div>
         )}
       </div>

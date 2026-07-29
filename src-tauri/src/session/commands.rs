@@ -252,6 +252,10 @@ pub fn session_remove(
             }
             crate::diff::unwatch_session(&session_id); // FR-15: dispose the watcher
             crate::dispose_session_shell(&app, &session_id); // wsl-filesystem FR-13: dispose the shell
+                                                             // plugin-system FR-55/§7 #31: the transcript just went with the
+                                                             // session, so any injection card aimed at it must expire rather
+                                                             // than linger unanswerable in the plugin registry.
+            crate::plugin::on_session_removed(&app, &session_id);
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)
         }

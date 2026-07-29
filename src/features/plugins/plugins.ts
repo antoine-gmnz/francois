@@ -18,6 +18,7 @@ import type {
   PanelTone,
   PluginCapabilities,
   PluginCapabilityKey,
+  PluginTab,
   PluginEnablement,
   PluginInjectionBlockState,
   PluginInstallPhase,
@@ -32,16 +33,20 @@ import type {
 } from '../../../contract/plugin-system';
 import {
   DEFAULT_PLUGIN_GLYPH,
+  MAX_PLUGIN_TABS,
   PLUGIN_CAPABILITY_KEYS,
   PLUGIN_FAILURE_LIMIT,
   PLUGIN_PANE_TITLE_MAX,
+  PLUGIN_TAB_SCHEMES,
   REFRESH_INTERVAL_MAX_MS,
   REFRESH_INTERVAL_MIN_MS,
   SECRET_SENTINEL,
   SETTING_MAX_STRING,
   STATUS_ITEM_MAX_VISIBLE,
+  TAB_MAX_TITLE,
   pluginIdOfTab,
   pluginPaletteCommandId,
+  pluginPaneFocusLabel,
   pluginPaneHotkey,
   pluginPaneId,
 } from '../../../contract/plugin-system';
@@ -261,22 +266,174 @@ export function paneTitle(title: string): string {
 }
 
 // ============================================================================
-// FR-81 — main tabs
+// FR-81..FR-86 — the framed main tab
 // ============================================================================
+//
+// A contributed tab is STATIC MANIFEST DATA. There is no `tab()` handler, no
+// `'tab'` render surface, and therefore nothing to poll: what the user consented
+// to is what gets framed, permanently. Everything below is a pure function of
+// `manifest.contributes.tab` and `grantedCapabilities` — never of a handler
+// result, which is exactly why a compromised backing service cannot move the
+// tab after the fact.
+
+export interface ResolvedPluginTab {
+  plugin: InstalledPlugin;
+  tab: PluginTab;
+}
 
 /**
- * The plugins contributing a main tab, in registry order — the same order and
- * the same enablement rule the panes use, so a project filter adds and removes
- * tabs exactly as it does panes.
+ * The tabs that may render, in registry order, capped at MAX_PLUGIN_TABS
+ * (FR-86) — each one already RESOLVED.
+ *
+ * Resolving here rather than at each call site is deliberate: the gate ("does
+ * this plugin have a tab?") and the resolution are then the same decision, and
+ * a strip entry cannot exist without a tab behind it. FR-82a makes that matter
+ * — the core drops a tab whose on-disk url no longer matches the one the user
+ * consented to, and a plugin that keeps `webTab` while losing its tab is now a
+ * real shape rather than a hypothetical one. A dropped tab is not a failed tab:
+ * it takes none of the three slots.
+ *
+ * Three gates beyond enablement:
+ *  - `consentPending` contributes nothing (FR-16). The on-disk manifest wants
+ *    more than was granted, so its `tab.url` is one the user never saw — the
+ *    precise case FR-81's static url exists to prevent.
+ *  - `webTab` must actually be GRANTED. A manifest declaring `contributes.tab`
+ *    without it is rejected by the core at install (FR-81); this is the
+ *    belt-and-braces half, for a registry file edited underneath us.
+ *  - the URL itself is re-checked at render time by `checkTabUrl` (FR-85) — an
+ *    invalid one still gets a strip entry, because §8·H35's refusal has to be
+ *    visible rather than silent.
  */
-export function pluginTabs(plugins: InstalledPlugin[], scope: ProjectId | null): InstalledPlugin[] {
-  return activePlugins(plugins, scope).filter((p) => p.manifest.contributes.tab !== undefined);
+export function resolvedPluginTabs(
+  plugins: InstalledPlugin[],
+  scope: ProjectId | null,
+): ResolvedPluginTab[] {
+  const out: ResolvedPluginTab[] = [];
+  for (const plugin of activePlugins(plugins, scope)) {
+    if (plugin.consentPending || plugin.grantedCapabilities.webTab !== true) continue;
+    const tab = resolvePluginTab(plugin);
+    if (!tab) continue;
+    out.push({ plugin, tab });
+    if (out.length === MAX_PLUGIN_TABS) break;
+  }
+  return out;
 }
 
-/** FR-81: `contributes.tab.title`, uppercased and truncated like a pane title. */
-export function tabTitle(title: string): string {
-  return title.toUpperCase().slice(0, PLUGIN_PANE_TITLE_MAX);
+/** The same set, as plugins — for the callers that only need identity. */
+export function pluginTabs(plugins: InstalledPlugin[], scope: ProjectId | null): InstalledPlugin[] {
+  return resolvedPluginTabs(plugins, scope).map((e) => e.plugin);
 }
+
+/** §8·H31: `contributes.tab.title`, uppercased and truncated to TAB_MAX_TITLE. */
+export function tabTitle(title: string): string {
+  return title.toUpperCase().slice(0, TAB_MAX_TITLE);
+}
+
+/**
+ * The contract's `PluginTab`, resolved from the manifest. Returns null when the
+ * plugin contributes no tab — there is no other way to obtain one.
+ */
+export function resolvePluginTab(plugin: InstalledPlugin): PluginTab | null {
+  const tab = plugin.manifest.contributes.tab;
+  if (!tab) return null;
+  return {
+    pluginId: plugin.manifest.id,
+    title: tabTitle(tab.title),
+    url: tab.url,
+    glyph: tab.glyph || DEFAULT_PLUGIN_GLYPH,
+  };
+}
+
+/** A host as the allowlist should see it: lowercased, trailing dot stripped. */
+function normHost(raw: string): string {
+  return raw.trim().replace(/\.$/, '').toLowerCase();
+}
+
+/**
+ * FR-31's host rule, mirrored from the core's `net::host_allowed`: an exact
+ * match, or ONE leading wildcard label — `*.acme.dev` matches `a.acme.dev` and
+ * the apex `acme.dev`, but never `x.y.acme.dev` and never `evil-acme.dev`
+ * (a suffix matcher would accept both).
+ */
+export function hostAllowed(host: string, allowlist: readonly string[]): boolean {
+  const h = normHost(host);
+  if (!h) return false;
+  return allowlist.some((raw) => {
+    const pattern = normHost(raw);
+    if (!pattern.startsWith('*.')) return pattern === h;
+    const apex = pattern.slice(2);
+    if (!apex) return false; // a bare `*.` is not a wildcard for everything
+    if (h === apex) return true;
+    if (!h.endsWith(`.${apex}`)) return false;
+    const prefix = h.slice(0, h.length - apex.length - 1);
+    return prefix.length > 0 && !prefix.includes('.');
+  });
+}
+
+export type TabBlockReason = 'malformed' | 'scheme' | 'host';
+export type TabUrlCheck = { ok: true; host: string } | { ok: false; reason: TabBlockReason };
+
+/**
+ * FR-85 — the frontend's own gate, run immediately before the frame is drawn.
+ *
+ * The core is authoritative and already refused anything this would refuse; the
+ * renderer runs it anyway because it can verify the string cheaply and because
+ * `<iframe src>` is not a place to find out you were wrong. `https:` only
+ * (FR-82 — loopback included, unlike `francois.fetch`), host on the plugin's
+ * OWN granted allowlist.
+ */
+export function checkTabUrl(url: string, caps: PluginCapabilities): TabUrlCheck {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, reason: 'malformed' };
+  }
+  if (!(PLUGIN_TAB_SCHEMES as readonly string[]).includes(parsed.protocol)) {
+    return { ok: false, reason: 'scheme' };
+  }
+  const hosts = caps.network?.hosts ?? [];
+  if (!hostAllowed(parsed.hostname, hosts)) return { ok: false, reason: 'host' };
+  return { ok: true, host: normHost(parsed.hostname) };
+}
+
+/** The host of a tab url, or null when it does not parse. For consent copy. */
+export function tabUrlHost(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return normHost(new URL(url).hostname) || null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- §8 · H copy ----------
+
+/** §8·H32: `⌁ <plugin name> · <host>` — the host is the FRAME's, not the title. */
+export function tabAttribution(pluginName: string, host: string): string {
+  return `${DEFAULT_PLUGIN_GLYPH} ${pluginName} · ${host}`;
+}
+
+/**
+ * §8·H32 — the control copies the address rather than opening it. Francois
+ * bundles no opener plugin, and `window.open` inside the Tauri webview would
+ * render the page in a window WITHOUT the FR-83 sandbox — strictly worse than
+ * the frame it escapes. `tauri-plugin-opener` is the real fix, deferred.
+ */
+export const TAB_COPY_ADDRESS = 'copy address';
+export const TAB_ADDRESS_COPIED = 'url copied — paste in your browser';
+/** §8·H32 — how long the copied label stands before reverting. */
+export const TAB_COPIED_MS = 2_000;
+
+/** §8·H34. */
+export function tabLoadingLine(host: string): string {
+  return `loading ${host}…`;
+}
+
+/** §8·H35 — a refusal, not a load failure. */
+export const TAB_BLOCKED_LINE = "this tab's address is not allowed";
+export const TAB_BLOCKED_HINT =
+  'the plugin may have been tampered with — review it in ⌘K → Manage plugins';
 
 /**
  * Is `tab` still a tab some visible plugin contributes?
@@ -286,9 +443,9 @@ export function tabTitle(title: string): string {
  * under the user. Without this the app would render a tab whose plugin is gone —
  * a blank main pane with no way back.
  */
-export function isTabStillVisible(tab: string, visible: InstalledPlugin[]): boolean {
+export function isTabStillVisible(tab: string, visiblePluginIds: readonly string[]): boolean {
   const id = pluginIdOfTab(tab);
-  return id === null || visible.some((p) => p.manifest.id === id);
+  return id === null || visiblePluginIds.includes(id);
 }
 
 /** FR-46: the count the first TOP-LEVEL list reports, else the top-level node count. */
@@ -301,6 +458,15 @@ export function paneCount(spec: PanelSpec | null): number {
 /** §8·A1: `<n> · [<hotkey>]`, or `<n>` alone when the pane has no hotkey. */
 export function paneCountLabel(count: number, hotkey: string | null): string {
   return hotkey === null ? String(count) : `${count} · [${hotkey}]`;
+}
+
+/**
+ * FR-45 / §3·B1 — the status bar's `focus:` label. A plugin pane shows the
+ * PLUGIN ID alone (`acme-ci`), never the raw pane id (`plugin:acme-ci`); the
+ * five static panes are their own label.
+ */
+export function paneFocusLabel(paneId: string): string {
+  return pluginPaneFocusLabel(paneId) ?? paneId;
 }
 
 // ============================================================================
@@ -532,10 +698,20 @@ export function settingPatch(
 // FR-11 / §8·C/D — consent card and modal copy
 // ============================================================================
 
+/**
+ * §8·H36 — the framed tab's own consent line. `null` when the host is not known
+ * at the call site (the manifest carries the url, `PluginCapabilities` does not).
+ */
+export function webTabSentence(host: string | null): string {
+  return `frame ${host ?? 'a web page'} as a tab — that page runs its own code`;
+}
+
 export const CAPABILITY_SENTENCES: Record<PluginCapabilityKey, string> = {
   readState: 'read your sessions, projects, diffs and agent activity',
   driveSessions: 'ask to send prompts to your sessions — every one needs your approval',
   network: 'reach the network, limited to the domains below',
+  // Host-parameterised at render time; this is the fallback wording.
+  webTab: webTabSentence(null),
 };
 
 export interface CapabilityRow {
@@ -547,28 +723,105 @@ export interface CapabilityRow {
   added: boolean;
   /** The subset of `hosts` that is new. */
   addedHosts: string[];
+  /**
+   * §8·C9's PERMISSIONS glyph: `✓` for a granted capability, `⚠` for `webTab`
+   * (§8·H36) — that one is the strongest grant on the card and never reads as
+   * a routine tick. The consent card (§8·D13) marks every row `⚠` regardless.
+   */
+  glyph: '✓' | '⚠';
 }
 
-/** FR-11: one row per GRANTED capability, in consent-card display order. */
+/** Is `key` granted by `caps`? `network` is a value, the rest are flags. */
+function isGranted(caps: PluginCapabilities, key: PluginCapabilityKey): boolean {
+  return key === 'network' ? caps.network !== undefined : caps[key] === true;
+}
+
+/**
+ * FR-11: one row per GRANTED capability, in PLUGIN_CAPABILITY_KEYS order —
+ * which puts `webTab` last (§8·H36), because it is the strongest grant on the
+ * card and reads as the closing statement rather than a middle line.
+ */
 export function capabilityRows(
   caps: PluginCapabilities,
   addedCapabilities: readonly PluginCapabilityKey[] = [],
   addedHosts: readonly string[] = [],
+  /** The host of `contributes.tab.url`, for the §8·H36 sentence. */
+  webTabHost: string | null = null,
 ): CapabilityRow[] {
   const rows: CapabilityRow[] = [];
   for (const key of PLUGIN_CAPABILITY_KEYS) {
-    const granted = key === 'network' ? caps.network !== undefined : caps[key] === true;
-    if (!granted) continue;
+    if (!isGranted(caps, key)) continue;
     const hosts = key === 'network' ? (caps.network?.hosts ?? []) : [];
     rows.push({
       key,
-      sentence: CAPABILITY_SENTENCES[key],
+      sentence: key === 'webTab' ? webTabSentence(webTabHost) : CAPABILITY_SENTENCES[key],
       hosts,
       added: addedCapabilities.includes(key),
       addedHosts: hosts.filter((h) => addedHosts.includes(h)),
+      glyph: key === 'webTab' ? '⚠' : '✓',
     });
   }
   return rows;
+}
+
+export interface CapabilityDelta {
+  addedCapabilities: PluginCapabilityKey[];
+  addedHosts: string[];
+}
+
+/**
+ * FR-13 / §8·D15 — what a wanted capability set asks for BEYOND what was
+ * granted. `granted === null` is a first install: nothing is "added", the whole
+ * card is new.
+ *
+ * On an UPDATE the core reports this in `PluginUpdateInfo`, and that list is
+ * what the consent card renders. This function exists for the case the core
+ * cannot report: a `consentPending` entry, whose widening is between the
+ * on-disk manifest and the granted set with no update flow in sight (§3·F5).
+ * Hosts are compared normalized but returned VERBATIM — the user reads the
+ * manifest's own spelling (FR-11).
+ */
+export function capabilityDiff(
+  granted: PluginCapabilities | null,
+  wanted: PluginCapabilities,
+): CapabilityDelta {
+  if (!granted) return { addedCapabilities: [], addedHosts: [] };
+  const addedCapabilities = PLUGIN_CAPABILITY_KEYS.filter(
+    (key) => isGranted(wanted, key) && !isGranted(granted, key),
+  );
+  const grantedHosts = new Set((granted.network?.hosts ?? []).map(normHost));
+  const addedHosts = (wanted.network?.hosts ?? []).filter((h) => !grantedHosts.has(normHost(h)));
+  return { addedCapabilities: [...addedCapabilities], addedHosts };
+}
+
+/**
+ * FR-16 / §3·F5 — what a `consentPending` plugin is asking for. Its ON-DISK
+ * manifest wants more than `grantedCapabilities`; this is that difference, so
+ * the modal has something to actually show. Without it the flow dead-ends on a
+ * sentence with nothing to review.
+ */
+export function pendingConsentDiff(plugin: InstalledPlugin): CapabilityDelta {
+  return capabilityDiff(plugin.grantedCapabilities, plugin.manifest.capabilities);
+}
+
+/**
+ * Why a plugin is `consentPending` — and the two reasons must not read alike.
+ *
+ * `consent_pending` is also how the core quarantines a registry row it does not
+ * trust (§7 #49): an entry whose manifest no longer validates, or whose
+ * `installPath` is not where it should be, is KEPT but marked pending with a
+ * `lastError` explaining why. Nothing was widened in that case, so the FR-16
+ * copy — "new permissions — review to re-enable" — would be a lie: there are no
+ * new permissions to review, and re-consenting is not the way out. A widening
+ * always has a non-empty delta; that is what tells the two apart, rather than
+ * matching on the error's wording.
+ */
+export function consentPendingReason(plugin: InstalledPlugin): 'widening' | 'untrusted' | null {
+  if (!plugin.consentPending) return null;
+  const delta = pendingConsentDiff(plugin);
+  const widened = delta.addedCapabilities.length > 0 || delta.addedHosts.length > 0;
+  if (widened) return 'widening';
+  return plugin.lastError ? 'untrusted' : 'widening';
 }
 
 /** §8·C4/D14 — the standing warning. A disclosure, not a control (§10). */
@@ -636,7 +889,16 @@ export function pluginRowSubtitle(plugin: InstalledPlugin): string {
 
 export type PluginRowTone = 'faint' | 'error' | 'warn' | 'accent';
 
-/** §8·C8 state tags, in the order the brief lists them. */
+/**
+ * §8·C8 state tags, in the order the brief lists them.
+ *
+ * The fifth tag exists because a quarantined registry row reuses the
+ * `consentPending` mechanism to make itself inert (FR-79 §7 #49, FR-82a). It
+ * would otherwise render as `new permissions` — telling the user to review an
+ * update that does not exist, on a row whose real problem is that its on-disk
+ * state was edited. `consentPendingReason` is the discrimination, on the
+ * capability DELTA rather than on `lastError`'s wording.
+ */
 export function pluginRowTags(
   plugin: InstalledPlugin,
   updateAvailable: boolean,
@@ -644,7 +906,9 @@ export function pluginRowTags(
   const tags: { label: string; tone: PluginRowTone }[] = [];
   if (plugin.enablement.scope === 'off') tags.push({ label: 'off', tone: 'faint' });
   if (plugin.lastError) tags.push({ label: 'error', tone: 'error' });
-  if (plugin.consentPending) tags.push({ label: 'new permissions', tone: 'warn' });
+  const reason = consentPendingReason(plugin);
+  if (reason === 'widening') tags.push({ label: 'new permissions', tone: 'warn' });
+  else if (reason === 'untrusted') tags.push({ label: 'not trustworthy', tone: 'error' });
   if (updateAvailable) tags.push({ label: 'update', tone: 'accent' });
   return tags;
 }

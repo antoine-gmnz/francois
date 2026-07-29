@@ -140,6 +140,28 @@ pub(crate) fn request(
     Ok(serde_json::json!({ "requestId": request_id }))
 }
 
+/// What a decision resolves to, decided PURELY so the rule is testable without
+/// an app: the ten-minute window is a security property, not a UI detail.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Decision {
+    /// FR-55: the window closed. Nothing is sent, whatever the user clicked.
+    Expired,
+    Denied,
+    Approved,
+}
+
+/// FR-55/§7 #29 — expiry beats the decision.
+pub(crate) fn decide(pending: &PendingInjection, now: u64, approve: bool) -> Decision {
+    if now >= pending.expires_at {
+        return Decision::Expired;
+    }
+    if approve {
+        Decision::Approved
+    } else {
+        Decision::Denied
+    }
+}
+
 /// FR-57: the human's decision. `approve` sends through the SAME path as
 /// `session_send`, queue-if-busy included (§7 #32).
 pub(crate) fn resolve(
@@ -173,28 +195,74 @@ pub(crate) fn resolve(
         }
     };
 
-    let state_label = if approve { "approved" } else { "denied" };
-    crate::session::buffer_plugin_injection(
-        app,
-        session_id,
-        block_id,
-        &pending.request,
-        state_label,
-    );
-    crate::session::emit_injection_resolved(app, session_id, block_id, state_label);
-
-    if !approve {
-        // FR-56: the plugin is told nothing. Not even that it was denied.
-        return Ok((false, None));
+    // FR-55/§7 #29: the ten minutes are checked HERE, at the decision, not only
+    // by the sweep. The sweep runs off the render tick, which FR-70 puts in the
+    // frontend — so with no plugin surface mounted there is no clock at all, and
+    // an hours-old card would otherwise still send. The window exists precisely
+    // for "the user walked away", which is exactly the case with nothing
+    // rendering.
+    let decision = decide(&pending, now_ms(), approve);
+    if decision != Decision::Approved {
+        let label = match decision {
+            Decision::Expired => "expired",
+            _ => "denied",
+        };
+        crate::session::buffer_plugin_injection(app, session_id, block_id, &pending.request, label);
+        crate::session::emit_injection_resolved(app, session_id, block_id, label);
+        return match decision {
+            // FR-56: a denial tells the plugin nothing. Not even that it was denied.
+            Decision::Denied => Ok((false, None)),
+            _ => Err((E_INJECTION_NOT_PENDING, "this request expired".to_string())),
+        };
     }
-    crate::session::send_from_plugin(
+
+    // §7 #37: send FIRST, then record. Marking the card approved before the send
+    // succeeds would leave the transcript — which is the permanent record of what
+    // a plugin was allowed to do — claiming a prompt was sent that never was.
+    match crate::session::send_from_plugin(
         app,
         session_id,
-        pending.prompt,
+        pending.prompt.clone(),
         &pending.plugin_id,
         &pending.plugin_name,
-    )
-    .map_err(|(code, msg)| (code, msg))
+    ) {
+        Ok(out) => {
+            crate::session::buffer_plugin_injection(
+                app,
+                session_id,
+                block_id,
+                &pending.request,
+                "approved",
+            );
+            crate::session::emit_injection_resolved(app, session_id, block_id, "approved");
+            Ok(out)
+        }
+        Err((code, msg)) => {
+            // Nothing was sent, so the request is still pending: put it back and
+            // leave the card as it was rather than resolving it to a state that
+            // did not happen.
+            if let Some(state) = app.try_state::<PluginState>() {
+                state
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .injections
+                    .insert(block_id.to_string(), pending);
+            }
+            // §5.4 declares SESSION_NOT_FOUND / PLUGIN_INJECTION_NOT_PENDING /
+            // INTERNAL for this channel; anything else the session domain
+            // reports (SESSION_NOT_RUNNING, INVALID_INPUT) is mapped rather
+            // than leaked as an undeclared code.
+            Err((
+                if code == "SESSION_NOT_FOUND" {
+                    "SESSION_NOT_FOUND"
+                } else {
+                    "INTERNAL"
+                },
+                msg,
+            ))
+        }
+    }
 }
 
 /// FR-55: expire everything that has run out of time, plus (when `plugin_id` is
@@ -380,6 +448,26 @@ mod tests {
         let expired = expire(&mut inner, 0, None, Some("s1"));
         assert_eq!(expired, vec![("s1".to_string(), "b1".to_string())]);
         assert!(inner.injections.contains_key("b2"));
+    }
+
+    #[test]
+    fn a_decision_taken_after_the_window_closed_sends_nothing() {
+        // §7 #29: the sweep runs off the FRONTEND's render tick (FR-70), so a
+        // user with no plugin surface on screen can click approve on a card that
+        // ran out of time hours ago. Expiry has to be decided here, at the
+        // decision, or the ten-minute window is not a window.
+        let p = pending("acme-ci", "s1", 600_000);
+        assert_eq!(decide(&p, 599_999, true), Decision::Approved);
+        assert_eq!(decide(&p, 599_999, false), Decision::Denied);
+        // exactly at the boundary the window is closed — `expiresAt` is when it
+        // expires, not the last instant it is open.
+        assert_eq!(decide(&p, 600_000, true), Decision::Expired);
+        assert_eq!(decide(&p, 600_001, true), Decision::Expired);
+        assert_eq!(
+            decide(&p, 600_001, false),
+            Decision::Expired,
+            "a denial after the window is still an expiry, not a denial"
+        );
     }
 
     #[test]

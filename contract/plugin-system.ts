@@ -61,10 +61,32 @@ export interface PluginCapabilities {
   driveSessions?: boolean;
   /** core-proxied fetch, allowlisted (FR-31). Absent ⇒ no network at all. */
   network?: { hosts: string[] };
+  /**
+   * Frame ONE https:// origin as a main tab (FR-81..FR-86).
+   *
+   * Deliberately separate from `network`, and consented on its own line: a fetch
+   * returns inert bytes to the isolate, a frame EXECUTES them next to the app.
+   * It narrows rather than widens — the tab's host must also be in
+   * `network.hosts` — but it is never implied by it.
+   */
+  webTab?: boolean;
 }
 
-/** The three capability flags, in consent-card display order. */
-export const PLUGIN_CAPABILITY_KEYS = ['readState', 'driveSessions', 'network'] as const;
+/**
+ * The four capability flags, in consent-card display order (§8 · D, §8 · H36).
+ *
+ * `webTab` sorts LAST because it is the strongest grant on the card. It must be
+ * a member here, not merely a field on PluginCapabilities: `PluginUpdateInfo
+ * .addedCapabilities` is typed by this tuple, so a key missing from it is a
+ * widening the core cannot report — and an unreportable widening is one that
+ * never triggers PLUGIN_CONSENT_REQUIRED (FR-13, FR-81).
+ */
+export const PLUGIN_CAPABILITY_KEYS = [
+  'readState',
+  'driveSessions',
+  'network',
+  'webTab',
+] as const;
 export type PluginCapabilityKey = (typeof PLUGIN_CAPABILITY_KEYS)[number];
 
 export interface PluginCommandContribution {
@@ -82,23 +104,34 @@ export interface PluginContributes {
   /** Claims a status-bar item (FR-49). */
   statusBar?: Record<string, never>;
   /**
-   * Claims a MAIN TAB that frames a web page the plugin names (FR-81).
+   * Claims a MAIN TAB that frames one web page (FR-81..FR-86).
    *
    * This is the one contribution that puts something in the webview which
-   * Francois did not draw, so it is the one to be careful about. Three things
-   * bound it:
+   * Francois did not draw, so it is the one to be careful about. What bounds it:
    *
-   *  * The plugin never supplies markup — only a URL, returned from `tab()`.
-   *  * The core rejects any URL whose host is not in
-   *    `capabilities.network.hosts`. The allowlist that already decides what a
-   *    plugin may FETCH now also decides what it may FRAME, so consenting to a
-   *    tab grants no origin the user had not already granted.
-   *  * The framed page is inert with respect to Francois: `francois.*` exists
-   *    only inside the isolate, so script in the frame reaches no session, diff
-   *    or project. A plugin drives sessions through `driveSessions` (FR-30),
-   *    where every prompt is human-confirmed — never through its own page.
+   *  * **The URL is static.** It lives here, in the manifest, and is fixed at
+   *    the moment the user consents. There is no `tab()` handler and the isolate
+   *    never runs for this surface — so a plugin cannot repoint its tab after
+   *    consent, and a compromised backing service cannot move it.
+   *  * **`webTab` is its own capability** (FR-81), consented on its own line. It
+   *    is NOT implied by `network`: a fetch returns inert bytes to the isolate,
+   *    a frame executes them next to the app. The tab's host must ALSO be in
+   *    `capabilities.network.hosts` — `webTab` narrows that allowlist, never
+   *    widens it.
+   *  * **`https:` only** (FR-82), loopback included. The `http://127.0.0.1`
+   *    exemption `francois.fetch` grants (FR-31) does not extend to frames.
+   *  * **Cross-origin, IPC-free** (FR-83, FR-86): rendered without
+   *    `allow-same-origin`, so the page is forced into an opaque origin, and
+   *    Tauri's bridge is not injected into sub-frames. `francois.*` exists only
+   *    inside the isolate, so script in the frame reaches no session, diff, or
+   *    project.
    */
-  tab?: { title: string }; // ≤ 18 chars after uppercasing/truncation
+  tab?: {
+    title: string; // ≤ TAB_MAX_TITLE chars after uppercasing/truncation
+    /** https:// only, host ∈ capabilities.network.hosts (FR-82). */
+    url: string;
+    glyph?: string; // single grapheme; defaults to DEFAULT_PLUGIN_GLYPH
+  };
 }
 
 export type PluginSettingType = 'string' | 'number' | 'boolean' | 'select' | 'secret';
@@ -150,7 +183,12 @@ export type PluginEnablement =
   | { scope: 'all' }
   | { scope: 'projects'; projectIds: ProjectId[] };
 
-export type PluginSurface = 'panel' | 'statusBar' | 'command' | 'tab';
+/**
+ * The surfaces plugin CODE can produce. `tab` is deliberately absent: a tab is
+ * static manifest data (FR-81), never a handler result, so it is never rendered,
+ * never invalidated, and never a reason to start an isolate.
+ */
+export type PluginSurface = 'panel' | 'statusBar' | 'command';
 
 export interface PluginRuntimeError {
   at: number; // epoch ms
@@ -255,24 +293,19 @@ export interface StatusItemSpec {
 }
 
 /**
- * What a `tab()` handler returns (FR-81).
+ * The resolved, core-validated tab a plugin contributes (FR-81..FR-86).
  *
- * Exactly ONE of `url` / `message` — the core rejects both and neither. A
- * plugin whose backing service is down returns `message`, not a URL it knows
- * will fail to load, so the tab explains itself instead of framing a browser
- * error page.
- *
- * There is deliberately no way to return markup, HTML, or a data:/blob: URL:
- * `url` must be http(s) with a host on the plugin's own network allowlist.
+ * Derived from `PluginContributes.tab` at registry-load time — NOT returned by
+ * plugin code. There is no `tab()` handler: the URL is static in the manifest so
+ * that what the user consented to is what gets framed, permanently.
  */
-export interface TabSpec {
-  version: 1;
-  /** http(s) only, host ∈ capabilities.network.hosts. */
-  url?: string;
-  /** Why there is nothing to frame. ≤ PANEL_MAX_TEXT chars. */
-  message?: string;
-  /** Optional affordance under `message` — e.g. a retry. */
-  action?: { label: string; commandId: string };
+export interface PluginTab {
+  pluginId: string;
+  /** Uppercased, truncated to TAB_MAX_TITLE. */
+  title: string;
+  /** Always https: with host ∈ the plugin's granted network allowlist (FR-82). */
+  url: string;
+  glyph: string;
 }
 
 // ---------- validation limits the CORE enforces (FR-36) ----------
@@ -303,6 +336,33 @@ export const PANEL_MAX_ARG_VALUE_LEN = 512;
 // invoke('plugins_list'): Promise<Result<InstalledPlugin[]>>
 //   Registry order (install order). Secrets redacted (FR-64). Errors: 'INTERNAL'.
 export type PluginListOutput = InstalledPlugin[];
+
+// ---------- francois:plugins:logs ----------
+// FR-26's ring buffer needs a way out of the core for §8 · C9's LOG group.
+export interface PluginLogsInput {
+  pluginId: string;
+}
+// invoke('plugins_logs', req: PluginLogsInput): Promise<Result<string[]>>
+//   Oldest first, ≤ LOG_RING_MAX_LINES entries (FR-26).
+//   Errors: 'PLUGIN_NOT_FOUND' | 'INTERNAL'
+export type PluginLogsOutput = string[];
+
+/** FR-26 — the per-plugin ring keeps the LAST this many lines. */
+export const LOG_RING_MAX_LINES = 200;
+
+// ---------- francois:plugins:status ----------
+// FR-79 (§7 #40) + FR-66 (§7 #42): two startup conditions that belong to no single
+// plugin row, so they fit neither `InstalledPlugin` nor the `plugin.registry` event.
+export interface PluginStatusOutput {
+  /** `plugins.json` was unparseable and was reset; a backup is at plugins.json.bak. */
+  registryWasReset: boolean;
+  /** The secret key is missing or corrupt, so stored secrets could not be opened. */
+  secretsUnreadable: boolean;
+}
+// invoke('plugins_status'): Promise<Result<PluginStatusOutput>>
+//   `registryWasReset` is CLEARED BY THE READ — it reports something that happened once,
+//   and the modal shows it once (§7 #40). `secretsUnreadable` is a standing condition and
+//   is not cleared. Errors: 'INTERNAL'
 
 // ---------- francois:plugins:resolve ----------
 
@@ -382,7 +442,7 @@ export interface PluginSetSettingsInput {
 
 export interface PluginRenderInput {
   pluginId: string;
-  surface: 'panel' | 'statusBar' | 'tab';
+  surface: 'panel' | 'statusBar';
   /** The current visibility scope (FR-76); null under "All projects". */
   projectId: ProjectId | null;
   /** The app-shell active session, or null. */
@@ -391,8 +451,7 @@ export interface PluginRenderInput {
 
 export type PluginRenderOutput =
   | { surface: 'panel'; spec: PanelSpec | null } // null ⇒ handler returned nothing (FR-43)
-  | { surface: 'statusBar'; item: StatusItemSpec | null }
-  | { surface: 'tab'; tab: TabSpec | null }; // null ⇒ handler returned nothing (FR-81)
+  | { surface: 'statusBar'; item: StatusItemSpec | null };
 // invoke('plugins_render', req: PluginRenderInput): Promise<Result<PluginRenderOutput>>
 //   On-demand only (FR-72). Errors: 'PLUGIN_NOT_FOUND' | 'PLUGIN_RUNTIME_ERROR'
 //         | 'INVALID_INPUT' | 'INTERNAL'
@@ -538,7 +597,7 @@ export interface PluginHostApi {
 }
 
 export interface PluginRenderContext {
-  surface: 'panel' | 'statusBar' | 'tab';
+  surface: 'panel' | 'statusBar';
   projectId: ProjectId | null;
   sessionId: SessionId | null;
   now: number; // epoch ms, stamped by the core
@@ -557,8 +616,8 @@ export interface PluginCommandContext {
 export interface PluginModule {
   panel?(ctx: PluginRenderContext): PanelSpec | null | Promise<PanelSpec | null>;
   statusBar?(ctx: PluginRenderContext): StatusItemSpec | null | Promise<StatusItemSpec | null>;
-  /** FR-81: the URL to frame in this plugin's main tab, or why there is none. */
-  tab?(ctx: PluginRenderContext): TabSpec | null | Promise<TabSpec | null>;
+  // No `tab()`: a contributed tab is static manifest data (FR-81), so plugin code
+  // never runs for it and cannot repoint it after consent.
   commands?: Record<string, (ctx: PluginCommandContext) => void | Promise<void>>;
 }
 
@@ -659,13 +718,34 @@ export function pluginIdOfTab(tabId: string): string | null {
 }
 
 /**
- * The URL schemes a `TabSpec.url` may use (FR-81).
+ * The URL schemes a contributed tab may use (FR-82).
  *
  * `data:` and `blob:` are excluded deliberately — either would let a plugin
  * supply the DOCUMENT rather than merely point at one, which is the entire
  * distinction between "names a page" and "renders markup in the webview".
+ *
+ * `http:` is excluded too, loopback INCLUDED. `francois.fetch` exempts
+ * `http://127.0.0.1` (FR-31) because a fetch response is inert text handed to
+ * the isolate; a framed page executes. Same string, different blast radius.
  */
-export const PLUGIN_TAB_SCHEMES = ['http:', 'https:'] as const;
+export const PLUGIN_TAB_SCHEMES = ['https:'] as const;
+
+/** FR-86 — at most one tab per plugin, at most this many overall, registry order. */
+export const MAX_PLUGIN_TABS = 3;
+
+/** FR-81 — the tab strip is narrow; titles are uppercased and truncated to this. */
+export const TAB_MAX_TITLE = 12;
+
+/**
+ * FR-83 — the exact sandbox token set for a contributed tab's iframe.
+ *
+ * `allow-same-origin` is absent on purpose: without it the framed document is
+ * forced into an opaque origin, so it reaches no storage, cookie, or
+ * postMessage channel of Francois's. `allow-popups` is absent so it cannot
+ * spawn a window that outlives the tab. Do not add either without a spec
+ * amendment — they are the whole boundary.
+ */
+export const PLUGIN_TAB_SANDBOX = 'allow-scripts allow-forms allow-popups-to-escape-sandbox';
 
 /** FR-47 — KeyAction gains these four; KEY_BINDINGS gains '6'..'9', scope 'suspended-in-text-input'. */
 export const PLUGIN_PANE_KEY_ACTIONS = [

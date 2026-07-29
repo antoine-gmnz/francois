@@ -4,6 +4,11 @@
 // delegates to its owning feature's own action/channel exactly as the spec pins.
 
 import type { Result } from '../../../contract/common';
+import {
+  DEFAULT_PLUGIN_GLYPH,
+  MANAGE_PLUGINS_COMMAND_ID,
+  MANAGE_PLUGINS_COMMAND_NAME,
+} from '../../../contract/plugin-system';
 import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './palette';
 import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
 import { agentsKill, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
@@ -239,9 +244,9 @@ export function registerBuiltinCommands(): void {
   // commands themselves register dynamically under `plugin:<id>:<cmd>` (FR-50);
   // this is Francois's own, and needs no session.
   registerPaletteCommand({
-    id: 'manage-plugins',
-    glyph: '⌁',
-    name: 'Manage plugins',
+    id: MANAGE_PLUGINS_COMMAND_ID,
+    glyph: DEFAULT_PLUGIN_GLYPH,
+    name: MANAGE_PLUGINS_COMMAND_NAME,
     hint: () => 'install & configure',
     run: () => {
       usePluginsStore.getState().openModal();

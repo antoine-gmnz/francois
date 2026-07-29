@@ -192,6 +192,33 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 streaming: false,
             });
         }
+        "pluginInjection" => {
+            // plugin-system FR-55 §7 #30: pending injections are memory-only
+            // (§6), so a line still "pending" on disk means the process died
+            // holding it — and nothing can send it now. It comes back EXPIRED,
+            // visibly, rather than vanishing: the card is the transcript's
+            // permanent record that a plugin asked, and an approved or denied
+            // one is exactly the record FR-58 promises survives a reload.
+            let request = v
+                .get("request")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let state = match v.get("state").and_then(|s| s.as_str()) {
+                Some(s @ ("approved" | "denied")) => s,
+                _ => "expired",
+            };
+            return Some(BufBlock {
+                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
+                kind: BlockKind::PluginInjection,
+                text: String::new(),
+                tool: String::new(),
+                summary: String::new(),
+                meta: None,
+                card: Some(serde_json::json!({ "request": request, "state": state })),
+                origin: None,
+                streaming: false,
+            });
+        }
         "permission" => {
             // permission-guardrails FR-25: same rule as questions — pending
             // entries are memory-only, so a line still "pending" on disk can only
@@ -775,6 +802,64 @@ mod tests {
                 state
             );
         }
+    }
+
+    // ---------- plugin-system FR-55/FR-58 — the injection card ----------
+
+    fn injection_request() -> Value {
+        json!({
+            "requestId": "r1", "pluginId": "acme-ci", "pluginName": "Acme CI",
+            "sessionId": "s1", "prompt": "fix the build",
+            "requestedAt": 1_000, "expiresAt": 601_000,
+        })
+    }
+
+    #[test]
+    fn an_injection_card_round_trips_through_the_transcript_in_every_state() {
+        // §7 #30: before this arm existed the card did not come back expired —
+        // it DISAPPEARED, taking with it the transcript's record that a plugin
+        // had asked to speak.
+        for (written, expect) in [
+            ("approved", "approved"),
+            ("denied", "denied"),
+            ("expired", "expired"),
+            // pending is memory-only (§6): a line still pending on disk means
+            // the process died holding it, and nothing can send it now.
+            ("pending", "expired"),
+        ] {
+            let mut s = perm_session();
+            s.buf_plugin_injection("b1", &injection_request());
+            let block = if written == "pending" {
+                s.block_buffer[0].clone()
+            } else {
+                s.buf_plugin_injection_resolve("b1", written).unwrap()
+            };
+            let line = serde_json::to_string(&persisted_block_json(&block)).unwrap();
+            let back = parse_persisted_block(&line).expect("the card must survive a reload");
+            assert!(matches!(back.kind, BlockKind::PluginInjection));
+            assert!(!back.streaming, "a reloaded card is never pending");
+            let v = classify_block(&back);
+            assert_eq!(v["kind"], "pluginInjection");
+            assert_eq!(v["state"], expect, "written as {written}");
+            assert_eq!(v["request"]["prompt"], "fix the build");
+            assert_eq!(v["request"]["pluginName"], "Acme CI");
+        }
+    }
+
+    #[test]
+    fn an_injection_cards_last_persisted_line_wins_on_reload() {
+        // The card is written at ask AND at resolution; parse_transcript upserts
+        // by blockId, so the transcript shows the decision, not the question.
+        let mut s = perm_session();
+        s.buf_plugin_injection("b1", &injection_request());
+        let asked = serde_json::to_string(&persisted_block_json(&s.block_buffer[0])).unwrap();
+        let resolved = serde_json::to_string(&persisted_block_json(
+            &s.buf_plugin_injection_resolve("b1", "approved").unwrap(),
+        ))
+        .unwrap();
+        let blocks = parse_transcript(&format!("{asked}\n{resolved}\n"));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(classify_block(&blocks[0])["state"], "approved");
     }
 }
 

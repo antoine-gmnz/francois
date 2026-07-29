@@ -8,7 +8,6 @@
   "entry": "plugin.js",
   "contributes": {
     "panel": { "title": "COHORTE" },
-    "tab": { "title": "COHORTE" },
     "statusBar": {},
     "commands": [
       { "id": "open-project", "title": "Cohorte: show project detail", "glyph": "⊞" },

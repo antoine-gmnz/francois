@@ -625,6 +625,7 @@ fn main() {
             diff::diff_commit,
             plugin::plugins_list,
             plugin::plugins_logs,
+            plugin::plugins_status,
             plugin::plugins_resolve,
             plugin::plugins_install,
             plugin::plugins_uninstall,

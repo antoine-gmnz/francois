@@ -1,167 +1,215 @@
-// plugin-system FR-81 — a plugin's main tab.
+// plugin-system FR-81..FR-86 / §8·H — the framed main tab.
 //
-// The one surface where something Francois did not draw ends up in the webview,
-// so the boundaries are worth stating where they are enforced:
+// This is the one surface where something Francois did not draw ends up in the
+// webview, so what bounds it is worth stating where it is enforced:
 //
-//  * The plugin supplies a URL, never markup. There is no innerHTML path here,
-//    and `TabSpec` has no field that could carry one.
-//  * The core already rejected any URL outside the plugin's own
-//    `capabilities.network.hosts` (panelspec::validate_tab → net::check_url).
-//    This component frames what it is given precisely BECAUSE that check has
-//    already happened — it must not become the place that check lives.
-//  * The frame cannot reach Francois. `francois.*` exists only inside the
-//    isolate, so script in the page has no session, diff or project. A plugin
-//    drives sessions through `driveSessions`, where each prompt is confirmed by
-//    a human — never through its own page.
+//  * **The URL is static manifest data.** It is resolved from
+//    `contributes.tab`, fixed at the moment the user consented. There is no
+//    `tab()` handler, no `'tab'` render surface and therefore nothing to poll:
+//    a plugin cannot repoint its tab after consent, and a compromised backing
+//    service cannot move it. This file must never grow a refresh path — there
+//    is nothing that could change.
+//  * **The URL is re-validated here** (FR-85). The core is authoritative and
+//    already refused anything `checkTabUrl` refuses; the renderer checks anyway
+//    because `<iframe src>` is not a place to find out you were wrong. A URL
+//    failing either half renders §8·H35 — a refusal — and never a frame.
+//  * **The frame is cross-origin and IPC-free** (FR-83/FR-86). The sandbox
+//    token set comes from the contract verbatim: no `allow-same-origin`, so the
+//    document is forced into an opaque origin and reaches no storage, cookie or
+//    postMessage channel of ours; no `allow-popups`, so it cannot spawn a
+//    window that outlives the tab. `francois.*` exists only inside the isolate,
+//    so script in the page reaches no session, diff or project.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { InstalledPlugin, TabSpec } from '../../../contract/plugin-system';
-import { pluginsInvokeCommand, pluginsRender } from '../../lib/api';
-import { usePluginsStore } from './pluginsStore';
-import { CONSENT_PENDING_LINE, declaredCommandIds, isActionInert, refreshIntervalFor } from './plugins';
+import { useMemo, useRef, useState } from 'react';
+import type { InstalledPlugin, PluginTab as PluginTabSpec } from '../../../contract/plugin-system';
+import { PLUGIN_TAB_SANDBOX } from '../../../contract/plugin-system';
+import {
+  TAB_ADDRESS_COPIED,
+  TAB_BLOCKED_HINT,
+  TAB_BLOCKED_LINE,
+  TAB_COPIED_MS,
+  TAB_COPY_ADDRESS,
+  checkTabUrl,
+  tabAttribution,
+  tabLoadingLine,
+} from './plugins';
 
 const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
   faint: 'var(--text-faint)',
-  error: 'var(--error)',
+  muted: 'var(--text-muted)',
+  text: 'var(--text)',
+  warn: 'var(--warn)',
 };
 
 export default function PluginTab({
   plugin,
-  projectId,
-  sessionId,
+  /**
+   * Resolved by `resolvedPluginTabs`, which is also what decided this tab
+   * exists at all — so this component never has to ask again, and there is no
+   * "webTab granted but no tab" case for it to fall through (FR-82a).
+   */
+  tab,
 }: {
   plugin: InstalledPlugin;
-  projectId: string | null;
-  sessionId: string | null;
+  tab: PluginTabSpec;
 }) {
-  const id = plugin.manifest.id;
-  const [spec, setSpec] = useState<TabSpec | null | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
-  // Bumping this remounts the frame. A retry has to force a real reload — an
-  // identical `src` would otherwise let the webview serve the failed load from
-  // cache and the button would look broken.
-  const [reload, setReload] = useState(0);
-  const invalidation = usePluginsStore((s) => s.invalidation[`${id}:tab`] ?? 0);
-
-  const render = useCallback(async () => {
-    // Same reasoning as PluginPane.render: plugins_render resolves a Result for
-    // every domain failure, so a REJECTION is a bridge fault. Uncaught, it would
-    // leave the tab on "loading…" with no way out.
-    let res;
-    try {
-      res = await pluginsRender({ pluginId: id, surface: 'tab', projectId, sessionId });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      return;
-    }
-    if (res.ok) {
-      if (res.data.surface === 'tab') {
-        setSpec(res.data.tab);
-        setError(null);
-      }
-    } else {
-      setError(res.error.message);
-    }
-  }, [id, projectId, sessionId]);
-
-  useEffect(() => {
-    if (plugin.consentPending) return;
-    void render();
-  }, [render, invalidation, plugin.consentPending]);
-
-  // FR-70: re-ask for the URL on the plugin's own interval. A backing service
-  // that was down when the tab opened comes back on its own this way, without
-  // the user having to press anything.
-  const renderRef = useRef(render);
-  renderRef.current = render;
-  useEffect(() => {
-    const interval = refreshIntervalFor(plugin.manifest);
-    // No tick once a URL is up: the frame is live and re-rendering it would
-    // reload the user's page out from under them mid-interaction.
-    if (interval === null || plugin.consentPending || spec?.url) return;
-    const tick = () => {
-      if (document.visibilityState === 'visible') void renderRef.current();
-    };
-    const handle = window.setInterval(tick, interval);
-    return () => window.clearInterval(handle);
-  }, [plugin.manifest, plugin.consentPending, spec?.url]);
-
-  const retry = () => {
-    setReload((n) => n + 1);
-    void render();
-  };
-
-  const runAction = (commandId: string) => {
-    if (isActionInert(commandId, declaredCommandIds(plugin.manifest))) return;
-    void pluginsInvokeCommand({ pluginId: id, commandId, projectId, sessionId }).then(() => render());
-  };
-
-  if (plugin.consentPending) return <Centered>{CONSENT_PENDING_LINE}</Centered>;
-  if (error) {
-    return (
-      <Centered>
-        <span style={{ color: C.error }}>{error}</span>
-        <Action label="retry" onClick={retry} />
-      </Centered>
-    );
-  }
-  if (spec === undefined) return <Centered>loading…</Centered>;
-  if (spec === null) return <Centered>{plugin.manifest.name} has nothing to show</Centered>;
-
-  if (spec.url) {
-    return (
-      <iframe
-        // The plugin id is in the key so switching tabs never reuses a frame
-        // across plugins; `reload` is what makes retry a real reload.
-        key={`${id}:${reload}`}
-        src={spec.url}
-        title={plugin.manifest.name}
-        style={{ flex: 1, border: 'none', background: 'var(--bg-deep)', minHeight: 0 }}
-        // allow-same-origin is required: without it the frame gets an opaque
-        // origin and cannot call its OWN backend. It does not widen what the
-        // frame can reach in Francois — that is bounded by there being no
-        // francois.* outside the isolate, not by this attribute.
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-      />
-    );
-  }
-
-  return (
-    <Centered>
-      <span>{spec.message}</span>
-      {spec.action && <Action label={spec.action.label} onClick={() => runAction(spec.action!.commandId)} />}
-    </Centered>
+  const check = useMemo(
+    () => checkTabUrl(tab.url, plugin.grantedCapabilities),
+    [tab.url, plugin.grantedCapabilities],
   );
-}
+  const [loaded, setLoaded] = useState(false);
 
-function Centered({ children }: { children: React.ReactNode }) {
+  // §8·H35 (FR-85). No frame at all: this is a security state and it reads as a
+  // refusal, not as a page that failed to load.
+  if (!check.ok) {
+    return (
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          padding: 24,
+          textAlign: 'center',
+        }}
+      >
+        <span style={{ fontSize: 18, color: C.faint }}>{tab.glyph}</span>
+        <span style={{ fontSize: 11.5, color: C.warn }}>{TAB_BLOCKED_LINE}</span>
+        {/* The offending URL as a TEXT CHILD — never in an attribute, never in
+            a style value, and never as an href. */}
+        <span style={{ fontSize: 10, color: C.faint, overflowWrap: 'anywhere', maxWidth: 520 }}>
+          {tab.url}
+        </span>
+        <span style={{ fontSize: 10, color: C.muted }}>{TAB_BLOCKED_HINT}</span>
+      </div>
+    );
+  }
+
   return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        padding: 24,
-        textAlign: 'center',
-        fontSize: 12,
-        color: C.dim,
-        lineHeight: 1.6,
-      }}
-    >
-      {children}
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <AttributionStrip pluginName={plugin.manifest.name} host={check.host} url={tab.url} />
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', background: 'var(--bg-app)' }}>
+        {!loaded && (
+          // §8·H34 — the strip is up immediately; the frame area says where it
+          // is going while the page loads.
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 11,
+              color: C.faint,
+            }}
+          >
+            <span className="blink">{tabLoadingLine(check.host)}</span>
+          </div>
+        )}
+        <iframe
+          // Keyed by plugin id so switching tabs never reuses a frame across
+          // plugins.
+          key={tab.pluginId}
+          src={tab.url}
+          title={plugin.manifest.name}
+          onLoad={() => setLoaded(true)}
+          // FR-83, verbatim from the contract. `allow-same-origin` and
+          // `allow-popups` are absent on purpose — they are the whole boundary,
+          // and adding either needs a spec amendment, not a code change.
+          sandbox={PLUGIN_TAB_SANDBOX}
+          referrerPolicy="no-referrer"
+          allow=""
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            border: 'none',
+            background: 'var(--bg-app)',
+          }}
+        />
+      </div>
     </div>
   );
 }
 
-function Action({ label, onClick }: { label: string; onClick: () => void }) {
+/**
+ * §8·H32 — the 20px bar above the frame. The host shown is the FRAME's actual
+ * hostname (from the parsed URL), not the plugin's chosen title: the user
+ * should always be able to see *where* they are without trusting the plugin's
+ * copy for it.
+ */
+function AttributionStrip({
+  pluginName,
+  host,
+  url,
+}: {
+  pluginName: string;
+  host: string;
+  url: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // §8·H32: COPY, not open. Francois bundles no opener plugin, and
+  // `window.open` in a Tauri webview would render the page in a window WITHOUT
+  // the FR-83 sandbox — strictly worse than the frame it is meant to escape. So
+  // the handoff is the URL itself: one paste opens it in the user's real
+  // browser, outside the app.
+  const copyAddress = () => {
+    void navigator.clipboard
+      ?.writeText(url)
+      .then(() => {
+        setCopied(true);
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => setCopied(false), TAB_COPIED_MS);
+      })
+      .catch(() => {
+        /* clipboard denied — the host is on screen either way */
+      });
+  };
+
   return (
-    <span role="button" onClick={onClick} style={{ fontSize: 11.5, color: C.accent, cursor: 'pointer' }}>
-      {label}
-    </span>
+    <div
+      style={{
+        height: 20,
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+        padding: '0 10px',
+        background: 'var(--bg-deep)',
+        borderBottom: '1px solid var(--border)',
+      }}
+    >
+      <span
+        style={{
+          fontSize: 10,
+          color: C.faint,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {tabAttribution(pluginName, host)}
+      </span>
+      <span
+        role="button"
+        onClick={copyAddress}
+        title={url}
+        style={{
+          fontSize: 10,
+          color: copied ? C.text : C.muted,
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      >
+        {copied ? TAB_ADDRESS_COPIED : TAB_COPY_ADDRESS}
+      </span>
+    </div>
   );
 }

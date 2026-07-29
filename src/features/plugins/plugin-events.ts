@@ -12,14 +12,18 @@ import { usePluginsStore } from './pluginsStore';
 /**
  * Start the subscription and load the registry once. Returns the unlisten fn.
  *
- * Order matters: the listener is attached BEFORE the list is fetched, so a
- * registry mutation that lands between the two is not lost. A duplicate snapshot
- * is harmless — `setPlugins` replaces rather than merges.
+ * Order matters, in both directions:
+ *  - the listener is attached BEFORE the list is fetched, so a registry
+ *    mutation that lands between the two is not lost;
+ *  - the list result is a SEED, applied only if no snapshot has landed yet. A
+ *    `plugin.registry` event delivered after `pluginsList()` was issued but
+ *    before its response resolved is newer than that response, and applying the
+ *    response on top would roll the registry back to the older state.
  */
 export async function startPlugins(): Promise<() => void> {
   const store = usePluginsStore.getState();
   const unlisten = await onPluginsEvent((event) => store.applyPluginEvent(event));
   const res = await pluginsList();
-  if (res.ok) store.setPlugins(res.data);
+  if (res.ok && !usePluginsStore.getState().loaded) store.setPlugins(res.data);
   return unlisten;
 }

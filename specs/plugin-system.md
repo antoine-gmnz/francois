@@ -1,8 +1,9 @@
 ---
 id: plugin-system
 title: Plugin system — capability-sandboxed UI extensions
-status: frozen
+status: shipped
 created: 2026-07-28
+amended: 2026-07-29   # §2 non-goals rewritten · §Web tab FR-81..FR-86 added · FR-26/§5.4 log channel · §9 reconciled — see ## Remediation
 depends_on: [app-shell, session-engine, conversation-view, command-palette, projects, permission-guardrails, diff-view, agents-panel, usage-bar]
 design_files: []
 design_project: none
@@ -60,9 +61,10 @@ The UI must keep them visually and lexically separate — the pane is `PLUGINS`,
     wall-clock deadline, and no module resolver (v1 plugins are one self-contained file).
   - A **frozen, versioned `PanelSpec` vocabulary** (10 node types, §5.3) rendered by
     Francois's own components. No HTML, no CSS, no styling escape hatch.
-  - **Three capabilities**, consented as a set at install: `readState` (sessions, project,
+  - **Four capabilities**, consented as a set at install: `readState` (sessions, project,
     diff summary, agents, usage), `driveSessions` (request a prompt injection — always
-    confirmed), `network` (core-proxied `fetch` against a manifest-declared host allowlist).
+    confirmed), `network` (core-proxied `fetch` against a manifest-declared host allowlist),
+    and `webTab` (frame one allowlisted `https://` origin as a main tab — §Web tab, FR-81+).
   - **Install from GitHub or npm**, pinned to a resolved ref, behind a consent card.
     **Manual updates only**, with an explicit check; an update that widens capabilities
     quarantines the plugin until the user re-consents.
@@ -73,15 +75,26 @@ The UI must keep them visually and lexically separate — the pane is `PLUGINS`,
   - **Plugin settings** declared by the plugin, edited in a Francois-rendered form; values
     typed `secret` are obfuscated at rest and never leave the core except into the owning
     plugin's own isolate.
-  - Surfaces: a numbered pane `[6]+`, palette commands, a status-bar item, a Plugins modal.
+  - Surfaces: a numbered pane `[6]+`, palette commands, a status-bar item, a Plugins modal,
+    and — under `webTab` only — one framed main tab (§Web tab).
 
 - **Non-goals**:
-  - **Plugin code in the webview, in any form** — no iframes, no JS modules, no React
-    components, no `<script>`. The webview only ever receives `PanelSpec` JSON.
+  - **Plugin JavaScript in the Francois webview, in any form** — no JS modules, no React
+    components, no `<script>`, no plugin code sharing Francois's origin. The Francois origin
+    only ever receives `PanelSpec` JSON. *(Amended 2026-07-29: the `webTab` capability frames a
+    **third-party origin** in a cross-origin, IPC-free `<iframe>`. That page's scripts run in
+    **its own** origin under the browser's own isolation — the same boundary a browser tab
+    gives it — never in Francois's. The plugin's own `plugin.js` is still isolate-only and can
+    never reach the webview. See FR-81..FR-86 for the constraints that make this true; the
+    boundary is the origin, not the absence of a frame.)*
   - Raw HTML/CSS/SVG from plugins; no custom colors, fonts, radii, or animations in v1. The
-    only expressible visual variance is `PanelTone`, which resolves to existing tokens.
-  - **A contributed main tab.** The SESSION / DIFF / SHELL / OVERVIEW spine is closed to
-    third parties in v1 (decided). `MainTab` is unchanged by this feature.
+    only expressible visual variance is `PanelTone`, which resolves to existing tokens. The
+    framed tab is exempt — its content is that origin's own page, drawn by the browser
+    engine, and Francois styles only the chrome around it.
+  - **A plugin-drawn main tab.** The SESSION / DIFF / SHELL / OVERVIEW spine stays closed to
+    `PanelSpec`; a plugin may contribute a tab **only** as a framed URL under `webTab`, never
+    as a Francois-rendered surface. A plugin cannot reorder, rename, or replace the four
+    built-in tabs.
   - Unattended / background automation. There is no "trust this plugin in this session"
     toggle in v1 — it is the designed exit if a later spec revisits FR-53 (see §10).
   - Spawning processes, reading or writing the filesystem, or invoking any Tauri command
@@ -307,8 +320,12 @@ The UI must keep them visually and lexically separate — the pane is `PLUGINS`,
   `francois.settings.get()`, `francois.storage`.
 - **FR-26**: `francois.log` accepts any number of arguments, JSON-stringifies each (cycles →
   `[circular]`), joins with a space, truncates to 2 000 chars, and appends to a per-plugin
-  ring buffer of the last 200 lines. The buffer is in-memory only, is surfaced in the Plugins
-  modal's log view, and is cleared on uninstall.
+  ring buffer of the last 200 lines — the **last** 200, so the tail next to a failure survives.
+  The buffer is in-memory only and is cleared on uninstall. It is surfaced in the Plugins
+  modal's log view (§8 · C9) over its own channel, **`francois:plugins:logs`** (§5.4) — a
+  thirteenth command, added by the same 2026-07-29 amendment as §Web tab, because the original
+  §5.4 declared twelve and none of them could return the buffer. *(A **fourteenth**,
+  `francois:plugins:status`, was added later the same day for FR-79/FR-66 — see §5.4.)*
 - **FR-27**: `francois.storage` is a per-plugin JSON key–value store persisted at
   `<install dir>/../<id>.storage.json`. `get(key)`, `set(key, value)`, `remove(key)`,
   `keys()`. Keys ≤ 128 chars; the whole serialized store ≤ **256 KB** — a `set` that would
@@ -421,6 +438,74 @@ The UI must keep them visually and lexically separate — the pane is `PLUGINS`,
   plugins`** (glyph `⌁`), which opens the Plugins modal.
 - **FR-52**: Palette command ids are namespaced by FR-50, so two plugins may declare the same
   `commandId`. A collision on the **plugin id** itself is impossible (FR-2).
+
+### Web tab
+
+*Added 2026-07-29 by amendment, after the first `/review` of the build. This section is the
+whole of the tab surface — it did not exist at the original freeze, and §2's non-goals were
+rewritten in the same amendment.*
+
+- **FR-81**: **Capability `webTab`** lets a manifest declare `contributes.tab`:
+  `{ title, url, glyph? }`. It is a **separate capability** from `network` and carries its own
+  consent line — framing an origin is not the same grant as fetching it, because a framed page
+  **executes**, and the consent card must say so. A manifest declaring `contributes.tab`
+  without `capabilities.webTab` is `PLUGIN_MANIFEST_INVALID` at install.
+- **FR-82**: The tab `url` must be **`https://`** and its host must appear in
+  `capabilities.network.hosts` (so `webTab` implies a declared `network` allowlist even when
+  the plugin never calls `fetch`). **`http://` is rejected, loopback included** — the
+  `http://127.0.0.1` exemption that `francois.fetch` grants (FR-31) does **not** extend here:
+  a fetch returns inert bytes to the isolate, a frame executes them next to the app. Rejection
+  is `PLUGIN_MANIFEST_INVALID` at install and at update, validated in the **core**.
+- **FR-82a** *(added 2026-07-29 during the fix pass, closing a gap the reviewers did not
+  reach)*: the **exact `url` the user consented to is recorded in the registry entry**, and the
+  on-disk manifest's tab is honoured only while it still matches that string byte for byte.
+  Any difference — a changed path, a different host, even one inside the granted
+  `network.hosts` allowlist — **drops the tab** and sets `lastError`. Rationale: FR-81's whole
+  claim is that the URL is fixed *at the moment of consent*, and §7 #49 already treats the
+  plugin directory as attacker-influenceable. Host-level validation alone is too weak to carry
+  that claim, because the consent card names a host while the thing that executes is a page.
+  This is deliberately stricter than FR-82's host check, which remains the rule for the
+  install-time validation of a *newly consented* manifest.
+- **FR-83**: The frame is opened with
+  `sandbox="allow-scripts allow-forms allow-popups-to-escape-sandbox"` — **without
+  `allow-same-origin`**, so the framed document is forced into an opaque origin and can reach
+  no storage, cookie, or `postMessage` channel belonging to Francois; and **without
+  `allow-popups`**, so it cannot spawn a window that outlives the tab. `referrerpolicy` is
+  `no-referrer`, `allow` is the empty string (no camera, microphone, geolocation, or payment).
+  *(A page that genuinely needs its own storage is out of scope for v1 — say so in its
+  error state rather than relaxing this.)*
+- **FR-84**: `src-tauri/tauri.conf.json` **must carry a real CSP** — `csp: null` is
+  incompatible with this feature. It declares at minimum
+  `default-src 'self'; frame-src https:` with the app's existing needs preserved, so the
+  webview refuses a frame the core somehow let through. The core's per-plugin host check
+  (FR-82) is the primary gate; the CSP is the backstop for a bug in it.
+- **FR-85**: The **frontend re-validates before rendering** — it parses the URL, checks
+  `protocol` against `PLUGIN_TAB_SCHEMES` (`['https:']`), and checks `hostname` against the
+  plugin's own `grantedCapabilities.network.hosts`. A URL failing either check renders the
+  FR-44 error state instead of a frame. This is deliberate belt-and-braces: the core is
+  authoritative, and the renderer never trusts a string it can cheaply verify.
+- **FR-86**: The framed page **reaches no Francois IPC**. *(Corrected 2026-07-29 after the fix
+  pass: this requirement originally said "Tauri's `__TAURI__` bridge must not be injected into
+  sub-frames — verified by a test". That is **not true on Windows** and cannot be tested from
+  `cargo test`. Tauri marks its IPC init scripts `for_main_frame_only: true`, but wry 0.55.1
+  ignores that flag on WebView2 — `AddScriptToExecuteOnDocumentCreated` runs in every frame.
+  macOS and GTK honour it. So the guarantee is relocated one layer down, where it holds on all
+  three platforms:* Tauri resolves every IPC request's ACL against its `Origin` header; a
+  non-app origin is `Origin::Remote` and is **refused unless a capability file lists it under
+  `remote`**. No file in `src-tauri/capabilities/` may carry a `remote` key — that is the
+  assertion, and it is testable. FR-83's missing `allow-same-origin` makes the frame's origin
+  opaque, so its `Origin` is `null` and is rejected before the ACL is even consulted;
+  `withGlobalTauri` stays absent so there is no `window.__TAURI__` to find. Three independent
+  reasons the frame cannot call in, none of them "the script was not injected".
+  A plugin's tab is
+  reachable by click and by the palette; it takes no single-key binding, and the four built-in
+  tabs keep theirs. Tab ids are namespaced `plugintab:<pluginId>` (`PLUGIN_TAB_PREFIX`) — a
+  **different** prefix from `PLUGIN_PANE_PREFIX`'s `plugin:`, deliberately: `Pane` and
+  `MainTab` are distinct unions and a shared prefix makes `plugin:acme` ambiguous between
+  them. At most
+  **one** tab per plugin and at most **three** plugin tabs overall, in registry order; the
+  rest are inert with `lastError` set. A tab contribution follows the same enablement rules as
+  every other surface (FR-23, FR-76) and disappears with the project filter.
 
 ### Injection
 
@@ -625,6 +710,12 @@ export interface PluginCapabilities {
   driveSessions?: boolean;
   /** core-proxied fetch, allowlisted (FR-31). Absent ⇒ no network at all. */
   network?: { hosts: string[] };
+  /**
+   * Frame ONE https:// origin as a main tab (FR-81..FR-86). Separate from `network` and
+   * separately consented — a fetch returns inert bytes, a frame executes. Requires the tab's
+   * host to also appear in `network.hosts`.
+   */
+  webTab?: boolean;
 }
 
 export interface PluginCommandContribution {
@@ -641,6 +732,17 @@ export interface PluginContributes {
   panel?: { title: string }; // ≤ 18 chars after uppercasing/truncation
   /** Claims a status-bar item (FR-49). */
   statusBar?: Record<string, never>;
+  /**
+   * Claims ONE framed main tab (FR-81..FR-86). Requires `capabilities.webTab` AND
+   * `url`'s host in `capabilities.network.hosts`. Declared statically in the manifest —
+   * there is no `tab()` handler and the isolate never runs for this surface, so a plugin
+   * cannot change where the tab points after consent.
+   */
+  tab?: {
+    title: string;  // ≤ 12 chars after uppercasing/truncation (tab strip is narrow)
+    url: string;    // https:// only, host ∈ capabilities.network.hosts (FR-82)
+    glyph?: string; // single grapheme; defaults to '⌁'
+  };
 }
 
 export type PluginSettingType = 'string' | 'number' | 'boolean' | 'select' | 'secret';
@@ -781,6 +883,32 @@ export const PANEL_INVALID_NODE = '⟨invalid node⟩';
 // ---------- francois:plugins:list  (no payload) ----------
 // invoke('plugins_list'): Promise<Result<InstalledPlugin[]>>
 //   Registry order (install order). Secrets redacted (FR-64). Errors: 'INTERNAL'.
+
+// ---------- francois:plugins:logs ----------
+// Added 2026-07-29 by amendment: FR-26's ring buffer had no channel, so §8 · C9's LOG group
+// was unimplementable. The core already shipped an undeclared `plugins_logs` taking a bare
+// string; this is the declared, request-object form every other command in the domain uses.
+export interface PluginLogsInput { pluginId: string }
+// invoke('plugins_logs', req): Promise<Result<string[]>>
+//   Oldest first, ≤ 200 lines (FR-26). Unknown id ⇒ 'PLUGIN_NOT_FOUND'.
+//   Errors: 'PLUGIN_NOT_FOUND' | 'INTERNAL'
+
+// ---------- francois:plugins:status ----------
+// The FOURTEENTH command, added 2026-07-29 alongside `logs`. FR-79 (§7 #40) and FR-66
+// (§7 #42) each name a startup condition the user must be told about, and neither belongs
+// to a single plugin row — so they fit neither `InstalledPlugin` nor the `plugin.registry`
+// event's declared shape.
+export interface PluginStatusOutput {
+  /** `plugins.json` was unparseable and was reset; a backup is at plugins.json.bak. */
+  registryWasReset: boolean;
+  /** The secret key is missing or corrupt, so stored secrets could not be opened. */
+  secretsUnreadable: boolean;
+}
+// invoke('plugins_status'): Promise<Result<PluginStatusOutput>>
+//   `registryWasReset` is CLEARED BY THE READ — it reports something that happened once and
+//   the modal shows it once (§7 #40), so the frontend reads it on open and holds it rather
+//   than polling. `secretsUnreadable` is a standing condition and is never cleared.
+//   Errors: 'INTERNAL'
 
 // ---------- francois:plugins:resolve ----------
 export interface PluginResolveInput {
@@ -1216,7 +1344,13 @@ express nothing beyond `PanelTone`** — every color, size, and space below is F
    `<version> · <sourceKind>` in `10px var(--text-faint)`. Selected: `background:var(--bg-raised)`,
    2px `var(--accent)` left rail, name `var(--text-bright)`. State tags at `9px`, right-aligned:
    `off` (`var(--text-faint)`), `error` (`var(--error)`), `new permissions` (`var(--warn)`),
-   `update` (`var(--accent)`). Bottom of the column: the **install field** — a full-width input
+   `update` (`var(--accent)`), and — *added 2026-07-29* — `not trustworthy` (`var(--error)`).
+   The fifth tag exists because a quarantined registry row (FR-79 §7 #49, FR-82a) reuses the
+   `consentPending` mechanism to make itself inert, and would otherwise render as
+   `new permissions` — which tells the user to review an update that does not exist, on a row
+   whose real problem is that its on-disk state was edited. Discriminate on the **capability
+   delta**, never on `lastError`'s wording: a genuine FR-16 pending has a non-empty delta, a
+   quarantined row has an empty delta plus a `lastError`. Bottom of the column: the **install field** — a full-width input
    (`var(--bg-deep)`, `1px solid var(--border-2)`, radius 4px, `6px 8px`, `11px`, focus border
    `var(--accent)`) with placeholder `owner/repo, a github url, or an npm package`, committing on
    `⏎`; beneath it a `10px var(--text-faint)` progress line during resolve.
@@ -1317,8 +1451,46 @@ express nothing beyond `PanelTone`** — every color, size, and space below is F
     right-aligned hint in `var(--text-faint)` — so every plugin row is attributed without a
     bespoke treatment. Disabled rows use the palette's existing disabled state.
 
+### H. Framed main tab (`webTab`)
+
+*Added 2026-07-29 by amendment (FR-81..FR-86).*
+
+31. **Tab strip entry** — appended after the four built-in tabs, same typography and states as
+    them (`10.5px`, uppercase, `var(--text-muted)` → `var(--text)` when active, 1px accent
+    underline when active). Label is `contributes.tab.title` uppercased, truncated at 12 chars.
+    The glyph precedes it at `var(--text-faint)`. No number badge — plugin tabs take no
+    single-key binding (FR-86), so nothing implies one.
+32. **Attribution strip** — a 20px bar directly above the frame, `background:var(--bg-deep)`,
+    1px bottom border `var(--border)`, holding `⌁ <plugin name> · <host>` in
+    `10px var(--text-faint)` on the left. The host is the frame's actual hostname, not the
+    plugin's chosen title — the user should always be able to see *where* they are without
+    trusting the plugin's copy. On the right, `copy address` in
+    `10px var(--text-muted)` → `var(--text)`, which copies the URL and swaps its label to
+    `url copied — paste in your browser` for 2 s. *(Corrected 2026-07-29: this said `open
+    externally ↗`, handing the URL to the OS browser. Francois bundles no opener plugin, and
+    `window.open` inside the Tauri webview would render the page in a window **without**
+    FR-83's sandbox — strictly worse than the frame it escapes. Adding `tauri-plugin-opener`
+    is the right fix and is deferred to a follow-up; copy is the honest interim.)*
+33. **The frame** — fills the remaining tab area, no border, no radius, `background:var(--bg)`.
+    It is a plain cross-origin `<iframe>` per FR-83; Francois draws nothing inside it and
+    styles nothing inside it.
+34. **Loading** — the attribution strip renders immediately; the frame area shows
+    `loading <host>…` centered in `11px var(--text-faint)` with the `blink` animation until
+    the frame's `load` fires.
+35. **Blocked / invalid URL state** (FR-85) — no frame at all. Centered in the tab area:
+    `⌁` glyph at `18px var(--text-faint)`, then `this tab's address is not allowed` in
+    `11.5px var(--warn)`, then the offending URL in `10px var(--text-faint)` with
+    `overflow-wrap:anywhere`, then `the plugin may have been tampered with — review it in
+    ⌘K → Manage plugins` in `10px var(--text-muted)`. This is a security state; it reads as a
+    refusal, not as a loading failure.
+36. **Consent card line** (extends §8 · D) — `webTab` renders its own row in the capability
+    list, `⚠` in `var(--warn)` rather than the usual `✓`, reading
+    `frame <host> as a tab — that page runs its own code`. It sorts **last**, after
+    `network`, because it is the strongest grant on the card.
+
 ### Resize / responsive
 
+The framed tab fills its area and is not resizable; the attribution strip never scrolls away.
 Plugin panes share the right column's flex behavior; `text` nodes without `wrap` ellipsize, with
 `wrap` they wrap. Long `badge`/`keyhint` values are truncated by the core (FR-36), never by CSS.
 The modal caps at `min(860px, 94vw)` / `min(620px, 88vh)`; both columns scroll independently. The
@@ -1355,7 +1527,7 @@ ellipsize and are dropped past 3 (FR-49) rather than wrapping the status bar.
 - [ ] A 302 from an allowlisted host to an unlisted one is returned as a 302 and is not followed (FR-31, edge 17).
 - [ ] `francois.storage` round-trips values, enforces the 256 KB quota, and is isolated per plugin (FR-27, FR-67).
 - [ ] `francois.settings.get()` returns secrets in plaintext inside the isolate (FR-28).
-- [ ] `francois.log` output appears in the modal's LOG group, capped at 200 lines (FR-26).
+- [ ] `francois.log` output appears in the modal's LOG group over `francois:plugins:logs`, capped at the **last** 200 lines (FR-26, §5.4).
 
 **PanelSpec**
 - [ ] All ten node types render per §8 · A3; a `version` other than `1` renders `unsupported panel version` (FR-34, FR-35).
@@ -1373,7 +1545,20 @@ ellipsize and are dropped past 3 (FR-49) rather than wrapping the status bar.
 - [ ] At most three status items render, in registry order (FR-49, edge 47).
 - [ ] Plugin palette entries are namespaced `plugin:<pluginId>:<commandId>`, attributed with the plugin name, and disabled while the plugin is inert or busy (FR-50, FR-52).
 - [ ] `Manage plugins` is registered in ⌘K and opens the modal (FR-51).
-- [ ] `MainTab` is unchanged — no plugin contributes a main tab (§2).
+
+**Web tab** *(added 2026-07-29 by amendment — replaces the original "`MainTab` is unchanged — no plugin contributes a main tab", which the §2 rewrite retired)*
+- [ ] `contributes.tab` without `capabilities.webTab` is `PLUGIN_MANIFEST_INVALID` at install **and** at update (FR-81).
+- [ ] A tab `url` that is `http://` — **including `http://127.0.0.1`** — or whose host is absent from `capabilities.network.hosts` is rejected in the **core** at install and at update (FR-82).
+- [ ] The rendered frame carries `allow-scripts allow-forms allow-popups-to-escape-sandbox` and **not** `allow-same-origin`, **not** `allow-popups`; `referrerpolicy="no-referrer"`; `allow=""` (FR-83).
+- [ ] `src-tauri/tauri.conf.json` declares a CSP (not `null`) whose `frame-src` is `https:`, and the app still boots and renders with it (FR-84).
+- [ ] The frontend independently rejects a non-`https:` scheme and an off-allowlist hostname, rendering §8 · H35 rather than a frame — verified by feeding it a tampered `InstalledPlugin` the core would never emit (FR-85).
+- [ ] No file in `src-tauri/capabilities/` carries a `remote` key, and `withGlobalTauri` is absent — so a framed origin's IPC is refused by the ACL and there is no `window.__TAURI__` to find (FR-86). *(Amended 2026-07-29 from "`__TAURI__` is `undefined` inside the framed document, asserted by a test" — see FR-86 for why that form is untestable and, on Windows, false.)*
+- [ ] A hand-edited on-disk `contributes.tab.url` that differs from the consented string — including one whose host is still inside the granted allowlist — drops the tab and sets `lastError` (FR-82a).
+- [ ] A `consentPending` plugin contributes no tab — its on-disk manifest wants more than was granted, so its `tab.url` is a string the user never consented to (FR-16 extended to the tab surface, 2026-07-29).
+- [ ] An update that adds `webTab` is reported in `addedCapabilities` and requires `consented: true` — `PLUGIN_CAPABILITY_KEYS` includes `'webTab'`, so the widening is representable (FR-13, FR-81).
+- [ ] The tab URL is fixed at consent time: it comes from the manifest, no `tab()` handler exists, and `plugins_render` has no `'tab'` surface — a plugin cannot repoint its tab after the user consented (FR-81, §5.2).
+- [ ] At most three plugin tabs render, in registry order; a plugin's tab disappears when its enablement excludes the active project (FR-86, FR-76).
+- [ ] Plugin tabs take no single-key binding and the four built-in tabs keep theirs (FR-86).
 
 **Injection**
 - [ ] `francois.session.prompt` sends nothing and resolves with a `requestId`; a card appears in that session's transcript showing the exact prompt (FR-53).
@@ -1400,7 +1585,7 @@ ellipsize and are dropped past 3 (FR-49) rather than wrapping the status bar.
 **Contract**
 - [ ] `contract/plugin-system.ts` compiles under `strict: true`, exposes exactly the channels, types, and constants of §5, imports `DiffSummary` from `./diff-view` and `UsageSnapshot` from `./usage-bar`, and redefines nothing from `common.ts`.
 - [ ] `contract/common.ts` carries the eight new `ErrorCode` members, `MessageOrigin`, `PluginInjectionRequest`, `PluginInjectionState`, the `origin?` field on `message.user`, and the two new `SessionEvent` members (§5.1).
-- [ ] `contract/app-shell.ts` carries the extended `PaneId`, the four new `KeyAction`s, and the four new `KEY_BINDINGS` rows (§5.6).
+- [ ] The extended `PaneId`, the four new `KeyAction`s, and the four new `KEY_BINDINGS` rows are carried in `contract/plugin-system.ts`. *(Amended 2026-07-29: the original criterion named `contract/app-shell.ts`, which has never existed in this repo — `PaneId` lives as `Pane` in `src/lib/store.ts`. Co-locating the amendments with the feature's own contract is the correct placement; the substance is unchanged.)*
 - [ ] `contract/conversation-view.ts` carries `'pluginInjection'` in `ConversationBlockKind`, `origin?` on `UserConversationBlock`, and `PluginInjectionConversationBlock` in the `ConversationBlock` union (§5.6).
 - [ ] Serde round-trip tests cover `PluginManifest`, `InstalledPlugin`, `PanelSpec` (every node type), `StatusItemSpec`, `PluginEvent`, and the two new `SessionEvent` members.
 
@@ -1425,6 +1610,17 @@ Carried from the brainstorm, recorded here so `/review` and any successor spec i
   (`packaging/npm/` downloads them; `[profile.release] strip + lto` already applies). If
   `rquickjs` will not cross-compile universal cleanly, that is a build-time blocker to raise at
   `/build`, not a spec change.
+- **An update may move a tab's URL without its own consent line — deliberately.** An update
+  that repoints `contributes.tab.url` from `/ci` to `/admin` with an unchanged capability set
+  is not widening (FR-13), so the user sees `update to <version>` and no consent card. This
+  was raised during the fix pass and **decided as a non-issue**: the plugin author already
+  controls what is served at the consented URL, so repointing gains them nothing they could
+  not achieve by changing the page's content in place. The threat FR-82a actually closes is
+  the one where the attacker does **not** control the origin — a local edit to the on-disk
+  manifest — and that stays closed, because FR-82a pins against the consented manifest rather
+  than against the allowlist. Adding a consent line here would train the user to click through
+  a card that carries no information. If a future spec revisits it, the cheap form is one
+  condition in `registry::is_widening` plus a line on the card.
 - **`PanelSpec` is a public API from plugin #2 onward.** FR-35 freezes ten node types and the
   acceptance criteria assert the member count so it cannot be widened by accident. Adding a node
   in a future `version: 2` is safe; changing or removing one is not.
@@ -1439,4 +1635,37 @@ Carried from the brainstorm, recorded here so `/review` and any successor spec i
 
 ## Remediation
 
-(Empty until a review returns findings.)
+### Round 1 — `/review` 2026-07-29 · verdict **BLOCK** (12 CRITICAL · 7 HIGH · 13 MEDIUM · 12 LOW)
+
+Full report: `specs/reports/plugin-system.md`. Static gates were **green** at review time
+(`tsc --noEmit` exit 0 · 559 vitest · 489 cargo tests) — the BLOCK was conformance and security.
+
+**Spec amendments applied before the fix pass** (this document, 2026-07-29):
+
+1. **§2, §4 §Web tab (FR-81..FR-86), §5.2, §8 · H, §9 §Web tab** — the tab surface is now
+   specified rather than forbidden. The human chose *amend and harden* over *revert*. Three
+   substantive tightenings over what the build shipped:
+   - `webTab` is its **own capability** with its own consent line — not covered by `network`.
+   - The URL is **static in the manifest**, validated at install/update. The build let the
+     isolate return a URL from a `tab()` handler at render time, which meant a plugin could
+     repoint its tab to anywhere on its allowlist *after* the user consented to a specific
+     page. That path is removed: no `tab()` export, no `'tab'` surface on `plugins_render`,
+     no `Handler::Tab` in the isolate.
+   - `http://127.0.0.1` is **rejected** for frames even though `francois.fetch` allows it
+     (FR-31) — a fetch returns inert bytes to the isolate, a frame executes them.
+2. **FR-26 + §5.4** — `francois:plugins:logs` is now a declared thirteenth channel, so §8 · C9's
+   LOG group is implementable. FR-26 also now says **last** 200 lines explicitly.
+3. **§9 contract criterion** — the `contract/app-shell.ts` criterion was unmeetable (that file
+   has never existed here); reworded to `contract/plugin-system.ts` with the substance intact.
+
+**Findings are NOT restated here** — read `specs/reports/plugin-system.md`, which is the
+self-sufficient list (`file:line` · severity · type · concrete fix). Note that these findings
+are superseded by the amendment above and need no code change beyond it:
+
+- Report CRITICAL 1's option (a) "revert the tab surface" — **not taken**; take option (b),
+  now backed by FR-81..FR-86.
+- Report LOW 44's `contract/app-shell.ts` criterion — struck; land its two substantive halves
+  (report CRITICAL 8 and HIGH 16) and nothing else.
+- Report LOW 39's suspicion that `cohorte.rs` is first-party plugin code baked into the core —
+  **withdrawn by the reviewer**; it is `#[cfg(test)]`. Only its placement and its `panic!`
+  need fixing.

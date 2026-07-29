@@ -140,6 +140,11 @@ a {
     opacity: 0;
   }
 }
+/* The one motion the plugin vocabulary has (§8·A3 `spinner`) and the framed
+   tab's loading line (§8·H34). Step-based, so it costs ~2 repaints/sec. */
+.blink {
+  animation: blink 1s step-end infinite;
+}
 @keyframes pulse {
   0%,
   100% {
@@ -436,6 +441,53 @@ a {
   border-radius: 3px;
   padding: 0 6px;
   font-size: 9.5px;
+}
+/* plugin-system §8·E17 — the injection card. Structurally the approval card
+   above, with a DIFFERENT left rail so the two are never confused: a permission
+   ask is a stop (amber), a plugin injection is an OUTSIDE VOICE (purple).
+   Motion: none. */
+.picard {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+.picard-pending {
+  border-left: 2px solid var(--hue-purple);
+}
+.picard-approved {
+  border-left: 2px solid var(--success);
+}
+.picard-denied {
+  border-left: 2px solid var(--error);
+}
+.picard-expired {
+  opacity: 0.55;
+}
+.picard-inflight {
+  opacity: 0.7;
+}
+.picard-chip {
+  color: var(--hue-purple);
+  border: 1px solid var(--border-2);
+  border-radius: 3px;
+  padding: 0 6px;
+  font-size: 9.5px;
+}
+/* §8·E20 — the prompt box. It scrolls INSIDE its box, never the transcript,
+   and it is never truncated with an ellipsis: it is the whole basis on which
+   the user can consent. */
+.picard-prompt {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 11.5px;
+  color: var(--text-bright);
+  margin-top: 6px;
 }
 .pcard-note {
   font-size: 9.5px;

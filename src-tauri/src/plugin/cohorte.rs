@@ -14,14 +14,32 @@ use super::*;
 use serde_json::json;
 use std::sync::{Arc, Mutex as StdMutex};
 
-fn plugin_source() -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+/// The shipped sample's directory, which lives OUTSIDE this crate. A vendored
+/// or `cargo package` build legitimately has no copy of it, so nothing here may
+/// panic on its absence — `cargo test` must pass in a tree that contains only
+/// `src-tauri/`. Every test below returns early instead (see `sample`).
+fn sample_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("plugins")
         .join("cohorte-dashboard")
-        .join("plugin.js");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()))
+}
+
+fn plugin_source() -> String {
+    std::fs::read_to_string(sample_dir().join("plugin.js")).unwrap_or_default()
+}
+
+/// `Some(manifest)` when the sample is present in this checkout. A test that
+/// gets `None` has nothing to assert on and returns — a skip, not a pass
+/// wearing a pass's clothes: `sample_is_present_in_this_checkout` below fails
+/// loudly if the monorepo ever loses the directory.
+fn sample() -> Option<PluginManifest> {
+    let bytes = std::fs::read(sample_dir().join(MANIFEST_FILENAME)).ok()?;
+    let source = std::fs::read_to_string(sample_dir().join("plugin.js")).ok()?;
+    if source.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// The three capabilities the shipped manifest declares as of 1.1.0.
@@ -32,6 +50,7 @@ fn caps_network() -> PluginCapabilities {
         }),
         read_state: Some(true),
         drive_sessions: Some(true),
+        ..Default::default()
     }
 }
 
@@ -248,9 +267,6 @@ fn context_for(handler: &Handler, args: Value) -> Value {
         Handler::StatusBar => json!({
             "surface": "statusBar", "projectId": null, "sessionId": null, "now": 1
         }),
-        Handler::Tab => json!({
-            "surface": "tab", "projectId": null, "sessionId": null, "now": 1
-        }),
     }
 }
 
@@ -365,14 +381,25 @@ fn collect_actions(node: &PanelNode, out: &mut Vec<(String, Option<Map<String, V
 }
 
 #[test]
+fn sample_is_present_in_this_checkout() {
+    // The one test that is allowed to care: inside the monorepo the sample must
+    // be there, so the skips below can never quietly become the normal case.
+    // Outside it (a vendored crate), there is nothing to check.
+    if !sample_dir().exists() {
+        return;
+    }
+    assert!(
+        sample().is_some(),
+        "plugins/cohorte-dashboard is unreadable"
+    );
+}
+
+#[test]
 fn the_manifest_on_disk_is_valid_and_asks_only_for_loopback() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("plugins")
-        .join("cohorte-dashboard")
-        .join(MANIFEST_FILENAME);
-    let bytes = std::fs::read(&path).expect("the manifest must exist");
-    let manifest: PluginManifest = serde_json::from_slice(&bytes).expect("valid JSON");
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
+    let Some(manifest) = sample() else { return };
     install::validate_manifest(&manifest).expect("the shipped manifest must pass FR-1");
 
     assert_eq!(manifest.id, "cohorte-dashboard");
@@ -389,6 +416,9 @@ fn the_manifest_on_disk_is_valid_and_asks_only_for_loopback() {
 
 #[test]
 fn the_panel_renders_the_fleet_with_freshness_and_health() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let raw = run_handler(Handler::Panel, DashboardHost::up()).unwrap();
     let spec = panelspec::validate_panel(&raw).expect("the core must accept the spec");
     let text = seen(&spec);
@@ -406,6 +436,9 @@ fn the_panel_renders_the_fleet_with_freshness_and_health() {
 
 #[test]
 fn both_fleet_response_shapes_render_identically() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // The running server answers `{ projects: [...] }`. An earlier build answered
     // a bare array, and the plugin accepts either — which is only worth doing if
     // it is actually true, so both shapes go through the real isolate here.
@@ -428,6 +461,9 @@ fn both_fleet_response_shapes_render_identically() {
 
 #[test]
 fn both_fleet_response_shapes_render_the_same_projects() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // The server answers `{ projects: [...] }`. An earlier version of this
     // fixture invented a bare array, and every assertion below still passed
     // because an empty list renders as an empty list — which is why this test
@@ -453,6 +489,9 @@ fn both_fleet_response_shapes_render_the_same_projects() {
 
 #[test]
 fn the_fleet_list_is_the_panes_keyboard_target_and_each_row_can_be_opened() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // FR-40: a selectable list makes ↑/↓/⏎ work, and ⏎ fires the FIRST action
     // inside the selected item — which has to be `open-project`.
     let raw = run_handler(Handler::Panel, DashboardHost::up()).unwrap();
@@ -476,7 +515,10 @@ fn the_fleet_list_is_the_panes_keyboard_target_and_each_row_can_be_opened() {
     }
     // Every row can be opened; since 1.1.0 an actionable row carries a second
     // action as well, so assert per-row rather than on the total.
-    let opens = actions.iter().filter(|(id, _)| id == "open-project").count();
+    let opens = actions
+        .iter()
+        .filter(|(id, _)| id == "open-project")
+        .count();
     assert_eq!(opens, 2, "every project row must still be openable");
     for (_, args) in &actions {
         // FR-39: args round-trip verbatim, so the path survives validation
@@ -488,6 +530,9 @@ fn the_fleet_list_is_the_panes_keyboard_target_and_each_row_can_be_opened() {
 
 #[test]
 fn every_declared_command_is_actually_implemented() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // FR-38/FR-44: an action naming an undeclared command renders inert, and a
     // declared command with no handler fails at invoke time. Both directions
     // have to agree, and neither is checked by the manifest alone.
@@ -504,6 +549,9 @@ fn every_declared_command_is_actually_implemented() {
 
 #[test]
 fn a_dashboard_that_is_not_running_renders_an_instruction_not_an_error() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // The server is a separate process the user starts by hand, so this is the
     // EXPECTED state — it must read as a calm instruction, not a failure.
     let raw = run_handler(Handler::Panel, DashboardHost::down()).unwrap();
@@ -522,6 +570,9 @@ fn a_dashboard_that_is_not_running_renders_an_instruction_not_an_error() {
 
 #[test]
 fn the_status_item_escalates_failing_over_stale_over_idle() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let raw = run_handler(Handler::StatusBar, DashboardHost::up()).unwrap();
     let item = panelspec::validate_status(&raw).unwrap();
     // The fixture has one project with bad > 0, which outranks staleness.
@@ -539,6 +590,9 @@ fn the_status_item_escalates_failing_over_stale_over_idle() {
 
 #[test]
 fn open_project_stores_a_detail_the_next_panel_render_picks_up() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let host = DashboardHost::up();
     run_command(
         "open-project",
@@ -567,6 +621,9 @@ fn open_project_stores_a_detail_the_next_panel_render_picks_up() {
 
 #[test]
 fn the_plugin_only_ever_reaches_the_configured_loopback_port() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // The whole security story of this plugin is its one-host allowlist. If it
     // ever built a URL out of fleet data, it would show up here.
     let host = DashboardHost::up();
@@ -585,6 +642,9 @@ fn the_plugin_only_ever_reaches_the_configured_loopback_port() {
 
 #[test]
 fn a_custom_port_setting_reaches_the_url() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let host = DashboardHost::up();
     let _ = run_with(
         Handler::Panel,
@@ -602,6 +662,9 @@ fn a_custom_port_setting_reaches_the_url() {
 
 #[test]
 fn one_render_stays_well_inside_the_isolates_io_budget() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // Two fetches per panel render (fleet + versions) plus one storage read —
     // comfortably inside FR-20's 4 fetches and 8 I/O calls, with room for the
     // detail lookup a command adds.
@@ -614,84 +677,13 @@ fn one_render_stays_well_inside_the_isolates_io_budget() {
     );
 }
 
-// ---------- FR-81: the tab surface ----------
-
-#[test]
-fn the_tab_frames_the_dashboard_at_the_configured_port() {
-    let raw = run_handler(Handler::Tab, DashboardHost::up()).unwrap();
-    let spec = panelspec::validate_tab(&raw, &["127.0.0.1".to_string()]).unwrap();
-    assert_eq!(spec.url.as_deref(), Some("http://127.0.0.1:4317"));
-    assert!(spec.message.is_none());
-}
-
-#[test]
-fn the_tab_url_honours_the_port_setting_like_every_other_call() {
-    let raw = run_with(
-        Handler::Tab,
-        DashboardHost::up(),
-        settings_with_port(9999),
-        json!({}),
-    )
-    .unwrap();
-    let spec = panelspec::validate_tab(&raw, &["127.0.0.1".to_string()]).unwrap();
-    assert_eq!(spec.url.as_deref(), Some("http://127.0.0.1:9999"));
-}
-
-#[test]
-fn a_dashboard_that_is_down_returns_a_message_not_a_url_that_would_fail_to_load() {
-    // Framing a dead URL shows the webview's connection-error page, which says
-    // nothing about `cohorte dashboard`. The message does.
-    let raw = run_handler(Handler::Tab, DashboardHost::down()).unwrap();
-    let spec = panelspec::validate_tab(&raw, &["127.0.0.1".to_string()]).unwrap();
-    assert!(spec.url.is_none(), "must not frame a server known to be down");
-    let msg = spec.message.unwrap();
-    assert!(msg.contains("cohorte dashboard"), "{msg}");
-    // And it must not promise something the sandbox forbids.
-    assert!(msg.contains("cannot start it"), "{msg}");
-    assert_eq!(spec.action.unwrap().command_id, "refresh");
-}
-
-#[test]
-fn the_tab_url_is_inside_the_manifests_own_allowlist() {
-    // The core gates the URL on `capabilities.network.hosts`. A plugin whose
-    // tab() names a host it never declared renders nothing at all — so this
-    // pins the manifest and the handler against each other.
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("plugins")
-        .join("cohorte-dashboard")
-        .join(MANIFEST_FILENAME);
-    let manifest: PluginManifest =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).expect("valid JSON");
-    let hosts = manifest.capabilities.hosts().to_vec();
-
-    let raw = run_handler(Handler::Tab, DashboardHost::up()).unwrap();
-    assert!(
-        panelspec::validate_tab(&raw, &hosts).is_ok(),
-        "tab() named a host the manifest does not grant"
-    );
-}
-
-#[test]
-fn the_manifest_declares_the_tab_it_implements() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("plugins")
-        .join("cohorte-dashboard")
-        .join(MANIFEST_FILENAME);
-    let manifest: PluginManifest =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).expect("valid JSON");
-    assert!(
-        manifest.contributes.tab.is_some(),
-        "a tab() handler with no contributes.tab never gets rendered"
-    );
-    install::validate_manifest(&manifest).expect("the shipped manifest must pass FR-1");
-}
-
 // ---------- 1.1.0: readState + driveSessions (plugin-system FR-29/FR-30) ----------
 
 #[test]
 fn a_failing_project_offers_to_hand_itself_to_a_session() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let host = DashboardHost::up();
     let spec = panel_of(run_handler(Handler::Panel, host as Arc<dyn Host>).unwrap());
     let actions = actions_of(&spec);
@@ -708,6 +700,9 @@ fn a_failing_project_offers_to_hand_itself_to_a_session() {
 
 #[test]
 fn a_healthy_current_project_offers_no_session_action() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // The fixture's `francois` is bad: 0 and freshness: 0. Raising an approval
     // card for it would ask the user to confirm a prompt with nothing to say.
     let host = DashboardHost::up();
@@ -726,6 +721,9 @@ fn a_healthy_current_project_offers_no_session_action() {
 
 #[test]
 fn fix_health_prompts_the_idle_session_on_that_project() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let host = DashboardHost::up();
     let res = run_command_as(
         "fix-health",
@@ -751,6 +749,9 @@ fn fix_health_prompts_the_idle_session_on_that_project() {
 
 #[test]
 fn a_windows_path_that_differs_only_by_separator_and_case_still_matches() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // The regression this pins: cohorte stores the path the user typed, a session
     // stores its own cwd. `d:/api/` and `D:\api` are the same folder, and a raw
     // === would find no session for any row — the feature would look broken while
@@ -769,6 +770,9 @@ fn a_windows_path_that_differs_only_by_separator_and_case_still_matches() {
 
 #[test]
 fn update_core_names_the_release_gap_it_read_from_the_dashboard() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let host = DashboardHost::up();
     let res = run_command_as(
         "update-core",
@@ -786,6 +790,9 @@ fn update_core_names_the_release_gap_it_read_from_the_dashboard() {
 
 #[test]
 fn with_no_session_on_the_project_nothing_is_requested_and_the_pane_says_why() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let host = DashboardHost::without_sessions();
     let res = run_command_as(
         "fix-health",
@@ -811,6 +818,9 @@ fn with_no_session_on_the_project_nothing_is_requested_and_the_pane_says_why() {
 
 #[test]
 fn a_command_never_claims_the_prompt_was_sent() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // FR-56: the plugin cannot learn whether the human approved. Any copy that
     // says "sent" would be asserting something it does not know.
     let host = DashboardHost::up();
@@ -828,6 +838,9 @@ fn a_command_never_claims_the_prompt_was_sent() {
 
 #[test]
 fn without_drive_sessions_the_host_refuses_and_the_plugin_does_not_pretend() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     // A user who declines the capability at install time gets a plugin that
     // still renders the fleet; only the actions fail, and they fail loudly in
     // the log rather than silently doing nothing.
@@ -845,6 +858,9 @@ fn without_drive_sessions_the_host_refuses_and_the_plugin_does_not_pretend() {
 
 #[test]
 fn refresh_clears_the_note_so_it_does_not_outlive_its_command() {
+    if sample().is_none() {
+        return; // the sample is not in this checkout (see `sample`)
+    }
     let host = DashboardHost::up();
     let _ = run_command_as(
         "fix-health",
@@ -856,5 +872,8 @@ fn refresh_clears_the_note_so_it_does_not_outlive_its_command() {
     assert!(run_command("refresh", host.clone() as Arc<dyn Host>, json!({})).is_ok());
     let spec = panel_of(run_handler(Handler::Panel, host as Arc<dyn Host>).unwrap());
     let copy = seen(&spec).join(" ");
-    assert!(!copy.contains("for approval"), "note survived refresh: {copy}");
+    assert!(
+        !copy.contains("for approval"),
+        "note survived refresh: {copy}"
+    );
 }

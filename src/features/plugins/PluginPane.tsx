@@ -11,8 +11,10 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import type { InstalledPlugin, PanelNode, PanelSpec } from '../../../contract/plugin-system';
-import { pluginsInvokeCommand, pluginsRender } from '../../lib/api';
+import { pluginPaneId } from '../../../contract/plugin-system';
+import { pluginsRender } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { invokePluginCommand } from './pluginInvoke';
 import { usePluginsStore } from './pluginsStore';
 import {
   CONSENT_PENDING_LINE,
@@ -30,6 +32,7 @@ import {
   paneTitle,
   refreshIntervalFor,
   selectionAction,
+  shouldRefresh,
   toneColor,
   validPanelNode,
 } from './plugins';
@@ -281,7 +284,7 @@ export default function PluginPane({
   sessionId: string | null;
 }) {
   const id = plugin.manifest.id;
-  const paneId = `plugin:${id}` as const;
+  const paneId = pluginPaneId(id);
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const focused = focusedPane === paneId;
@@ -296,6 +299,7 @@ export default function PluginPane({
   const setSelection = usePluginsStore((s) => s.setSelection);
   const resetFailures = usePluginsStore((s) => s.resetFailures);
   const openModal = usePluginsStore((s) => s.openModal);
+  const modalOpen = usePluginsStore((s) => s.modalOpen);
 
   const declared = declaredCommandIds(plugin.manifest);
   const cached = spec ?? null;
@@ -334,24 +338,44 @@ export default function PluginPane({
     void render();
   }, [render, invalidation, plugin.consentPending]);
 
-  // FR-70: the tick runs only while this pane is mounted AND the window is
-  // visible — the frontend drives it, so a hidden window costs nothing. FR-73
-  // stops it after five consecutive failures.
+  // FR-70/FR-72/FR-73: the tick runs only while this pane is mounted AND the
+  // window is visible — the frontend drives it, so a hidden window costs
+  // nothing — and it stops after PLUGIN_FAILURE_LIMIT consecutive failures.
+  // The conditions live in `shouldRefresh`, which is tested; re-deriving them
+  // here (with a magic 5) is how they drifted last time.
+  //
+  // The deps name `refreshIntervalMs`, NOT `plugin.manifest`: the manifest
+  // object's identity changes on every plugin.registry snapshot, which tore the
+  // interval down and recreated it on every registry event.
+  const intervalMs = refreshIntervalFor(plugin.manifest);
   const renderRef = useRef(render);
   renderRef.current = render;
   useEffect(() => {
-    const interval = refreshIntervalFor(plugin.manifest);
-    if (interval === null || plugin.consentPending || failures >= 5) return;
+    if (
+      !shouldRefresh({
+        intervalMs,
+        documentVisible: true, // re-checked per tick below
+        failures,
+        consentPending: plugin.consentPending,
+        enabled: true, // a mounted pane is, by construction, in scope (FR-76)
+      })
+    ) {
+      return;
+    }
     const tick = () => {
       if (document.visibilityState === 'visible') void renderRef.current();
     };
-    const handle = window.setInterval(tick, interval);
+    const handle = window.setInterval(tick, intervalMs as number);
     return () => window.clearInterval(handle);
-  }, [plugin.manifest, plugin.consentPending, failures]);
+  }, [intervalMs, plugin.consentPending, failures]);
 
   // FR-40: while focused, this pane owns the arrow keys and ⏎.
+  //
+  // The modal guard mirrors app-shell's own: with FRANCOIS PLUGINS (or any
+  // other modal) open, a pane behind it must not eat ↑/↓/⏎ — the same
+  // convention permission-guardrails FR-29 and projects FR-37 set.
   useEffect(() => {
-    if (!focused || !cached) return;
+    if (!focused || !cached || modalOpen) return;
     const list = findSelectableList(cached.nodes);
     if (!list) return;
     const onKey = (e: KeyboardEvent) => {
@@ -364,17 +388,17 @@ export default function PluginPane({
         const action = selectionAction(cached, clampSelection(list.items.length, selection), declared);
         if (action) {
           e.preventDefault();
-          void pluginsInvokeCommand({ pluginId: id, commandId: action.commandId, args: action.args, projectId, sessionId });
+          void invokePluginCommand({ pluginId: id, commandId: action.commandId, args: action.args, projectId, sessionId });
         }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [focused, cached, selection, id, declared, projectId, sessionId, setSelection]);
+  }, [focused, cached, modalOpen, selection, id, declared, projectId, sessionId, setSelection]);
 
   const onAction = useCallback(
     (commandId: string, args?: Record<string, string | number | boolean>) => {
-      void pluginsInvokeCommand({ pluginId: id, commandId, args, projectId, sessionId });
+      void invokePluginCommand({ pluginId: id, commandId, args, projectId, sessionId });
     },
     [id, projectId, sessionId],
   );

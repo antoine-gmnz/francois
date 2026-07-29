@@ -27,9 +27,11 @@ import {
   pluginsInstall,
   pluginsInvokeCommand,
   pluginsList,
+  pluginsLogs,
   pluginsRender,
   pluginsResolve,
   pluginsResolveInjection,
+  pluginsStatus,
   pluginsSetEnablement,
   pluginsSetSettings,
   pluginsUninstall,
@@ -44,9 +46,16 @@ describe('plugins invoke wrappers (§5.4)', () => {
 
   const call = () => invoke.mock.calls[0] as unknown as [string, unknown];
 
-  it('covers the twelve plugins_* commands', async () => {
+  it('covers the fourteen plugins_* commands', async () => {
     const cases: [() => Promise<unknown>, string, unknown][] = [
       [() => pluginsList(), 'plugins_list', undefined],
+      // §5.4 / FR-79 §7 #40 + FR-66 §7 #42: two startup conditions that belong
+      // to no plugin row. No payload — and `registryWasReset` is CLEARED BY THE
+      // READ, so this is called once per modal opening, never polled.
+      [() => pluginsStatus(), 'plugins_status', undefined],
+      // FR-26 / §5.4: the ring buffer's way out of the core, for §8·C9's LOG
+      // group. Same `{ req }` binding as every other command in the domain.
+      [() => pluginsLogs({ pluginId: 'acme-ci' }), 'plugins_logs', { pluginId: 'acme-ci' }],
       [() => pluginsResolve({ spec: 'acme/ci' }), 'plugins_resolve', { spec: 'acme/ci' }],
       [() => pluginsInstall({ stagingId: 's1' }), 'plugins_install', { stagingId: 's1' }],
       [() => pluginsUninstall({ pluginId: 'acme-ci' }), 'plugins_uninstall', { pluginId: 'acme-ci' }],
@@ -79,7 +88,7 @@ describe('plugins invoke wrappers (§5.4)', () => {
       [() => pluginsCheckUpdate({ pluginId: 'acme-ci' }), 'plugins_check_update', { pluginId: 'acme-ci' }],
       [() => pluginsUpdate({ pluginId: 'acme-ci', consented: true }), 'plugins_update', { pluginId: 'acme-ci', consented: true }],
     ];
-    expect(cases).toHaveLength(12);
+    expect(cases).toHaveLength(14);
 
     // The plugins_* handlers take ONE struct parameter named `req`, and Tauri
     // binds arguments by parameter name — so every payload-carrying command must

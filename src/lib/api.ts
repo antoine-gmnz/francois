@@ -30,6 +30,8 @@ import type {
   PluginInstallPreview,
   PluginInvokeCommandInput,
   PluginListOutput,
+  PluginLogsInput,
+  PluginLogsOutput,
   PluginRenderInput,
   PluginRenderOutput,
   PluginResolveInjectionInput,
@@ -37,6 +39,7 @@ import type {
   PluginResolveInput,
   PluginSetEnablementInput,
   PluginSetSettingsInput,
+  PluginStatusOutput,
   PluginSettingsView,
   PluginUninstallInput,
   PluginUpdateInfo,
@@ -181,7 +184,7 @@ export function onRemoteEvent(cb: (e: RemoteControlEvent) => void): Promise<Unli
   return listen<RemoteControlEvent>('francois://remote/event', (e) => cb(e.payload));
 }
 
-// plugin-system (§5.4). Twelve commands over the `plugins` domain. Every one is
+// plugin-system (§5.4). Fourteen commands over the `plugins` domain. Every one is
 // a plain request/response — the frontend NEVER receives plugin code, only the
 // core-validated PanelSpec / StatusItemSpec JSON these resolve (FR-36).
 //
@@ -193,6 +196,16 @@ export function onRemoteEvent(cb: (e: RemoteControlEvent) => void): Promise<Unli
 // is invisible to a mocked-invoke unit test and surfaced as a plugin pane stuck
 // on "rendering…". Do not "simplify" these back to a bare `req`.
 export const pluginsList = () => ipc<Result<PluginListOutput>>('plugins_list');
+/**
+ * FR-79 §7 #40 + FR-66 §7 #42 — two app-wide startup conditions that belong to
+ * no plugin row. `registryWasReset` is CLEARED BY THE READ (it reports
+ * something that happened once), so call this once per modal opening and hold
+ * the result — polling it makes the message disappear.
+ */
+export const pluginsStatus = () => ipc<Result<PluginStatusOutput>>('plugins_status');
+/** FR-26: the per-plugin ring buffer, oldest first, for §8·C9's LOG group. */
+export const pluginsLogs = (req: PluginLogsInput) =>
+  ipc<Result<PluginLogsOutput>>('plugins_logs', { req });
 export const pluginsResolve = (req: PluginResolveInput) =>
   ipc<Result<PluginInstallPreview>>('plugins_resolve', { req });
 export const pluginsInstall = (req: PluginInstallInput) =>

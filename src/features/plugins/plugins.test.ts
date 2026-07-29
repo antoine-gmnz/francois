@@ -10,6 +10,7 @@ import type {
   InstalledPlugin,
   PanelNode,
   PanelSpec,
+  PluginCapabilities,
   PluginEnablement,
   PluginEvent,
   PluginManifest,
@@ -22,25 +23,28 @@ import {
   DEFAULT_PLUGIN_GLYPH,
   PANEL_INVALID_NODE,
   PANEL_NODE_TYPES,
+  PLUGIN_CAPABILITY_KEYS,
   PLUGIN_FAILURE_LIMIT,
   PLUGIN_PANE_TITLE_MAX,
+  paneHintGlyph,
   REFRESH_INTERVAL_MAX_MS,
   REFRESH_INTERVAL_MIN_MS,
   SECRET_SENTINEL,
   STATUS_ITEM_MAX_VISIBLE,
-  isPluginTabId,
-  pluginIdOfTab,
   pluginPaletteCommandId,
+  pluginPaneFocusLabel,
   pluginPaneId,
-  pluginTabId,
 } from '../../../contract/plugin-system';
 import {
   CONSENT_PENDING_LINE,
   EXFILTRATION_WARNING,
   INJECTION_INTENT_LINE,
   SECRET_PLACEHOLDER,
+  WIDENING_LINE,
   activePlugins,
+  capabilityDiff,
   capabilityRows,
+  consentPendingReason,
   coerceSettingValue,
   declaredCommandIds,
   enablementMode,
@@ -57,17 +61,16 @@ import {
   isSecretSet,
   moveListSelection,
   paletteSyncPlan,
+  pendingConsentDiff,
   paneCount,
   paneCountLabel,
+  paneFocusLabel,
   paneTitle,
   pluginAttributionLine,
   pluginCommandEnabled,
   pluginPaletteEntries,
   pluginPaneHotkeys,
   pluginPanes,
-  pluginTabs,
-  tabTitle,
-  isTabStillVisible,
   pluginRowSubtitle,
   pluginRowTags,
   queuedNote,
@@ -363,59 +366,24 @@ describe('plugin panes (FR-46/FR-47/FR-48)', () => {
     expect(paneCountLabel(4, '6')).toBe('4 · [6]');
     expect(paneCountLabel(0, null)).toBe('0');
   });
-});
 
-describe('plugin main tabs (FR-81)', () => {
-  const tab = { tab: { title: 'cohorte' } };
-  const list = [
-    plugin({ manifest: { id: 'a', contributes: tab } }),
-    plugin({ manifest: { id: 'b', contributes: { panel: { title: 'ci' } } } }), // pane only
-    plugin({ manifest: { id: 'c', contributes: tab }, enablement: { scope: 'off' } }),
-    plugin({ manifest: { id: 'd', contributes: tab } }),
-  ];
-
-  it('keeps registry order and drops non-contributors and inactive plugins', () => {
-    expect(pluginTabs(list, null).map((p) => p.manifest.id)).toEqual(['a', 'd']);
+  it('grows the status-bar pane hint with the visible pane count (FR-48)', () => {
+    // The regression this pins: App hardcoded '1-5', so a plugin pane's own
+    // number key was never advertised.
+    const panes = pluginPanes(list, null);
+    expect(paneHintGlyph(0)).toBe('1-5');
+    expect(paneHintGlyph(1)).toBe('1-6');
+    expect(paneHintGlyph(panes.length)).toBe('1-9'); // 5 visible panes, capped
   });
 
-  it('scopes tabs by project exactly as panes are scoped', () => {
-    const scoped = [
-      plugin({ manifest: { id: 'a', contributes: tab }, enablement: { scope: 'projects', projectIds: ['p1'] } }),
-    ];
-    expect(pluginTabs(scoped, 'p1')).toHaveLength(1);
-    expect(pluginTabs(scoped, 'p2')).toHaveLength(0);
-  });
-
-  it('uppercases and truncates the title like a pane title', () => {
-    expect(tabTitle('cohorte')).toBe('COHORTE');
-    expect(tabTitle('a-very-long-plugin-tab-title').length).toBeLessThanOrEqual(18);
-  });
-
-  it('uses a DIFFERENT prefix from pane ids so a bare string is never ambiguous', () => {
-    // A plugin may contribute both surfaces; one shared prefix would make
-    // 'plugin:acme' mean either at every boundary that takes a string.
-    expect(pluginTabId('acme')).not.toBe(pluginPaneId('acme'));
-    expect(isPluginTabId(pluginPaneId('acme'))).toBe(false);
-    expect(isPluginTabId(pluginTabId('acme'))).toBe(true);
-    expect(pluginIdOfTab(pluginTabId('acme'))).toBe('acme');
-  });
-
-  it('reports the static tabs as always visible', () => {
-    for (const t of ['overview', 'session', 'diff', 'shell']) {
-      expect(isTabStillVisible(t, [])).toBe(true);
-    }
-  });
-
-  it('reports a tab whose plugin disappeared as no longer visible', () => {
-    // The regression this pins: disabling a plugin (or filtering to another
-    // project) while its tab is selected would otherwise leave the main pane
-    // rendering nothing, with no tab selected to get back from.
-    const visible = pluginTabs(list, null);
-    expect(isTabStillVisible(pluginTabId('a'), visible)).toBe(true);
-    expect(isTabStillVisible(pluginTabId('c'), visible)).toBe(false);
-    expect(isTabStillVisible(pluginTabId('gone'), visible)).toBe(false);
+  it('labels focus with the plugin id alone, never the raw pane id (FR-45, §3·B1)', () => {
+    expect(pluginPaneFocusLabel(pluginPaneId('acme-ci'))).toBe('acme-ci');
+    expect(pluginPaneFocusLabel('sidebar')).toBeNull();
+    expect(paneFocusLabel(pluginPaneId('acme-ci'))).toBe('acme-ci');
+    expect(paneFocusLabel('sidebar')).toBe('sidebar');
   });
 });
+
 
 describe('status-bar items (FR-49)', () => {
   const statusBar = { statusBar: {} as Record<string, never> };
@@ -619,6 +587,107 @@ describe('consent card (FR-11, §8·C4/D13)', () => {
     expect(rows.find((r) => r.key === 'network')?.addedHosts).toEqual(['telemetry.acme.dev']);
   });
 
+  it('sorts the webTab row LAST and words it as a warning (§8·H36)', () => {
+    const rows = capabilityRows(
+      { readState: true, network: { hosts: ['ci.acme.dev'] }, webTab: true },
+      [],
+      [],
+      'ci.acme.dev',
+    );
+    expect(rows.map((r) => r.key)).toEqual(['readState', 'network', 'webTab']);
+    expect(rows[2].sentence).toBe('frame ci.acme.dev as a tab — that page runs its own code');
+    // §8·C9 marks a granted capability with ✓; the framed tab is the one row
+    // that carries ⚠ instead, because it is the strongest grant on the card.
+    expect(rows.map((r) => r.glyph)).toEqual(['✓', '✓', '⚠']);
+  });
+
+  it('omits the webTab row when the capability is absent', () => {
+    expect(capabilityRows({ readState: true }).map((r) => r.key)).toEqual(['readState']);
+  });
+
+  it('marks webTab as added on a widening update', () => {
+    const rows = capabilityRows({ webTab: true, network: { hosts: ['h'] } }, ['webTab'], [], 'h');
+    expect(rows.find((r) => r.key === 'webTab')?.added).toBe(true);
+  });
+
+  it('diffs a wanted capability set against what was granted (FR-13, §8·D15)', () => {
+    // The consent BYPASS this exists to close: the modal used to send
+    // `consented: true` straight from the update button, so this diff was
+    // computed and never shown.
+    const granted: PluginCapabilities = { readState: true, network: { hosts: ['api.github.com'] } };
+    const wanted: PluginCapabilities = {
+      readState: true,
+      driveSessions: true,
+      network: { hosts: ['api.github.com', 'Telemetry.acme.dev.'] },
+      webTab: true,
+    };
+    expect(capabilityDiff(granted, wanted)).toEqual({
+      addedCapabilities: ['driveSessions', 'webTab'],
+      addedHosts: ['Telemetry.acme.dev.'],
+    });
+  });
+
+  it('treats a first install as nothing added, and a narrowing update as nothing added', () => {
+    expect(capabilityDiff(null, { readState: true })).toEqual({ addedCapabilities: [], addedHosts: [] });
+    expect(
+      capabilityDiff({ readState: true, driveSessions: true }, { readState: true }),
+    ).toEqual({ addedCapabilities: [], addedHosts: [] });
+  });
+
+  it('reports webTab as a first-class capability key (§8·H36)', () => {
+    // The contract's tuple types PluginUpdateInfo.addedCapabilities, so a key
+    // missing from it is a widening the CORE cannot report — and an
+    // unreportable widening never triggers PLUGIN_CONSENT_REQUIRED.
+    expect(PLUGIN_CAPABILITY_KEYS).toEqual(['readState', 'driveSessions', 'network', 'webTab']);
+    expect(capabilityDiff({ network: { hosts: ['h'] } }, { network: { hosts: ['h'] }, webTab: true })).toEqual({
+      addedCapabilities: ['webTab'],
+      addedHosts: [],
+    });
+  });
+
+  it('gives a consentPending plugin something to review (§3·F5)', () => {
+    // FR-16 says such a plugin is inert until re-consent; the modal used to
+    // show the sentence and nothing else, so there was nothing to review.
+    const pending = plugin({
+      manifest: { capabilities: { readState: true, network: { hosts: ['a.dev'] } } },
+      grantedCapabilities: { readState: true },
+      consentPending: true,
+    });
+    expect(pendingConsentDiff(pending)).toEqual({
+      addedCapabilities: ['network'],
+      addedHosts: ['a.dev'],
+    });
+    expect(WIDENING_LINE).toBe('this update asks for more than you granted');
+    expect(consentPendingReason(pending)).toBe('widening');
+  });
+
+  it('tells a TAMPERED registry entry apart from a pending consent (§7 #49)', () => {
+    // The core keeps an untrustworthy row but marks it consent_pending with a
+    // lastError. Nothing was widened, so the "new permissions — review" copy
+    // would be a lie: the honest reading is that the entry is not trustworthy.
+    const untrusted = plugin({
+      manifest: { capabilities: { readState: true } },
+      grantedCapabilities: { readState: true },
+      consentPending: true,
+      lastError: { at: 1, surface: 'panel', message: 'this registry entry is not trustworthy — reinstall it' },
+    });
+    expect(pendingConsentDiff(untrusted)).toEqual({ addedCapabilities: [], addedHosts: [] });
+    expect(consentPendingReason(untrusted)).toBe('untrusted');
+    expect(consentPendingReason(plugin())).toBeNull();
+    // A widening entry that ALSO carries an unrelated runtime error still reads
+    // as a widening — the diff is what decides, not the presence of an error.
+    expect(
+      consentPendingReason(
+        plugin({
+          manifest: { capabilities: { readState: true } },
+          grantedCapabilities: {},
+          consentPending: true,
+          lastError: { at: 1, surface: 'panel', message: 'execution deadline exceeded' },
+        }),
+      ),
+    ).toBe('widening');
+  });
+
   it('shows the standing warning only when readState AND network are both granted', () => {
     expect(showsExfiltrationWarning({ readState: true, network: { hosts: ['a'] } })).toBe(true);
     expect(showsExfiltrationWarning({ readState: true })).toBe(false);
@@ -663,12 +732,34 @@ describe('modal copy (§8·C)', () => {
   it('tags a row in §8·C8 order', () => {
     expect(pluginRowTags(plugin(), false)).toEqual([]);
     expect(pluginRowTags(plugin({ enablement: { scope: 'off' } }), false).map((t) => t.label)).toEqual(['off']);
-    const busted = plugin({
+    const widened = plugin({
       enablement: { scope: 'off' },
+      manifest: { capabilities: { readState: true } },
+      grantedCapabilities: {},
       consentPending: true,
       lastError: { at: 1, surface: 'panel', message: 'boom' },
     });
-    expect(pluginRowTags(busted, true).map((t) => t.label)).toEqual(['off', 'error', 'new permissions', 'update']);
+    expect(pluginRowTags(widened, true).map((t) => t.label)).toEqual([
+      'off',
+      'error',
+      'new permissions',
+      'update',
+    ]);
+  });
+
+  it('tags a quarantined row `not trustworthy`, never `new permissions` (§8·C8)', () => {
+    // The fifth tag: a quarantined row reuses consentPending to make itself
+    // inert, and `new permissions` would tell the user to review an update that
+    // does not exist. Discriminated on the capability DELTA, per §8·C8.
+    const quarantined = plugin({
+      manifest: { capabilities: { readState: true } },
+      grantedCapabilities: { readState: true },
+      consentPending: true,
+      lastError: { at: 1, surface: 'panel', message: 'this registry entry is not trustworthy — reinstall it' },
+    });
+    const tags = pluginRowTags(quarantined, false);
+    expect(tags.map((t) => t.label)).toEqual(['error', 'not trustworthy']);
+    expect(tags[1].tone).toBe('error');
   });
 
   it('words the update control (§3·F2)', () => {

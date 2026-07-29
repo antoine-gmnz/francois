@@ -27,6 +27,11 @@ pub(crate) struct HostContext {
     /// The visibility scope this invocation renders for — `projects.current`.
     pub project_id: Option<String>,
     pub storage_path: Option<PathBuf>,
+    /// FR-71: set when this invocation WROTE storage, so the caller can
+    /// invalidate the plugin's other surfaces once the isolate has settled.
+    /// Never acted on mid-invocation: a panel that writes on every render would
+    /// otherwise invalidate itself into a loop.
+    pub storage_dirty: std::sync::atomic::AtomicBool,
 }
 
 impl isolate::Host for HostContext {
@@ -187,6 +192,8 @@ impl HostContext {
             return Err("storage quota exceeded".into());
         }
         self.save_store(&store)?;
+        self.storage_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(Value::Null)
     }
 
@@ -195,6 +202,8 @@ impl HostContext {
         let mut store = self.load_store();
         if store.remove(key).is_some() {
             self.save_store(&store)?;
+            self.storage_dirty
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(Value::Null)
     }
