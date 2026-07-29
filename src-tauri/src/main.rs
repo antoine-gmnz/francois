@@ -591,6 +591,7 @@ fn main() {
             session::agents_dispatch,
             session::agents_kill,
             session::agents_activity,
+            session::agents_transcript,
             session::mcp_registry,
             session::mcp_list,
             session::mcp_detail,

@@ -13,10 +13,24 @@ import type { UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlStatus } from '../../contract/remote-control';
 import { applyRemoteResult, applyRemoteStatus, applySeedStatus, type RemoteMap } from '../features/remote/remote-control';
 import { loadActiveProjectId, persistActiveProjectId, reconcileActiveProjectId } from '../features/projects/projects';
+import {
+  agentIdFromTab,
+  agentTabId,
+  closeTab,
+  mainTabAfterClose,
+  openTab,
+  syncTab,
+  type AgentTabRef,
+} from '../features/agents/agent-tab';
 import { mintActivityId } from '../features/overview/overview';
 
 export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills';
-export type MainTab = 'overview' | 'session' | 'diff' | 'shell';
+/**
+ * The main pane's active tab. The `agent:${string}` member is agent-tab FR-9's
+ * dynamic tab — a template-literal member rather than a discriminated object so
+ * every existing `mainTab === 'diff'` comparison keeps working untouched.
+ */
+export type MainTab = 'overview' | 'session' | 'diff' | 'shell' | `agent:${string}`;
 
 // localStorage persistence for the column toggles — guarded so a restricted
 // storage environment (or node test env) degrades to defaults silently.
@@ -112,6 +126,18 @@ interface AppState extends ProjectsState {
   // main-pane active tab (minimal app-shell)
   mainTab: MainTab;
   setMainTab: (t: MainTab) => void;
+
+  // agent-tab §6: the open agent tabs, in the order they were opened. Scoped to
+  // the active session (agent ids are session-scoped) and never persisted.
+  agentTabs: AgentTabRef[];
+  /** FR-10: open (or re-activate) an agent's tab and make it the active tab. */
+  openAgentTab: (ref: AgentTabRef) => void;
+  /** Refresh an OPEN tab's name/status from an agent.update; never opens one. */
+  syncAgentTab: (ref: AgentTabRef) => void;
+  /** FR-13: close one tab; falls back to SESSION only if it was the active one. */
+  closeAgentTab: (agentId: string) => void;
+  /** FR-14: close every agent tab (session switch). */
+  clearAgentTabs: () => void;
 
   // light/dark theme (§theme). Initialized from localStorage; setter/toggle both
   // persist and apply data-theme to <html>.
@@ -228,6 +254,26 @@ export const useStore = create<AppState>((set) => ({
   mainTab: INITIAL_ACTIVE_PROJECT === null ? 'overview' : 'session',
   setMainTab: (mainTab) => set({ mainTab }),
 
+  agentTabs: [],
+  openAgentTab: (ref) =>
+    set((s) => ({ agentTabs: openTab(s.agentTabs, ref), mainTab: agentTabId(ref.id) as MainTab })),
+  syncAgentTab: (ref) =>
+    set((s) => {
+      const agentTabs = syncTab(s.agentTabs, ref);
+      return agentTabs === s.agentTabs ? {} : { agentTabs };
+    }),
+  closeAgentTab: (agentId) =>
+    set((s) => ({
+      agentTabs: closeTab(s.agentTabs, agentId),
+      mainTab: mainTabAfterClose(s.mainTab, [agentId]) as MainTab,
+    })),
+  clearAgentTabs: () =>
+    set((s) =>
+      s.agentTabs.length === 0 && agentIdFromTab(s.mainTab) === null
+        ? {}
+        : { agentTabs: [], mainTab: mainTabAfterClose(s.mainTab, null) as MainTab },
+    ),
+
   theme: loadTheme(),
   setTheme: (theme) => {
     persistTheme(theme);
@@ -243,7 +289,16 @@ export const useStore = create<AppState>((set) => ({
     }),
 
   activeSessionId: null,
-  setActiveSessionId: (activeSessionId) => set({ activeSessionId }),
+  // agent-tab FR-14: agent ids are session-scoped, so a session CHANGE closes
+  // every agent tab (and hands SESSION back the main pane if one was active).
+  // Re-selecting the session already active must not — clicking the current row
+  // in the sidebar would otherwise wipe the tabs you are reading.
+  setActiveSessionId: (activeSessionId) =>
+    set((s) =>
+      s.activeSessionId === activeSessionId
+        ? { activeSessionId }
+        : { activeSessionId, agentTabs: [], mainTab: mainTabAfterClose(s.mainTab, null) as MainTab },
+    ),
   sidebarFilter: null,
   setSidebarFilter: (sidebarFilter) => set({ sidebarFilter }),
 

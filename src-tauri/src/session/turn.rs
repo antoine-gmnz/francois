@@ -614,9 +614,11 @@ mod tests {
 
         // ordering: the notice step precedes the agent.update that carries it —
         // both must land before fail_session's own SessionEvent::Error/Status.
-        assert_eq!(ems.len(), 2);
+        // (agent-tab FR-4 puts the notice's transcript block between the two.)
+        assert_eq!(ems.len(), 3);
         assert!(matches!(ems[0], AgentEmission::Step { .. }));
-        assert!(matches!(ems[1], AgentEmission::Update { .. }));
+        assert!(matches!(ems[1], AgentEmission::Block { .. }));
+        assert!(matches!(ems[2], AgentEmission::Update { .. }));
     }
 
     #[test]

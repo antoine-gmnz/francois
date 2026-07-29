@@ -15,6 +15,7 @@ import type {
 import type { PermissionDecision, PermissionRule, PermissionTier } from '../../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { ConversationBlock } from '../../contract/conversation-view';
+import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
 import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
@@ -93,6 +94,15 @@ export const agentsKill = (agentId: string) => ipc<Result<null>>('agents_kill', 
 // async-agents §5: the agent's activity trail (≤200 steps, FR-12 window).
 export const agentsActivity = (agentId: string) =>
   ipc<Result<AgentStep[]>>('agents_activity', { agentId });
+// agent-tab §5: the agent's OWN transcript (≤400 blocks, FR-5 window) + the
+// count evicted past it — what the dynamic agent tab renders.
+export const agentsTranscript = (agentId: string) =>
+  ipc<Result<AgentTranscript>>('agents_transcript', { agentId });
+
+/** Subscribe to francois://agents/event (agent.block, agent-tab FR-8). */
+export function onAgentEvent(cb: (e: AgentEvent) => void): Promise<UnlistenFn> {
+  return listen<AgentEvent>('francois://agents/event', (e) => cb(e.payload));
+}
 
 export const mcpList = (sessionId: SessionId) => ipc<Result<McpServerInfo[]>>('mcp_list', { sessionId });
 export const mcpDetail = (sessionId: SessionId, name: string) => ipc<Result<McpServerDetail>>('mcp_detail', { sessionId, name });

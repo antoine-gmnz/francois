@@ -11,6 +11,8 @@ import ConversationView from '../features/conversation/ConversationView';
 import OverviewView from '../features/overview/OverviewView';
 import DiffView from '../features/diff/DiffView';
 import AgentsPanel from '../features/agents/AgentsPanel';
+import AgentView from '../features/agents/AgentView';
+import { agentIdFromTab, agentTabId, agentTabLabel, type AgentTabRef } from '../features/agents/agent-tab';
 import McpPanel from '../features/mcp/McpPanel';
 import SkillsPanel from '../features/skills/SkillsPanel';
 import UsageBar from '../features/usage/UsageBar';
@@ -89,8 +91,12 @@ export default function App() {
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
+  // agent-tab FR-9: the dynamic per-subagent tabs, after SHELL in the strip.
+  const agentTabs = useStore((s) => s.agentTabs);
+  const closeAgentTab = useStore((s) => s.closeAgentTab);
 
   const active = sessions.find((s) => s.id === activeSessionId) ?? null;
+  const activeAgentId = agentIdFromTab(mainTab);
 
   useEffect(() => {
     initShellEvents();
@@ -241,6 +247,15 @@ export default function App() {
         // conversation you came from.
         setFocusedPane('main');
         setMainTab(useStore.getState().mainTab === 'overview' ? 'session' : 'overview');
+      } else if (e.key === 'w' || e.key === 'W') {
+        // agent-tab FR-15: close the active agent tab (SESSION takes over). A
+        // no-op on the built-in tabs — nothing else in the strip is closable.
+        const st = useStore.getState();
+        const agentId = agentIdFromTab(st.mainTab);
+        if (agentId !== null) {
+          e.preventDefault();
+          st.closeAgentTab(agentId);
+        }
       } else if (e.key === '[') {
         useStore.getState().toggleLeftPane();
       } else if (e.key === ']') {
@@ -358,6 +373,18 @@ export default function App() {
               <span onClick={() => setMainTab('shell')} style={tabStyle(mainTab === 'shell')}>
                 SHELL
               </span>
+              {/* agent-tab FR-9/FR-12: one tab per clicked subagent, in open
+                  order. Lower-case and un-tracked on purpose — an agent name is
+                  content, not a chrome label. */}
+              {agentTabs.map((t) => (
+                <AgentTabChip
+                  key={t.id}
+                  tab={t}
+                  active={mainTab === agentTabId(t.id)}
+                  onOpen={() => setMainTab(agentTabId(t.id) as typeof mainTab)}
+                  onClose={() => closeAgentTab(t.id)}
+                />
+              ))}
             </div>
             {mainTab === 'session' && active && (
               <div style={{ display: 'flex', gap: 14, fontSize: 10.5, color: C.dim, alignItems: 'center' }}>
@@ -409,6 +436,18 @@ export default function App() {
             ) : (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
                 select a session to review its changes
+              </div>
+            )
+          ) : activeAgentId !== null ? (
+            // agent-tab: one subagent's own conversation. Keyed by agent so
+            // switching tabs remounts rather than leaking the previous state.
+            // The session is always present here (FR-14 closes agent tabs when it
+            // changes) — the fallback only guards a dangling id.
+            active ? (
+              <AgentView key={activeAgentId} agentId={activeAgentId} sessionId={active.id} />
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
+                select a session
               </div>
             )
           ) : active ? (
@@ -554,5 +593,81 @@ export default function App() {
 
       <PaletteRoot />
     </div>
+  );
+}
+
+/**
+ * agent-tab FR-12 / §8: one agent tab in the strip — status dot, `⇉`, the
+ * truncated agent name, and a `✕` that appears on hover. Not upper-cased or
+ * letter-spaced like the built-in tabs: this is content, not chrome.
+ */
+function AgentTabChip({
+  tab,
+  active,
+  onOpen,
+  onClose,
+}: {
+  tab: AgentTabRef;
+  active: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const sc =
+    tab.status === 'running'
+      ? C.running
+      : tab.status === 'done'
+        ? C.done
+        : tab.status === 'error'
+          ? C.error
+          : C.idle;
+  return (
+    <span
+      onClick={onOpen}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={tab.name}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 11,
+        fontWeight: 500,
+        cursor: 'pointer',
+        padding: '2px 0',
+        color: active ? C.accent : C.dim,
+        borderBottom: `2px solid ${active ? C.accent : 'transparent'}`,
+        maxWidth: 160,
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          flexShrink: 0,
+          background: sc,
+          animation: tab.status === 'running' ? 'pulse 1.4s ease-in-out infinite' : 'none',
+        }}
+      />
+      <span style={{ color: C.running, flexShrink: 0 }}>⇉</span>
+      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {agentTabLabel(tab.name)}
+      </span>
+      {hover && (
+        <span
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          title="close tab"
+          style={{ fontSize: 10, color: C.faint, flexShrink: 0 }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = C.error)}
+          onMouseLeave={(e) => (e.currentTarget.style.color = C.faint)}
+        >
+          ✕
+        </span>
+      )}
+    </span>
   );
 }
