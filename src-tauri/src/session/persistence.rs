@@ -41,6 +41,9 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
         BlockKind::Assistant => "assistant",
         BlockKind::Tool => "tool",
         BlockKind::Subagent => "subagent",
+        // agent-tab FR-6: notice blocks only ever live in a per-agent transcript,
+        // which is in-memory and never persisted — this arm is exhaustiveness only.
+        BlockKind::Notice => "notice",
         BlockKind::Command => {
             // interactive-commands FR-24: finalized command blocks persist the card as JSON.
             return serde_json::json!({
@@ -465,6 +468,9 @@ pub fn load_persisted(app: &AppHandle) {
                 agent_step_seq: HashMap::new(),
                 agent_inner_tools: HashMap::new(),
                 agent_backend_ref: HashMap::new(),
+                agent_blocks: HashMap::new(),
+                agent_block_seq: HashMap::new(),
+                agent_blocks_dropped: HashMap::new(),
                 block_buffer,
                 mcp: HashMap::new(),
                 cli_commands: Vec::new(),

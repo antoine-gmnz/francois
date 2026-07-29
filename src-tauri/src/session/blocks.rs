@@ -55,6 +55,12 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
             }
             o
         }
+        BlockKind::Notice => serde_json::json!({
+            // agent-tab FR-4: AgentNoticeBlock — appended already final, so it
+            // never streams and carries no glyph/color (the tab owns those).
+            "kind": "notice", "blockId": b.block_id, "isStreaming": false,
+            "text": b.text,
+        }),
         BlockKind::Command => {
             // CommandConversationBlock (contract/interactive-commands.ts): `card` absent while pending.
             let mut o = serde_json::json!({

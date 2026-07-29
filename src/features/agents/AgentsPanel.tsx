@@ -58,6 +58,8 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
+  const openAgentTab = useStore((s) => s.openAgentTab);
+  const syncAgentTab = useStore((s) => s.syncAgentTab);
 
   const [agents, setAgents] = useState<Map<string, AgentInfo>>(new Map());
   const [loading, setLoading] = useState(false);
@@ -103,6 +105,10 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
     const buffer: AgentInfo[] = [];
 
     const applyAgent = (a: AgentInfo) => {
+      // agent-tab: keep an open tab's label + status dot live. A no-op when this
+      // agent has no tab, and this panel is already the ONE agent.update
+      // subscriber for the active session — no second subscription.
+      syncAgentTab({ id: a.id, name: a.name, status: a.status });
       setAgents((prev) => {
         const next = new Map(prev);
         next.set(a.id, a); // set on existing key preserves position (FR-7)
@@ -295,10 +301,17 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
               trail={a.id === trail.agentId ? trail : null}
               hover={a.id === hoverId}
               pending={pendingKill.has(a.id)}
-              onClick={() => {
+              onClick={(e) => {
                 if (a.id !== trail.agentId) setTrail(collapseTrail); // FR-13: selection collapses
                 setSelectedId(a.id);
-                setFocusedPane('agents');
+                // agent-tab FR-10: a CLICK also opens (or re-activates) this
+                // agent's main-pane tab and hands it focus — you clicked to read
+                // it. stopPropagation keeps the section's own handler from
+                // immediately pulling focus back to pane [3]. The keyboard path
+                // (↑/↓ + ⏎, the in-place trail) is deliberately unchanged.
+                e.stopPropagation();
+                openAgentTab({ id: a.id, name: a.name, status: a.status });
+                setFocusedPane('main');
               }}
               onHover={(h) => setHoverId(h ? a.id : null)}
               onKill={() => void doKill(a.id)}
@@ -334,7 +347,7 @@ function Card({
   trail: TrailState | null;
   hover: boolean;
   pending: boolean;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
   onHover: (h: boolean) => void;
   onKill: () => void;
   onAtBottom: (v: boolean) => void;

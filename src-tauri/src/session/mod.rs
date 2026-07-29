@@ -15,6 +15,7 @@
 //    auth failure surfaces on the first `send` as a turn error (session.error),
 //    matching FR-19's lazy-error path rather than failing `create`.
 
+mod agent_transcript;
 mod agents;
 mod blocks;
 mod commands;
@@ -33,6 +34,7 @@ mod stream;
 mod tools;
 mod turn;
 
+pub(crate) use agent_transcript::*;
 pub(crate) use agents::*;
 pub(crate) use blocks::*;
 pub(crate) use commands::*;
@@ -72,6 +74,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 const EVENT_CHANNEL: &str = "francois://session/event";
+/// agent-tab §5: the `agents` domain event stream (`agent.block`). Separate from
+/// the session stream because AgentBlock builds on conversation-view's block
+/// types while contract/common.ts (which owns SessionEvent) is import-free.
+const AGENT_EVENT_CHANNEL: &str = "francois://agents/event";
 const QUEUE_CAP: usize = 20;
 const DEFAULT_MODEL: &str = "sonnet";
 /// interactive-commands FR-10: a /usage//cost probe is killed after this long.
@@ -259,6 +265,9 @@ pub(crate) struct InnerTool {
     seq: u32,
     tool: String,
     input: Value,
+    /// agent-tab FR-2: the transcript block minted for the same tool_use, so one
+    /// `tool_result` fills the step's `meta` AND the block's in one pass.
+    block_id: String,
 }
 
 /// What an async-agents state mutation asks its caller to emit, in order. Keeping
@@ -266,8 +275,19 @@ pub(crate) struct InnerTool {
 /// the AppHandle wrappers only lock → mutate → drop the lock → emit.
 #[derive(Clone)]
 pub(crate) enum AgentEmission {
-    Step { agent_id: String, step: AgentStep },
-    Update { agent: AgentInfo },
+    Step {
+        agent_id: String,
+        step: AgentStep,
+    },
+    Update {
+        agent: AgentInfo,
+    },
+    /// agent-tab FR-8: a transcript block was appended, or an existing one was
+    /// re-emitted with its `meta` filled. Carries the serialized AgentBlock.
+    Block {
+        agent_id: String,
+        block: Value,
+    },
 }
 
 /// Tool names that dispatch a subagent. Claude Code's stock CLI uses `Task`;
@@ -318,6 +338,10 @@ pub(crate) enum BlockKind {
     Command,    // interactive-commands: a slash-command response card
     Question,   // session-questions: an AskUserQuestion card
     Permission, // permission-guardrails: a gated tool call awaiting approval
+    /// agent-tab FR-4: an engine lifecycle marker inside a subagent's transcript
+    /// (dispatch / completion / kill / turn end). Only ever buffered per agent —
+    /// never in a session's own `block_buffer`.
+    Notice,
 }
 
 #[derive(Clone)]
@@ -408,6 +432,15 @@ pub(crate) struct Session {
     agent_inner_tools: HashMap<String, HashMap<String, InnerTool>>,
     /// FR-5: the spawn ack's text, for FR-14 matching.
     agent_backend_ref: HashMap<String, String>,
+    // ---- agent-tab §6 (in-memory, cleared with the session — never serialized) ----
+    /// FR-5: the ≤400-block transcript window per agent, in the same BufBlock
+    /// shape (and through the same classify_block serializer) as the session's
+    /// own `block_buffer`.
+    agent_blocks: HashMap<String, VecDeque<BufBlock>>,
+    /// FR-5: next `blockId` ordinal per agent (1-based).
+    agent_block_seq: HashMap<String, u32>,
+    /// FR-5: blocks evicted past the window — the tab's `… N earlier blocks` row.
+    agent_blocks_dropped: HashMap<String, u32>,
     block_buffer: Vec<BufBlock>, // §6: read by conversation-view's getTranscript
     mcp: HashMap<String, McpServerInfo>,
     // slash-menu FR-2: the CLI's slash_commands captured from the latest

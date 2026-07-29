@@ -39,6 +39,9 @@ pub(crate) fn test_session() -> Session {
         agent_step_seq: HashMap::new(),
         agent_inner_tools: HashMap::new(),
         agent_backend_ref: HashMap::new(),
+        agent_blocks: HashMap::new(),
+        agent_block_seq: HashMap::new(),
+        agent_blocks_dropped: HashMap::new(),
         block_buffer: Vec::new(),
         mcp: HashMap::new(),
         cli_commands: Vec::new(),
@@ -129,6 +132,16 @@ pub(crate) fn emitted_steps(ems: &[AgentEmission]) -> Vec<AgentStep> {
     ems.iter()
         .filter_map(|e| match e {
             AgentEmission::Step { step, .. } => Some(step.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// agent-tab: the serialized AgentBlocks an emission list carries, in order.
+pub(crate) fn emitted_blocks(ems: &[AgentEmission]) -> Vec<Value> {
+    ems.iter()
+        .filter_map(|e| match e {
+            AgentEmission::Block { block, .. } => Some(block.clone()),
             _ => None,
         })
         .collect()

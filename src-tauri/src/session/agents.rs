@@ -146,6 +146,14 @@ pub(crate) fn push_step(
         agent_id: agent_id.to_string(),
         step: step.clone(),
     }];
+    // agent-tab FR-4: every lifecycle notice is also a transcript block. Minted
+    // HERE rather than at the four notice call sites so step/block parity is
+    // structural — a new notice site cannot forget the tab.
+    if kind == "notice" {
+        if let Some(nb) = push_agent_notice(s, agent_id, &step.label) {
+            out.push(nb.emission);
+        }
+    }
     if let Some(a) = s.agents.get_mut(agent_id) {
         a.last_activity = Some(step.label);
         a.step_count = a.step_count.saturating_add(1);
@@ -276,11 +284,13 @@ pub(crate) fn apply_attributed_line(
         let bt = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
         match (ty, bt) {
             ("assistant", "text") => {
-                let label = first_nonblank_line(
-                    item.get("text").and_then(|t| t.as_str()).unwrap_or(""),
-                    120,
-                );
+                let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                let label = first_nonblank_line(text, 120);
                 out.extend(push_step(s, agent_id, "text", None, &label, at));
+                // agent-tab FR-1: the same block again, untruncated, for the tab.
+                if let Some(nb) = push_agent_text(s, agent_id, text) {
+                    out.push(nb.emission);
+                }
             }
             ("assistant", "tool_use") => {
                 let name = item
@@ -305,8 +315,18 @@ pub(crate) fn apply_attributed_line(
                     _ => None,
                 });
                 out.extend(ems);
+                // agent-tab FR-1: the tool card for the tab, classified like a
+                // top-level tool.start (a nested dispatch becomes a subagent block).
+                let block_id = match push_agent_tool(s, agent_id, &name, &label) {
+                    Some(nb) => {
+                        out.push(nb.emission);
+                        nb.block_id
+                    }
+                    None => String::new(),
+                };
                 // FR-9: remember the inner tool_use_id against the step's seq, in a
-                // PER-AGENT map — never the parent turn's tool index.
+                // PER-AGENT map — never the parent turn's tool index. `block_id`
+                // rides along so one tool_result fills both projections (agent-tab FR-2).
                 if let (Some(seq), Some(tuid)) = (seq, item.get("id").and_then(|i| i.as_str())) {
                     s.agent_inner_tools
                         .entry(agent_id.to_string())
@@ -317,6 +337,7 @@ pub(crate) fn apply_attributed_line(
                                 seq,
                                 tool: name,
                                 input,
+                                block_id,
                             },
                         );
                 }
@@ -349,6 +370,11 @@ pub(crate) fn apply_attributed_line(
                         &extract_result_text(item.get("content")),
                     )
                 };
+                // agent-tab FR-2: the same meta closes the transcript block, in
+                // place and under the same blockId — never a second block.
+                if !inner.block_id.is_empty() {
+                    out.extend(fill_agent_block_meta(s, agent_id, &inner.block_id, &meta));
+                }
                 out.extend(fill_step_meta(s, agent_id, tuid, inner.seq, meta));
             }
             _ => {} // thinking & any other block type → no step
@@ -527,6 +553,16 @@ pub(crate) fn emit_agent_emissions(app: &AppHandle, session_id: &str, ems: Vec<A
                 },
             ),
             AgentEmission::Update { agent } => emit(app, SessionEvent::AgentUpdate { agent }),
+            // agent-tab FR-8: blocks ride the `agents` domain stream, not the
+            // session one (§5 — common.ts stays import-free).
+            AgentEmission::Block { agent_id, block } => emit_agent_event(
+                app,
+                AgentEvent::Block {
+                    session_id: session_id.into(),
+                    agent_id,
+                    block,
+                },
+            ),
         }
     }
 }
@@ -894,6 +930,10 @@ mod tests {
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].kind, "notice");
         assert_eq!(steps[0].label, "dispatched in background");
+        // agent.step FIRST, then its agent-tab notice block, then agent.update (FR-4).
+        assert!(matches!(ems[0], AgentEmission::Step { .. }));
+        assert!(matches!(ems[1], AgentEmission::Block { .. }));
+        assert!(matches!(ems[2], AgentEmission::Update { .. }));
         assert_eq!(emitted_updates(&ems).len(), 1);
     }
 
@@ -952,6 +992,50 @@ mod tests {
             .get("a1")
             .unwrap()
             .contains_key("toolu_i1"));
+    }
+
+    #[test]
+    fn attributed_line_also_builds_the_agent_tab_transcript() {
+        // agent-tab FR-1/FR-2/FR-3: the SAME line that produces steps produces
+        // blocks — untruncated text, a tool card that streams until its result
+        // fills the meta in place. This is the wiring the tab depends on, and it
+        // is the one thing agent_transcript.rs's pure tests cannot see.
+        let mut s = test_session();
+        mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
+        let body = "Looking at the engine.\nsecond line";
+        let line = json!({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_d",
+            "message": { "content": [
+                { "type": "thinking", "thinking": "hmm" },
+                { "type": "text", "text": "   \n  " },
+                { "type": "text", "text": body },
+                { "type": "tool_use", "id": "toolu_i1", "name": "Read",
+                  "input": { "file_path": "/x/src/session.rs" } }
+            ]}
+        });
+        let blocks = emitted_blocks(&apply_attributed_line(&mut s, "a1", &line, "/x", 5_000));
+        assert_eq!(blocks.len(), 2); // thinking and blank text produce none
+        assert_eq!(blocks[0]["kind"], "assistant");
+        assert_eq!(blocks[0]["blockId"], "a1:1");
+        assert_eq!(blocks[0]["text"], body); // NOT the step's 120-char first line
+        assert_eq!(blocks[1]["kind"], "tool");
+        assert_eq!(blocks[1]["blockId"], "a1:2");
+        assert_eq!(blocks[1]["summary"], "src/session.rs");
+        assert_eq!(blocks[1]["isStreaming"], true);
+
+        let result = json!({
+            "type": "user", "parent_tool_use_id": "toolu_d",
+            "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "toolu_i1", "content": "a\nb\nc" }
+            ]}
+        });
+        let filled = emitted_blocks(&apply_attributed_line(&mut s, "a1", &result, "/x", 5_100));
+        assert_eq!(filled.len(), 1);
+        assert_eq!(filled[0]["blockId"], "a1:2"); // filled in place, not appended
+        assert_eq!(filled[0]["isStreaming"], false);
+        assert!(filled[0]["meta"].is_string());
+        assert_eq!(s.agent_blocks.get("a1").unwrap().len(), 2);
     }
 
     #[test]
@@ -1247,9 +1331,10 @@ mod tests {
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].kind, "notice");
         assert_eq!(steps[0].label, "explorer finished: 3 files reviewed");
-        // agent.step FIRST, then agent.update
+        // agent.step FIRST, then its agent-tab notice block, then agent.update
         assert!(matches!(ems[0], AgentEmission::Step { .. }));
-        assert!(matches!(ems[1], AgentEmission::Update { .. }));
+        assert!(matches!(ems[1], AgentEmission::Block { .. }));
+        assert!(matches!(ems[2], AgentEmission::Update { .. }));
 
         let mut s = test_session();
         mint_agent(&mut s, "a1", "explorer", "toolu_1", true);
@@ -1331,6 +1416,10 @@ mod tests {
         let steps = emitted_steps(&ems);
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].label, "killed from the panel");
+        // agent.step FIRST, then its agent-tab notice block, then agent.update (FR-4).
+        assert!(matches!(ems[0], AgentEmission::Step { .. }));
+        assert!(matches!(ems[1], AgentEmission::Block { .. }));
+        assert!(matches!(ems[2], AgentEmission::Update { .. }));
         assert_eq!(emitted_updates(&ems).len(), 1);
         assert!(apply_kill(&mut s, "nope", 9_000).is_empty());
     }
