@@ -15,7 +15,7 @@
 // engine. Keep it that way.
 
 use crate::ipc::{ok, AppError, IpcResult};
-use crate::session::{no_window, now_ms, PROBE_TIMEOUT_SECS};
+use crate::session::{claude_path_env, no_window, now_ms, PROBE_TIMEOUT_SECS};
 use serde::Serialize;
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
@@ -357,6 +357,9 @@ fn request_probe(app: &AppHandle, manual: bool) -> bool {
     cmd.args(args);
     if let Some(home) = probe_cwd() {
         cmd.current_dir(home);
+    }
+    if let Some(path) = claude_path_env() {
+        cmd.env("PATH", path);
     }
     no_window(&mut cmd); // FR-10 — no console flash
     cmd.stdin(Stdio::null())

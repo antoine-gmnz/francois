@@ -548,6 +548,9 @@ pub(crate) fn run_probe(
     if runtime != "wsl" {
         cmd.current_dir(&cwd); // wsl probes get their cwd via `--cd` inside the distro
     }
+    if let Some(path) = claude_path_env() {
+        cmd.env("PATH", path);
+    }
     no_window(&mut cmd);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())

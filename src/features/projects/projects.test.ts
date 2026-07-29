@@ -344,10 +344,19 @@ describe('modal copy', () => {
 
 describe('project defaults form (FR-34)', () => {
   it('opens every select with an "inherit" option', () => {
-    const defs = defaultFieldDefs(MODELS, {});
+    const defs = defaultFieldDefs(MODELS, {}, true);
     expect(defs.map((d) => d.key)).toEqual(['modelId', 'effort', 'permissionMode', 'runtime', 'allowGit']);
     for (const d of defs) expect(d.options[0]).toEqual({ value: '', label: 'inherit' });
     expect(defs[4].options.map((o) => o.value)).toEqual(['', 'yes', 'no']);
+  });
+
+  it('offers wsl as a runtime only when allowWsl is true (§7 case 24)', () => {
+    const runtimeOptions = (allowWsl: boolean) =>
+      defaultFieldDefs(MODELS, {}, allowWsl)
+        .find((d) => d.key === 'runtime')!
+        .options.map((o) => o.value);
+    expect(runtimeOptions(true)).toEqual(['', 'native', 'wsl']);
+    expect(runtimeOptions(false)).toEqual(['', 'native']);
   });
 
   it('offers the efforts of the project default model, else every known effort', () => {

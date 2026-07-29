@@ -283,7 +283,11 @@ const INHERIT: FieldOption = { value: '', label: 'inherit' };
  * a default is cleared — FR-7 replaces the whole defaults object).
  * `allow git` is a select, not a toggle, precisely because it has three states.
  */
-export function defaultFieldDefs(models: ModelInfo[], defaults: ProjectDefaults): DefaultFieldDef[] {
+export function defaultFieldDefs(
+  models: ModelInfo[],
+  defaults: ProjectDefaults,
+  allowWsl: boolean,
+): DefaultFieldDef[] {
   return [
     {
       key: 'modelId',
@@ -303,7 +307,11 @@ export function defaultFieldDefs(models: ModelInfo[], defaults: ProjectDefaults)
     {
       key: 'runtime',
       label: 'runtime',
-      options: [INHERIT, ...RUNTIMES.map((r) => ({ value: r, label: r }))],
+      // wsl is Windows-only (§7 case 24) — the same gate NewSessionModal applies.
+      options: [
+        INHERIT,
+        ...RUNTIMES.filter((r) => r !== 'wsl' || allowWsl).map((r) => ({ value: r, label: r })),
+      ],
     },
     {
       key: 'allowGit',

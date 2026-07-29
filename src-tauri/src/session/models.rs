@@ -98,9 +98,37 @@ pub(crate) fn model_cache() -> &'static Mutex<Vec<ModelInfo>> {
 }
 
 pub(crate) fn read_oauth_token() -> Option<String> {
+    parse_access_token(&read_credentials_json()?)
+}
+
+/// The `claudeAiOauth` JSON blob, wherever the CLI put it: a plaintext file on
+/// Linux/Windows, or (macOS) the login Keychain — `claude` stores credentials
+/// there instead and never creates the file, so a file-only read always came
+/// up empty on a Mac.
+fn read_credentials_json() -> Option<String> {
     let path = dirs::home_dir()?.join(".claude").join(".credentials.json");
-    let bytes = std::fs::read(path).ok()?;
-    let v: Value = serde_json::from_slice(&bytes).ok()?;
+    if let Ok(bytes) = std::fs::read(path) {
+        return String::from_utf8(bytes).ok();
+    }
+    keychain_credentials_json()
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_credentials_json() -> Option<String> {
+    let out = Command::new("security")
+        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        .output()
+        .ok()?;
+    out.status.success().then_some(())?;
+    String::from_utf8(out.stdout).ok()
+}
+#[cfg(not(target_os = "macos"))]
+fn keychain_credentials_json() -> Option<String> {
+    None
+}
+
+fn parse_access_token(json: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(json).ok()?;
     v.get("claudeAiOauth")?
         .get("accessToken")?
         .as_str()
@@ -311,6 +339,18 @@ mod tests {
     #[test]
     fn catalog_fallback_contains_default() {
         assert!(catalog().iter().any(|m| m.id == DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn parse_access_token_reads_the_same_shape_the_file_and_keychain_both_use() {
+        let json = r#"{"claudeAiOauth":{"accessToken":"sk-test-123","refreshToken":"r"}}"#;
+        assert_eq!(parse_access_token(json), Some("sk-test-123".to_string()));
+    }
+
+    #[test]
+    fn parse_access_token_rejects_malformed_or_unrelated_json() {
+        assert_eq!(parse_access_token("not json"), None);
+        assert_eq!(parse_access_token(r#"{"other":"field"}"#), None);
     }
 
     #[test]

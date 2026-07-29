@@ -127,6 +127,9 @@ pub fn session_create(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(path) = claude_path_env() {
+        probe_cmd.env("PATH", path);
+    }
     no_window(&mut probe_cmd);
     match probe_cmd.status() {
         Ok(s) if s.success() => {}
