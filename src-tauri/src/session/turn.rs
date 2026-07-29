@@ -225,6 +225,8 @@ pub(crate) fn begin_turn(
     session_id: &str,
     block_id: String,
     text: String,
+    // plugin-system FR-58: `Some` only for an approved plugin injection.
+    origin: Option<Value>,
     mode: TurnMode,
 ) {
     let (cwd, model_id, resume, effort, permission_mode, runtime) = {
@@ -258,7 +260,7 @@ pub(crate) fn begin_turn(
             let mut map = engine.sessions.lock().unwrap();
             match map.get_mut(session_id) {
                 Some(s) => {
-                    s.buf_user(&block_id, text.clone());
+                    s.buf_user(&block_id, text.clone(), origin.clone());
                     s.last_activity_at = now_ms();
                     s.block_buffer.last().cloned()
                 }
@@ -274,6 +276,7 @@ pub(crate) fn begin_turn(
                 session_id: session_id.into(),
                 block_id: block_id.clone(),
                 text: text.clone(),
+                origin: origin.clone(),
             },
         );
     }
@@ -354,7 +357,7 @@ pub(crate) fn finish_turn(
     // at turn end — 'error' when the turn errored (session-engine FR-40), else
     // 'done' — with endedAt and an `ended with the turn` notice step. This is the
     // backstop that keeps the elapsed clock correct when FR-13's notice never came.
-    let (next, agent_ems): (Option<(String, String)>, Vec<AgentEmission>) = {
+    let (next, agent_ems): (Option<(String, String, Option<Value>)>, Vec<AgentEmission>) = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(session_id) else {
             return;
@@ -412,7 +415,10 @@ pub(crate) fn finish_turn(
     }
 
     match next {
-        Some((block_id, text)) => begin_turn(app, session_id, block_id, text, TurnMode::Normal), // no idle blip (FR-20)
+        Some((block_id, text, origin)) => {
+            begin_turn(app, session_id, block_id, text, origin, TurnMode::Normal)
+            // no idle blip (FR-20)
+        }
         None => emit(
             app,
             SessionEvent::Status {

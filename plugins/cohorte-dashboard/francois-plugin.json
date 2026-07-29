@@ -1,0 +1,43 @@
+{
+  "manifestVersion": 1,
+  "id": "cohorte-dashboard",
+  "name": "Cohorte Dashboard",
+  "version": "1.1.0",
+  "description": "Your cohorte fleet at a glance — tracked projects, doctor health, and core freshness.",
+  "author": "The Bidouille Agency",
+  "entry": "plugin.js",
+  "contributes": {
+    "panel": { "title": "COHORTE" },
+    "statusBar": {},
+    "commands": [
+      { "id": "open-project", "title": "Cohorte: show project detail", "glyph": "⊞" },
+      { "id": "refresh", "title": "Cohorte: refresh fleet", "glyph": "⟳" },
+      { "id": "fix-health", "title": "Cohorte: ask a session to fix failing checks", "glyph": "⚑" },
+      { "id": "update-core", "title": "Cohorte: ask a session to update the pipeline core", "glyph": "↑" }
+    ]
+  },
+  "configuration": [
+    {
+      "key": "port",
+      "type": "number",
+      "label": "dashboard port",
+      "description": "The port `cohorte dashboard` is serving on (COHORTE_DASHBOARD_PORT / --port).",
+      "default": 4317,
+      "min": 1,
+      "max": 65535
+    },
+    {
+      "key": "showHealth",
+      "type": "boolean",
+      "label": "show doctor health",
+      "description": "Append each project's ok/warn/bad check counts.",
+      "default": true
+    }
+  ],
+  "capabilities": {
+    "network": { "hosts": ["127.0.0.1"] },
+    "readState": true,
+    "driveSessions": true
+  },
+  "refreshIntervalMs": 30000
+}

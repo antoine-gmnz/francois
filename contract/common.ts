@@ -42,6 +42,14 @@ export type ErrorCode =
   | 'PROJECT_ROOT_MISSING' // projects: the project's root no longer exists on disk
   | 'STANDARDS_WRITE_FAILED' // projects: CLAUDE.md could not be read-merged-written
   | 'REMOTE_CONTROL_FAILED' // remote-control: the host process died, or published no URL before the deadline
+  | 'PLUGIN_NOT_FOUND' // plugin-system: pluginId is not in the registry
+  | 'PLUGIN_ALREADY_INSTALLED' // plugin-system: manifest.id collides with an installed plugin (FR-2)
+  | 'PLUGIN_MANIFEST_INVALID' // plugin-system: missing/unparseable/schema-violating manifest, or an unsafe tree (FR-1/6/7)
+  | 'PLUGIN_SOURCE_UNREACHABLE' // plugin-system: clone/registry/tarball fetch failed, or integrity mismatch (FR-3/4)
+  | 'PLUGIN_RUNTIME_ERROR' // plugin-system: the isolate threw, timed out, or blew a limit (FR-20)
+  | 'PLUGIN_CONSENT_REQUIRED' // plugin-system: a widening update was applied without consented:true (FR-14)
+  | 'PLUGIN_INJECTION_NOT_PENDING' // plugin-system: a decision arrived for a request that is not pending (FR-57)
+  | 'PLUGIN_STORE_WRITE_FAILED' // plugin-system: plugins.json could not be written (FR-79)
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -307,6 +315,38 @@ export interface SlashCommandInfo {
   scope?: 'project' | 'user' | 'plugin';
 }
 
+// ---------- plugin system ----------
+// Shared vocabulary for plugin-system (the SessionEvent union below needs
+// PluginInjectionRequest/PluginInjectionState, and MessageOrigin rides on
+// message.user — and common.ts never imports from feature files, the same
+// placement rule session-questions §5.3 and permission-guardrails use).
+// contract/plugin-system.ts re-exports them. Spec: specs/plugin-system.md §5.1.
+
+/** Why a user message exists when the human did not type it (plugin-system FR-58). */
+export interface MessageOrigin {
+  kind: 'plugin';
+  pluginId: string;
+  /** manifest.name at send time — a snapshot, so attribution survives uninstall. */
+  pluginName: string;
+}
+
+/**
+ * A plugin's REQUEST to send a prompt into a session (plugin-system FR-53).
+ * Minting one sends nothing: every injection is confirmed by a human.
+ */
+export interface PluginInjectionRequest {
+  requestId: string; // uuid v4
+  pluginId: string;
+  pluginName: string;
+  sessionId: SessionId;
+  /** The EXACT text that would be sent. Trimmed, ≤ 8000 chars, control chars stripped (FR-54). */
+  prompt: string;
+  requestedAt: number; // epoch ms
+  expiresAt: number; // epoch ms — requestedAt + 600_000 (FR-55)
+}
+
+export type PluginInjectionState = 'approved' | 'denied' | 'expired';
+
 // ---------- session event stream ----------
 // Emitted by session-engine on channel 'francois:session:event'.
 // The session-engine spec is the authority on emission semantics; consumers
@@ -317,7 +357,7 @@ export type SessionEvent =
   | { type: 'session.meta'; meta: SessionMeta } // full snapshot (created/updated)
   | { type: 'session.status'; sessionId: SessionId; status: SessionStatus }
   | { type: 'session.removed'; sessionId: SessionId }
-  | { type: 'message.user'; sessionId: SessionId; blockId: BlockId; text: string }
+  | { type: 'message.user'; sessionId: SessionId; blockId: BlockId; text: string; origin?: MessageOrigin } // plugin-system FR-58: origin set iff an approved plugin injection produced it
   | { type: 'assistant.delta'; sessionId: SessionId; blockId: BlockId; text: string } // streamed partial
   | { type: 'assistant.done'; sessionId: SessionId; blockId: BlockId }
   | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string } // e.g. tool 'Read', summary 'src/auth/middleware.ts'
@@ -328,6 +368,8 @@ export type SessionEvent =
   | { type: 'question.resolved'; sessionId: SessionId; blockId: BlockId; state: 'answered' | 'cancelled'; answers?: Record<string, string> } // session-questions FR-11/13: exactly one per asked
   | { type: 'permission.asked'; sessionId: SessionId; blockId: BlockId; ask: PermissionAsk } // permission-guardrails FR-2: a gated tool call parked the turn
   | { type: 'permission.resolved'; sessionId: SessionId; blockId: BlockId; state: 'allowed' | 'denied' | 'cancelled'; rule?: PermissionRule } // permission-guardrails FR-8/10: exactly one per asked
+  | { type: 'plugin.injection.asked'; sessionId: SessionId; blockId: BlockId; request: PluginInjectionRequest } // plugin-system FR-53: a plugin asked to send a prompt into this session
+  | { type: 'plugin.injection.resolved'; sessionId: SessionId; blockId: BlockId; state: PluginInjectionState } // plugin-system FR-55/57: exactly one per asked
   | { type: 'session.commands'; sessionId: SessionId; commands: SlashCommandInfo[] } // slash-menu FR-2: merged registry after an init changed the cli set
   | { type: 'agent.update'; agent: AgentInfo }
   | { type: 'agent.step'; sessionId: SessionId; agentId: AgentId; step: AgentStep } // async-agents FR-10: a trail step was appended, or an existing seq re-emitted with meta filled

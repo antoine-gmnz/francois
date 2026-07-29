@@ -8,6 +8,11 @@ src-tauri/gen/
 packaging/npm/manifest.json
 packaging/npm/vendor/
 
+# pipeline build/review telemetry (local evidence for surface specialization)
+.claude/pipeline-metrics.jsonl
+# live git worktrees the pipeline checks out — checkouts, never sources
+.claude/worktrees/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

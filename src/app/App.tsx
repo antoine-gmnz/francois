@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { homeDir } from '@tauri-apps/api/path';
 import { getName, getVersion } from '@tauri-apps/api/app';
@@ -15,6 +15,21 @@ import AgentView from '../features/agents/AgentView';
 import { agentIdFromTab, agentTabId, agentTabLabel, type AgentTabRef } from '../features/agents/agent-tab';
 import McpPanel from '../features/mcp/McpPanel';
 import SkillsPanel from '../features/skills/SkillsPanel';
+import PluginPane from '../features/plugins/PluginPane';
+import PluginsModal from '../features/plugins/PluginsModal';
+import { startPlugins } from '../features/plugins/plugin-events';
+import { usePluginsStore } from '../features/plugins/pluginsStore';
+import PluginTab from '../features/plugins/PluginTab';
+import PluginStatusItems from '../features/plugins/PluginStatusItems';
+import { syncPluginPaletteCommands } from '../features/plugins/pluginPalette';
+import {
+  isTabStillVisible,
+  paneFocusLabel,
+  pluginPaneHotkeys,
+  pluginPanes,
+  resolvedPluginTabs,
+} from '../features/plugins/plugins';
+import { paneHintGlyph, pluginIdOfTab, pluginPaneId, pluginTabId } from '../../contract/plugin-system';
 import UsageBar from '../features/usage/UsageBar';
 import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import { useStore } from '../lib/store';
@@ -71,6 +86,11 @@ export default function App() {
   // ShellUiState until a session is active — never spawns a PTY on its own.
   const shell = useShellState(activeSessionId ?? '');
   const focusedPane = useStore((s) => s.focusedPane);
+  // plugin-system FR-76: the visible set is a function of the registry AND the
+  // sidebar's project filter, so switching the filter adds/removes panes,
+  // hotkeys and status items in one re-render.
+  const installedPlugins = usePluginsStore((s) => s.plugins);
+  const pluginsModalOpen = usePluginsStore((s) => s.modalOpen);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const mainTab = useStore((s) => s.mainTab);
   const setMainTab = useStore((s) => s.setMainTab);
@@ -85,6 +105,25 @@ export default function App() {
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
   const activeProjectId = useStore((s) => s.activeProjectId);
+  // FR-46/FR-47: visible panes in registry order; the first four get 6–9.
+  const visiblePluginPanes = useMemo(
+    () => pluginPanes(installedPlugins, activeProjectId),
+    [installedPlugins, activeProjectId],
+  );
+  const pluginHotkeys = useMemo(() => pluginPaneHotkeys(visiblePluginPanes), [visiblePluginPanes]);
+  // FR-81/FR-86: tabs follow the same enablement + registry order as panes,
+  // capped at MAX_PLUGIN_TABS. Resolved once, here — FR-82a means a plugin can
+  // hold `webTab` and have no tab (the core drops one whose on-disk url no
+  // longer matches what was consented to), so "is there a tab" and "what is the
+  // tab" must be a single answer.
+  const visiblePluginTabs = useMemo(
+    () => resolvedPluginTabs(installedPlugins, activeProjectId),
+    [installedPlugins, activeProjectId],
+  );
+  const visiblePluginTabIds = useMemo(
+    () => visiblePluginTabs.map((e) => e.plugin.manifest.id),
+    [visiblePluginTabs],
+  );
   const permissionsOpen = useStore((s) => s.permissionsOpen);
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
   const projectsOpen = useStore((s) => s.projectsOpen);
@@ -101,9 +140,17 @@ export default function App() {
 
   useEffect(() => {
     initShellEvents();
+    // plugin-system FR-69/FR-80: subscribe to the registry stream and load it
+    // once. The registry is app-scoped, not session-scoped, so this runs once
+    // for the app's lifetime rather than per session.
+    let stopPlugins: (() => void) | null = null;
+    void startPlugins().then((stop) => {
+      stopPlugins = stop;
+    });
     void homeDir()
       .then((h) => setHome(h.replace(/[\\/]$/, '')))
       .catch(() => {});
+    return () => stopPlugins?.();
   }, []);
 
   // Keep the native window title in sync with the active session, "<session> — <app>"
@@ -216,7 +263,17 @@ export default function App() {
       const inTerminal = !!ae && ae.closest('.xterm') !== null;
       // permission-guardrails FR-29 / projects FR-37: an open editor suppresses the
       // single-letter globals too, exactly like the other modals.
-      if (newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || inInput || inTerminal) return;
+      if (
+        newSessionOpen ||
+        newAgentOpen ||
+        permissionsOpen ||
+        projectsOpen ||
+        pluginsModalOpen ||
+        inInput ||
+        inTerminal
+      ) {
+        return;
+      }
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
         setNewSessionOpen(true);
@@ -236,6 +293,11 @@ export default function App() {
         setFocusedPane('mcp');
       } else if (e.key === '5') {
         setFocusedPane('skills');
+      } else if (e.key >= '6' && e.key <= '9') {
+        // FR-47: 6–9 target the 1st–4th VISIBLE plugin panes. A key with no
+        // corresponding pane is a no-op, never a focus change to nothing.
+        const pane = visiblePluginPanes[Number(e.key) - 6];
+        if (pane) setFocusedPane(pluginPaneId(pane.manifest.id));
       } else if (e.key === 'd' || e.key === 'D') {
         // toggle diff↔session, identical to command-palette's view-diff.run (FR-23/FR-29)
         setFocusedPane('main');
@@ -265,7 +327,15 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newSessionOpen, newAgentOpen, permissionsOpen, projectsOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab]);
+  }, [newSessionOpen, newAgentOpen, permissionsOpen, projectsOpen, pluginsModalOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab, visiblePluginPanes]);
+
+  // plugin-system FR-50/FR-52: reconcile the plugin palette commands against
+  // every registry snapshot (FR-80). The rows' `enabled`/`run` read the stores
+  // at call time, so a project-filter switch needs no re-registration — only an
+  // install/uninstall/consent change does.
+  useEffect(() => {
+    syncPluginPaletteCommands(installedPlugins);
+  }, [installedPlugins]);
 
   // overview: widening the board's scope back to "All projects" is a zoom-OUT —
   // there is no longer one project in view, so the main pane goes back to the
@@ -282,6 +352,13 @@ export default function App() {
       setMainTab('overview'); // last: wins over clearAgentTabs' own 'session' fallback
     }
   }, [activeProjectId, setMainTab, clearAgentTabs]);
+
+  // FR-81: a plugin tab can vanish under the user — the plugin is disabled,
+  // uninstalled, or scoped out by the project filter. Without this the main
+  // pane would render nothing at all, with no tab selected to get back from.
+  useEffect(() => {
+    if (!isTabStillVisible(mainTab, visiblePluginTabIds)) setMainTab('session');
+  }, [mainTab, visiblePluginTabIds, setMainTab]);
 
   // permission-guardrails: the rules editor needs a session (the local tier is
   // its cwd). If the last session is removed while it is open the modal unmounts
@@ -405,6 +482,24 @@ export default function App() {
                   onClose={() => closeAgentTab(t.id)}
                 />
               ))}
+              {/* §8·H31 / FR-86: plugin tabs APPEND after the static spine, in
+                  registry order. The title is the plugin's only say in the strip
+                  — uppercased, truncated to TAB_MAX_TITLE, and rendered as a
+                  text child, never as an attribute. NO number badge: a plugin
+                  tab takes no single-key binding, so nothing implies one. */}
+              {visiblePluginTabs.map(({ plugin, tab }) => {
+                const id = pluginTabId(plugin.manifest.id);
+                return (
+                  <span
+                    key={id}
+                    onClick={() => setMainTab(id)}
+                    style={{ ...tabStyle(mainTab === id), display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <span style={{ color: C.faint, fontWeight: 400, letterSpacing: 0 }}>{tab.glyph}</span>
+                    {tab.title}
+                  </span>
+                );
+              })}
             </div>
             {mainTab === 'session' && active && (
               <div style={{ display: 'flex', gap: 14, fontSize: 10.5, color: C.dim, alignItems: 'center' }}>
@@ -470,6 +565,16 @@ export default function App() {
                 select a session
               </div>
             )
+          ) : pluginIdOfTab(mainTab) ? (
+            // FR-81. `visiblePluginTabs.find` rather than a lookup by id alone:
+            // the tab must not render for a plugin the current project filter
+            // hides, and the effect above already sends focus back if so.
+            (() => {
+              const entry = visiblePluginTabs.find((x) => x.plugin.manifest.id === pluginIdOfTab(mainTab));
+              return entry ? (
+                <PluginTab key={entry.plugin.manifest.id} plugin={entry.plugin} tab={entry.tab} />
+              ) : null;
+            })()
           ) : active ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-app)' }}>
               <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
@@ -527,6 +632,17 @@ export default function App() {
           <div style={{ flex: 1.05, minHeight: 0 }}>
             <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
+          {/* FR-46: plugin panes append BELOW skills, in registry order. */}
+          {visiblePluginPanes.map((p) => (
+            <div key={p.manifest.id} style={{ flex: 1, minHeight: 0 }}>
+              <PluginPane
+                plugin={p}
+                hotkey={pluginHotkeys[pluginPaneId(p.manifest.id)] ?? null}
+                projectId={activeProjectId}
+                sessionId={activeSessionId}
+              />
+            </div>
+          ))}
         </div>
 
         {/* status bar */}
@@ -545,8 +661,10 @@ export default function App() {
             color: 'var(--text-muted)',
           }}
         >
+          {/* FR-48: the hint GROWS with the visible plugin panes — '1-5' with
+              none, '1-9' with four or more. */}
           <span style={{ color: C.dim }}>
-            <span style={{ color: C.accent }}>1-5</span> switch pane
+            <span style={{ color: C.accent }}>{paneHintGlyph(visiblePluginPanes.length)}</span> switch pane
           </span>
           <span>
             <span style={{ color: C.hint }}>↑↓</span> nav
@@ -583,9 +701,15 @@ export default function App() {
           >
             <span style={{ color: C.accent }}>{theme === 'dark' ? '☾' : '☀'}</span> {theme}
           </span>
+          {/* FR-45 / §3·B1: a plugin pane reads as its plugin id (`acme-ci`),
+              never as the raw pane id (`plugin:acme-ci`). */}
           <span>
-            focus: <span style={{ color: C.accent }}>{focusedPane}</span>
+            focus: <span style={{ color: C.accent }}>{paneFocusLabel(focusedPane)}</span>
           </span>
+          {/* plugin-system FR-42/FR-49: plugin status items, right-aligned, LEFT
+              of the version string, in registry order. The component owns both
+              halves — asking the core for each item and rendering it. */}
+          <PluginStatusItems projectId={activeProjectId} sessionId={activeSessionId} />
           <span style={{ color: C.faint }}>francois{appVersion && ` ${appVersion}`}</span>
         </div>
       </div>
@@ -610,6 +734,9 @@ export default function App() {
           needs NO session — a project is configured whether or not anything is
           running — so it is gated on `projectsOpen` alone. */}
       {projectsOpen && <ProjectsModal home={home} onClose={() => setProjectsOpen(false)} />}
+      {/* FR-51: opened by the `Manage plugins` palette command. Owns its own
+          visibility, so nothing here has to track it. */}
+      <PluginsModal />
 
       <PaletteRoot />
     </div>

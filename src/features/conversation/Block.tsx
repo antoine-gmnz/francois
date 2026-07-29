@@ -7,6 +7,8 @@ import { toolBody, type ConversationBlock } from '../../../contract/conversation
 import CommandBlock from '../commands/CommandCard';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
+import PluginInjectionCard from '../plugins/PluginInjectionCard';
+import { pluginAttributionLine } from '../plugins/plugins';
 import QuestionCard from '../questions/QuestionCard';
 
 const C = {
@@ -31,6 +33,11 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
   if (b.kind === 'permission') {
     return <PermissionCard b={b} sessionId={sessionId} />;
   }
+  // plugin-system FR-53: a plugin's prompt, parked behind Approve/Deny. Nothing
+  // has been sent — this card is the only thing that can send it.
+  if (b.kind === 'pluginInjection') {
+    return <PluginInjectionCard b={b} sessionId={sessionId} />;
+  }
   if (b.kind === 'user') {
     return (
       <div style={{ background: 'var(--bg-elevated)', borderLeft: '2px solid var(--accent)', borderRadius: '0 4px 4px 0', padding: '10px 13px' }}>
@@ -47,6 +54,23 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
           )}
         </div>
         <div style={{ fontSize: 13, color: C.userBody, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{b.text}</div>
+        {/* plugin-system FR-58: a message the human approved but did not write.
+            Persisted with the transcript, so it survives a reload and a resume —
+            it is a record of what happened, not view state. */}
+        {b.origin && (
+          <div
+            style={{
+              fontSize: 10.5,
+              color: 'var(--text-faint)',
+              marginTop: 4,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {pluginAttributionLine(b.origin)}
+          </div>
+        )}
       </div>
     );
   }

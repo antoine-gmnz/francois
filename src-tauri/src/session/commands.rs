@@ -252,6 +252,10 @@ pub fn session_remove(
             }
             crate::diff::unwatch_session(&session_id); // FR-15: dispose the watcher
             crate::dispose_session_shell(&app, &session_id); // wsl-filesystem FR-13: dispose the shell
+                                                             // plugin-system FR-55/§7 #31: the transcript just went with the
+                                                             // session, so any injection card aimed at it must expire rather
+                                                             // than linger unanswerable in the plugin registry.
+            crate::plugin::on_session_removed(&app, &session_id);
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)
         }
@@ -502,7 +506,7 @@ pub struct SendOutput {
 }
 
 /// Where a send originated — controls the interactive-commands intercept branch.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(crate) enum SendSource {
     /// Typed input (francois:session:send): slash commands in the intercept set
     /// are answered locally (interactive-commands FR-2).
@@ -510,14 +514,179 @@ pub(crate) enum SendSource {
     /// francois:skills:run: custom skills pass through byte-for-byte
     /// (interactive-commands §2 non-goal) — never intercepted, always a real turn.
     Skill,
+    /// plugin-system FR-57: an APPROVED plugin injection. It takes the same path
+    /// as a typed send — including queue-if-busy — and buys no extra trust
+    /// (FR-59); the only difference is the `origin` stamped on the user block.
+    Plugin {
+        plugin_id: String,
+        plugin_name: String,
+    },
 }
 
 /// The intercept decision for a send (interactive-commands FR-1/2), honoring the
 /// skills passthrough. Pure; unit-tested.
-pub(crate) fn send_intercept(text: &str, source: SendSource) -> Option<(String, Option<String>)> {
+pub(crate) fn send_intercept(text: &str, source: &SendSource) -> Option<(String, Option<String>)> {
     match source {
         SendSource::Typed => intercepted_command(text),
         SendSource::Skill => None,
+        // FR-57: a plugin prompt is a real turn, never a locally-answered slash
+        // command. The user approved the TEXT, not a command Francois would run.
+        SendSource::Plugin { .. } => None,
+    }
+}
+
+// ---------- plugin-system: read-state accessors (FR-29) ----------
+//
+// The plugin domain never touches Engine's fields. It asks these, which return
+// already-serialized contract shapes — so a plugin can only ever see what the
+// owning feature's own contract type exposes.
+
+pub fn plugin_session_metas(app: &AppHandle) -> Vec<Value> {
+    let Some(engine) = app.try_state::<Engine>() else {
+        return Vec::new();
+    };
+    let map = engine.sessions.lock().unwrap();
+    map.values()
+        .map(|s| serde_json::to_value(s.meta()).unwrap_or(Value::Null))
+        .collect()
+}
+
+pub fn plugin_session_exists(app: &AppHandle, session_id: &str) -> bool {
+    match app.try_state::<Engine>() {
+        Some(engine) => engine.sessions.lock().unwrap().contains_key(session_id),
+        None => false,
+    }
+}
+
+pub fn plugin_agents(app: &AppHandle, session_id: &str) -> Vec<Value> {
+    let Some(engine) = app.try_state::<Engine>() else {
+        return Vec::new();
+    };
+    let map = engine.sessions.lock().unwrap();
+    match map.get(session_id) {
+        Some(s) => s
+            .agent_order
+            .iter()
+            .filter_map(|id| s.agents.get(id))
+            .map(|a| serde_json::to_value(a).unwrap_or(Value::Null))
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+// ---------- plugin-system: the injection bridge (FR-53..FR-59) ----------
+//
+// These four live here rather than in `plugin/` because they are the SESSION's
+// side of the boundary: they touch Engine, the block buffer and the transcript,
+// none of which the plugin domain may reach directly.
+
+/// FR-53: buffer (or resolve) the Approve/Deny card and persist it, so the card
+/// survives a reload exactly as the permission card does.
+pub fn buffer_plugin_injection(
+    app: &AppHandle,
+    session_id: &str,
+    block_id: &str,
+    request: &Value,
+    state: &str,
+) {
+    let engine = app.state::<Engine>();
+    let block = {
+        let mut map = engine.sessions.lock().unwrap();
+        let Some(s) = map.get_mut(session_id) else {
+            return;
+        };
+        if state == "pending" {
+            s.buf_plugin_injection(block_id, request);
+            s.block_buffer.last().cloned()
+        } else {
+            s.buf_plugin_injection_resolve(block_id, state)
+        }
+    };
+    if let Some(b) = &block {
+        append_transcript(app, session_id, b);
+    }
+}
+
+pub fn emit_injection_asked(app: &AppHandle, session_id: &str, block_id: &str, request: &Value) {
+    emit(
+        app,
+        SessionEvent::PluginInjectionAsked {
+            session_id: session_id.into(),
+            block_id: block_id.into(),
+            request: request.clone(),
+        },
+    );
+}
+
+pub fn emit_injection_resolved(app: &AppHandle, session_id: &str, block_id: &str, state: &str) {
+    emit(
+        app,
+        SessionEvent::PluginInjectionResolved {
+            session_id: session_id.into(),
+            block_id: block_id.into(),
+            state: state.into(),
+        },
+    );
+}
+
+/// FR-57/FR-59: an approved injection takes the SAME path as a typed send. Not a
+/// parallel one that happens to look similar — the same one, so queue-if-busy,
+/// status transitions and permission gating are identical by construction rather
+/// than by review.
+pub fn send_from_plugin(
+    app: &AppHandle,
+    session_id: &str,
+    text: String,
+    plugin_id: &str,
+    plugin_name: &str,
+) -> Result<(bool, Option<u32>), (&'static str, String)> {
+    let out = do_send(
+        app,
+        session_id,
+        text,
+        uuid(),
+        SendSource::Plugin {
+            plugin_id: plugin_id.to_string(),
+            plugin_name: plugin_name.to_string(),
+        },
+    );
+    match serde_json::to_value(&out) {
+        Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(true) => {
+            let data = v.get("data").cloned().unwrap_or(Value::Null);
+            Ok((
+                data.get("queued")
+                    .and_then(|q| q.as_bool())
+                    .unwrap_or(false),
+                data.get("queuePosition")
+                    .and_then(|p| p.as_u64())
+                    .map(|p| p as u32),
+            ))
+        }
+        Ok(v) => {
+            let code = v
+                .get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("INTERNAL");
+            let message = v
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("the prompt could not be sent")
+                .to_string();
+            // The codes are the session domain's own; map to a &'static str the
+            // plugin command can hand straight back.
+            Err((
+                match code {
+                    "SESSION_NOT_FOUND" => "SESSION_NOT_FOUND",
+                    "SESSION_NOT_RUNNING" => "SESSION_NOT_RUNNING",
+                    "INVALID_INPUT" => "INVALID_INPUT",
+                    _ => "INTERNAL",
+                },
+                message,
+            ))
+        }
+        Err(_) => Err(("INTERNAL", "the prompt could not be sent".to_string())),
     }
 }
 
@@ -530,6 +699,16 @@ pub(crate) fn do_send(
     block_id: String,
     source: SendSource,
 ) -> IpcResult<SendOutput> {
+    // FR-58: the attribution the user block carries forever after.
+    let origin = match &source {
+        SendSource::Plugin {
+            plugin_id,
+            plugin_name,
+        } => Some(serde_json::json!({
+            "kind": "plugin", "pluginId": plugin_id, "pluginName": plugin_name,
+        })),
+        _ => None,
+    };
     let engine = app.state::<Engine>();
     let mut map = engine.sessions.lock().unwrap();
     let Some(s) = map.get_mut(session_id) else {
@@ -541,10 +720,10 @@ pub(crate) fn do_send(
     // interactive-commands FR-1/2: an intercepted slash command never enqueues, never
     // changes SessionStatus, and works identically whether running or idle. It sits
     // BEFORE the running→enqueue branch so it bypasses the FIFO queue.
-    if let Some((command, arg)) = send_intercept(&text, source) {
+    if let Some((command, arg)) = send_intercept(&text, &source) {
         // FR-4: user echo first — buffer + persist the user block, then message.user
         // with the request's blockId, then the per-command flow.
-        s.buf_user(&block_id, text.clone());
+        s.buf_user(&block_id, text.clone(), origin.clone());
         s.last_activity_at = now_ms();
         let user_block = s.block_buffer.last().cloned();
         drop(map);
@@ -557,6 +736,7 @@ pub(crate) fn do_send(
                 session_id: session_id.into(),
                 block_id,
                 text,
+                origin: origin.clone(),
             },
         );
         run_intercepted_command(app, session_id, &command, arg.as_deref());
@@ -570,7 +750,7 @@ pub(crate) fn do_send(
             if s.queue.len() >= QUEUE_CAP {
                 return err("INVALID_INPUT", "send queue is full (20 pending)");
             }
-            s.queue.push_back((block_id, text));
+            s.queue.push_back((block_id, text, origin));
             let pos = s.queue.len();
             return ok(SendOutput {
                 queued: true,
@@ -589,7 +769,7 @@ pub(crate) fn do_send(
             status: "running".into(),
         },
     );
-    begin_turn(app, session_id, block_id, text, TurnMode::Normal);
+    begin_turn(app, session_id, block_id, text, origin, TurnMode::Normal);
     ok(SendOutput {
         queued: false,
         queue_position: None,
@@ -814,7 +994,7 @@ mod tests {
         s.status = "idle".into();
         s.claude_session_id = Some("abc-resume".into());
         s.context_used_tokens = 42_000;
-        s.buf_user("b1", "hello".into());
+        s.buf_user("b1", "hello".into(), None);
         s.buf_assistant("b2", "hi".into());
         assert_eq!(s.block_buffer.len(), 2);
 
@@ -839,7 +1019,7 @@ mod tests {
         s.status = "running".into();
         s.claude_session_id = Some("abc-resume".into());
         s.context_used_tokens = 42_000;
-        s.buf_user("b1", "hello".into());
+        s.buf_user("b1", "hello".into(), None);
 
         let engine = test_engine_with(s);
         let outcome = {
@@ -871,16 +1051,16 @@ mod tests {
         // command passes through byte-for-byte; typed input keeps intercepting.
         for t in ["/usage", "/cost", "/model opus", "/status", "/help"] {
             assert!(
-                send_intercept(t, SendSource::Skill).is_none(),
+                send_intercept(t, &SendSource::Skill).is_none(),
                 "{t} from skills_run must pass through"
             );
             assert!(
-                send_intercept(t, SendSource::Typed).is_some(),
+                send_intercept(t, &SendSource::Typed).is_some(),
                 "{t} typed must intercept"
             );
         }
         // non-intercepted text is passthrough from both sources
-        assert!(send_intercept("/spec something", SendSource::Typed).is_none());
-        assert!(send_intercept("/spec something", SendSource::Skill).is_none());
+        assert!(send_intercept("/spec something", &SendSource::Typed).is_none());
+        assert!(send_intercept("/spec something", &SendSource::Skill).is_none());
     }
 }

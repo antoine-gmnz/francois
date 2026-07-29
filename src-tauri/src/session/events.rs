@@ -33,6 +33,30 @@ pub(crate) enum SessionEvent {
         #[serde(rename = "blockId")]
         block_id: String,
         text: String,
+        /// plugin-system FR-58: why this message exists when the human did not
+        /// type it. Absent for a typed message — an OMITTED key, never null, so
+        /// the frontend's `origin?` test is a plain truthiness check.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        origin: Option<serde_json::Value>,
+    },
+    /// plugin-system FR-53: a plugin is ASKING to send a prompt. Nothing has been
+    /// sent — the card in the transcript is the only thing that can send it.
+    #[serde(rename = "plugin.injection.asked")]
+    PluginInjectionAsked {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        request: serde_json::Value,
+    },
+    /// plugin-system FR-55/FR-57: exactly one of these per `asked`.
+    #[serde(rename = "plugin.injection.resolved")]
+    PluginInjectionResolved {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        state: String,
     },
     #[serde(rename = "assistant.delta")]
     AssistantDelta {

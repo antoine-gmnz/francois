@@ -14,7 +14,12 @@
       "Bash(cd src-tauri && cargo fmt:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(npm install:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)"
     ]
   }
 }

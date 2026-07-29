@@ -11,6 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri",
+    "dev:clean": "node scripts/dev-clean.mjs",
+    "predev:app": "node scripts/dev-clean.mjs",
     "dev:app": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "build:app": "tauri build",
     "build:app:dev": "tauri build --config src-tauri/tauri.dev.conf.json"

@@ -13,7 +13,7 @@
 
 mod commands;
 mod compute;
-mod git;
+pub(crate) mod git;
 mod parse;
 mod watch;
 
@@ -92,4 +92,18 @@ pub(crate) struct GitOut {
     code: i32,
     stdout: Vec<u8>,
     stderr: String,
+}
+
+/// plugin-system FR-29: `francois.diff.summary(sessionId)`. Returns `None` for an
+/// unknown session or a failed git call — a plugin polling a session the user
+/// just removed should see nothing, not an error (FR-29).
+pub fn summary_for_plugin(app: &tauri::AppHandle, session_id: &str) -> Option<serde_json::Value> {
+    use tauri::Manager as _;
+    let engine = app.try_state::<crate::session::Engine>()?;
+    let cwd = engine.cwd_of(session_id)?;
+    let lock = git_lock(session_id);
+    let _g = lock.lock().unwrap();
+    compute_summary(&cwd)
+        .ok()
+        .and_then(|s| serde_json::to_value(s).ok())
 }

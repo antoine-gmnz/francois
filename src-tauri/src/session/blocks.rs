@@ -17,10 +17,17 @@ pub(crate) fn tool_glyph(tool: &str) -> (&'static str, &'static str) {
 /// conversation-view). Mirrors classifyToolStart in the TS contract.
 pub(crate) fn classify_block(b: &BufBlock) -> Value {
     match b.kind {
-        BlockKind::User => serde_json::json!({
-            "kind": "user", "blockId": b.block_id, "isStreaming": b.streaming,
-            "text": b.text, "queued": false,
-        }),
+        BlockKind::User => {
+            let mut o = serde_json::json!({
+                "kind": "user", "blockId": b.block_id, "isStreaming": b.streaming,
+                "text": b.text, "queued": false,
+            });
+            // plugin-system FR-58: present only for a plugin-originated message.
+            if let Some(origin) = &b.origin {
+                o["origin"] = origin.clone();
+            }
+            o
+        }
         BlockKind::Assistant => {
             let (gc, bc) = if b.streaming {
                 ("#c8a15a", "#dfe2e8")
@@ -83,6 +90,20 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
             });
             if let Some(a) = card.get("answers") {
                 o["answers"] = a.clone();
+            }
+            o
+        }
+        BlockKind::PluginInjection => {
+            // PluginInjectionConversationBlock (contract/plugin-system.ts):
+            // isStreaming <=> pending, mirroring the permission card (FR-53).
+            let card = b.card.clone().unwrap_or_else(|| serde_json::json!({}));
+            let mut o = serde_json::json!({
+                "kind": "pluginInjection", "blockId": b.block_id, "isStreaming": b.streaming,
+            });
+            if let Some(map) = card.as_object() {
+                for (k, v) in map {
+                    o[k] = v.clone();
+                }
             }
             o
         }
