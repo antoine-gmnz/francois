@@ -268,6 +268,19 @@ fn adopt_host_routes_a_bare_linux_path_to_the_wsl_default_distro_when_adopting()
 
 use std::process::Command as Cmd;
 
+/// Windows CI runners can alias a long account name to its DOS 8.3 short form
+/// in `%TEMP%` (e.g. `runneradmin` -> `RUNNER~1`), while git resolves a repo
+/// root to the long form — canonicalize before comparing so the two
+/// spellings of the same path don't spuriously differ.
+fn canonical_lower(p: &std::path::Path) -> String {
+    let c = std::fs::canonicalize(p).expect("canonicalize");
+    let s = c.to_string_lossy().replace('\\', "/");
+    s.strip_prefix("//?/")
+        .unwrap_or(&s)
+        .trim_end_matches('/')
+        .to_lowercase()
+}
+
 fn tmp_dir(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "francois-worktree-{tag}-{}",
@@ -348,7 +361,7 @@ fn adopting_an_existing_worktree_mutates_no_git_state() {
     assert_eq!(adopted_cwd, worktree_path);
     assert_eq!(sw.branch, "feat/x");
     assert!(!sw.created_branch);
-    assert_eq!(norm_path(&sw.source_repo_root), norm_path(&cwd));
+    assert_eq!(norm_path(&sw.source_repo_root), canonical_lower(&repo));
 }
 
 #[test]

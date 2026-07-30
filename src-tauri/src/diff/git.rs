@@ -308,6 +308,19 @@ mod tests {
     // (a linked worktree's `.git` is a FILE, not a directory — `--show-toplevel`
     // must still resolve to the worktree's own root, not the main repo's.)
 
+    /// Windows CI runners can alias a long account name to its DOS 8.3 short
+    /// form in `%TEMP%` (e.g. `runneradmin` -> `RUNNER~1`), while git resolves
+    /// `--show-toplevel` to the long form — canonicalize before comparing so
+    /// the two spellings of the same path don't spuriously differ.
+    fn canonical_lower(p: &std::path::Path) -> String {
+        let c = std::fs::canonicalize(p).expect("canonicalize");
+        let s = c.to_string_lossy().replace('\\', "/");
+        s.strip_prefix("//?/")
+            .unwrap_or(&s)
+            .trim_end_matches('/')
+            .to_lowercase()
+    }
+
     #[test]
     fn repo_info_resolves_a_linked_worktrees_own_root() {
         use std::process::Command;
@@ -352,7 +365,7 @@ mod tests {
         // The resolved root is the WORKTREE's own root, not the main repo's.
         assert_eq!(
             root.trim_end_matches('/').to_lowercase(),
-            cwd.replace('\\', "/").trim_end_matches('/').to_lowercase()
+            canonical_lower(&wt_path)
         );
     }
 
