@@ -3,7 +3,7 @@ import type { SessionEvent, SlashCommandInfo } from '../../../contract/common';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { getTranscript, onSessionEvent, sessionClear, sessionInterrupt, sessionListCommands, sessionSend } from '../../lib/api';
 import Block from './Block';
-import { compactBlocks, isClearCommand, transcriptReducer } from './conversation-blocks';
+import { compactBlocks, isClearCommand, transcriptReducer, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { composerPlaceholder, hasPendingQuestionBlock } from '../questions/question-card';
 import {
@@ -418,7 +418,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
             gap: 14,
             // The app root disables selection (styles.css body rule) for chrome;
             // the transcript is CONTENT — copying out of it must work.
-            userSelect: 'text',
+            ...TRANSCRIPT_TEXT_SELECT_STYLE,
             cursor: 'auto',
           }}
         >

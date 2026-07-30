@@ -9,6 +9,7 @@ import type { ConversationBlock } from '../../../contract/conversation-view';
 import { formatElapsed } from '../../../contract/conversation-view';
 import { agentsList, agentsTranscript, onAgentEvent, onSessionEvent } from '../../lib/api';
 import Block from '../conversation/Block';
+import { TRANSCRIPT_TEXT_SELECT_STYLE } from '../conversation/conversation-blocks';
 import { ASYNC_MARKER, STEP_GLYPH, STEP_GLYPH_COLOR, TRAIL_EMPTY_LABEL, isAtBottom, showAsyncMarker } from './agent-trail';
 import {
   CLOSED_TRANSCRIPT,
@@ -183,8 +184,9 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
           flexDirection: 'column',
           gap: 14,
           // The transcript is CONTENT — copying out of it must work (the app root
-          // disables selection for chrome).
-          userSelect: 'text',
+          // disables selection for chrome). mac-text-selection FR-1: WKWebView needs
+          // the -webkit- prefixed form too — see TRANSCRIPT_TEXT_SELECT_STYLE.
+          ...TRANSCRIPT_TEXT_SELECT_STYLE,
           cursor: 'auto',
         }}
       >
