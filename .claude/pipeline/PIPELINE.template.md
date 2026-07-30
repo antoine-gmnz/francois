@@ -59,7 +59,13 @@ surfaces:
                                               #   vs the Opus lead); haiku = purely mechanical scaffolding;
                                               #   inherit = only for surfaces with real design decisions
     test_cmd: pnpm --filter api test
+    # Bridled variants — what agents actually RUN (dot reporter / failures-only /
+    # --quiet), so a green run costs lines, not pages. "" ⇒ callers fall back to
+    # `<cmd> 2>&1 | tail -40`. /init-pipeline asks for these; never store a bare
+    # `pnpm test` as the thing agents execute.
+    test_quiet_cmd: pnpm --filter api test --reporter=dot
     lint_cmd: pnpm --filter api lint
+    lint_quiet_cmd: pnpm --filter api lint --quiet
     format_cmd: pnpm --filter api format
     typecheck_cmd: pnpm --filter api exec tsc --noEmit
     build_cmd: ""
@@ -74,7 +80,9 @@ surfaces:
                                               #   lead's tier, often Opus) ONLY if this surface must make
                                               #   novel design decisions
     test_cmd: pnpm --filter web test
+    test_quiet_cmd: pnpm --filter web test --reporter=dot
     lint_cmd: pnpm --filter web lint
+    lint_quiet_cmd: pnpm --filter web lint --quiet
     format_cmd: pnpm --filter web format
     typecheck_cmd: pnpm check-types
     build_cmd: pnpm --filter web build
@@ -94,9 +102,11 @@ commands:
   install: pnpm install
   dev: pnpm dev
   lint: pnpm lint
+  lint_quiet: pnpm lint --quiet              # bridled variant (see surfaces[].*_quiet_cmd)
   format: pnpm format
   typecheck: pnpm check-types
   test: pnpm test
+  test_quiet: pnpm test --reporter=dot       # bridled variant — what /review·/smoke preflight runs
   # migration commands — omit / leave "" if the project has no DB migrations
   migrate: "cd apps/api && node ace migration:run"
   make_migration: "cd apps/api && node ace make:migration"
@@ -154,6 +164,13 @@ gate:
     - "git rebase"
     - "git reset"
     - "docker compose"
+  # Phase gate: review/smoke dispatches require a fresh `.claude/preflight.ok` stamp,
+  # written by pipeline/scripts/preflight.sh when typecheck+lint+tests are green —
+  # gate.py "ask"s the dispatch when the stamp is missing, stale, or HEAD moved.
+  preflight:
+    enabled: true
+    agents: [review, smoke]                   # subagent_types the stamp gates
+    max_age_minutes: 30
 
 ```
 

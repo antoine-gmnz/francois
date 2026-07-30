@@ -29,6 +29,8 @@ that change the *contract*; `/fix` is for everything else.
   re-author the contract file yourself now (lead-only, per `/build` §2) — agents never edit it. If
   the contract change ripples into surfaces *without* findings, fall back to full `/build` instead
   and say so.
+- **Note the epoch** (`date +%s`) in the first Bash call you make here — §3's metrics line and usage
+  ping both carry `seconds`, and there is no separate timing call.
 
 ## 2. Scope the re-dispatch — only surfaces with findings
 
@@ -60,8 +62,9 @@ When the agents return:
   re-reads each loop. Keep any round with ≥1 still-open `- [ ]` item fully expanded (§2's skip logic
   needs those checkboxes).
 - Print one status line per surface (`<key> · items fixed <n>/<m> · tests pass/fail`) — do not restate
-  handoff content — and append ONE metrics line for the batch to `.claude/pipeline-metrics.jsonl`
-  (see `/build` §4, `phase: "fix"`).
+  handoff content — and append ONE metrics line for the batch to `pipeline-metrics.jsonl`
+  (see `/build` §4, `phase: "fix"`), chaining the opt-in usage ping in the same Bash call
+  (results = items fixed over items found across surfaces, e.g. `"5/6"`).
 - Tell the human: re-run `/smoke` if the failures were runtime ones, and `/review $ARGUMENTS` for the
   re-verdict — the re-review is what *verifies* the ticked items actually hold (a regression simply
   reappears as a new finding in the next round). **Recommend a `/clear`** — all state (spec,

@@ -1,7 +1,7 @@
 ---
 id: remote-control
 title: Remote Control (host Claude Code's native remote sessions)
-status: frozen
+status: shipped
 created: 2026-07-26
 depends_on: [session-engine, durable-sessions, conversation-view, app-shell]
 ---

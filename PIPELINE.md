@@ -41,7 +41,9 @@ surfaces:
     tools: [Read, Write, Edit, Bash, Grep, Glob, DesignSync, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
     model: inherit
     test_cmd: npm test
+    test_quiet_cmd: npm test -- --reporter=dot
     lint_cmd: ""                              # no eslint configured; tsc is the static gate
+    lint_quiet_cmd: ""
     format_cmd: ""
     typecheck_cmd: npx tsc --noEmit
     build_cmd: npm run build
@@ -53,7 +55,9 @@ surfaces:
     tools: [Read, Write, Edit, Bash, Grep, Glob, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
     model: inherit
     test_cmd: cd src-tauri && cargo test
+    test_quiet_cmd: cd src-tauri && cargo test -q
     lint_cmd: ""
+    lint_quiet_cmd: ""
     format_cmd: cd src-tauri && cargo fmt
     typecheck_cmd: cd src-tauri && cargo check
     build_cmd: ""                             # release builds via tauri build / CI matrix
@@ -73,9 +77,11 @@ commands:
   install: npm install
   dev: npm run dev:app
   lint: ""
+  lint_quiet: ""
   format: ""
   typecheck: npx tsc --noEmit
   test: npm test && cd src-tauri && cargo test
+  test_quiet: npm test -- --reporter=dot && cd src-tauri && cargo test -q
   migrate: ""                                 # no DB
   make_migration: ""
 
@@ -118,6 +124,13 @@ gate:
     - "git merge"
     - "git rebase"
     - "git reset"
+  # Phase gate: review/smoke dispatches require a fresh `.claude/preflight.ok` stamp,
+  # written by pipeline/scripts/preflight.sh when typecheck+lint+tests are green —
+  # gate.py "ask"s the dispatch when the stamp is missing, stale, or HEAD moved.
+  preflight:
+    enabled: true
+    agents: [review, smoke]                   # subagent_types the stamp gates
+    max_age_minutes: 30
 ```
 
 ## Stack (decided)
@@ -167,6 +180,12 @@ gate:
 
 ## Conventions
 
+> Read by the implementer + review agents. `### Shared` + each `### Surface: <key>` stanza below
+> are baked verbatim into that surface's rendered agent file (`.claude/agents/<agent>.md`) at
+> `/update-pipeline` reconcile time — edit conventions here, never in the agent files.
+
+### Shared
+
 - **Logical channels**: specs and contracts name the frontend↔core interface as `francois:<domain>:<verb>` (request/response) and `francois:<domain>:event` (event streams). These names are canonical and transport-agnostic. **Physical binding on Tauri**:
   - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`). Commands never reject for domain failures — every fallible call resolves to `Result`.
   - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in `contract/common.ts`).
@@ -176,25 +195,32 @@ gate:
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
 - **Errors**: `AppError { code, message, detail? }` with codes from `ErrorCode` in `contract/common.ts`; extend the union in a feature contract only for feature-specific codes.
+- **Code layout**: both surfaces group by **feature**, not by technical kind. New code goes in
+  the folder that owns the feature — never in a new top-level file.
+- **Size**: no source file over ~1000 lines. Past that, split by concern rather than
+  growing the file — and move each test with the code it covers.
 
-### Code layout
+### Surface: `frontend` (`src`)
 
-Both surfaces group by **feature**, not by technical kind. New code goes in the folder
-that owns the feature — never in a new top-level file.
-
-- **frontend** (`src/`): `src/features/<feature>/` holds that feature's panel, its pure
+- `src/features/<feature>/` holds that feature's panel, its pure
   helpers, and its tests together (`agents`, `commands`, `conversation`, `diff`, `mcp`,
   `palette`, `permissions`, `questions`, `remote`, `sessions`, `shell`, `skills`,
   `usage`).
   `src/lib/` holds only what every feature imports (`api.ts`, `store.ts`); `src/app/`
   holds the shell. `main.tsx` and `styles.css` stay at the root. No barrel files — import
   the module directly.
-- **core** (`src-tauri/src/`): each large domain is a module directory (`session/`,
+
+### Surface: `core` (`src-tauri`)
+
+- `src-tauri/src/`: each large domain is a module directory (`session/`,
   `diff/`, `permissions/`). Its `mod.rs` owns the **shared data model** — the types whose
   fields the whole domain touches — and declares the child modules; each child owns one
   concern plus its own `#[cfg(test)] mod tests`. Keeping the model in `mod.rs` is
   deliberate: Rust lets a child read an ancestor's private fields, so children need no
   widened visibility. Shared test fixtures live in a `#[cfg(test)] mod testutil`.
+
+### Non-surface code (not part of the contract; no implementer agent owns these trees)
+
 - **packaging** (`packaging/npm/`): the `francois` npm package — **not a surface**, so no
   agent owns it and it is not part of the contract. Plain CommonJS with **zero
   dependencies**, because it runs inside `npm install` before anything else exists;
@@ -208,8 +234,6 @@ that owns the feature — never in a new top-level file.
   with no build and no install. Split pure-from-I/O the same way everywhere:
   `scripts/release/version.mjs` decides (and is unit-tested), `bump.mjs` touches git
   and the filesystem (and takes `--dry-run`).
-- **Size**: no source file over ~1000 lines. Past that, split by concern rather than
-  growing the file — and move each test with the code it covers.
 
 ## Testing — strict TDD (red → green → refactor)
 

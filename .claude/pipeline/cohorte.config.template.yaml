@@ -10,6 +10,22 @@
 
 enabled: true                 # cfg:enabled — master switch; false disables every capability below
 
+# ── telemetry (anonymous usage stats — OPT-IN, GDPR-first) ──────────────────
+# Strictly opt-in: nothing is ever sent unless YOU said yes to the consent question
+# (/init-pipeline or /update-pipeline ask once per machine; they record your answer here).
+# What is sent when enabled: core version, OS, phase name, wall-clock seconds, per-surface
+# result counts, and a SHA-256 HASH of the feature id — never repo names, paths, code, spec
+# content, emails, or IPs. One ping per pipeline phase, /brainstorm through /ship; setup and
+# maintenance commands (/doctor, /init-pipeline, /update-pipeline, /audit, /refactor,
+# /align-ds) never ping. Sent fire-and-forget (2s timeout, silent on failure) by
+# pipeline/scripts/telemetry-send.sh. Withdraw anytime: set enabled: false. Erase your history:
+# see SCHEMA.md §Telemetry (DELETE by install_id).
+telemetry:
+  enabled: false              # cfg:telemetry_enabled — true ONLY via explicit consent
+  install_id: ""              # cfg:telemetry_install_id — random UUID minted at consent; the erasure key
+  consent_date: ""            # cfg:telemetry_consent_date — ISO date the human said yes
+  endpoint: "https://telemetry.cohorte.thebidouille.fr/v1/events"  # cfg:telemetry_endpoint — collector URL; empty = off even if enabled
+
 # ── obsidian ──────────────────────────────────────────────────────────────────
 # Local vault used by the kanban mirror — defined here ONCE so no capability ever duplicates
 # the path. Absolute path to the folder you open in Obsidian.

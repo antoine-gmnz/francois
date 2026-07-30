@@ -85,8 +85,12 @@ domain** (same finding-line shape) instead of a SHIP/REVISE/BLOCK verdict.
 
 Every finding must be **self-sufficient for a stateless agent**: `file:line` · severity ·
 `spec-violation | quality | security` · one concrete suggested fix — it gets appended verbatim to the
-spec's `## Remediation`. Your final message **is** the report. Emit nothing outside this shape — no
-restated rules, no "verified clean" lists:
+spec's `## Remediation`. Your final message **is** the report. **The shape is capped:** at most
+**20 findings**, ONE line each, **zero code excerpts** (the diff and the source are on disk — a
+`file:line` is enough for a stateless fixer). More than 20? Keep every CRITICAL/HIGH/security
+finding, fill the rest by severity, and close the list with one line:
+`+<n> more MEDIUM/LOW — re-run after the fix loop`. Emit nothing outside this shape — no restated
+rules, no "verified clean" lists:
 
 ```
 # REVIEW REPORT
@@ -104,7 +108,7 @@ Verdict: <SHIP | REVISE | BLOCK>
 ## Findings
 
 - **[<SEVERITY>]** `<file>:<line>` · <spec-violation|quality|security> · <problem> → **Fix:** <concrete change>
-(order by severity; "None." if none)
+(order by severity; "None." if none; max 20 lines, one per finding, no code excerpts)
 
 ## Notes
 (ONLY the RBAC / mobile-first assessment when the profile enables them; omit the section otherwise)

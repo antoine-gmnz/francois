@@ -49,3 +49,8 @@ when invoked with no paste). In chat print only a 3-line summary + the path. Tel
 downstream. If a board is configured, **move** the card into the **Brainstorm** column tagged
 `#<feature_id>` (per §Kanban): the picked Ideas card if the human chose one, else a new card. No-op if
 no board.
+
+**Telemetry:** chain the opt-in usage ping onto that same Bash call — `/build` §4's shared form,
+`<phase>` = `brainstorm`, `<seconds>` = `0` (this phase is human thinking time, not pipeline
+wall-clock — the funnel signal is the event, not its duration), `<results>` = `""`. No board ⇒ still
+ping, in its own `|| true` call. Silent no-op without consent; never ask about consent here.

@@ -9,18 +9,26 @@
 3. **Render one agent per surface** — for each surface, follow SCHEMA.md §"Rendering / reconciling a
    surface agent" (steps 2–3): render `.claude/agents/<agent>.md` from the installer's
    `pipeline/implementer.template.md`, substituting `<SURFACE_AGENT>`, `<SURFACE_LABEL>`, `<SURFACE_PATH>`,
-   `<SURFACE_TOOLS>`, `<SURFACE_MODEL>`, `<PROJECT_NAME>`, and the surface-specific blocks
+   `<SURFACE_TOOLS>`, `<SURFACE_MODEL>`, `<PROJECT_NAME>`, `<SURFACE_CONVENTIONS>` (the surface's
+   baked convention slice — §Shared + its `### Surface:` stanza + its §Testing lines from the
+   PIPELINE.md you just wrote), and the surface-specific blocks
    (`<SURFACE_EXTRA_NEVER>`, `<SURFACE_DESIGN_INPUT>`, `<SURFACE_TDD_STEP1>` — fill design-related ones
    only when `uses_design`).
-   Leave `review.md` + `release.md` as-is (generic).
-4. **Generate `.claude/gate-config.json`** from the `gate` block — copy all four keys verbatim:
-   `{"deny": [...], "ask": [...], "ask_on_default_branch": [...], "default_branch": "<vcs.default_branch>"}`.
+   Leave `review.md` + `release.md` + `profile-reader.md` as-is (generic).
+4. **Generate `.claude/gate-config.json`** from the `gate` block — copy all five keys verbatim:
+   `{"deny": [...], "ask": [...], "ask_on_default_branch": [...], "default_branch": "<vcs.default_branch>",
+   "preflight": {"enabled": <gate.preflight.enabled>, "agents": [...], "max_age_minutes": <n>}}`
+   (profile has no `preflight` block ⇒ omit the key — the hook then skips the phase gate).
 5. **Write `.claude/settings.json`** permissions (`ask`/`deny` lists mirroring the gate, **plus an
    `allow` list of the project's read-only / verification commands** so agents don't stall on
-   permission prompts: the detected per-surface `test_cmd`/`lint_cmd`/`typecheck_cmd`/`build_cmd`
-   and repo-wide `commands.*` equivalents as `Bash(<cmd>:*)` rules, plus read-only git —
-   `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`. Never allowlist anything matching a
-   `gate.ask`/`gate.deny` pattern. Mention the human can widen it later with
+   permission prompts — including mid-workflow, where nobody is watching a prompt: the detected
+   per-surface `test_cmd`/`lint_cmd`/`typecheck_cmd`/`build_cmd` **and their `*_quiet_cmd`
+   variants** and repo-wide `commands.*` equivalents as `Bash(<cmd>:*)` rules, plus read-only git —
+   `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git rev-parse:*)` — plus the
+   shipped pipeline scripts for BOTH cores (`Bash(.claude/pipeline/scripts/:*)` and
+   `Bash(~/.claude/pipeline/scripts/:*)` — preflight, kanban-move, telemetry-send), and the
+   retrieval provider's MCP tools when wired (e.g. `mcp__serena`). Never allowlist anything matching
+   a `gate.ask`/`gate.deny` pattern. Mention the human can widen it later with
    `/fewer-permission-prompts`) + the hooks, **conditioned on the install mode:**
    - **bundled:** register the PreToolUse `Bash` hook `.claude/hooks/gate.py` and the PostToolUse
      formatter (detected formatter).

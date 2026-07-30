@@ -16,6 +16,23 @@ A pattern matches a command segment when the segment *contains* the pattern
 (after normalizing whitespace). `deny` wins over `ask`. If the config is missing
 or unreadable, the hook stays silent (exit 0) and lets settings.json decide.
 
+The hook fires for EVERY agent in the session — the lead, /build's implementers,
+and subagents spawned by the Workflow runtime alike. Workflow subagents run in
+acceptEdits regardless of the session's permission mode (their Write/Edit calls
+are auto-approved), but acceptEdits does NOT auto-approve Bash or Task, so this
+gate still sees and can block them. In bypassPermissions (headless `claude -p`,
+dashboard actions) there is no human to answer a prompt, so every `ask` match is
+escalated to a hard deny with the reason attached — a clear refusal beats a
+prompt that can never be answered.
+
+Two extra duties beyond Bash patterns:
+
+- Phase gate (`preflight` block in gate-config.json): a Task dispatch of a
+  listed subagent_type (default review/smoke) requires a fresh
+  `.claude/preflight.ok` stamp, written by pipeline/scripts/preflight.sh when
+  typecheck+lint+tests are green. Stale/missing stamp => "ask" — dispatching
+  reviewers onto code that doesn't compile burns their whole run.
+
 Protocol: reads the PreToolUse payload on stdin; emits a JSON permissionDecision
 of "deny" or "ask" on a match; otherwise exits 0 silently.
 """
@@ -25,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 SPLIT = re.compile(r"&&|\|\||[;|\n]")
 WS = re.compile(r"\s+")
@@ -33,18 +51,24 @@ WS = re.compile(r"\s+")
 def load_config() -> dict:
     root = os.environ.get("CLAUDE_PROJECT_DIR", ".")
     path = os.path.join(root, ".claude", "gate-config.json")
-    empty = {"deny": [], "ask": [], "ask_on_default_branch": [], "default_branch": "main"}
+    empty = {"deny": [], "ask": [], "ask_on_default_branch": [], "default_branch": "main",
+             "preflight": {}}
     try:
         with open(path, "r", encoding="utf-8") as fh:
             cfg = json.load(fh)
     except Exception:
         return empty
+    preflight = cfg.get("preflight")
+    if not isinstance(preflight, dict):
+        preflight = {}
     return {
         "deny": list(cfg.get("deny", [])),
         "ask": list(cfg.get("ask", [])),
         # Patterns gated ONLY on the default branch — allowed freely on feature branches.
         "ask_on_default_branch": list(cfg.get("ask_on_default_branch", [])),
         "default_branch": cfg.get("default_branch", "main") or "main",
+        # Phase gate: {"enabled": true, "agents": ["review","smoke"], "max_age_minutes": 30}
+        "preflight": preflight,
     }
 
 
@@ -67,21 +91,82 @@ def current_branch():
     return None
 
 
+def current_head():
+    """HEAD sha of CLAUDE_PROJECT_DIR, or None."""
+    root = os.environ.get("CLAUDE_PROJECT_DIR", ".")
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root, capture_output=True, text=True, timeout=3,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def check_preflight(payload: dict, cfg: dict) -> int:
+    """Phase gate on Task dispatches: review/smoke agents need a green preflight stamp."""
+    pf = cfg.get("preflight") or {}
+    if not pf.get("enabled"):
+        return 0
+    agents = pf.get("agents") or ["review", "smoke"]
+    subagent = (payload.get("tool_input") or {}).get("subagent_type", "") or ""
+    if subagent not in agents:
+        return 0
+
+    root = os.environ.get("CLAUDE_PROJECT_DIR", ".")
+    stamp = os.path.join(root, ".claude", "preflight.ok")
+    why = None
+    try:
+        with open(stamp, "r", encoding="utf-8") as fh:
+            epoch_s, _, sha = fh.read().strip().partition(" ")
+        age_min = (time.time() - float(epoch_s)) / 60
+        max_age = float(pf.get("max_age_minutes", 30) or 30)
+        if age_min > max_age:
+            why = f"the preflight stamp is {age_min:.0f} min old (max {max_age:.0f})"
+        else:
+            head = current_head()
+            if head and sha not in ("", "none") and head != sha:
+                why = "HEAD moved since the preflight ran"
+    except Exception:
+        why = "no preflight stamp found"
+    if why is None:
+        return 0
+    return decide(
+        "ask",
+        f"Phase gate: dispatching `{subagent}` but {why}. Run the deterministic pre-flight first "
+        f"(pipeline/scripts/preflight.sh — typecheck + lint + tests) so agents never review red code; "
+        f"or confirm to dispatch anyway (PIPELINE.md gate.preflight).",
+    )
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except Exception:
         return 0  # malformed input → don't block
 
-    if payload.get("tool_name") != "Bash":
+    tool = payload.get("tool_name")
+    cfg = load_config()
+
+    if tool == "Task":
+        return check_preflight(payload, cfg)
+    if tool != "Bash":
         return 0
 
     command = (payload.get("tool_input") or {}).get("command", "") or ""
-    cfg = load_config()
     deny, ask, branch_gated = cfg["deny"], cfg["ask"], cfg["ask_on_default_branch"]
     default = cfg["default_branch"]
     if not deny and not ask and not branch_gated:
         return 0
+
+    # No human can answer a prompt in bypassPermissions (headless runs) — an "ask"
+    # there either hangs or silently auto-resolves, so escalate it to a clear deny.
+    unattended = payload.get("permission_mode") == "bypassPermissions"
+    ask_decision = "deny" if unattended else "ask"
+    ask_suffix = " (denied outright: unattended run, nobody to confirm)" if unattended else ""
 
     # Branch-conditional patterns (e.g. git/docker) are gated only on the default branch;
     # on a feature branch they run freely. Unknown branch (no repo / detached / no git) ⇒
@@ -100,12 +185,16 @@ def main() -> int:
                 return decide("deny", f"`{pat}` is forbidden by the project's PIPELINE.md gate.")
         for pat in ask:
             if norm(pat) in seg:
-                return decide("ask", f"`{pat}` is a gated command — confirm first (PIPELINE.md gate).")
+                return decide(ask_decision,
+                              f"`{pat}` is a gated command — confirm first (PIPELINE.md gate)."
+                              f"{ask_suffix}")
         if on_default:
             for pat in branch_gated:
                 if norm(pat) in seg:
-                    return decide("ask", f"`{pat}` is gated on the default branch `{default}` — confirm "
-                                         f"(PIPELINE.md gate). It runs freely on feature branches.")
+                    return decide(ask_decision,
+                                  f"`{pat}` is gated on the default branch `{default}` — confirm "
+                                  f"(PIPELINE.md gate). It runs freely on feature branches."
+                                  f"{ask_suffix}")
 
     return 0
 

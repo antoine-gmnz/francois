@@ -93,11 +93,21 @@ tree. For each surface in `surfaces`:
 
 When all return, flag any contract mismatch or failing test from the handoffs; otherwise print one
 status line per surface (`<key> · tests pass/fail · <n> TODOs`) — do not restate handoff content.
-Append **ONE line for the batch** to `.claude/pipeline-metrics.jsonl` (create it if absent; it must
-be gitignored), computing the elapsed time in the same Bash call
+Append **ONE line for the batch** to the **main checkout's** `.claude/pipeline-metrics.jsonl` —
+NOT the worktree's, which dies at teardown while metrics must accumulate across features. Resolve
+it from anywhere: `$(dirname "$(git rev-parse --git-common-dir)")/.claude/pipeline-metrics.jsonl`
+(in the main checkout this resolves to itself). Create it if absent; it must be gitignored.
+Compute the elapsed time in the same Bash call
 (`echo "{...\"seconds\":$(($(date +%s)-<start epoch from §2>)),...}" >> …`):
 `{"ts":"<ISO date>","feature":"$ARGUMENTS","phase":"build","seconds":<wall-clock>,"surfaces":{"<key>":"ok|error",…}}`
-— this is the evidence SCHEMA.md §Specialization asks for before splitting a surface.
+— this is the evidence SCHEMA.md §Specialization asks for before splitting a surface. In the same
+Bash call, chain the opt-in usage ping — **the shared form every phase command reuses**:
+`<core>/pipeline/scripts/telemetry-send.sh <phase> "$ARGUMENTS" <seconds> "<results>" || true`
+(`<core>` = `~/.claude` global / `.claude` bundled; here `<phase>` = `build`, `<results>` =
+`<ok,ok|error,…>`) — a silent no-op unless the human explicitly consented (SCHEMA.md §Telemetry);
+never ask about consent here. `/review`, `/fix` and `/smoke` chain the same line with their own
+phase + results. The `|| true` swallows a **missing** script too, so a half-copied core goes
+silent rather than loud — `/doctor` check 1 is what catches that.
 Then tell the human: run `/smoke $ARGUMENTS` to exercise the feature end-to-end (or test by hand),
 then `/review $ARGUMENTS`. Do not run the app or migrations yourself here — `/smoke` is the
 sanctioned path for that. **Recommend a `/clear` now** — the spec, contract and diff are all on

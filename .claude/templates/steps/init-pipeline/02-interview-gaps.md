@@ -15,6 +15,13 @@ Ask ONLY what you couldn't confidently detect. Batch related questions. Cover:
   per SCHEMA.md §Specialization. If the human accepts, apply the rules: **shared code (routing, global
   state, DS kit/tokens) becomes its own single-owner surface**, and cross-slice shapes go through the
   contract. Default to NOT splitting when boundaries are tangled or slices are tiny — coarse is fine.
+- **Quiet commands** (never store a bare `pnpm test` as what agents execute) — for each noisy command
+  (tests, lint; per surface AND repo-wide), propose the detected **bridled variant** as the
+  Recommended option: dot/failures-only reporter (`--reporter=dot` vitest/playwright, `--silent`
+  jest, `-q` pytest, `--quiet` eslint/ruff — whatever the detected runner supports). These land in
+  `test_quiet_cmd`/`lint_quiet_cmd` + `commands.test_quiet`/`lint_quiet` and are what agents and the
+  `/review`·`/smoke` pre-flight actually run (SCHEMA.md §Output discipline). If the human declines or
+  the runner has no such flag, leave `""` — consumers then fall back to `<cmd> 2>&1 | tail -40`.
 - **Contract** — mechanism (`shared-types-zod` / `openapi` / `protobuf` / `json-schema` / `none`) and
   where feature contracts are authored. If `none`, surfaces sync by the spec prose alone.
 - **UI language** — language of all user-facing copy.
@@ -39,3 +46,14 @@ Prefer sensible defaults from Phase 1 as the first (Recommended) option in each 
 
 > The **kanban** link is user-scoped (it points at a personal vault, so it never goes in the committed
 > `PIPELINE.md`), but IS wired here because it is per-project — see Phase 4.
+
+- **Telemetry** (optional, machine-scoped — SKIP entirely if `~/.claude/cohorte.config.yaml` already
+  has a `telemetry:` block with a `consent_date`, i.e. the human already answered on this machine).
+  Ask ONE opt-in question, stating exactly: _"Share anonymous usage stats with the cohorte project?
+  One ping per pipeline phase, `/brainstorm` through `/ship`: core version, OS, phase name, duration,
+  per-surface result counts, and a hash of the feature id — never repo names, paths, code, or IPs.
+  Setup and maintenance commands never ping. Off by default; withdraw anytime
+  (`telemetry.enabled: false`); erase your history anytime (SCHEMA.md §Telemetry). Default: No."_
+  On **yes**: in the global config set `telemetry.enabled: true`, mint `install_id` (`uuidgen`,
+  lowercase), set `consent_date` (ISO date). On **no**: set `enabled: false` + `consent_date` (so
+  no future command re-asks). Never touch `endpoint` — it ships with the template.

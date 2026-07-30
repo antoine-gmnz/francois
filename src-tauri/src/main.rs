@@ -23,7 +23,7 @@ mod wsl;
 // keeps resolving exactly as before this domain moved out of main.rs.
 pub(crate) use shell::dispose_session_shell;
 
-use tauri::{Manager, RunEvent};
+use tauri::{RunEvent};
 
 fn main() {
     tauri::Builder::default()

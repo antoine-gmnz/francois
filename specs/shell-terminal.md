@@ -1,7 +1,7 @@
 ---
 id: shell-terminal
 title: Shell terminal
-status: frozen
+status: shipped
 created: 2026-07-18
 depends_on: [session-engine, app-shell]
 ---

@@ -51,7 +51,14 @@ the human's choices — so `/init-pipeline` never needs re-running for an upgrad
 ## 3. Report old → new
 
 Re-read the VERSION file(s) and print `old → new`. If unchanged, say the core was already up to date.
-For a bundled repo, note that `.claude/pipeline.json`'s `core_version` was bumped and should be committed.
+
+**Sync the pointer — in BOTH modes.** If this repo has a `.claude/pipeline.json` whose `core_version`
+differs from the core you just installed, rewrite that one field (leave every other field untouched)
+and tell the human to commit it. In **bundled** mode the installer already did it; in **global** mode
+**nothing does** — the installer refreshes one shared core and cannot know which repos point at it,
+so before 1.2.5 the field simply drifted forever (a repo on a current core still claiming `1.0.0`).
+`/doctor` check 1 requires the pointer to be coherent with the VERSION file, so a drifted field reads
+as a broken install when nothing is broken.
 
 Then print **What's new**: read the installed `<core>/pipeline/CHANGELOG.md` and show the entries
 between the old and new versions (most recent first). File absent ⇒ the old core predates 0.1.14 —
@@ -61,10 +68,16 @@ skip silently.
 
 Only when the current repo has a `PIPELINE.md`: run the **Reconcile procedure** from the installed
 `pipeline/SCHEMA.md` §Reconcile — top up the profile's machine block with new fields at their defaults
-(one batched question set for any genuinely new human decision, e.g. choosing a `retrieval` provider),
-re-render the surface agents from the current `implementer.template.md`, additively patch
-`settings.json`/`gate-config.json`, and run any newly-added capability's wiring (e.g. Serena's
-project-scope `claude mcp add`). Even when no capability is new, **re-run the retrieval provider's
+(one batched question set for any genuinely new human decision — e.g. choosing a `retrieval` provider,
+or the **quiet command variants**: `test_quiet_cmd`/`lint_quiet_cmd` + `commands.test_quiet`/
+`lint_quiet`, proposing the detected bridled forms per §Output discipline; `gate.preflight` tops up
+silently at its defaults), re-render the surface agents from the current `implementer.template.md`
+(this refreshes each agent's **baked §Conventions slice** — required after any hand-edit of the
+profile's prose), additively patch `settings.json`/`gate-config.json` (including the `preflight`
+block and the workflow-agent `allow` entries from init step 5), and run any newly-added capability's
+wiring (e.g. Serena's project-scope `claude mcp add`). Verify the refreshed core actually carries
+`<core>/workflows/` + `agents/profile-reader.md` — missing means the update half-ran: re-run the
+installer. Even when no capability is new, **re-run the retrieval provider's
 health check** (SCHEMA.md §Code retrieval: CLI resolvable from PATH, `.mcp.json` entry present —
 upgrading a bare `serena` entry to the PATH-proof launcher form, `.serena/` gitignored, server
 actually connected) and repair whatever fails — wiring that worked at
@@ -75,7 +88,10 @@ Two of the §Reconcile steps matter specifically here:
 
 - **Global config seed** (§Reconcile step 5): if `~/.claude/cohorte.config.yaml` is absent, seed it
   from the template so the kanban + shared-vault config has a home. Never clobber an existing filled
-  file. Report what was seeded.
+  file. Report what was seeded. If the existing file has NO `telemetry:` block with a `consent_date`
+  (pre-telemetry install), top up the block from the template and ask the ONE opt-in consent
+  question defined in `templates/steps/init-pipeline/02-interview-gaps.md` §Telemetry — record the
+  answer either way so it is never re-asked. Consent is strictly opt-in; "No" is the default.
 - **Kanban sync** (§Reconcile step 6): resolve this project's board from `kanban.boards[<PIPELINE
   name>]`. **Not linked** → offer to link/create a board (confirm the vault + `<folder>/Tasks.md`,
   write the `boards` entry, create the board file per §Kanban). **Linked** → verify the board file

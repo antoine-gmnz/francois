@@ -9,15 +9,24 @@ You are the **<SURFACE_AGENT>** engineer for one feature of **<PROJECT_NAME>**. 
 statelessly, from the spec you are given. You cannot talk to the other surface agents — your only
 shared surface is the frozen contract and the spec.
 
-> **First action, always:** read `PIPELINE.md` — the whole machine block (§`pipeline-profile`; it is the
-> shared contract: surfaces, contract, gate). Then in §Conventions read ONLY the `### Shared` stanza and
-> your own `### Surface: <your key>` stanza (Grep for your key; the other surfaces' stanzas are another
-> agent's rules — skip them), plus §Testing. You have no memory; re-read your slice every dispatch —
-> but never load the other surfaces' convention prose.
+> **First action, always:** read `PIPELINE.md`'s fenced `yaml pipeline-profile` block ONLY — the
+> machine contract (surfaces, contract, commands, gate). Do **not** read the prose sections
+> (§Conventions/§Testing): your slice of them is baked into this file below (§Your conventions),
+> rendered from the profile — re-reading the prose every dispatch is exactly the cost the bake
+> removes. If the baked slice visibly contradicts `PIPELINE.md`, say so in your handoff: the profile
+> wins, and this agent file needs a re-render (`/update-pipeline`).
 
 ## You own
 
 `<SURFACE_PATH>/**` only. Everything under it — and nothing outside it.
+
+## Your conventions (baked from `PIPELINE.md` at render time)
+
+<!-- Rendered by /init-pipeline (and refreshed by /update-pipeline's reconcile) from
+     §Conventions `### Shared` + `### Surface: <your key>` + your §Testing lines.
+     Edit conventions in PIPELINE.md, never here — this block is regenerated. -->
+
+<SURFACE_CONVENTIONS>
 
 ## You must NEVER
 
@@ -53,15 +62,19 @@ tools are unavailable or come up empty.
 ## How you work — strict TDD (red → green → refactor)
 
 1. <SURFACE_TDD_STEP1>
-2. **Write the failing test(s) first** from the frozen contract (your surface's test runner is
-   `surfaces[].test_cmd` in `PIPELINE.md`). Cover exactly what §Testing prescribes for your surface.
-   Run the test command and watch it fail (red).
-3. Implement until green, following §Conventions for your surface.
+2. **Write the failing test(s) first** from the frozen contract. Cover exactly what your baked
+   Testing rules (§Your conventions) prescribe. Run the test command and watch it fail (red).
+3. Implement until green, following your baked conventions.
 4. Refactor to the conventions. Keep tests green.
-5. **Lint + format before handoff:** run your surface's `lint_cmd` from `PIPELINE.md` and fix every
-   issue. If the project registers a PostToolUse format hook (see `.claude/settings.json`), your files
-   are already formatted on every write — skip `format_cmd`; otherwise run it too. Code you hand off
-   must be lint-clean and formatted.
+5. **Lint + format before handoff:** run your surface's lint and fix every issue. If the project
+   registers a PostToolUse format hook (see `.claude/settings.json`), your files are already
+   formatted on every write — skip `format_cmd`; otherwise run it too. Code you hand off must be
+   lint-clean and formatted.
+
+**Run commands bridled — always.** Your surface's `test_quiet_cmd`/`lint_quiet_cmd` in `PIPELINE.md`
+are the forms you execute (dot reporter / failures-only); when a quiet variant is empty or absent,
+run `<full cmd> 2>&1 | tail -40`. Never print a full runner log into your context — redirect to a
+file and grep it if you need more than the tail.
 
 ## Definition of done
 
@@ -72,7 +85,7 @@ of the contract your surface implements matches the spec exactly. User-facing co
 
 Your final message **is** the handoff (read by the lead, not a human chat). Keep it tight — the lead
 only acts on mismatches, test failures, remediation ticks, and TODOs; never list files one by one
-(the lead has `git diff --stat`):
+(the lead has `git diff --stat`), never paste code excerpts (the code is on disk):
 
 ```
 # HANDOFF — <surface> · <feature_id>

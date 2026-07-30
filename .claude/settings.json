@@ -14,7 +14,24 @@
       "Bash(cd src-tauri && cargo fmt:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(.claude/pipeline/scripts/:*)",
+      "Bash(~/.claude/pipeline/scripts/:*)",
+      "mcp__serena"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "py \".claude/hooks/gate.py\""
+          }
+        ]
+      }
     ]
   }
 }

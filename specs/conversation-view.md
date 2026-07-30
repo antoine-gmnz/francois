@@ -1,7 +1,7 @@
 ---
 id: conversation-view
 title: Conversation view (SESSION tab)
-status: frozen
+status: shipped
 created: 2026-07-18
 depends_on: [session-engine, app-shell]
 ---

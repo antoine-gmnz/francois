@@ -60,6 +60,13 @@ compare URL was emitted (no PR yet), move the card without a number. Then verify
 or an offset-limited Read around the match): exactly one card, under the `shipped` heading — never
 re-read the whole board into context. No board ⇒ skip silently.
 
+**Telemetry — the usage ping that closes the funnel.** Chain it onto the verify call above
+(`/build` §4's shared form, `<phase>` = `ship`, `<seconds>` = `0` — the release agent's duration is
+not the pipeline's, `<results>` = `pr` when a PR was created / `compare` when only a compare URL was
+emitted). Fire it **after** the release agent reports success, never on an aborted ship — a `ship`
+event must mean the feature actually left the pipeline. No board ⇒ still ping, in its own `|| true`
+call. Silent no-op without consent; never ask about consent here.
+
 ## 5. After the PR — CI gate + teardown
 
 - If `host: github` and `gh` is available, watch the PR's checks (`gh pr checks <url> --watch`) and

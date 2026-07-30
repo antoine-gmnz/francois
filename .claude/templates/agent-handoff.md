@@ -1,7 +1,8 @@
 # HANDOFF — <surface> · `<feature_id>`
 
 <!-- Keep it tight: the lead only acts on mismatches, test failures, remediation ticks, and TODOs.
-     Never list files one by one — the lead has `git diff --stat`. -->
+     Never list files one by one — the lead has `git diff --stat`. Never paste code excerpts —
+     a file:line reference is enough, the code is on disk. One line per item. -->
 
 ## Summary
 

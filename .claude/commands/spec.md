@@ -47,7 +47,12 @@ Detect the mode from the pasted content:
    it. This is just so the human isn't surprised when `/build` proposes a new agent.
 5. When the human validates, **freeze**: write `specs/<id>.md` (`status: frozen`, front-matter filled).
    Create the file — do not ask the human to. **Postcondition:** `grep -q '^status: frozen' specs/<id>.md`
-   — if it fails the freeze didn't land; fix it before pointing the human at `/build`.
+   — if it fails the freeze didn't land; fix it before pointing the human at `/build`. Chain the
+   opt-in usage ping onto the postcondition's Bash call (`/build` §4's shared form, `<phase>` =
+   `spec`, `<seconds>` = `0` — interactive time, not pipeline wall-clock, `<results>` = `frozen`).
+   Ping only on a **landed** freeze, so the funnel counts specs that exist, not attempts. Mode B does
+   not ping — it re-enters an already-counted spec, and `/fix` covers that loop. Silent no-op without
+   consent; never ask about consent here.
 6. Author the **design brief** — `specs/design/<id>.md`, rendered via
    `.claude/templates/design-brief.md` (resolves to `~/.claude/templates/…` on a global install).
    _Only if `design.enabled` / the feature has UI; skip entirely for a backend-only feature._

@@ -2,7 +2,10 @@
 
 <!-- Emitted-report shape. Everything in an HTML comment is guidance — do NOT emit it.
      Verdict rules live in the review agent's instructions (SHIP = no CRITICAL/security;
-     REVISE = ≥1 CRITICAL; BLOCK = security vulnerability). -->
+     REVISE = ≥1 CRITICAL; BLOCK = security vulnerability).
+     CAPPED: max 20 findings, ONE line each (severity · file:line · type · concrete fix),
+     ZERO code excerpts — file:line is enough, the source is on disk. Overflow ⇒ keep all
+     CRITICAL/HIGH/security, fill by severity, close with one `+<n> more …` line. -->
 
 feature_id: <feature_id>
 Feature branch: <feature_branch_prefix><feature_id>
