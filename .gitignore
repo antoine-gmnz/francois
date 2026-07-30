@@ -18,3 +18,7 @@ Thumbs.db
 
 # pipeline review/smoke staging buffer — ephemeral, regenerated every /review /smoke round
 specs/reports/
+
+# VitePress build output + cache (docs deploy via .github/workflows/docs.yml)
+docs/.vitepress/dist/
+docs/.vitepress/cache/

@@ -1,0 +1,50 @@
+name: Docs
+
+# Build the VitePress site in docs/ and deploy it to GitHub Pages.
+# One-time repo setup: Settings → Pages → Source: "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Build site
+        run: |
+          npm --prefix docs ci
+          npm --prefix docs run build
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
