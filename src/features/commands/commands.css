@@ -1,0 +1,222 @@
+/* interactive-commands — CommandCard chrome (spec §8 tokens). Values match the
+   inline styles they replace 1:1; percentages/colors that depend on runtime
+   data (meter fill width/color, status color, current-model color) stay
+   inline or as conditional modifier classes. */
+
+.cmdcard-notice {
+  display: flex;
+  gap: var(--space-10);
+}
+.cmdcard-notice-glyph {
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: var(--font-size-12);
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+.cmdcard-notice-text {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--font-size-12-5);
+  line-height: 1.55;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+.cmdcard {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  padding: var(--space-10) var(--space-13);
+}
+
+.cmdcard-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-bottom: var(--space-8);
+}
+.cmdcard-header-glyph {
+  font-size: var(--font-size-12);
+  color: var(--accent);
+}
+.cmdcard-header-label {
+  font-size: var(--font-size-10);
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+.cmdcard-header-spacer {
+  flex: 1;
+}
+.cmdcard-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.cmdcard-loading-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
+  /* design-refresh FR-16: ticking pulse. Spelled out because the
+     `[style*="pulse"]` throttle in styles.css matches inline styles only. */
+  animation: pulse 1.6s steps(6, end) infinite;
+}
+.cmdcard-loading-text {
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.04em;
+  color: var(--warn);
+}
+.cmdcard-fetching {
+  font-size: var(--font-size-12);
+  color: var(--text-faint);
+}
+
+.cmdcard-meter-label {
+  font-size: var(--font-size-11);
+  color: var(--text-2);
+  margin-bottom: var(--space-3);
+}
+.cmdcard-meter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+.cmdcard-meter-track {
+  flex: 1;
+  min-width: 120px;
+  height: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--border);
+}
+/* width % and fill color are data-driven — stay inline (see CommandCard.tsx MeterRow). */
+.cmdcard-meter-fill {
+  height: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.cmdcard-usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.cmdcard-usage-percent {
+  font-size: var(--font-size-11);
+  color: var(--text-bright);
+}
+.cmdcard-usage-resets {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.cmdcard-usage-tail {
+  margin-top: var(--space-8);
+  font-size: var(--font-size-12);
+  color: var(--text-2);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.cmdcard-context-right {
+  font-size: var(--font-size-11);
+}
+.cmdcard-context-used {
+  color: var(--text-bright);
+}
+.cmdcard-context-limit {
+  color: var(--text-faint);
+}
+
+.cmdcard-pre {
+  font-size: var(--font-size-12);
+  color: var(--text-2);
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.cmdcard-model-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-5) var(--space-8);
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+.cmdcard-model-row--interactive {
+  cursor: pointer;
+}
+.cmdcard-model-row--dim {
+  opacity: 0.5;
+}
+.cmdcard-model-glyph {
+  font-size: var(--font-size-12);
+}
+.cmdcard-model-glyph-current {
+  color: var(--success);
+}
+.cmdcard-model-glyph-idle {
+  color: var(--text-faint);
+}
+.cmdcard-model-label {
+  font-size: var(--font-size-12);
+}
+.cmdcard-model-label-current {
+  color: var(--text-bright);
+}
+.cmdcard-model-label-idle {
+  color: var(--text-2);
+}
+.cmdcard-model-current-tag {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.cmdcard-model-error {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+
+.cmdcard-status-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-3) var(--space-14);
+}
+.cmdcard-status-key {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.cmdcard-status-value {
+  font-size: var(--font-size-12);
+  color: var(--text);
+  min-width: 0;
+}
+.cmdcard-status-cwd {
+  overflow-wrap: anywhere;
+}
+.cmdcard-status-ctx-used {
+  color: var(--text-bright);
+}
+.cmdcard-status-ctx-limit {
+  color: var(--text-faint);
+}
+
+.cmdcard-help-grid {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  row-gap: var(--space-2);
+}
+.cmdcard-help-command {
+  font-size: var(--font-size-12);
+  color: var(--accent);
+}
+.cmdcard-help-description {
+  font-size: var(--font-size-12);
+  color: var(--text-dim);
+}
+.cmdcard-help-footer {
+  margin-top: var(--space-8);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}

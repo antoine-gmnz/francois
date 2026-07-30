@@ -6,7 +6,8 @@
 //! handlers stay in `mod.rs`.
 
 use super::WorktreeStatusData;
-use crate::diff::{git_program, git_routed, no_window, wsl_cd_target, GitHost};
+use crate::diff::{git_program, git_routed, wsl_cd_target, GitHost};
+use crate::process_util::no_window;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 

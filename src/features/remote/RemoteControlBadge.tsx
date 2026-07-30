@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { SessionId } from '../../../contract/common';
 import { remoteGet, remoteStart, remoteStop } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import './remote.css';
 import {
   isRemoteLive,
   remoteDotTone,
@@ -137,7 +138,7 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
   }
 
   return (
-    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+    <span className="rc-badge">
       <span
         role="button"
         tabIndex={0}
@@ -145,27 +146,12 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
         onClick={() => void toggle()}
         onKeyDown={onChipKeyDown}
         title={remoteLabel(state)}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 5,
-          cursor: busy ? 'default' : 'pointer',
-          opacity: busy ? 0.6 : 1,
-          color: live ? 'var(--text-hint)' : 'var(--text-faint)',
-        }}
+        className={`rc-chip${busy ? ' rc-chip--busy' : ''}${live ? ' rc-chip--live' : ''}`}
       >
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: '50%',
-            background: TONE[remoteDotTone(state)],
-            flexShrink: 0,
-          }}
-        />
+        <span className="rc-dot" style={{ background: TONE[remoteDotTone(state)] }} />
         rc
         {handle && (
-          <span title={handle} style={{ color: 'var(--text-faint)' }}>
+          <span title={handle} className="rc-handle">
             {/* the short handle is enough to tell two remote sessions apart */}
             {handle.replace('session_', '').slice(0, 6)}
           </span>
@@ -173,105 +159,38 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
       </span>
 
       {open && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 20,
-            right: 0,
-            zIndex: 40,
-            minWidth: 300,
-            padding: 10,
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--bg-hover)',
-            borderRadius: 6,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
-          }}
-        >
-          <div style={{ color: 'var(--text-hint)', fontSize: 10.5 }}>{remoteLabel(state)}</div>
+        <div className="rc-popover">
+          <div className="rc-popover-title">{remoteLabel(state)}</div>
 
           {state.phase === 'starting' && (
-            <div style={{ color: 'var(--text-faint)', fontSize: 10 }}>
+            <div className="rc-popover-note">
               registering with claude.ai — the URL appears here in a moment
             </div>
           )}
 
           {url && (
             <>
-              <div
-                style={{
-                  color: 'var(--text-2)',
-                  fontSize: 10,
-                  wordBreak: 'break-all',
-                  background: 'var(--bg-deep)',
-                  padding: '6px 7px',
-                  borderRadius: 4,
-                }}
-              >
-                {url}
-              </div>
-              <div style={{ color: 'var(--text-faint)', fontSize: 10 }}>
+              <div className="rc-url-box">{url}</div>
+              <div className="rc-popover-note">
                 Open it on your phone or in any browser to continue this same session.
               </div>
             </>
           )}
 
-          {state.phase === 'failed' && (
-            <div style={{ color: 'var(--error-bright)', fontSize: 10 }}>{state.error.message}</div>
-          )}
+          {state.phase === 'failed' && <div className="rc-popover-error">{state.error.message}</div>}
 
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="rc-btn-row">
             {url && (
-              <button
-                onClick={() => void copy()}
-                style={{
-                  fontSize: 10,
-                  padding: '4px 9px',
-                  background: 'var(--bg-raised)',
-                  color: 'var(--text-hint)',
-                  border: '1px solid var(--bg-hover)',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
+              <button className="rc-btn" onClick={() => void copy()}>
                 {copied ? 'copied' : 'copy url'}
               </button>
             )}
             {state.phase === 'failed' && (
-              <button
-                onClick={() => void start()}
-                disabled={busy}
-                style={{
-                  fontSize: 10,
-                  padding: '4px 9px',
-                  background: 'var(--bg-raised)',
-                  color: 'var(--text-hint)',
-                  border: '1px solid var(--bg-hover)',
-                  borderRadius: 4,
-                  cursor: busy ? 'default' : 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
+              <button className="rc-btn" onClick={() => void start()} disabled={busy}>
                 retry
               </button>
             )}
-            <button
-              onClick={() => void stop()}
-              disabled={busy}
-              style={{
-                fontSize: 10,
-                padding: '4px 9px',
-                background: 'transparent',
-                color: 'var(--error)',
-                border: '1px solid var(--bg-hover)',
-                borderRadius: 4,
-                cursor: busy ? 'default' : 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
+            <button className="rc-btn rc-btn--danger" onClick={() => void stop()} disabled={busy}>
               {state.phase === 'failed' ? 'dismiss' : 'stop'}
             </button>
           </div>

@@ -1,0 +1,276 @@
+/* AgentsPanel + AgentView (pane [3] + the agent-tab main pane). See
+   REFACTOR-CONVENTIONS.md: ListRow deliberately does NOT fit `.agent-card` —
+   its resting background is `--bg-panel` (not transparent) and selection is
+   a left-accent border, not a raised fill. */
+
+/* -- AgentsPanel: panel shell -------------------------------------------- */
+
+.agents-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+}
+.agents-panel--focused {
+  border-color: var(--border-focus);
+}
+.agents-body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-8);
+}
+.agents-error-text {
+  padding: var(--space-12) var(--space-4);
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+.agents-empty {
+  padding: var(--space-24) var(--space-12);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+.agents-empty-key {
+  color: var(--text-hint);
+}
+
+/* Shared by AgentsPanel's Card head and AgentView's header row. */
+.agent-inline-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+/* "async" marker chip (AgentsPanel card + AgentView header — identical
+   look; the card usage additionally needs flex-shrink since it sits among
+   more siblings). */
+.agent-async-badge {
+  font-size: var(--font-size-9);
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  padding: var(--space-1) var(--space-5);
+  border-radius: var(--radius-xl);
+  background: var(--bg-raised);
+}
+.agent-async-badge--shrink {
+  flex-shrink: 0;
+}
+
+/* -- AgentsPanel: agent card ---------------------------------------------- */
+
+/* design-refresh: --radius-card on a --bg-hover surface inside a
+   --border-emphasis outline, per the mock's agent card. */
+.agent-card {
+  padding: var(--space-11);
+  border-radius: var(--radius-card);
+  margin-bottom: var(--space-8);
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+.agent-card--selected {
+  background: var(--bg-raised);
+  border-left-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--border-focus);
+}
+.agent-card--pending {
+  opacity: 0.55;
+}
+.agent-card__name {
+  font-size: var(--font-size-12);
+  color: var(--text);
+  font-weight: 500;
+  flex: 1;
+}
+.agent-card__kill {
+  font-size: var(--font-size-10);
+}
+.agent-card__status {
+  font-size: var(--font-size-10);
+}
+.agent-card__task {
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+  margin: var(--space-5) 0 var(--space-4) var(--space-16);
+}
+.agent-card__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  margin-left: var(--space-16);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.agent-card__meta-shrink {
+  flex-shrink: 0;
+}
+.agent-card__meta-label {
+  flex-shrink: 0;
+  color: var(--text-disabled);
+}
+.agent-card__activity {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+/* -- AgentsPanel: activity trail ------------------------------------------ */
+
+.agent-trail {
+  margin-left: var(--space-16);
+  margin-top: var(--space-6);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-6);
+  overflow-y: auto;
+  /* overscroll-behavior — not a wheel handler — is what keeps the trail's
+     scroll from bubbling to the pane: native scroll chaining ignores React's
+     synthetic event propagation, so stopPropagation() on onWheel is a no-op. */
+  overscroll-behavior: contain;
+}
+.agent-trail-error-text {
+  font-size: var(--font-size-10);
+  color: var(--error);
+  padding: var(--space-4) 0;
+}
+.agent-trail-notice {
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+  padding: var(--space-4) 0;
+}
+.agent-trail-earlier {
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+  padding: var(--space-2) 0 var(--space-4);
+}
+.agent-step-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-7);
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-10);
+}
+.agent-step-glyph {
+  width: var(--space-10);
+  flex-shrink: 0;
+  text-align: center;
+}
+.agent-step-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+}
+.agent-step-prefix {
+  color: var(--text-dim);
+}
+.agent-step-meta {
+  font-size: var(--font-size-9-5);
+  flex-shrink: 0;
+}
+
+/* -- AgentsPanel: new-agent modal ------------------------------------------ */
+
+.agent-modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-11);
+}
+.agent-modal-arrow {
+  color: var(--accent);
+  font-size: var(--font-size-15);
+}
+.agent-modal-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: var(--font-size-14);
+  font-family: inherit;
+}
+.agent-modal-hint {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.agent-modal-error {
+  padding: 0 var(--space-16) var(--space-10);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+
+/* -- AgentView: agent-tab main pane ---------------------------------------- */
+
+.agent-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.agent-view-header {
+  padding: var(--space-9) var(--space-14);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.agent-view-name {
+  font-size: var(--font-size-12-5);
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.agent-view-status-text {
+  font-size: var(--font-size-10);
+}
+.agent-view-spacer {
+  flex: 1;
+}
+.agent-view-elapsed {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.agent-view-task {
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+  margin-top: var(--space-4);
+  margin-left: var(--space-16);
+}
+.agent-view-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-16) var(--space-18);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  /* The transcript is CONTENT — copying out of it must work (the app root
+     disables selection for chrome). */
+  user-select: text;
+  cursor: auto;
+}
+.agent-view-error {
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+.agent-view-empty {
+  font-size: var(--font-size-12);
+  color: var(--text-faint);
+}
+.agent-view-notice {
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+}
+.agent-block-notice-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+  font-size: var(--font-size-10-5);
+}
+.agent-block-notice-glyph {
+  width: var(--space-16);
+  flex-shrink: 0;
+  text-align: center;
+}
+.agent-block-notice-text {
+  color: var(--text-disabled);
+}

@@ -16,7 +16,7 @@ import type {
 import { setShellState } from './shellStore';
 import { useStore } from '../../lib/store';
 
-const FAINT = '\x1b[38;2;86;90;99m'; // #565a63 (spec §8)
+const FAINT = '\x1b[38;2;107;115;133m'; // #6b7385 — design-refresh FR-13, new --text-muted
 const RESET = '\x1b[0m';
 
 // Tauri's invoke wants Record<string, unknown>; our named payload interfaces
@@ -32,11 +32,12 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-// Selection tint = the accent at 25% (was rgba(200,161,90,0.25)). The accent
-// resolves to a hex, so convert to rgba to keep the alpha the theme can't carry.
+// Selection tint = the accent at 25% (design-refresh FR-13: new --accent
+// #e0a84e → rgba(224,168,78,0.25)). The accent resolves to a hex, so convert
+// to rgba to keep the alpha the theme can't carry.
 function accentSelection(): string {
   const h = cssVar('--accent').replace('#', '');
-  if (h.length < 6) return 'rgba(200,161,90,0.25)';
+  if (h.length < 6) return 'rgba(224,168,78,0.25)';
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);

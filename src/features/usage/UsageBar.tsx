@@ -1,50 +1,61 @@
 // usage-bar (specs/usage-bar.md §8) — the always-mounted plan-limit strip that
-// sits between the native OS caption and the content grid.
+// sits between the native OS caption and the content grid. design-refresh
+// FR-4 turns it into the app's custom titlebar row: left brand cluster
+// (diamond glyph + wordmark + project-path button) alongside the unchanged
+// usage meters on the right — same data, same events, restyled/relocated
+// only. No account UI (4a is out of scope).
 //
 // Pure chrome: it is NOT a focusable pane (FR-3 — no tabIndex, no key handling,
 // no focus ring, absent from the 1–5 cycle) and it has NO motion at all (FR-25 —
 // no @keyframes, no animation, no transition anywhere in this file; the webview
 // may fall back to software compositing, where permanent chrome that animates
-// repaints forever). Its height is a fixed 28px in every state (FR-2), so no
-// state change ever reflows the grid below.
+// repaints forever). Its height is a fixed 38px in every state (FR-2/design-refresh
+// FR-4), so no state change ever reflows the grid below.
 //
 // All logic lives in ./usage (covered by src/features/usage/usage.test.ts); this file only maps
 // the view model onto §8's tokens.
 
 import { useEffect, useState } from 'react';
+import { displayWslCwd } from '../../../contract/wsl-filesystem';
+import { abbreviate } from '../../lib/path';
 import { useStore } from '../../lib/store';
+import './usage.css';
 import { requestUsageRefresh, startUsageFeed, usageBarView, type MeterChipView } from './usage';
-
-// §8 tokens
-const T = {
-  // App-root shell color: the OS caption is DWM-tinted to the same value
-  // (src-tauri/src/main.rs), so caption + bar read as one continuous surface.
-  bg: 'var(--bg-app)',
-  border: 'var(--border)',
-  track: 'var(--border)',
-  label: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  error: 'var(--error)',
-};
 
 function MeterChip({ chip }: { chip: MeterChipView }) {
   return (
-    <span title={chip.title} style={{ display: 'flex', alignItems: 'center', gap: 7, flex: '0 0 auto' }}>
-      <span style={{ color: T.label, whiteSpace: 'nowrap' }}>{chip.label}</span>
-      <span style={{ width: 52, height: 4, borderRadius: 2, background: T.track, overflow: 'hidden', flex: '0 0 auto' }}>
+    <span title={chip.title} className="usage-chip">
+      <span className="usage-chip-label">{chip.label}</span>
+      <span className="usage-track">
         {/* renders straight at its final width — no transition (FR-25) */}
-        <span style={{ display: 'block', height: '100%', width: `${chip.fillPercent}%`, background: chip.color }} />
+        <span className="usage-fill" style={{ width: `${chip.fillPercent}%`, background: chip.color }} />
       </span>
-      <span style={{ color: chip.color, fontVariantNumeric: 'tabular-nums' }}>{chip.percentText}</span>
+      {/* No inline colour: the fill above carries the severity hue, the figure
+          stays neutral (--text-hint) as in the mock — design-refresh FR-4. */}
+      <span className="usage-percent">{chip.percentText}</span>
     </span>
   );
 }
 
-export default function UsageBar() {
+export default function UsageBar({ home }: { home: string }) {
   const snapshot = useStore((s) => s.usage);
   const setUsage = useStore((s) => s.setUsage);
   const [now, setNow] = useState(() => Date.now());
   const [freshHover, setFreshHover] = useState(false);
+  const [pathHover, setPathHover] = useState(false);
+
+  // design-refresh FR-4: the project-path button reads whichever cwd is most
+  // specific right now — the scoped project's root, else the active session's
+  // cwd, else the bare home dir. No new IPC: every value is already in the store.
+  const projects = useStore((s) => s.projects);
+  const activeProjectId = useStore((s) => s.activeProjectId);
+  const sessions = useStore((s) => s.sessions);
+  const activeSessionId = useStore((s) => s.activeSessionId);
+  const setProjectsOpen = useStore((s) => s.setProjectsOpen);
+  const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+  const rawPath = activeProject?.root ?? activeSession?.cwd ?? home;
+  const pathLabel = rawPath ? (displayWslCwd(rawPath) ?? abbreviate(rawPath, home)) : '';
 
   // FR-21/22: seed once from the core cache, then follow francois://app/event;
   // the returned teardown unsubscribes on unmount (§7 #12).
@@ -62,20 +73,29 @@ export default function UsageBar() {
   const fullError = view.error && !view.error.compact ? view.error : null;
 
   return (
-    <div
-      style={{
-        height: 28,
-        flex: '0 0 28px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 16,
-        padding: '0 12px',
-        background: T.bg,
-        borderBottom: `1px solid ${T.border}`,
-        fontSize: 10.5,
-      }}
-    >
+    <div className="usage-bar">
+      {/* design-refresh FR-4: left brand cluster — diamond glyph + wordmark +
+          project-path button. Click opens the Projects modal (the nearest
+          existing "manage this" affordance) — no dropdown of its own. */}
+      <div className="titlebar-brand">
+        <span className="titlebar-logo" />
+        <span className="titlebar-wordmark">Francois</span>
+        {rawPath && (
+          <button
+            type="button"
+            onClick={() => setProjectsOpen(true)}
+            onMouseEnter={() => setPathHover(true)}
+            onMouseLeave={() => setPathHover(false)}
+            title={rawPath}
+            className={pathHover ? 'titlebar-path titlebar-path--hover' : 'titlebar-path'}
+          >
+            <span className="titlebar-path-dot" />
+            <span className="truncate titlebar-path-text">{pathLabel}</span>
+            <span className="titlebar-path-caret">▾</span>
+          </button>
+        )}
+      </div>
+
       {/* meter region — the whole strip left of the freshness label is the click target (FR-27) */}
       <div
         onClick={requestUsageRefresh}
@@ -83,20 +103,12 @@ export default function UsageBar() {
         // App.tsx's global keys only stand down while focus is in an input/terminal —
         // so without this the next keystroke after a click fires `n`/`d`/`t` (FR-3).
         onMouseDown={(e) => e.preventDefault()}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 18,
-          cursor: 'pointer',
-          minWidth: 0,
-          overflow: 'hidden',
-          // loading WITH data: a plain opacity swap, nothing else (FR-25)
-          opacity: view.dimmed ? 0.45 : 1,
-        }}
+        // loading WITH data: a plain opacity swap, nothing else (FR-25)
+        className={`usage-meters${view.dimmed ? ' usage-meters--dimmed' : ''}`}
       >
         {fullError ? (
           // no stale data to protect → the one-line affordance replaces the meters (FR-26)
-          <span title={fullError.message} style={{ color: T.error, display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+          <span title={fullError.message} className="usage-error-full">
             <span>⚠</span>
             <span>usage unavailable</span>
           </span>
@@ -104,38 +116,32 @@ export default function UsageBar() {
           <>
             {/* stale meters survive an error; the glyph shrinks to bare ⚠ beside them (FR-26) */}
             {view.error && (
-              <span title={view.error.message} style={{ color: T.error, flex: '0 0 auto' }}>
+              <span title={view.error.message} className="usage-error-glyph">
                 ⚠
               </span>
             )}
             {view.empty ? (
-              <span style={{ color: T.faint, whiteSpace: 'nowrap' }}>usage —</span>
+              <span className="usage-empty">usage —</span>
             ) : (
               view.chips.map((chip, i) => <MeterChip key={`${chip.label}:${i}`} chip={chip} />)
             )}
           </>
         )}
-      </div>
-
-      {/* freshness + session reset countdown, joined by ' · ' (FR-30); degrades to
-          whichever half exists — doubles as the refresh affordance (§8) */}
-      <span
+        <span
         onClick={requestUsageRefresh}
         onMouseDown={(e) => e.preventDefault()} // see the meter region above (FR-3)
         onMouseEnter={() => setFreshHover(true)}
         onMouseLeave={() => setFreshHover(false)}
         title={view.resetTitle}
-        style={{
-          color: freshHover ? T.label : T.faint,
-          flex: '0 0 auto',
-          cursor: 'pointer',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
+        className={`usage-fresh${freshHover ? ' usage-fresh--hover' : ''}`}
       >
         {view.trailing}
       </span>
+      </div>
+
+      {/* freshness + session reset countdown, joined by ' · ' (FR-30); degrades to
+          whichever half exists — doubles as the refresh affordance (§8) */}
+      
     </div>
   );
 }

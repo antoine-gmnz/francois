@@ -1,0 +1,313 @@
+/* app-shell layout (App.tsx) — migrated from inline styles (refactor Phase
+   2). These classes cover the static shapes only; genuinely dynamic values
+   (pane-toggle grid columns, focus/status-driven border and text colors that
+   vary per render) stay inline in App.tsx per REFACTOR-CONVENTIONS.md. */
+
+.app-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+}
+
+/* design-refresh: 12px gutter + 12px window padding, per the mock's
+   `grid-template-columns:276px 1fr 296px; gap:12px; padding:12px`. The status
+   bar is NOT a grid row — it is a full-bleed 30px strip below the grid (see
+   .app-status-bar), so the gutter never draws a margin around it. */
+.app-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr;
+  gap: var(--space-12);
+  padding: var(--space-12);
+}
+
+.app-col-left {
+  grid-row: 1;
+  min-height: 0;
+}
+
+.app-col-right {
+  grid-row: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.app-panel-agents {
+  flex: 1.3;
+  min-height: 0;
+}
+.app-panel-mcp {
+  flex: 0.95;
+  min-height: 0;
+}
+.app-panel-skills {
+  flex: 1.05;
+  min-height: 0;
+}
+
+/* design-refresh: every pane is a --bg-panel card on a --bg-app window, with
+   the OUTER border (--border-2) and the 8px panel radius; --border/--radius-md
+   are the INNER divider/chip scale and read as a hairline seam out here. */
+.app-main-section {
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.app-tabstrip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-14);
+  padding: var(--space-10) var(--space-14);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.app-tabstrip-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  overflow-x: auto;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* design-refresh FR-5: the segmented pill control — a recessed track holding
+   the built-in tabs (Overview/Session/Diff/Shell), sentence-case. */
+.tab-segment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+  flex-shrink: 0;
+}
+.tab-segment-divider {
+  width: 1px;
+  height: 20px;
+  align-self: center;
+  background: var(--border-2);
+  flex-shrink: 0;
+}
+/* Tab strip label (Overview/Session/Diff/Shell). --on recolors + fills the
+   pill when it is the active main tab. */
+.app-tab {
+  font-size: var(--font-size-12-5);
+  font-weight: 500;
+  cursor: pointer;
+  padding: var(--space-5) var(--space-12);
+  border-radius: var(--radius-md);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.app-tab:hover {
+  color: var(--text-hint);
+}
+.app-tab--on,
+.app-tab--on:hover {
+  color: var(--text-bright);
+  font-weight: 600;
+  background: var(--bg-hover-2);
+  box-shadow: var(--shadow-pill);
+}
+.app-tab--diff {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+}
+/* design-refresh FR-5: the Diff count is an accent-on-dark pill in the mock,
+   not the neutral grey `.badge-pill` the shared utility paints. Scoped to the
+   tab so the sidebar's file-count badges keep the neutral look. */
+.app-tab--diff .badge-pill {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  background: var(--accent);
+  color: var(--bg-app);
+  border-radius: 9px;
+  padding: 3px 5px;
+}
+
+.app-meta-cluster {
+  display: flex;
+  gap: var(--space-12);
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* design-refresh FR-5: the session meta cluster's context readout — mini fill
+   bar + --font-mono figure (numbers are mono, labels are UI type). */
+.app-ctx {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+}
+.app-ctx-track {
+  width: 52px;
+  height: var(--space-4);
+  border-radius: var(--radius-xs);
+  background: var(--border-2);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.app-ctx-fill {
+  display: block;
+  height: 100%;
+  background: var(--hue-blue);
+}
+.app-ctx-figure {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-app);
+}
+.app-shell-terminal-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+.app-shell-footer {
+  padding: var(--space-10) var(--space-14);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--space-14);
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+  background: var(--bg-app);
+  flex-shrink: 0;
+}
+
+/* design-refresh FR-10: a 30px full-bleed strip under the grid — not a bordered
+   card inside it, so it reads as window chrome (like the titlebar) rather than
+   a fourth pane. Border on the top edge only, no radius, no side gutters. */
+.app-status-bar {
+  height: 30px;
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  padding: 0 var(--space-14);
+  background: var(--bg-deep);
+  border-top: 1px solid var(--border-2);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+.app-status-bar > span {
+  white-space: nowrap;
+}
+
+.app-flex-spacer {
+  flex: 1;
+}
+.app-clickable {
+  cursor: pointer;
+}
+.app-inline-key {
+  color: var(--accent);
+  margin: 0 var(--space-4);
+}
+/* design-refresh FR-2: hotkey glyphs and version strings are --font-mono; the
+   surrounding label copy stays in --font-ui. */
+.app-key {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+.app-key--accent {
+  color: var(--accent);
+}
+
+/* Text-color utilities for the many single-property color spans in the tab
+   strip / shell footer / status bar — what the deleted `const C` token-alias
+   object used to serve. */
+.app-text-dim {
+  color: var(--text-dim);
+}
+.app-text-faint {
+  color: var(--text-faint);
+}
+.app-text-accent {
+  color: var(--accent);
+}
+.app-text-bright {
+  color: var(--text-bright);
+}
+.app-text-hint {
+  color: var(--text-hint);
+}
+.app-text-error {
+  color: var(--error);
+}
+
+/* Pane-toggle labels ("sessions" / "panels") dim when their column is hidden. */
+.app-pane-label {
+  opacity: 1;
+}
+.app-pane-label--off {
+  opacity: 0.5;
+}
+
+/* agent-tab FR-12 chip in the tab strip — design-refresh FR-5: a small pill,
+   not an underlined label; the active one fills + rings like a segment tab. */
+.app-tab-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 28px;
+  font-size: var(--font-size-12-5);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 var(--space-8) 0 var(--space-10);
+  border-radius: var(--radius-card);
+  color: var(--text-hint);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  max-width: 170px;
+  min-width: 92px;
+  flex: 0 1 auto;
+}
+.app-tab-chip:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-emphasis);
+}
+.app-tab-chip--active,
+.app-tab-chip--active:hover {
+  color: var(--text-bright);
+  font-weight: 600;
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-pill);
+}
+.app-tab-chip-glyph {
+  color: var(--accent-2);
+  flex-shrink: 0;
+}
+.app-tab-chip-close {
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.app-tab-chip-close:hover {
+  color: var(--text-strong);
+}

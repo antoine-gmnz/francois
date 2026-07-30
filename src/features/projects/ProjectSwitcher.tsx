@@ -8,16 +8,10 @@ import { useEffect, useRef, useState } from 'react';
 import { buildSwitcherRows, abbreviateRoot, safeCall, switcherLabel } from './projects';
 import { projectList } from '../../lib/api';
 import { useStore } from '../../lib/store';
-
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  muted: 'var(--text-muted)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-  error: 'var(--error)',
-};
+import { useMounted } from '../../lib/hooks/useMounted';
+import { useDismiss } from '../../lib/hooks/useDismiss';
+import { ListRow } from '../../ui/ListRow';
+import './projects.css';
 
 export default function ProjectSwitcher({ home }: { home: string }) {
   const projects = useStore((s) => s.projects);
@@ -28,7 +22,8 @@ export default function ProjectSwitcher({ home }: { home: string }) {
   const projectsOpen = useStore((s) => s.projectsOpen);
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
-  const mounted = useRef(true);
+  const mounted = useMounted();
+  const dismissRef = useRef<HTMLDivElement>(null);
 
   // Never trust a cached registry: read on mount, on every dropdown open, and
   // whenever the modal closes (rootExists is derived per list — FR-2/FR-32).
@@ -37,13 +32,6 @@ export default function ProjectSwitcher({ home }: { home: string }) {
       if (mounted.current && res.ok) setProjects(res.data);
     });
   };
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
 
   // The modal is the only other writer of the registry; re-read when it closes.
   // This also covers the initial load — its first run fires on mount — so there is
@@ -55,29 +43,18 @@ export default function ProjectSwitcher({ home }: { home: string }) {
   }, [projectsOpen]);
 
   // Escape / outside click close the dropdown (§8 interactions).
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    window.addEventListener('click', close);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
+  useDismiss(dismissRef, {
+    onEscape: () => setOpen(false),
+    onOutsideClick: () => setOpen(false),
+    enabled: open,
+  });
 
   const active = projects.find((p) => p.id === activeProjectId) ?? null;
   const rows = buildSwitcherRows(projects, activeProjectId);
   const filtered = active !== null;
 
   return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
+    <div ref={dismissRef} className="pjsw-root">
       <button
         type="button"
         aria-haspopup="listbox"
@@ -89,39 +66,16 @@ export default function ProjectSwitcher({ home }: { home: string }) {
         }}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
-        style={{
-          height: 26,
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 7,
-          padding: '0 12px',
-          // --bg-elevated is all but invisible against --bg-panel in the light
-          // theme; --bg-hover is what every other interactive row in pane [1]
-          // uses (the remove menu, the dropdown rows) and reads in both themes.
-          background: hover ? 'var(--bg-hover)' : 'transparent',
-          border: 0,
-          borderBottom: '1px solid var(--border)',
-          cursor: 'pointer',
-          fontFamily: 'inherit',
-          textAlign: 'left',
-        }}
+        className={hover ? 'pjsw-toggle pjsw-toggle--hover' : 'pjsw-toggle'}
       >
         {/* The mock's `▾` (U+25BE, the SMALL triangle) carries almost no ink in
             JetBrains Mono — at 8px it reads as a stray period rather than a
             disclosure control. U+25BC at 8px is the same visual weight the mock
             intended, and holds up in both themes. */}
-        <span style={{ fontSize: 8, lineHeight: 1, flexShrink: 0, color: filtered ? C.accent : C.muted }}>▼</span>
+        <span className={filtered ? 'pjsw-glyph pjsw-glyph--filtered' : 'pjsw-glyph'}>▼</span>
         <span
-          style={{
-            fontSize: 11,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            // Unfiltered is a quiet scope line, not a heading: --text would put
-            // it at the same weight as the session names right below it.
-            color: filtered ? C.accent : hover ? C.bright : C.dim,
-          }}
+          className="truncate pjsw-label"
+          style={{ color: filtered ? 'var(--accent)' : hover ? 'var(--text-bright)' : 'var(--text-dim)' }}
         >
           {switcherLabel(active)}
         </span>
@@ -129,97 +83,45 @@ export default function ProjectSwitcher({ home }: { home: string }) {
             reads as a control that has contents. Hidden while empty. */}
         {projects.length > 0 && (
           <>
-            <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 10, color: C.faint, flexShrink: 0 }}>{projects.length}</span>
+            <span className="pjsw-spacer" />
+            <span className="pjsw-count">{projects.length}</span>
           </>
         )}
       </button>
 
       {open && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            right: 0,
-            zIndex: 40,
-            background: 'var(--bg-panel)',
-            border: '1px solid var(--border-2)',
-            borderRadius: 5,
-            boxShadow: '0 6px 20px rgba(0,0,0,0.45)',
-            padding: '4px 0',
-            animation: 'dropIn 90ms ease-out',
-          }}
-        >
+        <div onClick={(e) => e.stopPropagation()} className="pjsw-dropdown">
           {/* The listbox is ONLY the selectable scopes — the manage action below is
               a sibling, so it is never announced as an option. The scroll cap lives
               here rather than on the panel so that action can't scroll out of reach. */}
-          <div
-            role="listbox"
-            className="scz"
-            style={{
-              maxHeight: 260,
-              // Vertical scroll only — a row must never widen the panel and mint a
-              // horizontal scrollbar; long names and roots ellipsize in place.
-              overflowY: 'auto',
-              overflowX: 'hidden',
-            }}
-          >
-          {rows.map((r) => (
-            <Row
-              key={r.id ?? '__all__'}
-              role="option"
-              selected={r.selected}
-              onClick={() => {
-                setActiveProjectId(r.id);
-                setOpen(false);
-              }}
-            >
-              <span style={{ width: 8, flexShrink: 0, fontSize: 9, color: C.accent }}>{r.mark}</span>
-              {/* The NAME is the primary information: it takes the slack and is the
-                  last thing to be truncated. `minWidth: 0` is what actually lets it
-                  ellipsize instead of collapsing — without it a long root next to a
-                  `missing` tag squeezed the name to ZERO width and it vanished. */}
-              <span
-                style={{
-                  flex: '1 1 auto',
-                  minWidth: 0,
-                  fontSize: 11,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  color: r.missing ? C.muted : C.primary,
+          <div role="listbox" className="scz pjsw-listbox">
+            {rows.map((r) => (
+              <Row
+                key={r.id ?? '__all__'}
+                role="option"
+                selected={r.selected}
+                onClick={() => {
+                  setActiveProjectId(r.id);
+                  setOpen(false);
                 }}
               >
-                {r.name}
-              </span>
-              {r.missing && <span style={{ fontSize: 9, color: C.error, flexShrink: 0 }}>missing</span>}
-              {/* The root is secondary: it shrinks and ellipsizes first, and is
-                  capped so a deep path can never crowd out the name. */}
-              <span
-                style={{
-                  flex: '0 1 auto',
-                  minWidth: 0,
-                  maxWidth: '52%',
-                  fontSize: 10,
-                  color: C.faint,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  textAlign: 'right',
-                }}
-              >
-                {abbreviateRoot(r.root, home)}
-              </span>
-            </Row>
-          ))}
-
+                <span className="pjsw-row-mark">{r.mark}</span>
+                {/* The NAME is the primary information: it takes the slack and is
+                    the last thing to be truncated. */}
+                <span className={`truncate pjsw-row-name${r.missing ? ' pjsw-row-name--missing' : ''}`}>
+                  {r.name}
+                </span>
+                {r.missing && <span className="pj-missing-tag">missing</span>}
+                {/* The root is secondary: it shrinks and ellipsizes first, and is
+                    capped so a deep path can never crowd out the name. */}
+                <span className="truncate pjsw-row-root">{abbreviateRoot(r.root, home)}</span>
+              </Row>
+            ))}
           </div>
 
           {/* Outside the listbox on purpose: it is an ACTION, not one of the
               selectable scopes, so it must not be announced as an option. */}
-          <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0 0' }} />
+          <div className="pjsw-divider" />
           <Row
             role="button"
             onClick={() => {
@@ -227,7 +129,7 @@ export default function ProjectSwitcher({ home }: { home: string }) {
               setProjectsOpen(true);
             }}
           >
-            <span style={{ fontSize: 11, color: C.dim }}>Manage projects…</span>
+            <span className="pjsw-manage-label">Manage projects…</span>
           </Row>
         </div>
       )}
@@ -248,7 +150,7 @@ function Row({
 }) {
   const [hover, setHover] = useState(false);
   return (
-    <div
+    <ListRow
       role={role}
       // Only an `option` carries selection state; hardcoding false here meant the
       // active scope (the one wearing the ✦) was announced as unselected.
@@ -256,17 +158,10 @@ function Row({
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{
-        height: 24,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 7,
-        padding: '0 12px',
-        cursor: 'pointer',
-        background: hover ? 'var(--bg-hover)' : 'transparent',
-      }}
+      hovered={hover}
+      className="pjsw-row"
     >
       {children}
-    </div>
+    </ListRow>
   );
 }

@@ -12,13 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
-#[cfg(windows)]
-fn no_window(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash (wsl.exe)
-}
-#[cfg(not(windows))]
-fn no_window(_cmd: &mut Command) {}
+use crate::process_util::no_window;
 
 // ---------- FR-1/FR-2: path vocabulary (mirrors contract/wsl-filesystem.ts) ----------
 

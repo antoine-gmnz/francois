@@ -1,0 +1,63 @@
+import { togglePalette } from '../features/palette/palette';
+import type { Pane, Theme } from '../lib/store';
+
+export interface StatusBarProps {
+  theme: Theme;
+  toggleTheme: () => void;
+  focusedPane: Pane;
+  /** Name of the agent whose tab is open, or null on a built-in tab (FR-10). */
+  activeAgentName: string | null;
+  /** Subagents currently running for the active session (fleet-board FR-5). */
+  runningAgents: number;
+  appVersion: string;
+}
+
+/**
+ * The app-shell's bottom status bar. design-refresh FR-10: condensed to ⌘K,
+ * the focus readout (plus the agent-tab keyboard hints while one is open),
+ * the theme toggle and the version — the old ten-hint string is gone. Every
+ * hotkey it used to name still works; `1`–`5`, `[`/`]`, `o`/`d`/`t` and `n`
+ * are bound in useAppShortcuts, not here.
+ */
+export default function StatusBar({ theme, toggleTheme, focusedPane, activeAgentName, runningAgents, appVersion }: StatusBarProps) {
+  return (
+    <div className="app-status-bar">
+      <span onClick={() => togglePalette()} className="app-clickable app-text-dim">
+        <span className="app-key app-key--accent">⌘K</span> commands
+      </span>
+      {activeAgentName ? (
+        <>
+          <span>
+            focus <span className="app-text-hint">{activeAgentName}</span>
+          </span>
+          <span>
+            <span className="app-key">⌥1-9</span> jump to tab
+          </span>
+          <span>
+            <span className="app-key">⌘W</span> close tab
+          </span>
+        </>
+      ) : (
+        <>
+          <span>
+            focus <span className="app-text-hint">{focusedPane}</span>
+          </span>
+          {runningAgents > 0 && (
+            <span>
+              <span className="app-text-accent">{runningAgents}</span> {runningAgents === 1 ? 'agent' : 'agents'} running
+            </span>
+          )}
+        </>
+      )}
+      <span className="app-flex-spacer" />
+      <span
+        onClick={toggleTheme}
+        className="app-clickable app-text-dim"
+        title={theme === 'dark' ? 'switch to light theme' : 'switch to dark theme'}
+      >
+        {theme === 'dark' ? '☾' : '☀'} {theme}
+      </span>
+      <span className="app-key">{appVersion || 'dev'}</span>
+    </div>
+  );
+}

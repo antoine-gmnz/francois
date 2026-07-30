@@ -1,222 +1,67 @@
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { SessionEvent, SlashCommandInfo } from '../../../contract/common';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { SlashCommandInfo } from '../../../contract/common';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
-import { getTranscript, onSessionEvent, sessionClear, sessionInterrupt, sessionListCommands, sessionSend } from '../../lib/api';
-import Block from './Block';
-import { compactBlocks, isClearCommand, transcriptReducer, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
+import { sessionClear, sessionInterrupt, sessionSend } from '../../lib/api';
+import Block, { ToolGroup } from './Block';
+import Composer from './Composer';
+import { compactBlocks, groupToolRuns, isClearCommand, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
+import JumpToLatestChip from './JumpToLatestChip';
+import ResumeFailBanner from './ResumeFailBanner';
+import { useConversationTranscript } from './useConversationTranscript';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { composerPlaceholder, hasPendingQuestionBlock } from '../questions/question-card';
 import {
   completionText,
   filterCommands,
-  getSessionCommands,
   moveSelection,
   nextDismissed,
   popupKeyAction,
   popupVisible,
   refreshSelection,
-  setSessionCommands,
   slashToken,
 } from '../commands/slash-menu';
-import SlashMenu from '../commands/SlashMenu';
 import { useStore } from '../../lib/store';
-import { dismissWorktreeNotice, isWorktreeNoticeDismissed, worktreeFetchWarningLine } from '../sessions/worktree';
+import './conversation.css';
+import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
+import WorktreeNotice from './WorktreeNotice';
 
-const C = {
-  accent: 'var(--accent)',
-  faint: 'var(--text-faint)',
-  dim: 'var(--text-dim)',
-  userBody: 'var(--text-strong)',
-  error: 'var(--error)',
-};
-
-// Block apply rules (reducer) live in ./conversation-blocks — pure + unit-tested.
-
-function eventSessionId(e: SessionEvent): string | null {
-  if (e.type === 'session.meta') return e.meta.id;
-  if ('sessionId' in e) return e.sessionId;
-  return null;
-}
+// Block apply rules (reducer) and the SessionEvent dispatch table live in
+// ./conversation-blocks — pure + unit-tested. Hydration/subscription plumbing
+// lives in ./useConversationTranscript.
 
 export default function ConversationView({ sessionId }: { sessionId: string }) {
-  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
-  const [state, dispatch] = useReducer(transcriptReducer, { blocks: [] });
-  const [hydrated, setHydrated] = useState(false);
-  const [hydrationError, setHydrationError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>(meta?.status ?? 'idle');
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(meta?.errorMessage);
-  const [isPinned, setPinned] = useState(true);
+  const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId) ?? null);
+  const {
+    state,
+    dispatch,
+    hydrated,
+    hydrationError,
+    status,
+    errorMessage,
+    resumeFailed,
+    dismissResumeFailed,
+    commands,
+    isPinned,
+    setPinned,
+    scrollRef,
+    onScroll,
+    jumpToLatest,
+  } = useConversationTranscript(sessionId);
+
   const [input, setInput] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
-  const [resumeFailed, setResumeFailed] = useState(false); // durable-sessions FR-14 banner
   // session-worktree FR-14: per-session dismissal, persisted in localStorage —
   // once dismissed the banner never returns for this session (component is
   // keyed by sessionId, so this state is naturally fresh per session).
   const [worktreeNoticeDismissed, setWorktreeNoticeDismissed] = useState(() => isWorktreeNoticeDismissed(sessionId));
 
-  // slash-menu popup state (spec §6): registry mirror for THIS session (cache-
-  // seeded, FR-10), dismissal token (FR-9) and selection (FR-7). All component-
-  // local — a session switch remounts (keyed by sessionId) and clears them.
-  const [commands, setCommands] = useState<SlashCommandInfo[]>(() => getSessionCommands(sessionId));
+  // slash-menu popup state (spec §6): dismissal token (FR-9) and selection
+  // (FR-7). Component-local — a session switch remounts (keyed by sessionId)
+  // and clears them.
   const [dismissedToken, setDismissedToken] = useState<string | null>(null);
   const [selIdx, setSelIdx] = useState(0);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const pinnedRef = useRef(true);
-  pinnedRef.current = isPinned;
-
-  // Hydration + live events (FR-8/9/10). Component is keyed by sessionId in the
-  // parent, so this runs fresh per session; a stale getTranscript after unmount
-  // is discarded via mountedRef (FR-9).
-  useEffect(() => {
-    let mounted = true;
-    let unlisten: (() => void) | undefined;
-    let hydratedLocal = false;
-    const pending: SessionEvent[] = [];
-
-    const route = (e: SessionEvent) => {
-      switch (e.type) {
-        case 'session.status':
-          setStatus(e.status);
-          break;
-        case 'session.meta':
-          setStatus(e.meta.status);
-          setErrorMessage(e.meta.errorMessage);
-          break;
-        case 'session.error':
-          setErrorMessage(e.error.message);
-          setStatus('error');
-          break;
-        case 'context.usage':
-          useStore.getState().patchUsage(sessionId, e.usedTokens, e.limitTokens);
-          break;
-        case 'message.user':
-          dispatch({ t: 'msgUser', blockId: e.blockId, text: e.text });
-          setResumeFailed(false); // a new user turn clears the resume-fail notice (FR-14)
-          break;
-        case 'session.resumeFailed':
-          setResumeFailed(true); // the --resume was rejected; core continued fresh (FR-9/14)
-          break;
-        case 'session.cleared':
-          // /clear full reset: drop every block (context.usage 0 resets the meter)
-          dispatch({ t: 'clear' });
-          setResumeFailed(false);
-          setPinned(true);
-          break;
-        case 'assistant.delta':
-          dispatch({ t: 'delta', blockId: e.blockId, text: e.text });
-          break;
-        case 'assistant.done':
-          dispatch({ t: 'assistantDone', blockId: e.blockId });
-          break;
-        case 'tool.start':
-          dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary });
-          break;
-        case 'tool.done':
-          dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta });
-          break;
-        case 'command.started':
-          // interactive-commands FR-20: pending command block (loading card)
-          dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command });
-          break;
-        case 'command.output':
-          // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
-          dispatch({ t: 'commandOutput', blockId: e.blockId, card: e.card });
-          break;
-        case 'question.asked':
-          // session-questions FR-6/16: insert the pending question card
-          dispatch({ t: 'questionAsked', blockId: e.blockId, questions: e.questions });
-          break;
-        case 'question.resolved':
-          // session-questions FR-11/13/16: flip to answered/cancelled in place
-          dispatch({ t: 'questionResolved', blockId: e.blockId, state: e.state, answers: e.answers });
-          break;
-        case 'permission.asked':
-          // permission-guardrails FR-2/24: insert the pending approval card
-          dispatch({ t: 'permissionAsked', blockId: e.blockId, ask: e.ask });
-          break;
-        case 'permission.resolved':
-          // permission-guardrails FR-8/10/24: flip to allowed/denied/cancelled in place
-          dispatch({ t: 'permissionResolved', blockId: e.blockId, state: e.state, rule: e.rule });
-          break;
-        case 'session.commands':
-          // slash-menu FR-10: idempotent replace — an open popup refilters in place
-          setCommands(e.commands);
-          break;
-        default:
-          break;
-      }
-    };
-
-    void onSessionEvent((e) => {
-      // slash-menu edge 7: cache the registry for EVERY session (no UI effect
-      // for non-visible ones — they re-seed from this cache when shown).
-      if (e.type === 'session.commands') setSessionCommands(e.sessionId, e.commands);
-      if (eventSessionId(e) !== sessionId) return;
-      if (!hydratedLocal) pending.push(e);
-      else route(e);
-    }).then((u) => {
-      if (!mounted) u();
-      else unlisten = u;
-    });
-
-    void getTranscript(sessionId).then((res) => {
-      if (!mounted) return; // FR-9: discard stale response
-      if (res.ok) {
-        dispatch({ t: 'seed', blocks: res.data });
-        for (const e of pending) route(e);
-        pending.length = 0;
-        hydratedLocal = true;
-        setHydrated(true);
-        setPinned(true);
-      } else {
-        setHydrationError(res.error.message);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      if (unlisten) unlisten();
-    };
-  }, [sessionId]);
-
-  // slash-menu FR-10: seed the registry on mount / session switch (the keyed
-  // remount makes both the same path). The cache gave an instant value above;
-  // listCommands refreshes it. Errors keep whatever the cache had.
-  useEffect(() => {
-    let mounted = true;
-    void sessionListCommands(sessionId).then((res) => {
-      if (!mounted || !res.ok) return;
-      setSessionCommands(sessionId, res.data);
-      setCommands(res.data);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, [sessionId]);
-
-  // Scroll-to-bottom while pinned (FR-17/18).
-  useLayoutEffect(() => {
-    if (pinnedRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [state.blocks, hydrated]);
-
-  const onScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (dist > 32 && pinnedRef.current) setPinned(false); // FR-19
-    // Scrolling back within the same band re-pins — the "jump to latest" chip
-    // must clear on a manual return to the bottom, not only via its own click.
-    else if (dist <= 32 && !pinnedRef.current) setPinned(true);
-  };
-
-  const jumpToLatest = () => {
-    setPinned(true);
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  };
 
   const disabled = status === 'done' || status === 'error';
 
@@ -338,218 +183,83 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     hasPendingPermissionBlock(state.blocks),
   );
 
-  // session-worktree FR-14: computed once per render rather than twice inline in the banner JSX below.
-  const fetchWarning = meta?.worktree ? worktreeFetchWarningLine(meta.worktree) : null;
-
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript so
-          it never scrolls away. A live region on first render (spec §8 notes). */}
+    <div className="conv-root">
+      {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript
+          so it never scrolls away. */}
       {meta?.worktree && !worktreeNoticeDismissed && (
-        <div
-          role="status"
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 9,
-            background: 'color-mix(in srgb, var(--warn) 9%, transparent)',
-            borderLeft: '2px solid var(--warn)',
-            borderRadius: 4,
-            padding: '8px 11px',
-            margin: '6px 8px',
-            flexShrink: 0,
+        <WorktreeNotice
+          worktree={meta.worktree}
+          onDismiss={() => {
+            dismissWorktreeNotice(sessionId);
+            setWorktreeNoticeDismissed(true);
           }}
-        >
-          <div style={{ fontSize: 11.5, color: 'var(--text-hint)', flex: 1 }}>
-            this session runs in an isolated git worktree — no dependencies were installed, and
-            local-scope config (<code>.claude/settings.local.json</code>, local <code>.mcp.json</code>) was not
-            carried over, so permission rules and MCP servers may differ from the parent checkout.
-            {fetchWarning && <div style={{ marginTop: 4 }}>{fetchWarning}</div>}
-          </div>
-          <span
-            onClick={() => {
-              dismissWorktreeNotice(sessionId);
-              setWorktreeNoticeDismissed(true);
-            }}
-            style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }}
-            title="dismiss"
-          >
-            ✕
-          </span>
-        </div>
+        />
       )}
 
       {/* resume-fail banner (durable-sessions FR-14) */}
-      {resumeFailed && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            background: 'var(--bg-raised)',
-            borderLeft: '2px solid var(--warn)',
-            borderRadius: 4,
-            padding: '8px 11px',
-            margin: '6px 8px',
-            flexShrink: 0,
-            animation: 'fadeIn 120ms ease-out',
-          }}
-        >
-          <span style={{ fontSize: 11.5, color: 'var(--text-hint)', flex: 1 }}>previous thread unavailable — continuing fresh</span>
-          <span onClick={() => setResumeFailed(false)} style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }} title="dismiss">
-            ✕
-          </span>
-        </div>
-      )}
+      {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
 
       {/* transcript */}
-      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+      <div className="conv-transcript-wrap">
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="scz"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            overflow: 'auto',
-            padding: '16px 18px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-            // The app root disables selection (styles.css body rule) for chrome;
-            // the transcript is CONTENT — copying out of it must work.
-            ...TRANSCRIPT_TEXT_SELECT_STYLE,
-            cursor: 'auto',
-          }}
+          className="scz conv-scroll"
+          // mac-text-selection FR-1: .conv-scroll already sets `user-select: text`;
+          // WKWebView needs the -webkit- prefixed form too — see
+          // TRANSCRIPT_TEXT_SELECT_STYLE.
+          style={TRANSCRIPT_TEXT_SELECT_STYLE}
         >
           {hydrationError ? (
             <Centered>
-              <span style={{ color: C.error }}>{hydrationError}</span>
+              <span className="conv-error-text">{hydrationError}</span>
             </Centered>
           ) : hydrated && state.blocks.length === 0 ? (
             <Centered>
-              <div style={{ fontSize: 12, color: C.dim }}>{meta && (displayWslCwd(meta.cwd) ?? meta.cwd)}</div>
-              <div style={{ fontSize: 11, color: C.faint, marginTop: 2 }}>{meta?.model.label}</div>
-              <div style={{ fontSize: 12.5, color: C.faint, marginTop: 10 }}>waiting for your first prompt</div>
+              <div className="conv-empty__cwd">{meta && (displayWslCwd(meta.cwd) ?? meta.cwd)}</div>
+              <div className="conv-empty__model">{meta?.model.label}</div>
+              <div className="conv-empty__hint">waiting for your first prompt</div>
             </Centered>
           ) : (
-            compactBlocks(state.blocks).map((b) => <Block key={b.blockId} b={b} sessionId={sessionId} />)
+            groupToolRuns(compactBlocks(state.blocks)).map((item) => (
+              <div key={item.kind === 'tool-group' ? item.blockId : item.block.blockId} className="conv-item">
+                {item.kind === 'tool-group' ? <ToolGroup blocks={item.blocks} /> : <Block b={item.block} sessionId={sessionId} />}
+              </div>
+            ))
           )}
         </div>
 
-        {!isPinned && (
-          <div
-            onClick={jumpToLatest}
-            style={{
-              position: 'absolute',
-              bottom: 10,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              padding: '5px 12px',
-              borderRadius: 12,
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--border-2)',
-              fontSize: 10.5,
-              color: C.accent,
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--bg-raised)')}
-          >
-            ↓ jump to latest
-          </div>
-        )}
+        {!isPinned && <JumpToLatestChip onClick={jumpToLatest} />}
       </div>
 
       {/* input bar */}
-      <div style={{ position: 'relative', flexShrink: 0 }}>
-        {/* slash-menu popup — anchored above the input bar, never covering it (FR-5) */}
-        {popupOpen && (
-          <SlashMenu items={filtered} selIdx={selIdx} onHover={setSelIdx} onRun={runCommand} onDismiss={dismissPopup} />
-        )}
-        {sendError && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '100%',
-              left: 14,
-              right: 14,
-              marginBottom: 4,
-              background: 'color-mix(in srgb, var(--error) 9%, transparent)',
-              color: C.error,
-              fontSize: 11,
-              borderRadius: 4,
-              padding: '6px 10px',
-            }}
-          >
-            {sendError}
-          </div>
-        )}
-        <div
-          style={{
-            padding: '10px 14px',
-            borderTop: '1px solid var(--border)',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          <span style={{ color: disabled ? 'var(--text-disabled)' : C.accent, fontSize: 13, marginTop: 2 }}>›</span>
-          <textarea
-            ref={inputRef}
-            value={input}
-            disabled={disabled}
-            placeholder={placeholder}
-            onChange={(e) => {
-              setInput(e.target.value);
-              autoGrow(e.target);
-            }}
-            onKeyDown={onInputKey}
-            rows={1}
-            style={{
-              flex: 1,
-              resize: 'none',
-              border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              color: C.userBody,
-              fontSize: 12.5,
-              fontFamily: 'inherit',
-              lineHeight: 1.5,
-              maxHeight: 130,
-              padding: 0,
-            }}
-          />
-          <span style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 3, display: 'flex', gap: 10, flexShrink: 0 }}>
-            {status === 'running' && (
-              <span>
-                <span style={{ color: C.accent }}>⌃C</span> interrupt
-              </span>
-            )}
-            <span>⌘K palette</span>
-          </span>
-        </div>
-      </div>
+      <Composer
+        status={status}
+        disabled={disabled}
+        input={input}
+        inputRef={inputRef}
+        placeholder={placeholder}
+        sendError={sendError}
+        onInputChange={(e) => {
+          setInput(e.target.value);
+          autoGrow(e.target);
+        }}
+        onInputKey={onInputKey}
+        onSend={() => void send()}
+        popupOpen={popupOpen}
+        filtered={filtered}
+        selIdx={selIdx}
+        onHover={setSelIdx}
+        onRun={runCommand}
+        onDismiss={dismissPopup}
+      />
     </div>
   );
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        textAlign: 'center',
-        minHeight: 200,
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div className="conv-centered">{children}</div>;
 }
 
 // The per-block renderer moved to ./Block.tsx — agent-tab renders a subagent's

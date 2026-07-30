@@ -22,8 +22,14 @@ import {
   type SectionSelection,
 } from './question-card';
 
-export default function QuestionCard({ b, sessionId }: { b: QuestionConversationBlock; sessionId: string }) {
-  const [sel, setSel] = useState<SectionSelection[]>(() => initSelections(b.questions));
+export default function QuestionCard({
+  b: block,
+  sessionId,
+}: {
+  b: QuestionConversationBlock;
+  sessionId: string;
+}) {
+  const [sel, setSel] = useState<SectionSelection[]>(() => initSelections(block.questions));
   const [inFlight, setInFlight] = useState(false);
   const [otherOpen, setOtherOpen] = useState<Record<number, boolean>>({});
   const [drafts, setDrafts] = useState<Record<number, string>>({});
@@ -31,15 +37,15 @@ export default function QuestionCard({ b, sessionId }: { b: QuestionConversation
 
   // FR-21 race check: the failure path must not re-enable a card an event
   // already resolved. Ref, so the async submit sees the CURRENT block state.
-  const resolvedRef = useRef(b.state !== 'pending');
-  resolvedRef.current = b.state !== 'pending';
+  const resolvedRef = useRef(block.state !== 'pending');
+  resolvedRef.current = block.state !== 'pending';
 
-  const interactive = b.state === 'pending' && !inFlight;
+  const interactive = block.state === 'pending' && !inFlight;
 
   const submit = (answers: Record<string, string>) =>
     submitAnswers({
       answers,
-      answer: (ans) => sessionAnswerQuestion(sessionId, b.blockId, ans),
+      answer: (ans) => sessionAnswerQuestion(sessionId, block.blockId, ans),
       setInFlight,
       isResolved: () => resolvedRef.current,
       log: (m) => console.error(m),
@@ -49,12 +55,12 @@ export default function QuestionCard({ b, sessionId }: { b: QuestionConversation
   // that completes the last section submits immediately.
   const applySel = (next: SectionSelection[]) => {
     setSel(next);
-    if (shouldAutoSubmit(b.questions, next)) void submit(buildAnswers(b.questions, next));
+    if (shouldAutoSubmit(block.questions, next)) void submit(buildAnswers(block.questions, next));
   };
 
   const onPick = (i: number, label: string) => {
     if (!interactive) return;
-    applySel(pickOption(b.questions, sel, i, label));
+    applySel(pickOption(block.questions, sel, i, label));
   };
 
   const onCommitOther = (i: number) => {
@@ -62,36 +68,36 @@ export default function QuestionCard({ b, sessionId }: { b: QuestionConversation
     const text = drafts[i] ?? '';
     if (text.trim() === '') return;
     setOtherOpen((o) => ({ ...o, [i]: false }));
-    applySel(commitFreeText(b.questions, sel, i, text));
+    applySel(commitFreeText(block.questions, sel, i, text));
   };
 
   const cardClass =
     'qcard' +
-    (b.state === 'pending' ? ' qcard-pending' : '') +
-    (b.state === 'cancelled' ? ' qcard-cancelled' : '') +
-    (b.state === 'pending' && inFlight ? ' qcard-inflight' : '');
+    (block.state === 'pending' ? ' qcard-pending' : '') +
+    (block.state === 'cancelled' ? ' qcard-cancelled' : '') +
+    (block.state === 'pending' && inFlight ? ' qcard-inflight' : '');
 
-  const showSubmit = hasMultiSelect(b.questions) && b.state === 'pending'; // §8.6: never for pure single-select
+  const showSubmit = hasMultiSelect(block.questions) && block.state === 'pending'; // §8.6: never for pure single-select
   const submitEnabled = allComplete(sel);
 
   return (
     <div className={cardClass}>
       <div className="qcard-head">
         <span className="qcard-label">QUESTION</span>
-        {b.questions.map((q, i) => (
+        {block.questions.map((q, i) => (
           <span key={i} className="qcard-chip">
             {q.header}
           </span>
         ))}
-        {b.state === 'cancelled' && <span className="qcard-cancelled-note">— cancelled</span>}
+        {block.state === 'cancelled' && <span className="qcard-cancelled-note">— cancelled</span>}
       </div>
 
-      {b.questions.map((q, i) => (
+      {block.questions.map((q, i) => (
         <Section
           key={i}
           q={q}
           idx={i}
-          block={b}
+          block={block}
           sel={sel[i] ?? { selected: [], freeText: '' }}
           interactive={interactive}
           otherOpen={otherOpen[i] === true}
@@ -120,7 +126,7 @@ export default function QuestionCard({ b, sessionId }: { b: QuestionConversation
             className={'qsubmit' + (submitEnabled ? '' : ' qsubmit-disabled')}
             onClick={() => {
               if (!interactive || !submitEnabled) return;
-              void submit(buildAnswers(b.questions, sel));
+              void submit(buildAnswers(block.questions, sel));
             }}
           >
             answer ↵

@@ -59,12 +59,6 @@ pub fn read_json_object(path: &Path) -> Result<Value, String> {
     }
 }
 
-/// Monotonic counter making each temp filename unique within the process. The
-/// name used to be a constant per target, so two concurrent writers to the same
-/// file (a decide racing the editor modal, or two sessions sharing a cwd) could
-/// interleave and clobber each other's temp file.
-pub(crate) static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Write a JSON document back, 2-space pretty, via temp file + atomic rename so a
 /// crash mid-write can never leave a torn settings.json.
 ///
@@ -82,8 +76,7 @@ pub fn write_json_atomic(path: &Path, doc: &Value) -> Result<(), String> {
     let mut bytes =
         serde_json::to_vec_pretty(doc).map_err(|e| format!("could not serialize rules: {e}"))?;
     bytes.push(b'\n');
-    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = path.with_extension(format!("json.{}.{seq}.tmp", std::process::id()));
+    let tmp = crate::fs_util::unique_temp_path(path, "json");
     // Clean up on the WRITE failure too, not just the rename — a full disk takes
     // this branch, and a leaked `.tmp` would sit next to the user's settings.json.
     if let Err(e) = write_private(&tmp, &bytes, path) {

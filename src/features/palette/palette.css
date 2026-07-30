@@ -1,0 +1,189 @@
+/* command-palette overlay + toast host — static styling for PaletteView.tsx,
+   extracted off the inline `style={{}}` + local `const C` alias pattern.
+   The overlay/panel are NOT built on src/ui/Modal: Modal's `closeOnEscape`
+   defaults off, and this file's own keydown handler plus app-shell's
+   capture-phase Escape/⌘K listener already own dismissal — layering Modal's
+   click-based backdrop dismissal (vs. this component's mousedown-based one)
+   would be a behavior change, not a pure move. See the handoff. */
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--backdrop);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 118px;
+  z-index: 1000;
+  animation: fadeIn 120ms ease-out;
+}
+.palette-panel {
+  width: min(588px, calc(100vw - 32px));
+  background: var(--bg-panel);
+  border: 1px solid var(--bg-hover-2);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  animation: palettePop 120ms ease-out;
+}
+
+/* ── input row ── */
+.palette-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-11);
+  padding: var(--space-14) var(--space-16);
+  border-bottom: 1px solid var(--border);
+}
+.palette-chevron {
+  color: var(--accent);
+  font-size: var(--font-size-15);
+}
+.palette-parent-pill {
+  font-size: var(--font-size-10);
+  color: var(--text-hint);
+  background: var(--bg-hover);
+  border-radius: var(--radius-xl);
+  padding: var(--space-1) var(--space-6);
+  flex-shrink: 0;
+}
+.palette-input-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+.palette-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  padding: 0; /* text starts at left:0 so the block caret aligns with the mirror */
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--font-size-14);
+  color: var(--text-strong);
+  caret-color: transparent;
+}
+.palette-mirror {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font-family: inherit;
+  font-size: var(--font-size-14);
+  left: 0;
+}
+/* `--caret-x` is set inline per render (measured from the mirror) — the one
+   genuinely dynamic value in this row. */
+.palette-caret {
+  position: absolute;
+  left: var(--caret-x, 0px);
+  width: 8px;
+  height: 16px;
+  background: var(--accent);
+  animation: blink 1s step-end infinite;
+  pointer-events: none;
+}
+.palette-esc-hint {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+/* ── result list ── */
+.palette-list {
+  padding: var(--space-6);
+  max-height: 336px;
+  overflow-y: auto;
+}
+.palette-empty {
+  padding: var(--space-10) var(--space-12);
+  font-size: var(--font-size-13);
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* Row: built on src/ui/ListRow for the selected/transparent background
+   structure, with the selected color pinned back to --bg-hover (ListRow's
+   own `.list-row--selected` uses --bg-raised, a different token — this
+   override keeps the palette's original color exactly). */
+.palette-row {
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-md);
+}
+.palette-row.list-row--selected {
+  background: var(--bg-hover);
+}
+.palette-row-glyph {
+  width: var(--space-16);
+  text-align: center;
+  font-size: var(--font-size-12);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.palette-row.list-row--selected .palette-row-glyph {
+  color: var(--accent);
+}
+.palette-row-name {
+  font-size: var(--font-size-13);
+  color: var(--text);
+  flex-shrink: 0;
+}
+.palette-row.list-row--selected .palette-row-name {
+  color: var(--text-bright);
+}
+.palette-row-hint {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  flex: 1;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── toasts (FR-24/FR-25) ── */
+.palette-toast-host {
+  position: fixed;
+  bottom: 48px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: var(--space-8);
+  z-index: 1100;
+  pointer-events: none;
+}
+.palette-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-10) var(--space-16);
+  font-size: var(--font-size-12);
+  color: var(--text-bright);
+  box-shadow: var(--shadow-modal);
+  cursor: pointer;
+  animation: toastIn 140ms ease-out;
+  max-width: min(520px, calc(100vw - 40px));
+}
+/* `--toast-color`/`--toast-border` are set inline per toast kind (error /
+   info / success) — the genuinely dynamic part of the glyph. */
+.palette-toast-glyph {
+  width: var(--space-12);
+  text-align: center;
+  font-size: var(--font-size-11);
+  color: var(--toast-color);
+  border: var(--toast-border);
+  border-radius: 50%;
+  line-height: 14px;
+  height: var(--space-14);
+  box-sizing: content-box;
+}
+.palette-toast-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

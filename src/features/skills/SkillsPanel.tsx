@@ -1,240 +1,71 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AppError, SkillInfo } from '../../../contract/common';
-import { onSkillsEvent, skillsInstall, skillsList, skillsRun } from '../../lib/api';
-import { setPaletteSkills } from '../palette/paletteData';
+import { useEffect, useRef, useState } from 'react';
+import type { SkillInfo } from '../../../contract/common';
+import { skillsInstall, skillsRun } from '../../lib/api';
 import { useStore } from '../../lib/store';
-
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-  installed: 'var(--success)',
-  error: 'var(--error)',
-};
-
-const scopeTag: Record<string, string> = { project: 'proj', user: 'user', plugin: 'plugin' };
-
-function badgeStyle(color: string): React.CSSProperties {
-  return {
-    fontSize: 8.5,
-    letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-    color,
-    border: '1px solid var(--border-2)',
-    borderRadius: 3,
-    padding: '1px 4px',
-    flexShrink: 0,
-    lineHeight: 1.4,
-  };
-}
+import { HintBar } from '../../ui/HintBar';
+import { Modal, ModalHeader } from '../../ui/Modal';
+import { PanelHeader } from '../../ui/PanelHeader';
+import { SkillsListBody } from './SkillsListBody';
+import { useSkillsFeed } from './useSkillsFeed';
+import { useSkillsKeyboard } from './useSkillsKeyboard';
+import './skills.css';
 
 export default function SkillsPanel({ sessionId }: { sessionId: string | null }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
+  const focused = focusedPane === 'skills';
 
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
-  const [listError, setListError] = useState<AppError | null>(null);
-  const [selected, setSelected] = useState(0);
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [query, setQuery] = useState('');
+  const { skills, status, listError, refetch } = useSkillsFeed(sessionId);
+
   const [runModal, setRunModal] = useState<{ name: string } | null>(null);
   const [installModal, setInstallModal] = useState<{ name: string; description: string; pluginId?: string } | null>(null);
-  const focused = focusedPane === 'skills';
-  const filterRef = useRef<HTMLInputElement>(null);
   const modalOpen = runModal !== null || installModal !== null;
 
-  const refetch = useMemo(
-    () => (sid: string, mountedRef?: { current: boolean }) => {
-      setStatus('loading');
-      void skillsList(sid).then((res) => {
-        if (mountedRef && !mountedRef.current) return;
-        if (res.ok) {
-          setSkills(res.data);
-          setPaletteSkills(sid, res.data); // feed the palette's run-skill secondary step (FR-19)
-          setStatus('loaded');
-          setListError(null);
-        } else {
-          setListError(res.error);
-          setStatus('error');
-        }
-      });
-    },
-    [],
-  );
-
+  // Close any open modal on a session switch (paired with useSkillsFeed's own
+  // reset of the skill list and useSkillsKeyboard's reset of filter/selection).
   useEffect(() => {
-    setSkills([]);
-    setSelected(0);
-    setFilterOpen(false);
-    setQuery('');
     setRunModal(null);
     setInstallModal(null);
-    if (!sessionId) {
-      setStatus('loaded');
-      return;
-    }
-    const mounted = { current: true };
-    let unlisten: (() => void) | undefined;
-    refetch(sessionId, mounted);
-    void onSkillsEvent((e) => {
-      if (e.type === 'skills.changed' && e.sessionId === sessionId) refetch(sessionId, mounted);
-    }).then((u) => {
-      if (!mounted.current) u();
-      else unlisten = u;
-    });
-    return () => {
-      mounted.current = false;
-      if (unlisten) unlisten();
-    };
-  }, [sessionId, refetch]);
-
-  const visible = useMemo(() => {
-    if (!query) return skills;
-    const q = query.toLowerCase();
-    return skills.filter((s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
-  }, [skills, query]);
-
-  useEffect(() => {
-    setSelected((i) => Math.max(0, Math.min(i, visible.length - 1)));
-  }, [visible.length]);
+  }, [sessionId]);
 
   const activate = (row: SkillInfo) => {
     if (row.installed) setRunModal({ name: row.name });
     else setInstallModal({ name: row.name, description: row.description, pluginId: row.pluginId });
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (modalOpen) return;
-      const inFilter = document.activeElement === filterRef.current;
-      if (inFilter) {
-        if (e.key === 'Escape') {
-          setQuery('');
-          setFilterOpen(false);
-          setSelected(0);
-          filterRef.current?.blur();
-        }
-        return;
-      }
-      if (!focused) return;
-      if (status === 'error') {
-        if (e.key === 'Enter' && sessionId) {
-          e.preventDefault();
-          refetch(sessionId);
-        }
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setSelected((i) => Math.min(i + 1, visible.length - 1));
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setSelected((i) => Math.max(i - 1, 0));
-      } else if (e.key === 'Enter') {
-        if (visible[selected]) {
-          e.preventDefault();
-          activate(visible[selected]);
-        }
-      } else if (e.key === '/') {
-        e.preventDefault();
-        setFilterOpen(true);
-        setQuery('');
-        requestAnimationFrame(() => filterRef.current?.focus());
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [focused, modalOpen, status, visible, selected, sessionId, refetch]);
+  const { visible, selected, setSelected, filterOpen, setFilterOpen, query, setQuery, filterRef } = useSkillsKeyboard({
+    sessionId,
+    skills,
+    status,
+    focused,
+    modalOpen,
+    refetch,
+    onActivate: activate,
+  });
 
   return (
-    <section
-      onClick={() => setFocusedPane('skills')}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--bg-deep)',
-        border: `1px solid ${focused ? C.accent : 'var(--border-2)'}`,
-        borderRadius: 5,
-        overflow: 'hidden',
-        minHeight: 0,
-        height: '100%',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '9px 12px',
-          borderBottom: '1px solid var(--border)',
-          flexShrink: 0,
+    <section onClick={() => setFocusedPane('skills')} className={focused ? 'skills-panel skills-panel--focused' : 'skills-panel'}>
+      <PanelHeader title="SKILLS" count={skills.length} paneKey={5} focused={focused} />
+
+      <SkillsListBody
+        filterOpen={filterOpen}
+        query={query}
+        filterRef={filterRef}
+        onQueryChange={(q) => {
+          setQuery(q);
+          setSelected(0);
         }}
-      >
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', color: focused ? C.accent : C.dim, fontWeight: 700 }}>
-          SKILLS
-        </span>
-        <span style={{ fontSize: 10, color: C.faint }}>{skills.length} · [5]</span>
-      </div>
-
-      <div className="scz" style={{ flex: 1, overflow: 'auto', padding: '6px 8px' }}>
-        {filterOpen && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '6px 8px',
-              borderBottom: '1px solid var(--border)',
-              margin: '-6px -8px 6px',
-            }}
-          >
-            <span style={{ fontSize: 12, color: C.accent }}>/</span>
-            <input
-              ref={filterRef}
-              value={query}
-              placeholder="filter skills…"
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setSelected(0);
-              }}
-              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontSize: 11.5, fontFamily: 'inherit' }}
-            />
-            <span style={{ fontSize: 9, color: 'var(--text-disabled)' }}>esc clear</span>
-          </div>
-        )}
-
-        {status === 'error' ? (
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 6px', background: 'var(--bg-raised)', borderLeft: '2px solid var(--error)' }}
-          >
-            <span style={{ width: 14, textAlign: 'center', fontSize: 11, color: C.error }}>⚠</span>
-            <span style={{ fontSize: 11, color: C.error, flex: 1 }}>{listError?.message ?? 'failed to load skills'} · ⏎ retry</span>
-          </div>
-        ) : status === 'loading' && skills.length === 0 ? null : visible.length === 0 && query ? (
-          <div style={{ padding: '24px 12px', textAlign: 'center', fontSize: 11, color: C.faint }}>no skills match "{query}"</div>
-        ) : skills.length === 0 ? (
-          <div style={{ padding: '24px 12px', textAlign: 'center', fontSize: 11, color: C.faint }}>no skills or commands found</div>
-        ) : (
-          visible.map((s, i) => {
-            const sel = i === selected;
-            return (
-              <Row
-                key={s.name}
-                s={s}
-                selected={sel}
-                onClick={() => {
-                  setFocusedPane('skills');
-                  setSelected(i);
-                  activate(s);
-                }}
-              />
-            );
-          })
-        )}
-      </div>
+        status={status}
+        listError={listError}
+        skills={skills}
+        visible={visible}
+        selected={selected}
+        onRowClick={(i, skill) => {
+          setFocusedPane('skills');
+          setSelected(i);
+          activate(skill);
+        }}
+      />
 
       {runModal && sessionId && (
         <RunModal sessionId={sessionId} name={runModal.name} onClose={() => setRunModal(null)} />
@@ -249,76 +80,6 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
         />
       )}
     </section>
-  );
-}
-
-function Row({ s, selected, onClick }: { s: SkillInfo; selected: boolean; onClick: () => void }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <div
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 9,
-        padding: selected ? '8px 6px 8px 4px' : '8px 6px',
-        borderBottom: '1px solid var(--bg-elevated)',
-        borderLeft: selected ? '2px solid var(--accent)' : 'none',
-        background: selected ? 'var(--bg-raised)' : hover ? 'var(--bg-panel)' : 'transparent',
-        cursor: 'pointer',
-      }}
-    >
-      <span style={{ width: 14, textAlign: 'center', fontSize: 11, color: s.installed ? C.accent : C.faint, flexShrink: 0 }}>
-        {s.installed ? '✦' : '◇'}
-      </span>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 12, color: selected ? C.bright : C.primary }}>
-          {s.kind === 'command' ? '/' : ''}
-          {s.name}
-        </div>
-        <div style={{ fontSize: 10, color: C.faint, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1, minHeight: 12 }}>
-          {s.description || (s.kind === 'command' ? 'slash command' : 'skill')}
-        </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        {s.kind === 'command' && <span style={badgeStyle('var(--hue-slate)')}>cmd</span>}
-        {s.scope && <span style={badgeStyle(C.faint)}>{scopeTag[s.scope] ?? s.scope}</span>}
-        {!s.installed && <span style={{ fontSize: 9.5, letterSpacing: '0.04em', color: C.accent }}>enable</span>}
-      </div>
-    </div>
-  );
-}
-
-function ModalShell({ width, children, onClose }: { width: number; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div
-      onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(6,7,9,0.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ width, background: 'var(--bg-panel)', border: '1px solid var(--bg-hover-2)', borderRadius: 8, overflow: 'hidden', boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)' }}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Footer({ hints }: { hints: [string, string][] }) {
-  return (
-    <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid var(--border)', fontSize: 10, color: C.faint }}>
-      {hints.map(([k, label]) => (
-        <span key={label}>
-          <span style={{ color: C.dim }}>{k}</span> {label}
-        </span>
-      ))}
-    </div>
   );
 }
 
@@ -357,27 +118,48 @@ function RunModal({ sessionId, name, onClose }: { sessionId: string; name: strin
   });
 
   return (
-    <ModalShell width={380} onClose={onClose}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-        <span style={{ color: C.accent, fontSize: 13 }}>✦</span>
-        <span style={{ fontSize: 14, color: 'var(--text-strong)', flex: 1 }}>Run {name}</span>
-        <span style={{ fontSize: 10, color: C.faint }}>esc</span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '12px 16px' }}>
-        <span style={{ color: C.accent, fontSize: 13 }}>›</span>
+    <Modal
+      onClose={onClose}
+      width={380}
+      align="center"
+      closeOnBackdropClick={true}
+      closeOnEscape={false}
+      className="skills-modal-backdrop"
+    >
+      <ModalHeader>
+        <div className="skills-modal-title-row">
+          <span className="skills-modal-glyph skills-modal-glyph--accent">✦</span>
+          <span className="skills-modal-title skills-modal-title--flex">Run {name}</span>
+          <span className="skills-modal-esc-hint">esc</span>
+        </div>
+      </ModalHeader>
+      <div className="skills-run-row">
+        <span className="skills-run-glyph">›</span>
         <input
           ref={inputRef}
           value={args}
           disabled={pending}
           placeholder="arguments (optional)"
           onChange={(e) => setArgs(e.target.value)}
-          style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontSize: 12.5, fontFamily: 'inherit', opacity: pending ? 0.6 : 1 }}
+          className={pending ? 'skills-run-input skills-run-input--pending' : 'skills-run-input'}
         />
       </div>
-      {error && <div style={{ padding: '0 16px 10px', fontSize: 10.5, color: C.error }}>{error}</div>}
-      <Footer hints={[['⏎', 'run'], ['esc', 'cancel']]} />
-    </ModalShell>
+      {error && <div className="skills-modal-error">{error}</div>}
+      <HintBar
+        items={[
+          { key: '⏎', label: 'run' },
+          { key: 'esc', label: 'cancel' },
+        ]}
+      />
+    </Modal>
   );
+}
+
+function optionClassName(selected: boolean, pending: boolean): string {
+  const parts = ['skills-option'];
+  if (selected) parts.push('skills-option--selected');
+  if (pending) parts.push('skills-option--pending');
+  return parts.join(' ');
 }
 
 function InstallModal({
@@ -438,40 +220,53 @@ function InstallModal({
           void confirm(key); // act on the clicked option, not the render-time choice
         }}
         onMouseEnter={() => setChoice(key)}
-        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 5, background: sel ? 'var(--bg-hover)' : 'transparent', cursor: 'pointer', opacity: pending ? 0.5 : 1 }}
+        className={optionClassName(sel, pending)}
       >
-        <span style={{ width: 16, textAlign: 'center', fontSize: 12, color: sel ? C.accent : C.faint }}>{glyph}</span>
-        <span style={{ fontSize: 13, color: sel ? C.bright : C.primary }}>{label}</span>
+        <span className={sel ? 'skills-option-glyph skills-option-glyph--selected' : 'skills-option-glyph'}>{glyph}</span>
+        <span className={sel ? 'skills-option-label skills-option-label--selected' : 'skills-option-label'}>{label}</span>
       </div>
     );
   };
 
   return (
-    <ModalShell width={380} onClose={onClose}>
-      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ color: C.faint, fontSize: 13 }}>◇</span>
-          <span style={{ fontSize: 14, color: 'var(--text-strong)' }}>Enable {name}?</span>
+    <Modal
+      onClose={onClose}
+      width={380}
+      align="center"
+      closeOnBackdropClick={true}
+      closeOnEscape={false}
+      className="skills-modal-backdrop"
+    >
+      <ModalHeader>
+        <div className="skills-modal-title-row">
+          <span className="skills-modal-glyph skills-modal-glyph--faint">◇</span>
+          <span className="skills-modal-title">Enable {name}?</span>
         </div>
-        {description && <div style={{ fontSize: 11, color: C.dim, marginTop: 3, marginLeft: 23 }}>{description}</div>}
-        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, marginLeft: 23 }}>
+        {description && <div className="skills-install-desc">{description}</div>}
+        <div className="skills-install-note">
           {pluginId ? (
             <>
-              Turns on the <span style={{ color: C.dim }}>{pluginId}</span> plugin — its skills, commands, agents,{' '}
-              <span style={{ color: C.dim }}>hooks, and MCP servers</span> — globally, for every Claude Code session
+              Turns on the <span className="skills-install-note-highlight">{pluginId}</span> plugin — its skills, commands, agents,{' '}
+              <span className="skills-install-note-highlight">hooks, and MCP servers</span> — globally, for every Claude Code session
               (hooks can run shell commands on tool events). Applies on the next turn.
             </>
           ) : (
             'Enables this plugin — including any hooks and MCP servers — globally, for every Claude Code session.'
           )}
         </div>
-      </div>
-      <div style={{ padding: 6 }}>
+      </ModalHeader>
+      <div className="skills-options">
         {option('install', '＋', 'Enable plugin')}
         {option('cancel', '⊗', 'Cancel')}
       </div>
-      {error && <div style={{ padding: '0 16px 10px', fontSize: 10.5, color: C.error }}>{error}</div>}
-      <Footer hints={[['↑↓', 'choose'], ['⏎', 'confirm'], ['esc', 'cancel']]} />
-    </ModalShell>
+      {error && <div className="skills-modal-error">{error}</div>}
+      <HintBar
+        items={[
+          { key: '↑↓', label: 'choose' },
+          { key: '⏎', label: 'confirm' },
+          { key: 'esc', label: 'cancel' },
+        ]}
+      />
+    </Modal>
   );
 }

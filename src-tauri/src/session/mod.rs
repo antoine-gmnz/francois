@@ -29,10 +29,12 @@ mod remote;
 mod remote_discovery;
 mod skills;
 mod slash;
+mod spawn;
 mod stdio;
 mod stream;
 mod tools;
 mod turn;
+mod usage_probe;
 mod worktree;
 
 pub(crate) use agent_transcript::*;
@@ -49,10 +51,12 @@ pub(crate) use remote::*;
 pub(crate) use remote_discovery::*;
 pub(crate) use skills::*;
 pub(crate) use slash::*;
+pub(crate) use spawn::*;
 pub(crate) use stdio::*;
 pub(crate) use stream::*;
 pub(crate) use tools::*;
 pub(crate) use turn::*;
+pub(crate) use usage_probe::*;
 pub(crate) use worktree::*;
 
 #[cfg(test)]
@@ -69,7 +73,7 @@ use crate::usage::{parse_meter_line, probe_answer, synthetic_text, UsageMeter};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
-use std::process::{Child, ChildStdin, Command};
+use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -85,129 +89,6 @@ const DEFAULT_MODEL: &str = "sonnet";
 /// interactive-commands FR-10: a /usage//cost probe is killed after this long.
 /// Reused by the app-scoped usage-bar probe (usage.rs, usage-bar FR-8).
 pub(crate) const PROBE_TIMEOUT_SECS: u64 = 30;
-
-fn valid_effort(e: &str) -> bool {
-    matches!(e, "low" | "medium" | "high" | "xhigh" | "max")
-}
-
-/// contract/common.ts PermissionMode. The CLI's `auto`/`dontAsk` are deliberately
-/// excluded (auto aborts headless -p runs on classifier blocks; dontAsk needs a
-/// paired allowedTools list).
-fn valid_permission_mode(m: &str) -> bool {
-    matches!(m, "default" | "plan" | "acceptEdits" | "bypassPermissions")
-}
-
-/// contract/common.ts ClaudeRuntime. 'wsl' is only accepted on Windows (create-time check).
-fn valid_runtime(r: &str) -> bool {
-    matches!(r, "native" | "wsl")
-}
-
-/// `--permission-mode` args for a turn. 'default' adds NOTHING — the turn inherits
-/// the user's ~/.claude settings (permissions.defaultMode / allow rules), exactly
-/// the pre-feature behavior. The flag does not persist across --resume, so every
-/// invocation passes it explicitly.
-fn permission_args(mode: &str) -> Vec<String> {
-    match mode {
-        "plan" | "acceptEdits" | "bypassPermissions" => {
-            vec!["--permission-mode".into(), mode.into()]
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// (program, argv) launching `claude <claude_args>` under a session's runtime.
-/// wsl: `wsl.exe [-d <distro>] --cd <dir> -- claude …` — a WSL UNC cwd targets
-/// the distro named in the path (bare wsl.exe hits the DEFAULT distro, wrong on
-/// multi-distro machines) with its pre-translated Linux path (`--cd
-/// '\\wsl.localhost\…'` fails with Wsl/E_INVALIDARG — verified live); a
-/// drive-letter cwd passes verbatim (wsl.exe maps it to /mnt/… itself).
-/// native: plain `claude …`; the caller sets current_dir.
-///
-/// `distro`: session-worktree FR-10's stored `Session::worktree_distro`. When
-/// `Some`, it OVERRIDES the UNC-derived distro — required for a WSL worktree
-/// session, whose `cwd` is already a bare Linux path (no `\\wsl$\<distro>\…`
-/// prefix left for `wsl_base_args` to recover the distro from) — `cwd` is then
-/// passed to `--cd` verbatim, since it is already in the distro's own dialect.
-/// `None` preserves the pre-existing UNC-derived behavior for every other
-/// (non-worktree) WSL session.
-fn claude_invocation(
-    runtime: &str,
-    cwd: &str,
-    claude_args: Vec<String>,
-    distro: Option<&str>,
-) -> (String, Vec<String>) {
-    if runtime == "wsl" {
-        let mut argv = match distro {
-            Some(d) => vec![
-                "-d".to_string(),
-                d.to_string(),
-                "--cd".to_string(),
-                cwd.to_string(),
-            ],
-            None => crate::wsl::wsl_base_args(cwd),
-        };
-        argv.push("--".to_string());
-        argv.push("claude".to_string());
-        argv.extend(claude_args);
-        ("wsl.exe".into(), argv)
-    } else {
-        ("claude".into(), claude_args)
-    }
-}
-
-/// A GUI app launched from Finder/Dock/Spotlight (not a terminal) inherits
-/// launchd's minimal default PATH, not the interactive shell's — so a `claude`
-/// installed via nvm/homebrew/~/.local/bin/etc. is invisible to `Command::new`
-/// even though it runs fine from a terminal. Ask the user's login shell for
-/// its PATH once and merge it in ahead of every spawn. Markers rather than a
-/// plain `echo $PATH` because an interactive shell (`-i`, needed since many
-/// PATH exports live in .zshrc/.bashrc, not the non-interactive .zprofile)
-/// may print MOTD/nvm-banner noise before its output.
-#[cfg(not(windows))]
-fn login_shell_path() -> Option<String> {
-    const START: &str = "__francois_path_start__";
-    const END: &str = "__francois_path_end__";
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = Command::new(shell)
-        // `${PATH}` (not `$PATH`), so the shell doesn't read the marker's trailing
-        // text as part of the variable name and expand it to nothing.
-        .args(["-ilc", &format!("echo -n {START}${{PATH}}{END}")])
-        .output()
-        .ok()?;
-    let text = String::from_utf8(out.stdout).ok()?;
-    let start = text.find(START)? + START.len();
-    let end = text[start..].find(END)? + start;
-    let path = text[start..end].trim();
-    (!path.is_empty()).then(|| path.to_string())
-}
-#[cfg(windows)]
-fn login_shell_path() -> Option<String> {
-    None // Windows GUI apps inherit the full user PATH from explorer.exe already.
-}
-
-static SHELL_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-
-/// The PATH to spawn `claude` with: the login shell's PATH (memoized, resolved
-/// at most once per run) prefixed onto the process's own, so directories only
-/// a shell rc file adds are searched too. `None` when unresolvable — callers
-/// then leave the spawn's PATH untouched.
-pub(crate) fn claude_path_env() -> Option<String> {
-    let shell_path = SHELL_PATH.get_or_init(login_shell_path).as_ref()?;
-    let current = std::env::var("PATH").unwrap_or_default();
-    Some(if current.is_empty() {
-        shell_path.clone()
-    } else {
-        format!("{shell_path}:{current}")
-    })
-}
-
-#[cfg(windows)]
-pub(crate) fn no_window(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash (esp. wsl.exe)
-}
-#[cfg(not(windows))]
-pub(crate) fn no_window(_cmd: &mut Command) {}
 
 #[derive(Serialize, Clone)]
 pub(crate) struct SessionMeta {
@@ -386,6 +267,26 @@ pub(crate) struct BufBlock {
     streaming: bool,
 }
 
+impl BufBlock {
+    /// §8 dedup: every `buf_*` append (below) and `parse_persisted_block`
+    /// (persistence.rs) built the same 8-field literal by hand, differing in
+    /// only 2-4 fields each. This is the shared shape — `text`/`tool`/`summary`
+    /// empty, `meta`/`card` absent, not streaming — callers override just what
+    /// differs via `BufBlock { field: value, ..BufBlock::new(id, kind) }`.
+    fn new(block_id: &str, kind: BlockKind) -> BufBlock {
+        BufBlock {
+            block_id: block_id.into(),
+            kind,
+            text: String::new(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+        }
+    }
+}
+
 pub(crate) struct TurnHandle {
     child: Arc<Mutex<Child>>,
     interrupted: Arc<AtomicBool>,
@@ -490,6 +391,71 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    /// Build a freshly-registered `Session`. Serves BOTH `session_create` (a
+    /// brand-new session: zeroed usage, no resume anchor, empty transcript) and
+    /// `load_persisted` (a reloaded record: its saved usage/resume-id/transcript,
+    /// `started_at` reset to load time per FR-18's honest-clock choice) — the two
+    /// literals were kept in lockstep by hand before this; now there is one.
+    /// Every field NOT taken here (queue, current turn, agents, mcp, …) is
+    /// in-memory-only run state that is always empty at construction.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        id: String,
+        name: String,
+        cwd: String,
+        model_id: String,
+        context_used_tokens: u64,
+        context_limit_tokens: u64,
+        started_at: u64,
+        last_activity_at: u64,
+        effort: Option<String>,
+        permission_mode: String,
+        runtime: String,
+        allow_git: bool,
+        project_id: Option<String>,
+        worktree: Option<SessionWorktree>,
+        worktree_distro: Option<String>,
+        claude_session_id: Option<String>,
+        block_buffer: Vec<BufBlock>,
+    ) -> Session {
+        Session {
+            id,
+            name,
+            cwd,
+            model_id,
+            status: "idle".into(),
+            context_used_tokens,
+            context_limit_tokens,
+            started_at,
+            last_activity_at,
+            error_message: None,
+            effort,
+            permission_mode,
+            runtime,
+            allow_git,
+            project_id,
+            worktree,
+            worktree_distro,
+            queue: VecDeque::new(),
+            claude_session_id,
+            current: None,
+            pending_probe: None,
+            agents: HashMap::new(),
+            agent_order: Vec::new(),
+            agent_by_tool: HashMap::new(),
+            agent_steps: HashMap::new(),
+            agent_step_seq: HashMap::new(),
+            agent_inner_tools: HashMap::new(),
+            agent_backend_ref: HashMap::new(),
+            agent_blocks: HashMap::new(),
+            agent_block_seq: HashMap::new(),
+            agent_blocks_dropped: HashMap::new(),
+            block_buffer,
+            mcp: HashMap::new(),
+            cli_commands: Vec::new(),
+        }
+    }
+
     fn meta(&self) -> SessionMeta {
         let label = label_for(&self.model_id);
         SessionMeta {
@@ -512,58 +478,38 @@ impl Session {
 
     fn buf_user(&mut self, block_id: &str, text: String) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::User,
             text,
-            tool: String::new(),
-            summary: String::new(),
-            meta: None,
-            card: None,
-            streaming: false,
+            ..BufBlock::new(block_id, BlockKind::User)
         });
     }
 
     fn buf_assistant(&mut self, block_id: &str, text: String) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::Assistant,
             text,
-            tool: String::new(),
-            summary: String::new(),
-            meta: None,
-            card: None,
-            streaming: false,
+            ..BufBlock::new(block_id, BlockKind::Assistant)
         });
     }
 
     fn buf_tool(&mut self, block_id: &str, tool: String, summary: String, is_task: bool) {
+        let kind = if is_task {
+            BlockKind::Subagent
+        } else {
+            BlockKind::Tool
+        };
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: if is_task {
-                BlockKind::Subagent
-            } else {
-                BlockKind::Tool
-            },
-            text: String::new(),
             tool,
             summary,
-            meta: None,
-            card: None,
             streaming: true,
+            ..BufBlock::new(block_id, kind)
         });
     }
 
     /// interactive-commands FR-6: append a pending command block (loading card).
     fn buf_command_pending(&mut self, block_id: &str, command: &str) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::Command,
-            text: String::new(),
             tool: command.into(),
-            summary: String::new(),
-            meta: None,
-            card: None,
             streaming: true,
+            ..BufBlock::new(block_id, BlockKind::Command)
         });
     }
 
@@ -579,14 +525,9 @@ impl Session {
             b.streaming = false;
         } else {
             self.block_buffer.push(BufBlock {
-                block_id: block_id.into(),
-                kind: BlockKind::Command,
-                text: String::new(),
                 tool: command.into(),
-                summary: String::new(),
-                meta: None,
                 card: Some(card),
-                streaming: false,
+                ..BufBlock::new(block_id, BlockKind::Command)
             });
         }
     }
@@ -595,14 +536,9 @@ impl Session {
     /// Question blocks it holds `{ questions, state, answers? }`.
     fn buf_question(&mut self, block_id: &str, questions: Value) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::Question,
-            text: String::new(),
-            tool: String::new(),
-            summary: String::new(),
-            meta: None,
             card: Some(serde_json::json!({ "questions": questions, "state": "pending" })),
             streaming: true,
+            ..BufBlock::new(block_id, BlockKind::Question)
         });
     }
 
@@ -632,14 +568,9 @@ impl Session {
     /// reuse (as for Question blocks): it holds `{ ask, state, rule? }`.
     fn buf_permission(&mut self, block_id: &str, ask: Value) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::Permission,
-            text: String::new(),
-            tool: String::new(),
-            summary: String::new(),
-            meta: None,
             card: Some(serde_json::json!({ "ask": ask, "state": "pending" })),
             streaming: true,
+            ..BufBlock::new(block_id, BlockKind::Permission)
         });
     }
 
@@ -705,13 +636,40 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// §8 dedup: the mechanical shape behind ~78 call sites —
+    /// `app.state::<Engine>(); engine.sessions.lock().unwrap(); map.get_mut(id)`
+    /// — collapsed into one helper. Locks, hands `f` the session, unlocks, returns
+    /// what `f` returned; `None` when no such session exists.
+    ///
+    /// ONLY for the single-session, nothing-else-while-locked shape: `f` must not
+    /// itself touch `Engine.sessions` (no reentrant locking), must not block, and
+    /// must not emit — see the file-wide lock discipline documented on
+    /// `TurnHandle`. A site that needs to do more than that while holding the
+    /// session (iterate every session, take a second lock, emit, spawn a thread,
+    /// …) does not fit this helper; leave it as a direct `.sessions.lock()`.
+    pub(crate) fn with_session_mut<T>(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut Session) -> T,
+    ) -> Option<T> {
+        let mut map = self.sessions.lock().unwrap();
+        map.get_mut(session_id).map(f)
+    }
+
+    /// Read-only counterpart of `with_session_mut`, for sites that only read the
+    /// session (same single-session, nothing-else-while-locked constraint).
+    pub(crate) fn with_session<T>(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&Session) -> T,
+    ) -> Option<T> {
+        let map = self.sessions.lock().unwrap();
+        map.get(session_id).map(f)
+    }
+
     /// The working directory of a session (used by the `diff` domain, FR-1). None if unknown.
     pub fn cwd_of(&self, session_id: &str) -> Option<String> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .map(|s| s.cwd.clone())
+        self.with_session(session_id, |s| s.cwd.clone())
     }
 
     /// projects FR-9: clear `project_id` on every session that referenced the
@@ -740,7 +698,7 @@ impl Engine {
         &self,
         session_id: &str,
     ) -> Option<(String, String, String, Option<String>, Option<String>)> {
-        self.sessions.lock().unwrap().get(session_id).map(|s| {
+        self.with_session(session_id, |s| {
             (
                 s.cwd.clone(),
                 s.runtime.clone(),
@@ -754,11 +712,7 @@ impl Engine {
     /// The claude runtime ("native" | "wsl") of a session — used by the `shell`
     /// domain's per-session spawn matrix (wsl-filesystem FR-10/FR-11). None if unknown.
     pub fn runtime_of(&self, session_id: &str) -> Option<String> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .map(|s| s.runtime.clone())
+        self.with_session(session_id, |s| s.runtime.clone())
     }
 }
 
@@ -816,31 +770,6 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// wsl.exe children need `TERM` forwarded across the distro boundary explicitly:
-/// setting it on this (Windows-side) process's own env does not cross wsl.exe's
-/// boundary; `WSLENV` with the `/u` flag does. Append (':'-joined) to any existing
-/// `WSLENV` list rather than overwrite it — the inherited environment may already
-/// carry one. Shared by shell-terminal's `shell_ensure` (main.rs) and
-/// remote-control's PTY host (remote.rs) — for the wsl runtime, remote-control's
-/// PTY stream is the feature's ONLY url source (spec §7 #7), so a missing `TERM`
-/// there breaks it outright, not just cosmetically.
-pub(crate) fn wsl_term_env() -> String {
-    let wslenv = std::env::var("WSLENV").ok().filter(|v| !v.is_empty());
-    match wslenv {
-        // Already forwarded (any flag variant counts) → leave the list untouched;
-        // otherwise trim a trailing ':' so we never emit an empty entry.
-        Some(existing)
-            if existing
-                .split(':')
-                .any(|e| e == "TERM/u" || e.starts_with("TERM/")) =>
-        {
-            existing
-        }
-        Some(existing) => format!("{}:TERM/u", existing.trim_end_matches(':')),
-        None => "TERM/u".to_string(),
-    }
-}
-
 fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -856,83 +785,7 @@ fn basename(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn permission_args_only_for_explicit_modes() {
-        assert!(permission_args("default").is_empty()); // inherit ~/.claude settings — no flag
-        assert!(permission_args("garbage").is_empty());
-        assert_eq!(permission_args("plan"), vec!["--permission-mode", "plan"]);
-        assert_eq!(
-            permission_args("acceptEdits"),
-            vec!["--permission-mode", "acceptEdits"]
-        );
-        assert_eq!(
-            permission_args("bypassPermissions"),
-            vec!["--permission-mode", "bypassPermissions"]
-        );
-    }
-
-    #[test]
-    fn claude_invocation_wraps_wsl() {
-        let (prog, args) =
-            claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()], None);
-        assert_eq!(prog, "claude");
-        assert_eq!(args, vec!["-p", "hi"]);
-        // wsl + drive cwd: wsl.exe maps it to /mnt/… itself — passed verbatim,
-        // no -d (no distro info → default distro is the only sane target)
-        let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()], None);
-        assert_eq!(prog, "wsl.exe");
-        assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
-        // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG
-        // live) AND target the distro named in the path — bare wsl.exe hits the
-        // default distro, which need not be the one holding the repo.
-        let (prog, args) = claude_invocation(
-            "wsl",
-            "\\\\wsl.localhost\\Ubuntu\\home\\u\\api",
-            vec!["-p".into(), "hi".into()],
-            None,
-        );
-        assert_eq!(prog, "wsl.exe");
-        assert_eq!(
-            args,
-            vec![
-                "-d",
-                "Ubuntu",
-                "--cd",
-                "/home/u/api",
-                "--",
-                "claude",
-                "-p",
-                "hi"
-            ]
-        );
-    }
-
-    #[test]
-    fn claude_invocation_distro_override_targets_the_stored_distro_from_a_linux_path() {
-        // session-worktree FR-10: a WSL worktree session's cwd is a bare Linux
-        // path (no `\\wsl$\<distro>\…` prefix) — the stored distro must still
-        // route to the repo's actual distro, not the machine's default one.
-        let (prog, args) = claude_invocation(
-            "wsl",
-            "/home/u/.francois-worktrees/api/feat-x",
-            vec!["--version".into()],
-            Some("Ubuntu"),
-        );
-        assert_eq!(prog, "wsl.exe");
-        assert_eq!(
-            args,
-            vec![
-                "-d",
-                "Ubuntu",
-                "--cd",
-                "/home/u/.francois-worktrees/api/feat-x",
-                "--",
-                "claude",
-                "--version"
-            ]
-        );
-    }
+    use crate::session::testutil::{test_engine_with, test_session};
 
     #[test]
     fn subagent_tool_recognizes_task_and_agent() {
@@ -940,5 +793,26 @@ mod tests {
         assert!(is_subagent_tool("Agent")); // this harness's subagent tool name
         assert!(!is_subagent_tool("Read"));
         assert!(!is_subagent_tool("Bash"));
+    }
+
+    #[test]
+    fn with_session_mut_locks_mutates_and_returns_the_closure_value() {
+        let engine = test_engine_with(test_session());
+        let out = engine.with_session_mut("s1", |s| {
+            s.name = "renamed".into();
+            s.name.clone()
+        });
+        assert_eq!(out, Some("renamed".to_string()));
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("renamed".to_string())
+        );
+    }
+
+    #[test]
+    fn with_session_mut_and_with_session_are_none_for_unknown_id() {
+        let engine = test_engine_with(test_session());
+        assert_eq!(engine.with_session_mut("nope", |s| s.name.clone()), None);
+        assert_eq!(engine.with_session("nope", |s| s.name.clone()), None);
     }
 }

@@ -1,71 +1,31 @@
 import { useEffect, useState } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { homeDir } from '@tauri-apps/api/path';
-import { getName, getVersion } from '@tauri-apps/api/app';
-import ShellTerminal from '../features/shell/ShellTerminal';
-import Sidebar from '../features/sessions/Sidebar';
-import NewSessionModal from '../features/sessions/NewSessionModal';
+import AgentsPanel from '../features/agents/AgentsPanel';
+import { agentIdFromTab } from '../features/agents/agent-tab';
+import McpPanel from '../features/mcp/McpPanel';
+import PaletteRoot from '../features/palette/PaletteView';
+import { registerBuiltinCommands } from '../features/palette/paletteCommands';
 import PermissionsModal from '../features/permissions/PermissionsModal';
 import ProjectsModal from '../features/projects/ProjectsModal';
-import ConversationView from '../features/conversation/ConversationView';
-import OverviewView from '../features/overview/OverviewView';
-import DiffView from '../features/diff/DiffView';
-import AgentsPanel from '../features/agents/AgentsPanel';
-import AgentView from '../features/agents/AgentView';
-import { agentIdFromTab, agentTabId, agentTabLabel, type AgentTabRef } from '../features/agents/agent-tab';
-import McpPanel from '../features/mcp/McpPanel';
+import NewSessionModal from '../features/sessions/NewSessionModal';
+import Sidebar from '../features/sessions/Sidebar';
+import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
 import UsageBar from '../features/usage/UsageBar';
-import { initShellEvents, useShellState } from '../features/shell/shellStore';
+import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { useStore } from '../lib/store';
-import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
-import { displayWslCwd } from '../../contract/wsl-filesystem';
-import { appSetWindowTheme, diffGetSummary, onDiffEvent, onRemoteEvent } from '../lib/api';
-import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
-import PaletteRoot from '../features/palette/PaletteView';
-import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
-import { setPaletteDiffCount } from '../features/palette/paletteData';
-import { registerBuiltinCommands } from '../features/palette/paletteCommands';
-import { truncateBranchLeft } from '../features/sessions/worktree';
+import './app.css';
+import MainPaneBody from './MainPaneBody';
+import MainTabStrip from './MainTabStrip';
+import StatusBar from './StatusBar';
+import { useAppIdentity } from './useAppIdentity';
+import { useAppShortcuts } from './useAppShortcuts';
+import { useDiffBadge } from './useDiffBadge';
 
 // Register the built-in palette commands once, before first paint (FR-6).
 registerBuiltinCommands();
 
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-  hint: 'var(--text-hint)',
-  running: 'var(--accent-2)',
-  idle: 'var(--text-muted)',
-  done: 'var(--success)',
-  error: 'var(--error)',
-};
-
-function abbreviate(cwd: string, home: string): string {
-  if (!cwd) return '';
-  if (home && (cwd === home || cwd.startsWith(home + '/') || cwd.startsWith(home + '\\'))) {
-    return '~' + cwd.slice(home.length);
-  }
-  return cwd;
-}
-
-// Shell footer path (spec §8): WSL cwds render as '<distro>:/path'; when the
-// shell name already names that distro (FR-12), drop the redundant prefix so
-// the footer doesn't repeat it — '● Ubuntu · /home/u/api', not '· Ubuntu:/…'.
-function shellFooterPath(cwd: string, shellName: string, home: string): string {
-  const wsl = displayWslCwd(cwd);
-  if (!wsl) return abbreviate(cwd, home);
-  const prefix = `${shellName}:`;
-  return wsl.startsWith(prefix) ? wsl.slice(prefix.length) : wsl;
-}
-
 export default function App() {
-  const [home, setHome] = useState('');
   const [clockNow, setClockNow] = useState(() => Date.now());
-  const [diffCount, setDiffCount] = useState(0);
   const sessions = useStore((s) => s.sessions);
   const activeSessionId = useStore((s) => s.activeSessionId);
   // Per-session shell state (FR-10/13); '' resolves to the untouched default
@@ -79,8 +39,6 @@ export default function App() {
   const toggleTheme = useStore((s) => s.toggleTheme);
   const showLeftPane = useStore((s) => s.showLeftPane);
   const showRightPane = useStore((s) => s.showRightPane);
-  const toggleLeftPane = useStore((s) => s.toggleLeftPane);
-  const toggleRightPane = useStore((s) => s.toggleRightPane);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
@@ -97,36 +55,14 @@ export default function App() {
   const closeAgentTab = useStore((s) => s.closeAgentTab);
   const clearAgentTabs = useStore((s) => s.clearAgentTabs);
 
-  const active = sessions.find((s) => s.id === activeSessionId) ?? null;
+  const active = sessions.find((session) => session.id === activeSessionId) ?? null;
   const activeAgentId = agentIdFromTab(mainTab);
 
   useEffect(() => {
     initShellEvents();
-    void homeDir()
-      .then((h) => setHome(h.replace(/[\\/]$/, '')))
-      .catch(() => {});
   }, []);
 
-  // Keep the native window title in sync with the active session, "<session> — <app>"
-  // (document-first, so the taskbar and alt-tab show the session, not a constant
-  // prefix). The app name comes from the bundle so the dev channel stays "Francois Dev".
-  const [appName, setAppName] = useState('Francois');
-  // Status-bar version — read from the bundle (tauri.conf.json), never hardcoded, so a
-  // release bumps it on its own. Empty until it resolves, so no stale number ever flashes.
-  const [appVersion, setAppVersion] = useState('');
-  useEffect(() => {
-    void getName()
-      .then(setAppName)
-      .catch(() => {});
-    void getVersion()
-      .then(setAppVersion)
-      .catch(() => {});
-  }, []);
-  useEffect(() => {
-    void getCurrentWindow()
-      .setTitle(active ? `${active.name} — ${appName}` : appName)
-      .catch(() => {});
-  }, [active?.name, appName]);
+  const { home, appVersion } = useAppIdentity(active?.name);
 
   // Keep the native caption bar painted to match --bg-app for the active theme
   // (white in light, dark otherwise). Runs on mount and every toggle; no-op off Windows.
@@ -144,9 +80,9 @@ export default function App() {
       if (e.type === 'remote.status') {
         useStore.getState().mergeRemote({ sessionId: e.sessionId, state: e.state });
       }
-    }).then((u) => {
-      if (!live) u();
-      else unlisten = u;
+    }).then((unsub) => {
+      if (!live) unsub();
+      else unlisten = unsub;
     });
     return () => {
       live = false;
@@ -154,34 +90,7 @@ export default function App() {
     };
   }, []);
 
-  // DIFF-tab badge: fileCount for the active session, seeded by getSummary and
-  // kept current by diff.changed events (diff-view FR-18).
-  useEffect(() => {
-    setDiffCount(0);
-    setPaletteDiffCount(0); // keep the palette's view-diff hint at 0 with no active session (FR-21/§7)
-    if (!activeSessionId) return;
-    const mounted = { current: true };
-    let unlisten: (() => void) | undefined;
-    void diffGetSummary(activeSessionId).then((res) => {
-      if (mounted.current && res.ok) {
-        setDiffCount(res.data.files.length);
-        setPaletteDiffCount(res.data.files.length);
-      }
-    });
-    void onDiffEvent((e) => {
-      if (e.type === 'diff.changed' && e.sessionId === activeSessionId && mounted.current) {
-        setDiffCount(e.fileCount);
-        setPaletteDiffCount(e.fileCount);
-      }
-    }).then((u) => {
-      if (!mounted.current) u();
-      else unlisten = u;
-    });
-    return () => {
-      mounted.current = false;
-      if (unlisten) unlisten();
-    };
-  }, [activeSessionId]);
+  const diffCount = useDiffBadge(activeSessionId);
 
   // Elapsed clock ticks only while the active session is running (FR-6).
   useEffect(() => {
@@ -190,83 +99,16 @@ export default function App() {
     return () => clearInterval(id);
   }, [active?.id, active?.status, mainTab]);
 
-  // app-shell owns ⌘K/Ctrl+K (togglePalette) and Escape-while-open (dismiss) via a
-  // single capture-phase listener so they fire from any focus, including the terminal
-  // (command-palette FR-1/FR-3). No competing listener lives in command-palette.
-  useEffect(() => {
-    const onKeyCapture = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
-        e.preventDefault();
-        e.stopPropagation();
-        togglePalette();
-      } else if (e.key === 'Escape' && isPaletteOpen()) {
-        e.preventDefault();
-        e.stopPropagation();
-        dismissPalette();
-      }
-    };
-    window.addEventListener('keydown', onKeyCapture, true);
-    return () => window.removeEventListener('keydown', onKeyCapture, true);
-  }, []);
-
-  // Minimal app-shell global keys: n (new session), 1/2 (pane focus), t (shell tab).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const ae = document.activeElement as HTMLElement | null;
-      const inInput = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
-      const inTerminal = !!ae && ae.closest('.xterm') !== null;
-      // permission-guardrails FR-29 / projects FR-37: an open editor suppresses the
-      // single-letter globals too, exactly like the other modals.
-      if (newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || inInput || inTerminal) return;
-      if (e.key === 'n' || e.key === 'N') {
-        e.preventDefault();
-        setNewSessionOpen(true);
-      } else if (e.key === 'a' || e.key === 'A') {
-        if (useStore.getState().activeSessionId) {
-          e.preventDefault();
-          setFocusedPane('agents');
-          setNewAgentOpen(true);
-        }
-      } else if (e.key === '1') {
-        setFocusedPane('sidebar');
-      } else if (e.key === '2') {
-        setFocusedPane('main');
-      } else if (e.key === '3') {
-        setFocusedPane('agents');
-      } else if (e.key === '4') {
-        setFocusedPane('mcp');
-      } else if (e.key === '5') {
-        setFocusedPane('skills');
-      } else if (e.key === 'd' || e.key === 'D') {
-        // toggle diff↔session, identical to command-palette's view-diff.run (FR-23/FR-29)
-        setFocusedPane('main');
-        setMainTab(useStore.getState().mainTab === 'diff' ? 'session' : 'diff');
-      } else if (e.key === 't' || e.key === 'T') {
-        setFocusedPane('main');
-        setMainTab(useStore.getState().mainTab === 'shell' ? 'session' : 'shell');
-      } else if (e.key === 'o' || e.key === 'O') {
-        // overview: same toggle grammar as d/t — press again to fall back to the
-        // conversation you came from.
-        setFocusedPane('main');
-        setMainTab(useStore.getState().mainTab === 'overview' ? 'session' : 'overview');
-      } else if (e.key === 'w' || e.key === 'W') {
-        // agent-tab FR-15: close the active agent tab (SESSION takes over). A
-        // no-op on the built-in tabs — nothing else in the strip is closable.
-        const st = useStore.getState();
-        const agentId = agentIdFromTab(st.mainTab);
-        if (agentId !== null) {
-          e.preventDefault();
-          st.closeAgentTab(agentId);
-        }
-      } else if (e.key === '[') {
-        useStore.getState().toggleLeftPane();
-      } else if (e.key === ']') {
-        useStore.getState().toggleRightPane();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [newSessionOpen, newAgentOpen, permissionsOpen, projectsOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab]);
+  useAppShortcuts({
+    newSessionOpen,
+    newAgentOpen,
+    permissionsOpen,
+    projectsOpen,
+    setNewSessionOpen,
+    setNewAgentOpen,
+    setFocusedPane,
+    setMainTab,
+  });
 
   // overview: widening the board's scope back to "All projects" is a zoom-OUT —
   // there is no longer one project in view, so the main pane goes back to the
@@ -294,308 +136,81 @@ export default function App() {
 
   const mainFocused = focusedPane === 'main';
 
+  // design-refresh FR-10: what the condensed status bar reads out. Both come
+  // from state the shell already holds — no new store slice, no new IPC.
+  const activeAgentName = (activeAgentId && agentTabs.find((t) => t.id === activeAgentId)?.name) || null;
+  const runningAgents = useStore((s) => (activeSessionId ? (s.derived.get(activeSessionId)?.runningAgentCount ?? 0) : 0));
+
   const elapsedMs = active
     ? active.status === 'running'
       ? clockNow - active.startedAt
       : Math.max(0, active.lastActivityAt - active.startedAt)
     : 0;
 
-  const tabStyle = (on: boolean): React.CSSProperties => ({
-    fontSize: 11,
-    letterSpacing: '0.14em',
-    fontWeight: 700,
-    cursor: 'pointer',
-    padding: '2px 0',
-    color: on ? C.accent : C.dim,
-    borderBottom: `2px solid ${on ? C.accent : 'transparent'}`,
-  });
-
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-app)' }}>
-      {/* usage bar: app-scoped plan limits, always mounted, fixed 28px, directly
-          under the (same-colored) native caption — usage-bar FR-1/FR-2/§8 */}
-      <UsageBar />
+    <div className="app-root">
+      {/* usage bar / titlebar: app-scoped plan limits + brand cluster, always
+          mounted, fixed height, directly under the (same-colored) native
+          caption — usage-bar FR-1/FR-2/§8, design-refresh FR-4 */}
+      <UsageBar home={home} />
       {/* grid: sidebar + main + agents (native OS title bar provides window chrome) */}
       <div
+        className="app-grid"
         style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'grid',
           // columns adapt to the [ / ] toggles; hidden columns keep their panes
           // MOUNTED (display:none) — Sidebar owns the session-cache subscriptions.
-          gridTemplateColumns: [showLeftPane ? '264px' : null, '1fr', showRightPane ? '336px' : null]
+          // design-refresh: the mock's `276px | 1fr | 296px` shell columns.
+          gridTemplateColumns: [showLeftPane ? '276px' : null, '1fr', showRightPane ? '296px' : null]
             .filter(Boolean)
             .join(' '),
-          gridTemplateRows: '1fr 32px',
-          gap: 10,
-          padding: 10,
         }}
       >
-        <div style={{ gridRow: 1, minHeight: 0, display: showLeftPane ? undefined : 'none' }}>
+        <div className="app-col-left" style={{ display: showLeftPane ? undefined : 'none' }}>
           <Sidebar home={home} />
         </div>
 
         {/* main pane */}
         <section
           onClick={() => setFocusedPane('main')}
-          style={{
-            gridRow: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            background: 'var(--bg-deep)',
-            border: `1px solid ${mainFocused ? C.accent : 'var(--border)'}`,
-            borderRadius: 5,
-            overflow: 'hidden',
-            minHeight: 0,
-          }}
+          className="app-main-section"
+          style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
         >
-          {/* tab strip + meta cluster */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '9px 14px',
-              borderBottom: '1px solid var(--border)',
-              flexShrink: 0,
-            }}
-          >
-            {/* §8: the strip scrolls horizontally past overflow rather than
-                clipping or squeezing tabs; it shrinks before the right-aligned
-                session meta cluster does. */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 16,
-                overflowX: 'auto',
-                flexShrink: 1,
-                minWidth: 0,
-              }}
-              className="scz"
-            >
-              {/* overview: the cross-project dashboard. First in the strip because
-                  it is the zoomed-OUT view — the tabs read left-to-right from the
-                  whole fleet down to one session's files. */}
-              <span onClick={() => setMainTab('overview')} style={tabStyle(mainTab === 'overview')}>
-                OVERVIEW
-              </span>
-              <span onClick={() => setMainTab('session')} style={tabStyle(mainTab === 'session')}>
-                SESSION
-              </span>
-              <span onClick={() => setMainTab('diff')} style={{ ...tabStyle(mainTab === 'diff'), display: 'flex', alignItems: 'center', gap: 6 }}>
-                DIFF
-                {diffCount > 0 && (
-                  <span style={{ background: 'var(--bg-hover)', color: 'var(--text-hint)', fontSize: 9, padding: '1px 5px', borderRadius: 8, fontWeight: 500, letterSpacing: 0 }}>
-                    {diffCount}
-                  </span>
-                )}
-              </span>
-              <span onClick={() => setMainTab('shell')} style={tabStyle(mainTab === 'shell')}>
-                SHELL
-              </span>
-              {/* agent-tab FR-9/FR-12: one tab per clicked subagent, in open
-                  order. Lower-case and un-tracked on purpose — an agent name is
-                  content, not a chrome label. */}
-              {agentTabs.map((t) => (
-                <AgentTabChip
-                  key={t.id}
-                  tab={t}
-                  active={mainTab === agentTabId(t.id)}
-                  onOpen={() => setMainTab(agentTabId(t.id) as typeof mainTab)}
-                  onClose={() => closeAgentTab(t.id)}
-                />
-              ))}
-            </div>
-            {mainTab === 'session' && active && (
-              <div style={{ display: 'flex', gap: 14, fontSize: 10.5, color: C.dim, alignItems: 'center' }}>
-                <span>{active.model.label}</span>
-                {active.permissionMode !== 'default' && (
-                  <span
-                    title={`permission mode: ${active.permissionMode}`}
-                    style={{ color: active.permissionMode === 'bypassPermissions' ? C.error : C.faint }}
-                  >
-                    {active.permissionMode === 'acceptEdits' ? 'edits-ok' : active.permissionMode === 'bypassPermissions' ? 'bypass' : 'plan'}
-                  </span>
-                )}
-                {active.runtime === 'wsl' && <span style={{ color: C.faint }}>wsl</span>}
-                {/* session-worktree FR-13: branch glyph + name, focused session only */}
-                {active.worktree && (
-                  <span title={active.worktree.branch} style={{ color: C.accent }}>
-                    ⎇ {truncateBranchLeft(active.worktree.branch, 24)}
-                  </span>
-                )}
-                {/* remote-control: host this session on claude.ai/code + mobile */}
-                <RemoteControlBadge key={active.id} sessionId={active.id} />
-                <span>
-                  <span style={{ color: C.faint }}>ctx </span>
-                  <span style={{ color: C.bright }}>{formatContextTokens(active.contextUsedTokens)}</span>
-                  <span style={{ color: C.faint }}>/{formatContextTokens(active.contextLimitTokens)}</span>
-                </span>
-                <span style={{ color: C.faint }}>{formatElapsed(elapsedMs)}</span>
-              </div>
-            )}
-          </div>
-
-          {/* body */}
-          {mainTab === 'overview' ? (
-            <OverviewView home={home} />
-          ) : mainTab === 'session' ? (
-            active ? (
-              <ConversationView key={active.id} sessionId={active.id} />
-            ) : (
-              <div
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 12.5,
-                  color: C.faint,
-                }}
-              >
-                select a session, or press <span style={{ color: C.accent, margin: '0 4px' }}>n</span> to start one
-              </div>
-            )
-          ) : mainTab === 'diff' ? (
-            active ? (
-              <DiffView key={active.id} sessionId={active.id} />
-            ) : (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
-                select a session to review its changes
-              </div>
-            )
-          ) : activeAgentId !== null ? (
-            // agent-tab: one subagent's own conversation. Keyed by agent so
-            // switching tabs remounts rather than leaking the previous state.
-            // The session is always present here (FR-14 closes agent tabs when it
-            // changes) — the fallback only guards a dangling id.
-            active ? (
-              <AgentView key={activeAgentId} agentId={activeAgentId} sessionId={active.id} />
-            ) : (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
-                select a session
-              </div>
-            )
-          ) : active ? (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-app)' }}>
-              <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-                <ShellTerminal key={active.id} sessionId={active.id} />
-              </div>
-              <div
-                style={{
-                  padding: '10px 14px',
-                  borderTop: '1px solid var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 14,
-                  fontSize: 11,
-                  color: 'var(--text-muted)',
-                  background: 'var(--bg-app)',
-                  flexShrink: 0,
-                }}
-              >
-                <span
-                  style={{ width: 7, height: 7, borderRadius: '50%', background: shell.alive ? C.done : C.error, display: 'block', flexShrink: 0 }}
-                />
-                <span>
-                  {shell.shellName || 'shell'}
-                  {shell.cwd && (
-                    <>
-                      {' '}
-                      <span style={{ color: C.faint }}>·</span> {shellFooterPath(shell.cwd, shell.shellName, home)}
-                    </>
-                  )}
-                </span>
-                <span style={{ flex: 1 }} />
-                <span>
-                  <span style={{ color: C.hint }}>⌃C</span> interrupt
-                </span>
-                <span>
-                  <span style={{ color: C.hint }}>⌃L</span> clear
-                </span>
-              </div>
-            </div>
-          ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
-              select a session to open its shell
-            </div>
-          )}
+          <MainTabStrip
+            mainTab={mainTab}
+            setMainTab={setMainTab}
+            diffCount={diffCount}
+            agentTabs={agentTabs}
+            closeAgentTab={closeAgentTab}
+            active={active}
+            elapsedMs={elapsedMs}
+          />
+          <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} shell={shell} />
         </section>
 
         {/* right column: agents [3] + mcp [4] + skills [5] */}
-        <div style={{ gridRow: 1, minHeight: 0, display: showRightPane ? 'flex' : 'none', flexDirection: 'column', gap: 10 }}>
-          <div style={{ flex: 1.3, minHeight: 0 }}>
+        <div className="app-col-right" style={{ display: showRightPane ? undefined : 'none' }}>
+          <div className="app-panel-agents">
             <AgentsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
-          <div style={{ flex: 0.95, minHeight: 0 }}>
+          <div className="app-panel-mcp">
             <McpPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
-          <div style={{ flex: 1.05, minHeight: 0 }}>
+          <div className="app-panel-skills">
             <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
         </div>
-
-        {/* status bar */}
-        <div
-          style={{
-            gridColumn: '1 / -1',
-            gridRow: 2,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 16,
-            padding: '0 12px',
-            background: 'var(--bg-deep)',
-            border: '1px solid var(--border)',
-            borderRadius: 5,
-            fontSize: 10.5,
-            color: 'var(--text-muted)',
-          }}
-        >
-          <span style={{ color: C.dim }}>
-            <span style={{ color: C.accent }}>1-5</span> switch pane
-          </span>
-          <span>
-            <span style={{ color: C.hint }}>↑↓</span> nav
-          </span>
-          <span>
-            <span style={{ color: C.hint }}>⏎</span> send
-          </span>
-          <span>
-            <span style={{ color: C.accent }}>o</span> overview
-          </span>
-          <span>
-            <span style={{ color: C.accent }}>d</span> diff
-          </span>
-          <span>
-            <span style={{ color: C.accent }}>t</span> shell
-          </span>
-          <span onClick={toggleLeftPane} style={{ cursor: 'pointer' }} title="toggle sessions column">
-            <span style={{ color: C.accent }}>[</span> <span style={{ opacity: showLeftPane ? 1 : 0.5 }}>sessions</span>
-          </span>
-          <span onClick={toggleRightPane} style={{ cursor: 'pointer' }} title="toggle side panels">
-            <span style={{ color: C.accent }}>]</span> <span style={{ opacity: showRightPane ? 1 : 0.5 }}>panels</span>
-          </span>
-          <span>
-            <span style={{ color: C.accent }}>n</span> new session
-          </span>
-          <span onClick={() => togglePalette()} style={{ cursor: 'pointer' }}>
-            <span style={{ color: C.accent }}>⌘K</span> commands
-          </span>
-          <span style={{ flex: 1 }} />
-          <span
-            onClick={toggleTheme}
-            style={{ cursor: 'pointer', color: C.dim }}
-            title={theme === 'dark' ? 'switch to light theme' : 'switch to dark theme'}
-          >
-            <span style={{ color: C.accent }}>{theme === 'dark' ? '☾' : '☀'}</span> {theme}
-          </span>
-          <span>
-            focus: <span style={{ color: C.accent }}>{focusedPane}</span>
-          </span>
-          <span style={{ color: C.faint }}>francois{appVersion && ` ${appVersion}`}</span>
-        </div>
       </div>
+
+      {/* design-refresh FR-10: window chrome, not a grid pane — a full-bleed
+          30px strip flush against the window edges, like the titlebar above. */}
+      <StatusBar
+        theme={theme}
+        toggleTheme={toggleTheme}
+        focusedPane={focusedPane}
+        activeAgentName={activeAgentName}
+        runningAgents={runningAgents}
+        appVersion={appVersion}
+      />
 
       {newSessionOpen && (
         <NewSessionModal
@@ -620,81 +235,5 @@ export default function App() {
 
       <PaletteRoot />
     </div>
-  );
-}
-
-/**
- * agent-tab FR-12 / §8: one agent tab in the strip — status dot, `⇉`, the
- * truncated agent name, and a `✕` that appears on hover. Not upper-cased or
- * letter-spaced like the built-in tabs: this is content, not chrome.
- */
-function AgentTabChip({
-  tab,
-  active,
-  onOpen,
-  onClose,
-}: {
-  tab: AgentTabRef;
-  active: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-}) {
-  const [hover, setHover] = useState(false);
-  const sc =
-    tab.status === 'running'
-      ? C.running
-      : tab.status === 'done'
-        ? C.done
-        : tab.status === 'error'
-          ? C.error
-          : C.idle;
-  return (
-    <span
-      onClick={onOpen}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      title={tab.name}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        fontSize: 11,
-        fontWeight: 500,
-        cursor: 'pointer',
-        padding: '2px 0',
-        color: active ? C.accent : C.dim,
-        borderBottom: `2px solid ${active ? C.accent : 'transparent'}`,
-        maxWidth: 160,
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          flexShrink: 0,
-          background: sc,
-          animation: tab.status === 'running' ? 'pulse 1.4s ease-in-out infinite' : 'none',
-        }}
-      />
-      <span style={{ color: C.running, flexShrink: 0 }}>⇉</span>
-      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {agentTabLabel(tab.name)}
-      </span>
-      {hover && (
-        <span
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          title="close tab"
-          style={{ fontSize: 10, color: C.faint, flexShrink: 0 }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = C.error)}
-          onMouseLeave={(e) => (e.currentTarget.style.color = C.faint)}
-        >
-          ✕
-        </span>
-      )}
-    </span>
   );
 }

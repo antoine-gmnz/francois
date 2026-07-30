@@ -37,14 +37,10 @@ pub(crate) fn handle_control_request(
     pending: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
     pending_perms: &Arc<Mutex<HashMap<String, PendingPermission>>>,
 ) {
-    let (allow_git, cwd) = {
-        let engine = app.state::<Engine>();
-        let map = engine.sessions.lock().unwrap();
-        match map.get(session_id) {
-            Some(s) => (s.allow_git, s.cwd.clone()),
-            None => (false, String::new()),
-        }
-    };
+    let (allow_git, cwd) = app
+        .state::<Engine>()
+        .with_session(session_id, |s| (s.allow_git, s.cwd.clone()))
+        .unwrap_or_default();
     match decide_control_request(v, allow_git) {
         ControlDecision::Permission {
             request_id,
@@ -64,17 +60,13 @@ pub(crate) fn handle_control_request(
                     ask: ask.clone(),
                 },
             );
-            let block = {
-                let engine = app.state::<Engine>();
-                let mut map = engine.sessions.lock().unwrap();
-                match map.get_mut(session_id) {
-                    Some(s) => {
-                        s.buf_permission(&block_id, ask_value);
-                        s.block_buffer.last().cloned()
-                    }
-                    None => None,
-                }
-            };
+            let block = app
+                .state::<Engine>()
+                .with_session_mut(session_id, |s| {
+                    s.buf_permission(&block_id, ask_value);
+                    s.block_buffer.last().cloned()
+                })
+                .flatten();
             if let Some(b) = &block {
                 append_transcript(app, session_id, b); // FR-2: persisted while pending
             }
@@ -102,17 +94,13 @@ pub(crate) fn handle_control_request(
             );
             let questions_value =
                 serde_json::to_value(&questions).unwrap_or_else(|_| Value::Array(Vec::new()));
-            let block = {
-                let engine = app.state::<Engine>();
-                let mut map = engine.sessions.lock().unwrap();
-                match map.get_mut(session_id) {
-                    Some(s) => {
-                        s.buf_question(&question_block_id, questions_value);
-                        s.block_buffer.last().cloned()
-                    }
-                    None => None,
-                }
-            };
+            let block = app
+                .state::<Engine>()
+                .with_session_mut(session_id, |s| {
+                    s.buf_question(&question_block_id, questions_value);
+                    s.block_buffer.last().cloned()
+                })
+                .flatten();
             if let Some(b) = &block {
                 append_transcript(app, session_id, b); // FR-6: persisted while pending
             }
@@ -139,12 +127,12 @@ pub(crate) fn resolve_question(
     state: &str,
     answers: Option<&Value>,
 ) {
-    let block = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        map.get_mut(session_id)
-            .and_then(|s| s.buf_question_resolve(block_id, state, answers))
-    };
+    let block = app
+        .state::<Engine>()
+        .with_session_mut(session_id, |s| {
+            s.buf_question_resolve(block_id, state, answers)
+        })
+        .flatten();
     if let Some(b) = &block {
         append_transcript(app, session_id, b);
     }
@@ -183,12 +171,12 @@ pub(crate) fn resolve_permission(
     rule: Option<&PermissionRule>,
 ) {
     let rule_value = rule.and_then(|r| serde_json::to_value(r).ok());
-    let block = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        map.get_mut(session_id)
-            .and_then(|s| s.buf_permission_resolve(block_id, state, rule_value.as_ref()))
-    };
+    let block = app
+        .state::<Engine>()
+        .with_session_mut(session_id, |s| {
+            s.buf_permission_resolve(block_id, state, rule_value.as_ref())
+        })
+        .flatten();
     if let Some(b) = &block {
         append_transcript(app, session_id, b);
     }

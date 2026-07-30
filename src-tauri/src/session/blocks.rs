@@ -6,10 +6,10 @@ use serde_json::Value;
 
 pub(crate) fn tool_glyph(tool: &str) -> (&'static str, &'static str) {
     match tool {
-        "Read" => ("\u{29C9}", "#868a93"),
-        "Grep" | "Search" => ("\u{2315}", "#868a93"),
-        "Edit" | "Write" => ("\u{270E}", "#7fa07a"),
-        _ => ("\u{25CF}", "#868a93"),
+        "Read" => ("\u{29C9}", "#8b93a3"),
+        "Grep" | "Search" => ("\u{2315}", "#8b93a3"),
+        "Edit" | "Write" => ("\u{270E}", "#8fbab8"),
+        _ => ("\u{25CF}", "#8b93a3"),
     }
 }
 
@@ -23,9 +23,9 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
         }),
         BlockKind::Assistant => {
             let (gc, bc) = if b.streaming {
-                ("#c8a15a", "#dfe2e8")
+                ("#e0a84e", "#e6e9ef")
             } else {
-                ("#868a93", "#c4c7ce")
+                ("#8b93a3", "#c3c9d4")
             };
             serde_json::json!({
                 "kind": "assistant", "blockId": b.block_id, "isStreaming": b.streaming,
@@ -36,7 +36,7 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
             let (glyph, gc) = tool_glyph(&b.tool);
             let mut o = serde_json::json!({
                 "kind": "tool", "blockId": b.block_id, "isStreaming": b.streaming,
-                "tool": b.tool, "glyph": glyph, "glyphColor": gc, "bodyColor": "#868a93",
+                "tool": b.tool, "glyph": glyph, "glyphColor": gc, "bodyColor": "#8b93a3",
                 "summary": b.summary,
             });
             if let Some(m) = &b.meta {
@@ -47,7 +47,7 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
         BlockKind::Subagent => {
             let mut o = serde_json::json!({
                 "kind": "subagent", "blockId": b.block_id, "isStreaming": b.streaming,
-                "glyph": "\u{21C9}", "glyphColor": "#c8a15a", "bodyColor": "#b9bcc4",
+                "glyph": "\u{21C9}", "glyphColor": "#b39ede", "bodyColor": "#c3c9d4",
                 "agentName": b.summary,
             });
             if let Some(m) = &b.meta {
@@ -127,5 +127,50 @@ mod tests {
             json!({ "kind": "command", "blockId": "c1", "isStreaming": false, "command": "usage",
             "card": { "kind": "notice", "text": "n" } })
         );
+    }
+
+    // design-refresh FR-11: Rust mirror of the contract's assistantColors /
+    // classifyToolStart glyph-color map (contract/conversation-view.ts §5).
+    #[test]
+    fn tool_glyph_uses_new_palette() {
+        assert_eq!(tool_glyph("Read"), ("\u{29C9}", "#8b93a3"));
+        assert_eq!(tool_glyph("Grep"), ("\u{2315}", "#8b93a3"));
+        assert_eq!(tool_glyph("Search"), ("\u{2315}", "#8b93a3"));
+        assert_eq!(tool_glyph("Edit"), ("\u{270E}", "#8fbab8"));
+        assert_eq!(tool_glyph("Write"), ("\u{270E}", "#8fbab8"));
+        assert_eq!(tool_glyph("Bash"), ("\u{25CF}", "#8b93a3"));
+    }
+
+    #[test]
+    fn classify_block_assistant_uses_new_palette() {
+        let mut s = test_session();
+        s.buf_assistant("a1", "hi".into());
+        s.block_buffer[0].streaming = true;
+        let streaming = classify_block(&s.block_buffer[0]);
+        assert_eq!(streaming["glyphColor"], "#e0a84e");
+        assert_eq!(streaming["bodyColor"], "#e6e9ef");
+
+        s.block_buffer[0].streaming = false;
+        let settled = classify_block(&s.block_buffer[0]);
+        assert_eq!(settled["glyphColor"], "#8b93a3");
+        assert_eq!(settled["bodyColor"], "#c3c9d4");
+    }
+
+    #[test]
+    fn classify_block_tool_body_color_uses_new_palette() {
+        let mut s = test_session();
+        s.buf_tool("t1", "Read".into(), "file.rs".into(), false);
+        let block = classify_block(&s.block_buffer[0]);
+        assert_eq!(block["bodyColor"], "#8b93a3");
+    }
+
+    #[test]
+    fn classify_block_subagent_uses_new_palette() {
+        let mut s = test_session();
+        s.buf_tool("s1", "Task".into(), "reviewer".into(), true);
+        let block = classify_block(&s.block_buffer[0]);
+        assert_eq!(block["kind"], "subagent");
+        assert_eq!(block["glyphColor"], "#b39ede");
+        assert_eq!(block["bodyColor"], "#c3c9d4");
     }
 }

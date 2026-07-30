@@ -201,12 +201,9 @@ pub(crate) fn find_mcp_config(cwd: &str, name: &str) -> Option<(Value, String)> 
 
 #[tauri::command(async)]
 pub fn mcp_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<Value>> {
-    let (cwd, runtime) = {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        (s.cwd.clone(), s.mcp.clone())
+    let Some((cwd, runtime)) = engine.with_session(&session_id, |s| (s.cwd.clone(), s.mcp.clone()))
+    else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
     let mut out: Vec<Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -230,12 +227,10 @@ pub fn mcp_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<
 
 #[tauri::command(async)]
 pub fn mcp_detail(engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Value> {
-    let (cwd, runtime) = {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        (s.cwd.clone(), s.mcp.get(&name).cloned())
+    let Some((cwd, runtime)) =
+        engine.with_session(&session_id, |s| (s.cwd.clone(), s.mcp.get(&name).cloned()))
+    else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
     let Some((entry, scope)) = find_mcp_config(&cwd, &name) else {
         return err(
@@ -269,14 +264,12 @@ pub fn mcp_reconnect(
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
-    let info = {
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
+    let Some(info) = engine.with_session_mut(&session_id, |s| {
         let info = connecting_info(&name);
         s.mcp.insert(name.clone(), info.clone());
         info
+    }) else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
     emit(
         &app,
@@ -294,12 +287,8 @@ pub fn mcp_detach(
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
-    let cwd = {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        s.cwd.clone()
+    let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
     // Only project-scope servers live in this project's .mcp.json. Refuse to silently
     // edit the user's global ~/.claude.json for local/user-scope servers.
@@ -308,12 +297,9 @@ pub fn mcp_detach(
             return err("MCP_ERROR", format!("'{name}' is {scope}-scoped (managed globally) — remove it with `claude mcp remove {name}`"));
         }
     }
-    {
-        let mut map = engine.sessions.lock().unwrap();
-        if let Some(s) = map.get_mut(&session_id) {
-            s.mcp.remove(&name);
-        }
-    }
+    engine.with_session_mut(&session_id, |s| {
+        s.mcp.remove(&name);
+    });
     let mut cfg = match read_mcp_json_for_write(&cwd) {
         Ok(v) => v,
         Err(e) => return err("MCP_ERROR", e),
@@ -347,12 +333,8 @@ pub fn mcp_attach(
         .get("transport")
         .and_then(|t| t.as_str())
         .unwrap_or("stdio");
-    let cwd = {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        s.cwd.clone()
+    let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
 
     let mut cfg = match read_mcp_json_for_write(&cwd) {
@@ -422,12 +404,9 @@ pub fn mcp_attach(
     }
 
     let info = connecting_info(&name);
-    {
-        let mut map = engine.sessions.lock().unwrap();
-        if let Some(s) = map.get_mut(&session_id) {
-            s.mcp.insert(name.clone(), info.clone());
-        }
-    }
+    engine.with_session_mut(&session_id, |s| {
+        s.mcp.insert(name.clone(), info.clone());
+    });
     emit(
         &app,
         SessionEvent::McpUpdate {

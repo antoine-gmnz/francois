@@ -325,22 +325,15 @@ pub(crate) fn claude_md_path(root: &str) -> PathBuf {
     Path::new(root).join("CLAUDE.md")
 }
 
-/// Monotonic counter making each temp filename unique within the process, so two
-/// writers never collide on the SAME temp path (the pattern
-/// `permissions::write_json_atomic` uses).
-///
-/// NOTE: this prevents temp-file collision only. It does NOT serialize the
-/// read-modify-write itself — that is what `STANDARDS_LOCK` in `write_standards`
-/// is for.
-static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Temp file in the SAME directory + rename (FR-13). The temp file is removed on
 /// EVERY failure path (FR-15) — including the write itself, which is the branch a
 /// full disk takes (§7 #12). This temp lands inside the user's git-tracked repo, so
 /// a leaked `CLAUDE.md.<pid>.<n>.tmp` would show up in their `git status`.
+///
+/// Kept separate from `permissions::write_json_atomic` on purpose — see the
+/// module doc on `crate::fs_util` for why the two atomic writers do not merge.
 fn write_text_atomic(path: &Path, content: &str) -> Result<(), String> {
-    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = path.with_extension(format!("md.{}.{seq}.tmp", std::process::id()));
+    let tmp = crate::fs_util::unique_temp_path(path, "md");
     if let Err(e) = std::fs::write(&tmp, content) {
         let _ = std::fs::remove_file(&tmp);
         return Err(format!("could not write {}: {e}", tmp.display()));

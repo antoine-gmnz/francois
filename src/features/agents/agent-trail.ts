@@ -42,13 +42,13 @@ export function stepToolPrefix(step: AgentStep): string | null {
 }
 
 /** FR-17: the `async` marker rides on the contract's `background` flag. */
-export function showAsyncMarker(a: AgentInfo): boolean {
-  return a.background === true;
+export function showAsyncMarker(agent: AgentInfo): boolean {
+  return agent.background === true;
 }
 
 /** FR-17: ` · {lastActivity}` on the meta row — for every status, absent when blank. */
-export function activitySuffix(a: AgentInfo): string | null {
-  const t = a.lastActivity?.trim();
+export function activitySuffix(agent: AgentInfo): string | null {
+  const t = agent.lastActivity?.trim();
   return t ? t : null;
 }
 
@@ -194,7 +194,7 @@ export function receiveTrailActivity(
   if (!res.ok) {
     return { ...prev, loading: false, hydrated: true, buffer: [], error: res.error };
   }
-  let steps = [...res.data].sort((a, b) => a.seq - b.seq);
-  for (const b of prev.buffer) steps = mergeStep(steps, b);
+  let steps = [...res.data].sort((left, right) => left.seq - right.seq);
+  for (const step of prev.buffer) steps = mergeStep(steps, step);
   return { ...prev, loading: false, hydrated: true, buffer: [], steps, error: null };
 }

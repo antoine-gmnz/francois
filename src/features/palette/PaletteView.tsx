@@ -1,23 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { PaletteCommand, SecondaryStep, SecondaryStepItem } from '../../../contract/command-palette';
 import { closePalette, filterRank, makeContext, paletteCommands, usePaletteState, useToastState } from './palette';
 import { getPaletteRunningAgents, usePaletteDataRev } from './paletteData';
 import { useStore } from '../../lib/store';
-
-const C = {
-  accent: 'var(--accent)',
-  text: 'var(--text-strong)',
-  name: 'var(--text)',
-  bright: 'var(--text-bright)',
-  glyph: 'var(--text-dim)',
-  hint: 'var(--text-faint)',
-  faint: 'var(--text-faint)',
-  pill: 'var(--bg-hover)',
-  pillText: 'var(--text-hint)',
-  border: 'var(--border)',
-  add: 'var(--success)',
-  del: 'var(--error)',
-};
+import { ListRow } from '../../ui/ListRow';
+import { HintBar } from '../../ui/HintBar';
+import './palette.css';
 
 // ---------- palette overlay + toast host (rendered once at the app root) ----------
 
@@ -127,74 +116,33 @@ function Palette() {
   };
 
   return (
-    <div
-      onMouseDown={() => closePalette()}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(6,7,9,0.62)',
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-        paddingTop: 118,
-        zIndex: 1000,
-        animation: 'fadeIn 120ms ease-out',
-      }}
-    >
-      <div
-        onMouseDown={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(588px, calc(100vw - 32px))',
-          background: 'var(--bg-panel)',
-          border: '1px solid var(--bg-hover-2)',
-          borderRadius: 8,
-          boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)',
-          overflow: 'hidden',
-          animation: 'palettePop 120ms ease-out',
-        }}
-      >
+    <div className="palette-backdrop" onMouseDown={() => closePalette()}>
+      <div className="palette-panel" onMouseDown={(e) => e.stopPropagation()}>
         {/* input row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: `1px solid ${C.border}` }}>
-          <span style={{ color: C.accent, fontSize: 15 }}>›</span>
-          {isSecondary && secondaryStep && (
-            <span style={{ fontSize: 10, color: C.pillText, background: C.pill, borderRadius: 8, padding: '1px 6px', flexShrink: 0 }}>
-              {secondaryParentName}
-            </span>
-          )}
-          <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+        <div className="palette-input-row">
+          <span className="palette-chevron">›</span>
+          {isSecondary && secondaryStep && <span className="palette-parent-pill">{secondaryParentName}</span>}
+          <div className="palette-input-wrap">
             <input
               ref={inputRef}
+              className="palette-input"
               value={currentText}
               onChange={(e) => (isSecondary ? setSecondaryQuery(e.target.value) : setQuery(e.target.value))}
               onKeyDown={onKeyDown}
               placeholder={isSecondary && secondaryStep ? secondaryStep.placeholder : 'run a command'}
-              style={{
-                flex: 1,
-                border: 'none',
-                outline: 'none',
-                padding: 0, // text starts at left:0 so the block caret aligns with the mirror
-                background: 'transparent',
-                fontFamily: 'inherit',
-                fontSize: 14,
-                color: C.text,
-                caretColor: 'transparent',
-              }}
             />
-            <span ref={mirrorRef} aria-hidden style={{ position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', fontFamily: 'inherit', fontSize: 14, left: 0 }}>
+            <span ref={mirrorRef} aria-hidden className="palette-mirror">
               {currentText}
             </span>
-            <span
-              aria-hidden
-              style={{ position: 'absolute', left: caretX, width: 8, height: 16, background: C.accent, animation: 'blink 1s step-end infinite', pointerEvents: 'none' }}
-            />
+            <span aria-hidden className="palette-caret" style={{ '--caret-x': `${caretX}px` } as CSSProperties} />
           </div>
-          <span style={{ fontSize: 10, color: C.faint }}>{isSecondary ? 'back' : 'esc'}</span>
+          <span className="palette-esc-hint">{isSecondary ? 'back' : 'esc'}</span>
         </div>
 
         {/* list */}
-        <div className="scz" style={{ padding: 6, maxHeight: 336, overflowY: 'auto' }}>
+        <div className="scz palette-list">
           {items.length === 0 ? (
-            <div style={{ padding: '10px 12px', fontSize: 13, color: C.faint, textAlign: 'center' }}>no matching commands</div>
+            <div className="palette-empty">no matching commands</div>
           ) : (
             items.map((it, i) =>
               isSecondary ? (
@@ -207,11 +155,13 @@ function Palette() {
         </div>
 
         {/* footer */}
-        <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: `1px solid ${C.border}`, fontSize: 10, color: C.faint }}>
-          <FooterHint k="↑↓" label="navigate" />
-          <FooterHint k="⏎" label={isSecondary ? 'select' : 'run'} />
-          <FooterHint k="esc" label={isSecondary ? 'back' : 'dismiss'} />
-        </div>
+        <HintBar
+          items={[
+            { key: '↑↓', label: 'navigate' },
+            { key: '⏎', label: isSecondary ? 'select' : 'run' },
+            { key: 'esc', label: isSecondary ? 'back' : 'dismiss' },
+          ]}
+        />
       </div>
     </div>
   );
@@ -236,31 +186,11 @@ function ItemRow({ item, selected, onHover, onClick }: { item: SecondaryStepItem
 
 function Row({ glyph, name, hint, selected, onHover, onClick }: { glyph: string; name: string; hint?: string; selected: boolean; onHover: () => void; onClick: () => void }) {
   return (
-    <div
-      onMouseEnter={onHover}
-      onClick={onClick}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '10px 12px',
-        borderRadius: 5,
-        cursor: 'pointer',
-        background: selected ? C.pill : 'transparent',
-      }}
-    >
-      <span style={{ width: 16, textAlign: 'center', fontSize: 12, color: selected ? C.accent : C.glyph, flexShrink: 0 }}>{glyph}</span>
-      <span style={{ fontSize: 13, color: selected ? C.bright : C.name, flexShrink: 0 }}>{name}</span>
-      <span style={{ fontSize: 11, color: C.hint, flex: 1, textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{hint ?? ''}</span>
-    </div>
-  );
-}
-
-function FooterHint({ k, label }: { k: string; label: string }) {
-  return (
-    <span>
-      <span style={{ color: C.glyph }}>{k}</span> {label}
-    </span>
+    <ListRow className="palette-row" selected={selected} onMouseEnter={onHover} onClick={onClick}>
+      <span className="palette-row-glyph">{glyph}</span>
+      <span className="palette-row-name">{name}</span>
+      <span className="palette-row-hint">{hint ?? ''}</span>
+    </ListRow>
   );
 }
 
@@ -277,33 +207,15 @@ function ToastHost() {
   const dismiss = useToastState((s) => s.dismiss);
   if (visible.length === 0) return null;
   return (
-    <div style={{ position: 'fixed', bottom: 48, left: 0, right: 0, display: 'flex', flexDirection: 'column-reverse', alignItems: 'center', gap: 8, zIndex: 1100, pointerEvents: 'none' }}>
+    <div className="palette-toast-host">
       {visible.map((t) => {
         const g = TOAST_GLYPH[t.kind] ?? TOAST_GLYPH.info;
         return (
-          <div
-            key={t.id}
-            onClick={() => dismiss(t.id)}
-            style={{
-              pointerEvents: 'auto',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              background: 'var(--bg-elevated)',
-              borderRadius: 6,
-              padding: '10px 16px',
-              fontSize: 12,
-              color: C.bright,
-              boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)',
-              cursor: 'pointer',
-              animation: 'toastIn 140ms ease-out',
-              maxWidth: 'min(520px, calc(100vw - 40px))',
-            }}
-          >
-            <span style={{ width: 12, textAlign: 'center', fontSize: 11, color: g.color, border: g.border, borderRadius: '50%', lineHeight: '14px', height: 14, boxSizing: 'content-box' }}>
+          <div key={t.id} className="palette-toast" onClick={() => dismiss(t.id)}>
+            <span className="palette-toast-glyph" style={{ '--toast-color': g.color, '--toast-border': g.border } as CSSProperties}>
               {g.glyph}
             </span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.message}</span>
+            <span className="palette-toast-message">{t.message}</span>
           </div>
         );
       })}

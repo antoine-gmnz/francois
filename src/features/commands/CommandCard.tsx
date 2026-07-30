@@ -12,25 +12,9 @@ import { formatContextTokens } from '../../../contract/conversation-view';
 import type { CommandConversationBlock } from '../../../contract/interactive-commands';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionSwitchModel } from '../../lib/api';
-import { cardHeaderLabel, liveCurrentModelId, meterFillColor, switchModelFromCard } from '../conversation/conversation-blocks';
+import { CARD_KIND_COMMAND, cardHeaderLabel, liveCurrentModelId, meterFillColor, switchModelFromCard } from '../conversation/conversation-blocks';
 import { useStore } from '../../lib/store';
-
-// §8 tokens
-const T = {
-  cardBg: 'var(--bg-deep)',
-  border: 'var(--border)',
-  accent: 'var(--accent)',
-  name: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  dim: 'var(--text-dim)',
-  body: 'var(--text-2)',
-  bright: 'var(--text-bright)',
-  value: 'var(--text)',
-  error: 'var(--error)',
-  loading: 'var(--warn)',
-  hover: 'var(--bg-raised)',
-  green: 'var(--success)',
-};
+import './commands.css';
 
 const STATUS_COLOR: Record<SessionStatus, string> = {
   running: 'var(--accent)',
@@ -39,54 +23,58 @@ const STATUS_COLOR: Record<SessionStatus, string> = {
   error: 'var(--error)',
 };
 
-export default function CommandBlock({ b, sessionId }: { b: CommandConversationBlock; sessionId: string }) {
-  const card = b.card;
+// Card-kind body dispatch, keyed against CARD_KIND_COMMAND's own keys
+// (conversation-blocks.ts) so the two tables enumerating CommandCard['kind']
+// can't drift apart (interactive-commands §8). 'notice' is excluded — it
+// isn't rendered as a card at all (see the early return below).
+type CardKind = Exclude<keyof typeof CARD_KIND_COMMAND, 'notice'>;
+type CardOfKind<K extends CardKind> = Extract<CommandCard, { kind: K }>;
+
+const CARD_BODY: { [K in CardKind]: (card: CardOfKind<K>, sessionId: string) => JSX.Element } = {
+  usage: (card) => <UsageBody card={card} />,
+  context: (card) => <ContextBody card={card} />,
+  model: (card, sessionId) => <ModelBody card={card} sessionId={sessionId} />,
+  status: (card) => <StatusBody meta={card.meta} />,
+  help: (card) => <HelpBody entries={card.entries} />,
+  text: (card) => <PreBody text={card.text} />,
+};
+
+export default function CommandBlock({ b: block, sessionId }: { b: CommandConversationBlock; sessionId: string }) {
+  const card = block.card;
 
   // Notice: NOT a card — glyph-column one-liner identical to tool blocks (§8).
   if (card?.kind === 'notice') {
     return (
-      <div style={{ display: 'flex', gap: 10 }}>
-        <span style={{ width: 16, flexShrink: 0, textAlign: 'center', fontSize: 12, color: T.faint, marginTop: 1 }}>▦</span>
-        <div style={{ minWidth: 0, flex: 1, fontSize: 12.5, lineHeight: 1.55, color: T.dim, whiteSpace: 'pre-wrap' }}>{card.text}</div>
+      <div className="cmdcard-notice">
+        <span className="cmdcard-notice-glyph">▦</span>
+        <div className="cmdcard-notice-text">{card.text}</div>
       </div>
     );
   }
 
-  const label = cardHeaderLabel(card, b.command); // falls back to 'OUTPUT' when both resolve empty
+  const label = cardHeaderLabel(card, block.command); // falls back to 'OUTPUT' when both resolve empty
 
   return (
-    <div style={{ background: T.cardBg, border: `1px solid ${T.border}`, borderRadius: 4, padding: '10px 13px' }}>
+    <div className="cmdcard">
       {/* header: glyph + command name; loading adds the right-aligned pulse */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 12, color: T.accent }}>▦</span>
-        <span style={{ fontSize: 10, letterSpacing: '0.12em', color: T.name }}>{label}</span>
+      <div className="cmdcard-header">
+        <span className="cmdcard-header-glyph">▦</span>
+        <span className="cmdcard-header-label">{label}</span>
         {!card && (
           <>
-            <span style={{ flex: 1 }} />
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span
-                style={{ width: 5, height: 5, borderRadius: '50%', background: T.loading, animation: 'pulse 1.4s ease-in-out infinite' }}
-              />
-              <span style={{ fontSize: 9.5, letterSpacing: '0.04em', color: T.loading }}>running…</span>
+            <span className="cmdcard-header-spacer" />
+            <span className="cmdcard-loading">
+              <span className="cmdcard-loading-dot" />
+              <span className="cmdcard-loading-text">running…</span>
             </span>
           </>
         )}
       </div>
 
       {!card ? (
-        <div style={{ fontSize: 12, color: T.faint }}>fetching…</div>
-      ) : card.kind === 'usage' ? (
-        <UsageBody card={card} />
-      ) : card.kind === 'context' ? (
-        <ContextBody card={card} />
-      ) : card.kind === 'model' ? (
-        <ModelBody card={card} sessionId={sessionId} />
-      ) : card.kind === 'status' ? (
-        <StatusBody meta={card.meta} />
-      ) : card.kind === 'help' ? (
-        <HelpBody entries={card.entries} />
+        <div className="cmdcard-fetching">fetching…</div>
       ) : (
-        <PreBody text={card.text} />
+        (CARD_BODY[card.kind] as (card: CommandCard, sessionId: string) => JSX.Element)(card, sessionId)
       )}
     </div>
   );
@@ -97,10 +85,10 @@ function MeterRow({ label, percent, right }: { label: string; percent: number; r
   const p = Math.min(100, Math.max(0, percent));
   return (
     <div>
-      <div style={{ fontSize: 11, color: T.body, marginBottom: 3 }}>{label}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 120, height: 6, borderRadius: 3, background: T.border }}>
-          <div style={{ width: `${p}%`, height: '100%', borderRadius: 3, background: meterFillColor(percent) }} />
+      <div className="cmdcard-meter-label">{label}</div>
+      <div className="cmdcard-meter-row">
+        <div className="cmdcard-meter-track">
+          <div className="cmdcard-meter-fill" style={{ width: `${p}%`, background: meterFillColor(percent) }} />
         </div>
         {right}
       </div>
@@ -111,7 +99,7 @@ function MeterRow({ label, percent, right }: { label: string; percent: number; r
 function UsageBody({ card }: { card: Extract<CommandCard, { kind: 'usage' }> }) {
   return (
     <>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="cmdcard-usage-list">
         {card.meters.map((m, i) => (
           <MeterRow
             key={i}
@@ -119,16 +107,14 @@ function UsageBody({ card }: { card: Extract<CommandCard, { kind: 'usage' }> }) 
             percent={m.percentUsed}
             right={
               <>
-                <span style={{ fontSize: 11, color: T.bright }}>{m.percentUsed}%</span>
-                <span style={{ fontSize: 10, color: T.faint }}>resets {m.resetsAt}</span>
+                <span className="cmdcard-usage-percent">{m.percentUsed}%</span>
+                <span className="cmdcard-usage-resets">resets {m.resetsAt}</span>
               </>
             }
           />
         ))}
       </div>
-      {card.tail && (
-        <div style={{ marginTop: 8, fontSize: 12, color: T.body, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{card.tail}</div>
-      )}
+      {card.tail && <div className="cmdcard-usage-tail">{card.tail}</div>}
     </>
   );
 }
@@ -141,9 +127,9 @@ function ContextBody({ card }: { card: Extract<CommandCard, { kind: 'context' }>
           label="context"
           percent={card.percentUsed}
           right={
-            <span style={{ fontSize: 11 }}>
-              <span style={{ color: T.bright }}>{card.usedLabel}</span>
-              <span style={{ color: T.faint }}>/{card.limitLabel}</span>
+            <span className="cmdcard-context-right">
+              <span className="cmdcard-context-used">{card.usedLabel}</span>
+              <span className="cmdcard-context-limit">/{card.limitLabel}</span>
             </span>
           }
         />
@@ -154,7 +140,7 @@ function ContextBody({ card }: { card: Extract<CommandCard, { kind: 'context' }>
 }
 
 function ModelBody({ card, sessionId }: { card: Extract<CommandCard, { kind: 'model' }>; sessionId: string }) {
-  const live = useStore((s) => s.sessions.find((x) => x.id === sessionId));
+  const live = useStore((s) => s.sessions.find((session) => session.id === sessionId));
   const currentId = liveCurrentModelId(live?.model.id, card.currentId); // FR-21: live, never the snapshot
   const disabled = live?.status === 'done' || live?.status === 'error';
   const [error, setError] = useState<string | null>(null);
@@ -183,25 +169,25 @@ function ModelBody({ card, sessionId }: { card: Extract<CommandCard, { kind: 'mo
                 schedule,
               })
             }
-            onMouseEnter={interactive ? (e) => (e.currentTarget.style.background = T.hover) : undefined}
+            onMouseEnter={interactive ? (e) => (e.currentTarget.style.background = 'var(--bg-raised)') : undefined}
             onMouseLeave={interactive ? (e) => (e.currentTarget.style.background = 'transparent') : undefined}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '5px 8px',
-              borderRadius: 3,
-              cursor: interactive ? 'pointer' : 'default',
-              opacity: disabled && !isCurrent ? 0.5 : 1,
-            }}
+            className={
+              'cmdcard-model-row' +
+              (interactive ? ' cmdcard-model-row--interactive' : '') +
+              (disabled && !isCurrent ? ' cmdcard-model-row--dim' : '')
+            }
           >
-            <span style={{ fontSize: 12, color: isCurrent ? T.green : T.faint }}>{isCurrent ? '●' : '○'}</span>
-            <span style={{ fontSize: 12, color: isCurrent ? T.bright : T.body }}>{m.label}</span>
-            {isCurrent && <span style={{ fontSize: 10, color: T.faint }}>current</span>}
+            <span className={`cmdcard-model-glyph ${isCurrent ? 'cmdcard-model-glyph-current' : 'cmdcard-model-glyph-idle'}`}>
+              {isCurrent ? '●' : '○'}
+            </span>
+            <span className={`cmdcard-model-label ${isCurrent ? 'cmdcard-model-label-current' : 'cmdcard-model-label-idle'}`}>
+              {m.label}
+            </span>
+            {isCurrent && <span className="cmdcard-model-current-tag">current</span>}
           </div>
         );
       })}
-      {error && <div style={{ marginTop: 4, fontSize: 10.5, color: T.error }}>{error}</div>}
+      {error && <div className="cmdcard-model-error">{error}</div>}
     </div>
   );
 }
@@ -209,7 +195,7 @@ function ModelBody({ card, sessionId }: { card: Extract<CommandCard, { kind: 'mo
 function StatusBody({ meta }: { meta: SessionMeta }) {
   const rows: [string, React.ReactNode][] = [
     ['name', meta.name],
-    ['cwd', <span style={{ overflowWrap: 'anywhere' }}>{displayWslCwd(meta.cwd) ?? meta.cwd}</span>],
+    ['cwd', <span className="cmdcard-status-cwd">{displayWslCwd(meta.cwd) ?? meta.cwd}</span>],
     ['model', meta.model.label],
     ['status', <span style={{ color: STATUS_COLOR[meta.status] }}>{meta.status}</span>],
     ['runtime', meta.runtime],
@@ -217,18 +203,18 @@ function StatusBody({ meta }: { meta: SessionMeta }) {
     [
       'ctx',
       <span>
-        <span style={{ color: T.bright }}>{formatContextTokens(meta.contextUsedTokens)}</span>
-        <span style={{ color: T.faint }}>/{formatContextTokens(meta.contextLimitTokens)}</span>
+        <span className="cmdcard-status-ctx-used">{formatContextTokens(meta.contextUsedTokens)}</span>
+        <span className="cmdcard-status-ctx-limit">/{formatContextTokens(meta.contextLimitTokens)}</span>
       </span>,
     ],
     ['started', new Date(meta.startedAt).toLocaleString()],
   ];
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '3px 14px' }}>
+    <div className="cmdcard-status-grid">
       {rows.map(([k, v]) => (
         <Fragment key={k}>
-          <span style={{ fontSize: 10.5, color: T.faint }}>{k}</span>
-          <span style={{ fontSize: 12, color: T.value, minWidth: 0 }}>{v}</span>
+          <span className="cmdcard-status-key">{k}</span>
+          <span className="cmdcard-status-value">{v}</span>
         </Fragment>
       ))}
     </div>
@@ -238,15 +224,15 @@ function StatusBody({ meta }: { meta: SessionMeta }) {
 function HelpBody({ entries }: { entries: HelpEntry[] }) {
   return (
     <div>
-      <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', rowGap: 2 }}>
+      <div className="cmdcard-help-grid">
         {entries.map((e) => (
           <Fragment key={e.command}>
-            <span style={{ fontSize: 12, color: T.accent }}>/{e.command}</span>
-            <span style={{ fontSize: 12, color: T.dim }}>{e.description}</span>
+            <span className="cmdcard-help-command">/{e.command}</span>
+            <span className="cmdcard-help-description">{e.description}</span>
           </Fragment>
         ))}
       </div>
-      <div style={{ marginTop: 8, fontSize: 10.5, color: T.faint }}>other /commands are passed to Claude Code</div>
+      <div className="cmdcard-help-footer">other /commands are passed to Claude Code</div>
     </div>
   );
 }
@@ -254,10 +240,7 @@ function HelpBody({ entries }: { entries: HelpEntry[] }) {
 /** Preformatted body (context/text cards): horizontal scroll inside the card only. */
 function PreBody({ text, top = 0 }: { text: string; top?: number }) {
   return (
-    <div
-      className="scz"
-      style={{ marginTop: top, fontSize: 12, color: T.body, lineHeight: 1.5, whiteSpace: 'pre', overflowX: 'auto' }}
-    >
+    <div className="scz cmdcard-pre" style={{ marginTop: top }}>
       {text}
     </div>
   );

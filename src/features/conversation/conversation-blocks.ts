@@ -5,7 +5,7 @@
 // Every rule is a keyed upsert on blockId: replaying an event is a no-op or an
 // identical replace, and out-of-order arrivals insert rather than drop.
 
-import type { CommandCard, PermissionAsk, PermissionRule, Result, SessionQuestion } from '../../../contract/common';
+import type { CommandCard, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion, SlashCommandInfo } from '../../../contract/common';
 import {
   assistantColors,
   classifyToolStart,
@@ -56,23 +56,28 @@ export function isClearCommand(text: string): boolean {
   return /^\/clear\s*$/i.test(text.trim());
 }
 
+type CardOfKind<K extends CommandCard['kind']> = Extract<CommandCard, { kind: K }>;
+
+/**
+ * Per-kind command-token derivation (§8 header label, via `cardHeaderLabel`
+ * below). The single home for `CommandCard['kind']` discriminant knowledge —
+ * `CommandCard.tsx`'s body-renderer table is typed against this table's keys
+ * so the two enumerations can't drift apart (interactive-commands §8).
+ */
+export const CARD_KIND_COMMAND: { [K in CommandCard['kind']]: (card: CardOfKind<K>) => string } = {
+  usage: (card) => card.command,
+  text: (card) => card.command,
+  context: () => 'context',
+  model: () => 'model',
+  status: () => 'status',
+  help: () => 'help',
+  notice: () => '', // notices carry no command token
+};
+
 /** Command token (without '/') a card answers — for insert-if-unseen outputs. */
 export function commandFromCard(card: CommandCard): string {
-  switch (card.kind) {
-    case 'usage':
-    case 'text':
-      return card.command;
-    case 'context':
-      return 'context';
-    case 'model':
-      return 'model';
-    case 'status':
-      return 'status';
-    case 'help':
-      return 'help';
-    case 'notice':
-      return ''; // notices carry no command token
-  }
+  const derive = CARD_KIND_COMMAND[card.kind] as (card: CommandCard) => string;
+  return derive(card);
 }
 
 /**
@@ -295,6 +300,100 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
   }
 }
 
+// ---------- session-event application (conversation-view FR-8/9/10) ----------
+
+export type TranscriptDispatch = (action: TranscriptAction) => void;
+
+/** The non-reducer component state a SessionEvent can also touch. */
+export interface ConversationEventSetters {
+  setStatus: (status: string) => void;
+  setErrorMessage: (message: string | undefined) => void;
+  setResumeFailed: (value: boolean) => void;
+  setPinned: (value: boolean) => void;
+  setCommands: (commands: SlashCommandInfo[]) => void;
+  patchUsage: (usedTokens: number, limitTokens: number) => void;
+}
+
+type SessionEventOf<T extends SessionEvent['type']> = Extract<SessionEvent, { type: T }>;
+
+type SessionEventHandler<T extends SessionEvent['type']> = (
+  dispatch: TranscriptDispatch,
+  setters: ConversationEventSetters,
+  e: SessionEventOf<T>,
+) => void;
+
+/** session.removed / agent.update / agent.step / mcp.update: owned by other
+ * panels' own subscriptions (sidebar / agents-panel / mcp-panel) — no-op here,
+ * matching the original switch's `default: break`. */
+function ignoreEvent(): void {}
+
+/**
+ * Per-`SessionEvent['type']` handler table, replacing the 21-branch `route(e)`
+ * switch that used to live inline in ConversationView's hydration effect. A
+ * `Record<SessionEvent['type'], handler>` (§7) rather than an exhaustive
+ * switch with a `never` default: the original switch was NOT exhaustive on
+ * purpose (4 member types are intentionally ignored here — see `ignoreEvent`
+ * above), and a plain switch's `default: break` would still silently swallow
+ * a genuinely missing case the same way. The Record instead forces an
+ * explicit (possibly no-op) entry per member, so a newly added SessionEvent
+ * variant fails to compile here until someone decides what this view does
+ * with it.
+ */
+const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler<T> } = {
+  'session.status': (_dispatch, setters, e) => setters.setStatus(e.status),
+  'session.meta': (_dispatch, setters, e) => {
+    setters.setStatus(e.meta.status);
+    setters.setErrorMessage(e.meta.errorMessage);
+  },
+  'session.error': (_dispatch, setters, e) => {
+    setters.setErrorMessage(e.error.message);
+    setters.setStatus('error');
+  },
+  'context.usage': (_dispatch, setters, e) => setters.patchUsage(e.usedTokens, e.limitTokens),
+  'message.user': (dispatch, setters, e) => {
+    dispatch({ t: 'msgUser', blockId: e.blockId, text: e.text });
+    setters.setResumeFailed(false); // a new user turn clears the resume-fail notice (FR-14)
+  },
+  // the --resume was rejected; core continued fresh (FR-9/14)
+  'session.resumeFailed': (_dispatch, setters) => setters.setResumeFailed(true),
+  'session.cleared': (dispatch, setters) => {
+    // /clear full reset: drop every block (context.usage 0 resets the meter)
+    dispatch({ t: 'clear' });
+    setters.setResumeFailed(false);
+    setters.setPinned(true);
+  },
+  'assistant.delta': (dispatch, _setters, e) => dispatch({ t: 'delta', blockId: e.blockId, text: e.text }),
+  'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId }),
+  'tool.start': (dispatch, _setters, e) => dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary }),
+  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta }),
+  // interactive-commands FR-20: pending command block (loading card)
+  'command.started': (dispatch, _setters, e) => dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command }),
+  // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
+  'command.output': (dispatch, _setters, e) => dispatch({ t: 'commandOutput', blockId: e.blockId, card: e.card }),
+  // session-questions FR-6/16: insert the pending question card
+  'question.asked': (dispatch, _setters, e) => dispatch({ t: 'questionAsked', blockId: e.blockId, questions: e.questions }),
+  // session-questions FR-11/13/16: flip to answered/cancelled in place
+  'question.resolved': (dispatch, _setters, e) =>
+    dispatch({ t: 'questionResolved', blockId: e.blockId, state: e.state, answers: e.answers }),
+  // permission-guardrails FR-2/24: insert the pending approval card
+  'permission.asked': (dispatch, _setters, e) => dispatch({ t: 'permissionAsked', blockId: e.blockId, ask: e.ask }),
+  // permission-guardrails FR-8/10/24: flip to allowed/denied/cancelled in place
+  'permission.resolved': (dispatch, _setters, e) =>
+    dispatch({ t: 'permissionResolved', blockId: e.blockId, state: e.state, rule: e.rule }),
+  // slash-menu FR-10: idempotent replace — an open popup refilters in place
+  'session.commands': (_dispatch, setters, e) => setters.setCommands(e.commands),
+  'session.removed': ignoreEvent,
+  'agent.update': ignoreEvent,
+  'agent.step': ignoreEvent,
+  'mcp.update': ignoreEvent,
+};
+
+/** Apply one SessionEvent to the transcript reducer / component setters. */
+export function applySessionEvent(dispatch: TranscriptDispatch, setters: ConversationEventSetters, e: SessionEvent): void {
+  const handler = SESSION_EVENT_HANDLERS[e.type] as SessionEventHandler<SessionEvent['type']>;
+  handler(dispatch, setters, e);
+}
+
 // ---------- render-time compaction of duplicate tool rows ----------
 
 /** The core's tool_meta line-change shape: `+N −M` (U+2212 minus). */
@@ -329,6 +428,38 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
       continue;
     }
     out.push(b);
+  }
+  return out;
+}
+
+// ---------- render-time grouping of consecutive tool calls (design-refresh FR-7) ----------
+
+export type TranscriptRenderItem =
+  | { kind: 'single'; block: ConversationBlock }
+  | { kind: 'tool-group'; blockId: string; blocks: ToolConversationBlock[] };
+
+/**
+ * Groups a run of consecutive `tool`-kind blocks (any tool/target — this runs
+ * AFTER compactBlocks, which already merged identical repeats) into one
+ * `tool-group` item so the view can render them inside a single hairline-
+ * divided card (design-refresh FR-7 / the agent-tab trace, which shares this
+ * same vocabulary). `subagent` blocks — a different glyph/color/banner
+ * treatment — never join a tool run. A lone tool block still becomes a
+ * one-item group, so every tool call gets the same card treatment.
+ */
+export function groupToolRuns(blocks: ConversationBlock[]): TranscriptRenderItem[] {
+  const out: TranscriptRenderItem[] = [];
+  for (const b of blocks) {
+    if (b.kind === 'tool') {
+      const last = out[out.length - 1];
+      if (last && last.kind === 'tool-group') {
+        last.blocks.push(b);
+        continue;
+      }
+      out.push({ kind: 'tool-group', blockId: b.blockId, blocks: [b] });
+      continue;
+    }
+    out.push({ kind: 'single', block: b });
   }
   return out;
 }

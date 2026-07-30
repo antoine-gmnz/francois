@@ -1,0 +1,343 @@
+/* pane [1] — the fleet board (Sidebar.tsx + SessionListBody / SessionContextMenu /
+   FilterInput, which share this stylesheet's class names 1:1). */
+
+/* design-refresh: a --bg-panel card with the outer border + 8px panel radius. */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+}
+.sidebar--focused {
+  border-color: var(--border-focus);
+}
+
+/* No bottom rule, unlike the right-rail panel headers: the filter field sits
+   directly beneath and the mock groups the two as one block. */
+.sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-11) var(--space-12) var(--space-10);
+  flex-shrink: 0;
+}
+.sidebar__title {
+  font-size: var(--font-size-11-5);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-hint);
+  font-weight: 600;
+}
+.sidebar__title--focused {
+  color: var(--accent);
+}
+.sidebar__count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+}
+
+.sidebar__footer {
+  padding: var(--space-10);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar__new {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12-5);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+.sidebar__new:hover {
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+}
+.sidebar__new-plus {
+  color: var(--accent);
+  font-size: var(--font-size-14);
+  line-height: 1;
+}
+.sidebar__footer-hint {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+/* filter row (FR-20) — design-refresh: a recessed 30px field on the panel, no
+   divider rule (the card list below is already visually separated). */
+.filter-input {
+  padding: 0 var(--space-10) var(--space-10);
+  flex-shrink: 0;
+}
+.filter-input__field {
+  width: 100%;
+  height: 30px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: 0 var(--space-10);
+  color: var(--text);
+  font-size: var(--font-size-12-5);
+  font-family: inherit;
+  outline: none;
+}
+.filter-input__field:focus {
+  border-color: var(--border-focus);
+}
+
+/* card list */
+.sidebar-list {
+  flex: 1;
+  overflow: auto;
+  padding: 0 var(--space-10) var(--space-10);
+}
+.sidebar-error {
+  padding: var(--space-16);
+  text-align: center;
+  color: var(--error);
+  font-size: var(--font-size-11-5);
+}
+.sidebar-error__retry {
+  color: var(--accent);
+  cursor: pointer;
+  margin-top: var(--space-6);
+}
+.sidebar-empty {
+  height: 100%;
+  flex-direction: column;
+  font-size: var(--font-size-11-5);
+  text-align: center;
+  padding: var(--space-12);
+}
+.sidebar-empty__hint {
+  font-size: var(--font-size-10);
+  margin-top: var(--space-5);
+}
+
+/* session card — deliberately NOT built on <ListRow>: it's a stacked 4-row
+   card (flex-direction: column), not the single-row layout ListRow assumes
+   (same reasoning as the AgentsPanel exception in REFACTOR-CONVENTIONS.md). */
+/* design-refresh FR-6: session rows become metadata cards — idle cards get a
+   raised surface of their own (not transparent-until-hover); selected adds a
+   border-focus inset ring plus a 2px accent rail on top of the raised fill. */
+/* Structure follows the mock's card exactly: name + status on one line, the
+   path under it, then ONE compact meta line (model chip · usage bar · tokens ·
+   age). No hanging 17px indent — the earlier version's left dot forced every
+   row to hang off it, which made the card read as a 5-row list, not a card. */
+.sidebar-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  padding: var(--space-11) var(--space-12);
+  border-radius: var(--radius-card);
+  cursor: pointer;
+  margin-bottom: var(--space-6);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--border);
+  border-left: 2px solid transparent;
+  outline: none;
+  outline-offset: -1px;
+}
+.sidebar-card--selected {
+  background: var(--bg-raised);
+}
+.sidebar-card--hovered {
+  background: var(--bg-hover);
+}
+.sidebar-card--cursor {
+  outline: 1px solid var(--text-disabled);
+}
+
+.sidebar-card__row1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.sidebar-card__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-13);
+  font-weight: 500;
+  color: var(--text);
+}
+.sidebar-card__name--selected {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+/* status cluster — dot + label, right-aligned on the name's line */
+.sidebar-card__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-shrink: 0;
+  font-size: var(--font-size-11);
+}
+.sidebar-card__cwd {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-card--selected .sidebar-card__cwd {
+  color: var(--text-muted);
+}
+/* model badge chip (FR-6) */
+.sidebar-card__model {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+  background: var(--border);
+  border-radius: var(--radius-base);
+  padding: var(--space-2) var(--space-6);
+  flex-shrink: 0;
+}
+.sidebar-card--selected .sidebar-card__model {
+  color: var(--text-hint);
+  background: var(--bg-hover-2);
+}
+/* mini token-usage bar (FR-6) — takes the slack in the meta row */
+.sidebar-card__bar-track {
+  flex: 1;
+  min-width: 16px;
+  height: 3px;
+  border-radius: var(--radius-xs);
+  background: var(--border-2);
+  overflow: hidden;
+}
+.sidebar-card__bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--hue-blue);
+}
+.sidebar-card__meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-10-5);
+  font-family: var(--font-mono);
+}
+.sidebar-card__spacer {
+  flex: 1;
+}
+.sidebar-card__faint {
+  color: var(--text-faint);
+}
+/* session-worktree FR-13: the card's branch line. Left-truncated in JS
+   (truncateBranchLeft) so the leaf segment stays readable. */
+.sidebar-card__branch {
+  font-size: var(--font-size-10-5);
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-card__branch-glyph {
+  color: var(--accent);
+}
+.sidebar-card__meta {
+  color: var(--text-dim);
+}
+.sidebar-card__files {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.sidebar-card__agents {
+  color: var(--accent);
+}
+
+/* right-click context menu */
+.context-menu {
+  position: fixed;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  min-width: 160px;
+  box-shadow: var(--shadow-dropdown);
+  z-index: 30;
+  overflow: hidden;
+}
+.context-menu__error {
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+.context-menu__item {
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-12);
+  color: var(--text);
+  cursor: pointer;
+  background: transparent;
+}
+.context-menu__item:hover {
+  background: var(--bg-hover);
+}
+.context-menu__body {
+  padding: var(--space-8) var(--space-10);
+}
+.context-menu__confirm-text {
+  font-size: var(--font-size-11-5);
+  color: var(--text);
+  margin-bottom: var(--space-8);
+}
+/* session-worktree §8 screen 5: the confirm step grows a worktree-removal
+   option, so the menu needs a width cap it never needed as a bare y/n. */
+.context-menu__body--confirm {
+  max-width: 260px;
+}
+.context-menu__worktree {
+  font-size: var(--font-size-10-5);
+  margin-bottom: var(--space-8);
+}
+.context-menu__worktree-hint {
+  color: var(--text-faint);
+}
+.context-menu__worktree-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+  cursor: pointer;
+  color: var(--text-dim);
+}
+/* FR-18/FR-20: dirty, unpushed, or unknown — the checkbox is disabled and the
+   reason is shown rather than hidden behind a tooltip. */
+.context-menu__worktree-opt--blocked {
+  cursor: default;
+  color: var(--warn);
+}
+.context-menu__worktree-opt input {
+  margin-top: 2px;
+}
+.context-menu__worktree-reason {
+  margin-top: 2px;
+}
+.context-menu__actions {
+  display: flex;
+  gap: var(--space-8);
+  justify-content: flex-end;
+}
+.context-menu__action {
+  font-size: var(--font-size-12);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.context-menu__action--danger {
+  color: var(--error);
+}

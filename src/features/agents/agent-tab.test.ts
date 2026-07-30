@@ -41,8 +41,8 @@ function textBlock(agentId: string, n: number, text = `line ${n}`): AgentBlock {
     blockId: `${agentId}:${n}`,
     isStreaming: false,
     glyph: '●',
-    glyphColor: '#868a93',
-    bodyColor: '#c4c7ce',
+    glyphColor: '#8b93a3',
+    bodyColor: '#c3c9d4',
     text,
   };
 }
@@ -54,8 +54,8 @@ function toolBlock(agentId: string, n: number, meta?: string): AgentBlock {
     isStreaming: meta === undefined,
     tool: 'Read',
     glyph: '⧉',
-    glyphColor: '#868a93',
-    bodyColor: '#868a93',
+    glyphColor: '#8b93a3',
+    bodyColor: '#8b93a3',
     summary: 'src/session.rs',
     ...(meta === undefined ? {} : { meta }),
   };

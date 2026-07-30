@@ -19,6 +19,32 @@ pub(crate) fn cwd_or_err<T: Serialize>(
         .ok_or_else(|| err("SESSION_NOT_FOUND", "no such session"))
 }
 
+/// Run one git step that MUST succeed, mapping both failure modes the way every
+/// call site did by hand: a non-zero exit reports git's own stderr, falling back
+/// to `fallback` when git said nothing; a spawn failure reports the io error.
+/// `Err` carries the message the caller passes to `err("GIT_ERROR", …)`.
+///
+/// Only for steps where exit 0 means success. Two git calls in this file
+/// deliberately do NOT use it, because for them exit 0 is not success:
+/// `diff --cached --quiet` (exit 0 means nothing is staged — an error, FR-11)
+/// and `rev-parse HEAD` (a failure is tolerated and yields an empty hash).
+fn require_git_ok(
+    host: &GitHost,
+    root: &str,
+    args: &[&str],
+    fallback: &str,
+) -> Result<GitOut, String> {
+    match git_routed(host, root, args) {
+        Ok(o) if o.code == 0 => Ok(o),
+        Ok(o) => Err(if o.stderr.is_empty() {
+            fallback.to_string()
+        } else {
+            o.stderr
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // All diff commands are `async` so Tauri executes them on the async runtime — a
 // SYNC command runs on the MAIN thread (Tauri 2), where every git spawn and every
 // git-lock wait freezes the entire app (window moves, all panes, all IPC). With
@@ -79,17 +105,9 @@ pub async fn diff_stage_all(app: AppHandle, session_id: String) -> IpcResult<Opt
     let lock = git_lock(&session_id);
     let _g = lock.lock().unwrap();
     let root = repo_root(&host, &cwd);
-    match git_routed(&host, &root, &["add", "-A"]) {
-        Ok(o) if o.code == 0 => ok(None), // succeeds even with nothing to stage (FR-10)
-        Ok(o) => err(
-            "GIT_ERROR",
-            if o.stderr.is_empty() {
-                "git add failed".into()
-            } else {
-                o.stderr
-            },
-        ),
-        Err(e) => err("GIT_ERROR", e.to_string()),
+    match require_git_ok(&host, &root, &["add", "-A"], "git add failed") {
+        Ok(_) => ok(None), // succeeds even with nothing to stage (FR-10)
+        Err(message) => err("GIT_ERROR", message),
     }
 }
 
@@ -150,38 +168,21 @@ pub async fn diff_commit(
         // no-op when a path has nothing to stage.
         let mut add = vec!["add", "--"];
         add.extend(paths.iter().map(|p| p.as_str()));
-        match git_routed(&host, &root, &add) {
-            Ok(o) if o.code == 0 => {}
-            Ok(o) => {
-                return err(
-                    "GIT_ERROR",
-                    if o.stderr.is_empty() {
-                        "git add failed".into()
-                    } else {
-                        o.stderr
-                    },
-                )
-            }
-            Err(e) => return err("GIT_ERROR", e.to_string()),
+        if let Err(message) = require_git_ok(&host, &root, &add, "git add failed") {
+            return err("GIT_ERROR", message);
         }
     }
 
     // FR-9: commit identity/hooks are the distro's own git config for WSL repos
     // (documented, not managed — spec §4). With paths, git itself errors if none of
     // the selected files have anything to commit.
-    match git_routed(&host, &root, &commit_args(message, &paths)) {
-        Ok(o) if o.code == 0 => {}
-        Ok(o) => {
-            return err(
-                "GIT_ERROR",
-                if o.stderr.is_empty() {
-                    "git commit failed".into()
-                } else {
-                    o.stderr
-                },
-            )
-        }
-        Err(e) => return err("GIT_ERROR", e.to_string()),
+    if let Err(message) = require_git_ok(
+        &host,
+        &root,
+        &commit_args(message, &paths),
+        "git commit failed",
+    ) {
+        return err("GIT_ERROR", message);
     }
     match git_routed(&host, &root, &["rev-parse", "HEAD"]) {
         Ok(o) if o.code == 0 => ok(CommitResult {

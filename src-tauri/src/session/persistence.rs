@@ -126,26 +126,23 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
         "command" => {
             // A persisted command block always carries its card (FR-24 — pending blocks
             // are never persisted); treat a card-less line as malformed and skip it.
+            let block_id = v.get("blockId").and_then(|b| b.as_str())?.to_string();
             let card = v.get("card").filter(|c| !c.is_null())?.clone();
             return Some(BufBlock {
-                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
-                kind: BlockKind::Command,
-                text: String::new(),
                 tool: v
                     .get("command")
                     .and_then(|c| c.as_str())
                     .unwrap_or("")
                     .to_string(),
-                summary: String::new(),
-                meta: None,
                 card: Some(card),
-                streaming: false,
+                ..BufBlock::new(&block_id, BlockKind::Command)
             });
         }
         "question" => {
             // session-questions §6: pending entries are memory-only, so a line still
             // "pending" on disk can only be read back after a hard kill — and a dead
             // process has no answerable questions. Normalize it to cancelled.
+            let block_id = v.get("blockId").and_then(|b| b.as_str())?.to_string();
             let questions = v
                 .get("questions")
                 .cloned()
@@ -159,14 +156,8 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 card["answers"] = a.clone();
             }
             return Some(BufBlock {
-                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
-                kind: BlockKind::Question,
-                text: String::new(),
-                tool: String::new(),
-                summary: String::new(),
-                meta: None,
                 card: Some(card),
-                streaming: false,
+                ..BufBlock::new(&block_id, BlockKind::Question)
             });
         }
         "permission" => {
@@ -174,6 +165,7 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
             // entries are memory-only, so a line still "pending" on disk can only
             // be read back after a hard kill, and a dead process has no
             // answerable asks. Normalize it to cancelled.
+            let block_id = v.get("blockId").and_then(|b| b.as_str())?.to_string();
             let ask = v
                 .get("ask")
                 .cloned()
@@ -187,21 +179,14 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 card["rule"] = r.clone();
             }
             return Some(BufBlock {
-                block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
-                kind: BlockKind::Permission,
-                text: String::new(),
-                tool: String::new(),
-                summary: String::new(),
-                meta: None,
                 card: Some(card),
-                streaming: false,
+                ..BufBlock::new(&block_id, BlockKind::Permission)
             });
         }
         _ => return None,
     };
+    let block_id = v.get("blockId").and_then(|b| b.as_str())?.to_string();
     Some(BufBlock {
-        block_id: v.get("blockId").and_then(|b| b.as_str())?.to_string(),
-        kind,
         text: v
             .get("text")
             .and_then(|t| t.as_str())
@@ -218,8 +203,7 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
             .unwrap_or("")
             .to_string(),
         meta: v.get("meta").and_then(|m| m.as_str()).map(String::from),
-        card: None,
-        streaming: false,
+        ..BufBlock::new(&block_id, kind)
     })
 }
 

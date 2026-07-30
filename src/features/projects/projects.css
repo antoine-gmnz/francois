@@ -1,0 +1,350 @@
+/* projects — feature styles for ProjectsModal (FR-31..FR-38) and the pane [1]
+   ProjectSwitcher (FR-25/FR-26). Migrated off the local `const C` token-alias
+   object and the per-file style-factories (REFACTOR-CONVENTIONS.md Phase 2).
+   `.pj-body` / `.pj-list` / `.scz` / `.truncate` / `.is-disabled` /
+   `.list-row*` live in src/styles.css and are reused here as-is. */
+
+/* ── ProjectsModal shell ─────────────────────────────────────────────────
+   Not built on src/ui/Modal: the panel needs a `min(860px, 94vw)` responsive
+   width (Modal's `width` prop is a fixed number, no CSS-expression slot) and
+   a `min(620px, 88vh)` max-height (Modal has no such slot at all) — see the
+   handoff for detail. */
+.pj-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+.pj-panel {
+  width: min(860px, 94vw);
+  /* maxHeight, not height (§8 C): a fixed height renders a full 620px panel
+     around a one-line "no projects yet" empty state. */
+  max-height: min(620px, 88vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.pj-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.pj-title {
+  font-size: var(--font-size-11);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+.pj-count {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+/* left: the registry (FR-33) */
+.pj-list-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.pj-empty {
+  padding: var(--space-14) var(--space-12);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+.pj-list-error {
+  padding: var(--space-6) var(--space-12);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+  flex-shrink: 0;
+}
+.pj-project-row {
+  height: 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-12);
+}
+.pj-project-row-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.pj-project-name {
+  font-size: var(--font-size-11-5);
+  color: var(--text);
+}
+.pj-project-name--selected {
+  color: var(--text-bright);
+}
+.pj-project-root {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.pj-new-project {
+  padding: var(--space-10) var(--space-12);
+  border-top: 1px solid var(--border);
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pj-new-project:hover {
+  color: var(--accent);
+}
+
+/* right: the config form (FR-34) */
+.pj-config {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: var(--space-14) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-18);
+}
+.pj-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.pj-group-label {
+  font-size: var(--font-size-10);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+.pj-row {
+  display: flex;
+  align-items: center;
+}
+.pj-row-label {
+  width: 120px;
+  flex-shrink: 0;
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+}
+.pj-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  padding: var(--space-6) var(--space-8);
+  font-size: var(--font-size-11);
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+}
+.pj-textarea {
+  flex: none;
+  min-height: 64px;
+  resize: vertical;
+  line-height: 1.6;
+}
+.pj-rule-input {
+  flex: none;
+}
+.pj-inline-error {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+.pj-inline-error--indented {
+  padding-left: 120px;
+}
+.pj-rules {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.pj-rules-empty {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.pj-rule-row {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  background: var(--bg-deep);
+  border-radius: var(--radius-base);
+  padding: var(--space-6) var(--space-8);
+}
+.pj-rule-dash {
+  color: var(--text-faint);
+  font-size: var(--font-size-11);
+  flex-shrink: 0;
+}
+.pj-rule-edit-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-app);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--font-size-11);
+  color: var(--text-bright);
+  font-family: inherit;
+  outline: none;
+}
+.pj-rule-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-11);
+  color: var(--text);
+  cursor: text;
+}
+.pj-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-shrink: 0;
+  transition: opacity 90ms ease-out;
+}
+.pj-action-glyph {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pj-footer-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.pj-remove-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-12);
+  padding-top: var(--space-4);
+}
+.pj-remove-confirm {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+  text-align: right;
+}
+.pj-missing-tag {
+  font-size: var(--font-size-9);
+  color: var(--error);
+  flex-shrink: 0;
+}
+
+/* ── ProjectSwitcher (pane [1] strip + dropdown) ────────────────────────── */
+.pjsw-root {
+  position: relative;
+  flex-shrink: 0;
+}
+.pjsw-toggle {
+  height: 26px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  padding: 0 var(--space-12);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+/* --bg-elevated is all but invisible against --bg-panel in the light theme;
+   --bg-hover is what every other interactive row in pane [1] uses (the
+   remove menu, the dropdown rows) and reads in both themes. */
+.pjsw-toggle--hover {
+  background: var(--bg-hover);
+}
+.pjsw-glyph {
+  font-size: var(--font-size-8);
+  line-height: 1;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.pjsw-glyph--filtered {
+  color: var(--accent);
+}
+.pjsw-label {
+  font-size: var(--font-size-11);
+}
+.pjsw-spacer {
+  flex: 1;
+}
+.pjsw-count {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.pjsw-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card-sm);
+  padding: var(--space-4) 0;
+  animation: dropIn 90ms ease-out;
+}
+.pjsw-listbox {
+  max-height: 260px;
+  /* Vertical scroll only — a row must never widen the panel and mint a
+     horizontal scrollbar; long names and roots ellipsize in place. */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.pjsw-row {
+  height: 24px;
+  gap: var(--space-7);
+  padding: 0 var(--space-12);
+}
+.pjsw-row.list-row--hovered {
+  background: var(--bg-hover);
+}
+.pjsw-row-mark {
+  width: 8px;
+  flex-shrink: 0;
+  font-size: var(--font-size-9);
+  color: var(--accent);
+}
+.pjsw-row-name {
+  /* The NAME is the primary information: it takes the slack and is the
+     last thing to be truncated. `min-width: 0` is what actually lets it
+     ellipsize instead of collapsing. */
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-11);
+  color: var(--text);
+}
+.pjsw-row-name--missing {
+  color: var(--text-muted);
+}
+.pjsw-row-root {
+  /* The root is secondary: it shrinks and ellipsizes first, and is capped
+     so a deep path can never crowd out the name. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 52%;
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  text-align: right;
+}
+.pjsw-divider {
+  border-top: 1px solid var(--border);
+  margin: var(--space-4) 0 0;
+}
+.pjsw-manage-label {
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+}

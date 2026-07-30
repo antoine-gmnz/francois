@@ -1,0 +1,360 @@
+/* mcp-panel (pane [4]) — static styling for McpPanel.tsx, extracted off the
+   inline `style={{}}` + local `const C` alias pattern. Dynamic values (status
+   colors, popover top/left) stay inline at the call site; see the handoff. */
+
+.mcp-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+}
+.mcp-panel--focused {
+  border-color: var(--border-focus);
+}
+
+/* ── header ── */
+.mcp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-11) var(--space-12);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+/* design-refresh: matches .panel-header in styles.css (AGENTS/SKILLS use that
+   shared class; this panel predates it and keeps its own selector). */
+.mcp-header-title {
+  font-size: var(--font-size-11-5);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-hint);
+}
+.mcp-header-title--focused {
+  color: var(--accent);
+}
+.mcp-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.mcp-header-count {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.mcp-attach-btn {
+  font-size: var(--font-size-12);
+  color: var(--text-faint);
+  line-height: 1;
+  cursor: pointer;
+}
+.mcp-attach-btn:hover {
+  color: var(--accent);
+}
+.mcp-attach-btn--disabled {
+  cursor: default;
+}
+
+/* ── server list ── */
+.mcp-rows {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-6) var(--space-8);
+}
+.mcp-list-error {
+  padding: var(--space-12) var(--space-4);
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+.mcp-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-12);
+  color: var(--text-faint);
+  text-align: center;
+}
+.mcp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  padding: var(--space-7) var(--space-6);
+  border-bottom: 1px solid var(--bg-elevated);
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.mcp-row--selected {
+  background: var(--bg-raised);
+}
+.mcp-row-name {
+  font-size: var(--font-size-12);
+  color: var(--text);
+  flex: 1;
+}
+.mcp-row-detail {
+  font-size: var(--font-size-10-5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+/* Bordered outline tag (scope badge) — no shared primitive fits this
+   non-interactive, bordered-outline shape (see REFACTOR-CONVENTIONS known
+   gaps); color is scope-driven and stays inline. */
+.mcp-scope-badge {
+  font-size: var(--font-size-8-5);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-4);
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+/* ── detail popover ── */
+.mcp-popover {
+  position: fixed;
+  width: 280px;
+  background: var(--bg-panel);
+  border: 1px solid var(--bg-hover-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+  z-index: 40;
+  overflow: hidden;
+}
+.mcp-popover-header {
+  padding: var(--space-11) var(--space-13);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.mcp-popover-name {
+  font-size: var(--font-size-13);
+  color: var(--text-bright);
+  flex: 1;
+}
+.mcp-popover-status {
+  font-size: var(--font-size-10);
+}
+.mcp-popover-body {
+  padding: var(--space-11) var(--space-13);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+}
+.mcp-popover-loading {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+.mcp-popover-error {
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+.mcp-popover-action-error {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+.mcp-popover-footer {
+  padding: var(--space-9) var(--space-13);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: var(--space-14);
+  justify-content: flex-end;
+}
+.mcp-popover-confirm-text {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  flex: 1;
+}
+.mcp-action-link {
+  font-size: var(--font-size-11);
+  cursor: pointer;
+  color: var(--text-hint);
+}
+.mcp-action-link--dim {
+  color: var(--text-dim);
+}
+.mcp-action-link--error {
+  color: var(--error);
+}
+
+/* Detail popover's own Field label/value — distinct sizing from the attach
+   form's FormField below (10px/faint here vs. 11px/dim there). */
+.mcp-detail-label {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+}
+.mcp-detail-value {
+  font-size: var(--font-size-12);
+  color: var(--text);
+  margin-top: var(--space-2);
+  word-break: break-all;
+}
+.mcp-detail-value--mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── attach overlay ── */
+.mcp-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--backdrop);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 118px;
+  z-index: 50;
+}
+.mcp-overlay-panel {
+  width: 588px;
+  background: var(--bg-panel);
+  border: 1px solid var(--bg-hover-2);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-modal);
+}
+.mcp-overlay-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-11);
+  padding: var(--space-14) var(--space-16);
+  border-bottom: 1px solid var(--border);
+}
+.mcp-overlay-icon {
+  color: var(--accent);
+  font-size: var(--font-size-15);
+}
+.mcp-overlay-title {
+  font-size: var(--font-size-14);
+  color: var(--text-strong);
+  flex: 1;
+}
+.mcp-overlay-esc {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+.mcp-registry-list {
+  padding: var(--space-6);
+}
+.mcp-registry-error {
+  padding: var(--space-6) var(--space-12);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+.mcp-registry-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+}
+.mcp-registry-row--selected {
+  background: var(--bg-hover);
+}
+.mcp-registry-glyph {
+  width: 16px;
+  text-align: center;
+  font-size: var(--font-size-12);
+  color: var(--text-dim);
+}
+.mcp-registry-glyph--selected {
+  color: var(--accent);
+}
+.mcp-registry-name {
+  font-size: var(--font-size-13);
+  color: var(--text);
+  flex-shrink: 0;
+}
+.mcp-registry-name--selected {
+  color: var(--text-bright);
+}
+.mcp-registry-desc {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  flex: 1;
+  text-align: right;
+}
+
+.mcp-params-step {
+  padding: var(--space-14) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+.mcp-form-label {
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+}
+.mcp-form-required {
+  color: var(--accent);
+}
+.mcp-form-input {
+  margin-top: var(--space-5);
+  width: 100%;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  height: 32px;
+  color: var(--text);
+  font-size: var(--font-size-12-5);
+  padding: 0 var(--space-10);
+  outline: none;
+}
+.mcp-form-input--mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+.mcp-transport-pills {
+  display: flex;
+  gap: var(--space-6);
+  margin-top: var(--space-5);
+}
+
+/* Selectable pill (transport toggle) — close to, but not identical to,
+   src/ui/Chip (different padding/background), so it stays local rather than
+   risking a pixel-level visual change. See the handoff. */
+.mcp-pill {
+  font-size: var(--font-size-11);
+  padding: var(--space-4) var(--space-10);
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  border: 1px solid var(--border-2);
+  background: var(--bg-deep);
+  color: var(--text-dim);
+}
+.mcp-pill--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.mcp-submit-btn {
+  margin-top: var(--space-4);
+  width: 100%;
+  height: 34px;
+  border: none;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: var(--font-size-12-5);
+  font-weight: 500;
+  cursor: default;
+  background: var(--bg-elevated);
+  color: var(--text-faint);
+}
+.mcp-submit-btn--enabled {
+  cursor: pointer;
+  background: var(--bg-hover);
+  color: var(--accent);
+}

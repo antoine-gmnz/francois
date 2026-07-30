@@ -1,0 +1,455 @@
+/* conversation-view (main tab SESSION) — static styling for ConversationView.tsx,
+   Block.tsx and MarkdownView.tsx, extracted off the inline `style={{}}` + local
+   `const C`/`M` alias pattern. Dynamic values (per-block glyph/body colors,
+   per-heading-level size, first-block margin collapse, table cell alignment)
+   stay inline at the call sites. */
+
+/* ── ConversationView shell ── */
+.conv-root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* durable-sessions FR-14 resume-fail banner */
+.resume-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  background: var(--bg-raised);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-11);
+  margin: var(--space-6) var(--space-8);
+  flex-shrink: 0;
+  animation: fadeIn 120ms ease-out;
+}
+.resume-banner__text {
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+  flex: 1;
+}
+.resume-banner__dismiss {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+/* session-worktree FR-14 bare-checkout notice — same banner geometry as
+   .resume-banner, tinted rather than raised so the two never read as the
+   same message when both are up. */
+.worktree-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-9);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-11);
+  margin: var(--space-6) var(--space-8);
+  flex-shrink: 0;
+  animation: fadeIn 120ms ease-out;
+}
+.worktree-notice__text {
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+  flex: 1;
+}
+.worktree-notice__warning {
+  margin-top: var(--space-4);
+}
+.worktree-notice__dismiss {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.conv-transcript-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+.conv-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: var(--space-24) 26px;
+  display: flex;
+  flex-direction: column;
+  /* design-refresh FR-7: the reading column is centered and capped — every
+     row is wrapped in .conv-item below, which carries the actual width cap. */
+  align-items: center;
+  gap: 22px;
+  /* The app root disables selection (styles.css body rule) for chrome; the
+     transcript is CONTENT — copying out of it must work. */
+  user-select: text;
+  cursor: auto;
+}
+.conv-item {
+  width: 100%;
+  max-width: 680px;
+}
+
+.conv-error-text {
+  color: var(--error);
+}
+
+.conv-centered {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 200px;
+}
+.conv-empty__cwd {
+  font-size: var(--font-size-12);
+  color: var(--text-dim);
+}
+.conv-empty__model {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  margin-top: var(--space-2);
+}
+.conv-empty__hint {
+  font-size: var(--font-size-12-5);
+  color: var(--text-faint);
+  margin-top: var(--space-10);
+}
+
+.jump-latest {
+  position: absolute;
+  bottom: var(--space-10);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-5) var(--space-12);
+  border-radius: var(--radius-2xl);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-2);
+  font-size: var(--font-size-10-5);
+  color: var(--accent);
+  cursor: pointer;
+}
+.jump-latest:hover {
+  background: var(--bg-hover);
+}
+
+/* ── composer (design-refresh FR-8: card style + a visible Send button) ──
+   The footer is its own --bg-deep band with a top rule, and its contents are
+   capped + centered on the SAME 680px reading column as the transcript above
+   (the bar used to span the full pane, so it fell out of alignment with every
+   block it answers). */
+.composer-wrap {
+  position: relative;
+  flex-shrink: 0;
+  padding: var(--space-14) 26px var(--space-16);
+  border-top: 1px solid var(--border);
+  background: var(--bg-deep);
+}
+.composer-col {
+  position: relative;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+/* Same visual treatment as .form-error (background/color/font-size/radius)
+   but this site's padding is 6/10, not 8/10, plus popover positioning — kept
+   local rather than forcing the shared utility. See handoff. */
+.send-error-banner {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: var(--space-4);
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+  color: var(--error);
+  font-size: var(--font-size-11);
+  border-radius: var(--radius-base);
+  padding: var(--space-6) var(--space-10);
+}
+
+.composer-bar {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: 11px;
+  box-shadow: var(--shadow-card);
+  padding: var(--space-10) 15px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.composer-arrow {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-size: var(--font-size-14);
+  line-height: 1.5;
+}
+.composer-input {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 14.5px;
+  font-family: inherit;
+  line-height: 1.5;
+  max-height: 130px;
+  padding: 0;
+}
+.composer-input::placeholder {
+  color: var(--text-faint);
+}
+/* design-refresh FR-8: a visible Send button — replaces the send-on-Enter-only
+   affordance (Enter still sends; this is now also a click target). */
+.composer-send {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 var(--space-13);
+  border: none;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12-5);
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--bg-app);
+}
+.composer-send:hover {
+  background: var(--accent-bright);
+}
+.composer-send.is-disabled {
+  cursor: default;
+  background: var(--text-disabled);
+  color: var(--text-muted);
+}
+/* Beneath the card, not inside it (the mock's hint row sits outside the input
+   surface — it annotates the composer, it is not part of the field). */
+.composer-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  margin-top: var(--space-10);
+  font-size: var(--font-size-11-5);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.composer-hint__key {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+/* ── Block.tsx (design-refresh FR-7: 15px/1.65 --font-ui reading body) ── */
+.block-row {
+  display: flex;
+  gap: var(--space-10);
+}
+.block-glyph {
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: var(--font-size-12);
+  margin-top: 1px;
+}
+.block-content {
+  min-width: 0;
+  flex: 1;
+}
+.block-body {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-15);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.block-meta {
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+}
+
+/* consecutive tool calls share one hairline-divided card (FR-7). The rows sit
+   on --bg-app so the block reads as recessed into the panel, as in the mock —
+   on --bg-panel it was the same value as its surroundings and the border was
+   doing all the work. */
+.tool-group {
+  background: var(--bg-app);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.tool-group-row {
+  display: flex;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-14);
+}
+.tool-group-row + .tool-group-row {
+  border-top: 1px solid var(--border-2);
+}
+.tool-group .block-body {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* subagent dispatch banner (FR-7). */
+.block-subagent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  background: color-mix(in srgb, var(--hue-purple) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hue-purple) 30%, transparent);
+  border-radius: var(--radius-card);
+  padding: var(--space-13) var(--space-16);
+}
+.block-subagent__name {
+  font-weight: 600;
+  color: var(--hue-purple-soft);
+}
+.block-caret {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  margin-left: var(--space-5);
+  animation: blink 1s step-end infinite;
+}
+
+/* design-refresh FR-7: the user prompt is a fully bordered card. It used to be
+   a half-card — an accent rail on the left with no border on the other three
+   sides — which read as a quoted aside rather than the mock's prompt card; the
+   "You" label carries the who, so the rail is redundant. */
+.block-user {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  padding: var(--space-14) var(--space-16);
+}
+.block-user__header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-8);
+}
+.block-user__label {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+.block-user__spacer {
+  flex: 1;
+}
+.block-user__queued {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.block-user__queued-label {
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.04em;
+  color: var(--warn);
+}
+.block-user__body {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-15);
+  color: var(--text-strong);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+/* ── MarkdownView.tsx (design-refresh FR-7: 15px/1.65 --font-ui reading body) ── */
+.md-root {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-15);
+  line-height: 1.65;
+  word-break: break-word;
+}
+.md-strong {
+  font-weight: 700;
+  color: var(--text-bright);
+}
+.md-em {
+  font-style: italic;
+}
+.md-del {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+.md-code {
+  background: var(--bg-raised);
+  color: var(--accent-bright);
+  border-radius: var(--radius-sm);
+  padding: 0.5px var(--space-4);
+  font-size: 0.92em;
+}
+.md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.md-heading {
+  margin-bottom: var(--space-2);
+  font-weight: 700;
+  color: var(--text-bright);
+}
+.md-code-wrap {
+  position: relative;
+}
+.md-lang-tag {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-8);
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  user-select: none;
+}
+.md-code-block {
+  margin: 0;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-8) var(--space-10);
+  overflow-x: auto;
+  font-size: var(--font-size-12);
+  line-height: 1.5;
+  color: var(--text-bright);
+}
+.md-hr {
+  margin-bottom: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.md-blockquote {
+  border-left: 2px solid var(--text-disabled);
+  padding-left: var(--space-10);
+  color: var(--text-dim);
+}
+.md-list {
+  margin-bottom: 0;
+  padding-left: 20px;
+}
+.md-list-item {
+  margin: var(--space-1) 0;
+}
+.md-table-wrap {
+  overflow-x: auto;
+}
+.md-table {
+  border-collapse: collapse;
+  font-size: var(--font-size-12);
+}
+.md-cell {
+  border: 1px solid var(--border);
+  padding: var(--space-3) var(--space-8);
+}
+.md-cell--header {
+  font-weight: 700;
+  color: var(--text-bright);
+  background: var(--bg-elevated);
+}

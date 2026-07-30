@@ -1,0 +1,64 @@
+import type { ReactNode } from 'react';
+import type { SessionMeta } from '../../contract/common';
+import AgentView from '../features/agents/AgentView';
+import ConversationView from '../features/conversation/ConversationView';
+import DiffView from '../features/diff/DiffView';
+import type { ShellUiState } from '../features/shell/shellStore';
+import OverviewView from '../features/overview/OverviewView';
+import type { MainTab } from '../lib/store';
+import { mainPaneBranch, type MainPaneBranch } from './appShell';
+import EmptyPaneMessage from './EmptyPaneMessage';
+import ShellTabView from './ShellTabView';
+
+export interface MainPaneBodyProps {
+  mainTab: MainTab;
+  activeAgentId: string | null;
+  active: SessionMeta | null;
+  home: string;
+  shell: ShellUiState;
+}
+
+/** The main pane's body: one renderer per `MainTab` (Phase 5 dispatch table),
+ * with the dynamic `agent:<id>` tabs handled explicitly since they are not a
+ * plain `MainTab` key the table can be built over. */
+export default function MainPaneBody({ mainTab, activeAgentId, active, home, shell }: MainPaneBodyProps) {
+  const branch = mainPaneBranch(mainTab);
+
+  if (branch === 'agent') {
+    // agent-tab: one subagent's own conversation. Keyed by agent so
+    // switching tabs remounts rather than leaking the previous state. The
+    // session is always present here (FR-14 closes agent tabs when it
+    // changes) — the fallback only guards a dangling id.
+    return active && activeAgentId !== null ? (
+      <AgentView key={activeAgentId} agentId={activeAgentId} sessionId={active.id} />
+    ) : (
+      <EmptyPaneMessage>select a session</EmptyPaneMessage>
+    );
+  }
+
+  const renderers: Record<Exclude<MainPaneBranch, 'agent'>, () => ReactNode> = {
+    overview: () => <OverviewView home={home} />,
+    session: () =>
+      active ? (
+        <ConversationView key={active.id} sessionId={active.id} />
+      ) : (
+        <EmptyPaneMessage>
+          select a session, or press <span className="app-inline-key">n</span> to start one
+        </EmptyPaneMessage>
+      ),
+    diff: () =>
+      active ? (
+        <DiffView key={active.id} sessionId={active.id} />
+      ) : (
+        <EmptyPaneMessage>select a session to review its changes</EmptyPaneMessage>
+      ),
+    shell: () =>
+      active ? (
+        <ShellTabView sessionId={active.id} shell={shell} home={home} />
+      ) : (
+        <EmptyPaneMessage>select a session to open its shell</EmptyPaneMessage>
+      ),
+  };
+
+  return renderers[branch]();
+}
