@@ -50,8 +50,15 @@ export function useSessionFleetSync(): SessionFleetSync {
 
   // overview: one feed entry. The session's name/project are captured HERE, at
   // record time, so a later rename or removal never rewrites history.
-  const logActivity = (s: SessionMeta, kind: ActivityKind, detail: string) => {
-    recordActivity({ at: Date.now(), kind, sessionId: s.id, sessionName: s.name, projectId: s.projectId, detail });
+  const logActivity = (session: SessionMeta, kind: ActivityKind, detail: string) => {
+    recordActivity({
+      at: Date.now(),
+      kind,
+      sessionId: session.id,
+      sessionName: session.name,
+      projectId: session.projectId,
+      detail,
+    });
   };
 
   const updateDerived = (id: string, partial: Partial<SessionDerived>) => mergeDerived(id, partial);
@@ -77,8 +84,8 @@ export function useSessionFleetSync(): SessionFleetSync {
   const reassignAfterRemoval = (id: string) => {
     const st = useStore.getState();
     const list = st.sessions;
-    const idx = list.findIndex((s) => s.id === id);
-    const remaining = list.filter((s) => s.id !== id);
+    const idx = list.findIndex((session) => session.id === id);
+    const remaining = list.filter((session) => session.id !== id);
     if (remaining.length === 0) {
       setActiveSessionId(null);
     } else {
@@ -100,9 +107,9 @@ export function useSessionFleetSync(): SessionFleetSync {
     setHydrationError(null);
     setSessions(data);
     if (useStore.getState().activeSessionId === null && data[0]) setActiveSessionId(data[0].id);
-    for (const s of data) {
-      seedDiff(s.id);
-      startedRef.current.add(s.id); // restored, not started — no feed entry (overview FR-28)
+    for (const session of data) {
+      seedDiff(session.id);
+      startedRef.current.add(session.id); // restored, not started — no feed entry (overview FR-28)
     }
   };
 
@@ -133,7 +140,7 @@ export function useSessionFleetSync(): SessionFleetSync {
       onStatus: (sessionId, status) => {
         // overview: read the OLD status before patching, so the feed can tell a
         // finished turn from a session that merely settled.
-        const prev = useStore.getState().sessions.find((s) => s.id === sessionId);
+        const prev = useStore.getState().sessions.find((session) => session.id === sessionId);
         patchStatus(sessionId, status);
         const kind = statusTransitionKind(prev?.status, status);
         if (kind && prev) {
@@ -152,7 +159,7 @@ export function useSessionFleetSync(): SessionFleetSync {
         patchUsage(sessionId, usedTokens, limitTokens); // keeps the ctx figure live (FR-3)
       },
       onAgentUpdate: (agent) => {
-        const owner = useStore.getState().sessions.find((s) => s.id === agent.sessionId);
+        const owner = useStore.getState().sessions.find((session) => session.id === agent.sessionId);
         if (!owner) return; // drop post-removal (FR-7)
         let m = agentStatusRef.current.get(agent.sessionId);
         if (!m) {
@@ -170,23 +177,23 @@ export function useSessionFleetSync(): SessionFleetSync {
         }
       },
       onRemoved: (sessionId) => {
-        const gone = useStore.getState().sessions.find((s) => s.id === sessionId);
+        const gone = useStore.getState().sessions.find((session) => session.id === sessionId);
         if (gone) logActivity(gone, 'session.removed', '');
         handleRemovedEvent(sessionId);
       },
     };
 
-    void onSessionEvent((e) => handleSessionEvent(e, ctx)).then((u) => {
-      if (cancelled) u();
-      else unlistenSession = u;
+    void onSessionEvent((e) => handleSessionEvent(e, ctx)).then((unsub) => {
+      if (cancelled) unsub();
+      else unlistenSession = unsub;
     });
 
     // Per-session diff file count, matched on sessionId for ALL sessions (FR-6).
     void onDiffEvent((e) => {
       if (e.type === 'diff.changed') updateDerived(e.sessionId, { fileCount: e.fileCount });
-    }).then((u) => {
-      if (cancelled) u();
-      else unlistenDiff = u;
+    }).then((unsub) => {
+      if (cancelled) unsub();
+      else unlistenDiff = unsub;
     });
 
     void sessionList().then((res) => {

@@ -5,12 +5,54 @@ Cleanup pass before the next feature wave. Derived from a six-agent audit of `sr
 
 ---
 
-## STATUS (updated 2026-07-30) — read before resuming
+## STATUS (updated 2026-07-30, round 2) — read before resuming
 
-All four gates are green: `cargo check --all-targets` (no warnings), `cargo test` **330**,
-`npx tsc --noEmit`, `npm test` **645**.
+All four gates are green: `cargo check --all-targets` (no warnings), `cargo test` **349**,
+`npx tsc --noEmit`, `npm test` **699**.
 
-**Done**
+**Round 2 — Phase 4c + Phase 5 complete, Phase 6 leftovers complete except the lock dedup**
+
+Nine agents, file-disjoint. Component decomposition (§6c), all §7 dispatch tables, and the
+`stream.rs` / `remote.rs` function splits landed:
+
+| file | before | after |
+|---|---|---|
+| `ProjectsModal.tsx` | 644 | 206 |
+| `McpPanel.tsx` | 637 | 394 |
+| `App.tsx` | 572 | 234 |
+| `DiffView.tsx` | 563 | 223 |
+| `Sidebar.tsx` | 556 | 177 |
+| `AgentsPanel.tsx` | 510 | 235 |
+| `SkillsPanel.tsx` | 419 | 272 |
+| `ConversationView.tsx` | 409 | 235 |
+
+- `session/stream.rs` (806) → `stream/{mod,lines,blocks,tool_results}.rs`; `run_reader` and
+  `handle_stream_event` are orchestrators over one named handler per arm.
+- `session/remote.rs` (888) → `remote/{mod,start}.rs`; `remote_start` is an orchestrator over
+  `spawn_host_process` + three named thread helpers. Lock scope unchanged (§9 item 2).
+- The six dormant `sessions/` modules are wired into `Sidebar.tsx` at last. **Two had drifted
+  from Sidebar's live code and would have shipped regressions**: `SessionListBody` had lost the
+  `truncate` class on the name span, and `SessionContextMenu` had dropped its
+  `onClick={e => e.stopPropagation()}` — without which a click on "Remove session" bubbles to the
+  window-level outside-click listener in the same dispatch and instantly re-closes the menu.
+
+**⚠ Still open — `Engine::with_session_mut` adoption is HALF DONE**
+
+The helper and its read-only sibling `with_session` exist in `session/mod.rs:626-648` with tests,
+and **~41 of the ~78 call sites** are converted (`mod`, `mcp`, `turn`, `stdio`, `agents`,
+`skills`, `usage_probe`, `slash`, `commands/{lifecycle,decisions,queries}`). The agent doing the
+sweep was interrupted; the tree is green and coherent, but these remain raw:
+
+- `commands/turn.rs` (9), `stream/{lines,blocks,tool_results,mod}.rs` (9), `interactive.rs` (3),
+  `commands/lifecycle.rs` (3), `agents.rs` (3), `models.rs` (1), `agent_transcript.rs` (1),
+  `commands/queries.rs` (1) — **not yet reviewed**, finish these.
+- `persistence.rs` (6) and `mod.rs`'s `kill_all` — **deliberately skipped, leave them.** Per §9
+  they hold the lock across disk I/O / take nested locks; converting them would change lock
+  scope, which is a behaviour decision, not cleanup.
+
+`BufBlock::new()` (§8) was not reached either.
+
+**Done (round 1)**
 
 - **Phase 2 (§4) — complete.** 12 agents, one per feature folder, each with its own
   `src/features/<feature>/<feature>.css` (plus `src/app/app.css`). **All 17 `const C`/`T`/`M`
@@ -35,14 +77,31 @@ All four gates are green: `cargo check --all-targets` (no warnings), `cargo test
   matches → one `TOOLS` table; `require_git_ok()` in `diff/commands.rs`; `fs_util.rs` with the
   shared `unique_temp_path()`; `stream.rs`'s `u8` block tag → `BlockKind` enum.
 
-**Not started — the bulk of the remaining work**
-
-- **Phase 5 (§7)** — dispatch tables, except `tools.rs` which is done.
-- **Phase 6 leftovers** — `stream.rs`'s `run_reader` (~340 lines) and `handle_stream_event`
-  (~233) still need their per-arm handler extraction; `remote.rs`'s `remote_start` (274);
-  `Engine::with_session_mut` for the ~78 lock repetitions (touches 16 files — do it LAST).
-
 **Corrections to this plan, found while executing it**
+
+- **§7's `ConversationView` entry says "dispatch table" and that is right, but not for the reason
+  given.** The original `route(e)` switch was **not** exhaustive — it deliberately ignored
+  `session.removed` / `agent.update` / `agent.step` / `mcp.update`, which other panels own via
+  their own subscriptions, through a `default: break`. A `switch` with a `never` default cannot
+  express that, and a `switch` with `default: break` keeps silently swallowing genuinely new
+  event types. The `Record<SessionEvent['type'], handler>` forces an explicit entry (a shared
+  `ignoreEvent` no-op where that is the decision) per union member, so a new `SessionEvent`
+  variant fails to compile until someone decides about it.
+- **The `CommandCard` / `conversation-blocks` merge could not be a physical merge.** Relocating
+  both switches into one file would either put JSX in `conversation-blocks.ts` (breaking the
+  pure-logic contract its tests rely on) or create a circular import. Instead
+  `conversation-blocks.ts` owns the canonical `CARD_KIND_COMMAND` enumeration and
+  `CommandCard.tsx`'s render table is typed
+  `Record<Exclude<keyof typeof CARD_KIND_COMMAND, 'notice'>, …>` — drift is now a compile error
+  in both directions with no cycle.
+- **The naming pass in §7 is a heuristic, not a rewrite rule.** Three agents correctly refused
+  parts of it: `s` in `McpPanel` is an `McpServerInfo` (→ `server`, not `session`); `f` in
+  `ProjectsModal` is a `DefaultFieldDef` (→ `field`, not `file`); and in `agent-tab.ts`'s
+  `mergeAgentBlock` / `agent-trail.ts`'s `mergeStep` the outer parameter is *already* `block` /
+  `step`, so renaming the inner `(b) =>` would shadow it and make the comparison
+  `block.blockId === block.blockId` — always true, silently breaking insert-or-replace. The
+  pervasive `useStore((s) => s.foo)` selector `s` is the store state and was left alone
+  everywhere (101 uses across 17 files).
 
 - §8 says the two atomic-write implementations should be collapsed to one. **Do not.** They
   conflict on purpose: `permissions/settings.rs` copies the target's permissions onto the temp

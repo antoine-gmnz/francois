@@ -55,30 +55,34 @@ function Inline({ nodes }: { nodes: MdInline[] }) {
 
 const HEADING_SIZE: Record<number, number> = { 1: 15, 2: 14, 3: 13.5, 4: 13, 5: 12.5, 6: 12.5 };
 
-function BlockView({ b, first }: { b: MdBlock; first: boolean }) {
+function BlockView({ block, first }: { block: MdBlock; first: boolean }) {
   const mt = first ? 0 : 8;
-  switch (b.type) {
+  switch (block.type) {
     case 'heading':
       return (
         <div
           className="md-heading"
-          style={{ marginTop: first ? 0 : 12, fontSize: HEADING_SIZE[b.level] ?? 12.5, letterSpacing: b.level <= 2 ? '0.01em' : undefined }}
+          style={{
+            marginTop: first ? 0 : 12,
+            fontSize: HEADING_SIZE[block.level] ?? 12.5,
+            letterSpacing: block.level <= 2 ? '0.01em' : undefined,
+          }}
         >
-          <Inline nodes={b.children} />
+          <Inline nodes={block.children} />
         </div>
       );
     case 'paragraph':
       return (
         <div style={{ marginTop: mt }}>
-          <Inline nodes={b.children} />
+          <Inline nodes={block.children} />
         </div>
       );
     case 'code':
       return (
         <div className="md-code-wrap" style={{ marginTop: mt }}>
-          {b.lang && <div className="md-lang-tag">{b.lang}</div>}
+          {block.lang && <div className="md-lang-tag">{block.lang}</div>}
           <pre className="md-code-block">
-            <code>{b.value}</code>
+            <code>{block.value}</code>
           </pre>
         </div>
       );
@@ -87,24 +91,24 @@ function BlockView({ b, first }: { b: MdBlock; first: boolean }) {
     case 'blockquote':
       return (
         <div className="md-blockquote" style={{ marginTop: mt }}>
-          <Blocks blocks={b.children} />
+          <Blocks blocks={block.children} />
         </div>
       );
     case 'list':
-      return <ListView b={b} mt={mt} />;
+      return <ListView block={block} mt={mt} />;
     case 'table':
-      return <TableView b={b} mt={mt} />;
+      return <TableView block={block} mt={mt} />;
   }
 }
 
-function ListView({ b, mt }: { b: Extract<MdBlock, { type: 'list' }>; mt: number }) {
-  const itemNodes = b.items.map((item, i) => (
+function ListView({ block, mt }: { block: Extract<MdBlock, { type: 'list' }>; mt: number }) {
+  const itemNodes = block.items.map((item, i) => (
     <li key={i} className="md-list-item">
       <Blocks blocks={item} tight />
     </li>
   ));
-  return b.ordered ? (
-    <ol start={b.start} className="md-list" style={{ marginTop: mt }}>
+  return block.ordered ? (
+    <ol start={block.start} className="md-list" style={{ marginTop: mt }}>
       {itemNodes}
     </ol>
   ) : (
@@ -118,24 +122,24 @@ function align(a: TableAlign): 'left' | 'right' | 'center' {
   return a ?? 'left';
 }
 
-function TableView({ b, mt }: { b: Extract<MdBlock, { type: 'table' }>; mt: number }) {
+function TableView({ block, mt }: { block: Extract<MdBlock, { type: 'table' }>; mt: number }) {
   return (
     <div className="md-table-wrap" style={{ marginTop: mt }}>
       <table className="md-table">
         <thead>
           <tr>
-            {b.header.map((h, i) => (
-              <th key={i} className="md-cell md-cell--header" style={{ textAlign: align(b.align[i]) }}>
+            {block.header.map((h, i) => (
+              <th key={i} className="md-cell md-cell--header" style={{ textAlign: align(block.align[i]) }}>
                 <Inline nodes={h} />
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {b.rows.map((row, r) => (
+          {block.rows.map((row, r) => (
             <tr key={r}>
               {row.map((c, i) => (
-                <td key={i} className="md-cell" style={{ textAlign: align(b.align[i]) }}>
+                <td key={i} className="md-cell" style={{ textAlign: align(block.align[i]) }}>
                   <Inline nodes={c} />
                 </td>
               ))}
@@ -155,8 +159,8 @@ function Blocks({ blocks, tight }: { blocks: MdBlock[]; tight?: boolean }) {
   }
   return (
     <>
-      {blocks.map((b, i) => (
-        <BlockView key={i} b={b} first={i === 0} />
+      {blocks.map((block, i) => (
+        <BlockView key={i} block={block} first={i === 0} />
       ))}
     </>
   );

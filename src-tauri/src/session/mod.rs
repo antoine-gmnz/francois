@@ -261,6 +261,26 @@ pub(crate) struct BufBlock {
     streaming: bool,
 }
 
+impl BufBlock {
+    /// §8 dedup: every `buf_*` append (below) and `parse_persisted_block`
+    /// (persistence.rs) built the same 8-field literal by hand, differing in
+    /// only 2-4 fields each. This is the shared shape — `text`/`tool`/`summary`
+    /// empty, `meta`/`card` absent, not streaming — callers override just what
+    /// differs via `BufBlock { field: value, ..BufBlock::new(id, kind) }`.
+    fn new(block_id: &str, kind: BlockKind) -> BufBlock {
+        BufBlock {
+            block_id: block_id.into(),
+            kind,
+            text: String::new(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+        }
+    }
+}
+
 pub(crate) struct TurnHandle {
     child: Arc<Mutex<Child>>,
     interrupted: Arc<AtomicBool>,
@@ -434,58 +454,38 @@ impl Session {
 
     fn buf_user(&mut self, block_id: &str, text: String) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::User,
             text,
-            tool: String::new(),
-            summary: String::new(),
-            meta: None,
-            card: None,
-            streaming: false,
+            ..BufBlock::new(block_id, BlockKind::User)
         });
     }
 
     fn buf_assistant(&mut self, block_id: &str, text: String) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::Assistant,
             text,
-            tool: String::new(),
-            summary: String::new(),
-            meta: None,
-            card: None,
-            streaming: false,
+            ..BufBlock::new(block_id, BlockKind::Assistant)
         });
     }
 
     fn buf_tool(&mut self, block_id: &str, tool: String, summary: String, is_task: bool) {
+        let kind = if is_task {
+            BlockKind::Subagent
+        } else {
+            BlockKind::Tool
+        };
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: if is_task {
-                BlockKind::Subagent
-            } else {
-                BlockKind::Tool
-            },
-            text: String::new(),
             tool,
             summary,
-            meta: None,
-            card: None,
             streaming: true,
+            ..BufBlock::new(block_id, kind)
         });
     }
 
     /// interactive-commands FR-6: append a pending command block (loading card).
     fn buf_command_pending(&mut self, block_id: &str, command: &str) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::Command,
-            text: String::new(),
             tool: command.into(),
-            summary: String::new(),
-            meta: None,
-            card: None,
             streaming: true,
+            ..BufBlock::new(block_id, BlockKind::Command)
         });
     }
 
@@ -501,14 +501,9 @@ impl Session {
             b.streaming = false;
         } else {
             self.block_buffer.push(BufBlock {
-                block_id: block_id.into(),
-                kind: BlockKind::Command,
-                text: String::new(),
                 tool: command.into(),
-                summary: String::new(),
-                meta: None,
                 card: Some(card),
-                streaming: false,
+                ..BufBlock::new(block_id, BlockKind::Command)
             });
         }
     }
@@ -517,14 +512,9 @@ impl Session {
     /// Question blocks it holds `{ questions, state, answers? }`.
     fn buf_question(&mut self, block_id: &str, questions: Value) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::Question,
-            text: String::new(),
-            tool: String::new(),
-            summary: String::new(),
-            meta: None,
             card: Some(serde_json::json!({ "questions": questions, "state": "pending" })),
             streaming: true,
+            ..BufBlock::new(block_id, BlockKind::Question)
         });
     }
 
@@ -554,14 +544,9 @@ impl Session {
     /// reuse (as for Question blocks): it holds `{ ask, state, rule? }`.
     fn buf_permission(&mut self, block_id: &str, ask: Value) {
         self.block_buffer.push(BufBlock {
-            block_id: block_id.into(),
-            kind: BlockKind::Permission,
-            text: String::new(),
-            tool: String::new(),
-            summary: String::new(),
-            meta: None,
             card: Some(serde_json::json!({ "ask": ask, "state": "pending" })),
             streaming: true,
+            ..BufBlock::new(block_id, BlockKind::Permission)
         });
     }
 
@@ -627,13 +612,40 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// §8 dedup: the mechanical shape behind ~78 call sites —
+    /// `app.state::<Engine>(); engine.sessions.lock().unwrap(); map.get_mut(id)`
+    /// — collapsed into one helper. Locks, hands `f` the session, unlocks, returns
+    /// what `f` returned; `None` when no such session exists.
+    ///
+    /// ONLY for the single-session, nothing-else-while-locked shape: `f` must not
+    /// itself touch `Engine.sessions` (no reentrant locking), must not block, and
+    /// must not emit — see the file-wide lock discipline documented on
+    /// `TurnHandle`. A site that needs to do more than that while holding the
+    /// session (iterate every session, take a second lock, emit, spawn a thread,
+    /// …) does not fit this helper; leave it as a direct `.sessions.lock()`.
+    pub(crate) fn with_session_mut<T>(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut Session) -> T,
+    ) -> Option<T> {
+        let mut map = self.sessions.lock().unwrap();
+        map.get_mut(session_id).map(f)
+    }
+
+    /// Read-only counterpart of `with_session_mut`, for sites that only read the
+    /// session (same single-session, nothing-else-while-locked constraint).
+    pub(crate) fn with_session<T>(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&Session) -> T,
+    ) -> Option<T> {
+        let map = self.sessions.lock().unwrap();
+        map.get(session_id).map(f)
+    }
+
     /// The working directory of a session (used by the `diff` domain, FR-1). None if unknown.
     pub fn cwd_of(&self, session_id: &str) -> Option<String> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .map(|s| s.cwd.clone())
+        self.with_session(session_id, |s| s.cwd.clone())
     }
 
     /// projects FR-9: clear `project_id` on every session that referenced the
@@ -659,7 +671,7 @@ impl Engine {
         &self,
         session_id: &str,
     ) -> Option<(String, String, String, Option<String>)> {
-        self.sessions.lock().unwrap().get(session_id).map(|s| {
+        self.with_session(session_id, |s| {
             (
                 s.cwd.clone(),
                 s.runtime.clone(),
@@ -672,11 +684,7 @@ impl Engine {
     /// The claude runtime ("native" | "wsl") of a session — used by the `shell`
     /// domain's per-session spawn matrix (wsl-filesystem FR-10/FR-11). None if unknown.
     pub fn runtime_of(&self, session_id: &str) -> Option<String> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .map(|s| s.runtime.clone())
+        self.with_session(session_id, |s| s.runtime.clone())
     }
 }
 
@@ -749,6 +757,7 @@ fn basename(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::testutil::{test_engine_with, test_session};
 
     #[test]
     fn subagent_tool_recognizes_task_and_agent() {
@@ -756,5 +765,26 @@ mod tests {
         assert!(is_subagent_tool("Agent")); // this harness's subagent tool name
         assert!(!is_subagent_tool("Read"));
         assert!(!is_subagent_tool("Bash"));
+    }
+
+    #[test]
+    fn with_session_mut_locks_mutates_and_returns_the_closure_value() {
+        let engine = test_engine_with(test_session());
+        let out = engine.with_session_mut("s1", |s| {
+            s.name = "renamed".into();
+            s.name.clone()
+        });
+        assert_eq!(out, Some("renamed".to_string()));
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("renamed".to_string())
+        );
+    }
+
+    #[test]
+    fn with_session_mut_and_with_session_are_none_for_unknown_id() {
+        let engine = test_engine_with(test_session());
+        assert_eq!(engine.with_session_mut("nope", |s| s.name.clone()), None);
+        assert_eq!(engine.with_session("nope", |s| s.name.clone()), None);
     }
 }

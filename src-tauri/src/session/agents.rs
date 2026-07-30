@@ -577,16 +577,15 @@ pub(crate) fn attribute_inner_line(
     v: &Value,
     cwd: &str,
 ) {
-    let ems = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else {
-            return;
-        };
-        let Some(agent_id) = s.agent_by_tool.get(parent_tuid).cloned() else {
-            return;
-        };
-        apply_attributed_line(s, &agent_id, v, cwd, now_ms())
+    let engine = app.state::<Engine>();
+    let ems = engine
+        .with_session_mut(session_id, |s| {
+            let agent_id = s.agent_by_tool.get(parent_tuid).cloned()?;
+            Some(apply_attributed_line(s, &agent_id, v, cwd, now_ms()))
+        })
+        .flatten();
+    let Some(ems) = ems else {
+        return;
     };
     emit_agent_emissions(app, session_id, ems);
 }
@@ -598,18 +597,14 @@ pub(crate) fn handle_task_notification(app: &AppHandle, session_id: &str, v: &Va
         return false;
     }
     let text = user_line_text(v);
-    let ems = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else {
-            return true;
-        };
-        match resolve_notice_agent(s, &text) {
-            Some(agent_id) => apply_notice(s, &agent_id, &text, now_ms()),
-            None => Vec::new(),
-        }
-    };
-    emit_agent_emissions(app, session_id, ems);
+    let engine = app.state::<Engine>();
+    let ems = engine.with_session_mut(session_id, |s| match resolve_notice_agent(s, &text) {
+        Some(agent_id) => apply_notice(s, &agent_id, &text, now_ms()),
+        None => Vec::new(),
+    });
+    if let Some(ems) = ems {
+        emit_agent_emissions(app, session_id, ems);
+    }
     true
 }
 
@@ -625,14 +620,15 @@ pub(crate) fn handle_task_notification(app: &AppHandle, session_id: &str, v: &Va
 
 #[tauri::command(async)]
 pub fn agents_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<AgentInfo>> {
-    let map = engine.sessions.lock().unwrap();
-    match map.get(&session_id) {
-        None => err("SESSION_NOT_FOUND", "no such session"),
-        Some(s) => ok(s
-            .agent_order
+    let agents = engine.with_session(&session_id, |s| {
+        s.agent_order
             .iter()
             .filter_map(|id| s.agents.get(id).cloned())
-            .collect()),
+            .collect::<Vec<_>>()
+    });
+    match agents {
+        None => err("SESSION_NOT_FOUND", "no such session"),
+        Some(agents) => ok(agents),
     }
 }
 
@@ -654,13 +650,9 @@ pub fn agents_dispatch(
         return err("INVALID_INPUT", "task is empty");
     }
     let agent_id = uuid();
-    let agent = {
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
+    let dispatched = engine.with_session_mut(&session_id, |s| {
         if s.status == "done" || s.status == "error" {
-            return err("SESSION_NOT_RUNNING", "session has ended");
+            return None;
         }
         let name: String = task.chars().take(24).collect();
         let agent = AgentInfo {
@@ -677,7 +669,12 @@ pub fn agents_dispatch(
             step_count: 0,
         };
         s.insert_agent(agent.clone());
-        agent
+        Some(agent)
+    });
+    let agent = match dispatched {
+        None => return err("SESSION_NOT_FOUND", "no such session"),
+        Some(None) => return err("SESSION_NOT_RUNNING", "session has ended"),
+        Some(Some(agent)) => agent,
     };
     emit(&app, SessionEvent::AgentUpdate { agent });
     ok(DispatchOutput { agent_id })

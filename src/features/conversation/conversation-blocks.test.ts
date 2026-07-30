@@ -3,12 +3,14 @@
 // and the model-card switch error path. Pure logic only (no DOM).
 
 import { describe, expect, it, vi } from 'vitest';
-import type { CommandCard, PermissionAsk, PermissionRule, Result, SessionQuestion } from '../../../contract/common';
+import type { AgentInfo, AgentStep, CommandCard, McpServerInfo, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion } from '../../../contract/common';
 import type { CommandConversationBlock } from '../../../contract/interactive-commands';
 import type { PermissionConversationBlock } from '../../../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
 import { classifyToolStart, type ConversationBlock } from '../../../contract/conversation-view';
 import {
+  applySessionEvent,
+  CARD_KIND_COMMAND,
   cardHeaderLabel,
   commandFromCard,
   compactBlocks,
@@ -17,6 +19,7 @@ import {
   meterFillColor,
   switchModelFromCard,
   transcriptReducer,
+  type ConversationEventSetters,
   type TranscriptState,
 } from './conversation-blocks';
 
@@ -638,6 +641,176 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
       const s2 = transcriptReducer(s1, { t: 'remove', blockId: 'nope' });
       expect(s2).toBe(s1);
     });
+  });
+});
+
+describe('CARD_KIND_COMMAND (interactive-commands §8 — shared with CommandCard.tsx)', () => {
+  it('is the table commandFromCard delegates to for every kind', () => {
+    for (const card of [usageCard, costCard, noticeCard]) {
+      expect(CARD_KIND_COMMAND[card.kind](card as never)).toBe(commandFromCard(card));
+    }
+  });
+});
+
+describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e) switch)', () => {
+  function newSetters(): ConversationEventSetters {
+    return {
+      setStatus: vi.fn(),
+      setErrorMessage: vi.fn(),
+      setResumeFailed: vi.fn(),
+      setPinned: vi.fn(),
+      setCommands: vi.fn(),
+      patchUsage: vi.fn(),
+    };
+  }
+
+  it('session.status → setStatus', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, { type: 'session.status', sessionId: 'x', status: 'running' });
+    expect(setters.setStatus).toHaveBeenCalledWith('running');
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('session.meta → setStatus + setErrorMessage from the snapshot', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    const meta = {
+      id: 'x',
+      name: 's',
+      cwd: '/repo',
+      model: { id: 'claude-opus-4', label: 'Opus' },
+      status: 'error' as const,
+      contextUsedTokens: 0,
+      contextLimitTokens: 0,
+      startedAt: 0,
+      lastActivityAt: 0,
+      errorMessage: 'boom',
+      permissionMode: 'default' as const,
+      runtime: 'native' as const,
+    };
+    applySessionEvent(dispatch, setters, { type: 'session.meta', meta });
+    expect(setters.setStatus).toHaveBeenCalledWith('error');
+    expect(setters.setErrorMessage).toHaveBeenCalledWith('boom');
+  });
+
+  it('session.error → setErrorMessage + setStatus("error")', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, {
+      type: 'session.error',
+      sessionId: 'x',
+      error: { code: 'SPAWN_FAILED', message: 'nope' },
+    });
+    expect(setters.setErrorMessage).toHaveBeenCalledWith('nope');
+    expect(setters.setStatus).toHaveBeenCalledWith('error');
+  });
+
+  it('context.usage → patchUsage(usedTokens, limitTokens)', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, { type: 'context.usage', sessionId: 'x', usedTokens: 10, limitTokens: 100 });
+    expect(setters.patchUsage).toHaveBeenCalledWith(10, 100);
+  });
+
+  it('message.user → dispatches msgUser and clears the resume-fail notice (FR-14)', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, { type: 'message.user', sessionId: 'x', blockId: 'b1', text: 'hi' });
+    expect(dispatch).toHaveBeenCalledWith({ t: 'msgUser', blockId: 'b1', text: 'hi' });
+    expect(setters.setResumeFailed).toHaveBeenCalledWith(false);
+  });
+
+  it('session.resumeFailed → setResumeFailed(true)', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, { type: 'session.resumeFailed', sessionId: 'x' });
+    expect(setters.setResumeFailed).toHaveBeenCalledWith(true);
+  });
+
+  it('session.cleared → dispatches clear, resets resume-fail and re-pins', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, { type: 'session.cleared', sessionId: 'x' });
+    expect(dispatch).toHaveBeenCalledWith({ t: 'clear' });
+    expect(setters.setResumeFailed).toHaveBeenCalledWith(false);
+    expect(setters.setPinned).toHaveBeenCalledWith(true);
+  });
+
+  it('assistant.delta / assistant.done / tool.start / tool.done forward to the reducer verbatim', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, { type: 'assistant.delta', sessionId: 'x', blockId: 'b1', text: 'He' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'delta', blockId: 'b1', text: 'He' });
+    applySessionEvent(dispatch, setters, { type: 'assistant.done', sessionId: 'x', blockId: 'b1' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'assistantDone', blockId: 'b1' });
+    applySessionEvent(dispatch, setters, { type: 'tool.start', sessionId: 'x', blockId: 't1', tool: 'Read', summary: 'a.ts' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'a.ts' });
+    applySessionEvent(dispatch, setters, { type: 'tool.done', sessionId: 'x', blockId: 't1', meta: '10 lines' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolDone', blockId: 't1', meta: '10 lines' });
+  });
+
+  it('command.started / command.output forward to the reducer (interactive-commands FR-20)', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, { type: 'command.started', sessionId: 'x', blockId: 'c1', command: 'usage' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'commandStarted', blockId: 'c1', command: 'usage' });
+    applySessionEvent(dispatch, setters, { type: 'command.output', sessionId: 'x', blockId: 'c1', card: usageCard });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'commandOutput', blockId: 'c1', card: usageCard });
+  });
+
+  it('question.asked / question.resolved forward to the reducer (session-questions FR-16)', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    const questions: SessionQuestion[] = [];
+    applySessionEvent(dispatch, setters, { type: 'question.asked', sessionId: 'x', blockId: 'q1', questions });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'questionAsked', blockId: 'q1', questions });
+    applySessionEvent(dispatch, setters, { type: 'question.resolved', sessionId: 'x', blockId: 'q1', state: 'answered', answers: { a: 'b' } });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'questionResolved', blockId: 'q1', state: 'answered', answers: { a: 'b' } });
+  });
+
+  it('permission.asked / permission.resolved forward to the reducer (permission-guardrails FR-24)', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    const ask: PermissionAsk = { toolName: 'Bash', summary: 'npm test', inputJson: '{}', cwd: '/repo', pattern: '*', patternLabel: '*' };
+    applySessionEvent(dispatch, setters, { type: 'permission.asked', sessionId: 'x', blockId: 'p1', ask });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'permissionAsked', blockId: 'p1', ask });
+    applySessionEvent(dispatch, setters, { type: 'permission.resolved', sessionId: 'x', blockId: 'p1', state: 'denied' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'permissionResolved', blockId: 'p1', state: 'denied', rule: undefined });
+  });
+
+  it('session.commands → setCommands (slash-menu FR-10)', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    const commands = [{ name: 'usage', description: '', source: 'builtin' as const }];
+    applySessionEvent(dispatch, setters, { type: 'session.commands', sessionId: 'x', commands });
+    expect(setters.setCommands).toHaveBeenCalledWith(commands);
+  });
+
+  it('ignores event types this view does not own (session.removed / agent.update / agent.step / mcp.update)', () => {
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    const agent: AgentInfo = {
+      id: 'a1',
+      sessionId: 'x',
+      name: 'explorer',
+      task: 'look around',
+      status: 'running',
+      startedAt: 0,
+      background: false,
+      stepCount: 0,
+    };
+    const step: AgentStep = { seq: 1, kind: 'text', at: 0, label: 'thinking' };
+    const server: McpServerInfo = { name: 'fs', status: 'connected' };
+    const ignored: SessionEvent[] = [
+      { type: 'session.removed', sessionId: 'x' },
+      { type: 'agent.update', agent },
+      { type: 'agent.step', sessionId: 'x', agentId: 'a1', step },
+      { type: 'mcp.update', sessionId: 'x', server },
+    ];
+    for (const e of ignored) applySessionEvent(dispatch, setters, e);
+    expect(dispatch).not.toHaveBeenCalled();
+    for (const fn of Object.values(setters)) expect(fn).not.toHaveBeenCalled();
   });
 });
 

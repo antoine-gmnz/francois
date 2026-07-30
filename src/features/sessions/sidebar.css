@@ -1,7 +1,5 @@
-/* pane [1] — the fleet board (Sidebar.tsx + SessionListBody/SessionContextMenu/
-   FilterInput, which share this stylesheet's class names 1:1 with the still-
-   inline SessionCard/menu/filter markup in Sidebar.tsx pending their wiring
-   in a later decomposition pass — see REFACTOR-CONVENTIONS.md). */
+/* pane [1] — the fleet board (Sidebar.tsx + SessionListBody / SessionContextMenu /
+   FilterInput, which share this stylesheet's class names 1:1). */
 
 .sidebar {
   display: flex;

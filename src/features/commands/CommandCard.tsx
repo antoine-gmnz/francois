@@ -12,7 +12,7 @@ import { formatContextTokens } from '../../../contract/conversation-view';
 import type { CommandConversationBlock } from '../../../contract/interactive-commands';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionSwitchModel } from '../../lib/api';
-import { cardHeaderLabel, liveCurrentModelId, meterFillColor, switchModelFromCard } from '../conversation/conversation-blocks';
+import { CARD_KIND_COMMAND, cardHeaderLabel, liveCurrentModelId, meterFillColor, switchModelFromCard } from '../conversation/conversation-blocks';
 import { useStore } from '../../lib/store';
 import './commands.css';
 
@@ -21,6 +21,22 @@ const STATUS_COLOR: Record<SessionStatus, string> = {
   idle: 'var(--success)',
   done: 'var(--text-faint)',
   error: 'var(--error)',
+};
+
+// Card-kind body dispatch, keyed against CARD_KIND_COMMAND's own keys
+// (conversation-blocks.ts) so the two tables enumerating CommandCard['kind']
+// can't drift apart (interactive-commands §8). 'notice' is excluded — it
+// isn't rendered as a card at all (see the early return below).
+type CardKind = Exclude<keyof typeof CARD_KIND_COMMAND, 'notice'>;
+type CardOfKind<K extends CardKind> = Extract<CommandCard, { kind: K }>;
+
+const CARD_BODY: { [K in CardKind]: (card: CardOfKind<K>, sessionId: string) => JSX.Element } = {
+  usage: (card) => <UsageBody card={card} />,
+  context: (card) => <ContextBody card={card} />,
+  model: (card, sessionId) => <ModelBody card={card} sessionId={sessionId} />,
+  status: (card) => <StatusBody meta={card.meta} />,
+  help: (card) => <HelpBody entries={card.entries} />,
+  text: (card) => <PreBody text={card.text} />,
 };
 
 export default function CommandBlock({ b: block, sessionId }: { b: CommandConversationBlock; sessionId: string }) {
@@ -57,18 +73,8 @@ export default function CommandBlock({ b: block, sessionId }: { b: CommandConver
 
       {!card ? (
         <div className="cmdcard-fetching">fetching…</div>
-      ) : card.kind === 'usage' ? (
-        <UsageBody card={card} />
-      ) : card.kind === 'context' ? (
-        <ContextBody card={card} />
-      ) : card.kind === 'model' ? (
-        <ModelBody card={card} sessionId={sessionId} />
-      ) : card.kind === 'status' ? (
-        <StatusBody meta={card.meta} />
-      ) : card.kind === 'help' ? (
-        <HelpBody entries={card.entries} />
       ) : (
-        <PreBody text={card.text} />
+        (CARD_BODY[card.kind] as (card: CommandCard, sessionId: string) => JSX.Element)(card, sessionId)
       )}
     </div>
   );
@@ -134,7 +140,7 @@ function ContextBody({ card }: { card: Extract<CommandCard, { kind: 'context' }>
 }
 
 function ModelBody({ card, sessionId }: { card: Extract<CommandCard, { kind: 'model' }>; sessionId: string }) {
-  const live = useStore((s) => s.sessions.find((x) => x.id === sessionId));
+  const live = useStore((s) => s.sessions.find((session) => session.id === sessionId));
   const currentId = liveCurrentModelId(live?.model.id, card.currentId); // FR-21: live, never the snapshot
   const disabled = live?.status === 'done' || live?.status === 'error';
   const [error, setError] = useState<string | null>(null);

@@ -145,7 +145,7 @@ function SessionCard({
       {/* Row 1 — header: dot + name + relative time */}
       <div className="sidebar-card__row1">
         <StatusDot color={statusColor} pulsing={statusPulses(session.status)} />
-        <span className={selected ? 'sidebar-card__name sidebar-card__name--selected' : 'sidebar-card__name'}>
+        <span className={selected ? 'sidebar-card__name sidebar-card__name--selected truncate' : 'sidebar-card__name truncate'}>
           {session.name}
         </span>
         <span className="sidebar-card__time">{formatRelativeTime(session.lastActivityAt)}</span>

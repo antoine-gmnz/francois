@@ -24,15 +24,13 @@ pub fn session_answer_question(
     }
     // Snapshot the turn's shared handles, then RELEASE the sessions lock — the
     // stdin write below can block and must never stall every other command.
-    let handles = {
-        let map = engine.sessions.lock().unwrap();
-        match map.get(&session_id) {
-            None => return err("SESSION_NOT_FOUND", "no such session"),
-            Some(s) => s
-                .current
-                .as_ref()
-                .map(|t| (t.stdin.clone(), t.pending_questions.clone())),
-        }
+    let handles = match engine.with_session(&session_id, |s| {
+        s.current
+            .as_ref()
+            .map(|t| (t.stdin.clone(), t.pending_questions.clone()))
+    }) {
+        None => return err("SESSION_NOT_FOUND", "no such session"),
+        Some(h) => h,
     };
     let Some((stdin, pending)) = handles else {
         // No turn in flight ⇒ nothing can be pending (turn over).
@@ -85,15 +83,13 @@ pub fn permissions_decide(
     };
     // Snapshot the turn's shared handles, then RELEASE the sessions lock — the
     // stdin write below can block and must never stall every other command.
-    let handles = {
-        let map = engine.sessions.lock().unwrap();
-        match map.get(&session_id) {
-            None => return err("SESSION_NOT_FOUND", "no such session"),
-            Some(s) => s
-                .current
-                .as_ref()
-                .map(|t| (t.stdin.clone(), t.pending_permissions.clone())),
-        }
+    let handles = match engine.with_session(&session_id, |s| {
+        s.current
+            .as_ref()
+            .map(|t| (t.stdin.clone(), t.pending_permissions.clone()))
+    }) {
+        None => return err("SESSION_NOT_FOUND", "no such session"),
+        Some(h) => h,
     };
     let Some((stdin, pending)) = handles else {
         // No turn in flight ⇒ nothing can be pending (§7 #16).

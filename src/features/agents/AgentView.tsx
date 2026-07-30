@@ -47,7 +47,7 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
     void agentsList(sessionId).then((res) => {
       if (!mounted || !res.ok) return;
       // A buffered agent.update already won — never overwrite it with the snapshot.
-      setAgent((prev) => prev ?? res.data.find((a) => a.id === agentId) ?? null);
+      setAgent((prev) => prev ?? res.data.find((agent) => agent.id === agentId) ?? null);
     });
     return () => {
       mounted = false;
@@ -143,8 +143,8 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
         ) : (
           <>
             {earlier && <div className="agent-view-notice">{earlier}</div>}
-            {state.blocks.map((b) => (
-              <AgentBlockRow key={b.blockId} block={b} sessionId={sessionId} />
+            {state.blocks.map((block) => (
+              <AgentBlockRow key={block.blockId} block={block} sessionId={sessionId} />
             ))}
           </>
         )}

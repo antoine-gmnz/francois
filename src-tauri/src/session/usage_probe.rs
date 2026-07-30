@@ -24,14 +24,16 @@ use tauri::{AppHandle, Manager};
 pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str) {
     let engine = app.state::<Engine>();
     let block_id = uuid();
-    let (cwd, model_id, runtime, slot) = {
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else {
-            return;
-        };
-        let Some(slot) = s.reserve_probe(&block_id) else {
+    let reserved = engine.with_session_mut(session_id, |s| {
+        let slot = s.reserve_probe(&block_id)?;
+        s.buf_command_pending(&block_id, command);
+        s.last_activity_at = now_ms();
+        Some((s.cwd.clone(), s.model_id.clone(), s.runtime.clone(), slot))
+    });
+    let (cwd, model_id, runtime, slot) = match reserved {
+        None => return, // no such session
+        Some(None) => {
             // FR-11: one in-flight probe per session → instant notice on a fresh block.
-            drop(map);
             finalize_command_block(
                 app,
                 session_id,
@@ -42,10 +44,8 @@ pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str
                 },
             );
             return;
-        };
-        s.buf_command_pending(&block_id, command);
-        s.last_activity_at = now_ms();
-        (s.cwd.clone(), s.model_id.clone(), s.runtime.clone(), slot)
+        }
+        Some(Some(t)) => t,
     };
     emit(
         app,
@@ -122,14 +122,15 @@ pub(crate) fn run_probe(
 
     // If the session was removed between reserve and spawn, its remove-path kill
     // found an empty slot — kill the child ourselves and vanish (§7, FR-14).
-    let still_wanted = {
-        let engine = app.state::<Engine>();
-        let map = engine.sessions.lock().unwrap();
-        map.get(&session_id)
-            .and_then(|s| s.pending_probe.as_ref())
-            .map(|p| p.block_id == block_id)
-            .unwrap_or(false)
-    };
+    let still_wanted = app
+        .state::<Engine>()
+        .with_session(&session_id, |s| {
+            s.pending_probe
+                .as_ref()
+                .map(|p| p.block_id == block_id)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
     if !still_wanted {
         if let Some(mut c) = slot.lock().unwrap().take() {
             let _ = c.kill();
@@ -187,16 +188,18 @@ pub(crate) fn finish_probe(
     command: &str,
     card: CommandCard,
 ) {
-    {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else {
-            return;
-        };
+    let should_finalize = app.state::<Engine>().with_session_mut(session_id, |s| {
         match &s.pending_probe {
-            Some(p) if p.block_id == block_id => s.pending_probe = None,
-            _ => return, // superseded or cancelled — never finalize another probe's block
+            Some(p) if p.block_id == block_id => {
+                s.pending_probe = None;
+                true
+            }
+            // superseded or cancelled — never finalize another probe's block
+            _ => false,
         }
+    });
+    if should_finalize != Some(true) {
+        return;
     }
     finalize_command_block(app, session_id, block_id, command, &card);
 }

@@ -279,12 +279,8 @@ pub(crate) fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
 
 #[tauri::command(async)]
 pub fn skills_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<SkillInfo>> {
-    let cwd = {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        s.cwd.clone()
+    let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
     ok(discover_skills(&cwd))
 }
@@ -299,12 +295,8 @@ pub fn skills_install(
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
-    let cwd = {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        s.cwd.clone()
+    let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
     let Some(target) = discover_skills(&cwd)
         .into_iter()
@@ -380,12 +372,8 @@ pub fn skills_run(
     name: String,
     args: Option<String>,
 ) -> IpcResult<Option<()>> {
-    let cwd = {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        s.cwd.clone()
+    let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
     if !discover_skills(&cwd)
         .iter()

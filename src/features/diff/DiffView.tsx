@@ -1,27 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, RefObject } from 'react';
-import type { AppError } from '../../../contract/common';
-import type { DiffSummary, DiffFileSummary, DiffFileStatus, FileDiff, DiffHunk, DiffLine } from '../../../contract/diff-view';
-import { diffCommit, diffGetFileDiff, diffGetSummary, diffStageAll, onDiffEvent } from '../../lib/api';
+import { useCallback, useRef, useState } from 'react';
+import type { DiffSummary } from '../../../contract/diff-view';
+import { diffCommit, diffStageAll } from '../../lib/api';
 import { useStore } from '../../lib/store';
-import { ListRow } from '../../ui/ListRow';
-import { nextDiffEventAction } from './diff-events';
+import { DiffListBody } from './DiffListBody';
+import { useDiffFeed } from './useDiffFeed';
+import { useDiffKeyboard } from './useDiffKeyboard';
 import './diff.css';
-
-// per-kind diff-row tokens (spec §8 dstyle table)
-const KIND: Record<string, { bg: string; fg: string; sign: string; signFg: string; noFg: string }> = {
-  hunk: { bg: 'var(--bg-elevated)', fg: 'var(--accent)', sign: '', signFg: '', noFg: '' },
-  add: { bg: 'color-mix(in srgb, var(--success) 9%, transparent)', fg: 'var(--success-bright)', sign: '+', signFg: 'var(--success)', noFg: 'var(--success-dim)' },
-  del: { bg: 'color-mix(in srgb, var(--error) 9%, transparent)', fg: 'var(--error-bright)', sign: '-', signFg: 'var(--error)', noFg: 'var(--error-dim)' },
-  ctx: { bg: 'transparent', fg: 'var(--text-dim)', sign: ' ', signFg: 'var(--text-faint)', noFg: 'var(--text-faint)' },
-};
-
-// Diff rows are single-line (white-space: pre, no wrap), so each is a fixed height:
-// fontSize 12 × lineHeight 1.75 = 21px. That lets us window the body — mount only the
-// rows in view — so a 5k-line diff stays as snappy to scroll/switch as a 50-line one.
-const ROW_H = 21;
-const OVERSCAN = 12; // rows rendered beyond each edge, to hide scroll blanking
-const WINDOW_INITIAL = 80; // rows to render on first paint, before the scroll box is measured
 
 interface CommitState {
   open: boolean;
@@ -34,171 +18,38 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const mainTab = useStore((s) => s.mainTab);
 
-  const [summary, setSummary] = useState<DiffSummary | null>(null);
-  const [summaryError, setSummaryError] = useState<AppError | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  // Commit selection. We track the paths the user EXPLICITLY unchecked (not the
-  // checked ones) so every newly-appearing change defaults to selected without any
-  // reconciliation on summary reload — a path simply drops out of the set when the
-  // user re-checks it, and stale entries are harmless.
-  const [deselected, setDeselected] = useState<Set<string>>(new Set());
-  const [fileDiff, setFileDiff] = useState<FileDiff | null>(null);
-  const [fileDiffError, setFileDiffError] = useState<AppError | null>(null);
-  const [fileDiffLoading, setFileDiffLoading] = useState(false);
+  const feed = useDiffFeed(sessionId);
+  const {
+    summary,
+    summaryError,
+    summaryLoading,
+    notRepo,
+    files,
+    selectedPath,
+    setSelectedPath,
+    deselected,
+    toggleFile,
+    toggleAll,
+    selectedPaths,
+    selectedCount,
+    allSelected,
+    cycle,
+    fileDiff,
+    fileDiffError,
+    fileDiffLoading,
+    loadSummary,
+    mountedRef,
+  } = feed;
+
   const [commit, setCommit] = useState<CommitState>({ open: false, message: '', error: null, success: null });
   const [busy, setBusy] = useState(false);
-  const [summaryLoading, setSummaryLoading] = useState(false);
 
   const commitInputRef = useRef<HTMLInputElement>(null);
   const bodyScrollRef = useRef<HTMLDivElement>(null);
-  const selectedRef = useRef<string | null>(null);
-  selectedRef.current = selectedPath;
-  const mountedRef = useRef(true);
   const commitRef = useRef(commit); // latest commit state, read by doCommit outside any updater
   commitRef.current = commit;
-  // Every getSummary emits one diff.changed echo (FR-17). We count outstanding echoes
-  // so our own subscription skips them and refetches only on external changes
-  // (watcher / tool.done / another surface) — otherwise getSummary would self-trigger
-  // an unbounded refetch loop.
-  const pendingEchoRef = useRef(0);
-  // Coalesce external-broadcast refetches: while one summary load is in flight, a
-  // burst of diff.changed events queues exactly ONE trailing re-run instead of
-  // stacking fetches (which strobed requestBusy → the footer hints "blinked").
-  const summaryInFlightRef = useRef(false);
-  const refreshQueuedRef = useRef(false);
-
-  const notRepo = summaryError?.code === 'NOT_A_GIT_REPO';
-  const files = summary?.files ?? [];
-
-  // Paths that will actually be committed (everything not explicitly unchecked).
-  const selectedPaths = useMemo(() => files.filter((file) => !deselected.has(file.path)).map((file) => file.path), [files, deselected]);
-  const selectedCount = selectedPaths.length;
-  const allSelected = files.length > 0 && selectedCount === files.length;
   const selectedPathsRef = useRef<string[]>([]);
   selectedPathsRef.current = selectedPaths; // read by doCommit without re-creating it
-
-  const toggleFile = useCallback((path: string) => {
-    setDeselected((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
-
-  // Header checkbox: all-checked → uncheck every current file, otherwise select all.
-  const toggleAll = useCallback(() => {
-    setDeselected((prev) => (files.length > 0 && files.every((file) => !prev.has(file.path)) ? new Set(files.map((file) => file.path)) : new Set()));
-  }, [files]);
-
-  // Load summary, preserving selection when the selected path survives (FR-19).
-  const loadSummary = useCallback((sid: string) => {
-    const run = () => {
-      summaryInFlightRef.current = true;
-      pendingEchoRef.current += 1; // a successful getSummary will broadcast one echo
-      setSummaryLoading(true);
-      void diffGetSummary(sid)
-        .then((res) => {
-          if (!res.ok) pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1); // no broadcast on error
-          if (!mountedRef.current) return;
-          setSummaryLoading(false);
-          if (res.ok) {
-            setSummary(res.data);
-            setSummaryError(null);
-            const prev = selectedRef.current;
-            const keep = prev && res.data.files.some((file) => file.path === prev);
-            setSelectedPath(keep ? prev : (res.data.files[0]?.path ?? null));
-          } else {
-            setSummary(null);
-            setSummaryError(res.error);
-            setSelectedPath(null);
-          }
-        })
-        .catch(() => {
-          pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1);
-          if (mountedRef.current) setSummaryLoading(false);
-        })
-        .finally(() => {
-          summaryInFlightRef.current = false;
-          if (refreshQueuedRef.current && mountedRef.current) {
-            refreshQueuedRef.current = false;
-            run(); // one trailing re-run covers every broadcast that arrived mid-flight
-          }
-        });
-    };
-    run();
-  }, []);
-
-  // Hydrate + live diff.changed for this session (component is keyed by sessionId in App).
-  useEffect(() => {
-    mountedRef.current = true;
-    let unlisten: (() => void) | undefined;
-    // Register the listener BEFORE the first getSummary so that fetch's own echo is
-    // guaranteed to be consumed by the counter (no mount-race stuck-at-1, N1).
-    void onDiffEvent((e) => {
-      switch (nextDiffEventAction(e, sessionId, pendingEchoRef.current, summaryInFlightRef.current)) {
-        case 'ignore':
-          return;
-        case 'consumeEcho':
-          pendingEchoRef.current -= 1; // our own getSummary echo — do not refetch
-          return;
-        case 'queueRefresh':
-          refreshQueuedRef.current = true; // fold the burst into one trailing re-run
-          return;
-        case 'refetch':
-          loadSummary(sessionId); // external change
-          return;
-      }
-    }).then((u) => {
-      if (!mountedRef.current) {
-        u();
-        return;
-      }
-      unlisten = u;
-      loadSummary(sessionId); // initial hydrate, now that the listener is live
-    });
-    return () => {
-      mountedRef.current = false;
-      if (unlisten) unlisten();
-    };
-  }, [sessionId, loadSummary]);
-
-  // Load the selected file's diff (FR-7/8). Stale path → refresh summary (FR §7).
-  useEffect(() => {
-    if (!selectedPath) {
-      setFileDiff(null);
-      setFileDiffError(null);
-      return;
-    }
-    const mounted = { current: true };
-    setFileDiffLoading(true);
-    setFileDiffError(null);
-    void diffGetFileDiff(sessionId, selectedPath).then((res) => {
-      if (!mounted.current) return;
-      setFileDiffLoading(false);
-      if (res.ok) {
-        setFileDiff(res.data);
-        setFileDiffError(null);
-      } else {
-        setFileDiff(null);
-        setFileDiffError(res.error);
-        if (res.error.code === 'INVALID_INPUT') loadSummary(sessionId); // stale path → refresh
-      }
-    });
-    return () => {
-      mounted.current = false;
-    };
-  }, [sessionId, selectedPath, loadSummary]);
-
-  const cycle = useCallback(
-    (dir: 1 | -1) => {
-      if (files.length === 0) return;
-      const i = files.findIndex((file) => file.path === selectedPath);
-      const next = (i === -1 ? 0 : i + dir + files.length) % files.length;
-      setSelectedPath(files[next].path);
-    },
-    [files, selectedPath],
-  );
 
   const requestBusy = busy || summaryLoading || fileDiffLoading; // any request in flight (FR-22/23)
 
@@ -210,7 +61,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
       .finally(() => {
         if (mountedRef.current) setBusy(false);
       });
-  }, [requestBusy, notRepo, files.length, sessionId, loadSummary]);
+  }, [requestBusy, notRepo, files.length, sessionId, loadSummary, mountedRef]);
 
   const openCommit = useCallback(() => {
     if (requestBusy || notRepo || selectedCount === 0) return; // FR-23 inert; nothing selected → nothing to commit
@@ -243,80 +94,41 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
       .finally(() => {
         if (mountedRef.current) setBusy(false);
       });
-  }, [busy, sessionId, loadSummary]);
+  }, [busy, sessionId, loadSummary, mountedRef]);
 
   // Keyboard (FR-21/22/23/24). Active only while the DIFF tab is visible.
-  useEffect(() => {
-    if (mainTab !== 'diff') return;
-    const onKey = (e: KeyboardEvent) => {
-      if (commit.open) {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          doCommit();
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          closeCommit();
-        }
-        return; // let all other keys type into the commit input
-      }
-      const activeEl = document.activeElement as HTMLElement | null;
-      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return; // FR-22/23 text-input guard
-      if (e.key === 's' || e.key === 'S') {
-        stageAll();
-      } else if (e.key === 'c' || e.key === 'C') {
-        openCommit();
-      } else if (focusedPane === 'main' && e.key === 'ArrowRight') {
-        e.preventDefault();
-        cycle(1);
-      } else if (focusedPane === 'main' && e.key === 'ArrowLeft') {
-        e.preventDefault();
-        cycle(-1);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [mainTab, focusedPane, commit.open, doCommit, closeCommit, stageAll, openCommit, cycle]);
+  useDiffKeyboard({
+    mainTab,
+    focusedPane,
+    commitOpen: commit.open,
+    doCommit,
+    closeCommit,
+    stageAll,
+    openCommit,
+    cycle,
+  });
 
   // ---------- render ----------
 
   return (
     <div className="diff-view">
-      {/* main area: vertical file selector (left) + diff body (right) */}
-      <div className="diff-main">
-        {/* file list — a vertical selector (replaces the horizontal chip strip, which
-            became unusable with many files). Renders nothing when empty (spec §8). */}
-        {files.length > 0 && (
-          <div className="scz diff-filelist">
-            <div onClick={toggleAll} title={allSelected ? 'deselect all' : 'select all'} className="diff-filelist__header">
-              <Checkbox checked={allSelected} indeterminate={selectedCount > 0 && !allSelected} />
-              <span>{selectedCount} of {files.length} selected</span>
-            </div>
-            {files.map((file) => (
-              <FileRow
-                key={file.path}
-                file={file}
-                selected={file.path === selectedPath}
-                checked={!deselected.has(file.path)}
-                onClick={() => setSelectedPath(file.path)}
-                onToggle={() => toggleFile(file.path)}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* body */}
-        <div ref={bodyScrollRef} className="scz diff-body">
-          {notRepo ? (
-            <EmptyState text="not a git repository — initialize with `git init` in the shell" />
-          ) : summaryError ? (
-            <EmptyState text={summaryError.message} color="var(--error)" />
-          ) : summary && files.length === 0 ? (
-            <EmptyState text="working tree clean" />
-          ) : (
-            <DiffBody loading={fileDiffLoading} error={fileDiffError} diff={fileDiff} scrollRef={bodyScrollRef} />
-          )}
-        </div>
-      </div>
+      <DiffListBody
+        files={files}
+        selectedPath={selectedPath}
+        deselected={deselected}
+        allSelected={allSelected}
+        selectedCount={selectedCount}
+        notRepo={notRepo}
+        summaryError={summaryError}
+        summary={summary}
+        fileDiff={fileDiff}
+        fileDiffError={fileDiffError}
+        fileDiffLoading={fileDiffLoading}
+        bodyScrollRef={bodyScrollRef}
+        onSelectPath={setSelectedPath}
+        onToggleFile={toggleFile}
+        onToggleAll={toggleAll}
+      />
 
       {/* footer / commit bar — hidden entirely for a non-repo (nothing actionable) */}
       {!notRepo && (
@@ -336,158 +148,6 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
       )}
     </div>
   );
-}
-
-// per-status glyph + color for the vertical file list (spec §8 status set).
-const STATUS: Record<DiffFileStatus, { ch: string; color: string }> = {
-  modified: { ch: 'M', color: 'var(--accent)' },
-  added: { ch: 'A', color: 'var(--success)' },
-  deleted: { ch: 'D', color: 'var(--error)' },
-  untracked: { ch: 'U', color: 'var(--hue-blue)' },
-  renamed: { ch: 'R', color: 'var(--hue-purple)' },
-};
-
-// A small terminal-styled checkbox: an accent-filled box with a ✓ when checked, a
-// hollow box when unchecked, and a dash when indeterminate (the header's mixed state).
-function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?: boolean }) {
-  const on = checked || indeterminate;
-  return (
-    <span
-      className="diff-checkbox"
-      style={{ border: `1px solid ${on ? 'var(--accent)' : 'var(--text-muted)'}`, background: checked ? 'var(--accent)' : 'transparent' }}
-    >
-      {checked ? '✓' : indeterminate ? <span className="diff-checkbox-dash" /> : ''}
-    </span>
-  );
-}
-
-// One row in the vertical file selector: [✓] · status glyph · filename · +add/−del.
-// The checkbox toggles whether the file is committed; clicking elsewhere views its
-// diff. Full repo-relative path shows on hover (title); the dir is elided to keep
-// rows dense.
-function FileRow({ file, selected, checked, onClick, onToggle }: { file: DiffFileSummary; selected: boolean; checked: boolean; onClick: () => void; onToggle: () => void }) {
-  const st = STATUS[file.status] ?? STATUS.modified;
-  return (
-    <ListRow onClick={onClick} title={file.path} selected={selected} className="diff-file-row">
-      <span
-        onClick={(e) => {
-          e.stopPropagation(); // toggle selection without changing which diff is shown
-          onToggle();
-        }}
-        className="diff-checkbox-wrap"
-      >
-        <Checkbox checked={checked} />
-      </span>
-      <span className="diff-file-status" style={{ color: st.color }}>{st.ch}</span>
-      <span className="diff-file-name truncate" style={{ color: selected ? 'var(--text-bright)' : 'var(--text)' }}>
-        {file.name}
-      </span>
-      {file.additions > 0 && <span className="diff-file-stat diff-color-add">+{file.additions}</span>}
-      {file.deletions > 0 && <span className="diff-file-stat diff-color-del">−{file.deletions}</span>}
-    </ListRow>
-  );
-}
-
-function EmptyState({ text, color }: { text: string; color?: string }) {
-  return (
-    <div className="diff-empty-state" style={color ? { color } : undefined}>
-      {text}
-    </div>
-  );
-}
-
-interface FlatRow {
-  kind: string;
-  no: string;
-  text: string;
-}
-
-function DiffBody({
-  loading,
-  error,
-  diff,
-  scrollRef,
-}: {
-  loading: boolean;
-  error: AppError | null;
-  diff: FileDiff | null;
-  scrollRef: RefObject<HTMLDivElement>;
-}) {
-  // Flatten hunks (header + lines) into one fixed-height row list so the body can be
-  // windowed. Cheap for small diffs, essential for huge ones.
-  const rows = useMemo<FlatRow[]>(() => {
-    if (!diff || diff.binary) return [];
-    const out: FlatRow[] = [];
-    for (const hunk of diff.hunks as DiffHunk[]) {
-      out.push({ kind: 'hunk', no: '', text: hunk.header });
-      for (const line of hunk.lines as DiffLine[]) {
-        out.push({ kind: line.kind, no: line.kind === 'del' ? String(line.oldNo ?? '') : String(line.newNo ?? ''), text: line.text });
-      }
-    }
-    return out;
-  }, [diff]);
-
-  const [win, setWin] = useState({ start: 0, end: WINDOW_INITIAL });
-
-  // Recompute the visible window on scroll / resize.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || rows.length === 0) return;
-    const recompute = () => {
-      const start = Math.max(0, Math.floor(el.scrollTop / ROW_H) - OVERSCAN);
-      const visible = Math.ceil(el.clientHeight / ROW_H) + OVERSCAN * 2;
-      const end = Math.min(rows.length, start + visible);
-      // bail out when unchanged — otherwise every scroll tick re-renders the body
-      setWin((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
-    };
-    recompute();
-    el.addEventListener('scroll', recompute, { passive: true });
-    const ro = new ResizeObserver(recompute);
-    ro.observe(el);
-    return () => {
-      el.removeEventListener('scroll', recompute);
-      ro.disconnect();
-    };
-  }, [rows.length, scrollRef]);
-
-  // Switching files: jump back to the top and reset the window for the new content.
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-    setWin({ start: 0, end: WINDOW_INITIAL });
-  }, [diff, scrollRef]);
-
-  if (error) return <Placeholder text={error.message} color="var(--error)" />;
-  if (loading && !diff) return <Placeholder text="loading…" />;
-  if (!diff) return null;
-  if (diff.binary) return <Placeholder text="binary file" />;
-  if (rows.length === 0) return <Placeholder text="no content changes" />;
-
-  const start = Math.min(win.start, rows.length);
-  const end = Math.min(win.end, rows.length);
-  // 8px matches the original body padding; the spacers reserve the off-screen rows so
-  // the scrollbar length stays correct.
-  return (
-    <div className="diff-rows" style={{ paddingTop: 8 + start * ROW_H, paddingBottom: 8 + (rows.length - end) * ROW_H }}>
-      {rows.slice(start, end).map((r, i) => (
-        <Row key={start + i} kind={r.kind} no={r.no} text={r.text} />
-      ))}
-    </div>
-  );
-}
-
-function Row({ kind, no, text }: { kind: string; no: string; text: string }) {
-  const k = KIND[kind] ?? KIND.ctx;
-  return (
-    <div className="diff-row" style={{ '--row-bg': k.bg } as CSSProperties}>
-      <span className="diff-row__no" style={{ color: k.noFg }}>{no}</span>
-      <span className="diff-row__sign" style={{ color: k.signFg }}>{k.sign}</span>
-      <span className="diff-row__text" style={{ color: k.fg }}>{text}</span>
-    </div>
-  );
-}
-
-function Placeholder({ text, color }: { text: string; color?: string }) {
-  return <div className="diff-placeholder" style={color ? { color } : undefined}>{text}</div>;
 }
 
 function Footer({

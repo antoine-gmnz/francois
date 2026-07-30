@@ -23,7 +23,7 @@ export function useRowCursorClamp(
     }
     setRowCursor((c) => {
       if (c < visible.length && visible[c]) return c;
-      const activeIdx = visible.findIndex((s) => s.id === activeSessionId);
+      const activeIdx = visible.findIndex((session) => session.id === activeSessionId);
       return activeIdx >= 0 ? activeIdx : 0;
     });
   }, [visible, activeSessionId]);

@@ -428,6 +428,19 @@ export function newSessionProjectOptions(projects: ProjectMeta[]): ProjectOption
   ];
 }
 
+// ---------- modal section errors (FR-33/FR-34/FR-36, §6c) ----------
+
+/** The four groups of ProjectsModal that show an inline error independently. */
+export type ProjectSection = 'list' | 'identity' | 'defaults' | 'standards';
+
+/** The all-clear state for the collapsed `Record<ProjectSection, string | null>`. */
+export const EMPTY_SECTION_ERRORS: Record<ProjectSection, string | null> = {
+  list: null,
+  identity: null,
+  defaults: null,
+  standards: null,
+};
+
 // ---------- IPC guard (FR-35) ----------
 
 /**

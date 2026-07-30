@@ -15,6 +15,7 @@ import {
   type ProjectMeta,
 } from '../../../contract/projects';
 import {
+  EMPTY_SECTION_ERRORS,
   STANDARDS_FOOTER_NOTE,
   abbreviateRoot,
   addRule,
@@ -538,6 +539,14 @@ describe('empty-input edges', () => {
 
   it('standardsFooterPath keeps the root separator on a mixed-separator root', () => {
     expect(standardsFooterPath('D:/a\b')).toContain('CLAUDE.md');
+  });
+});
+
+// ---------- modal section errors (§6c: collapsed error state) ----------
+
+describe('EMPTY_SECTION_ERRORS', () => {
+  it('starts every section clear', () => {
+    expect(EMPTY_SECTION_ERRORS).toEqual({ list: null, identity: null, defaults: null, standards: null });
   });
 });
 

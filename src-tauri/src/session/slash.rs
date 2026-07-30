@@ -104,12 +104,10 @@ pub fn session_list_commands(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Vec<SlashCommandInfo>> {
-    let (cwd, cli) = {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        (s.cwd.clone(), s.cli_commands.clone())
+    let Some((cwd, cli)) =
+        engine.with_session(&session_id, |s| (s.cwd.clone(), s.cli_commands.clone()))
+    else {
+        return err("SESSION_NOT_FOUND", "no such session");
     };
     ok(merge_commands(
         &help_entries(),

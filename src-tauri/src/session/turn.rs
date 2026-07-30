@@ -227,44 +227,40 @@ pub(crate) fn begin_turn(
     text: String,
     mode: TurnMode,
 ) {
-    let (cwd, model_id, resume, effort, permission_mode, runtime) = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else {
-            return;
-        };
-        // ResumeRetry forces resume off regardless of the stored id, so a still-good id
-        // is never dropped preemptively — a fresh init overwrites it only on success.
-        let resume = if mode == TurnMode::ResumeRetry {
-            None
-        } else {
-            s.claude_session_id.clone()
-        };
-        (
-            s.cwd.clone(),
-            s.model_id.clone(),
-            resume,
-            s.effort.clone(),
-            s.permission_mode.clone(),
-            s.runtime.clone(),
-        )
+    let engine = app.state::<Engine>();
+    let Some((cwd, model_id, resume, effort, permission_mode, runtime)) =
+        engine.with_session_mut(session_id, |s| {
+            // ResumeRetry forces resume off regardless of the stored id, so a
+            // still-good id is never dropped preemptively — a fresh init
+            // overwrites it only on success.
+            let resume = if mode == TurnMode::ResumeRetry {
+                None
+            } else {
+                s.claude_session_id.clone()
+            };
+            (
+                s.cwd.clone(),
+                s.model_id.clone(),
+                resume,
+                s.effort.clone(),
+                s.permission_mode.clone(),
+                s.runtime.clone(),
+            )
+        })
+    else {
+        return;
     };
 
     let resume_used = resume.is_some();
 
     if mode == TurnMode::Normal {
-        let block = {
-            let engine = app.state::<Engine>();
-            let mut map = engine.sessions.lock().unwrap();
-            match map.get_mut(session_id) {
-                Some(s) => {
-                    s.buf_user(&block_id, text.clone());
-                    s.last_activity_at = now_ms();
-                    s.block_buffer.last().cloned()
-                }
-                None => None,
-            }
-        };
+        let block = engine
+            .with_session_mut(session_id, |s| {
+                s.buf_user(&block_id, text.clone());
+                s.last_activity_at = now_ms();
+                s.block_buffer.last().cloned()
+            })
+            .flatten();
         if let Some(b) = &block {
             append_transcript(app, session_id, b); // durable-sessions FR-2
         }
@@ -308,19 +304,15 @@ pub(crate) fn begin_turn(
         Arc::new(Mutex::new(HashMap::new()));
     let child = Arc::new(Mutex::new(child));
     let interrupted = Arc::new(AtomicBool::new(false));
-    {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        if let Some(s) = map.get_mut(session_id) {
-            s.current = Some(TurnHandle {
-                child: child.clone(),
-                interrupted: interrupted.clone(),
-                stdin: stdin.clone(),
-                pending_questions: pending_questions.clone(),
-                pending_permissions: pending_permissions.clone(),
-            });
-        }
-    }
+    engine.with_session_mut(session_id, |s| {
+        s.current = Some(TurnHandle {
+            child: child.clone(),
+            interrupted: interrupted.clone(),
+            stdin: stdin.clone(),
+            pending_questions: pending_questions.clone(),
+            pending_permissions: pending_permissions.clone(),
+        });
+    });
 
     let app2 = app.clone();
     let sid = session_id.to_string();
@@ -354,25 +346,25 @@ pub(crate) fn finish_turn(
     // at turn end — 'error' when the turn errored (session-engine FR-40), else
     // 'done' — with endedAt and an `ended with the turn` notice step. This is the
     // backstop that keeps the elapsed clock correct when FR-13's notice never came.
-    let (next, agent_ems): (Option<(String, String)>, Vec<AgentEmission>) = {
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else {
-            return;
-        };
-        s.current = None;
-        let agent_ems = finalize_agents(s, errored, now_ms());
-        let next = if errored {
-            s.status = "error".into();
-            s.error_message = error_msg.clone();
-            s.queue.clear();
-            None
-        } else if let Some(entry) = s.queue.pop_front() {
-            Some(entry)
-        } else {
-            s.status = "idle".into();
-            None
-        };
-        (next, agent_ems)
+    let result: Option<(Option<(String, String)>, Vec<AgentEmission>)> =
+        engine.with_session_mut(session_id, |s| {
+            s.current = None;
+            let agent_ems = finalize_agents(s, errored, now_ms());
+            let next = if errored {
+                s.status = "error".into();
+                s.error_message = error_msg.clone();
+                s.queue.clear();
+                None
+            } else if let Some(entry) = s.queue.pop_front() {
+                Some(entry)
+            } else {
+                s.status = "idle".into();
+                None
+            };
+            (next, agent_ems)
+        });
+    let Some((next, agent_ems)) = result else {
+        return;
     };
     // Emitted BEFORE the turn's terminal session.status (FR-16), with no lock held.
     emit_agent_emissions(app, session_id, agent_ems);
@@ -437,14 +429,10 @@ pub(crate) fn apply_fail_session(s: &mut Session, msg: &str, at: u64) -> Vec<Age
 }
 
 pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &str) {
-    let agent_ems = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        match map.get_mut(session_id) {
-            Some(s) => apply_fail_session(s, msg, now_ms()),
-            None => Vec::new(),
-        }
-    };
+    let agent_ems = app
+        .state::<Engine>()
+        .with_session_mut(session_id, |s| apply_fail_session(s, msg, now_ms()))
+        .unwrap_or_default();
     crate::usage::note_turn_ended(app); // usage-bar FR-13: running → error
 
     // async-agents FR-16 ordering rule: agent finalization is emitted BEFORE the
@@ -470,12 +458,10 @@ pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &
 }
 
 pub(crate) fn update_used(app: &AppHandle, session_id: &str, used: u64) {
-    let engine = app.state::<Engine>();
-    let mut map = engine.sessions.lock().unwrap();
-    if let Some(s) = map.get_mut(session_id) {
+    app.state::<Engine>().with_session_mut(session_id, |s| {
         s.context_used_tokens = used;
         s.last_activity_at = now_ms();
-    }
+    });
 }
 
 #[cfg(test)]

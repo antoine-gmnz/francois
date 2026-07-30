@@ -11,33 +11,33 @@ import QuestionCard from '../questions/QuestionCard';
 import { StatusDot } from '../../ui/StatusDot';
 import './conversation.css';
 
-export default function Block({ b, sessionId }: { b: ConversationBlock; sessionId: string }) {
+export default function Block({ b: block, sessionId }: { b: ConversationBlock; sessionId: string }) {
   // interactive-commands: command cards (and notice one-liners) have their own renderer (§8)
-  if (b.kind === 'command') {
-    return <CommandBlock b={b} sessionId={sessionId} />;
+  if (block.kind === 'command') {
+    return <CommandBlock b={block} sessionId={sessionId} />;
   }
   // session-questions: interactive question cards (spec §8)
-  if (b.kind === 'question') {
-    return <QuestionCard b={b} sessionId={sessionId} />;
+  if (block.kind === 'question') {
+    return <QuestionCard b={block} sessionId={sessionId} />;
   }
   // permission-guardrails: approval cards for gated tool calls (spec §8)
-  if (b.kind === 'permission') {
-    return <PermissionCard b={b} sessionId={sessionId} />;
+  if (block.kind === 'permission') {
+    return <PermissionCard b={block} sessionId={sessionId} />;
   }
-  if (b.kind === 'user') {
+  if (block.kind === 'user') {
     return (
       <div className="block-user">
         <div className="block-user__header">
           <span className="block-user__label">YOU</span>
           <span className="block-user__spacer" />
-          {b.queued && (
+          {block.queued && (
             <span className="block-user__queued">
               <StatusDot color="var(--warn)" size={5} pulsing />
               <span className="block-user__queued-label">queued</span>
             </span>
           )}
         </div>
-        <div className="block-user__body">{b.text}</div>
+        <div className="block-user__body">{block.text}</div>
       </div>
     );
   }
@@ -45,15 +45,15 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
   // Assistant replies arrive as Markdown source — render it formatted (own
   // container, so the shared pre-wrap wrapper below never touches it). The
   // streaming caret trails the rendered content.
-  if (b.kind === 'assistant') {
+  if (block.kind === 'assistant') {
     return (
       <div className="block-row">
-        <span className="block-glyph" style={{ color: b.glyphColor }}>
-          {b.glyph}
+        <span className="block-glyph" style={{ color: block.glyphColor }}>
+          {block.glyph}
         </span>
         <div className="block-content">
-          <Markdown text={b.text} color={b.bodyColor} />
-          {b.isStreaming && <span className="block-caret" />}
+          <Markdown text={block.text} color={block.bodyColor} />
+          {block.isStreaming && <span className="block-caret" />}
         </div>
       </div>
     );
@@ -63,24 +63,24 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
   let glyphColor = 'var(--text-dim)';
   let bodyColor = 'var(--text)';
   let body: React.ReactNode = '';
-  if (b.kind === 'tool') {
-    glyph = b.glyph;
-    glyphColor = b.glyphColor;
-    bodyColor = b.bodyColor;
+  if (block.kind === 'tool') {
+    glyph = block.glyph;
+    glyphColor = block.glyphColor;
+    bodyColor = block.bodyColor;
     body = (
       <>
-        {toolBody(b.tool, b.summary)}
-        {b.meta && <span className="block-meta"> · {b.meta}</span>}
+        {toolBody(block.tool, block.summary)}
+        {block.meta && <span className="block-meta"> · {block.meta}</span>}
       </>
     );
   } else {
-    glyph = b.glyph;
-    glyphColor = b.glyphColor;
-    bodyColor = b.bodyColor;
+    glyph = block.glyph;
+    glyphColor = block.glyphColor;
+    bodyColor = block.bodyColor;
     body = (
       <>
-        Dispatched subagent  {b.agentName}
-        {b.meta && <span className="block-meta"> · {b.meta}</span>}
+        Dispatched subagent  {block.agentName}
+        {block.meta && <span className="block-meta"> · {block.meta}</span>}
       </>
     );
   }

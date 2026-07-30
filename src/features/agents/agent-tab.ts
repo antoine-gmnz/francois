@@ -35,8 +35,8 @@ export interface AgentTabRef {
   status: AgentStatus;
 }
 
-function sameRef(a: AgentTabRef, b: AgentTabRef): boolean {
-  return a.id === b.id && a.name === b.name && a.status === b.status;
+function sameRef(left: AgentTabRef, right: AgentTabRef): boolean {
+  return left.id === right.id && left.name === right.name && left.status === right.status;
 }
 
 export function agentTabLabel(name: string): string {
@@ -187,8 +187,8 @@ export function receiveAgentTranscript(
   if (!res.ok) {
     return { ...prev, loading: false, hydrated: true, buffer: [], error: res.error };
   }
-  let blocks = [...res.data.blocks].sort((a, b) => blockOrdinal(a.blockId) - blockOrdinal(b.blockId));
-  for (const b of prev.buffer) blocks = mergeAgentBlock(blocks, b);
+  let blocks = [...res.data.blocks].sort((left, right) => blockOrdinal(left.blockId) - blockOrdinal(right.blockId));
+  for (const block of prev.buffer) blocks = mergeAgentBlock(blocks, block);
   return {
     ...prev,
     loading: false,

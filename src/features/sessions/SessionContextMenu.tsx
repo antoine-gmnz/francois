@@ -29,7 +29,11 @@ export function SessionContextMenu({
   onRemove,
 }: SessionContextMenuProps): JSX.Element {
   return (
-    <div ref={containerRef} className="context-menu" style={{ left: menu.x, top: menu.y }}>
+    // stopPropagation keeps a click inside the menu (e.g. "Remove session" →
+    // confirm) from also reaching the window-level outside-click listener that
+    // closes the menu, since that listener has no way to tell an inside click
+    // from an outside one without it.
+    <div ref={containerRef} onClick={(e) => e.stopPropagation()} className="context-menu" style={{ left: menu.x, top: menu.y }}>
       {menu.error ? (
         <div className="context-menu__error">{menu.error.message}</div>
       ) : !menu.confirming ? (

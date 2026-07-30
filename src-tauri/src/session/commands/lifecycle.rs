@@ -160,15 +160,11 @@ pub fn session_create(
     };
     let linked = toctou_outcome(project_id.clone(), still_linked);
     if linked.is_none() && project_id.is_some() {
-        let mut map = engine.sessions.lock().unwrap();
-        if let Some(s) = map.get_mut(&id) {
-            s.project_id = None;
-        }
+        engine.with_session_mut(&id, |s| s.project_id = None);
     }
-    let meta = {
-        let map = engine.sessions.lock().unwrap();
-        map.get(&id).map(|s| s.meta()).unwrap_or(meta_before)
-    };
+    let meta = engine
+        .with_session(&id, |s| s.meta())
+        .unwrap_or(meta_before);
 
     persist(&app, &engine);
     // projects FR-20: the project just backed a session. A persist failure here is
@@ -223,14 +219,10 @@ pub fn session_switch_model(
     if model_id.trim().is_empty() {
         return err("INVALID_INPUT", "model is empty");
     }
-    {
-        let map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
-        };
-        if s.status == "done" || s.status == "error" {
-            return err("SESSION_NOT_RUNNING", "session has ended");
-        }
+    match engine.with_session(&session_id, |s| s.status != "done" && s.status != "error") {
+        None => return err("SESSION_NOT_FOUND", "no such session"),
+        Some(false) => return err("SESSION_NOT_RUNNING", "session has ended"),
+        Some(true) => {}
     }
     match apply_model_switch(&app, &session_id, &model_id) {
         Some(meta) => ok(serde_json::to_value(meta).unwrap()),
@@ -247,13 +239,11 @@ pub(crate) fn apply_model_switch(
     model_id: &str,
 ) -> Option<SessionMeta> {
     let engine = app.state::<Engine>();
-    let meta = {
-        let mut map = engine.sessions.lock().unwrap();
-        let s = map.get_mut(session_id)?;
+    let meta = engine.with_session_mut(session_id, |s| {
         s.model_id = model_id.to_string();
         s.context_limit_tokens = context_limit(model_id);
         s.meta()
-    };
+    })?;
     persist(app, &engine);
     emit(app, SessionEvent::Meta { meta: meta.clone() });
     Some(meta)

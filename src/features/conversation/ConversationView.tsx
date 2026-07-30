@@ -1,210 +1,61 @@
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { SessionEvent, SlashCommandInfo } from '../../../contract/common';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { SlashCommandInfo } from '../../../contract/common';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
-import { getTranscript, onSessionEvent, sessionClear, sessionInterrupt, sessionListCommands, sessionSend } from '../../lib/api';
+import { sessionClear, sessionInterrupt, sessionSend } from '../../lib/api';
 import Block from './Block';
-import { compactBlocks, isClearCommand, transcriptReducer } from './conversation-blocks';
+import Composer from './Composer';
+import { compactBlocks, isClearCommand } from './conversation-blocks';
+import JumpToLatestChip from './JumpToLatestChip';
+import ResumeFailBanner from './ResumeFailBanner';
+import { useConversationTranscript } from './useConversationTranscript';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { composerPlaceholder, hasPendingQuestionBlock } from '../questions/question-card';
 import {
   completionText,
   filterCommands,
-  getSessionCommands,
   moveSelection,
   nextDismissed,
   popupKeyAction,
   popupVisible,
   refreshSelection,
-  setSessionCommands,
   slashToken,
 } from '../commands/slash-menu';
-import SlashMenu from '../commands/SlashMenu';
 import { useStore } from '../../lib/store';
 import './conversation.css';
 
-// Block apply rules (reducer) live in ./conversation-blocks — pure + unit-tested.
-
-function eventSessionId(e: SessionEvent): string | null {
-  if (e.type === 'session.meta') return e.meta.id;
-  if ('sessionId' in e) return e.sessionId;
-  return null;
-}
+// Block apply rules (reducer) and the SessionEvent dispatch table live in
+// ./conversation-blocks — pure + unit-tested. Hydration/subscription plumbing
+// lives in ./useConversationTranscript.
 
 export default function ConversationView({ sessionId }: { sessionId: string }) {
-  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
-  const [state, dispatch] = useReducer(transcriptReducer, { blocks: [] });
-  const [hydrated, setHydrated] = useState(false);
-  const [hydrationError, setHydrationError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>(meta?.status ?? 'idle');
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(meta?.errorMessage);
-  const [isPinned, setPinned] = useState(true);
+  const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId) ?? null);
+  const {
+    state,
+    dispatch,
+    hydrated,
+    hydrationError,
+    status,
+    errorMessage,
+    resumeFailed,
+    dismissResumeFailed,
+    commands,
+    isPinned,
+    setPinned,
+    scrollRef,
+    onScroll,
+    jumpToLatest,
+  } = useConversationTranscript(sessionId);
+
   const [input, setInput] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
-  const [resumeFailed, setResumeFailed] = useState(false); // durable-sessions FR-14 banner
 
-  // slash-menu popup state (spec §6): registry mirror for THIS session (cache-
-  // seeded, FR-10), dismissal token (FR-9) and selection (FR-7). All component-
-  // local — a session switch remounts (keyed by sessionId) and clears them.
-  const [commands, setCommands] = useState<SlashCommandInfo[]>(() => getSessionCommands(sessionId));
+  // slash-menu popup state (spec §6): dismissal token (FR-9) and selection
+  // (FR-7). Component-local — a session switch remounts (keyed by sessionId)
+  // and clears them.
   const [dismissedToken, setDismissedToken] = useState<string | null>(null);
   const [selIdx, setSelIdx] = useState(0);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const pinnedRef = useRef(true);
-  pinnedRef.current = isPinned;
-
-  // Hydration + live events (FR-8/9/10). Component is keyed by sessionId in the
-  // parent, so this runs fresh per session; a stale getTranscript after unmount
-  // is discarded via mountedRef (FR-9).
-  useEffect(() => {
-    let mounted = true;
-    let unlisten: (() => void) | undefined;
-    let hydratedLocal = false;
-    const pending: SessionEvent[] = [];
-
-    const route = (e: SessionEvent) => {
-      switch (e.type) {
-        case 'session.status':
-          setStatus(e.status);
-          break;
-        case 'session.meta':
-          setStatus(e.meta.status);
-          setErrorMessage(e.meta.errorMessage);
-          break;
-        case 'session.error':
-          setErrorMessage(e.error.message);
-          setStatus('error');
-          break;
-        case 'context.usage':
-          useStore.getState().patchUsage(sessionId, e.usedTokens, e.limitTokens);
-          break;
-        case 'message.user':
-          dispatch({ t: 'msgUser', blockId: e.blockId, text: e.text });
-          setResumeFailed(false); // a new user turn clears the resume-fail notice (FR-14)
-          break;
-        case 'session.resumeFailed':
-          setResumeFailed(true); // the --resume was rejected; core continued fresh (FR-9/14)
-          break;
-        case 'session.cleared':
-          // /clear full reset: drop every block (context.usage 0 resets the meter)
-          dispatch({ t: 'clear' });
-          setResumeFailed(false);
-          setPinned(true);
-          break;
-        case 'assistant.delta':
-          dispatch({ t: 'delta', blockId: e.blockId, text: e.text });
-          break;
-        case 'assistant.done':
-          dispatch({ t: 'assistantDone', blockId: e.blockId });
-          break;
-        case 'tool.start':
-          dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary });
-          break;
-        case 'tool.done':
-          dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta });
-          break;
-        case 'command.started':
-          // interactive-commands FR-20: pending command block (loading card)
-          dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command });
-          break;
-        case 'command.output':
-          // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
-          dispatch({ t: 'commandOutput', blockId: e.blockId, card: e.card });
-          break;
-        case 'question.asked':
-          // session-questions FR-6/16: insert the pending question card
-          dispatch({ t: 'questionAsked', blockId: e.blockId, questions: e.questions });
-          break;
-        case 'question.resolved':
-          // session-questions FR-11/13/16: flip to answered/cancelled in place
-          dispatch({ t: 'questionResolved', blockId: e.blockId, state: e.state, answers: e.answers });
-          break;
-        case 'permission.asked':
-          // permission-guardrails FR-2/24: insert the pending approval card
-          dispatch({ t: 'permissionAsked', blockId: e.blockId, ask: e.ask });
-          break;
-        case 'permission.resolved':
-          // permission-guardrails FR-8/10/24: flip to allowed/denied/cancelled in place
-          dispatch({ t: 'permissionResolved', blockId: e.blockId, state: e.state, rule: e.rule });
-          break;
-        case 'session.commands':
-          // slash-menu FR-10: idempotent replace — an open popup refilters in place
-          setCommands(e.commands);
-          break;
-        default:
-          break;
-      }
-    };
-
-    void onSessionEvent((e) => {
-      // slash-menu edge 7: cache the registry for EVERY session (no UI effect
-      // for non-visible ones — they re-seed from this cache when shown).
-      if (e.type === 'session.commands') setSessionCommands(e.sessionId, e.commands);
-      if (eventSessionId(e) !== sessionId) return;
-      if (!hydratedLocal) pending.push(e);
-      else route(e);
-    }).then((u) => {
-      if (!mounted) u();
-      else unlisten = u;
-    });
-
-    void getTranscript(sessionId).then((res) => {
-      if (!mounted) return; // FR-9: discard stale response
-      if (res.ok) {
-        dispatch({ t: 'seed', blocks: res.data });
-        for (const e of pending) route(e);
-        pending.length = 0;
-        hydratedLocal = true;
-        setHydrated(true);
-        setPinned(true);
-      } else {
-        setHydrationError(res.error.message);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      if (unlisten) unlisten();
-    };
-  }, [sessionId]);
-
-  // slash-menu FR-10: seed the registry on mount / session switch (the keyed
-  // remount makes both the same path). The cache gave an instant value above;
-  // listCommands refreshes it. Errors keep whatever the cache had.
-  useEffect(() => {
-    let mounted = true;
-    void sessionListCommands(sessionId).then((res) => {
-      if (!mounted || !res.ok) return;
-      setSessionCommands(sessionId, res.data);
-      setCommands(res.data);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, [sessionId]);
-
-  // Scroll-to-bottom while pinned (FR-17/18).
-  useLayoutEffect(() => {
-    if (pinnedRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [state.blocks, hydrated]);
-
-  const onScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (dist > 32 && pinnedRef.current) setPinned(false); // FR-19
-    // Scrolling back within the same band re-pins — the "jump to latest" chip
-    // must clear on a manual return to the bottom, not only via its own click.
-    else if (dist <= 32 && !pinnedRef.current) setPinned(true);
-  };
-
-  const jumpToLatest = () => {
-    setPinned(true);
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  };
 
   const disabled = status === 'done' || status === 'error';
 
@@ -329,14 +180,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   return (
     <div className="conv-root">
       {/* resume-fail banner (durable-sessions FR-14) */}
-      {resumeFailed && (
-        <div className="resume-banner">
-          <span className="resume-banner__text">previous thread unavailable — continuing fresh</span>
-          <span onClick={() => setResumeFailed(false)} className="resume-banner__dismiss" title="dismiss">
-            ✕
-          </span>
-        </div>
-      )}
+      {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
 
       {/* transcript */}
       <div className="conv-transcript-wrap">
@@ -352,51 +196,33 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
               <div className="conv-empty__hint">waiting for your first prompt</div>
             </Centered>
           ) : (
-            compactBlocks(state.blocks).map((b) => <Block key={b.blockId} b={b} sessionId={sessionId} />)
+            compactBlocks(state.blocks).map((block) => <Block key={block.blockId} b={block} sessionId={sessionId} />)
           )}
         </div>
 
-        {!isPinned && (
-          <div onClick={jumpToLatest} className="jump-latest">
-            ↓ jump to latest
-          </div>
-        )}
+        {!isPinned && <JumpToLatestChip onClick={jumpToLatest} />}
       </div>
 
       {/* input bar */}
-      <div className="composer-wrap">
-        {/* slash-menu popup — anchored above the input bar, never covering it (FR-5) */}
-        {popupOpen && (
-          <SlashMenu items={filtered} selIdx={selIdx} onHover={setSelIdx} onRun={runCommand} onDismiss={dismissPopup} />
-        )}
-        {sendError && <div className="send-error-banner">{sendError}</div>}
-        <div className="composer-bar">
-          <span className="composer-arrow" style={{ color: disabled ? 'var(--text-disabled)' : 'var(--accent)' }}>
-            ›
-          </span>
-          <textarea
-            ref={inputRef}
-            value={input}
-            disabled={disabled}
-            placeholder={placeholder}
-            onChange={(e) => {
-              setInput(e.target.value);
-              autoGrow(e.target);
-            }}
-            onKeyDown={onInputKey}
-            rows={1}
-            className="composer-input"
-          />
-          <span className="composer-hint">
-            {status === 'running' && (
-              <span>
-                <span className="composer-hint__key">⌃C</span> interrupt
-              </span>
-            )}
-            <span>⌘K palette</span>
-          </span>
-        </div>
-      </div>
+      <Composer
+        status={status}
+        disabled={disabled}
+        input={input}
+        inputRef={inputRef}
+        placeholder={placeholder}
+        sendError={sendError}
+        onInputChange={(e) => {
+          setInput(e.target.value);
+          autoGrow(e.target);
+        }}
+        onInputKey={onInputKey}
+        popupOpen={popupOpen}
+        filtered={filtered}
+        selIdx={selIdx}
+        onHover={setSelIdx}
+        onRun={runCommand}
+        onDismiss={dismissPopup}
+      />
     </div>
   );
 }
