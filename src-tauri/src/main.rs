@@ -23,7 +23,11 @@ mod wsl;
 // keeps resolving exactly as before this domain moved out of main.rs.
 pub(crate) use shell::dispose_session_shell;
 
-use tauri::{RunEvent};
+// `Manager` is what provides `get_webview_window` on `&App` — used by the
+// #[cfg(windows)] chrome tint in setup() below. Without it the Windows build
+// fails to compile (E0599); the Linux/macOS builds compile the call out and
+// never noticed.
+use tauri::{Manager, RunEvent};
 
 fn main() {
     tauri::Builder::default()
