@@ -6,31 +6,19 @@ import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { filterSessionsByProject } from '../../../contract/projects';
 import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
 import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList, sessionRemove } from '../../lib/api';
+import { abbreviate } from '../../lib/path';
 import { prunePaletteSession } from '../palette/paletteData';
 import ProjectSwitcher from '../projects/ProjectSwitcher';
 import { filteredEmptyLabel, visibleSessions } from '../projects/projects';
 import { useStore } from '../../lib/store';
+import { BadgePill } from '../../ui/BadgePill';
+import { EmptyPane } from '../../ui/EmptyPane';
+import { StatusDot } from '../../ui/StatusDot';
+import './sidebar.css';
 
 // pane [1] — the fleet board (Mission Control). Evolves the sessions-sidebar row
 // list into rich per-session status cards, aggregated from existing channels
 // (specs/fleet-board.md). Preserves every sessions-sidebar behaviour.
-
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-  meta: 'var(--text-hint)',
-  error: 'var(--error)',
-};
-
-function abbreviate(cwd: string, home: string): string {
-  if (home && (cwd === home || cwd.startsWith(home + '/') || cwd.startsWith(home + '\\'))) {
-    return '~' + cwd.slice(home.length);
-  }
-  return cwd;
-}
 
 interface MenuState {
   sessionId: string;
@@ -122,13 +110,13 @@ export default function Sidebar({ home }: { home: string }) {
 
   // overview: one feed entry. The session's name and project are captured HERE,
   // at record time, so a later rename or removal never rewrites history.
-  const logActivity = (s: SessionMeta, kind: ActivityKind, detail: string) => {
+  const logActivity = (session: SessionMeta, kind: ActivityKind, detail: string) => {
     recordActivity({
       at: Date.now(),
       kind,
-      sessionId: s.id,
-      sessionName: s.name,
-      projectId: s.projectId,
+      sessionId: session.id,
+      sessionName: session.name,
+      projectId: session.projectId,
       detail,
     });
   };
@@ -147,9 +135,9 @@ export default function Sidebar({ home }: { home: string }) {
     setHydrationError(null);
     setSessions(data);
     if (useStore.getState().activeSessionId === null && data[0]) setActiveSessionId(data[0].id);
-    for (const s of data) {
-      seedDiff(s.id);
-      startedRef.current.add(s.id); // restored, not started — no feed entry (overview FR-28)
+    for (const session of data) {
+      seedDiff(session.id);
+      startedRef.current.add(session.id); // restored, not started — no feed entry (overview FR-28)
     }
   };
 
@@ -172,7 +160,7 @@ export default function Sidebar({ home }: { home: string }) {
       } else if (e.type === 'session.status') {
         // overview: read the OLD status before patching, so the feed can tell a
         // finished turn from a session that merely settled.
-        const prev = useStore.getState().sessions.find((x) => x.id === e.sessionId);
+        const prev = useStore.getState().sessions.find((session) => session.id === e.sessionId);
         patchStatus(e.sessionId, e.status);
         const kind = statusTransitionKind(prev?.status, e.status);
         if (kind && prev) {
@@ -190,25 +178,25 @@ export default function Sidebar({ home }: { home: string }) {
       } else if (e.type === 'context.usage') {
         patchUsage(e.sessionId, e.usedTokens, e.limitTokens); // keeps the ctx figure live (FR-3)
       } else if (e.type === 'agent.update') {
-        const a = e.agent;
-        const owner = useStore.getState().sessions.find((x) => x.id === a.sessionId);
+        const agent = e.agent;
+        const owner = useStore.getState().sessions.find((session) => session.id === agent.sessionId);
         if (!owner) return; // drop post-removal (FR-7)
-        let m = agentStatusRef.current.get(a.sessionId);
+        let m = agentStatusRef.current.get(agent.sessionId);
         if (!m) {
           m = new Map();
-          agentStatusRef.current.set(a.sessionId, m);
+          agentStatusRef.current.set(agent.sessionId, m);
         }
-        const prevStatus = m.get(a.id);
-        m.set(a.id, a.status);
-        updateDerived(a.sessionId, { runningAgentCount: countRunning(m) }); // FR-5
+        const prevStatus = m.get(agent.id);
+        m.set(agent.id, agent.status);
+        updateDerived(agent.sessionId, { runningAgentCount: countRunning(m) }); // FR-5
         // overview: an agent SETTLING is feed-worthy; its intermediate updates
         // (every step re-emits) are not — hence the transition guard.
-        if (prevStatus !== a.status) {
-          if (a.status === 'done') logActivity(owner, 'agent.finished', a.name);
-          else if (a.status === 'error') logActivity(owner, 'agent.failed', a.name);
+        if (prevStatus !== agent.status) {
+          if (agent.status === 'done') logActivity(owner, 'agent.finished', agent.name);
+          else if (agent.status === 'error') logActivity(owner, 'agent.failed', agent.name);
         }
       } else if (e.type === 'session.removed') {
-        const gone = useStore.getState().sessions.find((x) => x.id === e.sessionId);
+        const gone = useStore.getState().sessions.find((session) => session.id === e.sessionId);
         if (gone) logActivity(gone, 'session.removed', '');
         handleRemovedEvent(e.sessionId);
       }
@@ -257,8 +245,8 @@ export default function Sidebar({ home }: { home: string }) {
   const reassignAfterRemoval = (id: string) => {
     const st = useStore.getState();
     const list = st.sessions;
-    const idx = list.findIndex((s) => s.id === id);
-    const remaining = list.filter((s) => s.id !== id);
+    const idx = list.findIndex((session) => session.id === id);
+    const remaining = list.filter((session) => session.id !== id);
     if (remaining.length === 0) {
       setActiveSessionId(null);
     } else {
@@ -275,7 +263,7 @@ export default function Sidebar({ home }: { home: string }) {
     }
     setRowCursor((c) => {
       if (c < visible.length && visible[c]) return c;
-      const activeIdx = visible.findIndex((s) => s.id === activeSessionId);
+      const activeIdx = visible.findIndex((session) => session.id === activeSessionId);
       return activeIdx >= 0 ? activeIdx : 0;
     });
   }, [visible, activeSessionId]);
@@ -293,9 +281,9 @@ export default function Sidebar({ home }: { home: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (newSessionOpen || projectsOpen || menu) return;
-      const ae = document.activeElement as HTMLElement | null;
-      const inFilter = ae === filterRef.current;
-      const inOtherInput = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && !inFilter;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const inFilter = activeEl === filterRef.current;
+      const inOtherInput = !!activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && !inFilter;
       if (inOtherInput) return;
       if (focusedPane !== 'sidebar' && !inFilter) return;
 
@@ -367,35 +355,12 @@ export default function Sidebar({ home }: { home: string }) {
   const focused = focusedPane === 'sidebar';
 
   return (
-    <section
-      onClick={() => setFocusedPane('sidebar')}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--bg-deep)',
-        border: `1px solid ${focused ? C.accent : 'var(--border)'}`,
-        borderRadius: 5,
-        overflow: 'hidden',
-        minHeight: 0,
-        height: '100%',
-      }}
-    >
+    <section onClick={() => setFocusedPane('sidebar')} className={focused ? 'sidebar sidebar--focused' : 'sidebar'}>
       {/* header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '9px 12px',
-          borderBottom: '1px solid var(--border)',
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', color: focused ? C.accent : C.dim, fontWeight: 700 }}>
-          SESSIONS
-        </span>
+      <div className="sidebar__header">
+        <span className={focused ? 'sidebar__title sidebar__title--focused' : 'sidebar__title'}>SESSIONS</span>
         {/* projects FR-27: the count is post-filter — project scope AND '/' query. */}
-        <span style={{ fontSize: 10, color: C.faint }}>{visible.length} · [1]</span>
+        <span className="sidebar__count">{visible.length} · [1]</span>
       </div>
 
       {/* projects FR-25: the switcher strip, above the cards */}
@@ -403,31 +368,21 @@ export default function Sidebar({ home }: { home: string }) {
 
       {/* filter */}
       {sidebarFilter !== null && (
-        <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--bg-elevated)', flexShrink: 0 }}>
+        <div className="filter-input">
           <input
             ref={filterRef}
+            className="filter-input__field"
             value={sidebarFilter}
             placeholder="filter…"
             onChange={(e) => setSidebarFilter(e.target.value)}
-            style={{
-              width: '100%',
-              background: 'var(--bg-panel)',
-              border: '1px solid var(--border-2)',
-              borderRadius: 4,
-              padding: '6px 8px',
-              color: C.primary,
-              fontSize: 12,
-              fontFamily: 'inherit',
-              outline: 'none',
-            }}
           />
         </div>
       )}
 
       {/* list */}
-      <div className="scz" style={{ flex: 1, overflow: 'auto', padding: 6 }}>
+      <div className="scz sidebar-list">
         {hydrationError ? (
-          <div style={{ padding: 16, textAlign: 'center', color: C.error, fontSize: 11.5 }}>
+          <div className="sidebar-error">
             failed to load sessions
             <div
               onClick={() => {
@@ -436,13 +391,13 @@ export default function Sidebar({ home }: { home: string }) {
                   else setHydrationError(res.error);
                 });
               }}
-              style={{ color: C.accent, cursor: 'pointer', marginTop: 6 }}
+              className="sidebar-error__retry"
             >
               retry
             </div>
           </div>
         ) : sessions.length === 0 ? (
-          <Centered>no sessions yet · press n</Centered>
+          <EmptyPane className="sidebar-empty">no sessions yet · press n</EmptyPane>
         ) : activeProjectId !== null && inProject.length === 0 ? (
           // projects FR-29: a project is active and owns no session — distinct
           // from the global "no sessions yet" state.
@@ -452,84 +407,55 @@ export default function Sidebar({ home }: { home: string }) {
           // so keying on `activeProject` showed the '/'-filter message "no matches ·
           // esc to clear" on first paint with no filter typed. filteredEmptyLabel
           // degrades to a generic line for a null project.
-          <Centered>
+          <EmptyPane className="sidebar-empty">
             {filteredEmptyLabel(activeProject)}
-            <div style={{ fontSize: 10, marginTop: 5 }}>press n to start one</div>
-          </Centered>
+            <div className="sidebar-empty__hint">press n to start one</div>
+          </EmptyPane>
         ) : visible.length === 0 ? (
-          <Centered>no matches · esc to clear</Centered>
+          <EmptyPane className="sidebar-empty">no matches · esc to clear</EmptyPane>
         ) : (
-          visible.map((s, i) => (
+          visible.map((session, i) => (
             <SessionCard
-              key={s.id}
-              s={s}
+              key={session.id}
+              session={session}
               home={home}
-              selected={s.id === activeSessionId}
+              selected={session.id === activeSessionId}
               cursor={focused && i === rowCursor}
-              derived={derived.get(s.id)}
+              derived={derived.get(session.id)}
               onClick={() => {
-                selectSession(s.id);
+                selectSession(session.id);
                 setFocusedPane('sidebar');
               }}
-              onContext={(x, y) => setMenu({ sessionId: s.id, x, y, confirming: false, error: null })}
+              onContext={(x, y) => setMenu({ sessionId: session.id, x, y, confirming: false, error: null })}
             />
           ))
         )}
       </div>
 
       {/* footer */}
-      <div
-        onClick={() => useStore.getState().setNewSessionOpen(true)}
-        style={{
-          padding: '8px 12px',
-          borderTop: '1px solid var(--border)',
-          fontSize: 10.5,
-          color: C.faint,
-          flexShrink: 0,
-          cursor: 'pointer',
-        }}
-      >
-        + new session <span style={{ color: 'var(--text-disabled)' }}>[n]</span>
+      <div onClick={() => useStore.getState().setNewSessionOpen(true)} className="sidebar__footer">
+        + new session <span className="sidebar__footer-hint">[n]</span>
       </div>
 
       {/* context menu */}
       {menu && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'fixed',
-            left: menu.x,
-            top: menu.y,
-            background: 'var(--bg-panel)',
-            border: '1px solid var(--border-2)',
-            borderRadius: 5,
-            minWidth: 160,
-            boxShadow: '0 12px 30px -10px rgba(0,0,0,0.7)',
-            zIndex: 30,
-            overflow: 'hidden',
-          }}
-        >
+        <div onClick={(e) => e.stopPropagation()} className="context-menu" style={{ left: menu.x, top: menu.y }}>
           {menu.error ? (
-            <div style={{ padding: '8px 10px', fontSize: 11, color: C.error }}>{menu.error.message}</div>
+            <div className="context-menu__error">{menu.error.message}</div>
           ) : !menu.confirming ? (
-            <div
-              onClick={() => setMenu({ ...menu, confirming: true })}
-              style={{ padding: '8px 10px', fontSize: 12, color: C.primary, cursor: 'pointer' }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
+            <div className="context-menu__item" onClick={() => setMenu({ ...menu, confirming: true })}>
               Remove session
             </div>
           ) : (
-            <div style={{ padding: '8px 10px' }}>
-              <div style={{ fontSize: 11.5, color: C.primary, marginBottom: 8 }}>
-                remove '{sessions.find((s) => s.id === menu.sessionId)?.name ?? '?'}'?
+            <div className="context-menu__body">
+              <div className="context-menu__confirm-text">
+                remove '{sessions.find((session) => session.id === menu.sessionId)?.name ?? '?'}'?
               </div>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <span onClick={() => setMenu(null)} style={{ fontSize: 12, color: C.dim, cursor: 'pointer' }}>
+              <div className="context-menu__actions">
+                <span onClick={() => setMenu(null)} className="context-menu__action">
                   Cancel
                 </span>
-                <span onClick={() => void doRemove(menu.sessionId)} style={{ fontSize: 12, color: C.error, cursor: 'pointer' }}>
+                <span onClick={() => void doRemove(menu.sessionId)} className="context-menu__action context-menu__action--danger">
                   Remove
                 </span>
               </div>
@@ -541,41 +467,21 @@ export default function Sidebar({ home }: { home: string }) {
   );
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: 'var(--text-faint)',
-        fontSize: 11.5,
-        textAlign: 'center',
-        padding: 12,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
 function ContextFigure({ used, limit }: { used: number; limit: number }) {
   if (limit <= 0) {
-    if (used <= 0) return <span style={{ color: C.faint }}>—</span>;
-    return <span style={{ color: C.meta }}>{formatContextTokens(used)}</span>;
+    if (used <= 0) return <span className="sidebar-card__faint">—</span>;
+    return <span className="sidebar-card__meta">{formatContextTokens(used)}</span>;
   }
   return (
     <>
-      <span style={{ color: C.meta }}>{formatContextTokens(used)}</span>
-      <span style={{ color: C.faint }}>/{formatContextTokens(limit)}</span>
+      <span className="sidebar-card__meta">{formatContextTokens(used)}</span>
+      <span className="sidebar-card__faint">/{formatContextTokens(limit)}</span>
     </>
   );
 }
 
 function SessionCard({
-  s,
+  session,
   home,
   selected,
   cursor,
@@ -583,7 +489,7 @@ function SessionCard({
   onClick,
   onContext,
 }: {
-  s: SessionMeta;
+  session: SessionMeta;
   home: string;
   selected: boolean;
   cursor: boolean;
@@ -592,10 +498,15 @@ function SessionCard({
   onContext: (x: number, y: number) => void;
 }) {
   const [hover, setHover] = useState(false);
-  const sc = STATUS_COLOR[s.status] ?? C.dim;
-  const label = STATUS_LABEL[s.status] ?? s.status;
+  const statusColor = STATUS_COLOR[session.status] ?? 'var(--text-dim)';
+  const label = STATUS_LABEL[session.status] ?? session.status;
   const fileCount = derived?.fileCount ?? null;
   const agents = derived?.runningAgentCount ?? 0;
+
+  const classNames = ['sidebar-card'];
+  if (selected) classNames.push('sidebar-card--selected');
+  else if (hover) classNames.push('sidebar-card--hovered');
+  if (cursor) classNames.push('sidebar-card--cursor');
 
   return (
     <div
@@ -606,63 +517,39 @@ function SessionCard({
         e.preventDefault();
         onContext(e.clientX, e.clientY);
       }}
-      title={s.status === 'error' ? s.errorMessage : undefined}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-        padding: '9px 10px',
-        borderRadius: 4,
-        cursor: 'pointer',
-        marginBottom: 3,
-        background: selected ? 'var(--bg-raised)' : hover ? 'var(--bg-elevated)' : 'transparent',
-        outline: cursor ? '1px solid var(--text-disabled)' : 'none',
-        outlineOffset: -1,
-      }}
+      title={session.status === 'error' ? session.errorMessage : undefined}
+      className={classNames.join(' ')}
     >
       {/* Row 1 — header: dot + name + relative time */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            flexShrink: 0,
-            background: sc,
-            animation: statusPulses(s.status) ? 'pulse 1.4s ease-in-out infinite' : 'none',
-          }}
-        />
-        <span
-          style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selected ? C.bright : C.primary }}
-        >
-          {s.name}
+      <div className="sidebar-card__row1">
+        <StatusDot color={statusColor} pulsing={statusPulses(session.status)} />
+        <span className={selected ? 'sidebar-card__name sidebar-card__name--selected truncate' : 'sidebar-card__name truncate'}>
+          {session.name}
         </span>
-        <span style={{ flexShrink: 0, fontSize: 10, color: C.faint }}>{formatRelativeTime(s.lastActivityAt)}</span>
+        <span className="sidebar-card__time">{formatRelativeTime(session.lastActivityAt)}</span>
       </div>
 
       {/* Row 2 — cwd */}
-      <div style={{ fontSize: 10.5, color: C.faint, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginLeft: 17 }}>
-        {displayWslCwd(s.cwd) ?? abbreviate(s.cwd, home)}
-      </div>
+      <div className="sidebar-card__cwd">{displayWslCwd(session.cwd) ?? abbreviate(session.cwd, home)}</div>
 
       {/* Row 3 — status line */}
-      <div style={{ fontSize: 10, letterSpacing: '0.02em', marginLeft: 17, color: sc, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {label} · {s.model.label}
+      <div className="sidebar-card__status" style={{ color: statusColor }}>
+        {label} · {session.model.label}
       </div>
 
       {/* Row 4 — meta: context + diff badge + agent count */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 17, fontSize: 10 }}>
+      <div className="sidebar-card__meta-row">
         <span>
-          <span style={{ color: C.faint }}>ctx </span>
-          <ContextFigure used={s.contextUsedTokens} limit={s.contextLimitTokens} />
+          <span className="sidebar-card__faint">ctx </span>
+          <ContextFigure used={session.contextUsedTokens} limit={session.contextLimitTokens} />
         </span>
         {fileCount != null && fileCount > 0 && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-            <span style={{ color: C.faint }}>≡</span>
-            <span style={{ background: 'var(--bg-hover)', color: C.meta, fontSize: 9, fontWeight: 500, letterSpacing: 0, padding: '1px 5px', borderRadius: 8 }}>{fileCount}</span>
+          <span className="sidebar-card__files">
+            <span className="sidebar-card__faint">≡</span>
+            <BadgePill>{fileCount}</BadgePill>
           </span>
         )}
-        {agents > 0 && <span style={{ color: C.accent }}>⇉ {agents}</span>}
+        {agents > 0 && <span className="sidebar-card__agents">⇉ {agents}</span>}
       </div>
     </div>
   );

@@ -33,43 +33,27 @@ import {
   type OverviewGroup,
 } from '../../../contract/overview';
 import { useStore } from '../../lib/store';
+import { abbreviate } from '../../lib/path';
+import { ListRow } from '../../ui/ListRow';
+import { StatusDot } from '../../ui/StatusDot';
 import { formatGroupSubtitle, totalsSegments, type TotalsSegment } from './overview';
-
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-  meta: 'var(--text-hint)',
-  muted: 'var(--text-muted)',
-  error: 'var(--error)',
-  success: 'var(--success)',
-};
+import './overview.css';
 
 const TONE_COLOR: Record<TotalsSegment['tone'], string> = {
   active: STATUS_COLOR.running,
-  ready: C.muted,
+  ready: 'var(--text-muted)',
   done: STATUS_COLOR.done,
   error: STATUS_COLOR.error,
-  neutral: C.meta,
-  accent: C.accent,
+  neutral: 'var(--text-hint)',
+  accent: 'var(--accent)',
 };
 
 const ACTIVITY_TONE_COLOR: Record<ActivityTone, string> = {
-  error: C.error,
-  success: C.success,
-  active: C.accent,
-  neutral: C.faint,
+  error: 'var(--error)',
+  success: 'var(--success)',
+  active: 'var(--accent)',
+  neutral: 'var(--text-faint)',
 };
-
-function abbreviate(path: string, home: string): string {
-  if (!path) return '';
-  if (home && (path === home || path.startsWith(home + '/') || path.startsWith(home + '\\'))) {
-    return '~' + path.slice(home.length);
-  }
-  return path;
-}
 
 export default function OverviewView({ home }: { home: string }) {
   const sessions = useStore((s) => s.sessions);
@@ -113,14 +97,14 @@ export default function OverviewView({ home }: { home: string }) {
   const nothingAtAll = sessions.length === 0 && projects.length === 0;
 
   return (
-    <div className="scz" style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '14px 16px' }}>
+    <div className="scz ov-root">
       {nothingAtAll ? (
         <EmptyState onNewSession={() => setNewSessionOpen(true)} onManageProjects={() => setProjectsOpen(true)} />
       ) : (
         <>
           <TotalsStrip segments={segments} totals={totals} scoped={scoped} />
 
-          <div className="ov-split" style={{ marginTop: 16 }}>
+          <div className="ov-split ov-content-gap">
             <div className="ov-main">
               {attention.length > 0 && (
                 <Section title="NEEDS ATTENTION" count={attention.length}>
@@ -178,44 +162,37 @@ function TotalsStrip({
   scoped: boolean;
 }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'baseline',
-        flexWrap: 'wrap',
-        gap: '4px 22px',
-        padding: '2px 0 14px',
-        borderBottom: '1px solid var(--border)',
-      }}
-    >
-      <span style={{ fontSize: 11, letterSpacing: '0.14em', fontWeight: 700, color: C.accent, marginRight: 4 }}>
-        {scoped ? 'PROJECT' : 'FLEET'}
-      </span>
-      <Figure value={totals.sessions} label={totals.sessions === 1 ? 'session' : 'sessions'} color={C.bright} />
+    <div className="ov-totals-strip">
+      <span className="ov-totals-label">{scoped ? 'PROJECT' : 'FLEET'}</span>
+      <Figure
+        value={totals.sessions}
+        label={totals.sessions === 1 ? 'session' : 'sessions'}
+        color="var(--text-bright)"
+      />
       {!scoped && (
         <Figure
           value={totals.activeProjects}
           label={totals.activeProjects === 1 ? 'project' : 'projects'}
-          color={C.bright}
+          color="var(--text-bright)"
         />
       )}
-      {segments.length > 0 && <span style={{ color: 'var(--text-disabled)', fontSize: 11 }}>│</span>}
+      {segments.length > 0 && <span className="ov-totals-divider">│</span>}
       {segments.map((s) => (
         <Figure key={s.label} value={s.value} label={s.label} color={TONE_COLOR[s.tone]} />
       ))}
       {/* An entirely quiet fleet says so, rather than leaving a bare count row. */}
-      {segments.length === 0 && totals.sessions > 0 && (
-        <span style={{ fontSize: 11, color: C.faint }}>all quiet</span>
-      )}
+      {segments.length === 0 && totals.sessions > 0 && <span className="ov-totals-quiet">all quiet</span>}
     </div>
   );
 }
 
 function Figure({ value, label, color }: { value: number; label: string; color: string }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
-      <span style={{ fontSize: 17, fontWeight: 500, color, lineHeight: 1 }}>{value}</span>
-      <span style={{ fontSize: 10.5, color: C.faint }}>{label}</span>
+    <span className="ov-figure">
+      <span className="ov-figure-value" style={{ color }}>
+        {value}
+      </span>
+      <span className="ov-figure-label">{label}</span>
     </span>
   );
 }
@@ -224,10 +201,10 @@ function Figure({ value, label, color }: { value: number; label: string; color: 
 
 function Section({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 10, letterSpacing: '0.14em', fontWeight: 700, color: C.dim }}>{title}</span>
-        {count != null && <span style={{ fontSize: 10, color: C.faint }}>{count}</span>}
+    <div className="ov-section">
+      <div className="ov-section-header">
+        <span className="ov-section-title">{title}</span>
+        {count != null && <span className="ov-section-count">{count}</span>}
       </div>
       {children}
     </div>
@@ -235,7 +212,7 @@ function Section({ title, count, children }: { title: string; count?: number; ch
 }
 
 function Muted({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 11, color: C.faint, padding: '4px 0' }}>{children}</div>;
+  return <div className="ov-muted">{children}</div>;
 }
 
 // ---------- needs attention ----------
@@ -244,45 +221,23 @@ function AttentionRow({ item, onClick }: { item: AttentionItem; onClick: () => v
   const [hover, setHover] = useState(false);
   const isError = item.reason === 'error';
   return (
-    <div
+    <ListRow
+      hovered={hover}
+      className="ov-attention-row"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       title={item.detail}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 9,
-        padding: '7px 9px',
-        marginBottom: 3,
-        borderRadius: 4,
-        cursor: 'pointer',
-        background: hover ? 'var(--bg-elevated)' : 'transparent',
-        // A red rail on the errors keeps the two reasons distinguishable at a
-        // glance without a second colour for the merely-dirty ones.
-        borderLeft: `2px solid ${isError ? C.error : 'var(--text-disabled)'}`,
-      }}
+      // A red rail on the errors keeps the two reasons distinguishable at a
+      // glance without a second colour for the merely-dirty ones.
+      style={{ borderLeft: `2px solid ${isError ? 'var(--error)' : 'var(--text-disabled)'}` }}
     >
-      <span style={{ fontSize: 11.5, color: C.primary, flexShrink: 0, maxWidth: '38%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {item.session.name}
-      </span>
-      <span
-        style={{
-          flex: 1,
-          minWidth: 0,
-          fontSize: 10.5,
-          color: isError ? C.error : C.meta,
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
-      >
+      <span className="ov-attention-name truncate">{item.session.name}</span>
+      <span className="ov-attention-detail truncate" style={{ color: isError ? 'var(--error)' : 'var(--text-hint)' }}>
         {item.detail}
       </span>
-      <span style={{ flexShrink: 0, fontSize: 10, color: C.faint }}>
-        {formatRelativeTime(item.session.lastActivityAt)}
-      </span>
-    </div>
+      <span className="ov-attention-time">{formatRelativeTime(item.session.lastActivityAt)}</span>
+    </ListRow>
   );
 }
 
@@ -302,26 +257,20 @@ function ProjectGroup({
   onOpen: (id: string) => void;
 }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, padding: '0 0 5px' }}>
-        <span style={{ fontSize: 12, fontWeight: 500, color: group.sessions.length > 0 ? C.bright : C.muted }}>
+    <div className="ov-group">
+      <div className="ov-group-header">
+        <span
+          className="ov-group-name"
+          style={{ color: group.sessions.length > 0 ? 'var(--text-bright)' : 'var(--text-muted)' }}
+        >
           {group.name}
         </span>
-        {!group.rootExists && <span style={{ fontSize: 9, color: C.error }}>missing</span>}
-        {group.root && (
-          <span
-            style={{
-              fontSize: 10, color: C.faint, flex: 1, minWidth: 0,
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            }}
-          >
-            {abbreviate(group.root, home)}
-          </span>
-        )}
-        <span style={{ flexShrink: 0, fontSize: 10, color: C.faint }}>{formatGroupSubtitle(group)}</span>
+        {!group.rootExists && <span className="ov-group-missing">missing</span>}
+        {group.root && <span className="ov-group-root truncate">{abbreviate(group.root, home)}</span>}
+        <span className="ov-group-subtitle">{formatGroupSubtitle(group)}</span>
       </div>
       {group.sessions.length === 0 ? (
-        <div style={{ fontSize: 10.5, color: 'var(--text-disabled)', padding: '3px 0 3px 10px' }}>—</div>
+        <div className="ov-group-empty">—</div>
       ) : (
         group.sessions.map((s) => (
           <SessionRow
@@ -351,74 +300,37 @@ function SessionRow({
   const [hover, setHover] = useState(false);
   const files = d?.fileCount ?? null;
   const agents = d?.runningAgentCount ?? 0;
-  const sc = STATUS_COLOR[s.status] ?? C.dim;
+  const sc = STATUS_COLOR[s.status] ?? 'var(--text-dim)';
 
   return (
-    <div
+    <ListRow
+      selected={selected}
+      hovered={hover}
+      className="ov-session-row"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       title={s.status === 'error' ? s.errorMessage : displayWslCwd(s.cwd) ?? s.cwd}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 9,
-        padding: '6px 9px',
-        marginBottom: 2,
-        borderRadius: 4,
-        cursor: 'pointer',
-        background: selected ? 'var(--bg-raised)' : hover ? 'var(--bg-elevated)' : 'transparent',
-      }}
     >
-      <span
-        style={{
-          width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: sc,
-          animation: statusPulses(s.status) ? 'pulse 1.4s ease-in-out infinite' : 'none',
-        }}
-      />
-      <span
-        style={{
-          flex: '1 1 auto', minWidth: 0, fontSize: 11.5,
-          color: selected ? C.bright : C.primary,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}
-      >
+      <StatusDot color={sc} size={7} pulsing={statusPulses(s.status)} />
+      <span className="ov-session-name truncate" style={{ color: selected ? 'var(--text-bright)' : 'var(--text)' }}>
         {s.name}
       </span>
       {/* §8: every trailing cell is right-aligned so the rollup reads as a table. */}
-      <span style={{ flexShrink: 0, fontSize: 10, color: sc, width: 44, textAlign: 'right' }}>
+      <span className="ov-session-status" style={{ color: sc }}>
         {STATUS_LABEL[s.status] ?? s.status}
       </span>
-      <span
-        style={{
-          flexShrink: 0,
-          fontSize: 10,
-          color: C.faint,
-          width: 62,
-          textAlign: 'right',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {s.model.label}
-      </span>
-      <span style={{ flexShrink: 0, fontSize: 10, width: 62, textAlign: 'right' }}>
-        <span style={{ color: C.faint }}>ctx </span>
-        <span style={{ color: C.meta }}>{formatContextTokens(s.contextUsedTokens)}</span>
+      <span className="ov-session-model truncate">{s.model.label}</span>
+      <span className="ov-session-ctx">
+        <span className="ov-session-ctx-label">ctx </span>
+        <span className="ov-session-ctx-value">{formatContextTokens(s.contextUsedTokens)}</span>
       </span>
       {/* The last two cells are fixed-width so the columns line up down the whole
           rollup even when most rows have neither a diff nor an agent. */}
-      <span style={{ flexShrink: 0, fontSize: 10, width: 34, textAlign: 'right', color: C.meta }}>
-        {files != null && files > 0 ? `≡ ${files}` : ''}
-      </span>
-      <span style={{ flexShrink: 0, fontSize: 10, width: 30, textAlign: 'right', color: C.accent }}>
-        {agents > 0 ? `⇉ ${agents}` : ''}
-      </span>
-      <span style={{ flexShrink: 0, fontSize: 10, color: C.faint, width: 30, textAlign: 'right' }}>
-        {formatRelativeTime(s.lastActivityAt)}
-      </span>
-    </div>
+      <span className="ov-session-files">{files != null && files > 0 ? `≡ ${files}` : ''}</span>
+      <span className="ov-session-agents">{agents > 0 ? `⇉ ${agents}` : ''}</span>
+      <span className="ov-session-time">{formatRelativeTime(s.lastActivityAt)}</span>
+    </ListRow>
   );
 }
 
@@ -428,35 +340,21 @@ function ActivityRow({ entry, onClick }: { entry: ActivityEntry; onClick: () => 
   const [hover, setHover] = useState(false);
   const tone = ACTIVITY_TONE_COLOR[activityTone(entry.kind)];
   return (
-    <div
+    <ListRow
+      hovered={hover}
+      className="ov-activity-row"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       title={entry.detail || undefined}
-      style={{
-        display: 'flex',
-        alignItems: 'baseline',
-        gap: 7,
-        padding: '4px 6px',
-        borderRadius: 3,
-        cursor: 'pointer',
-        background: hover ? 'var(--bg-elevated)' : 'transparent',
-      }}
     >
-      <span style={{ flexShrink: 0, fontSize: 9.5, color: C.faint, width: 26 }}>
-        {formatRelativeTime(entry.at)}
-      </span>
-      <span
-        style={{
-          flex: 1, minWidth: 0, fontSize: 10.5, color: C.dim,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}
-      >
-        <span style={{ color: C.primary }}>{entry.sessionName}</span>{' '}
+      <span className="ov-activity-time">{formatRelativeTime(entry.at)}</span>
+      <span className="ov-activity-text truncate">
+        <span className="ov-activity-session">{entry.sessionName}</span>{' '}
         <span style={{ color: tone }}>{ACTIVITY_LABEL[entry.kind]}</span>
-        {entry.detail && <span style={{ color: C.faint }}> · {entry.detail}</span>}
+        {entry.detail && <span className="ov-activity-detail"> · {entry.detail}</span>}
       </span>
-    </div>
+    </ListRow>
   );
 }
 
@@ -470,25 +368,14 @@ function EmptyState({
   onManageProjects: () => void;
 }) {
   return (
-    <div
-      style={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        color: C.faint,
-        fontSize: 12.5,
-      }}
-    >
+    <div className="ov-empty">
       <div>nothing running yet</div>
-      <div style={{ display: 'flex', gap: 16, fontSize: 11 }}>
-        <span onClick={onNewSession} style={{ cursor: 'pointer', color: C.dim }}>
-          <span style={{ color: C.accent }}>n</span> new session
+      <div className="ov-empty-actions">
+        <span onClick={onNewSession} className="ov-empty-action">
+          <span className="ov-empty-action-key">n</span> new session
         </span>
-        <span onClick={onManageProjects} style={{ cursor: 'pointer', color: C.dim }}>
-          <span style={{ color: C.accent }}>⊟</span> manage projects
+        <span onClick={onManageProjects} className="ov-empty-action">
+          <span className="ov-empty-action-key">⊟</span> manage projects
         </span>
       </div>
     </div>

@@ -1,0 +1,213 @@
+/* app-shell layout (App.tsx) — migrated from inline styles (refactor Phase
+   2). These classes cover the static shapes only; genuinely dynamic values
+   (pane-toggle grid columns, focus/status-driven border and text colors that
+   vary per render) stay inline in App.tsx per REFACTOR-CONVENTIONS.md. */
+
+.app-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+}
+
+.app-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr 32px;
+  gap: var(--space-10);
+  padding: var(--space-10);
+}
+
+.app-col-left {
+  grid-row: 1;
+  min-height: 0;
+}
+
+.app-col-right {
+  grid-row: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+.app-panel-agents {
+  flex: 1.3;
+  min-height: 0;
+}
+.app-panel-mcp {
+  flex: 0.95;
+  min-height: 0;
+}
+.app-panel-skills {
+  flex: 1.05;
+  min-height: 0;
+}
+
+.app-main-section {
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.app-tabstrip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-9) var(--space-14);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.app-tabstrip-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  overflow-x: auto;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* Tab strip label (OVERVIEW/SESSION/DIFF/SHELL). --on recolors to the accent
+   when it is the active main tab. */
+.app-tab {
+  font-size: var(--font-size-11);
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  cursor: pointer;
+  padding: var(--space-2) 0;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+}
+.app-tab--on {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.app-tab--diff {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.app-meta-cluster {
+  display: flex;
+  gap: var(--space-14);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+  align-items: center;
+}
+
+.app-shell-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-app);
+}
+.app-shell-terminal-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+.app-shell-footer {
+  padding: var(--space-10) var(--space-14);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--space-14);
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+  background: var(--bg-app);
+  flex-shrink: 0;
+}
+
+.app-status-bar {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  padding: 0 var(--space-12);
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+}
+
+.app-flex-spacer {
+  flex: 1;
+}
+.app-clickable {
+  cursor: pointer;
+}
+.app-inline-key {
+  color: var(--accent);
+  margin: 0 var(--space-4);
+}
+
+/* Text-color utilities for the many single-property color spans in the tab
+   strip / shell footer / status bar — what the deleted `const C` token-alias
+   object used to serve. */
+.app-text-dim {
+  color: var(--text-dim);
+}
+.app-text-faint {
+  color: var(--text-faint);
+}
+.app-text-accent {
+  color: var(--accent);
+}
+.app-text-bright {
+  color: var(--text-bright);
+}
+.app-text-hint {
+  color: var(--text-hint);
+}
+.app-text-error {
+  color: var(--error);
+}
+
+/* Pane-toggle labels ("sessions" / "panels") dim when their column is hidden. */
+.app-pane-label {
+  opacity: 1;
+}
+.app-pane-label--off {
+  opacity: 0.5;
+}
+
+/* agent-tab FR-12 chip in the tab strip. */
+.app-tab-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  font-size: var(--font-size-11);
+  font-weight: 500;
+  cursor: pointer;
+  padding: var(--space-2) 0;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  max-width: 160px;
+}
+.app-tab-chip--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.app-tab-chip-glyph {
+  color: var(--accent-2);
+  flex-shrink: 0;
+}
+.app-tab-chip-close {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.app-tab-chip-close:hover {
+  color: var(--error);
+}

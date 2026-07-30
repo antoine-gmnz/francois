@@ -24,6 +24,9 @@ import {
 } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { IS_WINDOWS } from '../../lib/platform';
+import { useMounted } from '../../lib/hooks/useMounted';
+import { useDismiss } from '../../lib/hooks/useDismiss';
+import { ListRow } from '../../ui/ListRow';
 import {
   ROOT_MISSING_LINE,
   STANDARDS_FOOTER_NOTE,
@@ -43,48 +46,12 @@ import {
   standardsFooterPath,
   type DefaultsKey,
 } from './projects';
-
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  muted: 'var(--text-muted)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-  error: 'var(--error)',
-};
+import './projects.css';
 
 const EMPTY_READ: StandardsRead = {
   standards: { notes: '', rules: [] },
   fileExists: false,
   blockPresent: false,
-};
-
-const inputStyle: React.CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  background: 'var(--bg-deep)',
-  border: '1px solid var(--border-2)',
-  borderRadius: 4,
-  padding: '6px 8px',
-  fontSize: 11,
-  color: C.primary,
-  fontFamily: 'inherit',
-  outline: 'none',
-};
-
-const groupLabelStyle: React.CSSProperties = {
-  fontSize: 10,
-  fontWeight: 700,
-  letterSpacing: '0.14em',
-  color: C.dim,
-};
-
-const rowLabelStyle: React.CSSProperties = {
-  width: 120,
-  flexShrink: 0,
-  fontSize: 10.5,
-  color: C.muted,
 };
 
 export default function ProjectsModal({ home, onClose }: { home: string; onClose: () => void }) {
@@ -109,14 +76,8 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
   const [standardsError, setStandardsError] = useState<string | null>(null);
   const [removeConfirm, setRemoveConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
-  const alive = useRef(true);
-
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
+  const alive = useMounted();
+  const dismissRef = useRef<HTMLDivElement>(null);
 
   const syncDrafts = (p: ProjectMeta | undefined) => {
     setNameDraft(p?.name ?? '');
@@ -213,17 +174,12 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
 
   // FR-37: Escape and a backdrop click close. Escape inside an inline rule edit
   // reverts that row only, without closing the modal (§8 Interactions).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopPropagation();
+  useDismiss(dismissRef, {
+    onEscape: () => {
       if (editIndex >= 0) setEditIndex(-1);
       else onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, editIndex]);
+    },
+  });
 
   const selected = projects.find((p) => p.id === selectedId) ?? null;
   const rootMissing = selected !== null && !selected.rootExists;
@@ -347,57 +303,23 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
   const fieldDefs = defaultFieldDefs(models, selected?.defaults ?? {}, IS_WINDOWS);
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 20,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(860px, 94vw)',
-          // maxHeight, not height (§8 C): a fixed height renders a full 620px panel
-          // around a one-line "no projects yet" empty state.
-          maxHeight: 'min(620px, 88vh)',
-          display: 'flex',
-          flexDirection: 'column',
-          background: 'var(--bg-panel)',
-          border: '1px solid var(--border-2)',
-          borderRadius: 6,
-          overflow: 'hidden',
-        }}
-      >
+    <div onClick={onClose} className="pj-backdrop">
+      <div onClick={(e) => e.stopPropagation()} className="pj-panel">
         {/* header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 16px',
-            borderBottom: '1px solid var(--border)',
-            flexShrink: 0,
-          }}
-        >
-          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', color: C.accent }}>PROJECTS</span>
-          <span style={{ fontSize: 10, color: C.faint }}>{projectCountLabel(projects.length)}</span>
+        <div className="pj-header">
+          <span className="pj-title">PROJECTS</span>
+          <span className="pj-count">{projectCountLabel(projects.length)}</span>
         </div>
 
         <div className="pj-body">
           {/* left: the registry (FR-33) */}
           <div className="pj-list">
-            <div className="scz" style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+            <div className="scz pj-list-scroll">
               {projects.length === 0 ? (
-                <div style={{ padding: '14px 12px', fontSize: 11, color: C.faint }}>no projects yet</div>
+                <div className="pj-empty">no projects yet</div>
               ) : (
                 projects.map((p) => (
-                  <ListRow
+                  <ProjectRow
                     key={p.id}
                     project={p}
                     home={home}
@@ -407,35 +329,23 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
                 ))
               )}
             </div>
-            {listError !== null && (
-              <div style={{ padding: '6px 12px', fontSize: 10.5, color: C.error, flexShrink: 0 }}>{listError}</div>
-            )}
+            {listError !== null && <div className="pj-list-error">{listError}</div>}
             <NewProjectControl onClick={() => void addProject()} />
           </div>
 
           {/* right: the config form (FR-34) */}
           {selected && (
             <div
-              className="scz"
-              style={{
-                flex: 1,
-                overflow: 'auto',
-                minHeight: 0,
-                padding: '14px 16px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 18,
-                opacity: busy ? 0.6 : 1,
-                pointerEvents: busy ? 'none' : undefined,
-              }}
+              className="scz pj-config"
+              style={busy ? { opacity: 0.6, pointerEvents: 'none' } : undefined}
             >
               {/* IDENTITY — stays editable even when the root is gone (FR-38) */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <span style={groupLabelStyle}>IDENTITY</span>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <span style={rowLabelStyle}>name</span>
+              <div className="pj-group">
+                <span className="pj-group-label">IDENTITY</span>
+                <div className="pj-row">
+                  <span className="pj-row-label">name</span>
                   <input
-                    style={inputStyle}
+                    className="pj-input"
                     value={nameDraft}
                     onChange={(e) => setNameDraft(e.target.value)}
                     onBlur={commitName}
@@ -444,10 +354,10 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
                     }}
                   />
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <span style={rowLabelStyle}>root</span>
+                <div className="pj-row">
+                  <span className="pj-row-label">root</span>
                   <input
-                    style={inputStyle}
+                    className="pj-input"
                     value={rootDraft}
                     onChange={(e) => setRootDraft(e.target.value)}
                     onBlur={commitRoot}
@@ -456,13 +366,13 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
                     }}
                   />
                 </div>
-                {identityError !== null && <InlineError style={{ paddingLeft: 120 }}>{identityError}</InlineError>}
-                {rootMissing && <InlineError style={{ paddingLeft: 120 }}>{ROOT_MISSING_LINE}</InlineError>}
+                {identityError !== null && <InlineError indent>{identityError}</InlineError>}
+                {rootMissing && <InlineError indent>{ROOT_MISSING_LINE}</InlineError>}
               </div>
 
               {/* SESSION DEFAULTS — disabled while the root is missing (FR-38) */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, ...disabledIf(rootMissing) }}>
-                <span style={groupLabelStyle}>SESSION DEFAULTS</span>
+              <div className={rootMissing ? 'pj-group is-disabled' : 'pj-group'}>
+                <span className="pj-group-label">SESSION DEFAULTS</span>
                 {fieldDefs.map((f) => {
                   const value = defaultsSelectValue(selected.defaults, f.key);
                   // §7 case 22: a stored default the catalog no longer offers has no
@@ -471,12 +381,13 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
                   // the new-session modal already says so via `staleModelId`.
                   const stale = value !== '' && !f.options.some((o) => o.value === value);
                   return (
-                    <div key={f.key} style={{ display: 'flex', alignItems: 'center' }}>
-                      <span style={rowLabelStyle}>{f.label}</span>
+                    <div key={f.key} className="pj-row">
+                      <span className="pj-row-label">{f.label}</span>
                       <select
                         value={value}
                         onChange={(e) => commitDefault(f.key, e.target.value)}
-                        style={{ ...inputStyle, color: value === '' ? C.faint : stale ? C.error : C.primary }}
+                        className="pj-input"
+                        style={{ color: value === '' ? 'var(--text-faint)' : stale ? 'var(--error)' : 'var(--text)' }}
                       >
                         {stale && <option value={value}>{`${value} (unavailable)`}</option>}
                         {f.options.map((o) => (
@@ -495,25 +406,17 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
                   Disabled until the on-disk read lands (`standards === null`): an
                   interactive editor rendering from an empty fallback invites a commit
                   that would overwrite the real block. */}
-              <div
-                style={{ display: 'flex', flexDirection: 'column', gap: 8, ...disabledIf(rootMissing || standards === null) }}
-              >
-                <span style={groupLabelStyle}>STANDARDS</span>
+              <div className={rootMissing || standards === null ? 'pj-group is-disabled' : 'pj-group'}>
+                <span className="pj-group-label">STANDARDS</span>
                 <textarea
                   value={notes}
                   placeholder="notes for every session in this project…"
                   onChange={(e) => setNotes(e.target.value)}
                   onBlur={commitNotes}
-                  style={{
-                    ...inputStyle,
-                    flex: 'none',
-                    minHeight: 64,
-                    resize: 'vertical',
-                    lineHeight: 1.6,
-                  }}
+                  className="pj-input pj-textarea"
                 />
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div className="pj-rules">
                   {rules.map((text, i) => (
                     <RuleRow
                       key={`${i}-${text}`}
@@ -534,7 +437,7 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
                       onDrop={() => commitRules(dropRule(rules, i))}
                     />
                   ))}
-                  {rules.length === 0 && <span style={{ fontSize: 10.5, color: C.faint }}>no rules yet</span>}
+                  {rules.length === 0 && <span className="pj-rules-empty">no rules yet</span>}
                   <input
                     value={newRule}
                     placeholder="add a rule…"
@@ -553,34 +456,32 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
                       setNewRule('');
                       commitRules(next);
                     }}
-                    style={{ ...inputStyle, flex: 'none' }}
+                    className="pj-input pj-rule-input"
                   />
                 </div>
 
                 {standardsError !== null && <InlineError>{standardsError}</InlineError>}
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: C.faint }}>
+                <div className="pj-footer-note">
                   <span>{standardsFooterPath(selected.root)}</span>
                   <span>{STANDARDS_FOOTER_NOTE}</span>
                 </div>
               </div>
 
               {/* REMOVE (FR-36) */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, paddingTop: 4 }}>
+              <div className="pj-remove-row">
                 {removeConfirm ? (
                   <>
-                    <span style={{ fontSize: 10.5, color: C.error, textAlign: 'right' }}>
-                      {removeConfirmText(selected.name)}
-                    </span>
-                    <Action color={C.dim} hoverColor={C.primary} onClick={() => setRemoveConfirm(false)}>
+                    <span className="pj-remove-confirm">{removeConfirmText(selected.name)}</span>
+                    <Action color="var(--text-dim)" hoverColor="var(--text)" onClick={() => setRemoveConfirm(false)}>
                       cancel
                     </Action>
-                    <Action color={C.error} hoverColor="var(--error-bright)" onClick={() => void doRemove()}>
+                    <Action color="var(--error)" hoverColor="var(--error-bright)" onClick={() => void doRemove()}>
                       remove
                     </Action>
                   </>
                 ) : (
-                  <Action color={C.muted} hoverColor={C.error} onClick={() => setRemoveConfirm(true)}>
+                  <Action color="var(--text-muted)" hoverColor="var(--error)" onClick={() => setRemoveConfirm(true)}>
                     Remove
                   </Action>
                 )}
@@ -593,16 +494,11 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
   );
 }
 
-/** FR-38: Defaults + Standards are inert while the root is missing. */
-function disabledIf(disabled: boolean): React.CSSProperties {
-  return disabled ? { opacity: 0.45, pointerEvents: 'none' } : {};
+function InlineError({ children, indent }: { children: React.ReactNode; indent?: boolean }) {
+  return <div className={indent ? 'pj-inline-error pj-inline-error--indented' : 'pj-inline-error'}>{children}</div>;
 }
 
-function InlineError({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return <div style={{ fontSize: 10.5, color: C.error, ...style }}>{children}</div>;
-}
-
-function ListRow({
+function ProjectRow({
   project,
   home,
   selected,
@@ -615,42 +511,23 @@ function ListRow({
 }) {
   const [hover, setHover] = useState(false);
   return (
-    <div
+    <ListRow
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{
-        height: 44,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        gap: 2,
-        padding: '8px 12px',
-        cursor: 'pointer',
-        background: selected ? 'var(--bg-raised)' : hover ? 'var(--bg-elevated)' : 'transparent',
-        borderLeft: `2px solid ${selected ? C.accent : 'transparent'}`,
-      }}
+      selected={selected}
+      hovered={hover}
+      className="pj-project-row"
+      style={{ borderLeft: selected ? '2px solid var(--accent)' : '2px solid transparent' }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span
-          style={{
-            fontSize: 11.5,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            color: selected ? C.bright : C.primary,
-          }}
-        >
+      <div className="pj-project-row-top">
+        <span className={`truncate pj-project-name${selected ? ' pj-project-name--selected' : ''}`}>
           {project.name}
         </span>
-        {!project.rootExists && <span style={{ fontSize: 9, color: C.error, flexShrink: 0 }}>missing</span>}
+        {!project.rootExists && <span className="pj-missing-tag">missing</span>}
       </div>
-      <span
-        style={{ fontSize: 10, color: C.faint, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-      >
-        {abbreviateRoot(project.root, home)}
-      </span>
-    </div>
+      <span className="truncate pj-project-root">{abbreviateRoot(project.root, home)}</span>
+    </ListRow>
   );
 }
 
@@ -661,14 +538,8 @@ function NewProjectControl({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{
-        padding: '10px 12px',
-        borderTop: '1px solid var(--border)',
-        fontSize: 11,
-        color: hover ? C.accent : C.dim,
-        cursor: 'pointer',
-        flexShrink: 0,
-      }}
+      className="pj-new-project"
+      style={{ color: hover ? 'var(--accent)' : 'var(--text-dim)' }}
     >
       + New project
     </div>
@@ -702,20 +573,8 @@ function RuleRow({
   const [hover, setHover] = useState(false);
   const showActions = hover || editing;
   return (
-    <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        minHeight: 26,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        background: 'var(--bg-deep)',
-        borderRadius: 4,
-        padding: '6px 8px',
-      }}
-    >
-      <span style={{ color: C.faint, fontSize: 11, flexShrink: 0 }}>-</span>
+    <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} className="pj-rule-row">
+      <span className="pj-rule-dash">-</span>
       {editing ? (
         <input
           autoFocus
@@ -728,42 +587,24 @@ function RuleRow({
               (e.target as HTMLInputElement).blur();
             }
           }}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            background: 'var(--bg-app)',
-            border: `1px solid ${C.accent}`,
-            borderRadius: 3,
-            padding: '2px 5px',
-            fontSize: 11,
-            color: C.bright,
-            fontFamily: 'inherit',
-            outline: 'none',
-          }}
+          className="pj-rule-edit-input"
         />
       ) : (
-        <span onClick={onEdit} style={{ flex: 1, minWidth: 0, fontSize: 11, color: C.primary, cursor: 'text' }}>
+        <span onClick={onEdit} className="pj-rule-text">
           {text}
         </span>
       )}
       <span
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          flexShrink: 0,
-          opacity: showActions ? 1 : 0,
-          transition: 'opacity 90ms ease-out',
-          pointerEvents: showActions ? 'auto' : 'none',
-        }}
+        className="pj-rule-actions"
+        style={{ opacity: showActions ? 1 : 0, pointerEvents: showActions ? 'auto' : 'none' }}
       >
-        <Action color={C.faint} hoverColor={C.accent} onClick={onUp} title="move rule up" size={10}>
+        <Action color="var(--text-faint)" hoverColor="var(--accent)" onClick={onUp} title="move rule up" size={10}>
           ↑
         </Action>
-        <Action color={C.faint} hoverColor={C.accent} onClick={onDown} title="move rule down" size={10}>
+        <Action color="var(--text-faint)" hoverColor="var(--accent)" onClick={onDown} title="move rule down" size={10}>
           ↓
         </Action>
-        <Action color={C.faint} hoverColor={C.error} onClick={onDrop} title="remove rule" size={10}>
+        <Action color="var(--text-faint)" hoverColor="var(--error)" onClick={onDrop} title="remove rule" size={10}>
           ×
         </Action>
       </span>
@@ -794,7 +635,8 @@ function Action({
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ fontSize: size, color: hover ? hoverColor : color, cursor: 'pointer', flexShrink: 0 }}
+      className="pj-action-glyph"
+      style={{ fontSize: size, color: hover ? hoverColor : color }}
     >
       {children}
     </span>

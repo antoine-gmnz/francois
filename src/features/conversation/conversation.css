@@ -1,0 +1,321 @@
+/* conversation-view (main tab SESSION) — static styling for ConversationView.tsx,
+   Block.tsx and MarkdownView.tsx, extracted off the inline `style={{}}` + local
+   `const C`/`M` alias pattern. Dynamic values (per-block glyph/body colors,
+   per-heading-level size, first-block margin collapse, table cell alignment)
+   stay inline at the call sites. */
+
+/* ── ConversationView shell ── */
+.conv-root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* durable-sessions FR-14 resume-fail banner */
+.resume-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  background: var(--bg-raised);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-11);
+  margin: var(--space-6) var(--space-8);
+  flex-shrink: 0;
+  animation: fadeIn 120ms ease-out;
+}
+.resume-banner__text {
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+  flex: 1;
+}
+.resume-banner__dismiss {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.conv-transcript-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+.conv-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: var(--space-16) var(--space-18);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  /* The app root disables selection (styles.css body rule) for chrome; the
+     transcript is CONTENT — copying out of it must work. */
+  user-select: text;
+  cursor: auto;
+}
+
+.conv-error-text {
+  color: var(--error);
+}
+
+.conv-centered {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 200px;
+}
+.conv-empty__cwd {
+  font-size: var(--font-size-12);
+  color: var(--text-dim);
+}
+.conv-empty__model {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  margin-top: var(--space-2);
+}
+.conv-empty__hint {
+  font-size: var(--font-size-12-5);
+  color: var(--text-faint);
+  margin-top: var(--space-10);
+}
+
+.jump-latest {
+  position: absolute;
+  bottom: var(--space-10);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-5) var(--space-12);
+  border-radius: var(--radius-2xl);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-2);
+  font-size: var(--font-size-10-5);
+  color: var(--accent);
+  cursor: pointer;
+}
+.jump-latest:hover {
+  background: var(--bg-hover);
+}
+
+/* ── composer ── */
+.composer-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Same visual treatment as .form-error (background/color/font-size/radius)
+   but this site's padding is 6/10, not 8/10, plus popover positioning — kept
+   local rather than forcing the shared utility. See handoff. */
+.send-error-banner {
+  position: absolute;
+  bottom: 100%;
+  left: var(--space-14);
+  right: var(--space-14);
+  margin-bottom: var(--space-4);
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+  color: var(--error);
+  font-size: var(--font-size-11);
+  border-radius: var(--radius-base);
+  padding: var(--space-6) var(--space-10);
+}
+
+.composer-bar {
+  padding: var(--space-10) var(--space-14);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-10);
+}
+.composer-arrow {
+  font-size: var(--font-size-13);
+  margin-top: var(--space-2);
+}
+.composer-input {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: var(--font-size-12-5);
+  font-family: inherit;
+  line-height: 1.5;
+  max-height: 130px;
+  padding: 0;
+}
+.composer-hint {
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+  margin-top: var(--space-3);
+  display: flex;
+  gap: var(--space-10);
+  flex-shrink: 0;
+}
+.composer-hint__key {
+  color: var(--accent);
+}
+
+/* ── Block.tsx ── */
+.block-row {
+  display: flex;
+  gap: var(--space-10);
+}
+.block-glyph {
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: var(--font-size-12);
+  margin-top: 1px;
+}
+.block-content {
+  min-width: 0;
+  flex: 1;
+}
+.block-body {
+  font-size: var(--font-size-12-5);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.block-meta {
+  color: var(--text-faint);
+}
+.block-caret {
+  display: inline-block;
+  width: 8px;
+  height: 15px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  margin-left: var(--space-2);
+  animation: blink 1s step-end infinite;
+}
+
+.block-user {
+  background: var(--bg-elevated);
+  border-left: 2px solid var(--accent);
+  border-radius: 0 var(--radius-base) var(--radius-base) 0;
+  padding: var(--space-10) var(--space-13);
+}
+.block-user__header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-5);
+}
+.block-user__label {
+  font-size: var(--font-size-10);
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.block-user__spacer {
+  flex: 1;
+}
+.block-user__queued {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.block-user__queued-label {
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.04em;
+  color: var(--warn);
+}
+.block-user__body {
+  font-size: var(--font-size-13);
+  color: var(--text-strong);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* ── MarkdownView.tsx ── */
+.md-root {
+  font-size: var(--font-size-12-5);
+  line-height: 1.55;
+  word-break: break-word;
+}
+.md-strong {
+  font-weight: 700;
+  color: var(--text-bright);
+}
+.md-em {
+  font-style: italic;
+}
+.md-del {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+.md-code {
+  background: var(--bg-raised);
+  color: var(--accent-bright);
+  border-radius: var(--radius-sm);
+  padding: 0.5px var(--space-4);
+  font-size: 0.92em;
+}
+.md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.md-heading {
+  margin-bottom: var(--space-2);
+  font-weight: 700;
+  color: var(--text-bright);
+}
+.md-code-wrap {
+  position: relative;
+}
+.md-lang-tag {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-8);
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  user-select: none;
+}
+.md-code-block {
+  margin: 0;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-8) var(--space-10);
+  overflow-x: auto;
+  font-size: var(--font-size-12);
+  line-height: 1.5;
+  color: var(--text-bright);
+}
+.md-hr {
+  margin-bottom: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.md-blockquote {
+  border-left: 2px solid var(--text-disabled);
+  padding-left: var(--space-10);
+  color: var(--text-dim);
+}
+.md-list {
+  margin-bottom: 0;
+  padding-left: 20px;
+}
+.md-list-item {
+  margin: var(--space-1) 0;
+}
+.md-table-wrap {
+  overflow-x: auto;
+}
+.md-table {
+  border-collapse: collapse;
+  font-size: var(--font-size-12);
+}
+.md-cell {
+  border: 1px solid var(--border);
+  padding: var(--space-3) var(--space-8);
+}
+.md-cell--header {
+  font-weight: 700;
+  color: var(--text-bright);
+  background: var(--bg-elevated);
+}

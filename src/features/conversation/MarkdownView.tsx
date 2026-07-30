@@ -1,24 +1,11 @@
 import { useMemo } from 'react';
 import { parseMarkdown, type MdBlock, type MdInline, type TableAlign } from './markdown';
+import './conversation.css';
 
 // Renders the Markdown AST with the terminal palette. The whole app is set in
 // JetBrains Mono, so code is set apart by a panel/background rather than a font
 // switch. Links are shown styled but do NOT navigate the webview (no opener
 // plugin is wired) — the full URL rides in the title tooltip.
-
-const M = {
-  accent: 'var(--accent)',
-  bright: 'var(--text-bright)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  border: 'var(--border)',
-  codeBg: 'var(--bg-deep)',
-  codeBorder: 'var(--border)',
-  inlineBg: 'var(--bg-raised)',
-  inlineFg: 'var(--accent-bright)',
-  quoteBar: 'var(--text-disabled)',
-  langTag: 'var(--text-muted)',
-};
 
 function Inline({ nodes }: { nodes: MdInline[] }) {
   return (
@@ -31,41 +18,32 @@ function Inline({ nodes }: { nodes: MdInline[] }) {
             return <br key={i} />;
           case 'strong':
             return (
-              <strong key={i} style={{ fontWeight: 700, color: M.bright }}>
+              <strong key={i} className="md-strong">
                 <Inline nodes={n.children} />
               </strong>
             );
           case 'em':
             return (
-              <em key={i} style={{ fontStyle: 'italic' }}>
+              <em key={i} className="md-em">
                 <Inline nodes={n.children} />
               </em>
             );
           case 'del':
             return (
-              <span key={i} style={{ textDecoration: 'line-through', color: M.dim }}>
+              <span key={i} className="md-del">
                 <Inline nodes={n.children} />
               </span>
             );
           case 'code':
             return (
-              <code
-                key={i}
-                style={{ background: M.inlineBg, color: M.inlineFg, borderRadius: 3, padding: '0.5px 4px', fontSize: '0.92em' }}
-              >
+              <code key={i} className="md-code">
                 {n.value}
               </code>
             );
           case 'link':
             return (
               // Non-navigating on purpose (no opener plugin) — the URL is in the tooltip.
-              <a
-                key={i}
-                href={n.href}
-                title={n.href}
-                onClick={(e) => e.preventDefault()}
-                style={{ color: M.accent, textDecoration: 'underline', cursor: 'pointer' }}
-              >
+              <a key={i} href={n.href} title={n.href} onClick={(e) => e.preventDefault()} className="md-link">
                 <Inline nodes={n.children} />
               </a>
             );
@@ -82,7 +60,10 @@ function BlockView({ b, first }: { b: MdBlock; first: boolean }) {
   switch (b.type) {
     case 'heading':
       return (
-        <div style={{ marginTop: first ? 0 : 12, marginBottom: 2, fontSize: HEADING_SIZE[b.level] ?? 12.5, fontWeight: 700, color: M.bright, letterSpacing: b.level <= 2 ? '0.01em' : undefined }}>
+        <div
+          className="md-heading"
+          style={{ marginTop: first ? 0 : 12, fontSize: HEADING_SIZE[b.level] ?? 12.5, letterSpacing: b.level <= 2 ? '0.01em' : undefined }}
+        >
           <Inline nodes={b.children} />
         </div>
       );
@@ -94,32 +75,18 @@ function BlockView({ b, first }: { b: MdBlock; first: boolean }) {
       );
     case 'code':
       return (
-        <div style={{ marginTop: mt, position: 'relative' }}>
-          {b.lang && (
-            <div style={{ position: 'absolute', top: 4, right: 8, fontSize: 9.5, letterSpacing: '0.04em', color: M.langTag, userSelect: 'none' }}>{b.lang}</div>
-          )}
-          <pre
-            style={{
-              margin: 0,
-              background: M.codeBg,
-              border: `1px solid ${M.codeBorder}`,
-              borderRadius: 6,
-              padding: '8px 10px',
-              overflowX: 'auto',
-              fontSize: 12,
-              lineHeight: 1.5,
-              color: M.bright,
-            }}
-          >
+        <div className="md-code-wrap" style={{ marginTop: mt }}>
+          {b.lang && <div className="md-lang-tag">{b.lang}</div>}
+          <pre className="md-code-block">
             <code>{b.value}</code>
           </pre>
         </div>
       );
     case 'hr':
-      return <div style={{ marginTop: mt, marginBottom: 4, borderTop: `1px solid ${M.border}` }} />;
+      return <div className="md-hr" style={{ marginTop: mt }} />;
     case 'blockquote':
       return (
-        <div style={{ marginTop: mt, borderLeft: `2px solid ${M.quoteBar}`, paddingLeft: 10, color: M.dim }}>
+        <div className="md-blockquote" style={{ marginTop: mt }}>
           <Blocks blocks={b.children} />
         </div>
       );
@@ -131,18 +98,19 @@ function BlockView({ b, first }: { b: MdBlock; first: boolean }) {
 }
 
 function ListView({ b, mt }: { b: Extract<MdBlock, { type: 'list' }>; mt: number }) {
-  const style = { marginTop: mt, marginBottom: 0, paddingLeft: 20 } as const;
   const itemNodes = b.items.map((item, i) => (
-    <li key={i} style={{ margin: '1px 0' }}>
+    <li key={i} className="md-list-item">
       <Blocks blocks={item} tight />
     </li>
   ));
   return b.ordered ? (
-    <ol start={b.start} style={style}>
+    <ol start={b.start} className="md-list" style={{ marginTop: mt }}>
       {itemNodes}
     </ol>
   ) : (
-    <ul style={style}>{itemNodes}</ul>
+    <ul className="md-list" style={{ marginTop: mt }}>
+      {itemNodes}
+    </ul>
   );
 }
 
@@ -151,18 +119,13 @@ function align(a: TableAlign): 'left' | 'right' | 'center' {
 }
 
 function TableView({ b, mt }: { b: Extract<MdBlock, { type: 'table' }>; mt: number }) {
-  const cell = (extra?: React.CSSProperties): React.CSSProperties => ({
-    border: `1px solid ${M.border}`,
-    padding: '3px 8px',
-    ...extra,
-  });
   return (
-    <div style={{ marginTop: mt, overflowX: 'auto' }}>
-      <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>
+    <div className="md-table-wrap" style={{ marginTop: mt }}>
+      <table className="md-table">
         <thead>
           <tr>
             {b.header.map((h, i) => (
-              <th key={i} style={cell({ textAlign: align(b.align[i]), fontWeight: 700, color: M.bright, background: 'var(--bg-elevated)' })}>
+              <th key={i} className="md-cell md-cell--header" style={{ textAlign: align(b.align[i]) }}>
                 <Inline nodes={h} />
               </th>
             ))}
@@ -172,7 +135,7 @@ function TableView({ b, mt }: { b: Extract<MdBlock, { type: 'table' }>; mt: numb
           {b.rows.map((row, r) => (
             <tr key={r}>
               {row.map((c, i) => (
-                <td key={i} style={cell({ textAlign: align(b.align[i]) })}>
+                <td key={i} className="md-cell" style={{ textAlign: align(b.align[i]) }}>
                   <Inline nodes={c} />
                 </td>
               ))}
@@ -202,7 +165,7 @@ function Blocks({ blocks, tight }: { blocks: MdBlock[]; tight?: boolean }) {
 export default function Markdown({ text, color }: { text: string; color: string }) {
   const blocks = useMemo(() => parseMarkdown(text), [text]);
   return (
-    <div style={{ color, fontSize: 12.5, lineHeight: 1.55, wordBreak: 'break-word' }}>
+    <div className="md-root" style={{ color }}>
       <Blocks blocks={blocks} />
     </div>
   );

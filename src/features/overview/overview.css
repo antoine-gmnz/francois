@@ -1,0 +1,290 @@
+/* overview — the OVERVIEW main tab (cross-project dashboard). Static layout
+   only; status-driven colors, the selected/hover row background, and the
+   pulsing status dot stay inline or come from the shared `.list-row` /
+   `.status-dot` utilities in styles.css. */
+
+.ov-root {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: var(--space-14) var(--space-16);
+}
+
+/* Extra top gap for the two-column split below the totals strip; `.ov-split`
+   itself is a shared utility owned by styles.css. */
+.ov-content-gap {
+  margin-top: var(--space-16);
+}
+
+/* ---------- totals strip ---------- */
+
+.ov-totals-strip {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-4) 22px;
+  padding: var(--space-2) 0 var(--space-14);
+  border-bottom: 1px solid var(--border);
+}
+
+.ov-totals-label {
+  font-size: var(--font-size-11);
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: var(--accent);
+  margin-right: var(--space-4);
+}
+
+.ov-totals-divider {
+  color: var(--text-disabled);
+  font-size: var(--font-size-11);
+}
+
+.ov-totals-quiet {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+
+.ov-figure {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-5);
+}
+
+.ov-figure-value {
+  font-size: var(--font-size-17);
+  font-weight: 500;
+  line-height: 1;
+}
+
+.ov-figure-label {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+
+/* ---------- section shell ---------- */
+
+.ov-section {
+  margin-bottom: 20px;
+}
+
+.ov-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-bottom: var(--space-8);
+}
+
+.ov-section-title {
+  font-size: var(--font-size-10);
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.ov-section-count {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+.ov-muted {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  padding: var(--space-4) 0;
+}
+
+/* ---------- needs attention ---------- */
+
+.ov-attention-row {
+  gap: var(--space-9);
+  padding: var(--space-7) var(--space-9);
+  margin-bottom: var(--space-3);
+  border-radius: var(--radius-base);
+}
+
+.ov-attention-name {
+  font-size: var(--font-size-11-5);
+  color: var(--text);
+  flex-shrink: 0;
+  max-width: 38%;
+}
+
+.ov-attention-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-10-5);
+}
+
+.ov-attention-time {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+/* ---------- project rollup ---------- */
+
+.ov-group {
+  margin-bottom: var(--space-14);
+}
+
+.ov-group-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-9);
+  padding: 0 0 var(--space-5);
+}
+
+.ov-group-name {
+  font-size: var(--font-size-12);
+  font-weight: 500;
+}
+
+.ov-group-missing {
+  font-size: var(--font-size-9);
+  color: var(--error);
+}
+
+.ov-group-root {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  flex: 1;
+  min-width: 0;
+}
+
+.ov-group-subtitle {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+.ov-group-empty {
+  font-size: var(--font-size-10-5);
+  color: var(--text-disabled);
+  padding: var(--space-3) 0 var(--space-3) var(--space-10);
+}
+
+.ov-session-row {
+  gap: var(--space-9);
+  padding: var(--space-6) var(--space-9);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-base);
+}
+
+.ov-session-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-11-5);
+}
+
+.ov-session-status {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  width: 44px;
+  text-align: right;
+}
+
+.ov-session-model {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  width: 62px;
+  text-align: right;
+}
+
+.ov-session-ctx {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  width: 62px;
+  text-align: right;
+}
+
+.ov-session-ctx-label {
+  color: var(--text-faint);
+}
+
+.ov-session-ctx-value {
+  color: var(--text-hint);
+}
+
+.ov-session-files {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  width: 34px;
+  text-align: right;
+  color: var(--text-hint);
+}
+
+.ov-session-agents {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  width: 30px;
+  text-align: right;
+  color: var(--accent);
+}
+
+.ov-session-time {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  width: 30px;
+  text-align: right;
+}
+
+/* ---------- activity feed ---------- */
+
+.ov-activity-row {
+  align-items: baseline;
+  gap: var(--space-7);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-sm);
+}
+
+.ov-activity-time {
+  flex-shrink: 0;
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  width: 26px;
+}
+
+.ov-activity-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+}
+
+.ov-activity-session {
+  color: var(--text);
+}
+
+.ov-activity-detail {
+  color: var(--text-faint);
+}
+
+/* ---------- empty state ---------- */
+
+.ov-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-10);
+  color: var(--text-faint);
+  font-size: var(--font-size-12-5);
+}
+
+.ov-empty-actions {
+  display: flex;
+  gap: var(--space-16);
+  font-size: var(--font-size-11);
+}
+
+.ov-empty-action {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.ov-empty-action-key {
+  color: var(--accent);
+}

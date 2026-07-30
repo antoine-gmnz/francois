@@ -1,0 +1,72 @@
+/* NewSessionModal.tsx — field/label/hint/chip-row primitives specific to this
+   form. Modal chrome itself (backdrop/panel/header/body/footer) comes from
+   src/ui/Modal.tsx + .modal-* in styles.css; these classes cover only what is
+   local to this form's layout. */
+
+.new-session-modal__title {
+  font-size: var(--font-size-14);
+  color: var(--text-strong);
+}
+
+.new-session-modal__title-accent {
+  color: var(--accent);
+}
+
+.new-session-modal__label {
+  font-size: var(--font-size-10);
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  margin-bottom: var(--space-5);
+  display: block;
+}
+
+.new-session-modal__field {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  height: 32px;
+  color: var(--text);
+  font-size: var(--font-size-12-5);
+  font-family: inherit;
+  padding: 0 var(--space-10);
+  width: 100%;
+  outline: none;
+}
+
+.new-session-modal__field--flex {
+  flex: 1;
+}
+
+.new-session-modal__row {
+  display: flex;
+  gap: var(--space-8);
+}
+
+.new-session-modal__hint {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  margin-top: var(--space-4);
+}
+
+.new-session-modal__hint--below-chips {
+  margin-top: var(--space-5);
+}
+
+.new-session-modal__hint--error {
+  color: var(--error);
+}
+
+.new-session-modal__chip-row {
+  display: flex;
+  gap: var(--space-6);
+}
+
+.new-session-modal__chip-row--wrap {
+  flex-wrap: wrap;
+}
+
+.new-session-modal__actions {
+  display: flex;
+  gap: var(--space-10);
+  margin-left: auto;
+}

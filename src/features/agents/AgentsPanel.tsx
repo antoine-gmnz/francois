@@ -24,33 +24,26 @@ import {
 } from './agent-trail';
 import { setPaletteAgents } from '../palette/paletteData';
 import { useStore } from '../../lib/store';
+import { HintBar } from '../../ui/HintBar';
+import { Modal, ModalHeader } from '../../ui/Modal';
+import { PanelHeader } from '../../ui/PanelHeader';
+import { StatusDot } from '../../ui/StatusDot';
+import './agents.css';
 
-const C = {
+const statusColor: Record<string, string> = {
   running: 'var(--accent-2)',
   idle: 'var(--text-muted)',
   done: 'var(--success)',
   error: 'var(--error)',
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  primary: 'var(--text)',
-  bright: 'var(--text-strong)',
 };
 
-const statusColor: Record<string, string> = {
-  running: C.running,
-  idle: C.idle,
-  done: C.done,
-  error: C.error,
-};
-
-const rank = (s: string) => (s === 'running' ? 0 : s === 'idle' ? 1 : 2);
+const rank = (status: string) => (status === 'running' ? 0 : status === 'idle' ? 1 : 2);
 
 function ordered(map: Map<string, AgentInfo>): AgentInfo[] {
   return Array.from(map.values())
-    .map((a, i) => ({ a, i }))
-    .sort((x, y) => rank(x.a.status) - rank(y.a.status) || x.i - y.i)
-    .map(({ a }) => a);
+    .map((agent, i) => ({ agent, i }))
+    .sort((left, right) => rank(left.agent.status) - rank(right.agent.status) || left.i - right.i)
+    .map(({ agent }) => agent);
 }
 
 export default function AgentsPanel({ sessionId }: { sessionId: string | null }) {
@@ -73,7 +66,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
 
   const focused = focusedPane === 'agents';
   const list = ordered(agents);
-  const hasRunning = list.some((a) => a.status === 'running');
+  const hasRunning = list.some((agent) => agent.status === 'running');
 
   // Publish this session's agents to the palette cache (backs kill-agent + runningAgentCount, FR-23).
   useEffect(() => {
@@ -104,20 +97,20 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
     let hydrated = false;
     const buffer: AgentInfo[] = [];
 
-    const applyAgent = (a: AgentInfo) => {
+    const applyAgent = (agent: AgentInfo) => {
       // agent-tab: keep an open tab's label + status dot live. A no-op when this
       // agent has no tab, and this panel is already the ONE agent.update
       // subscriber for the active session — no second subscription.
-      syncAgentTab({ id: a.id, name: a.name, status: a.status });
+      syncAgentTab({ id: agent.id, name: agent.name, status: agent.status });
       setAgents((prev) => {
         const next = new Map(prev);
-        next.set(a.id, a); // set on existing key preserves position (FR-7)
+        next.set(agent.id, agent); // set on existing key preserves position (FR-7)
         return next;
       });
       setPendingKill((prev) => {
-        if (!prev.has(a.id)) return prev;
+        if (!prev.has(agent.id)) return prev;
         const next = new Set(prev);
-        next.delete(a.id);
+        next.delete(agent.id);
         return next;
       });
     };
@@ -132,9 +125,9 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
       if (e.agent.sessionId !== sessionId) return; // FR-3
       if (!hydrated) buffer.push(e.agent);
       else applyAgent(e.agent);
-    }).then((u) => {
-      if (!mounted) u();
-      else unlisten = u;
+    }).then((unsub) => {
+      if (!mounted) unsub();
+      else unlisten = unsub;
     });
 
     void agentsList(sessionId).then((res) => {
@@ -144,10 +137,10 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
         // Seed only ids not already present from a buffered event (FR-2).
         setAgents((prev) => {
           const next = new Map(prev);
-          for (const a of res.data) if (!next.has(a.id)) next.set(a.id, a);
+          for (const agent of res.data) if (!next.has(agent.id)) next.set(agent.id, agent);
           return next;
         });
-        for (const a of buffer) applyAgent(a);
+        for (const agent of buffer) applyAgent(agent);
         buffer.length = 0;
         hydrated = true;
       } else {
@@ -190,9 +183,9 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
     try {
       const res = await agentsActivity(agentId);
       setTrail((prev) => receiveTrailActivity(prev, reqId, res));
-    } catch (e) {
+    } catch (err) {
       setTrail((prev) =>
-        receiveTrailActivity(prev, reqId, { ok: false, error: { code: 'INTERNAL', message: String(e) } }),
+        receiveTrailActivity(prev, reqId, { ok: false, error: { code: 'INTERNAL', message: String(err) } }),
       );
     }
   };
@@ -223,9 +216,9 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (newAgentOpen || !focused) return;
-      const ae = document.activeElement as HTMLElement | null;
-      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
-      const cur = list.findIndex((a) => a.id === selectedId);
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
+      const cur = list.findIndex((agent) => agent.id === selectedId);
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         const i = Math.min(cur < 0 ? 0 : cur + 1, list.length - 1);
@@ -246,8 +239,8 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
           toggleExpand(selectedId);
         }
       } else if (e.key === 'x' || e.key === 'X') {
-        const a = agents.get(selectedId ?? '');
-        if (a && a.status === 'running' && !pendingKill.has(a.id)) void doKill(a.id);
+        const agent = agents.get(selectedId ?? '');
+        if (agent && agent.status === 'running' && !pendingKill.has(agent.id)) void doKill(agent.id);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -257,64 +250,41 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
   return (
     <section
       onClick={() => setFocusedPane('agents')}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--bg-deep)',
-        border: `1px solid ${focused ? C.accent : 'var(--border)'}`,
-        borderRadius: 5,
-        overflow: 'hidden',
-        minHeight: 0,
-        height: '100%',
-      }}
+      className={focused ? 'agents-panel agents-panel--focused' : 'agents-panel'}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '9px 12px',
-          borderBottom: '1px solid var(--border)',
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', color: focused ? C.accent : C.dim, fontWeight: 700 }}>
-          AGENTS
-        </span>
-        <span style={{ fontSize: 10, color: C.faint }}>{agents.size} · [3]</span>
-      </div>
+      <PanelHeader title="AGENTS" count={agents.size} paneKey={3} focused={focused} />
 
-      <div className="scz" style={{ flex: 1, overflow: 'auto', padding: 8 }}>
+      <div className="scz agents-body">
         {listError ? (
-          <div style={{ padding: '12px 4px', fontSize: 11, color: C.error }}>{listError.message}</div>
+          <div className="agents-error-text">{listError.message}</div>
         ) : loading ? null : list.length === 0 ? (
-          <div style={{ padding: '24px 12px', fontSize: 11, color: C.faint }}>
-            no agents yet · press <span style={{ color: 'var(--text-hint)' }}>a</span>
+          <div className="agents-empty">
+            no agents yet · press <span className="agents-empty-key">a</span>
           </div>
         ) : (
-          list.map((a) => (
+          list.map((agent) => (
             <Card
-              key={a.id}
-              a={a}
+              key={agent.id}
+              agent={agent}
               now={clockNow}
-              selected={a.id === selectedId}
-              trail={a.id === trail.agentId ? trail : null}
-              hover={a.id === hoverId}
-              pending={pendingKill.has(a.id)}
+              selected={agent.id === selectedId}
+              trail={agent.id === trail.agentId ? trail : null}
+              hover={agent.id === hoverId}
+              pending={pendingKill.has(agent.id)}
               onClick={(e) => {
-                if (a.id !== trail.agentId) setTrail(collapseTrail); // FR-13: selection collapses
-                setSelectedId(a.id);
+                if (agent.id !== trail.agentId) setTrail(collapseTrail); // FR-13: selection collapses
+                setSelectedId(agent.id);
                 // agent-tab FR-10: a CLICK also opens (or re-activates) this
                 // agent's main-pane tab and hands it focus — you clicked to read
                 // it. stopPropagation keeps the section's own handler from
                 // immediately pulling focus back to pane [3]. The keyboard path
                 // (↑/↓ + ⏎, the in-place trail) is deliberately unchanged.
                 e.stopPropagation();
-                openAgentTab({ id: a.id, name: a.name, status: a.status });
+                openAgentTab({ id: agent.id, name: agent.name, status: agent.status });
                 setFocusedPane('main');
               }}
-              onHover={(h) => setHoverId(h ? a.id : null)}
-              onKill={() => void doKill(a.id)}
+              onHover={(hovering) => setHoverId(hovering ? agent.id : null)}
+              onKill={() => void doKill(agent.id)}
               onAtBottom={(v) => setTrail((t) => (t.atBottom === v ? t : { ...t, atBottom: v }))}
             />
           ))
@@ -329,7 +299,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
 }
 
 function Card({
-  a,
+  agent,
   now,
   selected,
   trail,
@@ -340,7 +310,7 @@ function Card({
   onKill,
   onAtBottom,
 }: {
-  a: AgentInfo;
+  agent: AgentInfo;
   now: number;
   selected: boolean;
   /** The expanded card's trail state, or null when this card is collapsed. */
@@ -348,59 +318,24 @@ function Card({
   hover: boolean;
   pending: boolean;
   onClick: (e: React.MouseEvent) => void;
-  onHover: (h: boolean) => void;
+  onHover: (hovering: boolean) => void;
   onKill: () => void;
   onAtBottom: (v: boolean) => void;
 }) {
-  const sc = statusColor[a.status] ?? C.idle;
-  const elapsedMs = Math.max(0, (a.endedAt ?? now) - a.startedAt);
-  const showKill = a.status === 'running' && hover && !pending;
+  const sc = statusColor[agent.status] ?? 'var(--text-muted)';
+  const elapsedMs = Math.max(0, (agent.endedAt ?? now) - agent.startedAt);
+  const showKill = agent.status === 'running' && hover && !pending;
   const expanded = trail !== null;
-  const activity = activitySuffix(a); // FR-17: rendered for every status
+  const activity = activitySuffix(agent); // FR-17: rendered for every status
+  const cardClass = ['agent-card', selected && 'agent-card--selected', pending && 'agent-card--pending']
+    .filter(Boolean)
+    .join(' ');
   return (
-    <div
-      onClick={onClick}
-      onMouseEnter={() => onHover(true)}
-      onMouseLeave={() => onHover(false)}
-      style={{
-        padding: 9,
-        borderRadius: 4,
-        marginBottom: 4,
-        background: selected ? 'var(--bg-raised)' : 'var(--bg-panel)',
-        borderLeft: `2px solid ${selected ? C.accent : 'transparent'}`,
-        opacity: pending ? 0.55 : 1,
-        cursor: 'pointer',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            flexShrink: 0,
-            background: sc,
-            animation: a.status === 'running' ? 'pulse 1.4s ease-in-out infinite' : 'none',
-          }}
-        />
-        <span style={{ fontSize: 12, color: C.primary, fontWeight: 500, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {a.name}
-        </span>
-        {showAsyncMarker(a) && (
-          <span
-            style={{
-              fontSize: 9,
-              letterSpacing: '0.08em',
-              color: C.faint,
-              padding: '1px 5px',
-              borderRadius: 8,
-              background: 'var(--bg-raised)',
-              flexShrink: 0,
-            }}
-          >
-            {ASYNC_MARKER}
-          </span>
-        )}
+    <div onClick={onClick} onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)} className={cardClass}>
+      <div className="agent-inline-row">
+        <StatusDot color={sc} pulsing={agent.status === 'running'} />
+        <span className="agent-card__name truncate">{agent.name}</span>
+        {showAsyncMarker(agent) && <span className="agent-async-badge agent-async-badge--shrink">{ASYNC_MARKER}</span>}
         {showKill ? (
           <span
             onClick={(e) => {
@@ -408,53 +343,31 @@ function Card({
               onKill();
             }}
             title="kill agent"
-            style={{ fontSize: 10, color: C.dim, cursor: 'pointer' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = C.error)}
-            onMouseLeave={(e) => (e.currentTarget.style.color = C.dim)}
+            className="agent-kill-action agent-card__kill"
           >
             ✕
           </span>
         ) : (
-          <span style={{ fontSize: 10, color: sc }}>{a.status}</span>
+          <span className="agent-card__status" style={{ color: sc }}>
+            {agent.status}
+          </span>
         )}
       </div>
-      <div
-        style={{
-          fontSize: 10.5,
-          color: 'var(--text-muted)',
-          margin: '5px 0 4px 16px',
-          ...(expanded
-            ? { whiteSpace: 'normal' as const }
-            : { whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' }),
-        }}
-      >
-        {a.task}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 16, fontSize: 10, color: C.faint }}>
-        <span style={{ flexShrink: 0, color: a.status === 'running' ? sc : C.faint }}>
-          {a.status === 'running' ? '◷' : '·'}
+      <div className={expanded ? 'agent-card__task' : 'agent-card__task truncate'}>{agent.task}</div>
+      <div className="agent-card__meta">
+        <span className="agent-card__meta-shrink" style={{ color: agent.status === 'running' ? sc : 'var(--text-faint)' }}>
+          {agent.status === 'running' ? '◷' : '·'}
         </span>
-        <span style={{ flexShrink: 0 }}>{formatElapsed(elapsedMs)}</span>
-        {a.status === 'running' && <span style={{ flexShrink: 0, color: 'var(--text-disabled)' }}>elapsed</span>}
+        <span className="agent-card__meta-shrink">{formatElapsed(elapsedMs)}</span>
+        {agent.status === 'running' && <span className="agent-card__meta-label">elapsed</span>}
         {activity !== null && (
           <>
-            <span style={{ flexShrink: 0, color: 'var(--text-disabled)' }}>·</span>
-            <span
-              style={{
-                flex: 1,
-                minWidth: 0,
-                color: 'var(--text-muted)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {activity}
-            </span>
+            <span className="agent-card__meta-label">·</span>
+            <span className="agent-card__activity truncate">{activity}</span>
           </>
         )}
       </div>
-      {trail && <Trail state={trail} stepCount={a.stepCount} onAtBottom={onAtBottom} />}
+      {trail && <Trail state={trail} stepCount={agent.stepCount} onAtBottom={onAtBottom} />}
     </div>
   );
 }
@@ -486,30 +399,17 @@ function Trail({
   return (
     <div
       ref={ref}
-      className="scz"
+      className="scz agent-trail"
       onScroll={(e) => onAtBottom(isAtBottom(e.currentTarget))}
-      style={{
-        marginLeft: 16,
-        marginTop: 6,
-        borderTop: '1px solid var(--border)',
-        paddingTop: 6,
-        maxHeight: TRAIL_MAX_HEIGHT_PX,
-        overflowY: 'auto',
-        // overscrollBehavior — not a wheel handler — is what keeps the trail's
-        // scroll from bubbling to the pane: native scroll chaining ignores React's
-        // synthetic event propagation, so stopPropagation() on onWheel is a no-op.
-        overscrollBehavior: 'contain',
-      }}
+      style={{ maxHeight: TRAIL_MAX_HEIGHT_PX }}
     >
       {state.error ? (
-        <div style={{ fontSize: 10, color: C.error, padding: '4px 0' }}>{state.error.message}</div>
+        <div className="agent-trail-error-text">{state.error.message}</div>
       ) : steps.length === 0 ? (
-        <div style={{ fontSize: 10, color: 'var(--text-disabled)', padding: '4px 0' }}>{TRAIL_EMPTY_LABEL}</div>
+        <div className="agent-trail-notice">{TRAIL_EMPTY_LABEL}</div>
       ) : (
         <>
-          {earlier && (
-            <div style={{ fontSize: 10, color: 'var(--text-disabled)', padding: '2px 0 4px' }}>{earlier}</div>
-          )}
+          {earlier && <div className="agent-trail-earlier">{earlier}</div>}
           {steps.map((s) => (
             <StepRow key={s.seq} step={s} />
           ))}
@@ -522,25 +422,18 @@ function Trail({
 function StepRow({ step }: { step: AgentStep }) {
   const prefix = stepToolPrefix(step);
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, padding: '2px 0', fontSize: 10 }}>
-      <span style={{ width: 10, flexShrink: 0, textAlign: 'center', color: STEP_GLYPH_COLOR[step.kind] }}>
+    <div className="agent-step-row">
+      <span className="agent-step-glyph" style={{ color: STEP_GLYPH_COLOR[step.kind] }}>
         {STEP_GLYPH[step.kind]}
       </span>
-      <span
-        style={{
-          flex: 1,
-          minWidth: 0,
-          color: 'var(--text-muted)',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
-      >
-        {prefix !== null && <span style={{ color: C.dim }}>{prefix} </span>}
+      <span className="agent-step-label truncate">
+        {prefix !== null && <span className="agent-step-prefix">{prefix} </span>}
         {step.label}
       </span>
       {step.kind === 'tool' && step.meta !== undefined && (
-        <span style={{ fontSize: 9.5, color: stepMetaColor(step.meta), flexShrink: 0 }}>{step.meta}</span>
+        <span className="agent-step-meta" style={{ color: stepMetaColor(step.meta) }}>
+          {step.meta}
+        </span>
       )}
     </div>
   );
@@ -585,61 +478,33 @@ function NewAgentModal({ sessionId, onClose }: { sessionId: string; onClose: () 
   });
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(6,7,9,0.62)',
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-        paddingTop: 118,
-        zIndex: 20,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 420,
-          background: 'var(--bg-panel)',
-          border: '1px solid var(--bg-hover-2)',
-          borderRadius: 8,
-          overflow: 'hidden',
-          boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ color: C.accent, fontSize: 15 }}>›</span>
+    // NewAgentModal keeps its own Escape/Enter keydown handler above (Enter
+    // dispatches), so closeOnEscape stays off here to avoid double-handling —
+    // see REFACTOR-CONVENTIONS.md's Modal note. closeOnBackdropClick mirrors
+    // the previous unconditional `onClick={onClose}` on the backdrop.
+    <Modal onClose={onClose} width={420} align="top" closeOnBackdropClick closeOnEscape={false}>
+      <ModalHeader>
+        <div className="agent-modal-title-row">
+          <span className="agent-modal-arrow">›</span>
           <input
             ref={inputRef}
             value={task}
             disabled={submitting}
             placeholder="describe the subagent's task…"
             onChange={(e) => setTask(e.target.value)}
-            style={{
-              flex: 1,
-              border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              color: C.bright,
-              fontSize: 14,
-              fontFamily: 'inherit',
-              opacity: submitting ? 0.7 : 1,
-            }}
+            className="agent-modal-input"
+            style={{ opacity: submitting ? 0.7 : 1 }}
           />
-          <span style={{ fontSize: 10, color: C.faint }}>esc</span>
+          <span className="agent-modal-hint">esc</span>
         </div>
-        {error && <div style={{ padding: '0 16px 10px', fontSize: 10.5, color: C.error }}>{error.message}</div>}
-        <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid var(--border)', fontSize: 10, color: C.faint }}>
-          <span>
-            <span style={{ color: C.dim }}>⏎</span> dispatch
-          </span>
-          <span>
-            <span style={{ color: C.dim }}>esc</span> cancel
-          </span>
-        </div>
-      </div>
-    </div>
+      </ModalHeader>
+      {error && <div className="agent-modal-error">{error.message}</div>}
+      <HintBar
+        items={[
+          { key: '⏎', label: 'dispatch' },
+          { key: 'esc', label: 'cancel' },
+        ]}
+      />
+    </Modal>
   );
 }

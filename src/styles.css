@@ -61,6 +61,81 @@ html[data-hidden='1'] [style*='animation'] {
   --hue-teal: #8fbab8;
   --hue-blue: #6b8fb0;
   --hue-slate: #7c8aa0;
+
+  /* ── Foundational scales ──────────────────────────────────────────────────
+     Derived from actual inline-style usage across src/**/*.tsx (grepped
+     fontSize/borderRadius/padding/gap/boxShadow literals), NOT an invented
+     scale — every value below is a px (or shadow) literal that already
+     appears, repeatedly, in the codebase. Spacing, radius and font-size do
+     not differ between themes, so they live only here in :root (no
+     :root[data-theme='light'] mirror needed). Shadows are likewise
+     theme-invariant in current usage (always a black rgba()).
+
+     --space-<n>: the numeric suffix IS the pixel value (not a multiplier),
+     so an inline `padding: '9px 16px'` maps 1:1 to
+     `padding: var(--space-9) var(--space-16)`. Only the distinct px values
+     actually found in gap:/padding: literals are defined.
+     --font-size-<n>: same convention (decimal point becomes a dash), e.g.
+     `fontSize: 10.5` -> var(--font-size-10-5). The distinct sizes found
+     range 8px–17px in 0.5px steps (this app's real type scale, however
+     unsystematic).
+     --radius-<role>: only 7 distinct radii are used app-wide, so these get
+     role names on a conventional xs..2xl ladder instead of raw numbers.
+     --shadow-<role>: the distinct box-shadow values used for floating
+     surfaces (modals, popovers, dropdown cards) plus the one already
+     hardcoded in this file (§slash-menu, see below). */
+  --space-1: 1px;
+  --space-2: 2px;
+  --space-3: 3px;
+  --space-4: 4px;
+  --space-5: 5px;
+  --space-6: 6px;
+  --space-7: 7px;
+  --space-8: 8px;
+  --space-9: 9px;
+  --space-10: 10px;
+  --space-11: 11px;
+  --space-12: 12px;
+  --space-13: 13px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-18: 18px;
+  --space-24: 24px;
+
+  --font-size-8: 8px;
+  --font-size-8-5: 8.5px;
+  --font-size-9: 9px;
+  --font-size-9-5: 9.5px;
+  --font-size-10: 10px;
+  --font-size-10-5: 10.5px;
+  --font-size-11: 11px;
+  --font-size-11-5: 11.5px;
+  --font-size-12: 12px;
+  --font-size-12-5: 12.5px;
+  --font-size-13: 13px;
+  --font-size-14: 14px;
+  --font-size-15: 15px;
+  --font-size-17: 17px;
+
+  /* xs=2 (rare, UsageBar), sm=3, base=4 (by far the most common — default
+     button/chip/row radius), md=5, lg=6, xl=8 (modals + larger panels),
+     2xl=12 (rare, ConversationView jump-to-latest pill). */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-base: 4px;
+  --radius-md: 5px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-2xl: 12px;
+
+  /* Named by the kind of floating surface each dresses, not by size. */
+  --shadow-modal: 0 30px 80px -20px rgba(0, 0, 0, 0.85);
+  --shadow-popover-lg: 0 20px 50px -18px rgba(0, 0, 0, 0.85);
+  --shadow-popover: 0 20px 50px -15px rgba(0, 0, 0, 0.75);
+  --shadow-dropdown: 0 12px 30px -10px rgba(0, 0, 0, 0.7);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-card-sm: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --shadow-bar: 0 -4px 16px rgba(0, 0, 0, 0.35);
 }
 :root[data-theme='light'] {
   /* backgrounds — near-white layered surfaces, panels whitest */
@@ -280,21 +355,31 @@ a {
 .qcard-pending {
   border-left: 2px solid var(--accent);
 }
-.qcard-cancelled {
+/* card-cancelled/card-head/card-label are the shared base for both the
+   question-card and permission-card families (previously byte-identical
+   duplicated rules — see the pcard-* declarations below, which read the
+   exact same properties via these grouped selectors). */
+.card-cancelled,
+.qcard-cancelled,
+.pcard-cancelled {
   opacity: 0.55;
 }
 .qcard-inflight {
   opacity: 0.7;
 }
-.qcard-head {
+.card-head,
+.qcard-head,
+.pcard-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-6);
 }
-.qcard-label {
+.card-label,
+.qcard-label,
+.pcard-label {
   color: var(--text-faint);
-  font-size: 9.5px;
+  font-size: var(--font-size-9-5);
   letter-spacing: 0.08em;
 }
 .qcard-chip {
@@ -395,9 +480,11 @@ a {
   cursor: default;
 }
 /* permission-guardrails §8 — approval card + rules editor. Inherits the
-   question-card language; the left edge is AMBER (--warn) while pending because
-   a permission ask is a stop, not a question, and recolors to the outcome once
-   decided. Motion: none — no @keyframes, no animation, no transition. */
+   question-card language (literally: card-head/card-label/card-cancelled are
+   the shared base declared above, grouped with the qcard-* selectors); the
+   left edge is AMBER (--warn) while pending because a permission ask is a
+   stop, not a question, and recolors to the outcome once decided. Motion:
+   none — no @keyframes, no animation, no transition. */
 .pcard {
   background: var(--bg-deep);
   border: 1px solid var(--border);
@@ -413,22 +500,8 @@ a {
 .pcard-denied {
   border-left: 2px solid var(--error);
 }
-.pcard-cancelled {
-  opacity: 0.55;
-}
 .pcard-inflight {
   opacity: 0.7;
-}
-.pcard-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.pcard-label {
-  color: var(--text-faint);
-  font-size: 9.5px;
-  letter-spacing: 0.08em;
 }
 .pcard-chip {
   color: var(--warn);
@@ -633,7 +706,7 @@ a {
   background: var(--bg-deep);
   border: 1px solid var(--border);
   border-radius: 4px;
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-bar);
   max-height: 224px;
   overflow-y: auto;
   padding: 4px 0;
@@ -666,4 +739,247 @@ a {
   color: var(--text-faint);
   font-size: 9.5px;
   flex: 0 0 auto;
+}
+
+/* ── Utility & primitive classes ──────────────────────────────────────────
+   Shared building blocks for the src/**/*.tsx -> CSS-class migration (573
+   inline `style={{}}` objects today). These names are a contract with the
+   components that will adopt them — do not rename. Each was reverse-engineered
+   from the current inline styles it is meant to replace, so adopting one
+   should be a no-visual-change swap; see the call sites named in each
+   comment. All values reference the scale tokens above — no raw hex, no
+   magic px. */
+
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Selectable/hoverable list row (session/agent/skill rows across the
+   sidebar/panels). Only the interaction states are shared here — padding,
+   border-radius and left-accent rails differ per list (rounded "card" rows
+   in AgentsPanel/OverviewView/Sidebar vs. bordered rows in SkillsPanel) and
+   stay on the call site. */
+.list-row {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  background: transparent;
+}
+.list-row--selected {
+  background: var(--bg-raised);
+}
+.list-row--hovered {
+  background: var(--bg-elevated);
+}
+
+/* Small round status indicator (AgentsPanel.tsx:376-385, Sidebar.tsx:625-634,
+   McpPanel.tsx:231-240) — 8px is the majority size; a couple of call sites
+   use 7px and should override width/height inline until they migrate to a
+   size modifier. */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot--pulsing {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* Inline error banner (NewSessionModal.tsx:510-522, ConversationView.tsx:426-442). */
+.form-error {
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+  color: var(--error);
+  font-size: var(--font-size-11);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+}
+
+/* Small pill-shaped counter badge (App.tsx:385-391, Sidebar.tsx:660-664). */
+.badge-pill {
+  display: inline-block;
+  background: var(--bg-hover);
+  color: var(--text-hint);
+  font-size: var(--font-size-9);
+  font-weight: 500;
+  letter-spacing: 0;
+  padding: var(--space-1) var(--space-5);
+  border-radius: var(--radius-xl);
+}
+
+/* Centered placeholder filling a main-tab pane (App.tsx:440-452, 457-460). */
+.empty-pane {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-12-5);
+  color: var(--text-faint);
+}
+
+/* Selectable option pill (NewSessionModal.tsx:388-407, 415-435, 445-458,
+   469-491 — effort/permission/git/runtime chips). `chip--danger` only takes
+   effect combined with `chip--selected`, matching the bypassPermissions
+   chip, which is only recolored red once chosen. */
+.chip {
+  font-size: var(--font-size-11);
+  padding: var(--space-4) var(--space-9);
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  border: 1px solid var(--border-2);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+}
+.chip--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.chip--danger.chip--selected {
+  border-color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
+}
+
+/* Button (NewSessionModal.tsx:546-573 — the btn()/createBtn() factories, now
+   src/ui/Button.tsx). `.btn` carries the shared sizing; `--ghost` is the
+   neutral outline look (btn()/Cancel), `--primary` is the filled accent
+   action (createBtn()). Button.tsx pairs the native `disabled` attribute
+   with an explicit `is-disabled` class, so the disabled recolor is keyed off
+   `.is-disabled` (not `:disabled`) — and, because a disabled button must
+   look muted/recolored rather than translucent, `.btn.is-disabled` opts back
+   out of the generic `.is-disabled` dimming below (opacity/pointer-events),
+   which would otherwise double up with the recolor. */
+.btn {
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-12);
+  font-family: inherit;
+  height: 32px;
+  cursor: pointer;
+  padding: 0 var(--space-12);
+}
+.btn--ghost {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  color: var(--text-dim);
+}
+.btn--primary {
+  background: var(--accent);
+  border: none;
+  color: var(--bg-panel);
+  font-weight: 600;
+  padding: 0 var(--space-14);
+}
+.btn.is-disabled {
+  opacity: 1;
+  cursor: default;
+}
+.btn--primary.is-disabled {
+  background: var(--text-disabled);
+  color: var(--text-muted);
+}
+
+/* Modal shell (AgentsPanel.tsx:588-611, NewSessionModal.tsx:274-297,
+   SkillsPanel.tsx:297-311). `.modal-panel` deliberately has no width — every
+   call site sizes itself (420/480/dynamic). Some modals anchor near the top
+   (`align-items: flex-start` + `padding-top: 118px` + a higher `z-index:
+   50/20`) instead of centering — those are per-modal deltas layered on top
+   of this base via an inline override until they get a dedicated modifier. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 7, 9, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+.modal-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--bg-hover-2);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-modal);
+}
+.modal-header {
+  padding: var(--space-14) var(--space-16);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.modal-body {
+  padding: var(--space-14) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  overflow-y: auto;
+}
+/* Identical to .hint-bar below (every modal's footer IS a hint bar) — grouped
+   rather than duplicated, same spirit as the qcard-*/pcard-* consolidation
+   above. */
+.modal-footer,
+.hint-bar {
+  display: flex;
+  gap: var(--space-16);
+  padding: var(--space-9) var(--space-16);
+  border-top: 1px solid var(--border);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.hint-bar__key {
+  color: var(--text-dim);
+}
+
+/* Pane title bar (AgentsPanel.tsx:271-285, SkillsPanel.tsx:166-180; also
+   src/ui/PanelHeader.tsx, which renders two bare <span> children with no
+   classes/inline styles of their own — so the title/count look, including
+   the focus-accent recolor, has to be expressed structurally here rather
+   than via a __title class). */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-9) var(--space-12);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.panel-header > span:first-child {
+  font-size: var(--font-size-11);
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.panel-header--focused > span:first-child {
+  color: var(--accent);
+}
+.panel-header > span:last-child {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+/* Generic "inert" state (ProjectsModal.tsx:597-599 disabledIf()). */
+.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Converts two imperative e.currentTarget.style hover mutations into real
+   CSS :hover rules (not part of the required class contract, but the two
+   call sites the task calls out explicitly). */
+/* AgentsPanel.tsx:404-416 — kill-agent glyph, dim -> error on hover. */
+.agent-kill-action {
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.agent-kill-action:hover {
+  color: var(--error);
+}
+/* ConversationView.tsx:397-414 — "jump to latest" pill, raised -> hover bg. */
+.jump-to-latest-btn {
+  background: var(--bg-raised);
+}
+.jump-to-latest-btn:hover {
+  background: var(--bg-hover);
 }

@@ -1,0 +1,90 @@
+/* usage-bar (specs/usage-bar.md §8) — the always-mounted plan-limit strip. All colours
+   here are fixed per §8 tokens; the only genuinely dynamic values are the per-chip fill
+   percent/colour and the two hover/dimmed boolean states, which stay inline or become
+   modifier classes below. */
+
+.usage-bar {
+  height: 28px;
+  flex: 0 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding: 0 var(--space-12);
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--font-size-10-5);
+}
+
+.usage-meters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-18);
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 1;
+}
+.usage-meters--dimmed {
+  opacity: 0.45;
+}
+
+.usage-error-full {
+  color: var(--error);
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  white-space: nowrap;
+}
+
+.usage-error-glyph {
+  color: var(--error);
+  flex: 0 0 auto;
+}
+
+.usage-empty {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.usage-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  flex: 0 0 auto;
+}
+
+.usage-chip-label {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.usage-track {
+  width: 52px;
+  height: var(--space-4);
+  border-radius: var(--radius-xs);
+  background: var(--border);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.usage-fill {
+  display: block;
+  height: 100%;
+}
+
+.usage-percent {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-fresh {
+  color: var(--text-faint);
+  flex: 0 0 auto;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.usage-fresh--hover {
+  color: var(--text-dim);
+}

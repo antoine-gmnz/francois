@@ -20,14 +20,7 @@ import {
 } from '../commands/slash-menu';
 import SlashMenu from '../commands/SlashMenu';
 import { useStore } from '../../lib/store';
-
-const C = {
-  accent: 'var(--accent)',
-  faint: 'var(--text-faint)',
-  dim: 'var(--text-dim)',
-  userBody: 'var(--text-strong)',
-  error: 'var(--error)',
-};
+import './conversation.css';
 
 // Block apply rules (reducer) live in ./conversation-blocks — pure + unit-tested.
 
@@ -334,59 +327,29 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   );
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div className="conv-root">
       {/* resume-fail banner (durable-sessions FR-14) */}
       {resumeFailed && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            background: 'var(--bg-raised)',
-            borderLeft: '2px solid var(--warn)',
-            borderRadius: 4,
-            padding: '8px 11px',
-            margin: '6px 8px',
-            flexShrink: 0,
-            animation: 'fadeIn 120ms ease-out',
-          }}
-        >
-          <span style={{ fontSize: 11.5, color: 'var(--text-hint)', flex: 1 }}>previous thread unavailable — continuing fresh</span>
-          <span onClick={() => setResumeFailed(false)} style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }} title="dismiss">
+        <div className="resume-banner">
+          <span className="resume-banner__text">previous thread unavailable — continuing fresh</span>
+          <span onClick={() => setResumeFailed(false)} className="resume-banner__dismiss" title="dismiss">
             ✕
           </span>
         </div>
       )}
 
       {/* transcript */}
-      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        <div
-          ref={scrollRef}
-          onScroll={onScroll}
-          className="scz"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            overflow: 'auto',
-            padding: '16px 18px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-            // The app root disables selection (styles.css body rule) for chrome;
-            // the transcript is CONTENT — copying out of it must work.
-            userSelect: 'text',
-            cursor: 'auto',
-          }}
-        >
+      <div className="conv-transcript-wrap">
+        <div ref={scrollRef} onScroll={onScroll} className="scz conv-scroll">
           {hydrationError ? (
             <Centered>
-              <span style={{ color: C.error }}>{hydrationError}</span>
+              <span className="conv-error-text">{hydrationError}</span>
             </Centered>
           ) : hydrated && state.blocks.length === 0 ? (
             <Centered>
-              <div style={{ fontSize: 12, color: C.dim }}>{meta && (displayWslCwd(meta.cwd) ?? meta.cwd)}</div>
-              <div style={{ fontSize: 11, color: C.faint, marginTop: 2 }}>{meta?.model.label}</div>
-              <div style={{ fontSize: 12.5, color: C.faint, marginTop: 10 }}>waiting for your first prompt</div>
+              <div className="conv-empty__cwd">{meta && (displayWslCwd(meta.cwd) ?? meta.cwd)}</div>
+              <div className="conv-empty__model">{meta?.model.label}</div>
+              <div className="conv-empty__hint">waiting for your first prompt</div>
             </Centered>
           ) : (
             compactBlocks(state.blocks).map((b) => <Block key={b.blockId} b={b} sessionId={sessionId} />)
@@ -394,63 +357,23 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         </div>
 
         {!isPinned && (
-          <div
-            onClick={jumpToLatest}
-            style={{
-              position: 'absolute',
-              bottom: 10,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              padding: '5px 12px',
-              borderRadius: 12,
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--border-2)',
-              fontSize: 10.5,
-              color: C.accent,
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--bg-raised)')}
-          >
+          <div onClick={jumpToLatest} className="jump-latest">
             ↓ jump to latest
           </div>
         )}
       </div>
 
       {/* input bar */}
-      <div style={{ position: 'relative', flexShrink: 0 }}>
+      <div className="composer-wrap">
         {/* slash-menu popup — anchored above the input bar, never covering it (FR-5) */}
         {popupOpen && (
           <SlashMenu items={filtered} selIdx={selIdx} onHover={setSelIdx} onRun={runCommand} onDismiss={dismissPopup} />
         )}
-        {sendError && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '100%',
-              left: 14,
-              right: 14,
-              marginBottom: 4,
-              background: 'color-mix(in srgb, var(--error) 9%, transparent)',
-              color: C.error,
-              fontSize: 11,
-              borderRadius: 4,
-              padding: '6px 10px',
-            }}
-          >
-            {sendError}
-          </div>
-        )}
-        <div
-          style={{
-            padding: '10px 14px',
-            borderTop: '1px solid var(--border)',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          <span style={{ color: disabled ? 'var(--text-disabled)' : C.accent, fontSize: 13, marginTop: 2 }}>›</span>
+        {sendError && <div className="send-error-banner">{sendError}</div>}
+        <div className="composer-bar">
+          <span className="composer-arrow" style={{ color: disabled ? 'var(--text-disabled)' : 'var(--accent)' }}>
+            ›
+          </span>
           <textarea
             ref={inputRef}
             value={input}
@@ -462,24 +385,12 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
             }}
             onKeyDown={onInputKey}
             rows={1}
-            style={{
-              flex: 1,
-              resize: 'none',
-              border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              color: C.userBody,
-              fontSize: 12.5,
-              fontFamily: 'inherit',
-              lineHeight: 1.5,
-              maxHeight: 130,
-              padding: 0,
-            }}
+            className="composer-input"
           />
-          <span style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 3, display: 'flex', gap: 10, flexShrink: 0 }}>
+          <span className="composer-hint">
             {status === 'running' && (
               <span>
-                <span style={{ color: C.accent }}>⌃C</span> interrupt
+                <span className="composer-hint__key">⌃C</span> interrupt
               </span>
             )}
             <span>⌘K palette</span>
@@ -491,21 +402,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        textAlign: 'center',
-        minHeight: 200,
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div className="conv-centered">{children}</div>;
 }
 
 // The per-block renderer moved to ./Block.tsx — agent-tab renders a subagent's

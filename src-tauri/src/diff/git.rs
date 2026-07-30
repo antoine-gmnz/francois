@@ -6,15 +6,8 @@ use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
+use crate::process_util::no_window;
 use crate::wsl;
-
-#[cfg(windows)]
-pub(crate) fn no_window(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash per git call
-}
-#[cfg(not(windows))]
-pub(crate) fn no_window(_cmd: &mut Command) {}
 
 /// Run `git <args>` in cwd with an argv array (never a shell string — FR-13).
 pub(crate) fn git(cwd: &str, args: &[&str]) -> std::io::Result<GitOut> {

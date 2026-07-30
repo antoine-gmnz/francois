@@ -20,13 +20,7 @@ import {
   otherTier,
 } from './permissions-editor';
 import { tierChip } from './permission-card';
-
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  error: 'var(--error)',
-};
+import './permissions.css';
 
 export default function PermissionsModal({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const [rules, setRules] = useState<PermissionRule[]>([]);
@@ -76,38 +70,16 @@ export default function PermissionsModal({ sessionId, onClose }: { sessionId: st
     void applyMutation({ call, setRules, setError, setBusy });
 
   return (
-    <div
-      onClick={onClose} // FR-29: backdrop click closes
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 20,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: 'var(--bg-panel)',
-          border: '1px solid var(--border-2)',
-          borderRadius: 6,
-          width: 'min(720px, 92vw)',
-          maxHeight: '80vh',
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '14px 16px',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexShrink: 0 }}>
-          <span style={{ fontSize: 10, letterSpacing: '0.12em', color: C.accent }}>PERMISSION RULES</span>
+    <div className="pmodal-backdrop" onClick={onClose}>
+      {/* FR-29: backdrop click closes */}
+      <div className="pmodal-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="pmodal-title-row">
+          <span className="pmodal-title">PERMISSION RULES</span>
           {/* Runtime-neutral: FR-13 puts a WSL session's global tier in the
               DISTRO's $HOME, so naming ~/.claude here would misstate where a
               promoted rule actually lands. */}
-          <span style={{ fontSize: 10, color: C.faint, flex: 1 }}>project · global Claude settings</span>
-          <span onClick={onClose} style={{ fontSize: 11, color: C.faint, cursor: 'pointer' }} title="close · Esc">
+          <span className="pmodal-subtitle">project · global Claude settings</span>
+          <span onClick={onClose} className="pmodal-close" title="close · Esc">
             ✕
           </span>
         </div>
@@ -117,49 +89,25 @@ export default function PermissionsModal({ sessionId, onClose }: { sessionId: st
           autoFocus
           placeholder="filter rules…"
           onChange={(e) => setQuery(e.target.value)}
-          style={{
-            marginTop: 10,
-            background: 'var(--bg-panel)',
-            border: '1px solid var(--border-2)',
-            borderRadius: 4,
-            height: 30,
-            color: 'var(--text)',
-            fontSize: 12,
-            fontFamily: 'inherit',
-            padding: '0 10px',
-            outline: 'none',
-            flexShrink: 0,
-          }}
+          className="pmodal-filter"
         />
 
-        {error !== null && (
-          <div style={{ marginTop: 8, fontSize: 11, color: C.error, flexShrink: 0 }}>{error}</div>
-        )}
+        {error !== null && <div className="pmodal-error">{error}</div>}
 
         {/* `busy` already drops concurrent row clicks; this gives that a visible
             affordance instead of silently swallowing them. No transition (§8). */}
-        <div
-          className="scz"
-          style={{
-            marginTop: 6,
-            overflowY: 'auto',
-            minHeight: 0,
-            flex: 1,
-            opacity: busy ? 0.6 : 1,
-            pointerEvents: busy ? 'none' : undefined,
-          }}
-        >
+        <div className={'scz pmodal-list' + (busy ? ' pmodal-list--busy' : '')}>
           {loading ? (
             <div className="prules-empty">reading settings…</div>
           ) : empty !== null ? (
             <div className="prules-empty">{empty}</div>
           ) : (
-            groups.map((g) => (
-              <div key={g.effect}>
-                <div className="prules-group">{effectLabel(g.effect)}</div>
+            groups.map((group) => (
+              <div key={group.effect}>
+                <div className="prules-group">{effectLabel(group.effect)}</div>
                 {/* Key by id AND index: a hand-edited settings file can repeat a
                     pattern inside one effect array, and ids are derived. */}
-                {g.rules.map((r, i) => (
+                {group.rules.map((r, i) => (
                   <div key={`${r.id}#${i}`} className={'prule' + (r.enabled ? '' : ' prule-off')}>
                     <span className={`prule-glyph prule-glyph-${r.effect}`}>{effectGlyph(r.effect)}</span>
                     <span className="prule-label">{r.label}</span>
@@ -199,9 +147,7 @@ export default function PermissionsModal({ sessionId, onClose }: { sessionId: st
           )}
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 10, color: C.dim, flexShrink: 0 }}>
-          Claude enforces these itself — a ruled call never asks again.
-        </div>
+        <div className="pmodal-footer">Claude enforces these itself — a ruled call never asks again.</div>
       </div>
     </div>
   );

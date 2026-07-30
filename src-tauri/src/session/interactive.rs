@@ -1,13 +1,13 @@
-//! locally intercepted slash commands (specs/interactive-commands.md).
+//! locally intercepted slash commands (specs/interactive-commands.md): the FR-1
+//! slash grammar, the CommandCard builders, and the non-spawning command bodies.
+//! The /usage · /cost probe lifecycle — the only part that owns a child process —
+//! now lives in usage_probe.rs; `run_intercepted_command` still dispatches to it
+//! through session/mod.rs's re-export.
 
 use super::*;
 
 use serde::Serialize;
 use serde_json::Value;
-use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 
 // ---------- interactive-commands card shapes (contract/common.ts, reproduced) ----------
@@ -472,190 +472,6 @@ pub(crate) fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&
             );
         }
     }
-}
-
-/// FR-6/7/11: begin the /usage//cost detached side-spawn — reserve the single probe
-/// slot, emit command.started + a pending block, then probe on a detached thread.
-/// Invisible to the turn lifecycle: status, queue, claude_session_id and
-/// contextUsedTokens are never touched.
-pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str) {
-    let engine = app.state::<Engine>();
-    let block_id = uuid();
-    let (cwd, model_id, runtime, slot) = {
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else {
-            return;
-        };
-        let Some(slot) = s.reserve_probe(&block_id) else {
-            // FR-11: one in-flight probe per session → instant notice on a fresh block.
-            drop(map);
-            finalize_command_block(
-                app,
-                session_id,
-                &uuid(),
-                command,
-                &CommandCard::Notice {
-                    text: "a usage check is already running".into(),
-                },
-            );
-            return;
-        };
-        s.buf_command_pending(&block_id, command);
-        s.last_activity_at = now_ms();
-        (s.cwd.clone(), s.model_id.clone(), s.runtime.clone(), slot)
-    };
-    emit(
-        app,
-        SessionEvent::CommandStarted {
-            session_id: session_id.into(),
-            block_id: block_id.clone(),
-            command: command.into(),
-        },
-    );
-    let app = app.clone();
-    let sid = session_id.to_string();
-    let command = command.to_string();
-    std::thread::spawn(move || {
-        run_probe(app, sid, block_id, command, cwd, model_id, runtime, slot)
-    });
-}
-
-/// FR-7/8/9/10: the detached probe body. Same invocation machinery as turns
-/// (session runtime incl. WSL + session cwd); NO --resume, no permission flags.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_probe(
-    app: AppHandle,
-    session_id: String,
-    block_id: String,
-    command: String,
-    cwd: String,
-    model_id: String,
-    runtime: String,
-    slot: Arc<Mutex<Option<Child>>>,
-) {
-    let args: Vec<String> = vec![
-        "-p".into(),
-        format!("/{command}"),
-        "--output-format".into(),
-        "stream-json".into(),
-        "--verbose".into(),
-        "--model".into(),
-        model_id,
-    ];
-    let (program, argv) = claude_invocation(&runtime, &cwd, args);
-    let mut cmd = Command::new(program);
-    cmd.args(argv);
-    if runtime != "wsl" {
-        cmd.current_dir(&cwd); // wsl probes get their cwd via `--cd` inside the distro
-    }
-    if let Some(path) = claude_path_env() {
-        cmd.env("PATH", path);
-    }
-    no_window(&mut cmd);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(_) => {
-            // FR-10 with session-engine FR-45's actionable wording where determinable.
-            let text = if runtime == "wsl" {
-                "couldn't fetch usage \u{2014} WSL not found. Install it (wsl --install) or use the native runtime."
-            } else {
-                "couldn't fetch usage \u{2014} Claude Code CLI not found. Install it and ensure `claude` is on PATH."
-            };
-            finish_probe(
-                &app,
-                &session_id,
-                &block_id,
-                &command,
-                CommandCard::Notice { text: text.into() },
-            );
-            return;
-        }
-    };
-    let stdout = child.stdout.take();
-    *slot.lock().unwrap() = Some(child);
-
-    // If the session was removed between reserve and spawn, its remove-path kill
-    // found an empty slot — kill the child ourselves and vanish (§7, FR-14).
-    let still_wanted = {
-        let engine = app.state::<Engine>();
-        let map = engine.sessions.lock().unwrap();
-        map.get(&session_id)
-            .and_then(|s| s.pending_probe.as_ref())
-            .map(|p| p.block_id == block_id)
-            .unwrap_or(false)
-    };
-    if !still_wanted {
-        if let Some(mut c) = slot.lock().unwrap().take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-        return;
-    }
-
-    // FR-10: 30s watchdog → kill. `done` stops the watchdog after a normal finish.
-    let done = Arc::new(AtomicBool::new(false));
-    let timed_out = Arc::new(AtomicBool::new(false));
-    {
-        let (slot, done, timed_out) = (slot.clone(), done.clone(), timed_out.clone());
-        std::thread::spawn(move || {
-            for _ in 0..(PROBE_TIMEOUT_SECS * 10) {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                if done.load(Ordering::SeqCst) {
-                    return;
-                }
-            }
-            timed_out.store(true, Ordering::SeqCst);
-            if let Some(c) = slot.lock().unwrap().as_mut() {
-                let _ = c.kill();
-            }
-        });
-    }
-
-    let mut lines: Vec<String> = Vec::new();
-    if let Some(out) = stdout {
-        for line in BufReader::new(out).lines() {
-            match line {
-                Ok(l) => lines.push(l),
-                Err(_) => break,
-            }
-        }
-    }
-    if let Some(mut c) = slot.lock().unwrap().take() {
-        let _ = c.wait();
-    }
-    done.store(true, Ordering::SeqCst);
-
-    // Remediation R1: prefer a fully-parsed answer over the timeout notice —
-    // an answer read just before the 30s kill must not be discarded (probe_card).
-    let card = probe_card(&command, &lines, timed_out.load(Ordering::SeqCst));
-    finish_probe(&app, &session_id, &block_id, &command, card);
-}
-
-/// Release the probe slot and finalize its pending block (FR-9/10 — a pending
-/// command block is never left open). If the session was removed mid-probe,
-/// nothing is emitted (session-engine FR-14).
-pub(crate) fn finish_probe(
-    app: &AppHandle,
-    session_id: &str,
-    block_id: &str,
-    command: &str,
-    card: CommandCard,
-) {
-    {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
-        let Some(s) = map.get_mut(session_id) else {
-            return;
-        };
-        match &s.pending_probe {
-            Some(p) if p.block_id == block_id => s.pending_probe = None,
-            _ => return, // superseded or cancelled — never finalize another probe's block
-        }
-    }
-    finalize_command_block(app, session_id, block_id, command, &card);
 }
 
 #[cfg(test)]

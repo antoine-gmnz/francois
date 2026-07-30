@@ -1,0 +1,132 @@
+/* ModelPicker.tsx — trigger + popover/submenu, ported 1:1 from the former
+   fieldStyle/panelStyle CSSProperties consts and the inline family/option
+   row styling. Selection/hover states that were previously computed inline
+   (or via imperative onMouseEnter/onMouseLeave) are now plain modifier
+   classes / :hover rules. */
+
+.model-picker__trigger {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  height: 32px;
+  color: var(--text);
+  font-size: var(--font-size-12-5);
+  padding: 0 var(--space-10);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  cursor: pointer;
+  opacity: 1;
+}
+
+.model-picker__trigger--disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.model-picker__trigger-label {
+  flex: 1;
+  color: var(--text-faint);
+}
+
+.model-picker__trigger-label--selected {
+  color: var(--text);
+}
+
+.model-picker__caret {
+  color: var(--text-faint);
+  font-size: var(--font-size-10);
+}
+
+.model-picker__brief {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  margin-top: var(--space-5);
+}
+
+/* Shared panel look for both the family list and the flown-out submenu. */
+.model-picker__panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--bg-hover-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover-lg);
+}
+
+.model-picker__popover {
+  position: fixed;
+  z-index: 40;
+}
+
+.model-picker__family {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-10);
+  border-left: 2px solid transparent;
+}
+
+.model-picker__family--active {
+  background: var(--bg-hover);
+}
+
+.model-picker__family--selected {
+  border-left-color: var(--accent);
+}
+
+.model-picker__family-label {
+  flex: 1;
+  font-size: var(--font-size-12);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.model-picker__family-label--selected {
+  color: var(--text-bright);
+}
+
+.model-picker__family-caret {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+.model-picker__submenu {
+  position: absolute;
+  left: 100%;
+  top: -1px;
+  margin-left: 3px;
+  min-width: 260px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.model-picker__option {
+  padding: var(--space-8) 11px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.model-picker__option--selected {
+  background: var(--bg-raised);
+  border-left-color: var(--accent);
+}
+
+.model-picker__option:not(.model-picker__option--selected):hover {
+  background: var(--bg-hover);
+}
+
+.model-picker__option-label {
+  font-size: var(--font-size-12);
+  color: var(--text);
+}
+
+.model-picker__option-label--selected {
+  color: var(--text-bright);
+}
+
+.model-picker__option-brief {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  margin-top: var(--space-2);
+}

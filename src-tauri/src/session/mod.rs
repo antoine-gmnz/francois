@@ -29,10 +29,12 @@ mod remote;
 mod remote_discovery;
 mod skills;
 mod slash;
+mod spawn;
 mod stdio;
 mod stream;
 mod tools;
 mod turn;
+mod usage_probe;
 
 pub(crate) use agent_transcript::*;
 pub(crate) use agents::*;
@@ -48,10 +50,12 @@ pub(crate) use remote::*;
 pub(crate) use remote_discovery::*;
 pub(crate) use skills::*;
 pub(crate) use slash::*;
+pub(crate) use spawn::*;
 pub(crate) use stdio::*;
 pub(crate) use stream::*;
 pub(crate) use tools::*;
 pub(crate) use turn::*;
+pub(crate) use usage_probe::*;
 
 #[cfg(test)]
 mod testutil;
@@ -67,7 +71,7 @@ use crate::usage::{parse_meter_line, probe_answer, synthetic_text, UsageMeter};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
-use std::process::{Child, ChildStdin, Command};
+use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -83,108 +87,6 @@ const DEFAULT_MODEL: &str = "sonnet";
 /// interactive-commands FR-10: a /usage//cost probe is killed after this long.
 /// Reused by the app-scoped usage-bar probe (usage.rs, usage-bar FR-8).
 pub(crate) const PROBE_TIMEOUT_SECS: u64 = 30;
-
-fn valid_effort(e: &str) -> bool {
-    matches!(e, "low" | "medium" | "high" | "xhigh" | "max")
-}
-
-/// contract/common.ts PermissionMode. The CLI's `auto`/`dontAsk` are deliberately
-/// excluded (auto aborts headless -p runs on classifier blocks; dontAsk needs a
-/// paired allowedTools list).
-fn valid_permission_mode(m: &str) -> bool {
-    matches!(m, "default" | "plan" | "acceptEdits" | "bypassPermissions")
-}
-
-/// contract/common.ts ClaudeRuntime. 'wsl' is only accepted on Windows (create-time check).
-fn valid_runtime(r: &str) -> bool {
-    matches!(r, "native" | "wsl")
-}
-
-/// `--permission-mode` args for a turn. 'default' adds NOTHING — the turn inherits
-/// the user's ~/.claude settings (permissions.defaultMode / allow rules), exactly
-/// the pre-feature behavior. The flag does not persist across --resume, so every
-/// invocation passes it explicitly.
-fn permission_args(mode: &str) -> Vec<String> {
-    match mode {
-        "plan" | "acceptEdits" | "bypassPermissions" => {
-            vec!["--permission-mode".into(), mode.into()]
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// (program, argv) launching `claude <claude_args>` under a session's runtime.
-/// wsl: `wsl.exe [-d <distro>] --cd <dir> -- claude …` via `wsl_base_args` — a
-/// WSL UNC cwd targets the distro named in the path (bare wsl.exe hits the
-/// DEFAULT distro, wrong on multi-distro machines) with its pre-translated Linux
-/// path (`--cd '\\wsl.localhost\…'` fails with Wsl/E_INVALIDARG — verified
-/// live); a drive-letter cwd passes verbatim (wsl.exe maps it to /mnt/… itself).
-/// native: plain `claude …`; the caller sets current_dir.
-fn claude_invocation(runtime: &str, cwd: &str, claude_args: Vec<String>) -> (String, Vec<String>) {
-    if runtime == "wsl" {
-        let mut argv = crate::wsl::wsl_base_args(cwd);
-        argv.push("--".to_string());
-        argv.push("claude".to_string());
-        argv.extend(claude_args);
-        ("wsl.exe".into(), argv)
-    } else {
-        ("claude".into(), claude_args)
-    }
-}
-
-/// A GUI app launched from Finder/Dock/Spotlight (not a terminal) inherits
-/// launchd's minimal default PATH, not the interactive shell's — so a `claude`
-/// installed via nvm/homebrew/~/.local/bin/etc. is invisible to `Command::new`
-/// even though it runs fine from a terminal. Ask the user's login shell for
-/// its PATH once and merge it in ahead of every spawn. Markers rather than a
-/// plain `echo $PATH` because an interactive shell (`-i`, needed since many
-/// PATH exports live in .zshrc/.bashrc, not the non-interactive .zprofile)
-/// may print MOTD/nvm-banner noise before its output.
-#[cfg(not(windows))]
-fn login_shell_path() -> Option<String> {
-    const START: &str = "__francois_path_start__";
-    const END: &str = "__francois_path_end__";
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = Command::new(shell)
-        // `${PATH}` (not `$PATH`), so the shell doesn't read the marker's trailing
-        // text as part of the variable name and expand it to nothing.
-        .args(["-ilc", &format!("echo -n {START}${{PATH}}{END}")])
-        .output()
-        .ok()?;
-    let text = String::from_utf8(out.stdout).ok()?;
-    let start = text.find(START)? + START.len();
-    let end = text[start..].find(END)? + start;
-    let path = text[start..end].trim();
-    (!path.is_empty()).then(|| path.to_string())
-}
-#[cfg(windows)]
-fn login_shell_path() -> Option<String> {
-    None // Windows GUI apps inherit the full user PATH from explorer.exe already.
-}
-
-static SHELL_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-
-/// The PATH to spawn `claude` with: the login shell's PATH (memoized, resolved
-/// at most once per run) prefixed onto the process's own, so directories only
-/// a shell rc file adds are searched too. `None` when unresolvable — callers
-/// then leave the spawn's PATH untouched.
-pub(crate) fn claude_path_env() -> Option<String> {
-    let shell_path = SHELL_PATH.get_or_init(login_shell_path).as_ref()?;
-    let current = std::env::var("PATH").unwrap_or_default();
-    Some(if current.is_empty() {
-        shell_path.clone()
-    } else {
-        format!("{shell_path}:{current}")
-    })
-}
-
-#[cfg(windows)]
-pub(crate) fn no_window(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash (esp. wsl.exe)
-}
-#[cfg(not(windows))]
-pub(crate) fn no_window(_cmd: &mut Command) {}
 
 #[derive(Serialize, Clone)]
 pub(crate) struct SessionMeta {
@@ -450,6 +352,67 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    /// Build a freshly-registered `Session`. Serves BOTH `session_create` (a
+    /// brand-new session: zeroed usage, no resume anchor, empty transcript) and
+    /// `load_persisted` (a reloaded record: its saved usage/resume-id/transcript,
+    /// `started_at` reset to load time per FR-18's honest-clock choice) — the two
+    /// literals were kept in lockstep by hand before this; now there is one.
+    /// Every field NOT taken here (queue, current turn, agents, mcp, …) is
+    /// in-memory-only run state that is always empty at construction.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        id: String,
+        name: String,
+        cwd: String,
+        model_id: String,
+        context_used_tokens: u64,
+        context_limit_tokens: u64,
+        started_at: u64,
+        last_activity_at: u64,
+        effort: Option<String>,
+        permission_mode: String,
+        runtime: String,
+        allow_git: bool,
+        project_id: Option<String>,
+        claude_session_id: Option<String>,
+        block_buffer: Vec<BufBlock>,
+    ) -> Session {
+        Session {
+            id,
+            name,
+            cwd,
+            model_id,
+            status: "idle".into(),
+            context_used_tokens,
+            context_limit_tokens,
+            started_at,
+            last_activity_at,
+            error_message: None,
+            effort,
+            permission_mode,
+            runtime,
+            allow_git,
+            project_id,
+            queue: VecDeque::new(),
+            claude_session_id,
+            current: None,
+            pending_probe: None,
+            agents: HashMap::new(),
+            agent_order: Vec::new(),
+            agent_by_tool: HashMap::new(),
+            agent_steps: HashMap::new(),
+            agent_step_seq: HashMap::new(),
+            agent_inner_tools: HashMap::new(),
+            agent_backend_ref: HashMap::new(),
+            agent_blocks: HashMap::new(),
+            agent_block_seq: HashMap::new(),
+            agent_blocks_dropped: HashMap::new(),
+            block_buffer,
+            mcp: HashMap::new(),
+            cli_commands: Vec::new(),
+        }
+    }
+
     fn meta(&self) -> SessionMeta {
         let label = label_for(&self.model_id);
         SessionMeta {
@@ -771,31 +734,6 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// wsl.exe children need `TERM` forwarded across the distro boundary explicitly:
-/// setting it on this (Windows-side) process's own env does not cross wsl.exe's
-/// boundary; `WSLENV` with the `/u` flag does. Append (':'-joined) to any existing
-/// `WSLENV` list rather than overwrite it — the inherited environment may already
-/// carry one. Shared by shell-terminal's `shell_ensure` (main.rs) and
-/// remote-control's PTY host (remote.rs) — for the wsl runtime, remote-control's
-/// PTY stream is the feature's ONLY url source (spec §7 #7), so a missing `TERM`
-/// there breaks it outright, not just cosmetically.
-pub(crate) fn wsl_term_env() -> String {
-    let wslenv = std::env::var("WSLENV").ok().filter(|v| !v.is_empty());
-    match wslenv {
-        // Already forwarded (any flag variant counts) → leave the list untouched;
-        // otherwise trim a trailing ':' so we never emit an empty entry.
-        Some(existing)
-            if existing
-                .split(':')
-                .any(|e| e == "TERM/u" || e.starts_with("TERM/")) =>
-        {
-            existing
-        }
-        Some(existing) => format!("{}:TERM/u", existing.trim_end_matches(':')),
-        None => "TERM/u".to_string(),
-    }
-}
-
 fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -811,55 +749,6 @@ fn basename(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn permission_args_only_for_explicit_modes() {
-        assert!(permission_args("default").is_empty()); // inherit ~/.claude settings — no flag
-        assert!(permission_args("garbage").is_empty());
-        assert_eq!(permission_args("plan"), vec!["--permission-mode", "plan"]);
-        assert_eq!(
-            permission_args("acceptEdits"),
-            vec!["--permission-mode", "acceptEdits"]
-        );
-        assert_eq!(
-            permission_args("bypassPermissions"),
-            vec!["--permission-mode", "bypassPermissions"]
-        );
-    }
-
-    #[test]
-    fn claude_invocation_wraps_wsl() {
-        let (prog, args) = claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()]);
-        assert_eq!(prog, "claude");
-        assert_eq!(args, vec!["-p", "hi"]);
-        // wsl + drive cwd: wsl.exe maps it to /mnt/… itself — passed verbatim,
-        // no -d (no distro info → default distro is the only sane target)
-        let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()]);
-        assert_eq!(prog, "wsl.exe");
-        assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
-        // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG
-        // live) AND target the distro named in the path — bare wsl.exe hits the
-        // default distro, which need not be the one holding the repo.
-        let (prog, args) = claude_invocation(
-            "wsl",
-            "\\\\wsl.localhost\\Ubuntu\\home\\u\\api",
-            vec!["-p".into(), "hi".into()],
-        );
-        assert_eq!(prog, "wsl.exe");
-        assert_eq!(
-            args,
-            vec![
-                "-d",
-                "Ubuntu",
-                "--cd",
-                "/home/u/api",
-                "--",
-                "claude",
-                "-p",
-                "hi"
-            ]
-        );
-    }
 
     #[test]
     fn subagent_tool_recognizes_task_and_agent() {

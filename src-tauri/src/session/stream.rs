@@ -18,6 +18,17 @@ pub(crate) struct ToolRec {
     is_task: bool,
 }
 
+/// What kind of content block a stream index is carrying.
+///
+/// This was a bare `u8` in a positional tuple with `0=text 1=tool` recorded only
+/// in a comment — so a miswritten literal, or a comparison against the wrong
+/// number, compiled clean and silently routed a tool block through the text path.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum BlockKind {
+    Text,
+    Tool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_reader(
     app: AppHandle,
@@ -40,11 +51,11 @@ pub(crate) fn run_reader(
     };
     let reader = BufReader::new(stdout);
 
-    // index -> (blockId, kind, input_accum)   kind: 0=text 1=tool
-    let mut blocks: HashMap<u64, (String, u8, String)> = HashMap::new();
+    // index -> (blockId, kind, input_accum)
+    let mut blocks: HashMap<u64, (String, BlockKind, String)> = HashMap::new();
     let mut tools: HashMap<String, ToolRec> = HashMap::new(); // tool_use_id -> rec
     let mut text_accum: HashMap<String, String> = HashMap::new(); // blockId -> text
-    let mut open_block: Option<(String, u8)> = None;
+    let mut open_block: Option<(String, BlockKind)> = None;
     let mut ctx_usage = ContextTracker::default();
     let mut got_result = false;
     let mut got_init = false; // did the stream start (system/init)? — resume-fail detection (FR-8)
@@ -289,7 +300,7 @@ pub(crate) fn run_reader(
 
     // Close any block left open (interrupt or crash) — FR-24/FR-34.
     if let Some((bid, kind)) = open_block.take() {
-        if kind == 0 {
+        if kind == BlockKind::Text {
             emit(
                 &app,
                 SessionEvent::AssistantDone {
@@ -439,10 +450,10 @@ pub(crate) fn handle_stream_event(
     session_id: &str,
     cwd: &str,
     ev: &Value,
-    blocks: &mut HashMap<u64, (String, u8, String)>,
+    blocks: &mut HashMap<u64, (String, BlockKind, String)>,
     tools: &mut HashMap<String, ToolRec>,
     text_accum: &mut HashMap<String, String>,
-    open_block: &mut Option<(String, u8)>,
+    open_block: &mut Option<(String, BlockKind)>,
     ctx_usage: &mut ContextTracker,
 ) {
     ctx_usage.observe_stream_event(ev);
@@ -455,7 +466,7 @@ pub(crate) fn handle_stream_event(
             match cbt {
                 "text" => {
                     let bid = uuid();
-                    blocks.insert(idx, (bid.clone(), 0, String::new()));
+                    blocks.insert(idx, (bid.clone(), BlockKind::Text, String::new()));
                     text_accum.insert(bid, String::new());
                 }
                 "tool_use" => {
@@ -474,7 +485,7 @@ pub(crate) fn handle_stream_event(
                         .get("input")
                         .cloned()
                         .unwrap_or(Value::Object(Default::default()));
-                    blocks.insert(idx, (bid.clone(), 1, String::new()));
+                    blocks.insert(idx, (bid.clone(), BlockKind::Tool, String::new()));
                     let is_task = is_subagent_tool(&tool);
                     tools.insert(
                         tuid.clone(),
@@ -551,14 +562,14 @@ pub(crate) fn handle_stream_event(
             match dt {
                 "text_delta" => {
                     if let Some((bid, kind, _)) = blocks.get(&idx).cloned() {
-                        if kind == 0 {
+                        if kind == BlockKind::Text {
                             let text = delta
                                 .get("text")
                                 .and_then(|t| t.as_str())
                                 .unwrap_or("")
                                 .to_string();
                             text_accum.entry(bid.clone()).or_default().push_str(&text);
-                            *open_block = Some((bid.clone(), 0));
+                            *open_block = Some((bid.clone(), BlockKind::Text));
                             emit(
                                 app,
                                 SessionEvent::AssistantDelta {
@@ -595,7 +606,7 @@ pub(crate) fn handle_stream_event(
         "content_block_stop" => {
             let idx = ev.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
             if let Some((bid, kind, slot)) = blocks.get(&idx).cloned() {
-                if kind == 0 {
+                if kind == BlockKind::Text {
                     let text = text_accum.get(&bid).cloned().unwrap_or_default();
                     let block = {
                         let engine = app.state::<Engine>();
@@ -652,7 +663,7 @@ pub(crate) fn handle_stream_event(
                             ems
                         };
                         emit_agent_emissions(app, session_id, bg_ems);
-                        *open_block = Some((bid.clone(), 1));
+                        *open_block = Some((bid.clone(), BlockKind::Tool));
                         emit(
                             app,
                             SessionEvent::ToolStart {
@@ -675,7 +686,7 @@ pub(crate) fn handle_tool_results(
     session_id: &str,
     v: &Value,
     tools: &mut HashMap<String, ToolRec>,
-    open_block: &mut Option<(String, u8)>,
+    open_block: &mut Option<(String, BlockKind)>,
 ) {
     let content = v
         .get("message")

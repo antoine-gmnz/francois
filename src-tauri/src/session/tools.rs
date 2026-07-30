@@ -32,33 +32,162 @@ pub(crate) fn str_field<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
     input.get(key).and_then(|v| v.as_str())
 }
 
-pub(crate) fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
-    match tool {
-        "Read" | "Edit" | "MultiEdit" | "Write" => str_field(input, "file_path")
-            .map(|p| rel_path(p, cwd))
-            .unwrap_or_default(),
-        "Grep" => truncate(str_field(input, "pattern").unwrap_or(""), 60),
-        "Glob" => str_field(input, "pattern").unwrap_or("").to_string(),
-        "Bash" => truncate(str_field(input, "command").unwrap_or(""), 60),
-        "Task" | "Agent" => str_field(input, "subagent_type")
-            .or_else(|| str_field(input, "description"))
-            .unwrap_or("subagent")
-            .to_string(),
-        "WebFetch" => str_field(input, "url").unwrap_or("").to_string(),
-        "WebSearch" => str_field(input, "query").unwrap_or("").to_string(),
-        _ => {
-            if let Some(obj) = input.as_object() {
-                for (k, val) in obj {
-                    if k.starts_with("__") {
-                        continue;
-                    }
-                    if let Some(s) = val.as_str() {
-                        return truncate(s, 60);
-                    }
-                }
+/// How one tool renders: `summary` condenses its INPUT (the block header),
+/// `meta` condenses its RESULT (the trailing detail).
+///
+/// These two used to be separate `match tool { … }` blocks — structurally
+/// parallel over the same tool names, but maintained in lockstep by hand, so
+/// adding a tool to one and forgetting the other compiled clean and silently
+/// degraded to the fallback. One row per tool means a name is either in the
+/// table with BOTH halves named, or absent and both halves fall back together.
+struct ToolSpec {
+    /// (input, cwd) -> header text
+    summary: fn(&Value, &str) -> String,
+    /// (input, result) -> meta text
+    meta: fn(&Value, &str) -> String,
+}
+
+const TOOLS: &[(&str, ToolSpec)] = &[
+    (
+        "Read",
+        ToolSpec {
+            summary: summary_file_path,
+            meta: meta_result_lines,
+        },
+    ),
+    (
+        "Edit",
+        ToolSpec {
+            summary: summary_file_path,
+            meta: meta_edit,
+        },
+    ),
+    (
+        "MultiEdit",
+        ToolSpec {
+            summary: summary_file_path,
+            meta: meta_multi_edit,
+        },
+    ),
+    (
+        "Write",
+        ToolSpec {
+            summary: summary_file_path,
+            meta: meta_write,
+        },
+    ),
+    (
+        "Grep",
+        ToolSpec {
+            summary: summary_pattern_truncated,
+            meta: meta_grep,
+        },
+    ),
+    (
+        "Glob",
+        ToolSpec {
+            summary: summary_pattern,
+            meta: meta_glob,
+        },
+    ),
+    (
+        "Bash",
+        ToolSpec {
+            summary: summary_command,
+            meta: meta_bash,
+        },
+    ),
+    (
+        "Task",
+        ToolSpec {
+            summary: summary_subagent,
+            meta: meta_task,
+        },
+    ),
+    (
+        "Agent",
+        ToolSpec {
+            summary: summary_subagent,
+            meta: meta_task,
+        },
+    ),
+    (
+        "WebFetch",
+        ToolSpec {
+            summary: summary_url,
+            meta: meta_done,
+        },
+    ),
+    (
+        "WebSearch",
+        ToolSpec {
+            summary: summary_query,
+            meta: meta_done,
+        },
+    ),
+];
+
+fn tool_spec(tool: &str) -> Option<&'static ToolSpec> {
+    TOOLS
+        .iter()
+        .find(|(name, _)| *name == tool)
+        .map(|(_, spec)| spec)
+}
+
+// ---------- summary halves ----------
+
+fn summary_file_path(input: &Value, cwd: &str) -> String {
+    str_field(input, "file_path")
+        .map(|p| rel_path(p, cwd))
+        .unwrap_or_default()
+}
+
+fn summary_pattern_truncated(input: &Value, _cwd: &str) -> String {
+    truncate(str_field(input, "pattern").unwrap_or(""), 60)
+}
+
+fn summary_pattern(input: &Value, _cwd: &str) -> String {
+    str_field(input, "pattern").unwrap_or("").to_string()
+}
+
+fn summary_command(input: &Value, _cwd: &str) -> String {
+    truncate(str_field(input, "command").unwrap_or(""), 60)
+}
+
+fn summary_subagent(input: &Value, _cwd: &str) -> String {
+    str_field(input, "subagent_type")
+        .or_else(|| str_field(input, "description"))
+        .unwrap_or("subagent")
+        .to_string()
+}
+
+fn summary_url(input: &Value, _cwd: &str) -> String {
+    str_field(input, "url").unwrap_or("").to_string()
+}
+
+fn summary_query(input: &Value, _cwd: &str) -> String {
+    str_field(input, "query").unwrap_or("").to_string()
+}
+
+/// Unknown tool: show the first non-internal string field, else the raw JSON.
+fn summary_fallback(input: &Value) -> String {
+    if let Some(obj) = input.as_object() {
+        for (k, val) in obj {
+            if k.starts_with("__") {
+                continue;
             }
-            truncate(&input.to_string(), 60)
+            if let Some(s) = val.as_str() {
+                return truncate(s, 60);
+            }
         }
+    }
+    truncate(&input.to_string(), 60)
+}
+
+pub(crate) fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
+    match tool_spec(tool) {
+        Some(spec) => (spec.summary)(input, cwd),
+        None => summary_fallback(input),
     }
 }
 
@@ -89,73 +218,99 @@ pub(crate) fn edit_counts(old: &str, new: &str) -> (usize, usize) {
     (n, m)
 }
 
+// ---------- meta halves ----------
+
+fn meta_result_lines(_input: &Value, result: &str) -> String {
+    format!("{} lines", line_count(result))
+}
+
+fn meta_grep(_input: &Value, result: &str) -> String {
+    let matches = line_count(result);
+    if matches == 0 {
+        return "no matches".into();
+    }
+    let files: std::collections::HashSet<&str> = result
+        .lines()
+        .filter_map(|l| l.split(':').next())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if result.lines().any(|l| l.contains(':')) {
+        format!("{matches} matches · {} files", files.len())
+    } else {
+        format!("{matches} files")
+    }
+}
+
+fn meta_glob(_input: &Value, result: &str) -> String {
+    format!("{} files", line_count(result))
+}
+
+fn meta_edit(input: &Value, _result: &str) -> String {
+    let old = str_field(input, "old_string").unwrap_or("");
+    let new = str_field(input, "new_string").unwrap_or("");
+    let (added, removed) = edit_counts(old, new);
+    format!("+{added} \u{2212}{removed}")
+}
+
+fn meta_multi_edit(input: &Value, _result: &str) -> String {
+    let mut total_added = 0;
+    let mut total_removed = 0;
+    if let Some(edits) = input.get("edits").and_then(|e| e.as_array()) {
+        for edit in edits {
+            let old = edit
+                .get("old_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let new = edit
+                .get("new_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let (added, removed) = edit_counts(old, new);
+            total_added += added;
+            total_removed += removed;
+        }
+    }
+    format!("+{total_added} \u{2212}{total_removed}")
+}
+
+fn meta_write(input: &Value, _result: &str) -> String {
+    format!(
+        "{} lines",
+        line_count(str_field(input, "content").unwrap_or(""))
+    )
+}
+
+fn meta_bash(_input: &Value, result: &str) -> String {
+    if result.trim().is_empty() {
+        "done".into()
+    } else {
+        format!("{} lines", line_count(result))
+    }
+}
+
+fn meta_task(_input: &Value, result: &str) -> String {
+    let first = result
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(80)
+        .collect::<String>();
+    if first.is_empty() {
+        "done".into()
+    } else {
+        first
+    }
+}
+
+fn meta_done(_input: &Value, _result: &str) -> String {
+    "done".into()
+}
+
 pub(crate) fn tool_meta(tool: &str, input: &Value, result: &str) -> String {
-    match tool {
-        "Read" => format!("{} lines", line_count(result)),
-        "Grep" => {
-            let matches = line_count(result);
-            if matches == 0 {
-                return "no matches".into();
-            }
-            let files: std::collections::HashSet<&str> = result
-                .lines()
-                .filter_map(|l| l.split(':').next())
-                .filter(|p| !p.is_empty())
-                .collect();
-            if result.lines().any(|l| l.contains(':')) {
-                format!("{matches} matches · {} files", files.len())
-            } else {
-                format!("{matches} files")
-            }
-        }
-        "Glob" => format!("{} files", line_count(result)),
-        "Edit" => {
-            let old = str_field(input, "old_string").unwrap_or("");
-            let new = str_field(input, "new_string").unwrap_or("");
-            let (n, m) = edit_counts(old, new);
-            format!("+{n} \u{2212}{m}")
-        }
-        "MultiEdit" => {
-            let mut tn = 0;
-            let mut tm = 0;
-            if let Some(edits) = input.get("edits").and_then(|e| e.as_array()) {
-                for e in edits {
-                    let old = e.get("old_string").and_then(|v| v.as_str()).unwrap_or("");
-                    let new = e.get("new_string").and_then(|v| v.as_str()).unwrap_or("");
-                    let (n, m) = edit_counts(old, new);
-                    tn += n;
-                    tm += m;
-                }
-            }
-            format!("+{tn} \u{2212}{tm}")
-        }
-        "Write" => format!(
-            "{} lines",
-            line_count(str_field(input, "content").unwrap_or(""))
-        ),
-        "Bash" => {
-            if result.trim().is_empty() {
-                "done".into()
-            } else {
-                format!("{} lines", line_count(result))
-            }
-        }
-        "Task" | "Agent" => {
-            let first = result
-                .lines()
-                .next()
-                .unwrap_or("")
-                .chars()
-                .take(80)
-                .collect::<String>();
-            if first.is_empty() {
-                "done".into()
-            } else {
-                first
-            }
-        }
-        "WebFetch" | "WebSearch" => "done".into(),
-        _ => "done".into(),
+    match tool_spec(tool) {
+        Some(spec) => (spec.meta)(input, result),
+        None => "done".into(),
     }
 }
 
@@ -253,5 +408,44 @@ mod tests {
     fn agent_tool_summary_uses_subagent_type() {
         let input = json!({ "subagent_type": "explorer", "description": "find files" });
         assert_eq!(tool_summary("Agent", &input, ""), "explorer");
+    }
+
+    /// The point of the TOOLS table: a tool name is known to BOTH halves or to
+    /// neither. Before the table these were two hand-synced matches, so a name
+    /// could be summarized specifically while its meta silently fell back to
+    /// "done". Adding a row to TOOLS without both fns will not compile; this
+    /// guards the other direction — no stray name recognized by only one half.
+    #[test]
+    fn every_known_tool_defines_both_halves() {
+        let names: Vec<&str> = TOOLS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            vec![
+                "Read",
+                "Edit",
+                "MultiEdit",
+                "Write",
+                "Grep",
+                "Glob",
+                "Bash",
+                "Task",
+                "Agent",
+                "WebFetch",
+                "WebSearch",
+            ]
+        );
+        for name in &names {
+            assert!(tool_spec(name).is_some(), "{name} missing from the table");
+        }
+    }
+
+    /// An unrecognized tool falls back on both halves together: the summary
+    /// shows its first string field, the meta says "done".
+    #[test]
+    fn unknown_tool_falls_back_on_both_halves() {
+        assert!(tool_spec("TotallyNewTool").is_none());
+        let input = json!({ "__internal": "hidden", "thing": "visible value" });
+        assert_eq!(tool_summary("TotallyNewTool", &input, ""), "visible value");
+        assert_eq!(tool_meta("TotallyNewTool", &input, "some output"), "done");
     }
 }

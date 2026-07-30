@@ -1,22 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import type { CSSProperties, RefObject } from 'react';
 import type { AppError } from '../../../contract/common';
 import type { DiffSummary, DiffFileSummary, DiffFileStatus, FileDiff, DiffHunk, DiffLine } from '../../../contract/diff-view';
 import { diffCommit, diffGetFileDiff, diffGetSummary, diffStageAll, onDiffEvent } from '../../lib/api';
 import { useStore } from '../../lib/store';
-
-const C = {
-  accent: 'var(--accent)',
-  add: 'var(--success)',
-  del: 'var(--error)',
-  name: 'var(--text)',
-  bright: 'var(--text-bright)',
-  base: 'var(--text-muted)',
-  faint: 'var(--text-faint)',
-  inert: 'var(--text-disabled)',
-  hint: 'var(--text-hint)',
-  border: 'var(--border)',
-};
+import { ListRow } from '../../ui/ListRow';
+import { nextDiffEventAction } from './diff-events';
+import './diff.css';
 
 // per-kind diff-row tokens (spec §8 dstyle table)
 const KIND: Record<string, { bg: string; fg: string; sign: string; signFg: string; noFg: string }> = {
@@ -81,7 +71,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const files = summary?.files ?? [];
 
   // Paths that will actually be committed (everything not explicitly unchecked).
-  const selectedPaths = useMemo(() => files.filter((f) => !deselected.has(f.path)).map((f) => f.path), [files, deselected]);
+  const selectedPaths = useMemo(() => files.filter((file) => !deselected.has(file.path)).map((file) => file.path), [files, deselected]);
   const selectedCount = selectedPaths.length;
   const allSelected = files.length > 0 && selectedCount === files.length;
   const selectedPathsRef = useRef<string[]>([]);
@@ -98,7 +88,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
 
   // Header checkbox: all-checked → uncheck every current file, otherwise select all.
   const toggleAll = useCallback(() => {
-    setDeselected((prev) => (files.length > 0 && files.every((f) => !prev.has(f.path)) ? new Set(files.map((f) => f.path)) : new Set()));
+    setDeselected((prev) => (files.length > 0 && files.every((file) => !prev.has(file.path)) ? new Set(files.map((file) => file.path)) : new Set()));
   }, [files]);
 
   // Load summary, preserving selection when the selected path survives (FR-19).
@@ -116,7 +106,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
             setSummary(res.data);
             setSummaryError(null);
             const prev = selectedRef.current;
-            const keep = prev && res.data.files.some((f) => f.path === prev);
+            const keep = prev && res.data.files.some((file) => file.path === prev);
             setSelectedPath(keep ? prev : (res.data.files[0]?.path ?? null));
           } else {
             setSummary(null);
@@ -146,16 +136,19 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
     // Register the listener BEFORE the first getSummary so that fetch's own echo is
     // guaranteed to be consumed by the counter (no mount-race stuck-at-1, N1).
     void onDiffEvent((e) => {
-      if (e.type !== 'diff.changed' || e.sessionId !== sessionId) return;
-      if (pendingEchoRef.current > 0) {
-        pendingEchoRef.current -= 1; // our own getSummary echo — do not refetch
-        return;
+      switch (nextDiffEventAction(e, sessionId, pendingEchoRef.current, summaryInFlightRef.current)) {
+        case 'ignore':
+          return;
+        case 'consumeEcho':
+          pendingEchoRef.current -= 1; // our own getSummary echo — do not refetch
+          return;
+        case 'queueRefresh':
+          refreshQueuedRef.current = true; // fold the burst into one trailing re-run
+          return;
+        case 'refetch':
+          loadSummary(sessionId); // external change
+          return;
       }
-      if (summaryInFlightRef.current) {
-        refreshQueuedRef.current = true; // fold the burst into one trailing re-run
-        return;
-      }
-      loadSummary(sessionId); // external change
     }).then((u) => {
       if (!mountedRef.current) {
         u();
@@ -200,7 +193,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const cycle = useCallback(
     (dir: 1 | -1) => {
       if (files.length === 0) return;
-      const i = files.findIndex((f) => f.path === selectedPath);
+      const i = files.findIndex((file) => file.path === selectedPath);
       const next = (i === -1 ? 0 : i + dir + files.length) % files.length;
       setSelectedPath(files[next].path);
     },
@@ -266,8 +259,8 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
         }
         return; // let all other keys type into the commit input
       }
-      const ae = document.activeElement as HTMLElement | null;
-      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return; // FR-22/23 text-input guard
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return; // FR-22/23 text-input guard
       if (e.key === 's' || e.key === 'S') {
         stageAll();
       } else if (e.key === 'c' || e.key === 'C') {
@@ -287,43 +280,36 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   // ---------- render ----------
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-deep)' }}>
+    <div className="diff-view">
       {/* main area: vertical file selector (left) + diff body (right) */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      <div className="diff-main">
         {/* file list — a vertical selector (replaces the horizontal chip strip, which
             became unusable with many files). Renders nothing when empty (spec §8). */}
         {files.length > 0 && (
-          <div
-            className="scz"
-            style={{ width: 236, flexShrink: 0, overflowY: 'auto', borderRight: `1px solid ${C.border}`, padding: '8px 6px' }}
-          >
-            <div
-              onClick={toggleAll}
-              title={allSelected ? 'deselect all' : 'select all'}
-              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 8px 6px', cursor: 'pointer', color: C.base, fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.4 }}
-            >
+          <div className="scz diff-filelist">
+            <div onClick={toggleAll} title={allSelected ? 'deselect all' : 'select all'} className="diff-filelist__header">
               <Checkbox checked={allSelected} indeterminate={selectedCount > 0 && !allSelected} />
               <span>{selectedCount} of {files.length} selected</span>
             </div>
-            {files.map((f) => (
+            {files.map((file) => (
               <FileRow
-                key={f.path}
-                f={f}
-                selected={f.path === selectedPath}
-                checked={!deselected.has(f.path)}
-                onClick={() => setSelectedPath(f.path)}
-                onToggle={() => toggleFile(f.path)}
+                key={file.path}
+                file={file}
+                selected={file.path === selectedPath}
+                checked={!deselected.has(file.path)}
+                onClick={() => setSelectedPath(file.path)}
+                onToggle={() => toggleFile(file.path)}
               />
             ))}
           </div>
         )}
 
         {/* body */}
-        <div ref={bodyScrollRef} className="scz" style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+        <div ref={bodyScrollRef} className="scz diff-body">
           {notRepo ? (
             <EmptyState text="not a git repository — initialize with `git init` in the shell" />
           ) : summaryError ? (
-            <EmptyState text={summaryError.message} color={C.del} />
+            <EmptyState text={summaryError.message} color="var(--error)" />
           ) : summary && files.length === 0 ? (
             <EmptyState text="working tree clean" />
           ) : (
@@ -367,23 +353,10 @@ function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?
   const on = checked || indeterminate;
   return (
     <span
-      style={{
-        width: 13,
-        height: 13,
-        flexShrink: 0,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 3,
-        border: `1px solid ${on ? C.accent : C.base}`,
-        background: checked ? C.accent : 'transparent',
-        color: 'var(--bg-deep)',
-        fontSize: 10,
-        lineHeight: 1,
-        userSelect: 'none',
-      }}
+      className="diff-checkbox"
+      style={{ border: `1px solid ${on ? 'var(--accent)' : 'var(--text-muted)'}`, background: checked ? 'var(--accent)' : 'transparent' }}
     >
-      {checked ? '✓' : indeterminate ? <span style={{ width: 6, height: 1.5, background: C.accent }} /> : ''}
+      {checked ? '✓' : indeterminate ? <span className="diff-checkbox-dash" /> : ''}
     </span>
   );
 }
@@ -392,46 +365,32 @@ function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?
 // The checkbox toggles whether the file is committed; clicking elsewhere views its
 // diff. Full repo-relative path shows on hover (title); the dir is elided to keep
 // rows dense.
-function FileRow({ f, selected, checked, onClick, onToggle }: { f: DiffFileSummary; selected: boolean; checked: boolean; onClick: () => void; onToggle: () => void }) {
-  const st = STATUS[f.status] ?? STATUS.modified;
+function FileRow({ file, selected, checked, onClick, onToggle }: { file: DiffFileSummary; selected: boolean; checked: boolean; onClick: () => void; onToggle: () => void }) {
+  const st = STATUS[file.status] ?? STATUS.modified;
   return (
-    <div
-      onClick={onClick}
-      title={f.path}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 7,
-        padding: '5px 8px',
-        borderRadius: 4,
-        cursor: 'pointer',
-        marginBottom: 1,
-        background: selected ? 'var(--bg-raised)' : 'transparent',
-        borderLeft: `2px solid ${selected ? C.accent : 'transparent'}`,
-      }}
-    >
+    <ListRow onClick={onClick} title={file.path} selected={selected} className="diff-file-row">
       <span
         onClick={(e) => {
           e.stopPropagation(); // toggle selection without changing which diff is shown
           onToggle();
         }}
-        style={{ display: 'inline-flex', flexShrink: 0 }}
+        className="diff-checkbox-wrap"
       >
         <Checkbox checked={checked} />
       </span>
-      <span style={{ width: 9, flexShrink: 0, fontSize: 9.5, fontWeight: 700, textAlign: 'center', color: st.color }}>{st.ch}</span>
-      <span style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selected ? C.bright : C.name }}>
-        {f.name}
+      <span className="diff-file-status" style={{ color: st.color }}>{st.ch}</span>
+      <span className="diff-file-name truncate" style={{ color: selected ? 'var(--text-bright)' : 'var(--text)' }}>
+        {file.name}
       </span>
-      {f.additions > 0 && <span style={{ flexShrink: 0, fontSize: 10, color: C.add }}>+{f.additions}</span>}
-      {f.deletions > 0 && <span style={{ flexShrink: 0, fontSize: 10, color: C.del }}>−{f.deletions}</span>}
-    </div>
+      {file.additions > 0 && <span className="diff-file-stat diff-color-add">+{file.additions}</span>}
+      {file.deletions > 0 && <span className="diff-file-stat diff-color-del">−{file.deletions}</span>}
+    </ListRow>
   );
 }
 
 function EmptyState({ text, color }: { text: string; color?: string }) {
   return (
-    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: color ?? C.faint, textAlign: 'center', padding: '0 24px' }}>
+    <div className="diff-empty-state" style={color ? { color } : undefined}>
       {text}
     </div>
   );
@@ -459,10 +418,10 @@ function DiffBody({
   const rows = useMemo<FlatRow[]>(() => {
     if (!diff || diff.binary) return [];
     const out: FlatRow[] = [];
-    for (const h of diff.hunks as DiffHunk[]) {
-      out.push({ kind: 'hunk', no: '', text: h.header });
-      for (const l of h.lines as DiffLine[]) {
-        out.push({ kind: l.kind, no: l.kind === 'del' ? String(l.oldNo ?? '') : String(l.newNo ?? ''), text: l.text });
+    for (const hunk of diff.hunks as DiffHunk[]) {
+      out.push({ kind: 'hunk', no: '', text: hunk.header });
+      for (const line of hunk.lines as DiffLine[]) {
+        out.push({ kind: line.kind, no: line.kind === 'del' ? String(line.oldNo ?? '') : String(line.newNo ?? ''), text: line.text });
       }
     }
     return out;
@@ -497,7 +456,7 @@ function DiffBody({
     setWin({ start: 0, end: WINDOW_INITIAL });
   }, [diff, scrollRef]);
 
-  if (error) return <Placeholder text={error.message} color={C.del} />;
+  if (error) return <Placeholder text={error.message} color="var(--error)" />;
   if (loading && !diff) return <Placeholder text="loading…" />;
   if (!diff) return null;
   if (diff.binary) return <Placeholder text="binary file" />;
@@ -508,14 +467,7 @@ function DiffBody({
   // 8px matches the original body padding; the spacers reserve the off-screen rows so
   // the scrollbar length stays correct.
   return (
-    <div
-      style={{
-        paddingTop: 8 + start * ROW_H,
-        paddingBottom: 8 + (rows.length - end) * ROW_H,
-        fontSize: 12,
-        lineHeight: `${ROW_H}px`,
-      }}
-    >
+    <div className="diff-rows" style={{ paddingTop: 8 + start * ROW_H, paddingBottom: 8 + (rows.length - end) * ROW_H }}>
       {rows.slice(start, end).map((r, i) => (
         <Row key={start + i} kind={r.kind} no={r.no} text={r.text} />
       ))}
@@ -526,16 +478,16 @@ function DiffBody({
 function Row({ kind, no, text }: { kind: string; no: string; text: string }) {
   const k = KIND[kind] ?? KIND.ctx;
   return (
-    <div style={{ display: 'flex', background: k.bg, padding: '0 12px' }}>
-      <span style={{ width: 34, flexShrink: 0, textAlign: 'right', paddingRight: 12, fontSize: 10.5, userSelect: 'none', color: k.noFg }}>{no}</span>
-      <span style={{ width: 12, flexShrink: 0, userSelect: 'none', color: k.signFg }}>{k.sign}</span>
-      <span style={{ whiteSpace: 'pre', color: k.fg }}>{text}</span>
+    <div className="diff-row" style={{ '--row-bg': k.bg } as CSSProperties}>
+      <span className="diff-row__no" style={{ color: k.noFg }}>{no}</span>
+      <span className="diff-row__sign" style={{ color: k.signFg }}>{k.sign}</span>
+      <span className="diff-row__text" style={{ color: k.fg }}>{text}</span>
     </div>
   );
 }
 
 function Placeholder({ text, color }: { text: string; color?: string }) {
-  return <div style={{ padding: '16px 14px', fontSize: 12, color: color ?? C.faint }}>{text}</div>;
+  return <div className="diff-placeholder" style={color ? { color } : undefined}>{text}</div>;
 }
 
 function Footer({
@@ -566,43 +518,42 @@ function Footer({
   const totalAdd = summary?.totalAdd ?? 0;
   const totalDel = summary?.totalDel ?? 0;
   const nFiles = summary?.files.length ?? 0;
-  const hintColor = (inert: boolean) => (inert ? C.inert : C.hint);
 
   return (
-    <div style={{ padding: '10px 14px', borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 14, fontSize: 11, color: C.base, flexShrink: 0 }}>
+    <div className="diff-footer">
       <span>
-        <span style={{ color: C.add }}>+{totalAdd}</span> <span style={{ color: C.del }}>−{totalDel}</span>
-        <span style={{ color: C.base }}> across {nFiles} files</span>
+        <span className="diff-color-add">+{totalAdd}</span> <span className="diff-color-del">−{totalDel}</span>
+        <span> across {nFiles} files</span>
       </span>
-      <span style={{ flex: 1 }} />
+      <span className="diff-footer__spacer" />
 
       {commit.open ? (
         commit.success ? (
-          <span style={{ color: C.add }}>committed {commit.success}</span>
+          <span className="diff-color-add">committed {commit.success}</span>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, alignSelf: 'stretch', justifyContent: 'flex-end' }}>
-              <span style={{ color: C.accent, fontSize: 13 }}>›</span>
+          <div className="diff-commit-form">
+            <div className="diff-commit-row">
+              <span className="diff-commit-prompt">›</span>
               <input
                 ref={inputRef}
                 className="diff-commit-input"
                 value={commit.message}
                 placeholder="commit message…"
                 onChange={(e) => setMessage(e.target.value)}
-                style={{ flex: 1, maxWidth: 320, minWidth: 80, border: 'none', outline: 'none', background: 'transparent', fontFamily: 'inherit', fontSize: 12.5, color: commit.message ? C.bright : C.faint }}
+                style={{ color: commit.message ? 'var(--text-bright)' : 'var(--text-faint)' }}
               />
-              <span onClick={onCommit} style={{ color: C.hint, cursor: 'pointer' }}>⏎ commit</span>
-              <span onClick={onCancel} style={{ color: C.hint, cursor: 'pointer' }}>esc cancel</span>
+              <span onClick={onCommit} className="diff-commit-action">⏎ commit</span>
+              <span onClick={onCancel} className="diff-commit-action">esc cancel</span>
             </div>
-            {commit.error && <span style={{ color: C.del, fontSize: 10.5 }}>{commit.error}</span>}
+            {commit.error && <span className="diff-commit-error">{commit.error}</span>}
           </div>
         )
       ) : (
         <>
-          <span onClick={() => !stageInert && onStage()} style={{ color: hintColor(stageInert), cursor: stageInert ? 'default' : 'pointer' }}>
+          <span onClick={() => !stageInert && onStage()} className={`diff-footer__hint${stageInert ? ' diff-footer__hint--inert' : ''}`}>
             [s] stage all
           </span>
-          <span onClick={() => !commitInert && onOpenCommit()} style={{ color: hintColor(commitInert), cursor: commitInert ? 'default' : 'pointer' }}>
+          <span onClick={() => !commitInert && onOpenCommit()} className={`diff-footer__hint${commitInert ? ' diff-footer__hint--inert' : ''}`}>
             [c] commit {selectedCount > 0 ? `${selectedCount} ` : ''}…
           </span>
         </>

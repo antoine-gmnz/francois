@@ -1,0 +1,272 @@
+/* skills-panel (pane [5]) — SkillsPanel.tsx. Static layout only; genuinely
+   dynamic bits (row hover/selected state, pending dimming) stay as small
+   boolean modifier classes toggled from the component, mirroring the
+   list-row / panel-header--focused pattern in src/ui and styles.css. */
+
+.skills-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+}
+.skills-panel--focused {
+  border-color: var(--accent);
+}
+
+.skills-list {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-6) var(--space-8);
+}
+
+/* Inline "/" filter bar, opened by pressing "/". */
+.skills-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border);
+  margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-8)) var(--space-6);
+}
+.skills-filter-glyph {
+  font-size: var(--font-size-12);
+  color: var(--accent);
+}
+.skills-filter-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: var(--font-size-11-5);
+  font-family: inherit;
+}
+.skills-filter-hint {
+  font-size: var(--font-size-9);
+  color: var(--text-disabled);
+}
+
+.skills-error-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  padding: var(--space-8) var(--space-6);
+  background: var(--bg-raised);
+  border-left: 2px solid var(--error);
+}
+.skills-error-icon {
+  width: var(--space-14);
+  text-align: center;
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+.skills-error-msg {
+  font-size: var(--font-size-11);
+  color: var(--error);
+  flex: 1;
+}
+
+.skills-empty {
+  padding: var(--space-24) var(--space-12);
+  text-align: center;
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+
+/* Row — deliberately not ListRow's `hovered` modifier: this row's hover
+   background (--bg-panel) differs from ListRow's shared --bg-elevated, so
+   only the (exact-match) `selected` state is delegated to ListRow; hover
+   keeps its original color via a local modifier. Border-left is always
+   reserved at 2px (transparent when unselected) so the selected/unselected
+   paddings can collapse to one value without any layout shift — the two
+   total to the same 6px either way, matching the original ternary exactly. */
+.skills-row {
+  gap: var(--space-9);
+  padding: var(--space-8) var(--space-6) var(--space-8) var(--space-4);
+  border-bottom: 1px solid var(--bg-elevated);
+  border-left: var(--space-2) solid transparent;
+}
+.skills-row--selected {
+  border-left-color: var(--accent);
+}
+.skills-row--hovered {
+  background: var(--bg-panel);
+}
+.skills-row-icon {
+  width: var(--space-14);
+  text-align: center;
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.skills-row-icon--installed {
+  color: var(--accent);
+}
+.skills-row-body {
+  min-width: 0;
+  flex: 1;
+}
+.skills-row-name {
+  font-size: var(--font-size-12);
+  color: var(--text);
+}
+.skills-row-name--selected {
+  color: var(--text-bright);
+}
+.skills-row-desc {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  margin-top: var(--space-1);
+  min-height: var(--space-12);
+}
+.skills-row-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-shrink: 0;
+}
+.skills-row-enable {
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+/* Outline scope/kind tag — no shared OutlineTag primitive on purpose (see
+   REFACTOR-CONVENTIONS.md "Known gaps"); this replaces the local
+   `badgeStyle()` factory. `--cmd` recolors the "cmd" tag; scope tags keep
+   the default faint color. */
+.skills-tag {
+  font-size: var(--font-size-8-5);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-4);
+  flex-shrink: 0;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+.skills-tag--cmd {
+  color: var(--hue-slate);
+}
+
+/* Run/Install modal content — Modal/ModalHeader/HintBar (src/ui) provide the
+   backdrop/panel/header/footer chrome; the body rows below keep their own
+   padding because it differs from ModalBody's fixed 14/16 (12/16 for the
+   run-args row, 6 for the install option list). */
+.skills-modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+}
+.skills-modal-glyph {
+  font-size: var(--font-size-13);
+}
+.skills-modal-glyph--accent {
+  color: var(--accent);
+}
+.skills-modal-glyph--faint {
+  color: var(--text-faint);
+}
+.skills-modal-title {
+  font-size: var(--font-size-14);
+  color: var(--text-strong);
+}
+.skills-modal-title--flex {
+  flex: 1;
+}
+.skills-modal-esc-hint {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.skills-modal-error {
+  padding: 0 var(--space-16) var(--space-10);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+
+.skills-install-desc {
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+  margin-top: var(--space-3);
+  margin-left: 23px; /* no token at this value */
+}
+.skills-install-note {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  margin-top: var(--space-6);
+  margin-left: 23px; /* no token at this value */
+}
+.skills-install-note-highlight {
+  color: var(--text-dim);
+}
+
+.skills-run-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-11);
+  padding: var(--space-12) var(--space-16);
+}
+.skills-run-glyph {
+  color: var(--accent);
+  font-size: var(--font-size-13);
+}
+.skills-run-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: var(--font-size-12-5);
+  font-family: inherit;
+}
+.skills-run-input--pending {
+  opacity: 0.6;
+}
+
+.skills-options {
+  padding: var(--space-6);
+}
+.skills-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+}
+.skills-option--selected {
+  background: var(--bg-hover);
+}
+.skills-option--pending {
+  opacity: 0.5;
+}
+.skills-option-glyph {
+  width: var(--space-16);
+  text-align: center;
+  font-size: var(--font-size-12);
+  color: var(--text-faint);
+}
+.skills-option-glyph--selected {
+  color: var(--accent);
+}
+.skills-option-label {
+  font-size: var(--font-size-13);
+  color: var(--text);
+}
+.skills-option-label--selected {
+  color: var(--text-bright);
+}
+
+/* Restores the z-index the run/install dialogs had before they adopted the
+   shared `Modal` (SkillsPanel.tsx:301 at HEAD used `zIndex: 50`). `.modal-backdrop`
+   fixes 20, which would stack these dialogs *below* the sidebar context menu (30)
+   and the mcp/remote/model-picker popovers (40). */
+.skills-modal-backdrop {
+  z-index: 50;
+}

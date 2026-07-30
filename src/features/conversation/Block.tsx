@@ -8,15 +8,8 @@ import CommandBlock from '../commands/CommandCard';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
-
-const C = {
-  accent: 'var(--accent)',
-  faint: 'var(--text-faint)',
-  dim: 'var(--text-dim)',
-  primary: 'var(--text)',
-  userBody: 'var(--text-strong)',
-  queued: 'var(--warn)',
-};
+import { StatusDot } from '../../ui/StatusDot';
+import './conversation.css';
 
 export default function Block({ b, sessionId }: { b: ConversationBlock; sessionId: string }) {
   // interactive-commands: command cards (and notice one-liners) have their own renderer (§8)
@@ -33,20 +26,18 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
   }
   if (b.kind === 'user') {
     return (
-      <div style={{ background: 'var(--bg-elevated)', borderLeft: '2px solid var(--accent)', borderRadius: '0 4px 4px 0', padding: '10px 13px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 5 }}>
-          <span style={{ fontSize: 10, letterSpacing: '0.12em', color: C.accent }}>YOU</span>
-          <span style={{ flex: 1 }} />
+      <div className="block-user">
+        <div className="block-user__header">
+          <span className="block-user__label">YOU</span>
+          <span className="block-user__spacer" />
           {b.queued && (
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span
-                style={{ width: 5, height: 5, borderRadius: '50%', background: C.queued, animation: 'pulse 1.4s ease-in-out infinite' }}
-              />
-              <span style={{ fontSize: 9.5, letterSpacing: '0.04em', color: C.queued }}>queued</span>
+            <span className="block-user__queued">
+              <StatusDot color="var(--warn)" size={5} pulsing />
+              <span className="block-user__queued-label">queued</span>
             </span>
           )}
         </div>
-        <div style={{ fontSize: 13, color: C.userBody, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{b.text}</div>
+        <div className="block-user__body">{b.text}</div>
       </div>
     );
   }
@@ -56,31 +47,21 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
   // streaming caret trails the rendered content.
   if (b.kind === 'assistant') {
     return (
-      <div style={{ display: 'flex', gap: 10 }}>
-        <span style={{ width: 16, flexShrink: 0, textAlign: 'center', fontSize: 12, color: b.glyphColor, marginTop: 1 }}>{b.glyph}</span>
-        <div style={{ minWidth: 0, flex: 1 }}>
+      <div className="block-row">
+        <span className="block-glyph" style={{ color: b.glyphColor }}>
+          {b.glyph}
+        </span>
+        <div className="block-content">
           <Markdown text={b.text} color={b.bodyColor} />
-          {b.isStreaming && (
-            <span
-              style={{
-                display: 'inline-block',
-                width: 8,
-                height: 15,
-                background: C.accent,
-                verticalAlign: 'text-bottom',
-                marginLeft: 2,
-                animation: 'blink 1s step-end infinite',
-              }}
-            />
-          )}
+          {b.isStreaming && <span className="block-caret" />}
         </div>
       </div>
     );
   }
 
   let glyph = '';
-  let glyphColor = C.dim;
-  let bodyColor = C.primary;
+  let glyphColor = 'var(--text-dim)';
+  let bodyColor = 'var(--text)';
   let body: React.ReactNode = '';
   if (b.kind === 'tool') {
     glyph = b.glyph;
@@ -89,7 +70,7 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
     body = (
       <>
         {toolBody(b.tool, b.summary)}
-        {b.meta && <span style={{ color: C.faint }}> · {b.meta}</span>}
+        {b.meta && <span className="block-meta"> · {b.meta}</span>}
       </>
     );
   } else {
@@ -99,15 +80,19 @@ export default function Block({ b, sessionId }: { b: ConversationBlock; sessionI
     body = (
       <>
         Dispatched subagent  {b.agentName}
-        {b.meta && <span style={{ color: C.faint }}> · {b.meta}</span>}
+        {b.meta && <span className="block-meta"> · {b.meta}</span>}
       </>
     );
   }
 
   return (
-    <div style={{ display: 'flex', gap: 10 }}>
-      <span style={{ width: 16, flexShrink: 0, textAlign: 'center', fontSize: 12, color: glyphColor, marginTop: 1 }}>{glyph}</span>
-      <div style={{ minWidth: 0, flex: 1, fontSize: 12.5, lineHeight: 1.55, color: bodyColor, whiteSpace: 'pre-wrap' }}>{body}</div>
+    <div className="block-row">
+      <span className="block-glyph" style={{ color: glyphColor }}>
+        {glyph}
+      </span>
+      <div className="block-content block-body" style={{ color: bodyColor }}>
+        {body}
+      </div>
     </div>
   );
 }

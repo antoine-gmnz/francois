@@ -13,29 +13,20 @@
 
 import { useEffect, useState } from 'react';
 import { useStore } from '../../lib/store';
+import './usage.css';
 import { requestUsageRefresh, startUsageFeed, usageBarView, type MeterChipView } from './usage';
-
-// §8 tokens
-const T = {
-  // App-root shell color: the OS caption is DWM-tinted to the same value
-  // (src-tauri/src/main.rs), so caption + bar read as one continuous surface.
-  bg: 'var(--bg-app)',
-  border: 'var(--border)',
-  track: 'var(--border)',
-  label: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  error: 'var(--error)',
-};
 
 function MeterChip({ chip }: { chip: MeterChipView }) {
   return (
-    <span title={chip.title} style={{ display: 'flex', alignItems: 'center', gap: 7, flex: '0 0 auto' }}>
-      <span style={{ color: T.label, whiteSpace: 'nowrap' }}>{chip.label}</span>
-      <span style={{ width: 52, height: 4, borderRadius: 2, background: T.track, overflow: 'hidden', flex: '0 0 auto' }}>
+    <span title={chip.title} className="usage-chip">
+      <span className="usage-chip-label">{chip.label}</span>
+      <span className="usage-track">
         {/* renders straight at its final width — no transition (FR-25) */}
-        <span style={{ display: 'block', height: '100%', width: `${chip.fillPercent}%`, background: chip.color }} />
+        <span className="usage-fill" style={{ width: `${chip.fillPercent}%`, background: chip.color }} />
       </span>
-      <span style={{ color: chip.color, fontVariantNumeric: 'tabular-nums' }}>{chip.percentText}</span>
+      <span className="usage-percent" style={{ color: chip.color }}>
+        {chip.percentText}
+      </span>
     </span>
   );
 }
@@ -62,20 +53,7 @@ export default function UsageBar() {
   const fullError = view.error && !view.error.compact ? view.error : null;
 
   return (
-    <div
-      style={{
-        height: 28,
-        flex: '0 0 28px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 16,
-        padding: '0 12px',
-        background: T.bg,
-        borderBottom: `1px solid ${T.border}`,
-        fontSize: 10.5,
-      }}
-    >
+    <div className="usage-bar">
       {/* meter region — the whole strip left of the freshness label is the click target (FR-27) */}
       <div
         onClick={requestUsageRefresh}
@@ -83,20 +61,12 @@ export default function UsageBar() {
         // App.tsx's global keys only stand down while focus is in an input/terminal —
         // so without this the next keystroke after a click fires `n`/`d`/`t` (FR-3).
         onMouseDown={(e) => e.preventDefault()}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 18,
-          cursor: 'pointer',
-          minWidth: 0,
-          overflow: 'hidden',
-          // loading WITH data: a plain opacity swap, nothing else (FR-25)
-          opacity: view.dimmed ? 0.45 : 1,
-        }}
+        // loading WITH data: a plain opacity swap, nothing else (FR-25)
+        className={`usage-meters${view.dimmed ? ' usage-meters--dimmed' : ''}`}
       >
         {fullError ? (
           // no stale data to protect → the one-line affordance replaces the meters (FR-26)
-          <span title={fullError.message} style={{ color: T.error, display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+          <span title={fullError.message} className="usage-error-full">
             <span>⚠</span>
             <span>usage unavailable</span>
           </span>
@@ -104,12 +74,12 @@ export default function UsageBar() {
           <>
             {/* stale meters survive an error; the glyph shrinks to bare ⚠ beside them (FR-26) */}
             {view.error && (
-              <span title={view.error.message} style={{ color: T.error, flex: '0 0 auto' }}>
+              <span title={view.error.message} className="usage-error-glyph">
                 ⚠
               </span>
             )}
             {view.empty ? (
-              <span style={{ color: T.faint, whiteSpace: 'nowrap' }}>usage —</span>
+              <span className="usage-empty">usage —</span>
             ) : (
               view.chips.map((chip, i) => <MeterChip key={`${chip.label}:${i}`} chip={chip} />)
             )}
@@ -125,14 +95,7 @@ export default function UsageBar() {
         onMouseEnter={() => setFreshHover(true)}
         onMouseLeave={() => setFreshHover(false)}
         title={view.resetTitle}
-        style={{
-          color: freshHover ? T.label : T.faint,
-          flex: '0 0 auto',
-          cursor: 'pointer',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
+        className={`usage-fresh${freshHover ? ' usage-fresh--hover' : ''}`}
       >
         {view.trailing}
       </span>

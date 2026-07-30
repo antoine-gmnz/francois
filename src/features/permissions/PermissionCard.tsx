@@ -25,7 +25,13 @@ import {
 
 const TIERS: PermissionTier[] = ['local', 'global'];
 
-export default function PermissionCard({ b, sessionId }: { b: PermissionConversationBlock; sessionId: string }) {
+export default function PermissionCard({
+  b: block,
+  sessionId,
+}: {
+  b: PermissionConversationBlock;
+  sessionId: string;
+}) {
   // FR-6: local by default — a trust decision made in one repo must not leak.
   const [tier, setTier] = useState<PermissionTier>('local');
   const [inFlight, setInFlight] = useState(false);
@@ -34,8 +40,8 @@ export default function PermissionCard({ b, sessionId }: { b: PermissionConversa
 
   // FR-21 race check: the failure path must not re-enable a card an event
   // already resolved. Ref, so the async submit sees the CURRENT block state.
-  const resolvedRef = useRef(b.state !== 'pending');
-  resolvedRef.current = b.state !== 'pending';
+  const resolvedRef = useRef(block.state !== 'pending');
+  resolvedRef.current = block.state !== 'pending';
 
   // FR-21: ONE live error timer. Repeated failures used to stack overlapping 4 s
   // timeouts, so timer #1 cleared message #2 early; and nothing cleaned them up
@@ -47,15 +53,15 @@ export default function PermissionCard({ b, sessionId }: { b: PermissionConversa
   };
   useEffect(() => clearErrorTimer, []);
 
-  const interactive = b.state === 'pending' && !inFlight;
-  const note = stateNote(b.state);
+  const interactive = block.state === 'pending' && !inFlight;
+  const note = stateNote(block.state);
 
   const decide = (decision: PermissionDecision) => {
     if (!interactive) return;
     void submitDecision({
       decision,
       tier,
-      decide: (d, t) => permissionsDecide(sessionId, b.blockId, d, t),
+      decide: (d, t) => permissionsDecide(sessionId, block.blockId, d, t),
       setInFlight,
       setError,
       isResolved: () => resolvedRef.current,
@@ -67,32 +73,32 @@ export default function PermissionCard({ b, sessionId }: { b: PermissionConversa
   };
 
   return (
-    <div className={cardClass(b.state, inFlight)}>
+    <div className={cardClass(block.state, inFlight)}>
       <div className="pcard-head">
         <span className="pcard-label">PERMISSION</span>
-        <span className="pcard-chip">{b.ask.toolName || 'tool'}</span>
-        {note && <span className={`pcard-note pcard-note-${b.state}`}>{note}</span>}
+        <span className="pcard-chip">{block.ask.toolName || 'tool'}</span>
+        {note && <span className={`pcard-note pcard-note-${block.state}`}>{note}</span>}
       </div>
 
       {/* FR-20: the one-line "what" — omitted when the tool exposes none. */}
-      {b.ask.summary !== '' && <div className="pcard-summary">{b.ask.summary}</div>}
+      {block.ask.summary !== '' && <div className="pcard-summary">{block.ask.summary}</div>}
 
       {/* FR-20: the raw input, so nothing is hidden behind the summary. */}
-      {b.ask.inputJson !== '' && <div className="scz pcard-input">{b.ask.inputJson}</div>}
+      {block.ask.inputJson !== '' && <div className="scz pcard-input">{block.ask.inputJson}</div>}
 
-      {b.ask.cwd !== '' && <div className="pcard-meta">cwd {b.ask.cwd}</div>}
+      {block.ask.cwd !== '' && <div className="pcard-meta">cwd {block.ask.cwd}</div>}
 
       {/* FR-22: what an "always" decision actually wrote. */}
-      {b.rule && <div className="pcard-meta">rule written: {writtenRuleSentence(b.rule)}</div>}
+      {block.rule && <div className="pcard-meta">rule written: {writtenRuleSentence(block.rule)}</div>}
 
-      {b.state === 'pending' && (
+      {block.state === 'pending' && (
         <>
           {/* FR-20: the rule an "always" decision WOULD write, with its tier
               control — visible before the user commits to it. */}
           <div className="pcard-rule">
             <span className="pcard-rule-label">writes rule:</span>
-            <span className="pcard-rule-text">{ruleSentence(b.ask, tier)}</span>
-            <span className="pcard-pattern">{b.ask.pattern}</span>
+            <span className="pcard-rule-text">{ruleSentence(block.ask, tier)}</span>
+            <span className="pcard-pattern">{block.ask.pattern}</span>
             <span className={'pcard-tiers' + (tierControlDimmed(hovered) ? ' pcard-tiers-inert' : '')}>
               {TIERS.map((t) => (
                 <span

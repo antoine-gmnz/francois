@@ -1,84 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AppError, McpServerInfo, SessionEvent } from '../../../contract/common';
-import type { McpRegistryEntry, McpServerDetail, McpAttachRequest } from '../../../contract/mcp-panel';
+import type { McpRegistryEntry, McpServerDetail } from '../../../contract/mcp-panel';
 import { mcpAttach, mcpDetach, mcpDetail, mcpList, mcpReconnect, mcpRegistry, onSessionEvent } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { useDismiss } from '../../lib/hooks/useDismiss';
+import { HintBar } from '../../ui/HintBar';
+import { StatusDot } from '../../ui/StatusDot';
+import {
+  buildAttachRequest,
+  canSubmitAttach,
+  detailText,
+  dotColor,
+  scopeColor,
+  scopeText,
+  type CustomServerForm,
+} from './mcp';
+import './mcp.css';
 
-const C = {
-  connected: 'var(--success)',
-  connecting: 'var(--warn)',
-  error: 'var(--error)',
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-  hint: 'var(--text-hint)',
-};
+// ---------- server list hook ----------
 
-const dotColor: Record<string, string> = {
-  connected: C.connected,
-  connecting: C.connecting,
-  error: C.error,
-};
-
-const scopeColor: Record<string, string> = {
-  project: 'var(--text-dim)',
-  local: 'var(--hue-slate)',
-  user: 'var(--text-muted)',
-};
-
-const scopeText = (scope: string): string =>
-  scope === 'project'
-    ? 'project · .mcp.json'
-    : scope === 'local'
-      ? 'local · ~/.claude.json'
-      : scope === 'user'
-        ? 'user · global'
-        : scope;
-
-function scopeBadge(scope: string): React.CSSProperties {
-  return {
-    fontSize: 8.5,
-    letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-    color: scopeColor[scope] ?? C.faint,
-    border: '1px solid var(--border-2)',
-    borderRadius: 3,
-    padding: '1px 4px',
-    flexShrink: 0,
-    lineHeight: 1.4,
-  };
-}
-
-function detailText(s: McpServerInfo): { text: string; color: string } {
-  if (s.status === 'connected') return { text: `${s.toolCount ?? 0} tools`, color: C.dim };
-  if (s.status === 'connecting') return { text: 'handshake…', color: C.dim };
-  return { text: s.errorMessage ?? 'error', color: C.error };
-}
-
-export default function McpPanel({ sessionId }: { sessionId: string | null }) {
-  const focusedPane = useStore((s) => s.focusedPane);
-  const setFocusedPane = useStore((s) => s.setFocusedPane);
-  // attach overlay lives in the store so the command palette can open it too (FR-23)
-  const attachOpen = useStore((s) => s.mcpAttachOpen);
-  const setAttachOpen = useStore((s) => s.setMcpAttachOpen);
-
+function useMcpServers(sessionId: string | null) {
   const [servers, setServers] = useState<McpServerInfo[]>([]);
   const [listError, setListError] = useState<AppError | null>(null);
-  const [selected, setSelected] = useState(0);
-  const [popover, setPopover] = useState<{ name: string; top: number; left: number } | null>(null);
-  const focused = focusedPane === 'mcp';
-  const rowsRef = useRef<HTMLDivElement>(null);
-  const existingNames = useMemo(() => servers.map((s) => s.name), [servers]);
 
-  // Hydration + live mcp.update (FR-1/2/3/28). Keyed by sessionId in App.
+  // Hydration + live mcp.update (FR-1/2/3/28).
   useEffect(() => {
     setServers([]);
     setListError(null);
-    setSelected(0);
-    setPopover(null);
-    setAttachOpen(false);
     if (!sessionId) return;
     let mounted = true;
     let unlisten: (() => void) | undefined;
@@ -110,6 +58,30 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
     };
   }, [sessionId]);
 
+  return { servers, setServers, listError };
+}
+
+export default function McpPanel({ sessionId }: { sessionId: string | null }) {
+  const focusedPane = useStore((s) => s.focusedPane);
+  const setFocusedPane = useStore((s) => s.setFocusedPane);
+  // attach overlay lives in the store so the command palette can open it too (FR-23)
+  const attachOpen = useStore((s) => s.mcpAttachOpen);
+  const setAttachOpen = useStore((s) => s.setMcpAttachOpen);
+
+  const { servers, setServers, listError } = useMcpServers(sessionId);
+  const [selected, setSelected] = useState(0);
+  const [popover, setPopover] = useState<{ name: string; top: number; left: number } | null>(null);
+  const focused = focusedPane === 'mcp';
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const existingNames = useMemo(() => servers.map((s) => s.name), [servers]);
+
+  // Reset the panel's own selection/overlay state on session switch (servers/listError reset inside useMcpServers).
+  useEffect(() => {
+    setSelected(0);
+    setPopover(null);
+    setAttachOpen(false);
+  }, [sessionId, setAttachOpen]);
+
   const openDetail = (index: number) => {
     const s = servers[index];
     if (!s) return;
@@ -134,8 +106,8 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
         return;
       }
       if (!focused) return;
-      const ae = document.activeElement as HTMLElement | null;
-      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setSelected((i) => Math.min(i + 1, servers.length - 1));
@@ -154,100 +126,41 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
   }, [focused, attachOpen, popover, servers, selected]);
 
   return (
-    <section
-      onClick={() => setFocusedPane('mcp')}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--bg-deep)',
-        border: `1px solid ${focused ? C.accent : 'var(--border-2)'}`,
-        borderRadius: 5,
-        overflow: 'hidden',
-        minHeight: 0,
-        height: '100%',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '9px 12px',
-          borderBottom: '1px solid var(--border)',
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', color: focused ? C.accent : C.dim, fontWeight: 700 }}>
-          MCP SERVERS
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 10, color: C.faint }}>{servers.length} · [4]</span>
+    <section onClick={() => setFocusedPane('mcp')} className={focused ? 'mcp-panel mcp-panel--focused' : 'mcp-panel'}>
+      <div className="mcp-header">
+        <span className={focused ? 'mcp-header-title mcp-header-title--focused' : 'mcp-header-title'}>MCP SERVERS</span>
+        <div className="mcp-header-right">
+          <span className="mcp-header-count">{servers.length} · [4]</span>
           <span
             onClick={(e) => {
               e.stopPropagation();
               if (sessionId) setAttachOpen(true);
             }}
             title="attach MCP server"
-            style={{ fontSize: 12, color: C.faint, cursor: sessionId ? 'pointer' : 'default', lineHeight: 1 }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = C.accent)}
-            onMouseLeave={(e) => (e.currentTarget.style.color = C.faint)}
+            className={sessionId ? 'mcp-attach-btn' : 'mcp-attach-btn mcp-attach-btn--disabled'}
           >
             +
           </span>
         </div>
       </div>
 
-      <div ref={rowsRef} className="scz" style={{ flex: 1, overflow: 'auto', padding: '6px 8px' }}>
+      <div ref={rowsRef} className="scz mcp-rows">
         {listError ? (
-          <div style={{ padding: '12px 4px', fontSize: 11, color: C.error }}>session unavailable</div>
+          <div className="mcp-list-error">session unavailable</div>
         ) : servers.length === 0 ? (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: C.faint, textAlign: 'center' }}>
-            no MCP servers · attach one with ⌘K
-          </div>
+          <div className="mcp-empty">no MCP servers · attach one with ⌘K</div>
         ) : (
-          servers.map((s, i) => {
-            const d = detailText(s);
-            const sel = i === selected;
-            return (
-              <div
-                key={s.name}
-                data-mcp-row
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setFocusedPane('mcp');
-                  openDetail(i);
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 9,
-                  padding: '7px 6px',
-                  borderBottom: '1px solid var(--bg-elevated)',
-                  background: sel ? 'var(--bg-raised)' : 'transparent',
-                  cursor: 'pointer',
-                  transition: 'background 120ms ease',
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    flexShrink: 0,
-                    background: dotColor[s.status] ?? C.dim,
-                    animation: s.status === 'connecting' ? 'pulse 1.4s ease-in-out infinite' : 'none',
-                  }}
-                />
-                <span style={{ fontSize: 12, color: C.primary, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {s.name}
-                </span>
-                {s.scope && <span style={scopeBadge(s.scope)}>{s.scope}</span>}
-                <span style={{ fontSize: 10.5, color: d.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120 }}>
-                  {d.text}
-                </span>
-              </div>
-            );
-          })
+          servers.map((s, i) => (
+            <ServerRow
+              key={s.name}
+              server={s}
+              selected={i === selected}
+              onClick={() => {
+                setFocusedPane('mcp');
+                openDetail(i);
+              }}
+            />
+          ))
         )}
       </div>
 
@@ -275,7 +188,48 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
   );
 }
 
+// ---------- server row ----------
+
+function ServerRow({ server, selected, onClick }: { server: McpServerInfo; selected: boolean; onClick: () => void }) {
+  const detail = detailText(server);
+  return (
+    <div data-mcp-row onClick={(e) => { e.stopPropagation(); onClick(); }} className={selected ? 'mcp-row mcp-row--selected' : 'mcp-row'}>
+      <StatusDot color={dotColor(server.status)} pulsing={server.status === 'connecting'} />
+      <span className="mcp-row-name truncate">{server.name}</span>
+      {server.scope && (
+        <span className="mcp-scope-badge" style={{ color: scopeColor(server.scope) }}>
+          {server.scope}
+        </span>
+      )}
+      <span className="mcp-row-detail" style={{ color: detail.color }}>
+        {detail.text}
+      </span>
+    </div>
+  );
+}
+
 // ---------- detail popover ----------
+
+function useMcpDetail(sessionId: string, name: string) {
+  const [data, setData] = useState<McpServerDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<AppError | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    void mcpDetail(sessionId, name).then((res) => {
+      if (!mounted) return;
+      setLoading(false);
+      if (res.ok) setData(res.data);
+      else setError(res.error);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [sessionId, name]);
+
+  return { data, loading, error };
+}
 
 function DetailPopover({
   sessionId,
@@ -294,33 +248,12 @@ function DetailPopover({
   onReconnected: (name: string) => void;
   onDetached: (name: string) => void;
 }) {
-  const [data, setData] = useState<McpServerDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<AppError | null>(null);
+  const { data, loading, error } = useMcpDetail(sessionId, name);
   const [confirming, setConfirming] = useState(false);
   const [actionError, setActionError] = useState<AppError | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    let mounted = true;
-    void mcpDetail(sessionId, name).then((res) => {
-      if (!mounted) return;
-      setLoading(false);
-      if (res.ok) setData(res.data);
-      else setError(res.error);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, [sessionId, name]);
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
-  }, []);
+  useDismiss(ref, { onOutsideClick: onClose });
 
   const reconnect = async () => {
     setActionError(null);
@@ -344,33 +277,20 @@ function DetailPopover({
   const status = data?.status ?? 'connecting';
 
   return (
-    <div
-      ref={ref}
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        position: 'fixed',
-        top,
-        left,
-        width: 280,
-        background: 'var(--bg-panel)',
-        border: '1px solid var(--bg-hover-2)',
-        borderRadius: 6,
-        boxShadow: '0 20px 50px -15px rgba(0,0,0,0.75)',
-        zIndex: 40,
-        overflow: 'hidden',
-      }}
-    >
-      <div style={{ padding: '11px 13px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor[status] ?? C.dim }} />
-        <span style={{ fontSize: 13, color: C.bright, flex: 1 }}>{name}</span>
-        <span style={{ fontSize: 10, color: dotColor[status] ?? C.dim }}>{status}</span>
+    <div ref={ref} onClick={(e) => e.stopPropagation()} className="mcp-popover" style={{ top, left }}>
+      <div className="mcp-popover-header">
+        <StatusDot color={dotColor(status)} />
+        <span className="mcp-popover-name">{name}</span>
+        <span className="mcp-popover-status" style={{ color: dotColor(status) }}>
+          {status}
+        </span>
       </div>
 
-      <div style={{ padding: '11px 13px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <div className="mcp-popover-body">
         {loading ? (
-          <span style={{ fontSize: 11, color: C.faint }}>loading…</span>
+          <span className="mcp-popover-loading">loading…</span>
         ) : error ? (
-          <span style={{ fontSize: 11, color: C.error }}>{error.message}</span>
+          <span className="mcp-popover-error">{error.message}</span>
         ) : data ? (
           <>
             <Field label="TRANSPORT" value={data.transport} />
@@ -378,32 +298,32 @@ function DetailPopover({
             {data.transport === 'stdio' && data.command && <Field label="COMMAND" value={data.command} mono />}
             {data.transport === 'http' && data.url && <Field label="URL" value={data.url} mono />}
             {data.status === 'connected' && <Field label="TOOLS" value={String(data.toolCount ?? 0)} />}
-            {data.status === 'error' && data.errorMessage && <Field label="ERROR" value={data.errorMessage} color={C.error} />}
+            {data.status === 'error' && data.errorMessage && <Field label="ERROR" value={data.errorMessage} color="var(--error)" />}
           </>
         ) : null}
 
-        {actionError && <span style={{ fontSize: 10.5, color: C.error }}>{actionError.message}</span>}
+        {actionError && <span className="mcp-popover-action-error">{actionError.message}</span>}
       </div>
 
       {data && (
-        <div style={{ padding: '9px 13px', borderTop: '1px solid var(--border)', display: 'flex', gap: 14, justifyContent: 'flex-end' }}>
+        <div className="mcp-popover-footer">
           {confirming ? (
             <>
-              <span style={{ fontSize: 10.5, color: C.faint, flex: 1 }}>detach '{name}' from .mcp.json?</span>
-              <span onClick={() => setConfirming(false)} style={{ fontSize: 11, color: C.dim, cursor: 'pointer' }}>
+              <span className="mcp-popover-confirm-text">detach '{name}' from .mcp.json?</span>
+              <span onClick={() => setConfirming(false)} className="mcp-action-link mcp-action-link--dim">
                 Cancel
               </span>
-              <span onClick={() => void detach()} style={{ fontSize: 11, color: C.error, cursor: 'pointer' }}>
+              <span onClick={() => void detach()} className="mcp-action-link mcp-action-link--error">
                 Confirm
               </span>
             </>
           ) : (
             <>
-              <span onClick={() => void reconnect()} style={btnStyle}>
+              <span onClick={() => void reconnect()} className="mcp-action-link">
                 Reconnect
               </span>
               {(!data.scope || data.scope === 'project') && (
-                <span onClick={() => setConfirming(true)} style={btnStyle}>
+                <span onClick={() => setConfirming(true)} className="mcp-action-link">
                   Detach
                 </span>
               )}
@@ -415,21 +335,11 @@ function DetailPopover({
   );
 }
 
-const btnStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-hint)', cursor: 'pointer' };
-
 function Field({ label, value, mono, color }: { label: string; value: string; mono?: boolean; color?: string }) {
   return (
     <div>
-      <div style={{ fontSize: 10, color: C.faint, letterSpacing: '0.06em' }}>{label}</div>
-      <div
-        style={{
-          fontSize: 12,
-          color: color ?? C.primary,
-          marginTop: 2,
-          fontFamily: mono ? "'JetBrains Mono', monospace" : 'inherit',
-          wordBreak: 'break-all',
-        }}
-      >
+      <div className="mcp-detail-label">{label}</div>
+      <div className={mono ? 'mcp-detail-value mcp-detail-value--mono' : 'mcp-detail-value'} style={color ? { color } : undefined}>
         {value}
       </div>
     </div>
@@ -438,19 +348,24 @@ function Field({ label, value, mono, color }: { label: string; value: string; mo
 
 // ---------- attach overlay ----------
 
-function AttachOverlay({ sessionId, existing, onClose }: { sessionId: string; existing: string[]; onClose: () => void }) {
+const REGISTRY_HINTS = [
+  { key: '↑↓', label: 'navigate' },
+  { key: '⏎', label: 'select' },
+  { key: 'esc', label: 'dismiss' },
+];
+const PARAMS_HINTS = [
+  { key: '⏎', label: 'submit' },
+  { key: 'esc', label: 'back' },
+];
+
+function useAttachFlow(sessionId: string, existing: string[], onClose: () => void) {
   const [step, setStep] = useState<'registry' | 'params'>('registry');
   const [registry, setRegistry] = useState<McpRegistryEntry[] | null>(null);
   const [regError, setRegError] = useState<AppError | null>(null);
   const [selIndex, setSelIndex] = useState(0);
   const [selected, setSelected] = useState<McpRegistryEntry | 'custom' | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
-  const [custom, setCustom] = useState<{ name: string; transport: 'stdio' | 'http'; command: string; url: string }>({
-    name: '',
-    transport: 'stdio',
-    command: '',
-    url: '',
-  });
+  const [custom, setCustom] = useState<CustomServerForm>({ name: '', transport: 'stdio', command: '', url: '' });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<AppError | null>(null);
 
@@ -462,6 +377,13 @@ function AttachOverlay({ sessionId, existing, onClose }: { sessionId: string; ex
   }, []);
 
   const rows: (McpRegistryEntry | 'custom')[] = [...(registry ?? []), 'custom'];
+
+  const advance = (row: McpRegistryEntry | 'custom') => {
+    setSelected(row);
+    setForm({});
+    setSubmitError(null);
+    setStep('params');
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -486,186 +408,202 @@ function AttachOverlay({ sessionId, existing, onClose }: { sessionId: string; ex
     return () => window.removeEventListener('keydown', onKey, true);
   });
 
-  const advance = (row: McpRegistryEntry | 'custom') => {
-    setSelected(row);
-    setForm({});
-    setSubmitError(null);
-    setStep('params');
-  };
-
   const submit = async () => {
     if (submitting || !selected) return;
-    let req: McpAttachRequest;
-    if (selected === 'custom') {
-      const name = custom.name.trim();
-      if (!name || existing.includes(name)) {
-        setSubmitError({ code: 'INVALID_INPUT', message: existing.includes(name) ? 'name already exists' : 'name required' });
-        return;
-      }
-      req = {
-        name,
-        transport: custom.transport,
-        command: custom.transport === 'stdio' ? custom.command.trim() : undefined,
-        url: custom.transport === 'http' ? custom.url.trim() : undefined,
-      };
-    } else {
-      const entry = selected;
-      if (existing.includes(entry.name)) {
-        setSubmitError({ code: 'INVALID_INPUT', message: 'name already exists' });
-        return;
-      }
-      const secretParams: Record<string, string> = {};
-      let command = entry.commandTemplate ?? '';
-      let url = entry.urlTemplate ?? '';
-      for (const p of entry.params) {
-        const val = form[p.key] ?? '';
-        if (p.secret) secretParams[p.key] = val;
-        else {
-          const token = `{${p.key}}`;
-          command = command.split(token).join(val);
-          url = url.split(token).join(val);
-        }
-      }
-      req = {
-        name: entry.name,
-        transport: entry.transport,
-        command: entry.transport === 'stdio' ? command : undefined,
-        url: entry.transport === 'http' ? url : undefined,
-        secretParams: Object.keys(secretParams).length ? secretParams : undefined,
-        registrySource: entry.name,
-      };
+    const result = buildAttachRequest(selected, custom, form, existing);
+    if (!result.ok) {
+      setSubmitError(result.error);
+      return;
     }
     setSubmitting(true);
     setSubmitError(null);
-    const res = await mcpAttach(sessionId, req);
+    const res = await mcpAttach(sessionId, result.request);
     setSubmitting(false);
     if (res.ok) onClose();
     else setSubmitError(res.error);
   };
 
-  // submit-enabled gating
-  const canSubmit = (() => {
-    if (!selected) return false;
-    if (selected === 'custom') {
-      const nameOk = custom.name.trim() !== '' && !existing.includes(custom.name.trim());
-      return nameOk && (custom.transport === 'stdio' ? custom.command.trim() !== '' : custom.url.trim() !== '');
-    }
-    return selected.params.every((p) => !p.required || (form[p.key] ?? '').trim() !== '') && !existing.includes(selected.name);
-  })();
+  const canSubmit = canSubmitAttach(selected, custom, form, existing);
+
+  return {
+    step,
+    rows,
+    regError,
+    selIndex,
+    setSelIndex,
+    selected,
+    advance,
+    form,
+    setForm,
+    custom,
+    setCustom,
+    submitting,
+    submitError,
+    canSubmit,
+    submit,
+  };
+}
+
+function AttachOverlay({ sessionId, existing, onClose }: { sessionId: string; existing: string[]; onClose: () => void }) {
+  const flow = useAttachFlow(sessionId, existing, onClose);
+  const { step, rows, regError, selIndex, setSelIndex, selected, advance, form, setForm, custom, setCustom, submitting, submitError, canSubmit, submit } =
+    flow;
 
   return (
-    <div
-      onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(6,7,9,0.62)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 118, zIndex: 50 }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: 588, background: 'var(--bg-panel)', border: '1px solid var(--bg-hover-2)', borderRadius: 8, overflow: 'hidden', boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)' }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ color: C.accent, fontSize: 15 }}>⊞</span>
-          <span style={{ fontSize: 14, color: 'var(--text-strong)', flex: 1 }}>
+    <div onClick={onClose} className="mcp-overlay-backdrop">
+      <div onClick={(e) => e.stopPropagation()} className="mcp-overlay-panel">
+        <div className="mcp-overlay-header">
+          <span className="mcp-overlay-icon">⊞</span>
+          <span className="mcp-overlay-title">
             {step === 'registry' ? 'attach MCP server' : selected === 'custom' ? 'custom server' : `configure ${(selected as McpRegistryEntry).name}`}
           </span>
-          <span style={{ fontSize: 10, color: C.faint }}>esc</span>
+          <span className="mcp-overlay-esc">esc</span>
         </div>
 
         {step === 'registry' ? (
-          <div style={{ padding: 6 }}>
-            {regError && <div style={{ padding: '6px 12px', fontSize: 10.5, color: C.error }}>{regError.message} — custom still available</div>}
-            {rows.map((row, i) => {
-              const isCustom = row === 'custom';
-              const sel = i === selIndex;
-              return (
-                <div
-                  key={isCustom ? 'custom' : row.name}
-                  onMouseEnter={() => setSelIndex(i)}
-                  onClick={() => advance(row)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 5, background: sel ? 'var(--bg-hover)' : 'transparent', cursor: 'pointer' }}
-                >
-                  <span style={{ width: 16, textAlign: 'center', fontSize: 12, color: sel ? C.accent : C.dim }}>{isCustom ? '+' : '⊞'}</span>
-                  <span style={{ fontSize: 13, color: sel ? C.bright : C.primary, flexShrink: 0 }}>{isCustom ? 'custom…' : row.name}</span>
-                  <span style={{ fontSize: 11, color: C.faint, flex: 1, textAlign: 'right' }}>{isCustom ? 'define manually' : row.description}</span>
-                </div>
-              );
-            })}
-          </div>
+          <RegistryStep rows={rows} regError={regError} selIndex={selIndex} onHover={setSelIndex} onSelect={advance} />
         ) : (
-          <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {selected === 'custom' ? (
-              <>
-                <FormField label="NAME" required value={custom.name} onChange={(v) => setCustom({ ...custom, name: v })} />
-                <div>
-                  <div style={fieldLabel}>TRANSPORT</div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 5 }}>
-                    {(['stdio', 'http'] as const).map((t) => (
-                      <span key={t} onClick={() => setCustom({ ...custom, transport: t })} style={pill(custom.transport === t)}>
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                {custom.transport === 'stdio' ? (
-                  <FormField label="COMMAND" required mono value={custom.command} onChange={(v) => setCustom({ ...custom, command: v })} />
-                ) : (
-                  <FormField label="URL" required mono value={custom.url} onChange={(v) => setCustom({ ...custom, url: v })} />
-                )}
-              </>
-            ) : (
-              (selected as McpRegistryEntry).params.map((p) => (
-                <FormField
-                  key={p.key}
-                  label={p.label}
-                  required={p.required}
-                  secret={p.secret}
-                  value={form[p.key] ?? ''}
-                  onChange={(v) => setForm({ ...form, [p.key]: v })}
-                />
-              ))
-            )}
-
-            {submitError && (
-              <div style={{ background: 'color-mix(in srgb, var(--error) 9%, transparent)', color: C.error, fontSize: 11, borderRadius: 4, padding: '8px 10px' }}>
-                {submitError.message}
-              </div>
-            )}
-
-            <button onClick={submit} disabled={!canSubmit || submitting} style={submitStyle(canSubmit && !submitting)}>
-              {submitting ? 'attaching…' : 'Attach server'}
-            </button>
-          </div>
+          <ParamsStep
+            selected={selected as McpRegistryEntry | 'custom'}
+            custom={custom}
+            onCustomChange={setCustom}
+            form={form}
+            onFormChange={setForm}
+            submitError={submitError}
+            canSubmit={canSubmit}
+            submitting={submitting}
+            onSubmit={submit}
+          />
         )}
 
-        <div style={{ display: 'flex', gap: 16, padding: '9px 16px', borderTop: '1px solid var(--border)', fontSize: 10, color: C.faint }}>
-          {step === 'registry' ? (
-            <>
-              <span>
-                <span style={{ color: C.dim }}>↑↓</span> navigate
-              </span>
-              <span>
-                <span style={{ color: C.dim }}>⏎</span> select
-              </span>
-              <span>
-                <span style={{ color: C.dim }}>esc</span> dismiss
-              </span>
-            </>
-          ) : (
-            <>
-              <span>
-                <span style={{ color: C.dim }}>⏎</span> submit
-              </span>
-              <span>
-                <span style={{ color: C.dim }}>esc</span> back
-              </span>
-            </>
-          )}
-        </div>
+        <HintBar items={step === 'registry' ? REGISTRY_HINTS : PARAMS_HINTS} />
       </div>
     </div>
   );
 }
 
-const fieldLabel: React.CSSProperties = { fontSize: 11, color: C.dim };
+function RegistryStep({
+  rows,
+  regError,
+  selIndex,
+  onHover,
+  onSelect,
+}: {
+  rows: (McpRegistryEntry | 'custom')[];
+  regError: AppError | null;
+  selIndex: number;
+  onHover: (i: number) => void;
+  onSelect: (row: McpRegistryEntry | 'custom') => void;
+}) {
+  return (
+    <div className="mcp-registry-list">
+      {regError && <div className="mcp-registry-error">{regError.message} — custom still available</div>}
+      {rows.map((row, i) => (
+        <RegistryRow key={row === 'custom' ? 'custom' : row.name} row={row} selected={i === selIndex} onMouseEnter={() => onHover(i)} onClick={() => onSelect(row)} />
+      ))}
+    </div>
+  );
+}
+
+function RegistryRow({
+  row,
+  selected,
+  onMouseEnter,
+  onClick,
+}: {
+  row: McpRegistryEntry | 'custom';
+  selected: boolean;
+  onMouseEnter: () => void;
+  onClick: () => void;
+}) {
+  const isCustom = row === 'custom';
+  return (
+    <div onMouseEnter={onMouseEnter} onClick={onClick} className={selected ? 'mcp-registry-row mcp-registry-row--selected' : 'mcp-registry-row'}>
+      <span className={selected ? 'mcp-registry-glyph mcp-registry-glyph--selected' : 'mcp-registry-glyph'}>{isCustom ? '+' : '⊞'}</span>
+      <span className={selected ? 'mcp-registry-name mcp-registry-name--selected' : 'mcp-registry-name'}>{isCustom ? 'custom…' : row.name}</span>
+      <span className="mcp-registry-desc">{isCustom ? 'define manually' : row.description}</span>
+    </div>
+  );
+}
+
+function ParamsStep({
+  selected,
+  custom,
+  onCustomChange,
+  form,
+  onFormChange,
+  submitError,
+  canSubmit,
+  submitting,
+  onSubmit,
+}: {
+  selected: McpRegistryEntry | 'custom';
+  custom: CustomServerForm;
+  onCustomChange: (next: CustomServerForm) => void;
+  form: Record<string, string>;
+  onFormChange: (next: Record<string, string>) => void;
+  submitError: AppError | null;
+  canSubmit: boolean;
+  submitting: boolean;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="mcp-params-step">
+      {selected === 'custom' ? (
+        <CustomServerFields custom={custom} onChange={onCustomChange} />
+      ) : (
+        <TemplateParamFields entry={selected} form={form} onChange={onFormChange} />
+      )}
+
+      {submitError && <div className="form-error">{submitError.message}</div>}
+
+      <button onClick={onSubmit} disabled={!canSubmit || submitting} className={canSubmit && !submitting ? 'mcp-submit-btn mcp-submit-btn--enabled' : 'mcp-submit-btn'}>
+        {submitting ? 'attaching…' : 'Attach server'}
+      </button>
+    </div>
+  );
+}
+
+function CustomServerFields({ custom, onChange }: { custom: CustomServerForm; onChange: (next: CustomServerForm) => void }) {
+  return (
+    <>
+      <FormField label="NAME" required value={custom.name} onChange={(v) => onChange({ ...custom, name: v })} />
+      <div>
+        <div className="mcp-form-label">TRANSPORT</div>
+        <div className="mcp-transport-pills">
+          {(['stdio', 'http'] as const).map((t) => (
+            <span key={t} onClick={() => onChange({ ...custom, transport: t })} className={custom.transport === t ? 'mcp-pill mcp-pill--selected' : 'mcp-pill'}>
+              {t}
+            </span>
+          ))}
+        </div>
+      </div>
+      {custom.transport === 'stdio' ? (
+        <FormField label="COMMAND" required mono value={custom.command} onChange={(v) => onChange({ ...custom, command: v })} />
+      ) : (
+        <FormField label="URL" required mono value={custom.url} onChange={(v) => onChange({ ...custom, url: v })} />
+      )}
+    </>
+  );
+}
+
+function TemplateParamFields({
+  entry,
+  form,
+  onChange,
+}: {
+  entry: McpRegistryEntry;
+  form: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}) {
+  return (
+    <>
+      {entry.params.map((p) => (
+        <FormField key={p.key} label={p.label} required={p.required} secret={p.secret} value={form[p.key] ?? ''} onChange={(v) => onChange({ ...form, [p.key]: v })} />
+      ))}
+    </>
+  );
+}
 
 function FormField({
   label,
@@ -684,56 +622,16 @@ function FormField({
 }) {
   return (
     <div>
-      <div style={fieldLabel}>
+      <div className="mcp-form-label">
         {label}
-        {required && <span style={{ color: C.accent }}> *</span>}
+        {required && <span className="mcp-form-required"> *</span>}
       </div>
       <input
         type={secret ? 'password' : 'text'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        style={{
-          marginTop: 5,
-          width: '100%',
-          background: 'var(--bg-deep)',
-          border: '1px solid var(--border)',
-          borderRadius: 4,
-          height: 32,
-          color: C.primary,
-          fontSize: 12.5,
-          fontFamily: mono ? "'JetBrains Mono', monospace" : 'inherit',
-          padding: '0 10px',
-          outline: 'none',
-        }}
+        className={mono ? 'mcp-form-input mcp-form-input--mono' : 'mcp-form-input'}
       />
     </div>
   );
-}
-
-function pill(sel: boolean): React.CSSProperties {
-  return {
-    fontSize: 11,
-    padding: '4px 10px',
-    borderRadius: 4,
-    cursor: 'pointer',
-    border: `1px solid ${sel ? C.accent : 'var(--border-2)'}`,
-    background: sel ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'var(--bg-deep)',
-    color: sel ? C.accent : C.dim,
-  };
-}
-
-function submitStyle(enabled: boolean): React.CSSProperties {
-  return {
-    marginTop: 4,
-    width: '100%',
-    height: 34,
-    border: 'none',
-    borderRadius: 5,
-    fontFamily: 'inherit',
-    fontSize: 12.5,
-    fontWeight: 500,
-    cursor: enabled ? 'pointer' : 'default',
-    background: enabled ? 'var(--bg-hover)' : 'var(--bg-elevated)',
-    color: enabled ? C.accent : C.faint,
-  };
 }

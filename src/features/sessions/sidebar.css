@@ -1,0 +1,230 @@
+/* pane [1] — the fleet board (Sidebar.tsx + SessionListBody/SessionContextMenu/
+   FilterInput, which share this stylesheet's class names 1:1 with the still-
+   inline SessionCard/menu/filter markup in Sidebar.tsx pending their wiring
+   in a later decomposition pass — see REFACTOR-CONVENTIONS.md). */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+}
+.sidebar--focused {
+  border-color: var(--accent);
+}
+
+.sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-9) var(--space-12);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar__title {
+  font-size: var(--font-size-11);
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+.sidebar__title--focused {
+  color: var(--accent);
+}
+.sidebar__count {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+
+.sidebar__footer {
+  padding: var(--space-8) var(--space-12);
+  border-top: 1px solid var(--border);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.sidebar__footer-hint {
+  color: var(--text-disabled);
+}
+
+/* filter row (FR-20) */
+.filter-input {
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--bg-elevated);
+  flex-shrink: 0;
+}
+.filter-input__field {
+  width: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  padding: var(--space-6) var(--space-8);
+  color: var(--text);
+  font-size: var(--font-size-12);
+  font-family: inherit;
+  outline: none;
+}
+
+/* card list */
+.sidebar-list {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-6);
+}
+.sidebar-error {
+  padding: var(--space-16);
+  text-align: center;
+  color: var(--error);
+  font-size: var(--font-size-11-5);
+}
+.sidebar-error__retry {
+  color: var(--accent);
+  cursor: pointer;
+  margin-top: var(--space-6);
+}
+.sidebar-empty {
+  height: 100%;
+  flex-direction: column;
+  font-size: var(--font-size-11-5);
+  text-align: center;
+  padding: var(--space-12);
+}
+.sidebar-empty__hint {
+  font-size: var(--font-size-10);
+  margin-top: var(--space-5);
+}
+
+/* session card — deliberately NOT built on <ListRow>: it's a stacked 4-row
+   card (flex-direction: column), not the single-row layout ListRow assumes
+   (same reasoning as the AgentsPanel exception in REFACTOR-CONVENTIONS.md). */
+.sidebar-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-9) var(--space-10);
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  margin-bottom: var(--space-3);
+  background: transparent;
+  outline: none;
+  outline-offset: -1px;
+}
+.sidebar-card--selected {
+  background: var(--bg-raised);
+}
+.sidebar-card--hovered {
+  background: var(--bg-elevated);
+}
+.sidebar-card--cursor {
+  outline: 1px solid var(--text-disabled);
+}
+
+.sidebar-card__row1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+}
+.sidebar-card__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-12-5);
+  font-weight: 500;
+  color: var(--text);
+}
+.sidebar-card__name--selected {
+  color: var(--text-bright);
+}
+.sidebar-card__time {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.sidebar-card__cwd {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: 17px;
+}
+.sidebar-card__status {
+  font-size: var(--font-size-10);
+  letter-spacing: 0.02em;
+  margin-left: 17px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-card__meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  margin-left: 17px;
+  font-size: var(--font-size-10);
+}
+.sidebar-card__faint {
+  color: var(--text-faint);
+}
+.sidebar-card__meta {
+  color: var(--text-hint);
+}
+.sidebar-card__files {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.sidebar-card__agents {
+  color: var(--accent);
+}
+
+/* right-click context menu */
+.context-menu {
+  position: fixed;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  min-width: 160px;
+  box-shadow: var(--shadow-dropdown);
+  z-index: 30;
+  overflow: hidden;
+}
+.context-menu__error {
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+.context-menu__item {
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-12);
+  color: var(--text);
+  cursor: pointer;
+  background: transparent;
+}
+.context-menu__item:hover {
+  background: var(--bg-hover);
+}
+.context-menu__body {
+  padding: var(--space-8) var(--space-10);
+}
+.context-menu__confirm-text {
+  font-size: var(--font-size-11-5);
+  color: var(--text);
+  margin-bottom: var(--space-8);
+}
+.context-menu__actions {
+  display: flex;
+  gap: var(--space-8);
+  justify-content: flex-end;
+}
+.context-menu__action {
+  font-size: var(--font-size-12);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.context-menu__action--danger {
+  color: var(--error);
+}

@@ -18,6 +18,7 @@ import SkillsPanel from '../features/skills/SkillsPanel';
 import UsageBar from '../features/usage/UsageBar';
 import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import { useStore } from '../lib/store';
+import { abbreviate } from '../lib/path';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
 import { displayWslCwd } from '../../contract/wsl-filesystem';
 import { appSetWindowTheme, diffGetSummary, onDiffEvent, onRemoteEvent } from '../lib/api';
@@ -26,30 +27,13 @@ import PaletteRoot from '../features/palette/PaletteView';
 import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
 import { setPaletteDiffCount } from '../features/palette/paletteData';
 import { registerBuiltinCommands } from '../features/palette/paletteCommands';
+import { EmptyPane } from '../ui/EmptyPane';
+import { StatusDot } from '../ui/StatusDot';
+import { BadgePill } from '../ui/BadgePill';
+import './app.css';
 
 // Register the built-in palette commands once, before first paint (FR-6).
 registerBuiltinCommands();
-
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-  hint: 'var(--text-hint)',
-  running: 'var(--accent-2)',
-  idle: 'var(--text-muted)',
-  done: 'var(--success)',
-  error: 'var(--error)',
-};
-
-function abbreviate(cwd: string, home: string): string {
-  if (!cwd) return '';
-  if (home && (cwd === home || cwd.startsWith(home + '/') || cwd.startsWith(home + '\\'))) {
-    return '~' + cwd.slice(home.length);
-  }
-  return cwd;
-}
 
 // Shell footer path (spec §8): WSL cwds render as '<distro>:/path'; when the
 // shell name already names that distro (FR-12), drop the redundant prefix so
@@ -59,6 +43,12 @@ function shellFooterPath(cwd: string, shellName: string, home: string): string {
   if (!wsl) return abbreviate(cwd, home);
   const prefix = `${shellName}:`;
   return wsl.startsWith(prefix) ? wsl.slice(prefix.length) : wsl;
+}
+
+// Main tab-strip label (OVERVIEW/SESSION/DIFF/SHELL): the `app-tab--on`
+// modifier recolors to the accent when it is the active main tab.
+function tabClassName(active: boolean): string {
+  return active ? 'app-tab app-tab--on' : 'app-tab';
 }
 
 export default function App() {
@@ -96,7 +86,7 @@ export default function App() {
   const closeAgentTab = useStore((s) => s.closeAgentTab);
   const clearAgentTabs = useStore((s) => s.clearAgentTabs);
 
-  const active = sessions.find((s) => s.id === activeSessionId) ?? null;
+  const active = sessions.find((session) => session.id === activeSessionId) ?? null;
   const activeAgentId = agentIdFromTab(mainTab);
 
   useEffect(() => {
@@ -143,9 +133,9 @@ export default function App() {
       if (e.type === 'remote.status') {
         useStore.getState().mergeRemote({ sessionId: e.sessionId, state: e.state });
       }
-    }).then((u) => {
-      if (!live) u();
-      else unlisten = u;
+    }).then((unsub) => {
+      if (!live) unsub();
+      else unlisten = unsub;
     });
     return () => {
       live = false;
@@ -172,9 +162,9 @@ export default function App() {
         setDiffCount(e.fileCount);
         setPaletteDiffCount(e.fileCount);
       }
-    }).then((u) => {
-      if (!mounted.current) u();
-      else unlisten = u;
+    }).then((unsub) => {
+      if (!mounted.current) unsub();
+      else unlisten = unsub;
     });
     return () => {
       mounted.current = false;
@@ -211,9 +201,9 @@ export default function App() {
   // Minimal app-shell global keys: n (new session), 1/2 (pane focus), t (shell tab).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const ae = document.activeElement as HTMLElement | null;
-      const inInput = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
-      const inTerminal = !!ae && ae.closest('.xterm') !== null;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const inInput = !!activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+      const inTerminal = !!activeEl && activeEl.closest('.xterm') !== null;
       // permission-guardrails FR-29 / projects FR-37: an open editor suppresses the
       // single-letter globals too, exactly like the other modals.
       if (newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || inInput || inTerminal) return;
@@ -299,98 +289,52 @@ export default function App() {
       : Math.max(0, active.lastActivityAt - active.startedAt)
     : 0;
 
-  const tabStyle = (on: boolean): React.CSSProperties => ({
-    fontSize: 11,
-    letterSpacing: '0.14em',
-    fontWeight: 700,
-    cursor: 'pointer',
-    padding: '2px 0',
-    color: on ? C.accent : C.dim,
-    borderBottom: `2px solid ${on ? C.accent : 'transparent'}`,
-  });
-
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-app)' }}>
+    <div className="app-root">
       {/* usage bar: app-scoped plan limits, always mounted, fixed 28px, directly
           under the (same-colored) native caption — usage-bar FR-1/FR-2/§8 */}
       <UsageBar />
       {/* grid: sidebar + main + agents (native OS title bar provides window chrome) */}
       <div
+        className="app-grid"
         style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'grid',
           // columns adapt to the [ / ] toggles; hidden columns keep their panes
           // MOUNTED (display:none) — Sidebar owns the session-cache subscriptions.
           gridTemplateColumns: [showLeftPane ? '264px' : null, '1fr', showRightPane ? '336px' : null]
             .filter(Boolean)
             .join(' '),
-          gridTemplateRows: '1fr 32px',
-          gap: 10,
-          padding: 10,
         }}
       >
-        <div style={{ gridRow: 1, minHeight: 0, display: showLeftPane ? undefined : 'none' }}>
+        <div className="app-col-left" style={{ display: showLeftPane ? undefined : 'none' }}>
           <Sidebar home={home} />
         </div>
 
         {/* main pane */}
         <section
           onClick={() => setFocusedPane('main')}
-          style={{
-            gridRow: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            background: 'var(--bg-deep)',
-            border: `1px solid ${mainFocused ? C.accent : 'var(--border)'}`,
-            borderRadius: 5,
-            overflow: 'hidden',
-            minHeight: 0,
-          }}
+          className="app-main-section"
+          style={{ borderColor: mainFocused ? 'var(--accent)' : 'var(--border)' }}
         >
           {/* tab strip + meta cluster */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '9px 14px',
-              borderBottom: '1px solid var(--border)',
-              flexShrink: 0,
-            }}
-          >
+          <div className="app-tabstrip">
             {/* §8: the strip scrolls horizontally past overflow rather than
                 clipping or squeezing tabs; it shrinks before the right-aligned
                 session meta cluster does. */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 16,
-                overflowX: 'auto',
-                flexShrink: 1,
-                minWidth: 0,
-              }}
-              className="scz"
-            >
+            <div className="app-tabstrip-left scz">
               {/* overview: the cross-project dashboard. First in the strip because
                   it is the zoomed-OUT view — the tabs read left-to-right from the
                   whole fleet down to one session's files. */}
-              <span onClick={() => setMainTab('overview')} style={tabStyle(mainTab === 'overview')}>
+              <span onClick={() => setMainTab('overview')} className={tabClassName(mainTab === 'overview')}>
                 OVERVIEW
               </span>
-              <span onClick={() => setMainTab('session')} style={tabStyle(mainTab === 'session')}>
+              <span onClick={() => setMainTab('session')} className={tabClassName(mainTab === 'session')}>
                 SESSION
               </span>
-              <span onClick={() => setMainTab('diff')} style={{ ...tabStyle(mainTab === 'diff'), display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span onClick={() => setMainTab('diff')} className={`${tabClassName(mainTab === 'diff')} app-tab--diff`}>
                 DIFF
-                {diffCount > 0 && (
-                  <span style={{ background: 'var(--bg-hover)', color: 'var(--text-hint)', fontSize: 9, padding: '1px 5px', borderRadius: 8, fontWeight: 500, letterSpacing: 0 }}>
-                    {diffCount}
-                  </span>
-                )}
+                {diffCount > 0 && <BadgePill>{diffCount}</BadgePill>}
               </span>
-              <span onClick={() => setMainTab('shell')} style={tabStyle(mainTab === 'shell')}>
+              <span onClick={() => setMainTab('shell')} className={tabClassName(mainTab === 'shell')}>
                 SHELL
               </span>
               {/* agent-tab FR-9/FR-12: one tab per clicked subagent, in open
@@ -407,25 +351,25 @@ export default function App() {
               ))}
             </div>
             {mainTab === 'session' && active && (
-              <div style={{ display: 'flex', gap: 14, fontSize: 10.5, color: C.dim, alignItems: 'center' }}>
+              <div className="app-meta-cluster">
                 <span>{active.model.label}</span>
                 {active.permissionMode !== 'default' && (
                   <span
                     title={`permission mode: ${active.permissionMode}`}
-                    style={{ color: active.permissionMode === 'bypassPermissions' ? C.error : C.faint }}
+                    className={active.permissionMode === 'bypassPermissions' ? 'app-text-error' : 'app-text-faint'}
                   >
                     {active.permissionMode === 'acceptEdits' ? 'edits-ok' : active.permissionMode === 'bypassPermissions' ? 'bypass' : 'plan'}
                   </span>
                 )}
-                {active.runtime === 'wsl' && <span style={{ color: C.faint }}>wsl</span>}
+                {active.runtime === 'wsl' && <span className="app-text-faint">wsl</span>}
                 {/* remote-control: host this session on claude.ai/code + mobile */}
                 <RemoteControlBadge key={active.id} sessionId={active.id} />
                 <span>
-                  <span style={{ color: C.faint }}>ctx </span>
-                  <span style={{ color: C.bright }}>{formatContextTokens(active.contextUsedTokens)}</span>
-                  <span style={{ color: C.faint }}>/{formatContextTokens(active.contextLimitTokens)}</span>
+                  <span className="app-text-faint">ctx </span>
+                  <span className="app-text-bright">{formatContextTokens(active.contextUsedTokens)}</span>
+                  <span className="app-text-faint">/{formatContextTokens(active.contextLimitTokens)}</span>
                 </span>
-                <span style={{ color: C.faint }}>{formatElapsed(elapsedMs)}</span>
+                <span className="app-text-faint">{formatElapsed(elapsedMs)}</span>
               </div>
             )}
           </div>
@@ -437,26 +381,15 @@ export default function App() {
             active ? (
               <ConversationView key={active.id} sessionId={active.id} />
             ) : (
-              <div
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 12.5,
-                  color: C.faint,
-                }}
-              >
-                select a session, or press <span style={{ color: C.accent, margin: '0 4px' }}>n</span> to start one
-              </div>
+              <EmptyPane>
+                select a session, or press <span className="app-inline-key">n</span> to start one
+              </EmptyPane>
             )
           ) : mainTab === 'diff' ? (
             active ? (
               <DiffView key={active.id} sessionId={active.id} />
             ) : (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
-                select a session to review its changes
-              </div>
+              <EmptyPane>select a session to review its changes</EmptyPane>
             )
           ) : activeAgentId !== null ? (
             // agent-tab: one subagent's own conversation. Keyed by agent so
@@ -466,127 +399,97 @@ export default function App() {
             active ? (
               <AgentView key={activeAgentId} agentId={activeAgentId} sessionId={active.id} />
             ) : (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
-                select a session
-              </div>
+              <EmptyPane>select a session</EmptyPane>
             )
           ) : active ? (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-app)' }}>
-              <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+            <div className="app-shell-view">
+              <div className="app-shell-terminal-wrap">
                 <ShellTerminal key={active.id} sessionId={active.id} />
               </div>
-              <div
-                style={{
-                  padding: '10px 14px',
-                  borderTop: '1px solid var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 14,
-                  fontSize: 11,
-                  color: 'var(--text-muted)',
-                  background: 'var(--bg-app)',
-                  flexShrink: 0,
-                }}
-              >
-                <span
-                  style={{ width: 7, height: 7, borderRadius: '50%', background: shell.alive ? C.done : C.error, display: 'block', flexShrink: 0 }}
-                />
+              <div className="app-shell-footer">
+                <StatusDot color={shell.alive ? 'var(--success)' : 'var(--error)'} size={7} />
                 <span>
                   {shell.shellName || 'shell'}
                   {shell.cwd && (
                     <>
                       {' '}
-                      <span style={{ color: C.faint }}>·</span> {shellFooterPath(shell.cwd, shell.shellName, home)}
+                      <span className="app-text-faint">·</span> {shellFooterPath(shell.cwd, shell.shellName, home)}
                     </>
                   )}
                 </span>
-                <span style={{ flex: 1 }} />
+                <span className="app-flex-spacer" />
                 <span>
-                  <span style={{ color: C.hint }}>⌃C</span> interrupt
+                  <span className="app-text-hint">⌃C</span> interrupt
                 </span>
                 <span>
-                  <span style={{ color: C.hint }}>⌃L</span> clear
+                  <span className="app-text-hint">⌃L</span> clear
                 </span>
               </div>
             </div>
           ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12.5, color: C.faint }}>
-              select a session to open its shell
-            </div>
+            <EmptyPane>select a session to open its shell</EmptyPane>
           )}
         </section>
 
         {/* right column: agents [3] + mcp [4] + skills [5] */}
-        <div style={{ gridRow: 1, minHeight: 0, display: showRightPane ? 'flex' : 'none', flexDirection: 'column', gap: 10 }}>
-          <div style={{ flex: 1.3, minHeight: 0 }}>
+        <div className="app-col-right" style={{ display: showRightPane ? undefined : 'none' }}>
+          <div className="app-panel-agents">
             <AgentsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
-          <div style={{ flex: 0.95, minHeight: 0 }}>
+          <div className="app-panel-mcp">
             <McpPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
-          <div style={{ flex: 1.05, minHeight: 0 }}>
+          <div className="app-panel-skills">
             <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
         </div>
 
         {/* status bar */}
-        <div
-          style={{
-            gridColumn: '1 / -1',
-            gridRow: 2,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 16,
-            padding: '0 12px',
-            background: 'var(--bg-deep)',
-            border: '1px solid var(--border)',
-            borderRadius: 5,
-            fontSize: 10.5,
-            color: 'var(--text-muted)',
-          }}
-        >
-          <span style={{ color: C.dim }}>
-            <span style={{ color: C.accent }}>1-5</span> switch pane
+        <div className="app-status-bar">
+          <span className="app-text-dim">
+            <span className="app-text-accent">1-5</span> switch pane
           </span>
           <span>
-            <span style={{ color: C.hint }}>↑↓</span> nav
+            <span className="app-text-hint">↑↓</span> nav
           </span>
           <span>
-            <span style={{ color: C.hint }}>⏎</span> send
+            <span className="app-text-hint">⏎</span> send
           </span>
           <span>
-            <span style={{ color: C.accent }}>o</span> overview
+            <span className="app-text-accent">o</span> overview
           </span>
           <span>
-            <span style={{ color: C.accent }}>d</span> diff
+            <span className="app-text-accent">d</span> diff
           </span>
           <span>
-            <span style={{ color: C.accent }}>t</span> shell
+            <span className="app-text-accent">t</span> shell
           </span>
-          <span onClick={toggleLeftPane} style={{ cursor: 'pointer' }} title="toggle sessions column">
-            <span style={{ color: C.accent }}>[</span> <span style={{ opacity: showLeftPane ? 1 : 0.5 }}>sessions</span>
+          <span onClick={toggleLeftPane} className="app-clickable" title="toggle sessions column">
+            <span className="app-text-accent">[</span>{' '}
+            <span className={showLeftPane ? 'app-pane-label' : 'app-pane-label app-pane-label--off'}>sessions</span>
           </span>
-          <span onClick={toggleRightPane} style={{ cursor: 'pointer' }} title="toggle side panels">
-            <span style={{ color: C.accent }}>]</span> <span style={{ opacity: showRightPane ? 1 : 0.5 }}>panels</span>
+          <span onClick={toggleRightPane} className="app-clickable" title="toggle side panels">
+            <span className="app-text-accent">]</span>{' '}
+            <span className={showRightPane ? 'app-pane-label' : 'app-pane-label app-pane-label--off'}>panels</span>
           </span>
           <span>
-            <span style={{ color: C.accent }}>n</span> new session
+            <span className="app-text-accent">n</span> new session
           </span>
-          <span onClick={() => togglePalette()} style={{ cursor: 'pointer' }}>
-            <span style={{ color: C.accent }}>⌘K</span> commands
+          <span onClick={() => togglePalette()} className="app-clickable">
+            <span className="app-text-accent">⌘K</span> commands
           </span>
-          <span style={{ flex: 1 }} />
+          <span className="app-flex-spacer" />
           <span
             onClick={toggleTheme}
-            style={{ cursor: 'pointer', color: C.dim }}
+            className="app-clickable app-text-dim"
             title={theme === 'dark' ? 'switch to light theme' : 'switch to dark theme'}
           >
-            <span style={{ color: C.accent }}>{theme === 'dark' ? '☾' : '☀'}</span> {theme}
+            <span className="app-text-accent">{theme === 'dark' ? '☾' : '☀'}</span> {theme}
           </span>
           <span>
-            focus: <span style={{ color: C.accent }}>{focusedPane}</span>
+            focus: <span className="app-text-accent">{focusedPane}</span>
           </span>
-          <span style={{ color: C.faint }}>francois{appVersion && ` ${appVersion}`}</span>
+          <span className="app-text-faint">francois{appVersion && ` ${appVersion}`}</span>
         </div>
       </div>
 
@@ -633,47 +536,25 @@ function AgentTabChip({
   onClose: () => void;
 }) {
   const [hover, setHover] = useState(false);
-  const sc =
+  const statusColor =
     tab.status === 'running'
-      ? C.running
+      ? 'var(--accent-2)'
       : tab.status === 'done'
-        ? C.done
+        ? 'var(--success)'
         : tab.status === 'error'
-          ? C.error
-          : C.idle;
+          ? 'var(--error)'
+          : 'var(--text-muted)';
   return (
     <span
       onClick={onOpen}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       title={tab.name}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        fontSize: 11,
-        fontWeight: 500,
-        cursor: 'pointer',
-        padding: '2px 0',
-        color: active ? C.accent : C.dim,
-        borderBottom: `2px solid ${active ? C.accent : 'transparent'}`,
-        maxWidth: 160,
-      }}
+      className={active ? 'app-tab-chip app-tab-chip--active' : 'app-tab-chip'}
     >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          flexShrink: 0,
-          background: sc,
-          animation: tab.status === 'running' ? 'pulse 1.4s ease-in-out infinite' : 'none',
-        }}
-      />
-      <span style={{ color: C.running, flexShrink: 0 }}>⇉</span>
-      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {agentTabLabel(tab.name)}
-      </span>
+      <StatusDot color={statusColor} size={6} pulsing={tab.status === 'running'} />
+      <span className="app-tab-chip-glyph">⇉</span>
+      <span className="truncate">{agentTabLabel(tab.name)}</span>
       {hover && (
         <span
           onClick={(e) => {
@@ -681,9 +562,7 @@ function AgentTabChip({
             onClose();
           }}
           title="close tab"
-          style={{ fontSize: 10, color: C.faint, flexShrink: 0 }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = C.error)}
-          onMouseLeave={(e) => (e.currentTarget.style.color = C.faint)}
+          className="app-tab-chip-close"
         >
           ✕
         </span>

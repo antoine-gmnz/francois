@@ -1,38 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from '../../../contract/common';
+import { useDismiss } from '../../lib/hooks/useDismiss';
+import './model-picker.css';
 
-const C = {
-  accent: 'var(--accent)',
-  dim: 'var(--text-dim)',
-  faint: 'var(--text-faint)',
-  primary: 'var(--text)',
-  bright: 'var(--text-bright)',
-};
-
-const fieldStyle: React.CSSProperties = {
-  background: 'var(--bg-panel)',
-  border: '1px solid var(--border-2)',
-  borderRadius: 4,
-  height: 32,
-  color: C.primary,
-  fontSize: 12.5,
-  padding: '0 10px',
-  width: '100%',
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-};
-
-// No overflow:hidden here — the submenu must be able to fly out to the side.
-const panelStyle: React.CSSProperties = {
-  background: 'var(--bg-panel)',
-  border: '1px solid var(--bg-hover-2)',
-  borderRadius: 6,
-  boxShadow: '0 20px 50px -18px rgba(0,0,0,0.85)',
-};
-
-function familyOf(m: ModelInfo): string {
-  return m.label.split(' ')[0] || m.label;
+function familyOf(model: ModelInfo): string {
+  return model.label.split(' ')[0] || model.label;
 }
 
 export default function ModelPicker({
@@ -56,9 +28,9 @@ export default function ModelPicker({
   const families = useMemo(() => {
     const map = new Map<string, ModelInfo[]>();
     for (const m of models) {
-      const f = familyOf(m);
-      if (!map.has(f)) map.set(f, []);
-      map.get(f)!.push(m);
+      const family = familyOf(m);
+      if (!map.has(family)) map.set(family, []);
+      map.get(family)!.push(m);
     }
     return Array.from(map, ([family, items]) => ({ family, items }));
   }, [models]);
@@ -77,42 +49,32 @@ export default function ModelPicker({
     setOpen(true);
   };
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', onDown);
-    window.addEventListener('keydown', onKey, true);
-    return () => {
-      window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('keydown', onKey, true);
-    };
-  }, [open]);
+  useDismiss(rootRef, {
+    onEscape: () => setOpen(false),
+    onOutsideClick: () => setOpen(false),
+    enabled: open,
+  });
 
   return (
     <div ref={rootRef}>
       <div
         ref={triggerRef}
         onClick={toggle}
-        style={{ ...fieldStyle, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.7 : 1 }}
+        className={`model-picker__trigger${disabled ? ' model-picker__trigger--disabled' : ''}`}
       >
-        <span style={{ flex: 1, color: selected ? C.primary : C.faint }}>
+        <span className={`model-picker__trigger-label${selected ? ' model-picker__trigger-label--selected' : ''}`}>
           {loading ? 'loading…' : models.length === 0 ? 'no models available' : selected ? selected.label : 'select a model'}
         </span>
-        <span style={{ color: C.faint, fontSize: 10 }}>▾</span>
+        <span className="model-picker__caret">▾</span>
       </div>
 
-      {selected?.brief && !open && <div style={{ fontSize: 10, color: C.faint, marginTop: 5 }}>{selected.brief}</div>}
+      {selected?.brief && !open && <div className="model-picker__brief">{selected.brief}</div>}
 
       {open && rect && (
-        <div style={{ ...panelStyle, position: 'fixed', top: rect.top, left: rect.left, width: rect.width, zIndex: 40 }}>
+        <div
+          className="model-picker__panel model-picker__popover"
+          style={{ top: rect.top, left: rect.left, width: rect.width }}
+        >
           {families.map(({ family, items }) => {
             const active = hovered === family;
             const familySelected = items.some((m) => m.id === modelId);
@@ -120,35 +82,17 @@ export default function ModelPicker({
               <div
                 key={family}
                 onMouseEnter={() => setHovered(family)}
-                style={{
-                  position: 'relative',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '8px 10px',
-                  background: active ? 'var(--bg-hover)' : 'transparent',
-                  borderLeft: `2px solid ${familySelected ? C.accent : 'transparent'}`,
-                }}
+                className={`model-picker__family${active ? ' model-picker__family--active' : ''}${familySelected ? ' model-picker__family--selected' : ''}`}
               >
-                <span style={{ flex: 1, fontSize: 12, color: familySelected ? C.bright : C.primary, fontWeight: 500 }}>
+                <span
+                  className={`model-picker__family-label${familySelected ? ' model-picker__family-label--selected' : ''}`}
+                >
                   {family}
                 </span>
-                <span style={{ fontSize: 10, color: C.faint }}>{items.length > 1 ? `${items.length} ` : ''}›</span>
+                <span className="model-picker__family-caret">{items.length > 1 ? `${items.length} ` : ''}›</span>
 
                 {active && (
-                  <div
-                    className="scz"
-                    style={{
-                      ...panelStyle,
-                      position: 'absolute',
-                      left: '100%',
-                      top: -1,
-                      marginLeft: 3,
-                      minWidth: 260,
-                      maxHeight: '60vh',
-                      overflowY: 'auto',
-                    }}
-                  >
+                  <div className="scz model-picker__panel model-picker__submenu">
                     {items.map((m) => {
                       const isSel = m.id === modelId;
                       return (
@@ -158,21 +102,12 @@ export default function ModelPicker({
                             onChange(m.id);
                             setOpen(false);
                           }}
-                          style={{
-                            padding: '8px 11px',
-                            cursor: 'pointer',
-                            background: isSel ? 'var(--bg-raised)' : 'transparent',
-                            borderLeft: `2px solid ${isSel ? C.accent : 'transparent'}`,
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isSel) e.currentTarget.style.background = 'var(--bg-hover)';
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isSel) e.currentTarget.style.background = 'transparent';
-                          }}
+                          className={`model-picker__option${isSel ? ' model-picker__option--selected' : ''}`}
                         >
-                          <div style={{ fontSize: 12, color: isSel ? C.bright : C.primary }}>{m.label}</div>
-                          {m.brief && <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>{m.brief}</div>}
+                          <div className={`model-picker__option-label${isSel ? ' model-picker__option-label--selected' : ''}`}>
+                            {m.label}
+                          </div>
+                          {m.brief && <div className="model-picker__option-brief">{m.brief}</div>}
                         </div>
                       );
                     })}

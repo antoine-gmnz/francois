@@ -22,7 +22,9 @@ import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contr
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
 
-function ipc<T>(cmd: string, args?: object): Promise<T> {
+// Exported so other invoke sites (e.g. ShellTerminal.tsx, which redefines this
+// byte-identically) can share the one wrapper instead of redeclaring it.
+export function ipc<T>(cmd: string, args?: object): Promise<T> {
   return invoke<T>(cmd, args as Record<string, unknown> | undefined);
 }
 

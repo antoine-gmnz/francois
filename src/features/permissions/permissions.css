@@ -1,0 +1,95 @@
+/* permission-guardrails — PermissionsModal (spec §8.10-14). Bespoke shell:
+   its border color/radius/backdrop and footer diverge from the shared
+   `.modal-*` classes in styles.css (see src/ui/Modal.tsx), and its panel
+   width is a CSS `min()` expression, which the shared <Modal> can't take
+   (its `width` prop is a plain px number) — so this stays its own class
+   set rather than forcing the shared primitive. */
+
+.pmodal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.pmodal-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  width: min(720px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-14) var(--space-16);
+}
+
+.pmodal-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+  flex-shrink: 0;
+}
+
+.pmodal-title {
+  font-size: var(--font-size-10);
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.pmodal-subtitle {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  flex: 1;
+}
+
+.pmodal-close {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.pmodal-filter {
+  margin-top: var(--space-10);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  height: 30px;
+  color: var(--text);
+  font-size: var(--font-size-12);
+  font-family: inherit;
+  padding: 0 var(--space-10);
+  outline: none;
+  flex-shrink: 0;
+}
+
+.pmodal-error {
+  margin-top: var(--space-8);
+  font-size: var(--font-size-11);
+  color: var(--error);
+  flex-shrink: 0;
+}
+
+/* `busy` already drops concurrent row clicks; the dimmed/inert state gives
+   that a visible affordance instead of silently swallowing them. No
+   transition (§8 motion rule). */
+.pmodal-list {
+  margin-top: var(--space-6);
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.pmodal-list--busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.pmodal-footer {
+  margin-top: var(--space-10);
+  font-size: var(--font-size-10);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
