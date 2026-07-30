@@ -1,23 +1,109 @@
 name: release
 
-# Build the installers for Windows, macOS (universal) and Linux and attach them to
-# a versioned GitHub Release. Trigger from the Actions tab (Run workflow) or by
-# pushing a v* tag. Version comes from tauri.conf.json (bump it + package.json first).
+# Continuous release. Every push to main, with no manual step anywhere:
+#
+#   gate      tests must pass before anything is tagged
+#   version   next semver from the conventional commits since the last v* tag,
+#             written into every manifest, committed back to main, tagged vX.Y.Z
+#   build     Windows / macOS (universal) / Linux installers + portable archives,
+#             attached to a DRAFT release so nothing is half-visible
+#   finalize  changelog + un-draft (the release goes live complete, in one step)
+#   npm       publish `francois` to the `latest` dist-tag against that release
+#
+# The tag is created with GITHUB_TOKEN, which by design does not re-trigger
+# workflows — so the version-bump push cannot loop back into this workflow.
+#
+# Escape hatches: `[skip release]` in a commit subject skips the whole run, and
+# npm-publish.yml can be re-dispatched by hand against any existing tag.
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+  workflow_dispatch:
 
+# Serialised, and NEVER cancelled mid-flight: a cancelled run can leave a tag and
+# a draft release behind with no binaries attached.
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: true
+  group: release
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: write # push the version bump + tag, publish the release
 
 jobs:
-  publish:
+  # Test gate. Runs once, before the tag exists, so a red main is never released.
+  # cargo test doubles as proof the crate compiles on Linux.
+  gate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (!contains(github.event.head_commit.message, '[skip release]') &&
+       !startsWith(github.event.head_commit.message, 'chore(release):'))
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Frontend typecheck + build
+        run: npm run build
+      - name: Frontend tests
+        run: npm test
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+  # Decide the version, write it into every manifest, commit it back to main and
+  # tag it. Everything downstream builds from the tag, so the binaries always
+  # carry the version this job chose.
+  version:
+    needs: gate
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      previous_tag: ${{ steps.previous.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # `git describe` needs the tags and the full history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Record the tag we are releasing from
+        id: previous
+        run: |
+          echo "tag=$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || echo '')" \
+            >> "$GITHUB_OUTPUT"
+      - name: Compute + write the next version
+        id: bump
+        run: node scripts/release/bump.mjs
+      - name: Commit the bump and tag it
+        env:
+          TAG: ${{ steps.bump.outputs.tag }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json \
+                  src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git commit -m "chore(release): v$VERSION [skip ci]"
+          git tag -a "$TAG" -m "Francois $TAG"
+          # Push the commit and the tag together: if either is rejected (a race
+          # with another push to main) nothing is left half-applied.
+          git push origin "HEAD:${GITHUB_REF_NAME}" "refs/tags/$TAG" --atomic
+
+  build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -33,8 +119,10 @@ jobs:
             rust-targets: ''
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # The tag, not github.sha: that commit is the one carrying the new version.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - name: Install Linux build deps
         if: matrix.platform == 'ubuntu-22.04'
@@ -42,66 +130,136 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust-targets }}
 
-      - name: Cache Rust build (src-tauri/target)
-        uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
-      - name: Install frontend dependencies
-        run: npm ci
+      - run: npm ci
 
-      # tauri-action substitutes __VERSION__ itself, but the portable-archive step
-      # needs the resolved tag too, so read it once here.
-      - name: Read the app version
-        id: version
-        shell: bash
-        run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Build app + attach to the GitHub Release
+      # Draft on purpose: three matrix legs attach assets to the same release, and
+      # finalize un-drafts it only once they have all landed. A published release
+      # carrying two platforms out of three would be worse than none.
+      - name: Build the installers + attach them to the draft release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # __VERSION__ is substituted from tauri.conf.json → tag "v0.1.0", etc.
-          tagName: v__VERSION__
-          releaseName: 'Francois v__VERSION__'
+          tagName: ${{ needs.version.outputs.tag }}
+          releaseName: 'Francois ${{ needs.version.outputs.tag }}'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
-          releaseBody: |
-            ## Install
-
-            - **Windows**: `Francois_*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi` (WiX)
-            - **macOS**: `Francois_*_universal.dmg` (Apple Silicon + Intel)
-            - **Linux**: `Francois_*_amd64.AppImage` or `*_amd64.deb`
-
-            **Prerequisite:** the app orchestrates the Claude Code CLI, so the machine needs
-            [`claude`](https://claude.ai/code) installed and authenticated on `PATH`.
-
-            Or skip the installers entirely — `npm i -g francois` fetches the same build with
-            no SmartScreen or Gatekeeper prompt, because binaries downloaded by a CLI never
-            carry the browser's Mark-of-the-Web / quarantine attribute. It still registers a
-            Start Menu / Launchpad / applications-menu entry, so you open it like any
-            installed app.
-
-            Builds are **unsigned** — Windows SmartScreen / macOS Gatekeeper may warn on first
-            launch (on macOS: right-click → Open, or `xattr -cr` the app).
+          releaseBody: 'Assembling — notes are written by the finalize job.'
 
       # Installer-free payload for the npm package. Must run after tauri-action,
-      # which is what creates the (draft) release these get attached to.
+      # which is what creates the release these get attached to.
       - name: Attach the portable archive
         uses: ./.github/actions/portable-archive
         with:
-          tag: v${{ steps.version.outputs.version }}
+          tag: ${{ needs.version.outputs.tag }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Write the changelog and make the release live. Un-drafting is what makes the
+  # assets publicly downloadable, which the npm postinstall depends on.
+  finalize:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+          fetch-depth: 0
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          PREVIOUS: ${{ needs.version.outputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          range="${PREVIOUS:+$PREVIOUS..}$TAG"
+          {
+            echo "## What changed"
+            echo
+            git log --no-merges --reverse --format='- %s' "$range" \
+              | grep -v '^- chore(release):' || echo "- no user-facing commits"
+            echo
+            if [ -n "$PREVIOUS" ]; then
+              echo "[Full diff](https://github.com/$GITHUB_REPOSITORY/compare/$PREVIOUS...$TAG)"
+              echo
+            fi
+            cat <<'BODY'
+          ## Install
+
+          ```sh
+          npm i -g francois
+          ```
+
+          This is the recommended route: binaries fetched by a CLI never carry the browser's
+          Mark-of-the-Web / quarantine attribute, so there is no SmartScreen or Gatekeeper
+          prompt even though the builds are unsigned. It still registers a Start Menu /
+          Launchpad / applications-menu entry, so you open it like any installed app.
+
+          Or take an installer below:
+
+          - **Windows**: `Francois_*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi` (WiX)
+          - **macOS**: `Francois_*_universal.dmg` (Apple Silicon + Intel)
+          - **Linux**: `Francois_*_amd64.AppImage` or `*_amd64.deb`
+
+          **Prerequisite:** the app orchestrates the Claude Code CLI, so the machine needs
+          [`claude`](https://claude.ai/code) installed and authenticated on `PATH`.
+
+          Installers are **unsigned** — Windows SmartScreen / macOS Gatekeeper may warn on
+          first launch (on macOS: right-click → Open, or `xattr -cr` the app).
+          BODY
+          } > notes.md
+          gh release edit "$TAG" --notes-file notes.md --draft=false --latest
+
+  # Publish the npm package against the release the matrix just built.
+  #
+  # Dispatched rather than called with `uses:`. npm's trusted-publishing exchange
+  # validates the workflow the publishing job runs as, and a reusable call yields
+  # different OIDC claims than a direct trigger — so npm-publish.yml always runs
+  # as a top-level workflow. We then watch that run, so a refused publish turns
+  # THIS release red instead of failing quietly elsewhere in the Actions tab.
+  npm:
+    needs: [version, finalize]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # dispatch + read npm-publish.yml
+    steps:
+      - name: Dispatch the npm publish and wait for it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          latest() { gh run list --workflow npm-publish.yml --limit 1 \
+            --json databaseId --jq '.[0].databaseId // 0' --repo "$GITHUB_REPOSITORY"; }
+
+          before=$(latest)
+          gh workflow run npm-publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG"
+
+          # `gh workflow run` does not return the run id, so wait for a run newer
+          # than whatever was on top before the dispatch.
+          run_id="$before"
+          for _ in $(seq 1 40); do
+            sleep 5
+            run_id=$(latest)
+            [ "$run_id" != "$before" ] && break
+          done
+          if [ "$run_id" = "$before" ]; then
+            echo "::error::npm-publish.yml never started for $TAG — dispatch it manually"
+            exit 1
+          fi
+
+          echo "watching https://github.com/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 15
