@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SlashCommandInfo } from '../../../contract/common';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionClear, sessionInterrupt, sessionSend } from '../../lib/api';
-import Block from './Block';
+import Block, { ToolGroup } from './Block';
 import Composer from './Composer';
-import { compactBlocks, isClearCommand } from './conversation-blocks';
+import { compactBlocks, groupToolRuns, isClearCommand } from './conversation-blocks';
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import { useConversationTranscript } from './useConversationTranscript';
@@ -196,7 +196,11 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
               <div className="conv-empty__hint">waiting for your first prompt</div>
             </Centered>
           ) : (
-            compactBlocks(state.blocks).map((block) => <Block key={block.blockId} b={block} sessionId={sessionId} />)
+            groupToolRuns(compactBlocks(state.blocks)).map((item) => (
+              <div key={item.kind === 'tool-group' ? item.blockId : item.block.blockId} className="conv-item">
+                {item.kind === 'tool-group' ? <ToolGroup blocks={item.blocks} /> : <Block b={item.block} sessionId={sessionId} />}
+              </div>
+            ))
           )}
         </div>
 
@@ -216,6 +220,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
           autoGrow(e.target);
         }}
         onInputKey={onInputKey}
+        onSend={() => void send()}
         popupOpen={popupOpen}
         filtered={filtered}
         selIdx={selIdx}

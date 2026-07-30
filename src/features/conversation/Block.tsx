@@ -3,7 +3,7 @@
 // SAME vocabulary — glyphs, colors, markdown, tool-card layout — instead of
 // growing a second renderer that would drift from this one.
 
-import { toolBody, type ConversationBlock } from '../../../contract/conversation-view';
+import { toolBody, type ConversationBlock, type ToolConversationBlock } from '../../../contract/conversation-view';
 import CommandBlock from '../commands/CommandCard';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
@@ -59,40 +59,56 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
     );
   }
 
-  let glyph = '';
-  let glyphColor = 'var(--text-dim)';
-  let bodyColor = 'var(--text)';
-  let body: React.ReactNode = '';
-  if (block.kind === 'tool') {
-    glyph = block.glyph;
-    glyphColor = block.glyphColor;
-    bodyColor = block.bodyColor;
-    body = (
-      <>
-        {toolBody(block.tool, block.summary)}
-        {block.meta && <span className="block-meta"> · {block.meta}</span>}
-      </>
-    );
-  } else {
-    glyph = block.glyph;
-    glyphColor = block.glyphColor;
-    bodyColor = block.bodyColor;
-    body = (
-      <>
-        Dispatched subagent  {block.agentName}
-        {block.meta && <span className="block-meta"> · {block.meta}</span>}
-      </>
+  if (block.kind === 'subagent') {
+    // design-refresh FR-7: dispatch renders as a purple-tinted banner, not a
+    // bare glyph row — bold agent name, soft bg/border from --hue-purple.
+    return (
+      <div className="block-subagent">
+        <span className="block-glyph" style={{ color: block.glyphColor }}>
+          {block.glyph}
+        </span>
+        <div className="block-content block-body" style={{ color: block.bodyColor }}>
+          Dispatched subagent <span className="block-subagent__name">{block.agentName}</span>
+          {block.meta && <span className="block-meta"> · {block.meta}</span>}
+        </div>
+      </div>
     );
   }
 
   return (
     <div className="block-row">
-      <span className="block-glyph" style={{ color: glyphColor }}>
-        {glyph}
+      <span className="block-glyph" style={{ color: block.glyphColor }}>
+        {block.glyph}
       </span>
-      <div className="block-content block-body" style={{ color: bodyColor }}>
-        {body}
+      <div className="block-content block-body" style={{ color: block.bodyColor }}>
+        {toolBody(block.tool, block.summary)}
+        {block.meta && <span className="block-meta"> · {block.meta}</span>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * design-refresh FR-7: a run of consecutive tool blocks (grouped by
+ * conversation-blocks.ts's `groupToolRuns`) renders as ONE hairline-divided
+ * card instead of N loose rows — same glyph/body vocabulary as a bare
+ * `.block-row`, just wrapped and separated by `.tool-group-row` + a `--border-2`
+ * top rule on every row after the first.
+ */
+export function ToolGroup({ blocks }: { blocks: ToolConversationBlock[] }) {
+  return (
+    <div className="tool-group">
+      {blocks.map((block) => (
+        <div key={block.blockId} className="tool-group-row">
+          <span className="block-glyph" style={{ color: block.glyphColor }}>
+            {block.glyph}
+          </span>
+          <div className="block-content block-body" style={{ color: block.bodyColor }}>
+            {toolBody(block.tool, block.summary)}
+            {block.meta && <span className="block-meta"> · {block.meta}</span>}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

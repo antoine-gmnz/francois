@@ -12,8 +12,9 @@ pub fn conversation_get_transcript(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Vec<Value>> {
-    let transcript: Option<Vec<Value>> = engine
-        .with_session(&session_id, |s| s.block_buffer.iter().map(classify_block).collect());
+    let transcript: Option<Vec<Value>> = engine.with_session(&session_id, |s| {
+        s.block_buffer.iter().map(classify_block).collect()
+    });
     match transcript {
         None => err("SESSION_NOT_FOUND", "no such session"),
         Some(blocks) => ok(blocks),

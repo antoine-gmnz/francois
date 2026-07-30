@@ -1,77 +1,109 @@
 /* pane [1] — the fleet board (Sidebar.tsx + SessionListBody / SessionContextMenu /
    FilterInput, which share this stylesheet's class names 1:1). */
 
+/* design-refresh: a --bg-panel card with the outer border + 8px panel radius. */
 .sidebar {
   display: flex;
   flex-direction: column;
-  background: var(--bg-deep);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
   overflow: hidden;
   min-height: 0;
   height: 100%;
 }
 .sidebar--focused {
-  border-color: var(--accent);
+  border-color: var(--border-focus);
 }
 
+/* No bottom rule, unlike the right-rail panel headers: the filter field sits
+   directly beneath and the mock groups the two as one block. */
 .sidebar__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-9) var(--space-12);
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-11) var(--space-12) var(--space-10);
   flex-shrink: 0;
 }
 .sidebar__title {
-  font-size: var(--font-size-11);
-  letter-spacing: 0.14em;
-  color: var(--text-dim);
-  font-weight: 700;
+  font-size: var(--font-size-11-5);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-hint);
+  font-weight: 600;
 }
 .sidebar__title--focused {
   color: var(--accent);
 }
 .sidebar__count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+}
+
+.sidebar__footer {
+  padding: var(--space-10);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar__new {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12-5);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+.sidebar__new:hover {
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+}
+.sidebar__new-plus {
+  color: var(--accent);
+  font-size: var(--font-size-14);
+  line-height: 1;
+}
+.sidebar__footer-hint {
+  font-family: var(--font-mono);
   font-size: var(--font-size-10);
   color: var(--text-faint);
 }
 
-.sidebar__footer {
-  padding: var(--space-8) var(--space-12);
-  border-top: 1px solid var(--border);
-  font-size: var(--font-size-10-5);
-  color: var(--text-faint);
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.sidebar__footer-hint {
-  color: var(--text-disabled);
-}
-
-/* filter row (FR-20) */
+/* filter row (FR-20) — design-refresh: a recessed 30px field on the panel, no
+   divider rule (the card list below is already visually separated). */
 .filter-input {
-  padding: var(--space-6) var(--space-8);
-  border-bottom: 1px solid var(--bg-elevated);
+  padding: 0 var(--space-10) var(--space-10);
   flex-shrink: 0;
 }
 .filter-input__field {
   width: 100%;
-  background: var(--bg-panel);
+  height: 30px;
+  background: var(--bg-app);
   border: 1px solid var(--border-2);
-  border-radius: var(--radius-base);
-  padding: var(--space-6) var(--space-8);
+  border-radius: var(--radius-lg);
+  padding: 0 var(--space-10);
   color: var(--text);
-  font-size: var(--font-size-12);
+  font-size: var(--font-size-12-5);
   font-family: inherit;
   outline: none;
+}
+.filter-input__field:focus {
+  border-color: var(--border-focus);
 }
 
 /* card list */
 .sidebar-list {
   flex: 1;
   overflow: auto;
-  padding: var(--space-6);
+  padding: 0 var(--space-10) var(--space-10);
 }
 .sidebar-error {
   padding: var(--space-16);
@@ -99,15 +131,24 @@
 /* session card — deliberately NOT built on <ListRow>: it's a stacked 4-row
    card (flex-direction: column), not the single-row layout ListRow assumes
    (same reasoning as the AgentsPanel exception in REFACTOR-CONVENTIONS.md). */
+/* design-refresh FR-6: session rows become metadata cards — idle cards get a
+   raised surface of their own (not transparent-until-hover); selected adds a
+   border-focus inset ring plus a 2px accent rail on top of the raised fill. */
+/* Structure follows the mock's card exactly: name + status on one line, the
+   path under it, then ONE compact meta line (model chip · usage bar · tokens ·
+   age). No hanging 17px indent — the earlier version's left dot forced every
+   row to hang off it, which made the card read as a 5-row list, not a card. */
 .sidebar-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-9) var(--space-10);
-  border-radius: var(--radius-base);
+  gap: var(--space-7);
+  padding: var(--space-11) var(--space-12);
+  border-radius: var(--radius-card);
   cursor: pointer;
-  margin-bottom: var(--space-3);
-  background: transparent;
+  margin-bottom: var(--space-6);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--border);
+  border-left: 2px solid transparent;
   outline: none;
   outline-offset: -1px;
 }
@@ -115,7 +156,7 @@
   background: var(--bg-raised);
 }
 .sidebar-card--hovered {
-  background: var(--bg-elevated);
+  background: var(--bg-hover);
 }
 .sidebar-card--cursor {
   outline: 1px solid var(--text-disabled);
@@ -124,51 +165,81 @@
 .sidebar-card__row1 {
   display: flex;
   align-items: center;
-  gap: var(--space-9);
+  gap: var(--space-8);
 }
 .sidebar-card__name {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-12-5);
+  font-size: var(--font-size-13);
   font-weight: 500;
   color: var(--text);
 }
 .sidebar-card__name--selected {
   color: var(--text-bright);
+  font-weight: 600;
 }
-.sidebar-card__time {
+/* status cluster — dot + label, right-aligned on the name's line */
+.sidebar-card__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
   flex-shrink: 0;
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
+  font-size: var(--font-size-11);
 }
 .sidebar-card__cwd {
-  font-size: var(--font-size-10-5);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-left: 17px;
 }
-.sidebar-card__status {
-  font-size: var(--font-size-10);
-  letter-spacing: 0.02em;
-  margin-left: 17px;
-  white-space: nowrap;
+.sidebar-card--selected .sidebar-card__cwd {
+  color: var(--text-muted);
+}
+/* model badge chip (FR-6) */
+.sidebar-card__model {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+  background: var(--border);
+  border-radius: var(--radius-base);
+  padding: var(--space-2) var(--space-6);
+  flex-shrink: 0;
+}
+.sidebar-card--selected .sidebar-card__model {
+  color: var(--text-hint);
+  background: var(--bg-hover-2);
+}
+/* mini token-usage bar (FR-6) — takes the slack in the meta row */
+.sidebar-card__bar-track {
+  flex: 1;
+  min-width: 16px;
+  height: 3px;
+  border-radius: var(--radius-xs);
+  background: var(--border-2);
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+.sidebar-card__bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--hue-blue);
 }
 .sidebar-card__meta-row {
   display: flex;
   align-items: center;
-  gap: var(--space-10);
-  margin-left: 17px;
-  font-size: var(--font-size-10);
+  gap: var(--space-8);
+  font-size: var(--font-size-10-5);
+  font-family: var(--font-mono);
+}
+.sidebar-card__spacer {
+  flex: 1;
 }
 .sidebar-card__faint {
   color: var(--text-faint);
 }
 .sidebar-card__meta {
-  color: var(--text-hint);
+  color: var(--text-dim);
 }
 .sidebar-card__files {
   display: flex;

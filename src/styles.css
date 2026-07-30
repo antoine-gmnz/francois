@@ -15,55 +15,67 @@ html[data-hidden='1'] [style*='animation'] {
   animation-play-state: paused !important;
 }
 /* ── Theme tokens ───────────────────────────────────────────────────────────
-   :root holds the DARK palette (the app's original, byte-identical hex values).
+   :root holds the DARK palette (design-refresh: the values from `Francois
+   Redesign.dc.html` variant 3a — see specs/design/design-refresh.md's table).
    :root[data-theme='light'] overrides them with a cohesive light palette.
    Every component references these via var(--…); main.tsx sets data-theme before
    first paint and store.ts flips it at runtime. */
 :root {
+  /* fonts (design-refresh FR-2): IBM Plex Sans is the UI chrome font (labels,
+     buttons, body copy, panel headers); JetBrains Mono is demoted to
+     code/paths/numbers/badges/hotkey glyphs — xterm keeps it unconditionally
+     via its own fontFamily option, not this token. */
+  --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
   /* backgrounds */
-  --bg-app: #0f1015;
-  --bg-deep: #131419;
-  --bg-panel: #191b21;
-  --bg-elevated: #1b1d23;
-  --bg-raised: #20222a;
-  --bg-hover: #26282f;
-  --bg-hover-2: #34363f;
+  --bg-app: #0d0f13;
+  --bg-deep: #11141a;
+  --bg-panel: #14171d;
+  --bg-elevated: #161a21;
+  --bg-raised: #1c212a;
+  --bg-hover: #1a1e26;
+  --bg-hover-2: #232833;
   /* borders */
-  --border: #24262d;
-  --border-2: #2a2c33;
+  --border: #1f242d;
+  --border-2: #232833;
+  --border-emphasis: #2d333f;
+  --border-focus: #3c4453;
   /* text */
-  --text-bright: #dfe2e8;
-  --text-strong: #d3d6dc;
-  --text: #c4c7ce;
-  --text-2: #b9bcc4;
-  --text-hint: #a9adb6;
-  --text-dim: #868a93;
-  --text-muted: #6b7079;
-  --text-faint: #565a63;
-  --text-disabled: #3a3d45;
+  --text-bright: #f2f4f8;
+  --text-strong: #e6e9ef;
+  --text: #d6dae2;
+  --text-2: #c3c9d4;
+  --text-hint: #9aa2b1;
+  --text-dim: #8b93a3;
+  --text-muted: #6b7385;
+  --text-faint: #565e6e;
+  --text-disabled: #3a4049;
   /* accent */
-  --accent: #c8a15a;
-  --accent-2: #d0a45c;
-  --accent-bright: #d8b878;
-  --accent-soft-bg: #3a3325;
-  --warn: #c2b06a;
+  --accent: #e0a84e;
+  --accent-2: #e0a84e;
+  --accent-bright: #f0c47c;
+  --accent-soft-bg: #332a18;
+  --warn: #d4c46f;
   /* green */
-  --success: #7fa07a;
-  --success-bright: #9dbb98;
-  --success-dim: #5f7a5b;
+  --success: #6fae7d;
+  --success-bright: #8bc292;
+  --success-dim: #517a55;
   /* red */
-  --error: #c46b62;
-  --error-bright: #d68f86;
-  --error-dim: #8a5751;
+  --error: #d1685e;
+  --error-bright: #e0918a;
+  --error-dim: #8f3f37;
   /* hues */
-  --hue-purple: #9a86c4;
-  --hue-purple-soft: #c29fbb;
+  --hue-purple: #b39ede;
+  --hue-purple-soft: #cbb9ec;
   --hue-teal: #8fbab8;
-  --hue-blue: #6b8fb0;
+  --hue-blue: #6f9fd8;
   --hue-slate: #7c8aa0;
+  /* dimming layer shared by every modal/overlay backdrop */
+  --backdrop: rgba(6, 7, 9, 0.62);
 
   /* ── Foundational scales ──────────────────────────────────────────────────
-     Derived from actual inline-style usage across src/**/*.tsx (grepped
+     Derived from actual inline-style usage across src.tsx (grepped
      fontSize/borderRadius/padding/gap/boxShadow literals), NOT an invented
      scale — every value below is a px (or shadow) literal that already
      appears, repeatedly, in the codebase. Spacing, radius and font-size do
@@ -119,36 +131,53 @@ html[data-hidden='1'] [style*='animation'] {
 
   /* xs=2 (rare, UsageBar), sm=3, base=4 (by far the most common — default
      button/chip/row radius), md=5, lg=6, xl=8 (modals + larger panels),
-     2xl=12 (rare, ConversationView jump-to-latest pill). */
+     2xl=12 (rare, ConversationView jump-to-latest pill). card=7 (design-refresh
+     FR-1/brief: session/tool-call/prompt cards move off base/lg onto this new
+     step — panels stay on xl, unchanged). */
   --radius-xs: 2px;
   --radius-sm: 3px;
   --radius-base: 4px;
   --radius-md: 5px;
   --radius-lg: 6px;
+  --radius-card: 7px;
   --radius-xl: 8px;
   --radius-2xl: 12px;
 
   /* Named by the kind of floating surface each dresses, not by size. */
-  --shadow-modal: 0 30px 80px -20px rgba(0, 0, 0, 0.85);
+  --shadow-modal: 0 30px 70px -18px rgba(0, 0, 0, 0.9);
   --shadow-popover-lg: 0 20px 50px -18px rgba(0, 0, 0, 0.85);
   --shadow-popover: 0 20px 50px -15px rgba(0, 0, 0, 0.75);
   --shadow-dropdown: 0 12px 30px -10px rgba(0, 0, 0, 0.7);
   --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-card-sm: 0 6px 20px rgba(0, 0, 0, 0.45);
   --shadow-bar: 0 -4px 16px rgba(0, 0, 0, 0.35);
+  /* design-refresh FR-5: the *lift* on a small active pill (segmented tab,
+     agent tab chip). The card shadows above are floating-surface scale — a
+     20px blur under a 26px-tall pill reads as a smudge, so the mock gives
+     these their own tight value. */
+  --shadow-pill: 0 1px 3px rgba(0, 0, 0, 0.45);
+
+  /* Native UA-rendered chrome — the <select> option popup, scrollbars, the
+     focus ring — is NOT reachable by the tokens above; it follows this
+     property only. Without it WebView2 renders that popup light-on-light over
+     the dark UI. Flipped alongside the tokens in the light block below. */
+  color-scheme: dark;
 }
 :root[data-theme='light'] {
+  color-scheme: light;
   /* backgrounds — near-white layered surfaces, panels whitest */
-  --bg-app: #f5f6f8;
-  --bg-deep: #eef0f3;
+  --bg-app: #eef0f4;
+  --bg-deep: #f8f9fb;
   --bg-panel: #ffffff;
   --bg-elevated: #fbfcfd;
   --bg-raised: #f2f4f7;
   --bg-hover: #e9ebef;
   --bg-hover-2: #dce0e6;
   /* borders — light grays */
-  --border: #dcdfe4;
-  --border-2: #c9cdd4;
+  --border: #e2e5ea;
+  --border-2: #d7dbe2;
+  --border-emphasis: #c9cdd4;
+  --border-focus: #14171c54;
   /* text — inverted ladder: bright is darkest, disabled lightest.
      Darkened for legibility on white (lighter steps carried too little contrast). */
   --text-bright: #14161b;
@@ -160,19 +189,19 @@ html[data-hidden='1'] [style*='animation'] {
   --text-muted: #6d717a;
   --text-faint: #878c95;
   --text-disabled: #b6bac2;
-  /* accent — gold darkened for contrast on light */
-  --accent: #a97e2c;
+  /* accent — gold darkened for contrast on light (fails on white at the dark value) */
+  --accent: #b07d24;
   --accent-2: #a67b28;
   --accent-bright: #8c661d;
   --accent-soft-bg: #f4ead0;
   --warn: #8f7f2e;
   /* green — shifted darker for legibility */
   --success: #4d7a48;
-  --success-bright: #3b6636;
+  --success-bright: #285024;
   --success-dim: #7e9b79;
   /* red */
   --error: #b0463d;
-  --error-bright: #97362e;
+  --error-bright: #7d2b24;
   --error-dim: #c98d87;
   /* hues — darkened for contrast on light */
   --hue-purple: #6a55a0;
@@ -180,6 +209,10 @@ html[data-hidden='1'] [style*='animation'] {
   --hue-teal: #3f8582;
   --hue-blue: #416b8f;
   --hue-slate: #566480;
+  --backdrop: rgba(6, 7, 9, 0.62);
+
+  --shadow-card: 0 0px 13px rgba(0, 0, 0, 0.25);
+  --shadow-card: 0 0px 13px rgba(0, 0, 0, 0.25);
 }
 * {
   box-sizing: border-box;
@@ -195,7 +228,7 @@ body {
   /* Same as the App root shell — body is only visible before React mounts, and a
      darker value there flashes as a black band against the tinted caption bar. */
   background: var(--bg-app);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
@@ -327,7 +360,7 @@ a {
   height: 8px;
 }
 .scz::-webkit-scrollbar-thumb {
-  background: var(--border-2);
+  background: var(--border-emphasis);
   border-radius: 4px;
 }
 .scz::-webkit-scrollbar-track {
@@ -337,7 +370,7 @@ a {
   width: 8px;
 }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-  background: var(--border-2);
+  background: var(--border-emphasis);
   border-radius: 4px;
 }
 .xterm .xterm-viewport::-webkit-scrollbar-track {
@@ -694,18 +727,20 @@ a {
   color: var(--error);
 }
 /* slash-menu (§8) — anchored above the composer input bar, same width as the
-   input (the sendError banner's 14px anchoring convention). NO MOTION: instant
-   open/close/swap — no keyframes, no animation, no transition. ~8 rows fit the
-   224px max-height, then it scrolls (.scz scrollbar). */
+   input: it positions against `.composer-col`, which IS that width now that
+   design-refresh FR-8 capped the composer to the 680px reading column — hence
+   a 0 inset rather than the old 14px matching of the wrapper's padding. NO
+   MOTION: instant open/close/swap — no keyframes, no animation, no
+   transition. ~8 rows fit the 224px max-height, then it scrolls (.scz). */
 .slash-menu {
   position: absolute;
   bottom: 100%;
-  left: 14px;
-  right: 14px;
+  left: 0;
+  right: 0;
   margin-bottom: 4px;
   background: var(--bg-deep);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-bar);
   max-height: 224px;
   overflow-y: auto;
@@ -742,7 +777,7 @@ a {
 }
 
 /* ── Utility & primitive classes ──────────────────────────────────────────
-   Shared building blocks for the src/**/*.tsx -> CSS-class migration (573
+   Shared building blocks for the src*.tsx -> CSS-class migration (573
    inline `style={{}}` objects today). These names are a contract with the
    components that will adopt them — do not rename. Each was reverse-engineered
    from the current inline styles it is meant to replace, so adopting one
@@ -763,7 +798,7 @@ a {
    stay on the call site. */
 .list-row {
   display: flex;
-  align-items: center;
+  align-items: flex-;
   cursor: pointer;
   background: transparent;
 }
@@ -784,8 +819,12 @@ a {
   border-radius: 50%;
   flex-shrink: 0;
 }
+/* design-refresh FR-16: `pulse` ticks — 1.6s in 6 steps. Declared in full
+   here rather than leaning on the `[style*="pulse"]` throttle at the top of
+   this file: that selector matches the *inline* style attribute only, so a
+   class-declared animation like this one never saw it. */
 .status-dot--pulsing {
-  animation: pulse 1.4s ease-in-out infinite;
+  animation: pulse 1.6s steps(6, end) infinite;
 }
 
 /* Inline error banner (NewSessionModal.tsx:510-522, ConversationView.tsx:426-442). */
@@ -890,7 +929,7 @@ a {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 7, 9, 0.62);
+  background: var(--backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -916,7 +955,7 @@ a {
   overflow-y: auto;
 }
 /* Identical to .hint-bar below (every modal's footer IS a hint bar) — grouped
-   rather than duplicated, same spirit as the qcard-*/pcard-* consolidation
+   rather than duplicated, same spirit as the qcard-/pcard-* consolidation
    above. */
 .modal-footer,
 .hint-bar {
@@ -937,26 +976,30 @@ a {
    classes/inline styles of their own — so the title/count look, including
    the focus-accent recolor, has to be expressed structurally here rather
    than via a __title class). */
+/* design-refresh: the mock's panel header — uppercase 11.5px/600 at .09em in
+   --text-hint, count/hotkey readout in --font-mono. */
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-9) var(--space-12);
+  padding: var(--space-11) var(--space-12);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .panel-header > span:first-child {
-  font-size: var(--font-size-11);
-  letter-spacing: 0.14em;
-  font-weight: 700;
-  color: var(--text-dim);
+  font-size: var(--font-size-11-5);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-hint);
 }
 .panel-header--focused > span:first-child {
   color: var(--accent);
 }
 .panel-header > span:last-child {
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
 }
 
 /* Generic "inert" state (ProjectsModal.tsx:597-599 disabledIf()). */

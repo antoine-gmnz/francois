@@ -46,14 +46,21 @@
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: var(--space-16) var(--space-18);
+  padding: var(--space-24) 26px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-14);
+  /* design-refresh FR-7: the reading column is centered and capped — every
+     row is wrapped in .conv-item below, which carries the actual width cap. */
+  align-items: center;
+  gap: 22px;
   /* The app root disables selection (styles.css body rule) for chrome; the
      transcript is CONTENT — copying out of it must work. */
   user-select: text;
   cursor: auto;
+}
+.conv-item {
+  width: 100%;
+  max-width: 680px;
 }
 
 .conv-error-text {
@@ -101,10 +108,22 @@
   background: var(--bg-hover);
 }
 
-/* ── composer ── */
+/* ── composer (design-refresh FR-8: card style + a visible Send button) ──
+   The footer is its own --bg-deep band with a top rule, and its contents are
+   capped + centered on the SAME 680px reading column as the transcript above
+   (the bar used to span the full pane, so it fell out of alignment with every
+   block it answers). */
 .composer-wrap {
   position: relative;
   flex-shrink: 0;
+  padding: var(--space-14) 26px var(--space-16);
+  border-top: 1px solid var(--border);
+  background: var(--bg-deep);
+}
+.composer-col {
+  position: relative;
+  max-width: 680px;
+  margin: 0 auto;
 }
 
 /* Same visual treatment as .form-error (background/color/font-size/radius)
@@ -113,8 +132,8 @@
 .send-error-banner {
   position: absolute;
   bottom: 100%;
-  left: var(--space-14);
-  right: var(--space-14);
+  left: 0;
+  right: 0;
   margin-bottom: var(--space-4);
   background: color-mix(in srgb, var(--error) 9%, transparent);
   color: var(--error);
@@ -124,15 +143,20 @@
 }
 
 .composer-bar {
-  padding: var(--space-10) var(--space-14);
-  border-top: 1px solid var(--border);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: 11px;
+  box-shadow: var(--shadow-card);
+  padding: var(--space-10) 15px;
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-10);
+  align-items: center;
+  gap: var(--space-12);
 }
 .composer-arrow {
-  font-size: var(--font-size-13);
-  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-size: var(--font-size-14);
+  line-height: 1.5;
 }
 .composer-input {
   flex: 1;
@@ -141,25 +165,55 @@
   outline: none;
   background: transparent;
   color: var(--text-strong);
-  font-size: var(--font-size-12-5);
+  font-size: 14.5px;
   font-family: inherit;
   line-height: 1.5;
   max-height: 130px;
   padding: 0;
 }
+.composer-input::placeholder {
+  color: var(--text-faint);
+}
+/* design-refresh FR-8: a visible Send button — replaces the send-on-Enter-only
+   affordance (Enter still sends; this is now also a click target). */
+.composer-send {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 var(--space-13);
+  border: none;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12-5);
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--bg-app);
+}
+.composer-send:hover {
+  background: var(--accent-bright);
+}
+.composer-send.is-disabled {
+  cursor: default;
+  background: var(--text-disabled);
+  color: var(--text-muted);
+}
+/* Beneath the card, not inside it (the mock's hint row sits outside the input
+   surface — it annotates the composer, it is not part of the field). */
 .composer-hint {
-  font-size: var(--font-size-10);
-  color: var(--text-disabled);
-  margin-top: var(--space-3);
   display: flex;
-  gap: var(--space-10);
+  align-items: center;
+  gap: var(--space-16);
+  margin-top: var(--space-10);
+  font-size: var(--font-size-11-5);
+  color: var(--text-faint);
   flex-shrink: 0;
 }
 .composer-hint__key {
-  color: var(--accent);
+  font-family: var(--font-mono);
+  color: var(--text-dim);
 }
 
-/* ── Block.tsx ── */
+/* ── Block.tsx (design-refresh FR-7: 15px/1.65 --font-ui reading body) ── */
 .block-row {
   display: flex;
   gap: var(--space-10);
@@ -176,38 +230,87 @@
   flex: 1;
 }
 .block-body {
-  font-size: var(--font-size-12-5);
-  line-height: 1.55;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-15);
+  line-height: 1.65;
   white-space: pre-wrap;
 }
 .block-meta {
+  font-family: var(--font-mono);
   color: var(--text-faint);
+}
+
+/* consecutive tool calls share one hairline-divided card (FR-7). The rows sit
+   on --bg-app so the block reads as recessed into the panel, as in the mock —
+   on --bg-panel it was the same value as its surroundings and the border was
+   doing all the work. */
+.tool-group {
+  background: var(--bg-app);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.tool-group-row {
+  display: flex;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-14);
+}
+.tool-group-row + .tool-group-row {
+  border-top: 1px solid var(--border-2);
+}
+.tool-group .block-body {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* subagent dispatch banner (FR-7). */
+.block-subagent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  background: color-mix(in srgb, var(--hue-purple) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hue-purple) 30%, transparent);
+  border-radius: var(--radius-card);
+  padding: var(--space-13) var(--space-16);
+}
+.block-subagent__name {
+  font-weight: 600;
+  color: var(--hue-purple-soft);
 }
 .block-caret {
   display: inline-block;
   width: 8px;
-  height: 15px;
+  height: 16px;
   background: var(--accent);
   vertical-align: text-bottom;
-  margin-left: var(--space-2);
+  margin-left: var(--space-5);
   animation: blink 1s step-end infinite;
 }
 
+/* design-refresh FR-7: the user prompt is a fully bordered card. It used to be
+   a half-card — an accent rail on the left with no border on the other three
+   sides — which read as a quoted aside rather than the mock's prompt card; the
+   "You" label carries the who, so the rail is redundant. */
 .block-user {
   background: var(--bg-elevated);
-  border-left: 2px solid var(--accent);
-  border-radius: 0 var(--radius-base) var(--radius-base) 0;
-  padding: var(--space-10) var(--space-13);
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  padding: var(--space-14) var(--space-16);
 }
 .block-user__header {
   display: flex;
   align-items: center;
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-8);
 }
 .block-user__label {
-  font-size: var(--font-size-10);
-  letter-spacing: 0.12em;
-  color: var(--accent);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
 }
 .block-user__spacer {
   flex: 1;
@@ -223,16 +326,18 @@
   color: var(--warn);
 }
 .block-user__body {
-  font-size: var(--font-size-13);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-15);
   color: var(--text-strong);
-  line-height: 1.55;
+  line-height: 1.65;
   white-space: pre-wrap;
 }
 
-/* ── MarkdownView.tsx ── */
+/* ── MarkdownView.tsx (design-refresh FR-7: 15px/1.65 --font-ui reading body) ── */
 .md-root {
-  font-size: var(--font-size-12-5);
-  line-height: 1.55;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-15);
+  line-height: 1.65;
   word-break: break-word;
 }
 .md-strong {

@@ -34,8 +34,8 @@ export interface UserConversationBlock extends ConversationBlockBase {
 export interface AssistantConversationBlock extends ConversationBlockBase {
   kind: 'assistant';
   glyph: '●';
-  glyphColor: '#868a93' | '#c8a15a';
-  bodyColor: '#c4c7ce' | '#dfe2e8';
+  glyphColor: '#8b93a3' | '#e0a84e';
+  bodyColor: '#c3c9d4' | '#e6e9ef';
   text: string;
 }
 
@@ -43,8 +43,8 @@ export interface ToolConversationBlock extends ConversationBlockBase {
   kind: 'tool';
   tool: string;
   glyph: '⧉' | '⌕' | '✎' | '●';
-  glyphColor: '#868a93' | '#7fa07a';
-  bodyColor: '#868a93';
+  glyphColor: '#8b93a3' | '#8fbab8';
+  bodyColor: '#8b93a3';
   summary: string;
   meta?: string;
 }
@@ -52,8 +52,8 @@ export interface ToolConversationBlock extends ConversationBlockBase {
 export interface SubagentConversationBlock extends ConversationBlockBase {
   kind: 'subagent';
   glyph: '⇉';
-  glyphColor: '#c8a15a';
-  bodyColor: '#b9bcc4';
+  glyphColor: '#b39ede';
+  bodyColor: '#c3c9d4';
   agentName: string;
   meta?: string;
 }
@@ -85,8 +85,8 @@ export function assistantColors(isStreaming: boolean): {
   bodyColor: AssistantConversationBlock['bodyColor'];
 } {
   return isStreaming
-    ? { glyphColor: '#c8a15a', bodyColor: '#dfe2e8' }
-    : { glyphColor: '#868a93', bodyColor: '#c4c7ce' };
+    ? { glyphColor: '#e0a84e', bodyColor: '#e6e9ef' }
+    : { glyphColor: '#8b93a3', bodyColor: '#c3c9d4' };
 }
 
 /**
@@ -110,22 +110,22 @@ export function classifyToolStart(
       blockId,
       isStreaming: true,
       glyph: '⇉',
-      glyphColor: '#c8a15a',
-      bodyColor: '#b9bcc4',
+      glyphColor: '#b39ede',
+      bodyColor: '#c3c9d4',
       agentName: summary,
     };
   }
   let glyph: ToolConversationBlock['glyph'] = '●';
-  let glyphColor: ToolConversationBlock['glyphColor'] = '#868a93';
+  let glyphColor: ToolConversationBlock['glyphColor'] = '#8b93a3';
   if (tool === 'Read') {
     glyph = '⧉';
   } else if (tool === 'Grep' || tool === 'Search') {
     glyph = '⌕';
   } else if (tool === 'Edit' || tool === 'Write') {
     glyph = '✎';
-    glyphColor = '#7fa07a';
+    glyphColor = '#8fbab8';
   }
-  return { kind: 'tool', blockId, isStreaming: true, tool, glyph, glyphColor, bodyColor: '#868a93', summary };
+  return { kind: 'tool', blockId, isStreaming: true, tool, glyph, glyphColor, bodyColor: '#8b93a3', summary };
 }
 
 /** Body text prefix for a tool block: `Read  <summary>` (two spaces). */

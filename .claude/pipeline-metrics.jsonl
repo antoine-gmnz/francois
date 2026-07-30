@@ -1,7 +1,0 @@
-{"ts":"2026-07-29T10:53:03+02:00","feature":"plugin-system","phase":"review","surface":"core","seconds":654,"result":"BLOCK:20"}
-{"ts":"2026-07-29T10:53:03+02:00","feature":"plugin-system","phase":"review","surface":"frontend","seconds":449,"result":"BLOCK:24"}
-{"ts":"2026-07-29T12:22:57+02:00","feature":"plugin-system","phase":"fix","surface":"core","seconds":2961,"result":"green:506-tests"}
-{"ts":"2026-07-29T12:22:57+02:00","feature":"plugin-system","phase":"fix","surface":"frontend","seconds":2304,"result":"green:596-tests"}
-{"ts":"2026-07-29T12:53:36+02:00","feature":"plugin-system","phase":"review","surface":"core","seconds":595,"result":"SHIP:12"}
-{"ts":"2026-07-29T12:53:36+02:00","feature":"plugin-system","phase":"review","surface":"frontend","seconds":513,"result":"SHIP:17"}
-{"ts":"2026-07-29T16:30:54+02:00","feature":"agent-tab","phase":"review","seconds":694,"surfaces":{"frontend":"SHIP:4","core":"SHIP:0"}}

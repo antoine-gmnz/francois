@@ -6,15 +6,15 @@
 .skills-panel {
   display: flex;
   flex-direction: column;
-  background: var(--bg-deep);
+  background: var(--bg-panel);
   border: 1px solid var(--border-2);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-xl);
   overflow: hidden;
   min-height: 0;
   height: 100%;
 }
 .skills-panel--focused {
-  border-color: var(--accent);
+  border-color: var(--border-focus);
 }
 
 .skills-list {

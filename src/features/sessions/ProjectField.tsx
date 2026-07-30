@@ -28,21 +28,25 @@ export function ProjectField({
   return (
     <div>
       <label className="new-session-modal__label">PROJECT</label>
-      <select
-        className="new-session-modal__field"
-        value={projectId}
-        onChange={(e) => {
-          onChange(e.target.value);
-          // A project change re-applies defaults (FR-22), and the name is
-          // derived again unless it was hand-edited.
-        }}
-      >
-        {newSessionProjectOptions(projects).map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.missing ? `${opt.label} (missing)` : opt.label}
-          </option>
-        ))}
-      </select>
+      {/* The caret is ours, not the platform's — see __field--select. */}
+      <div className="new-session-modal__select">
+        <select
+          className="new-session-modal__field new-session-modal__field--select"
+          value={projectId}
+          onChange={(e) => {
+            onChange(e.target.value);
+            // A project change re-applies defaults (FR-22), and the name is
+            // derived again unless it was hand-edited.
+          }}
+        >
+          {newSessionProjectOptions(projects).map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.missing ? `${opt.label} (missing)` : opt.label}
+            </option>
+          ))}
+        </select>
+        <span className="new-session-modal__select-caret">▾</span>
+      </div>
       {projectRootMissing && (
         <div className="new-session-modal__hint new-session-modal__hint--error">{PROJECT_ROOT_MISSING_LINE}</div>
       )}

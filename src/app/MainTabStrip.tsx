@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { SessionMeta } from '../../contract/common';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
 import { agentTabId, agentTabLabel, type AgentTabRef } from '../features/agents/agent-tab';
@@ -27,22 +26,28 @@ export default function MainTabStrip({ mainTab, setMainTab, diffCount, agentTabs
           clipping or squeezing tabs; it shrinks before the right-aligned
           session meta cluster does. */}
       <div className="app-tabstrip-left scz">
-        {/* overview: the cross-project dashboard. First in the strip because
-            it is the zoomed-OUT view — the tabs read left-to-right from the
-            whole fleet down to one session's files. */}
-        <span onClick={() => setMainTab('overview')} className={tabClassName(mainTab === 'overview')}>
-          OVERVIEW
-        </span>
-        <span onClick={() => setMainTab('session')} className={tabClassName(mainTab === 'session')}>
-          SESSION
-        </span>
-        <span onClick={() => setMainTab('diff')} className={`${tabClassName(mainTab === 'diff')} app-tab--diff`}>
-          DIFF
-          {diffCount > 0 && <BadgePill>{diffCount}</BadgePill>}
-        </span>
-        <span onClick={() => setMainTab('shell')} className={tabClassName(mainTab === 'shell')}>
-          SHELL
-        </span>
+        {/* design-refresh FR-5: the built-in tabs sit on a recessed segmented
+            track, sentence-case; agent tabs follow outside it after a
+            divider — they are content, not chrome. */}
+        <div className="tab-segment">
+          {/* overview: the cross-project dashboard. First in the strip because
+              it is the zoomed-OUT view — the tabs read left-to-right from the
+              whole fleet down to one session's files. */}
+          <span onClick={() => setMainTab('overview')} className={tabClassName(mainTab === 'overview')}>
+            Overview
+          </span>
+          <span onClick={() => setMainTab('session')} className={tabClassName(mainTab === 'session')}>
+            Session
+          </span>
+          <span onClick={() => setMainTab('diff')} className={`${tabClassName(mainTab === 'diff')} app-tab--diff`}>
+            Diff
+            {diffCount > 0 && <BadgePill>{diffCount}</BadgePill>}
+          </span>
+          <span onClick={() => setMainTab('shell')} className={tabClassName(mainTab === 'shell')}>
+            Shell
+          </span>
+        </div>
+        {agentTabs.length > 0 && <span className="tab-segment-divider" />}
         {/* agent-tab FR-9/FR-12: one tab per clicked subagent, in open
             order. Lower-case and un-tracked on purpose — an agent name is
             content, not a chrome label. */}
@@ -70,12 +75,24 @@ export default function MainTabStrip({ mainTab, setMainTab, diffCount, agentTabs
           {active.runtime === 'wsl' && <span className="app-text-faint">wsl</span>}
           {/* remote-control: host this session on claude.ai/code + mobile */}
           <RemoteControlBadge key={active.id} sessionId={active.id} />
-          <span>
-            <span className="app-text-faint">ctx </span>
-            <span className="app-text-bright">{formatContextTokens(active.contextUsedTokens)}</span>
-            <span className="app-text-faint">/{formatContextTokens(active.contextLimitTokens)}</span>
+          {/* design-refresh FR-5: the mock pairs the context figure with a mini
+              fill bar — same numbers, already in the store, just read at a
+              glance. Hidden when the limit is unknown (no denominator, no bar). */}
+          <span className="app-ctx">
+            {active.contextLimitTokens > 0 && (
+              <span className="app-ctx-track">
+                <span
+                  className="app-ctx-fill"
+                  style={{ width: `${Math.min(100, (active.contextUsedTokens / active.contextLimitTokens) * 100)}%` }}
+                />
+              </span>
+            )}
+            <span className="app-ctx-figure">
+              {formatContextTokens(active.contextUsedTokens)}
+              <span className="app-text-faint">/{formatContextTokens(active.contextLimitTokens)}</span>
+            </span>
           </span>
-          <span className="app-text-faint">{formatElapsed(elapsedMs)}</span>
+          <span className="app-ctx-figure app-text-faint">{formatElapsed(elapsedMs)}</span>
         </div>
       )}
     </div>
@@ -98,7 +115,6 @@ function AgentTabChip({
   onOpen: () => void;
   onClose: () => void;
 }) {
-  const [hover, setHover] = useState(false);
   const statusColor =
     tab.status === 'running'
       ? 'var(--accent-2)'
@@ -108,28 +124,23 @@ function AgentTabChip({
           ? 'var(--error)'
           : 'var(--text-muted)';
   return (
-    <span
-      onClick={onOpen}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      title={tab.name}
-      className={active ? 'app-tab-chip app-tab-chip--active' : 'app-tab-chip'}
-    >
+    <span onClick={onOpen} title={tab.name} className={active ? 'app-tab-chip app-tab-chip--active' : 'app-tab-chip'}>
       <StatusDot color={statusColor} size={6} pulsing={tab.status === 'running'} />
       <span className="app-tab-chip-glyph">⇉</span>
       <span className="truncate">{agentTabLabel(tab.name)}</span>
-      {hover && (
-        <span
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          title="close tab"
-          className="app-tab-chip-close"
-        >
-          ✕
-        </span>
-      )}
+      {/* design-refresh FR-5: the mock renders `✕` on every agent tab, not just
+          the hovered one — gating it on hover made the pill's width jump under
+          the cursor. It only brightens on hover now. */}
+      <span
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        title="close tab"
+        className="app-tab-chip-close"
+      >
+        ✕
+      </span>
     </span>
   );
 }

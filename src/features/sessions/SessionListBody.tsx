@@ -94,11 +94,13 @@ function ContextFigure({ used, limit }: { used: number; limit: number }) {
     if (used <= 0) return <span className="sidebar-card__faint">—</span>;
     return <span className="sidebar-card__meta">{formatContextTokens(used)}</span>;
   }
+  // One element, not a fragment: this sits in a `gap`-spaced flex row, so two
+  // siblings would have the gap wedged between the figure and its denominator.
   return (
-    <>
-      <span className="sidebar-card__meta">{formatContextTokens(used)}</span>
+    <span className="sidebar-card__meta">
+      {formatContextTokens(used)}
       <span className="sidebar-card__faint">/{formatContextTokens(limit)}</span>
-    </>
+    </span>
   );
 }
 
@@ -142,37 +144,55 @@ function SessionCard({
       title={session.status === 'error' ? session.errorMessage : undefined}
       className={classNames.join(' ')}
     >
-      {/* Row 1 — header: dot + name + relative time */}
+      {/* Row 1 — name, with the status dot + label right-aligned beside it */}
       <div className="sidebar-card__row1">
-        <StatusDot color={statusColor} pulsing={statusPulses(session.status)} />
         <span className={selected ? 'sidebar-card__name sidebar-card__name--selected truncate' : 'sidebar-card__name truncate'}>
           {session.name}
         </span>
-        <span className="sidebar-card__time">{formatRelativeTime(session.lastActivityAt)}</span>
+        <span className="sidebar-card__status" style={{ color: statusColor }}>
+          <StatusDot color={statusColor} size={6} pulsing={statusPulses(session.status)} />
+          {label}
+        </span>
       </div>
 
       {/* Row 2 — cwd */}
       <div className="sidebar-card__cwd">{displayWslCwd(session.cwd) ?? abbreviate(session.cwd, home)}</div>
 
-      {/* Row 3 — status line */}
-      <div className="sidebar-card__status" style={{ color: statusColor }}>
-        {label} · {session.model.label}
+      {/* Row 3 — one meta line: model chip · token-usage bar · context · age
+          (design-refresh FR-6 / the mock's card footer) */}
+      <div className="sidebar-card__meta-row">
+        <span className="sidebar-card__model">{session.model.label}</span>
+        {session.contextLimitTokens > 0 ? (
+          <span className="sidebar-card__bar-track">
+            <span
+              className="sidebar-card__bar-fill"
+              style={{ width: `${Math.min(100, (session.contextUsedTokens / session.contextLimitTokens) * 100)}%` }}
+            />
+          </span>
+        ) : (
+          <span className="sidebar-card__spacer" />
+        )}
+        <ContextFigure used={session.contextUsedTokens} limit={session.contextLimitTokens} />
+        <span className="sidebar-card__faint">{formatRelativeTime(session.lastActivityAt)}</span>
       </div>
 
-      {/* Row 4 — meta: context + diff badge + agent count */}
-      <div className="sidebar-card__meta-row">
-        <span>
-          <span className="sidebar-card__faint">ctx </span>
-          <ContextFigure used={session.contextUsedTokens} limit={session.contextLimitTokens} />
-        </span>
-        {fileCount != null && fileCount > 0 && (
-          <span className="sidebar-card__files">
-            <span className="sidebar-card__faint">≡</span>
-            <BadgePill>{fileCount}</BadgePill>
-          </span>
-        )}
-        {agents > 0 && <span className="sidebar-card__agents">⇉ {agents}</span>}
-      </div>
+      {/* Row 4 — only when there is something to say: running subagents and the
+          uncommitted-file count (both from fleet-board's derived figures). */}
+      {(agents > 0 || (fileCount != null && fileCount > 0)) && (
+        <div className="sidebar-card__meta-row">
+          {agents > 0 && (
+            <span className="sidebar-card__agents">
+              ⇉ {agents} {agents === 1 ? 'agent' : 'agents'}
+            </span>
+          )}
+          {fileCount != null && fileCount > 0 && (
+            <span className="sidebar-card__files">
+              <span className="sidebar-card__faint">≡</span>
+              <BadgePill>{fileCount}</BadgePill>
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

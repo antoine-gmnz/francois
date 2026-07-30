@@ -130,7 +130,7 @@ export default function Sidebar({ home }: { home: string }) {
       </div>
 
       {/* projects FR-25: the switcher strip, above the cards */}
-      <ProjectSwitcher home={home} />
+      {/* <ProjectSwitcher home={home} /> */}
 
       {/* filter */}
       {sidebarFilter !== null && <FilterInput value={sidebarFilter} onChange={setSidebarFilter} inputRef={filterRef} />}
@@ -156,9 +156,13 @@ export default function Sidebar({ home }: { home: string }) {
         onContext={(sessionId, x, y) => setMenu({ sessionId, x, y, confirming: false, error: null })}
       />
 
-      {/* footer */}
-      <div onClick={() => useStore.getState().setNewSessionOpen(true)} className="sidebar__footer">
-        + new session <span className="sidebar__footer-hint">[n]</span>
+      {/* footer — design-refresh FR-6: a real full-width button, per the mock,
+          instead of the bare clickable line it used to be. */}
+      <div className="sidebar__footer">
+        <button type="button" onClick={() => useStore.getState().setNewSessionOpen(true)} className="sidebar__new">
+          <span className="sidebar__new-plus">+</span>New session
+          <span className="sidebar__footer-hint">n</span>
+        </button>
       </div>
 
       {/* context menu */}

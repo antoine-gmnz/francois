@@ -37,6 +37,42 @@
   flex: 1;
 }
 
+/* `__field` above is an <input> look; a <select> wearing it also gets the
+   platform's own dropdown button drawn on top, which reads nothing like the
+   ModelPicker trigger sitting directly below it in the same form. Suppress it
+   and draw the caret ourselves — the same ▾ / --text-faint / 10px as
+   .model-picker__caret, as a real glyph so it follows the theme tokens. */
+.new-session-modal__select {
+  position: relative;
+}
+
+.new-session-modal__field--select {
+  appearance: none;
+  /* Room for the caret, which is positioned over the padding box. */
+  padding-right: var(--space-24);
+  cursor: pointer;
+  /* Chromium centers a select's text via the control's own metrics, not
+     line-height; without this the label sits a pixel high at height 32. */
+  line-height: normal;
+}
+
+/* The popup is UA-rendered (see color-scheme in styles.css); these keep the
+   closed row and the open list on the same panel color. */
+.new-session-modal__field--select option {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+.new-session-modal__select-caret {
+  position: absolute;
+  right: var(--space-10);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
 .new-session-modal__row {
   display: flex;
   gap: var(--space-8);

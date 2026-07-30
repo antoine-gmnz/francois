@@ -39,8 +39,6 @@ export default function App() {
   const toggleTheme = useStore((s) => s.toggleTheme);
   const showLeftPane = useStore((s) => s.showLeftPane);
   const showRightPane = useStore((s) => s.showRightPane);
-  const toggleLeftPane = useStore((s) => s.toggleLeftPane);
-  const toggleRightPane = useStore((s) => s.toggleRightPane);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
@@ -138,6 +136,11 @@ export default function App() {
 
   const mainFocused = focusedPane === 'main';
 
+  // design-refresh FR-10: what the condensed status bar reads out. Both come
+  // from state the shell already holds — no new store slice, no new IPC.
+  const activeAgentName = (activeAgentId && agentTabs.find((t) => t.id === activeAgentId)?.name) || null;
+  const runningAgents = useStore((s) => (activeSessionId ? (s.derived.get(activeSessionId)?.runningAgentCount ?? 0) : 0));
+
   const elapsedMs = active
     ? active.status === 'running'
       ? clockNow - active.startedAt
@@ -146,16 +149,18 @@ export default function App() {
 
   return (
     <div className="app-root">
-      {/* usage bar: app-scoped plan limits, always mounted, fixed 28px, directly
-          under the (same-colored) native caption — usage-bar FR-1/FR-2/§8 */}
-      <UsageBar />
+      {/* usage bar / titlebar: app-scoped plan limits + brand cluster, always
+          mounted, fixed height, directly under the (same-colored) native
+          caption — usage-bar FR-1/FR-2/§8, design-refresh FR-4 */}
+      <UsageBar home={home} />
       {/* grid: sidebar + main + agents (native OS title bar provides window chrome) */}
       <div
         className="app-grid"
         style={{
           // columns adapt to the [ / ] toggles; hidden columns keep their panes
           // MOUNTED (display:none) — Sidebar owns the session-cache subscriptions.
-          gridTemplateColumns: [showLeftPane ? '264px' : null, '1fr', showRightPane ? '336px' : null]
+          // design-refresh: the mock's `276px | 1fr | 296px` shell columns.
+          gridTemplateColumns: [showLeftPane ? '276px' : null, '1fr', showRightPane ? '296px' : null]
             .filter(Boolean)
             .join(' '),
         }}
@@ -168,7 +173,7 @@ export default function App() {
         <section
           onClick={() => setFocusedPane('main')}
           className="app-main-section"
-          style={{ borderColor: mainFocused ? 'var(--accent)' : 'var(--border)' }}
+          style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
         >
           <MainTabStrip
             mainTab={mainTab}
@@ -194,18 +199,18 @@ export default function App() {
             <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
         </div>
-
-        <StatusBar
-          showLeftPane={showLeftPane}
-          showRightPane={showRightPane}
-          toggleLeftPane={toggleLeftPane}
-          toggleRightPane={toggleRightPane}
-          theme={theme}
-          toggleTheme={toggleTheme}
-          focusedPane={focusedPane}
-          appVersion={appVersion}
-        />
       </div>
+
+      {/* design-refresh FR-10: window chrome, not a grid pane — a full-bleed
+          30px strip flush against the window edges, like the titlebar above. */}
+      <StatusBar
+        theme={theme}
+        toggleTheme={toggleTheme}
+        focusedPane={focusedPane}
+        activeAgentName={activeAgentName}
+        runningAgents={runningAgents}
+        appVersion={appVersion}
+      />
 
       {newSessionOpen && (
         <NewSessionModal

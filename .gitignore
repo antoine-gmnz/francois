@@ -12,3 +12,4 @@ packaging/npm/vendor/
 .DS_Store
 Thumbs.db
 .serena/
+.claude/pipeline-metrics.jsonl

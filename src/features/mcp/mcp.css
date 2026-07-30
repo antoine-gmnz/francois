@@ -5,15 +5,15 @@
 .mcp-panel {
   display: flex;
   flex-direction: column;
-  background: var(--bg-deep);
+  background: var(--bg-panel);
   border: 1px solid var(--border-2);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-xl);
   overflow: hidden;
   min-height: 0;
   height: 100%;
 }
 .mcp-panel--focused {
-  border-color: var(--accent);
+  border-color: var(--border-focus);
 }
 
 /* ── header ── */
@@ -21,15 +21,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-9) var(--space-12);
+  padding: var(--space-11) var(--space-12);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
+/* design-refresh: matches .panel-header in styles.css (AGENTS/SKILLS use that
+   shared class; this panel predates it and keeps its own selector). */
 .mcp-header-title {
-  font-size: var(--font-size-11);
-  letter-spacing: 0.14em;
-  font-weight: 700;
-  color: var(--text-dim);
+  font-size: var(--font-size-11-5);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-hint);
 }
 .mcp-header-title--focused {
   color: var(--accent);
@@ -205,7 +208,7 @@
 .mcp-overlay-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 7, 9, 0.62);
+  background: var(--backdrop);
   display: flex;
   align-items: flex-start;
   justify-content: center;

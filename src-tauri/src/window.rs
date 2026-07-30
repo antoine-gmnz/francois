@@ -9,6 +9,27 @@ use tauri::AppHandle;
 #[cfg(windows)]
 use tauri::Manager;
 
+// COLORREF is 0x00BBGGRR — byte order reversed from CSS hex.
+#[cfg(windows)]
+const fn colorref(rgb: u32) -> u32 {
+    ((rgb & 0xff) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 0xff)
+}
+
+/// (caption, text) COLORREFs for the given theme. Mirrors two `styles.css` tokens
+/// verbatim (design-refresh FR-12): `--bg-app` (dark #0d0f13 / light #eef0f4) for the
+/// caption/border, `--text-hint` (dark #9aa2b1 / light #42464e) for the caption text —
+/// so the OS chrome disappears into the window instead of reading as a strip on top
+/// of it. Pulled out of `tint_window_chrome` so the value mapping is unit-testable
+/// without a real HWND.
+#[cfg(windows)]
+fn caption_colors(theme: &str) -> (u32, u32) {
+    if theme == "light" {
+        (colorref(0xee_f0_f4), colorref(0x42_46_4e)) // --bg-app / --text-hint (light)
+    } else {
+        (colorref(0x0d_0f_13), colorref(0x9a_a2_b1)) // --bg-app / --text-hint (dark)
+    }
+}
+
 /// Paint the native caption bar with the app's own palette so the OS chrome reads as
 /// part of the window instead of a grey strip sitting on top of it. The window keeps
 /// its real minimize/maximize/close buttons — only their backdrop is recolored.
@@ -20,18 +41,7 @@ pub fn tint_window_chrome(window: &tauri::WebviewWindow, theme: &str) {
         DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
     };
 
-    // COLORREF is 0x00BBGGRR — byte order reversed from CSS hex.
-    const fn colorref(rgb: u32) -> u32 {
-        ((rgb & 0xff) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 0xff)
-    }
-    // Match the caption to --bg-app for the active theme so the OS chrome disappears
-    // into the window instead of reading as a strip on top of it. The values mirror
-    // styles.css: dark #0f1015 / light #f5f6f8, with the theme's secondary text hue.
-    let (caption, text) = if theme == "light" {
-        (colorref(0xf5_f6_f8), colorref(0x4e_52_5b)) // --bg-app / --text-hint (light)
-    } else {
-        (colorref(0x0f_10_15), colorref(0xa9_ad_b6)) // --bg-app / --text-hint (dark)
-    };
+    let (caption, text) = caption_colors(theme);
     let border = caption; // no seam between the caption and the window edge
 
     let Ok(hwnd) = window.hwnd() else { return };
@@ -64,4 +74,27 @@ pub fn app_set_window_theme(_app: AppHandle, theme: String) -> IpcResult<()> {
         tint_window_chrome(&w, &theme);
     }
     ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    // design-refresh FR-12: caption COLORREFs mirror the new --bg-app / --text-hint
+    // tokens (contract §5 / brief token table), byte-swapped to 0x00BBGGRR.
+    #[test]
+    fn caption_colors_dark_matches_new_bg_app_and_text_hint() {
+        assert_eq!(
+            caption_colors("dark"),
+            (colorref(0x0d_0f_13), colorref(0x9a_a2_b1))
+        );
+    }
+
+    #[test]
+    fn caption_colors_light_matches_new_bg_app_and_text_hint() {
+        assert_eq!(
+            caption_colors("light"),
+            (colorref(0xee_f0_f4), colorref(0x42_46_4e))
+        );
+    }
 }
