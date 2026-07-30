@@ -1,0 +1,1555 @@
+diff --git a/src/app/App.tsx b/src/app/App.tsx
+index 928388e..657951c 100644
+--- a/src/app/App.tsx
++++ b/src/app/App.tsx
+@@ -26,6 +26,7 @@ import PaletteRoot from '../features/palette/PaletteView';
+ import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
+ import { setPaletteDiffCount } from '../features/palette/paletteData';
+ import { registerBuiltinCommands } from '../features/palette/paletteCommands';
++import { truncateBranchLeft } from '../features/sessions/worktree';
+ 
+ // Register the built-in palette commands once, before first paint (FR-6).
+ registerBuiltinCommands();
+@@ -418,6 +419,12 @@ export default function App() {
+                   </span>
+                 )}
+                 {active.runtime === 'wsl' && <span style={{ color: C.faint }}>wsl</span>}
++                {/* session-worktree FR-13: branch glyph + name, focused session only */}
++                {active.worktree && (
++                  <span title={active.worktree.branch} style={{ color: C.accent }}>
++                    ⎇ {truncateBranchLeft(active.worktree.branch, 24)}
++                  </span>
++                )}
+                 {/* remote-control: host this session on claude.ai/code + mobile */}
+                 <RemoteControlBadge key={active.id} sessionId={active.id} />
+                 <span>
+diff --git a/src/features/conversation/ConversationView.tsx b/src/features/conversation/ConversationView.tsx
+index 3bf7c1c..1ea0913 100644
+--- a/src/features/conversation/ConversationView.tsx
++++ b/src/features/conversation/ConversationView.tsx
+@@ -20,6 +20,7 @@ import {
+ } from '../commands/slash-menu';
+ import SlashMenu from '../commands/SlashMenu';
+ import { useStore } from '../../lib/store';
++import { dismissWorktreeNotice, isWorktreeNoticeDismissed, worktreeFetchWarningLine } from '../sessions/worktree';
+ 
+ const C = {
+   accent: 'var(--accent)',
+@@ -48,6 +49,10 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
+   const [input, setInput] = useState('');
+   const [sendError, setSendError] = useState<string | null>(null);
+   const [resumeFailed, setResumeFailed] = useState(false); // durable-sessions FR-14 banner
++  // session-worktree FR-14: per-session dismissal, persisted in localStorage —
++  // once dismissed the banner never returns for this session (component is
++  // keyed by sessionId, so this state is naturally fresh per session).
++  const [worktreeNoticeDismissed, setWorktreeNoticeDismissed] = useState(() => isWorktreeNoticeDismissed(sessionId));
+ 
+   // slash-menu popup state (spec §6): registry mirror for THIS session (cache-
+   // seeded, FR-10), dismissal token (FR-9) and selection (FR-7). All component-
+@@ -333,8 +338,47 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
+     hasPendingPermissionBlock(state.blocks),
+   );
+ 
++  // session-worktree FR-14: computed once per render rather than twice inline in the banner JSX below.
++  const fetchWarning = meta?.worktree ? worktreeFetchWarningLine(meta.worktree) : null;
++
+   return (
+     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
++      {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript so
++          it never scrolls away. A live region on first render (spec §8 notes). */}
++      {meta?.worktree && !worktreeNoticeDismissed && (
++        <div
++          role="status"
++          style={{
++            display: 'flex',
++            alignItems: 'flex-start',
++            gap: 9,
++            background: 'color-mix(in srgb, var(--warn) 9%, transparent)',
++            borderLeft: '2px solid var(--warn)',
++            borderRadius: 4,
++            padding: '8px 11px',
++            margin: '6px 8px',
++            flexShrink: 0,
++          }}
++        >
++          <div style={{ fontSize: 11.5, color: 'var(--text-hint)', flex: 1 }}>
++            this session runs in an isolated git worktree — no dependencies were installed, and
++            local-scope config (<code>.claude/settings.local.json</code>, local <code>.mcp.json</code>) was not
++            carried over, so permission rules and MCP servers may differ from the parent checkout.
++            {fetchWarning && <div style={{ marginTop: 4 }}>{fetchWarning}</div>}
++          </div>
++          <span
++            onClick={() => {
++              dismissWorktreeNotice(sessionId);
++              setWorktreeNoticeDismissed(true);
++            }}
++            style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }}
++            title="dismiss"
++          >
++            ✕
++          </span>
++        </div>
++      )}
++
+       {/* resume-fail banner (durable-sessions FR-14) */}
+       {resumeFailed && (
+         <div
+diff --git a/src/features/diff/DiffView.tsx b/src/features/diff/DiffView.tsx
+index f422a48..aa0d8a2 100644
+--- a/src/features/diff/DiffView.tsx
++++ b/src/features/diff/DiffView.tsx
+@@ -4,6 +4,8 @@ import type { AppError } from '../../../contract/common';
+ import type { DiffSummary, DiffFileSummary, DiffFileStatus, FileDiff, DiffHunk, DiffLine } from '../../../contract/diff-view';
+ import { diffCommit, diffGetFileDiff, diffGetSummary, diffStageAll, onDiffEvent } from '../../lib/api';
+ import { useStore } from '../../lib/store';
++import { siblingWorktreeSummaryLine } from '../sessions/worktree';
++import { IS_WINDOWS } from '../../lib/platform';
+ 
+ const C = {
+   accent: 'var(--accent)',
+@@ -43,6 +45,11 @@ interface CommitState {
+ export default function DiffView({ sessionId }: { sessionId: string }) {
+   const focusedPane = useStore((s) => s.focusedPane);
+   const mainTab = useStore((s) => s.mainTab);
++  // session-worktree FR-15: dim, read-only sibling-worktree hint. Derived purely
++  // from the session cache — no new IPC, no persistence.
++  const sessions = useStore((s) => s.sessions);
++  const meta = sessions.find((s) => s.id === sessionId) ?? null;
++  const siblingLine = meta ? siblingWorktreeSummaryLine(meta, sessions, IS_WINDOWS) : null;
+ 
+   const [summary, setSummary] = useState<DiffSummary | null>(null);
+   const [summaryError, setSummaryError] = useState<AppError | null>(null);
+@@ -288,6 +295,30 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
+ 
+   return (
+     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-deep)' }}>
++      {/* session-worktree FR-15: read-only — no links, no buttons, no hover affordance */}
++      {siblingLine && (
++        <div
++          // design brief §Notes: a truncated value always carries its full text in a title.
++          title={siblingLine}
++          style={{
++            padding: '6px 14px',
++            borderBottom: `1px solid ${C.border}`,
++            fontSize: 10.5,
++            color: C.faint,
++            whiteSpace: 'nowrap',
++            overflow: 'hidden',
++            textOverflow: 'ellipsis',
++            flexShrink: 0,
++            // design brief §"Narrow window": middle-/left-truncate rather than a
++            // trailing ellipsis, so the branch list at the tail stays visible —
++            // same intent as the FR-13 branch chip's truncateBranchLeft.
++            direction: 'rtl',
++            textAlign: 'left',
++          }}
++        >
++          {siblingLine}
++        </div>
++      )}
+       {/* main area: vertical file selector (left) + diff body (right) */}
+       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+         {/* file list — a vertical selector (replaces the horizontal chip strip, which
+diff --git a/src/features/palette/paletteCommands.ts b/src/features/palette/paletteCommands.ts
+index b0f91be..e76b5c0 100644
+--- a/src/features/palette/paletteCommands.ts
++++ b/src/features/palette/paletteCommands.ts
+@@ -9,6 +9,7 @@ import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPale
+ import { agentsKill, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
+ import { useStore } from '../../lib/store';
+ import { requestUsageRefresh } from '../usage/usage';
++import { requestWorktreePreset } from '../sessions/worktree';
+ 
+ const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
+ 
+@@ -234,6 +235,20 @@ export function registerBuiltinCommands(): void {
+     },
+   });
+ 
++  // 13b — New session in worktree (session-worktree FR-16): opens the same modal
++  // pre-checked. Listed unconditionally — a non-repo cwd simply hides the
++  // checkbox once picked (FR-1).
++  registerPaletteCommand({
++    id: 'new-session-worktree',
++    glyph: '⎇',
++    name: 'New session in worktree…',
++    hint: () => 'isolated git worktree',
++    run: () => {
++      requestWorktreePreset();
++      useStore.getState().setNewSessionOpen(true);
++    },
++  });
++
+   // 14 — Toggle theme (app-shell): flip light/dark, same action as the status-bar glyph.
+   registerPaletteCommand({
+     id: 'toggle-theme',
+diff --git a/src/features/sessions/NewSessionModal.tsx b/src/features/sessions/NewSessionModal.tsx
+index 0ddf4ce..c95e144 100644
+--- a/src/features/sessions/NewSessionModal.tsx
++++ b/src/features/sessions/NewSessionModal.tsx
+@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
+ import type { AppError, ClaudeRuntime, ModelInfo, PermissionMode, SessionMeta } from '../../../contract/common';
+ import { isWslUncPath } from '../../../contract/wsl-filesystem';
+ import type { ProjectMeta } from '../../../contract/projects';
+-import { projectList, sessionCreate, sessionModels, sessionPickDirectory } from '../../lib/api';
++import type { WorktreeProbeData } from '../../../contract/session-worktree';
++import { previewWorktreePath } from '../../../contract/session-worktree';
++import { projectList, sessionCreate, sessionModels, sessionPickDirectory, sessionWorktreeProbe } from '../../lib/api';
+ import {
+   PROJECT_ROOT_MISSING_LINE,
+   applyProjectDefaults,
+@@ -13,6 +15,18 @@ import {
+ import { useStore } from '../../lib/store';
+ import { IS_WINDOWS } from '../../lib/platform';
+ import ModelPicker from './ModelPicker';
++import {
++  basenameOf,
++  canOpenWorktreeRecovery,
++  consumeWorktreePreset,
++  defaultWorktreeBranch,
++  isValidBranchName,
++  liveWorktreeProbe,
++  submitErrorBanner,
++  worktreeBranchInUsePath,
++  worktreeCreateBlocked,
++} from './worktree';
++import type { WorktreeProbeState } from './worktree';
+ 
+ // PermissionMode choices (contract/common.ts): label + the plain-language consequence.
+ const PERMISSION_OPTIONS: { mode: PermissionMode; label: string; hint: string }[] = [
+@@ -31,11 +45,6 @@ const C = {
+   error: 'var(--error)',
+ };
+ 
+-function basename(p: string): string {
+-  const parts = p.split(/[\\/]/).filter(Boolean);
+-  return parts[parts.length - 1] ?? p;
+-}
+-
+ const fieldStyle: React.CSSProperties = {
+   background: 'var(--bg-panel)',
+   border: '1px solid var(--border-2)',
+@@ -92,6 +101,29 @@ export default function NewSessionModal({
+   const [picking, setPicking] = useState(false);
+   const openRef = useRef(true);
+ 
++  // session-worktree FR-1/2/3/4/5: isolate-in-worktree group. `probe` is the last
++  // session_worktree_probe response for the current cwd (+ branch once typed).
++  const [worktreeEnabled, setWorktreeEnabled] = useState(false);
++  const [branch, setBranch] = useState('');
++  const [branchTouched, setBranchTouched] = useState(false);
++  const [baseRef, setBaseRef] = useState('');
++  const [baseRefTouched, setBaseRefTouched] = useState(false);
++  // The probe is stored WITH the cwd it was requested for, so `liveWorktreeProbe`
++  // drops it the moment the user picks/types a different directory — repo A's
++  // isRepo/branch/hint/path preview must never render for repo B during the
++  // debounce + round-trip window (FR-1).
++  //
++  // Within one cwd it is sticky across a transient failure: `data` is ONLY ever
++  // overwritten by a successful response, never nulled on error, so a checked
++  // "Isolate in worktree" box (and its last known isRepo) survives a blip.
++  // `errored`/`probing` track the failed/in-flight state SEPARATELY so the Create
++  // gate (worktreeCreateBlocked) can block on them without touching the data.
++  const [probeState, setProbeState] = useState<WorktreeProbeState | null>(null);
++  const { data: probe, errored: probeError } = liveWorktreeProbe(probeState, cwd);
++  const [probing, setProbing] = useState(false);
++  const probeSeqRef = useRef(0);
++  const [recovering, setRecovering] = useState(false);
++
+   useEffect(() => {
+     // RE-ARM on every mount. StrictMode runs mount → cleanup → mount on the same
+     // instance, so without this the cleanup's `false` survives into the second
+@@ -170,7 +202,7 @@ export default function NewSessionModal({
+     // one is selected, so the root is the cwd. Clearing back to '' on "none"
+     // restores the pre-projects flow rather than stranding the old root.
+     setCwd(project ? project.root : '');
+-    if (!nameTouched) setName(project ? basename(project.root) : '');
++    if (!nameTouched) setName(project ? basenameOf(project.root) : '');
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [projectId, project, models, modelsLoading]);
+ 
+@@ -181,13 +213,83 @@ export default function NewSessionModal({
+     if (effort && !modelEfforts.includes(effort)) setEffort('');
+   }, [modelId, models]); // eslint-disable-line react-hooks/exhaustive-deps
+ 
++  // command-palette FR-16: "New session in worktree…" opens this modal with the
++  // checkbox pre-checked (one-shot flag, consumed once per open).
++  useEffect(() => {
++    if (consumeWorktreePreset()) setWorktreeEnabled(true);
++  }, []);
++
++  // FR-1: probe the candidate cwd (debounced 250ms), refreshing on cwd AND
++  // branch changes so branchExists/branchCheckedOutAt/worktreePath stay current
++  // while the user types. A non-repo cwd resolves isRepo:false — never an error.
++  useEffect(() => {
++    const c = cwd.trim();
++    if (!c) {
++      probeSeqRef.current += 1;
++      setProbeState(null);
++      setProbing(false);
++      return;
++    }
++    const branchArg = worktreeEnabled && branch.trim() ? branch.trim() : undefined;
++    const seq = (probeSeqRef.current += 1);
++    setProbing(true);
++    const t = setTimeout(() => {
++      void sessionWorktreeProbe({ cwd: c, branch: branchArg }).then((res) => {
++        // A stale response (superseded by a later cwd/branch change while this
++        // one was in flight) must never clobber the current probe/error state.
++        if (!openRef.current || probeSeqRef.current !== seq) return;
++        setProbing(false);
++        if (res.ok) {
++          setProbeState({ cwd: c, data: res.data, errored: false });
++        } else {
++          // A transient failure never nulls the data for THIS cwd — see the
++          // state comment above. Only the error flag moves.
++          setProbeState((s) => (s && s.cwd === c ? { ...s, errored: true } : { cwd: c, data: null, errored: true }));
++        }
++      });
++    }, 250);
++    return () => clearTimeout(t);
++  }, [cwd, worktreeEnabled, branch]);
++
++  // FR-2: branch prefills feat/<session-name-slug> (falling back to basename(cwd))
++  // until hand-edited; base ref prefills the probed default branch until hand-edited.
++  useEffect(() => {
++    if (worktreeEnabled && !branchTouched) setBranch(defaultWorktreeBranch(name, cwd));
++  }, [worktreeEnabled, name, cwd, branchTouched]);
++  useEffect(() => {
++    if (worktreeEnabled && !baseRefTouched && probe?.defaultBranch) setBaseRef(probe.defaultBranch);
++  }, [worktreeEnabled, probe?.defaultBranch, baseRefTouched]);
++
++  // FR-9 preview, recomputed from the current branch value; null until a repo root
++  // is known. Recovery (FR-5) suppresses the normal create action entirely.
++  //
++  // Prefers the core's own `probe.worktreePath` (computed against the real
++  // filesystem, so it already reflects a `-2`/`-3`/… collision suffix per §7
++  // "Target path exists") over the pure client-side `previewWorktreePath`, which
++  // can only ever guess the un-suffixed path. The probe only fills `worktreePath`
++  // when `branch` was sent with the request (FR-1), so the client-side computation
++  // remains the fallback for the gap between typing a branch and the debounced
++  // probe returning.
++  const worktreePreview = probe?.repoRoot && branch.trim() ? (probe.worktreePath ?? previewWorktreePath(probe.repoRoot, branch.trim())) : null;
++  const worktreeBranchValid = isValidBranchName(branch);
++  const worktreeRecoveryPath = worktreeEnabled ? (probe?.branchCheckedOutAt ?? null) : null;
++  const worktreeBlocked = worktreeCreateBlocked({
++    worktreeEnabled,
++    probeIsRepo: probe?.isRepo ?? null,
++    probing,
++    probeErrored: probeError,
++    branch,
++    branchValid: worktreeBranchValid,
++    recoveryPath: worktreeRecoveryPath,
++  });
++
+   // Shared by Browse and direct typing: keep the derived name and the FR-16
+   // runtime auto-suggest in sync with the path. The suggest follows the path in
+   // BOTH directions (wsl for a WSL UNC path, back to native otherwise) but only
+   // while the user hasn't explicitly clicked a runtime chip this modal-open.
+   const applyCwd = (path: string) => {
+     setCwd(path);
+-    if (!nameTouched) setName(basename(path));
++    if (!nameTouched) setName(basenameOf(path));
+     if (IS_WINDOWS && !runtimeTouched) setRuntime(isWslUncPath(path) ? 'wsl' : 'native');
+   };
+ 
+@@ -208,17 +310,38 @@ export default function NewSessionModal({
+   // FR-23: a project whose root is gone blocks creation until another project
+   // (or "none") is chosen — the core would reject it with PROJECT_ROOT_MISSING.
+   const canCreate =
+-    cwd.trim() !== '' && name.trim() !== '' && modelId !== '' && !submitting && !projectRootMissing;
++    cwd.trim() !== '' &&
++    name.trim() !== '' &&
++    modelId !== '' &&
++    !submitting &&
++    !projectRootMissing &&
++    !worktreeBlocked;
++  // FR-5 recovery offer shares canCreate's non-worktree guards (name/model/project-root/
++  // in-flight submit) plus its own re-entrancy guard so a double-click can't fire twice.
++  // It also shares worktreeCreateBlocked's probe-staleness guard: liveWorktreeProbe only
++  // invalidates on a cwd change, not a branch change, so a branch edit must block the
++  // recovery offer (via `probing`/`probeError`) exactly like it blocks plain Create —
++  // otherwise the amber card can stay clickable while showing a stale branch's path.
++  const canOpenRecovery = canOpenWorktreeRecovery({
++    name,
++    modelId,
++    projectRootMissing,
++    submitting,
++    recovering,
++    probing,
++    probeErrored: probeError,
++  });
+   // FR-16/17: whether the picked directory is a WSL UNC path, drives the
+   // auto-suggest + mismatch hints below the CLAUDE RUNTIME row.
+   const cwdIsWsl = isWslUncPath(cwd);
+ 
+-  const submit = async () => {
+-    if (!canCreate) return;
++  // Shared by the normal submit and the FR-5 recovery offer — only `cwd` and the
++  // `worktree` options ever differ between the two.
++  const createSession = async (overrideCwd: string, worktree?: { branch: string; baseRef: string; adopt?: boolean }) => {
+     setSubmitting(true);
+     setSubmitError(null);
+     const res = await sessionCreate({
+-      cwd: cwd.trim(),
++      cwd: overrideCwd,
+       name,
+       modelId,
+       effort: effort || undefined,
+@@ -228,6 +351,7 @@ export default function NewSessionModal({
+       // FR-19: sent verbatim; the core does no default merging, so what is on
+       // screen right now is exactly what gets created.
+       projectId: projectId || undefined,
++      worktree,
+     });
+     if (!openRef.current) {
+       // Modal was cancelled mid-flight: still real, upsert but don't force-select.
+@@ -235,11 +359,15 @@ export default function NewSessionModal({
+       return;
+     }
+     setSubmitting(false);
++    setRecovering(false);
+     if (res.ok) {
+       onCreated(res.data);
+       onClose();
+     } else {
+-      setSubmitError(res.error);
++      // §7 race path: an error that becomes the FR-5 recovery offer below shows
++      // ONLY that offer — `submitErrorBanner` nulls it here so the red banner
++      // never even flashes on top of the amber one.
++      setSubmitError(submitErrorBanner(res.error));
+       // §7 case 13: the project was removed (or its root vanished) between opening
+       // the modal and submitting. Re-read the registry and drop back to "— none —",
+       // otherwise the select keeps offering a project that no longer exists and every
+@@ -249,10 +377,53 @@ export default function NewSessionModal({
+         if (!openRef.current) return;
+         if (fresh.ok) setProjects(fresh.data);
+         setProjectId('');
++      } else {
++        // §7 "Branch checked out between probe and create (race)": the branch was
++        // free at probe time but got checked out elsewhere before session_create
++        // ran. Merge the core's `{ path }` into `probe.branchCheckedOutAt` so the
++        // SAME recovery-offer JSX that FR-5's probe-time detection drives picks it
++        // up — no dead-end error, just the recovery path arriving a beat late.
++        const racePath = worktreeBranchInUsePath(res.error);
++        if (racePath) {
++          const key = cwd.trim();
++          setProbeState((s) => {
++            const known = s && s.cwd === key ? s.data : null;
++            const data: WorktreeProbeData = known
++              ? { ...known, branchExists: true, branchCheckedOutAt: racePath }
++              : {
++                  isRepo: true,
++                  repoRoot: null,
++                  defaultBranch: null,
++                  currentBranch: null,
++                  remote: null,
++                  branchExists: true,
++                  branchCheckedOutAt: racePath,
++                  worktreePath: null,
++                };
++            return { cwd: key, data, errored: false };
++          });
++        }
+       }
+     }
+   };
+ 
++  const submit = async () => {
++    if (!canCreate) return;
++    const worktree =
++      worktreeEnabled && probe?.isRepo
++        ? { branch: branch.trim(), baseRef: baseRef.trim() || probe.defaultBranch || 'main' }
++        : undefined;
++    await createSession(cwd.trim(), worktree);
++  };
++
++  // FR-5: the branch is already checked out elsewhere — open a session there
++  // instead, with NO git mutation (worktree.adopt = true).
++  const openRecoverySession = async () => {
++    if (!worktreeRecoveryPath || !canOpenRecovery) return;
++    setRecovering(true);
++    await createSession(worktreeRecoveryPath, { branch: branch.trim(), baseRef: baseRef.trim(), adopt: true });
++  };
++
+   useEffect(() => {
+     const onKey = (e: KeyboardEvent) => {
+       if (e.key === 'Escape') {
+@@ -507,6 +678,124 @@ export default function NewSessionModal({
+             </div>
+           )}
+ 
++          {/* session-worktree §8 screen 1: absent entirely on a non-repo cwd (FR-1) — no
++              gap, no disabled control. */}
++          {probe?.isRepo && (
++            <div>
++              <span
++                onClick={() => setWorktreeEnabled((v) => !v)}
++                style={{
++                  fontSize: 11,
++                  padding: '4px 9px',
++                  borderRadius: 4,
++                  cursor: 'pointer',
++                  border: `1px solid ${worktreeEnabled ? C.accent : 'var(--border-2)'}`,
++                  background: worktreeEnabled ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'var(--bg-panel)',
++                  color: worktreeEnabled ? C.accent : C.dim,
++                }}
++              >
++                {worktreeEnabled ? '✓ ' : ''}Isolate in worktree
++              </span>
++              <div style={{ fontSize: 10.5, color: C.faint, marginTop: 5 }}>runs this session in its own git worktree</div>
++
++              {worktreeEnabled && (
++                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
++                  <div>
++                    <label style={labelStyle}>BRANCH</label>
++                    <input
++                      style={{ ...fieldStyle, fontFamily: 'var(--font-mono, monospace)' }}
++                      value={branch}
++                      placeholder="feat/my-change"
++                      onChange={(e) => {
++                        setBranch(e.target.value);
++                        setBranchTouched(true);
++                      }}
++                    />
++                  </div>
++                  <div>
++                    <label style={labelStyle}>BASE REF</label>
++                    <input
++                      style={{
++                        ...fieldStyle,
++                        fontFamily: 'var(--font-mono, monospace)',
++                        opacity: probe.branchExists ? 0.5 : 1,
++                      }}
++                      value={baseRef}
++                      disabled={!!probe.branchExists}
++                      placeholder="main"
++                      onChange={(e) => {
++                        setBaseRef(e.target.value);
++                        setBaseRefTouched(true);
++                      }}
++                    />
++                  </div>
++                  {worktreePreview && (
++                    <div
++                      title={worktreePreview}
++                      style={{
++                        fontSize: 10.5,
++                        color: C.faint,
++                        fontFamily: 'var(--font-mono, monospace)',
++                        whiteSpace: 'nowrap',
++                        overflow: 'hidden',
++                        textOverflow: 'ellipsis',
++                        // design brief §"Narrow window": the path preview middle- or
++                        // left-truncates rather than losing its meaningful tail to a
++                        // trailing ellipsis — same intent as truncateBranchLeft's FR-13
++                        // chip, applied here via the browser's own ellipsis engine since
++                        // the value is a live string, not a fixed-width chip.
++                        direction: 'rtl',
++                        textAlign: 'left',
++                      }}
++                    >
++                      {worktreePreview}
++                    </div>
++                  )}
++
++                  {/* inline notice slot (FR-4/FR-5/FR-3) */}
++                  {worktreeRecoveryPath ? (
++                    <div
++                      style={{
++                        background: 'color-mix(in srgb, var(--warn) 10%, transparent)',
++                        borderRadius: 4,
++                        padding: '8px 10px',
++                        fontSize: 11,
++                        color: 'var(--warn)',
++                        display: 'flex',
++                        flexDirection: 'column',
++                        gap: 6,
++                      }}
++                    >
++                      <span>
++                        <code>{branch.trim()}</code> is already checked out at{' '}
++                        <code title={worktreeRecoveryPath}>{worktreeRecoveryPath}</code>
++                      </span>
++                      <span
++                        onClick={() => canOpenRecovery && void openRecoverySession()}
++                        style={{
++                          color: C.accent,
++                          cursor: canOpenRecovery ? 'pointer' : 'default',
++                          opacity: canOpenRecovery ? 1 : 0.5,
++                          fontWeight: 600,
++                          alignSelf: 'flex-start',
++                        }}
++                      >
++                        {recovering ? 'opening…' : 'Open a session there instead'}
++                      </span>
++                    </div>
++                  ) : probe.branchExists ? (
++                    <div style={{ fontSize: 10.5, color: C.faint }}>existing branch — will be checked out</div>
++                  ) : (
++                    branch.trim() !== '' &&
++                    !worktreeBranchValid && (
++                      <div style={{ fontSize: 10.5, color: C.error }}>invalid branch name</div>
++                    )
++                  )}
++                </div>
++              )}
++            </div>
++          )}
++
+           {submitError && (
+             <div
+               style={{
+diff --git a/src/features/sessions/Sidebar.tsx b/src/features/sessions/Sidebar.tsx
+index 399beeb..62b2ff2 100644
+--- a/src/features/sessions/Sidebar.tsx
++++ b/src/features/sessions/Sidebar.tsx
+@@ -5,11 +5,22 @@ import { formatContextTokens } from '../../../contract/conversation-view';
+ import { displayWslCwd } from '../../../contract/wsl-filesystem';
+ import { filterSessionsByProject } from '../../../contract/projects';
+ import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
+-import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList, sessionRemove } from '../../lib/api';
++import type { WorktreeStatusData } from '../../../contract/session-worktree';
++import {
++  diffGetSummary,
++  onDiffEvent,
++  onSessionEvent,
++  sessionList,
++  sessionRemove,
++  sessionWorktreeRemove,
++  sessionWorktreeStatus,
++} from '../../lib/api';
+ import { prunePaletteSession } from '../palette/paletteData';
++import { showToast } from '../palette/palette';
+ import ProjectSwitcher from '../projects/ProjectSwitcher';
+ import { filteredEmptyLabel, visibleSessions } from '../projects/projects';
+ import { useStore } from '../../lib/store';
++import { truncateBranchLeft, worktreeRemovalBlockReason } from './worktree';
+ 
+ // pane [1] — the fleet board (Mission Control). Evolves the sessions-sidebar row
+ // list into rich per-session status cards, aggregated from existing channels
+@@ -38,6 +49,16 @@ interface MenuState {
+   y: number;
+   confirming: boolean;
+   error: AppError | null;
++  // session-worktree FR-17/18: the dirty/unpushed probe for the delete-confirm's
++  // removal checkbox. Absent for a session with no worktree.
++  worktreeChecking?: boolean;
++  worktreeStatus?: WorktreeStatusData | null;
++  worktreeGone?: boolean; // WORKTREE_NOT_FOUND: the directory is already gone
++  // A non-WORKTREE_NOT_FOUND status-check failure (FR-20): the confirm step still
++  // renders normally, but the removal checkbox is disabled — a git-side check
++  // failure must never block removing the session itself.
++  worktreeStatusFailed?: boolean;
++  removeWorktree?: boolean;
+ }
+ 
+ export default function Sidebar({ home }: { home: string }) {
+@@ -350,7 +371,32 @@ export default function Sidebar({ home }: { home: string }) {
+     };
+   }, [menu]);
+ 
+-  const doRemove = async (sessionId: string) => {
++  // session-worktree FR-17: kicks off the dirty/unpushed probe when the confirm
++  // step opens for a session that has a worktree.
++  const startWorktreeCheck = (sessionId: string) => {
++    setMenu((m) => (m ? { ...m, worktreeChecking: true } : m));
++    void sessionWorktreeStatus(sessionId).then((res) => {
++      setMenu((m) => {
++        if (!m || m.sessionId !== sessionId) return m; // menu moved on
++        if (res.ok) return { ...m, worktreeChecking: false, worktreeStatus: res.data };
++        if (res.error.code === 'WORKTREE_NOT_FOUND') return { ...m, worktreeChecking: false, worktreeGone: true };
++        // FR-20: a git-side status-check failure (e.g. GIT_ERROR/INTERNAL) must not
++        // block removing the session — keep the normal confirm UI, just disable the
++        // worktree-removal checkbox.
++        return { ...m, worktreeChecking: false, worktreeStatusFailed: true };
++      });
++    });
++  };
++
++  // FR-20: session_worktree_remove runs first (it needs the session's worktree
++  // metadata), but session_remove always follows regardless of its outcome — a
++  // failed directory removal surfaces as a toast, never blocks removing the
++  // session from Francois.
++  const doRemove = async (sessionId: string, removeWorktree: boolean) => {
++    if (removeWorktree) {
++      const wtRes = await sessionWorktreeRemove(sessionId);
++      if (!wtRes.ok) showToast(wtRes.error.message, 'error');
++    }
+     const res = await sessionRemove(sessionId);
+     if (res.ok) {
+       const st = useStore.getState();
+@@ -513,7 +559,11 @@ export default function Sidebar({ home }: { home: string }) {
+             <div style={{ padding: '8px 10px', fontSize: 11, color: C.error }}>{menu.error.message}</div>
+           ) : !menu.confirming ? (
+             <div
+-              onClick={() => setMenu({ ...menu, confirming: true })}
++              onClick={() => {
++                const target = sessions.find((s) => s.id === menu.sessionId);
++                setMenu({ ...menu, confirming: true });
++                if (target?.worktree) startWorktreeCheck(menu.sessionId);
++              }}
+               style={{ padding: '8px 10px', fontSize: 12, color: C.primary, cursor: 'pointer' }}
+               onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
+               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+@@ -521,19 +571,64 @@ export default function Sidebar({ home }: { home: string }) {
+               Remove session
+             </div>
+           ) : (
+-            <div style={{ padding: '8px 10px' }}>
+-              <div style={{ fontSize: 11.5, color: C.primary, marginBottom: 8 }}>
+-                remove '{sessions.find((s) => s.id === menu.sessionId)?.name ?? '?'}'?
+-              </div>
+-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+-                <span onClick={() => setMenu(null)} style={{ fontSize: 12, color: C.dim, cursor: 'pointer' }}>
+-                  Cancel
+-                </span>
+-                <span onClick={() => void doRemove(menu.sessionId)} style={{ fontSize: 12, color: C.error, cursor: 'pointer' }}>
+-                  Remove
+-                </span>
+-              </div>
+-            </div>
++            (() => {
++              const target = sessions.find((s) => s.id === menu.sessionId);
++              const wt = target?.worktree;
++              const blockReason = menu.worktreeStatusFailed
++                ? 'could not check worktree status'
++                : menu.worktreeStatus
++                  ? worktreeRemovalBlockReason(menu.worktreeStatus)
++                  : null;
++              const removeWorktree = menu.removeWorktree ?? false;
++              return (
++                <div style={{ padding: '8px 10px', maxWidth: 260 }}>
++                  <div style={{ fontSize: 11.5, color: C.primary, marginBottom: 8 }}>remove '{target?.name ?? '?'}'?</div>
++                  {/* session-worktree §8 screen 5: the delete-confirm removal step. */}
++                  {wt && (
++                    <div style={{ fontSize: 10.5, marginBottom: 8 }}>
++                      {menu.worktreeChecking ? (
++                        <span style={{ color: C.faint }}>checking worktree…</span>
++                      ) : menu.worktreeGone ? (
++                        <span style={{ color: C.faint }}>worktree already removed</span>
++                      ) : (
++                        <label
++                          style={{
++                            display: 'flex',
++                            alignItems: 'flex-start',
++                            gap: 6,
++                            cursor: blockReason ? 'default' : 'pointer',
++                            color: blockReason ? 'var(--warn)' : C.dim,
++                          }}
++                        >
++                          <input
++                            type="checkbox"
++                            checked={!!blockReason ? false : removeWorktree}
++                            disabled={!!blockReason}
++                            onChange={() => setMenu((m) => (m ? { ...m, removeWorktree: !m.removeWorktree } : m))}
++                            style={{ marginTop: 2 }}
++                          />
++                          <span>
++                            Also remove the worktree at <code title={wt.path}>{wt.path}</code>
++                            {blockReason && <div style={{ marginTop: 2 }}>{blockReason}</div>}
++                          </span>
++                        </label>
++                      )}
++                    </div>
++                  )}
++                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
++                    <span onClick={() => setMenu(null)} style={{ fontSize: 12, color: C.dim, cursor: 'pointer' }}>
++                      Cancel
++                    </span>
++                    <span
++                      onClick={() => void doRemove(menu.sessionId, !blockReason && removeWorktree)}
++                      style={{ fontSize: 12, color: C.error, cursor: 'pointer' }}
++                    >
++                      Remove
++                    </span>
++                  </div>
++                </div>
++              );
++            })()
+           )}
+         </div>
+       )}
+@@ -645,9 +740,15 @@ function SessionCard({
+         {displayWslCwd(s.cwd) ?? abbreviate(s.cwd, home)}
+       </div>
+ 
+-      {/* Row 3 — status line */}
++      {/* Row 3 — status line; session-worktree FR-13: branch glyph + name, appended */}
+       <div style={{ fontSize: 10, letterSpacing: '0.02em', marginLeft: 17, color: sc, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+         {label} · {s.model.label}
++        {s.worktree && (
++          <span title={s.worktree.branch} style={{ color: C.faint }}>
++            {' '}
++            · <span style={{ color: C.accent }}>⎇</span> {truncateBranchLeft(s.worktree.branch, 20)}
++          </span>
++        )}
+       </div>
+ 
+       {/* Row 4 — meta: context + diff badge + agent count */}
+diff --git a/src/features/sessions/worktree.test.ts b/src/features/sessions/worktree.test.ts
+new file mode 100644
+index 0000000..cdf1370
+--- /dev/null
++++ b/src/features/sessions/worktree.test.ts
+@@ -0,0 +1,449 @@
++// session-worktree (specs/session-worktree.md) — pure logic covering FR-2, FR-3,
++// FR-14, FR-15, FR-18/19 and the palette FR-16 preset handoff. Node env, no DOM:
++// localStorage is stubbed exactly like projects.test.ts.
++
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++import type { AppError, SessionMeta, SessionWorktree } from '../../../contract/common';
++import type { WorktreeProbeData, WorktreeStatusData } from '../../../contract/session-worktree';
++import { WORKTREE_NOTICE_STORAGE_KEY } from '../../../contract/session-worktree';
++import {
++  basenameOf,
++  canOpenWorktreeRecovery,
++  consumeWorktreePreset,
++  defaultWorktreeBranch,
++  dismissWorktreeNotice,
++  isValidBranchName,
++  isWorktreeNoticeDismissed,
++  liveWorktreeProbe,
++  requestWorktreePreset,
++  siblingWorktreeSummaryLine,
++  submitErrorBanner,
++  truncateBranchLeft,
++  worktreeBranchInUsePath,
++  worktreeCreateBlocked,
++  worktreeFetchWarningLine,
++  worktreeRemovalBlockReason,
++} from './worktree';
++import type { WorktreeGateState, WorktreeProbeState, WorktreeRecoveryGateState } from './worktree';
++
++function fakeStorage(): Storage {
++  const map = new Map<string, string>();
++  return {
++    getItem: (k: string) => map.get(k) ?? null,
++    setItem: (k: string, v: string) => {
++      map.set(k, v);
++    },
++    removeItem: (k: string) => {
++      map.delete(k);
++    },
++    clear: () => map.clear(),
++    key: (i: number) => Array.from(map.keys())[i] ?? null,
++    get length() {
++      return map.size;
++    },
++  } as Storage;
++}
++
++function session(over: Partial<SessionMeta> = {}): SessionMeta {
++  return {
++    id: 's1',
++    name: 'francois',
++    cwd: '/repo',
++    model: { id: 'm', label: 'Model' },
++    status: 'idle',
++    contextUsedTokens: 0,
++    contextLimitTokens: 0,
++    startedAt: 0,
++    lastActivityAt: 0,
++    permissionMode: 'default',
++    runtime: 'native',
++    ...over,
++  };
++}
++
++function wt(over: Partial<SessionWorktree> = {}): SessionWorktree {
++  return {
++    branch: 'feat/x',
++    baseRef: 'main',
++    path: '/repo/../.francois-worktrees/repo/feat-x',
++    sourceRepoRoot: '/repo',
++    createdBranch: true,
++    fetched: true,
++    ...over,
++  };
++}
++
++describe('basenameOf', () => {
++  it('handles both separators and trailing slashes', () => {
++    expect(basenameOf('/a/b/c')).toBe('c');
++    expect(basenameOf('C:\\a\\b\\c')).toBe('c');
++    expect(basenameOf('/a/b/')).toBe('b');
++  });
++});
++
++describe('defaultWorktreeBranch (FR-2)', () => {
++  it('slugs the session name', () => {
++    expect(defaultWorktreeBranch('My Session!', '/repo')).toBe('feat/my-session');
++  });
++  it('falls back to basename(cwd) when the name is empty after trim', () => {
++    expect(defaultWorktreeBranch('   ', '/home/u/francois')).toBe('feat/francois');
++  });
++  it('collapses non-alnum runs and trims edges', () => {
++    expect(defaultWorktreeBranch('  --Auth Fix--  ', '/repo')).toBe('feat/auth-fix');
++  });
++});
++
++describe('isValidBranchName (FR-3 convenience check)', () => {
++  it.each([
++    ['feat/auth', true],
++    ['feat/Auth-Fix_2', true],
++    ['', false],
++    ['   ', false],
++    ['@', false],
++    ['/feat/auth', false],
++    ['feat/auth/', false],
++    ['-feat', false],
++    ['feat..auth', false],
++    ['feat@{up}', false],
++    ['feat auth', false],
++    ['feat~auth', false],
++    ['feat^auth', false],
++    ['feat:auth', false],
++    ['feat.lock', false],
++    ['feat.', false],
++    ['feat//auth', false],
++    ['feat/.hidden', false],
++  ])('%s -> %s', (branch, valid) => {
++    expect(isValidBranchName(branch)).toBe(valid);
++  });
++});
++
++describe('worktreeCreateBlocked (FR-1/FR-3 probe staleness gate)', () => {
++  function gate(over: Partial<WorktreeGateState> = {}): WorktreeGateState {
++    return {
++      worktreeEnabled: true,
++      probeIsRepo: true,
++      probing: false,
++      probeErrored: false,
++      branch: 'feat/x',
++      branchValid: true,
++      recoveryPath: null,
++      ...over,
++    };
++  }
++
++  it('is never blocked when the worktree checkbox is off, regardless of probe state', () => {
++    expect(worktreeCreateBlocked(gate({ worktreeEnabled: false, probeIsRepo: null, probing: true, probeErrored: true }))).toBe(
++      false,
++    );
++  });
++
++  it('is unblocked on a settled, successful, in-repo probe with a valid branch', () => {
++    expect(worktreeCreateBlocked(gate())).toBe(false);
++  });
++
++  it('blocks while a probe is still in flight, even if the last known probe was a repo', () => {
++    expect(worktreeCreateBlocked(gate({ probing: true }))).toBe(true);
++  });
++
++  it('blocks after a probe request errors, even with a sticky isRepo:true from before', () => {
++    expect(worktreeCreateBlocked(gate({ probeErrored: true }))).toBe(true);
++  });
++
++  it('does NOT silently unblock (i.e. degrade into a plain create) on error or pending — it always blocks', () => {
++    // This is the regression this gate exists to prevent: previously a failed
++    // probe nulled `isRepo` and the create gate fell through as unblocked.
++    expect(worktreeCreateBlocked(gate({ probeErrored: true, probeIsRepo: null }))).toBe(true);
++    expect(worktreeCreateBlocked(gate({ probing: true, probeIsRepo: null }))).toBe(true);
++  });
++
++  it('stays blocked while the probe result is still unknown (pending/never resolved)', () => {
++    expect(worktreeCreateBlocked(gate({ probeIsRepo: null }))).toBe(true);
++  });
++
++  it('unblocks (allows a plain, non-worktree create) once the probe confirms the cwd is not a repo', () => {
++    expect(worktreeCreateBlocked(gate({ probeIsRepo: false }))).toBe(false);
++  });
++
++  it('blocks on a recovery path (branch already checked out elsewhere)', () => {
++    expect(worktreeCreateBlocked(gate({ recoveryPath: '/other/checkout' }))).toBe(true);
++  });
++
++  it('blocks on an empty or invalid branch', () => {
++    expect(worktreeCreateBlocked(gate({ branch: '' }))).toBe(true);
++    expect(worktreeCreateBlocked(gate({ branch: '   ' }))).toBe(true);
++    expect(worktreeCreateBlocked(gate({ branchValid: false }))).toBe(true);
++  });
++});
++
++describe('canOpenWorktreeRecovery (FR-5 recovery-offer gate, probe-staleness)', () => {
++  function gate(over: Partial<WorktreeRecoveryGateState> = {}): WorktreeRecoveryGateState {
++    return {
++      name: 'my session',
++      modelId: 'm',
++      projectRootMissing: false,
++      submitting: false,
++      recovering: false,
++      probing: false,
++      probeErrored: false,
++      ...over,
++    };
++  }
++
++  it('is open when every field settles clean', () => {
++    expect(canOpenWorktreeRecovery(gate())).toBe(true);
++  });
++
++  it('blocks while a probe is still in flight for the current branch — regression: a branch', () => {
++    // edit re-probes (worktree.ts liveWorktreeProbe only invalidates on cwd, not
++    // branch) so the amber card can still show the PREVIOUS branch's
++    // branchCheckedOutAt while the field holds a different value; this must not
++    // stay clickable during that debounce + round-trip window.
++    expect(canOpenWorktreeRecovery(gate({ probing: true }))).toBe(false);
++  });
++
++  it('blocks when the last probe for the current branch errored', () => {
++    expect(canOpenWorktreeRecovery(gate({ probeErrored: true }))).toBe(false);
++  });
++
++  it('blocks on the same non-worktree guards as canCreate', () => {
++    expect(canOpenWorktreeRecovery(gate({ name: '' }))).toBe(false);
++    expect(canOpenWorktreeRecovery(gate({ name: '   ' }))).toBe(false);
++    expect(canOpenWorktreeRecovery(gate({ modelId: '' }))).toBe(false);
++    expect(canOpenWorktreeRecovery(gate({ projectRootMissing: true }))).toBe(false);
++    expect(canOpenWorktreeRecovery(gate({ submitting: true }))).toBe(false);
++  });
++
++  it('blocks its own re-entrancy guard', () => {
++    expect(canOpenWorktreeRecovery(gate({ recovering: true }))).toBe(false);
++  });
++});
++
++describe('worktreeRemovalBlockReason (FR-18/FR-19)', () => {
++  const base: WorktreeStatusData = { dirty: false, dirtyCount: 0, unpushed: false, unpushedCount: 0, upstream: null };
++
++  it('is null when clean and pushed', () => {
++    expect(worktreeRemovalBlockReason(base)).toBeNull();
++  });
++  it('reports dirty count, singular vs plural', () => {
++    expect(worktreeRemovalBlockReason({ ...base, dirty: true, dirtyCount: 1 })).toBe('1 uncommitted file');
++    expect(worktreeRemovalBlockReason({ ...base, dirty: true, dirtyCount: 3 })).toBe('3 uncommitted files');
++  });
++  it('reports unpushed count against the upstream name', () => {
++    expect(
++      worktreeRemovalBlockReason({ ...base, unpushed: true, unpushedCount: 2, upstream: 'origin/feat/x' }),
++    ).toBe('2 commits not on origin/feat/x');
++  });
++  it('falls back to a generic upstream label when there is none', () => {
++    expect(worktreeRemovalBlockReason({ ...base, unpushed: true, unpushedCount: 1, upstream: null })).toBe(
++      '1 commit not on its upstream',
++    );
++  });
++  it('joins both reasons when both apply', () => {
++    expect(
++      worktreeRemovalBlockReason({ dirty: true, dirtyCount: 3, unpushed: true, unpushedCount: 2, upstream: 'origin/feat/x' }),
++    ).toBe('3 uncommitted files · 2 commits not on origin/feat/x');
++  });
++
++  // contract §WorktreeStatusData / spec §5: `unpushed: true` + `unpushedCount: 0`
++  // is the "push status could not be determined" sentinel, NOT a literal zero.
++  it('renders the push-status-unknown sentinel instead of "0 commits"', () => {
++    const reason = worktreeRemovalBlockReason({ ...base, unpushed: true, unpushedCount: 0, upstream: null });
++    expect(reason).toBe('push status unknown — no upstream configured');
++    expect(reason).not.toContain('0 commit');
++  });
++
++  it('still says "push status unknown" for the sentinel when an upstream name is present', () => {
++    expect(worktreeRemovalBlockReason({ ...base, unpushed: true, unpushedCount: 0, upstream: 'origin/feat/x' })).toBe(
++      'push status unknown',
++    );
++  });
++
++  it('joins the dirty reason with the sentinel', () => {
++    expect(worktreeRemovalBlockReason({ dirty: true, dirtyCount: 1, unpushed: true, unpushedCount: 0, upstream: null })).toBe(
++      '1 uncommitted file · push status unknown — no upstream configured',
++    );
++  });
++});
++
++describe('liveWorktreeProbe (FR-1 — a probe belongs to the cwd it was requested for)', () => {
++  const data: WorktreeProbeData = {
++    isRepo: true,
++    repoRoot: '/repo-a',
++    defaultBranch: 'main',
++    currentBranch: 'main',
++    remote: 'origin',
++    branchExists: true,
++    branchCheckedOutAt: '/elsewhere',
++    worktreePath: '/x/.francois-worktrees/repo-a/feat-x',
++  };
++  const state: WorktreeProbeState = { cwd: '/repo-a', data, errored: false };
++
++  it('is empty with no probe at all', () => {
++    expect(liveWorktreeProbe(null, '/repo-a')).toEqual({ data: null, errored: false });
++  });
++
++  it('returns the data for the cwd it was requested for, ignoring surrounding whitespace', () => {
++    expect(liveWorktreeProbe(state, '/repo-a')).toEqual({ data, errored: false });
++    expect(liveWorktreeProbe(state, '  /repo-a  ')).toEqual({ data, errored: false });
++  });
++
++  it('keeps the sticky error flag for the matching cwd (a blip never nulls the data)', () => {
++    expect(liveWorktreeProbe({ ...state, errored: true }, '/repo-a')).toEqual({ data, errored: true });
++  });
++
++  it('goes stale IMMEDIATELY on a cwd change — repo A details never render for repo B', () => {
++    expect(liveWorktreeProbe(state, '/repo-b')).toEqual({ data: null, errored: false });
++    expect(liveWorktreeProbe({ ...state, errored: true }, '/repo-b')).toEqual({ data: null, errored: false });
++  });
++
++  it('goes stale when the cwd is cleared', () => {
++    expect(liveWorktreeProbe(state, '')).toEqual({ data: null, errored: false });
++    expect(liveWorktreeProbe(state, '   ')).toEqual({ data: null, errored: false });
++  });
++
++  it('feeds worktreeCreateBlocked an unknown (blocking) isRepo across a cwd change', () => {
++    const live = liveWorktreeProbe(state, '/repo-b');
++    expect(
++      worktreeCreateBlocked({
++        worktreeEnabled: true,
++        probeIsRepo: live.data?.isRepo ?? null,
++        probing: false,
++        probeErrored: live.errored,
++        branch: 'feat/x',
++        branchValid: true,
++        recoveryPath: live.data?.branchCheckedOutAt ?? null,
++      }),
++    ).toBe(true);
++  });
++});
++
++describe('worktreeFetchWarningLine (FR-14)', () => {
++  it('is null when fetched', () => {
++    expect(worktreeFetchWarningLine(wt({ fetched: true }))).toBeNull();
++  });
++  it('is null when there is no remote (no fetchError)', () => {
++    expect(worktreeFetchWarningLine(wt({ fetched: false }))).toBeNull();
++  });
++  it('names the base ref when the fetch failed', () => {
++    expect(worktreeFetchWarningLine(wt({ fetched: false, fetchError: 'timed out', baseRef: 'main' }))).toBe(
++      'could not fetch — forked from local `main`',
++    );
++  });
++});
++
++describe('worktree notice dismissal (FR-14, localStorage)', () => {
++  beforeEach(() => {
++    vi.unstubAllGlobals();
++  });
++
++  it('is not dismissed with no storage at all', () => {
++    expect(isWorktreeNoticeDismissed('s1')).toBe(false);
++  });
++
++  it('round-trips a dismissal under the contract key', () => {
++    const store = fakeStorage();
++    vi.stubGlobal('localStorage', store);
++    expect(isWorktreeNoticeDismissed('s1')).toBe(false);
++    dismissWorktreeNotice('s1');
++    expect(isWorktreeNoticeDismissed('s1')).toBe(true);
++    expect(JSON.parse(store.getItem(WORKTREE_NOTICE_STORAGE_KEY) as string)).toEqual(['s1']);
++  });
++
++  it('never returns for that session, and is per-session', () => {
++    const store = fakeStorage();
++    vi.stubGlobal('localStorage', store);
++    dismissWorktreeNotice('s1');
++    dismissWorktreeNotice('s1'); // idempotent
++    dismissWorktreeNotice('s2');
++    expect(isWorktreeNoticeDismissed('s1')).toBe(true);
++    expect(isWorktreeNoticeDismissed('s2')).toBe(true);
++    expect(isWorktreeNoticeDismissed('s3')).toBe(false);
++  });
++});
++
++describe('siblingWorktreeSummaryLine (FR-15)', () => {
++  it('is null when the session itself is a worktree session', () => {
++    const main = session({ id: 'main', cwd: '/repo', worktree: wt() });
++    expect(siblingWorktreeSummaryLine(main, [main], true)).toBeNull();
++  });
++
++  it('is null when there are no siblings', () => {
++    const main = session({ id: 'main', cwd: '/repo' });
++    expect(siblingWorktreeSummaryLine(main, [main], true)).toBeNull();
++  });
++
++  it('lists siblings by branch, count first, singular vs plural', () => {
++    const main = session({ id: 'main', cwd: '/repo' });
++    const a = session({ id: 'a', cwd: '/x/feat-a', worktree: wt({ branch: 'feat/auth', sourceRepoRoot: '/repo' }) });
++    expect(siblingWorktreeSummaryLine(main, [main, a], true)).toBe('1 worktree session · feat/auth');
++    const b = session({ id: 'b', cwd: '/x/feat-b', worktree: wt({ branch: 'feat/parser', sourceRepoRoot: '/repo' }) });
++    expect(siblingWorktreeSummaryLine(main, [main, a, b], true)).toBe('2 worktree sessions · feat/auth, feat/parser');
++  });
++});
++
++describe('truncateBranchLeft (FR-13)', () => {
++  it('leaves short names untouched', () => {
++    expect(truncateBranchLeft('feat/auth', 26)).toBe('feat/auth');
++  });
++  it('left-truncates long names with an ellipsis', () => {
++    const long = 'feat/a-very-long-branch-name-indeed';
++    const out = truncateBranchLeft(long, 16);
++    expect(out.length).toBe(16);
++    expect(out.startsWith('…')).toBe(true);
++    expect(long.endsWith(out.slice(1))).toBe(true);
++  });
++});
++
++describe('worktreeBranchInUsePath (§7 race: branch checked out between probe and create)', () => {
++  it('extracts the path from a WORKTREE_BRANCH_IN_USE error', () => {
++    const err: AppError = { code: 'WORKTREE_BRANCH_IN_USE', message: 'in use', detail: { path: '/other/checkout' } };
++    expect(worktreeBranchInUsePath(err)).toBe('/other/checkout');
++  });
++
++  it('is null for any other error code', () => {
++    const err: AppError = { code: 'GIT_ERROR', message: 'oops', detail: { path: '/other/checkout' } };
++    expect(worktreeBranchInUsePath(err)).toBeNull();
++  });
++
++  it('is null when detail is missing or malformed', () => {
++    expect(worktreeBranchInUsePath({ code: 'WORKTREE_BRANCH_IN_USE', message: 'in use' })).toBeNull();
++    expect(worktreeBranchInUsePath({ code: 'WORKTREE_BRANCH_IN_USE', message: 'in use', detail: {} })).toBeNull();
++    expect(
++      worktreeBranchInUsePath({ code: 'WORKTREE_BRANCH_IN_USE', message: 'in use', detail: { path: 42 } }),
++    ).toBeNull();
++  });
++});
++
++describe('submitErrorBanner (§7 race: recovery offer instead of a dead-end error)', () => {
++  it('suppresses the red banner when the error carries a recovery path', () => {
++    // The form transitions to the SAME amber recovery offer FR-5's probe drives,
++    // so stacking the raw WORKTREE_BRANCH_IN_USE message on top of it would
++    // contradict §7 ("the form transitions to the same recovery offer").
++    const err: AppError = { code: 'WORKTREE_BRANCH_IN_USE', message: 'in use', detail: { path: '/other/checkout' } };
++    expect(submitErrorBanner(err)).toBeNull();
++    // …and it agrees with the helper that derives the offer, by construction.
++    expect(worktreeBranchInUsePath(err)).toBe('/other/checkout');
++  });
++
++  it('still surfaces WORKTREE_BRANCH_IN_USE when no path came with it (no offer to fall back on)', () => {
++    const err: AppError = { code: 'WORKTREE_BRANCH_IN_USE', message: 'in use' };
++    expect(submitErrorBanner(err)).toBe(err);
++  });
++
++  it('passes every other error through unchanged', () => {
++    const err: AppError = { code: 'WORKTREE_CREATE_FAILED', message: 'git said no' };
++    expect(submitErrorBanner(err)).toBe(err);
++    const other: AppError = { code: 'PROJECT_ROOT_MISSING', message: 'gone' };
++    expect(submitErrorBanner(other)).toBe(other);
++  });
++});
++
++describe('command-palette worktree preset (FR-16)', () => {
++  it('is one-shot: set then consumed exactly once', () => {
++    expect(consumeWorktreePreset()).toBe(false);
++    requestWorktreePreset();
++    expect(consumeWorktreePreset()).toBe(true);
++    expect(consumeWorktreePreset()).toBe(false);
++  });
++});
+diff --git a/src/features/sessions/worktree.ts b/src/features/sessions/worktree.ts
+new file mode 100644
+index 0000000..02efd78
+--- /dev/null
++++ b/src/features/sessions/worktree.ts
+@@ -0,0 +1,268 @@
++// session-worktree (specs/session-worktree.md) — pure frontend logic for the New
++// Session modal's worktree group, the session card / status-bar branch chip, the
++// SESSION banner, the DIFF sibling line, and the delete-confirm removal step.
++// The byte-for-byte-pinned helpers (worktreeSlug, previewWorktreePath,
++// siblingWorktreeSessions, WORKTREE_NOTICE_STORAGE_KEY) live in the contract and
++// are re-exported/used here, never re-implemented.
++
++import type { AppError, SessionMeta, SessionWorktree } from '../../../contract/common';
++import type { WorktreeProbeData, WorktreeStatusData } from '../../../contract/session-worktree';
++import { WORKTREE_NOTICE_STORAGE_KEY, siblingWorktreeSessions } from '../../../contract/session-worktree';
++
++/** basename(path), either separator — mirrors NewSessionModal's own helper. */
++export function basenameOf(p: string): string {
++  const parts = p.split(/[\\/]/).filter(Boolean);
++  return parts[parts.length - 1] ?? p;
++}
++
++function kebab(input: string): string {
++  return input
++    .trim()
++    .toLowerCase()
++    .replace(/[^a-z0-9]+/g, '-')
++    .replace(/^-+|-+$/g, '');
++}
++
++/**
++ * FR-2: `feat/<kebab-slug of the session name>`, falling back to
++ * `feat/<kebab-slug of basename(cwd)>` when the name is empty (after trim).
++ */
++export function defaultWorktreeBranch(sessionName: string, cwd: string): string {
++  const base = sessionName.trim() ? kebab(sessionName) : kebab(basenameOf(cwd));
++  return `feat/${base}`;
++}
++
++/**
++ * FR-3 convenience check only — the core is the source of truth
++ * (`git check-ref-format --branch`). Rejects the common invalid shapes so the
++ * form can disable Create before a round-trip, without trying to be exhaustive.
++ */
++export function isValidBranchName(branch: string): boolean {
++  const b = branch.trim();
++  if (!b) return false;
++  if (b === '@') return false;
++  if (b.startsWith('/') || b.endsWith('/')) return false;
++  if (b.startsWith('-')) return false;
++  if (b.includes('..')) return false;
++  if (b.includes('@{')) return false;
++  if (/[\s~^:?*[\\]/.test(b)) return false;
++  if (b.endsWith('.lock') || b.endsWith('.')) return false;
++  if (b.split('/').some((seg) => seg === '' || seg.startsWith('.'))) return false;
++  return true;
++}
++
++/**
++ * FR-1/FR-3: whether Create should be blocked by the worktree group's own gate,
++ * independent of `canCreate`'s other fields. `probeIsRepo` is the LAST KNOWN
++ * probe result (sticky across a transient error — never collapses to a plain,
++ * silent non-worktree create just because a probe request failed or hasn't
++ * resolved yet). While a probe is in flight (`probing`) or the last one errored
++ * (`probeErrored`), Create stays blocked rather than letting `worktreeEnabled`
++ * silently degrade into `worktree: undefined`.
++ */
++export interface WorktreeGateState {
++  worktreeEnabled: boolean;
++  probeIsRepo: boolean | null;
++  probing: boolean;
++  probeErrored: boolean;
++  branch: string;
++  branchValid: boolean;
++  recoveryPath: string | null;
++}
++
++export function worktreeCreateBlocked(state: WorktreeGateState): boolean {
++  if (!state.worktreeEnabled) return false;
++  if (state.probing || state.probeErrored) return true;
++  // `null` is "still pending/unknown" — stays blocked. A confirmed `false` means
++  // the probe settled and the cwd is definitely not a repo, so the worktree gate
++  // has nothing to block: allow the plain (non-worktree) create through.
++  if (state.probeIsRepo === null) return true;
++  if (state.probeIsRepo === false) return false;
++  if (state.recoveryPath !== null) return true;
++  if (state.branch.trim() === '') return true;
++  if (!state.branchValid) return true;
++  return false;
++}
++
++/**
++ * FR-5 recovery-offer gate: whether "Open a session there instead" may fire.
++ * Shares `canCreate`'s non-worktree guards (name/model/project-root/in-flight
++ * submit) plus its own re-entrancy guard (`recovering`) — see `canCreate` in
++ * NewSessionModal. It ALSO carries the same probe-staleness guard as
++ * `worktreeCreateBlocked`: `liveWorktreeProbe` only invalidates the probe on a
++ * **cwd** change, never on a **branch** change (see `liveWorktreeProbe` above),
++ * so during the 250ms debounce + round-trip after a branch edit the amber
++ * recovery card can still be showing the PREVIOUS branch's
++ * `branchCheckedOutAt` path while the currently-typed branch differs from it.
++ * Blocking on `probing`/`probeErrored` here — exactly like the plain-create
++ * gate — closes that window instead of opening a session at a stale path.
++ */
++export interface WorktreeRecoveryGateState {
++  name: string;
++  modelId: string;
++  projectRootMissing: boolean;
++  submitting: boolean;
++  recovering: boolean;
++  probing: boolean;
++  probeErrored: boolean;
++}
++
++export function canOpenWorktreeRecovery(state: WorktreeRecoveryGateState): boolean {
++  return (
++    state.name.trim() !== '' &&
++    state.modelId !== '' &&
++    !state.projectRootMissing &&
++    !state.submitting &&
++    !state.recovering &&
++    !state.probing &&
++    !state.probeErrored
++  );
++}
++
++/**
++ * FR-1: a probe result belongs to the cwd it was requested for. Storing that cwd
++ * WITH the data is what makes a cwd change invalidate it in the SAME render —
++ * a plain `WorktreeProbeData` would keep rendering repo A's `isRepo`, branch,
++ * hint and path preview for repo B through the whole debounce + round-trip
++ * window (and could show the "Isolate in worktree" control for a cwd that is not
++ * a repo at all, which FR-1 forbids).
++ */
++export interface WorktreeProbeState {
++  /** The (trimmed) cwd this probe was requested for. */
++  cwd: string;
++  /** Last SUCCESSFUL response for that cwd — sticky across a transient failure. */
++  data: WorktreeProbeData | null;
++  /** The last request for that cwd failed. */
++  errored: boolean;
++}
++
++/** The probe view valid for `cwd` right now: empty as soon as the cwd differs. */
++export function liveWorktreeProbe(
++  state: WorktreeProbeState | null,
++  cwd: string,
++): { data: WorktreeProbeData | null; errored: boolean } {
++  if (!state || state.cwd !== cwd.trim()) return { data: null, errored: false };
++  return { data: state.data, errored: state.errored };
++}
++
++/**
++ * §7 "Branch checked out between probe and create (race)": `session_create` can fail
++ * AFTER a clean probe when another process checks the branch out first. Narrows
++ * `error.detail` to the `{ path }` the core sends with `WORKTREE_BRANCH_IN_USE`, so the
++ * caller can merge it into `probe.branchCheckedOutAt` and reuse the SAME recovery-offer
++ * UI that FR-5's probe-time detection drives. Returns null for any other error/shape.
++ */
++export function worktreeBranchInUsePath(error: AppError): string | null {
++  if (error.code !== 'WORKTREE_BRANCH_IN_USE') return null;
++  const detail = error.detail as { path?: unknown } | undefined;
++  return typeof detail?.path === 'string' ? detail.path : null;
++}
++
++/**
++ * §7 race path, continued: what the modal's red submit banner should show for a
++ * failed `session_create`. `null` ⇔ show nothing, because the error already
++ * became the FR-5 amber recovery offer ("the form transitions to the same
++ * recovery offer") and stacking the raw `WORKTREE_BRANCH_IN_USE` message on top
++ * of it would read as a dead end. A `WORKTREE_BRANCH_IN_USE` with no usable
++ * `{ path }` yields no offer, so it still surfaces as an error.
++ */
++export function submitErrorBanner(error: AppError): AppError | null {
++  return worktreeBranchInUsePath(error) === null ? error : null;
++}
++
++/**
++ * FR-18/19: the disabled-checkbox reason for the delete-session confirm. `null`
++ * ⇔ removal is allowed (clean and pushed).
++ */
++export function worktreeRemovalBlockReason(status: WorktreeStatusData): string | null {
++  const parts: string[] = [];
++  if (status.dirty) {
++    parts.push(`${status.dirtyCount} uncommitted file${status.dirtyCount === 1 ? '' : 's'}`);
++  }
++  if (status.unpushed) {
++    if (status.unpushedCount === 0) {
++      // Contract §WorktreeStatusData sentinel: `unpushed: true` with a count of 0
++      // means the core could NOT determine push status (no upstream and no
++      // reliable base ref). Removal still hard-blocks (FR-19), but the reason must
++      // name the cause — rendering the count literally would claim "0 commits".
++      parts.push(status.upstream ? 'push status unknown' : 'push status unknown — no upstream configured');
++    } else {
++      const upstream = status.upstream ?? 'its upstream';
++      parts.push(`${status.unpushedCount} commit${status.unpushedCount === 1 ? '' : 's'} not on ${upstream}`);
++    }
++  }
++  return parts.length > 0 ? parts.join(' · ') : null;
++}
++
++/** FR-14: the extra banner line when the create-time fetch failed. */
++export function worktreeFetchWarningLine(worktree: SessionWorktree): string | null {
++  return worktree.fetchError ? `could not fetch — forked from local \`${worktree.baseRef}\`` : null;
++}
++
++// ---------- FR-14 per-session dismissal (localStorage) ----------
++
++function readDismissed(): string[] {
++  try {
++    const raw = localStorage.getItem(WORKTREE_NOTICE_STORAGE_KEY);
++    if (!raw) return [];
++    const arr: unknown = JSON.parse(raw);
++    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [];
++  } catch {
++    return [];
++  }
++}
++
++export function isWorktreeNoticeDismissed(sessionId: string): boolean {
++  return readDismissed().includes(sessionId);
++}
++
++export function dismissWorktreeNotice(sessionId: string): void {
++  try {
++    const arr = readDismissed();
++    if (!arr.includes(sessionId)) {
++      localStorage.setItem(WORKTREE_NOTICE_STORAGE_KEY, JSON.stringify([...arr, sessionId]));
++    }
++  } catch {
++    /* ignore — the banner simply reappears next launch */
++  }
++}
++
++// ---------- FR-15 DIFF sibling line ----------
++
++/** `N worktree sessions · feat/auth, feat/parser`, or null when there are none. */
++export function siblingWorktreeSummaryLine(
++  session: SessionMeta,
++  all: SessionMeta[],
++  caseInsensitive: boolean,
++): string | null {
++  const siblings = siblingWorktreeSessions(session, all, caseInsensitive);
++  if (siblings.length === 0) return null;
++  const branches = siblings.map((s) => s.worktree?.branch ?? '').join(', ');
++  return `${siblings.length} worktree session${siblings.length === 1 ? '' : 's'} · ${branches}`;
++}
++
++// ---------- FR-13 branch chip ----------
++
++/** Left-truncates a long branch name for the card/status-bar chip; full value goes in `title`. */
++export function truncateBranchLeft(branch: string, maxLen = 26): string {
++  if (branch.length <= maxLen) return branch;
++  return '…' + branch.slice(branch.length - (maxLen - 1));
++}
++
++// ---------- command-palette FR-16 handoff ----------
++// "New session in worktree…" opens the SAME modal pre-checked (no new component,
++// no store slice — the modal consumes this one-shot flag on mount, exactly like
++// paletteData.ts's non-store caches).
++
++let presetWorktreeOnOpen = false;
++
++export function requestWorktreePreset(): void {
++  presetWorktreeOnOpen = true;
++}
++
++/** One-shot read: consumes (and clears) the pending preset. */
++export function consumeWorktreePreset(): boolean {
++  const v = presetWorktreeOnOpen;
++  presetWorktreeOnOpen = false;
++  return v;
++}
+diff --git a/src/lib/api.ts b/src/lib/api.ts
+index 88608a0..2e904a9 100644
+--- a/src/lib/api.ts
++++ b/src/lib/api.ts
+@@ -14,6 +14,8 @@ import type {
+ } from '../../contract/projects';
+ import type { PermissionDecision, PermissionRule, PermissionTier } from '../../contract/permission-guardrails';
+ import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
++import type { SessionCreateInput } from '../../contract/session-engine';
++import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
+ import type { ConversationBlock } from '../../contract/conversation-view';
+ import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
+ import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
+@@ -34,9 +36,21 @@ export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
+ export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
+ // projects FR-19: session_create gained an optional projectId, stored verbatim —
+ // the frontend (NewSessionModal) resolves the project and applies its defaults.
+-export const sessionCreate = (req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'>) =>
+-  ipc<Result<SessionMeta>>('session_create', req);
++// session-worktree: session_create also gained an optional `worktree` (spec §5),
++// sourced from the canonical SessionCreateInput field rather than re-declared here.
++export const sessionCreate = (
++  req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'> & Pick<SessionCreateInput, 'worktree'>,
++) => ipc<Result<SessionMeta>>('session_create', req);
+ export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
++// session-worktree §5: probe a candidate cwd for worktree isolation (FR-1).
++export const sessionWorktreeProbe = (req: WorktreeProbeRequest) =>
++  ipc<Result<WorktreeProbeData>>('session_worktree_probe', req);
++// session-worktree §5: dirty/unpushed check before offering removal (FR-18).
++export const sessionWorktreeStatus = (sessionId: SessionId) =>
++  ipc<Result<WorktreeStatusData>>('session_worktree_status', { sessionId });
++// session-worktree §5: `git worktree remove` + prune; never deletes the branch (FR-20).
++export const sessionWorktreeRemove = (sessionId: SessionId) =>
++  ipc<Result<null>>('session_worktree_remove', { sessionId });
+ export const sessionPickDirectory = () => ipc<Result<PickDirectoryData>>('session_pick_directory');
+ export const sessionSend = (sessionId: SessionId, blockId: string, text: string) =>
+   ipc<Result<{ queued: boolean; queuePosition?: number }>>('session_send', { sessionId, blockId, text });

@@ -2,7 +2,7 @@
 
 use super::*;
 
-use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::{err, err_detail, ok, IpcResult};
 use crate::permissions::PermissionRule;
 use serde::Serialize;
 use serde_json::Value;
@@ -86,18 +86,31 @@ pub fn session_create(
     runtime: Option<String>,
     allow_git: Option<bool>,
     project_id: Option<String>,
+    worktree: Option<WorktreeCreateInput>,
 ) -> IpcResult<Value> {
     // FR-7: cwd must exist and be a directory.
-    let meta = std::fs::metadata(&cwd);
-    match meta {
-        Ok(m) if m.is_dir() => {}
-        _ => {
-            return err(
-                "INVALID_INPUT",
-                "working directory does not exist or is not a directory",
-            )
-        }
+    //
+    // CRITICAL remediation: the FR-5 "already checked out" recovery flow calls
+    // session_create with `cwd` = `probe.branchCheckedOutAt` — a path read back
+    // from `git worktree list --porcelain`'s own stdout, which for a WSL repo is
+    // a BARE Linux path (no `\\wsl$\<distro>\…` prefix). A plain
+    // `std::fs::metadata` stat on Windows always fails INVALID_INPUT for that
+    // path, even though the directory is perfectly real inside the distro.
+    // Route the existence check the same way `resolve_worktree` will (via
+    // `adopt_host`) instead of assuming every cwd is Windows-native.
+    let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
+    let precheck_host = crate::session::worktree::adopt_host(&cwd, adopt);
+    let cwd_ok = match &precheck_host {
+        crate::diff::GitHost::Native => matches!(std::fs::metadata(&cwd), Ok(m) if m.is_dir()),
+        crate::diff::GitHost::Wsl(_) => crate::session::worktree::path_exists(&precheck_host, &cwd),
+    };
+    if !cwd_ok {
+        return err(
+            "INVALID_INPUT",
+            "working directory does not exist or is not a directory",
+        );
     }
+
     // Model is chosen from the live list (session_models); accept any non-empty
     // id and let the CLI reject a truly invalid one at turn time. Being
     // permissive here is what keeps newly released models usable without a
@@ -119,8 +132,13 @@ pub fn session_create(
             "the WSL runtime is only available on Windows",
         );
     }
-    // FR-9: eager spawn check — verify the claude binary runs under the session's runtime.
-    let (probe, probe_args) = claude_invocation(&runtime, &cwd, vec!["--version".to_string()]);
+    // FR-9: eager spawn check — verify the claude binary runs under the session's
+    // runtime. Runs against the ORIGINAL cwd (the repo path the modal probed),
+    // before session-worktree's `resolve_worktree` below: a probe failure here
+    // must not leave a worktree/branch behind (FR-11), and the probe itself
+    // doesn't care which directory inside the repo it runs from.
+    let (probe, probe_args) =
+        claude_invocation(&runtime, &cwd, vec!["--version".to_string()], None);
     let mut probe_cmd = Command::new(&probe);
     probe_cmd
         .args(&probe_args)
@@ -152,6 +170,33 @@ pub fn session_create(
         }
     }
 
+    // session-worktree FR-5/FR-6/FR-11/FR-12: resolve LAST, only once every other
+    // fallible validation (permission_mode, runtime, WSL availability, the FR-9
+    // spawn probe, the project-link check) has passed. `resolve_worktree` is the
+    // only step that mutates git state (a new worktree + branch); running it last
+    // means a later validation failure never orphans that state (FR-11) — there
+    // is nothing fallible left to run after it.
+    let mut cwd = cwd;
+    let mut session_worktree: Option<SessionWorktree> = None;
+    let mut worktree_distro: Option<String> = None;
+    if let Some(opts) = &worktree {
+        match resolve_worktree(&cwd, opts) {
+            Ok((actual_cwd, sw, distro)) => {
+                cwd = actual_cwd;
+                session_worktree = Some(sw);
+                worktree_distro = distro;
+            }
+            Err((code, msg)) if code == "WORKTREE_BRANCH_IN_USE" => {
+                return err_detail(
+                    &code,
+                    "that branch is already checked out at another path",
+                    serde_json::json!({ "path": msg }),
+                )
+            }
+            Err((code, msg)) => return err(&code, msg),
+        }
+    }
+
     let effort = effort.filter(|e| valid_effort(e));
     let now = now_ms();
     let id = uuid();
@@ -172,6 +217,8 @@ pub fn session_create(
         runtime,
         allow_git: allow_git.unwrap_or(false),
         project_id: project_id.clone(),
+        worktree: session_worktree,
+        worktree_distro,
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,
@@ -624,7 +671,7 @@ pub fn session_compact(
     session_id: String,
 ) -> IpcResult<Option<()>> {
     // Snapshot cwd/model/resume/effort; enforce status.
-    let (cwd, model_id, resume, effort, permission_mode, runtime) = {
+    let (cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro) = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(&session_id) else {
             return err("SESSION_NOT_FOUND", "no such session");
@@ -642,6 +689,7 @@ pub fn session_compact(
             s.effort.clone(),
             s.permission_mode.clone(),
             s.runtime.clone(),
+            s.worktree_distro.clone(),
         )
     };
     emit(
@@ -664,6 +712,7 @@ pub fn session_compact(
         effort.as_deref(),
         &permission_mode,
         &runtime,
+        worktree_distro.as_deref(),
     ) {
         // session-questions FR-5: /compact rides the stdin path like any turn, but a
         // compaction can never park on a question — close the pipe right away; the

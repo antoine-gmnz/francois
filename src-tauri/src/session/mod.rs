@@ -33,6 +33,7 @@ mod stdio;
 mod stream;
 mod tools;
 mod turn;
+mod worktree;
 
 pub(crate) use agent_transcript::*;
 pub(crate) use agents::*;
@@ -52,6 +53,7 @@ pub(crate) use stdio::*;
 pub(crate) use stream::*;
 pub(crate) use tools::*;
 pub(crate) use turn::*;
+pub(crate) use worktree::*;
 
 #[cfg(test)]
 mod testutil;
@@ -114,15 +116,36 @@ fn permission_args(mode: &str) -> Vec<String> {
 }
 
 /// (program, argv) launching `claude <claude_args>` under a session's runtime.
-/// wsl: `wsl.exe [-d <distro>] --cd <dir> -- claude …` via `wsl_base_args` — a
-/// WSL UNC cwd targets the distro named in the path (bare wsl.exe hits the
-/// DEFAULT distro, wrong on multi-distro machines) with its pre-translated Linux
-/// path (`--cd '\\wsl.localhost\…'` fails with Wsl/E_INVALIDARG — verified
-/// live); a drive-letter cwd passes verbatim (wsl.exe maps it to /mnt/… itself).
+/// wsl: `wsl.exe [-d <distro>] --cd <dir> -- claude …` — a WSL UNC cwd targets
+/// the distro named in the path (bare wsl.exe hits the DEFAULT distro, wrong on
+/// multi-distro machines) with its pre-translated Linux path (`--cd
+/// '\\wsl.localhost\…'` fails with Wsl/E_INVALIDARG — verified live); a
+/// drive-letter cwd passes verbatim (wsl.exe maps it to /mnt/… itself).
 /// native: plain `claude …`; the caller sets current_dir.
-fn claude_invocation(runtime: &str, cwd: &str, claude_args: Vec<String>) -> (String, Vec<String>) {
+///
+/// `distro`: session-worktree FR-10's stored `Session::worktree_distro`. When
+/// `Some`, it OVERRIDES the UNC-derived distro — required for a WSL worktree
+/// session, whose `cwd` is already a bare Linux path (no `\\wsl$\<distro>\…`
+/// prefix left for `wsl_base_args` to recover the distro from) — `cwd` is then
+/// passed to `--cd` verbatim, since it is already in the distro's own dialect.
+/// `None` preserves the pre-existing UNC-derived behavior for every other
+/// (non-worktree) WSL session.
+fn claude_invocation(
+    runtime: &str,
+    cwd: &str,
+    claude_args: Vec<String>,
+    distro: Option<&str>,
+) -> (String, Vec<String>) {
     if runtime == "wsl" {
-        let mut argv = crate::wsl::wsl_base_args(cwd);
+        let mut argv = match distro {
+            Some(d) => vec![
+                "-d".to_string(),
+                d.to_string(),
+                "--cd".to_string(),
+                cwd.to_string(),
+            ],
+            None => crate::wsl::wsl_base_args(cwd),
+        };
         argv.push("--".to_string());
         argv.push("claude".to_string());
         argv.extend(claude_args);
@@ -212,6 +235,10 @@ pub(crate) struct SessionMeta {
     /// cleared — with a session.meta emission — when that project is removed (FR-9).
     #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
     project_id: Option<String>,
+    /// session-worktree FR-12/FR-13: present iff this session runs in a
+    /// Francois-created or Francois-adopted git worktree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree: Option<SessionWorktree>,
 }
 
 #[derive(Serialize, Clone)]
@@ -413,6 +440,19 @@ pub(crate) struct Session {
     /// as `session_create` received it — the core does no auto-adoption and no
     /// default merging, so what the modal showed is exactly what was created.
     project_id: Option<String>,
+    /// session-worktree FR-12: provenance when this session runs in a
+    /// Francois-created or Francois-adopted git worktree.
+    worktree: Option<SessionWorktree>,
+    /// session-worktree FR-10: the `GitHost` this session's cwd/worktree was
+    /// resolved under, captured ONCE at creation (`resolve_worktree`) — `None`
+    /// for `Native`, `Some(distro)` for `Wsl(distro)`. Once `cwd` is replaced by
+    /// the worktree path it may be a bare Linux path with no `\\wsl$\<distro>\…`
+    /// prefix left to re-derive the distro from, so every git-routing / turn-spawn
+    /// call site that used to call `GitHost::of(&cwd)` reuses this stored value
+    /// instead (never re-derives it from `cwd`/`worktree.path`). Persisted
+    /// alongside `worktree` (sibling `worktreeDistro` key, see persistence.rs) so
+    /// it survives a restart.
+    worktree_distro: Option<String>,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
@@ -466,6 +506,7 @@ impl Session {
             permission_mode: self.permission_mode.clone(),
             runtime: self.runtime.clone(),
             project_id: self.project_id.clone(),
+            worktree: self.worktree.clone(),
         }
     }
 
@@ -689,19 +730,23 @@ impl Engine {
     }
 
     /// remote-control: everything the Remote Control host needs to spawn, in one
-    /// lock — `(cwd, runtime, name, claudeSessionId)`. The name is the default
-    /// remote session title; the claude session id (when present) is what lets the
-    /// host resume the REAL thread, so the phone continues the same conversation.
+    /// lock — `(cwd, runtime, name, claudeSessionId, worktreeDistro)`. The name is
+    /// the default remote session title; the claude session id (when present) is
+    /// what lets the host resume the REAL thread, so the phone continues the same
+    /// conversation. `worktreeDistro` (session-worktree FR-10) is the stored
+    /// `GitHost`/distro to route the spawn to when this session runs in a WSL
+    /// worktree, rather than re-deriving it from `cwd`.
     pub(crate) fn remote_target_of(
         &self,
         session_id: &str,
-    ) -> Option<(String, String, String, Option<String>)> {
+    ) -> Option<(String, String, String, Option<String>, Option<String>)> {
         self.sessions.lock().unwrap().get(session_id).map(|s| {
             (
                 s.cwd.clone(),
                 s.runtime.clone(),
                 s.name.clone(),
                 s.claude_session_id.clone(),
+                s.worktree_distro.clone(),
             )
         })
     }
@@ -829,12 +874,13 @@ mod tests {
 
     #[test]
     fn claude_invocation_wraps_wsl() {
-        let (prog, args) = claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()]);
+        let (prog, args) =
+            claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()], None);
         assert_eq!(prog, "claude");
         assert_eq!(args, vec!["-p", "hi"]);
         // wsl + drive cwd: wsl.exe maps it to /mnt/… itself — passed verbatim,
         // no -d (no distro info → default distro is the only sane target)
-        let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()]);
+        let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()], None);
         assert_eq!(prog, "wsl.exe");
         assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
         // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG
@@ -844,6 +890,7 @@ mod tests {
             "wsl",
             "\\\\wsl.localhost\\Ubuntu\\home\\u\\api",
             vec!["-p".into(), "hi".into()],
+            None,
         );
         assert_eq!(prog, "wsl.exe");
         assert_eq!(
@@ -857,6 +904,32 @@ mod tests {
                 "claude",
                 "-p",
                 "hi"
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_invocation_distro_override_targets_the_stored_distro_from_a_linux_path() {
+        // session-worktree FR-10: a WSL worktree session's cwd is a bare Linux
+        // path (no `\\wsl$\<distro>\…` prefix) — the stored distro must still
+        // route to the repo's actual distro, not the machine's default one.
+        let (prog, args) = claude_invocation(
+            "wsl",
+            "/home/u/.francois-worktrees/api/feat-x",
+            vec!["--version".into()],
+            Some("Ubuntu"),
+        );
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(
+            args,
+            vec![
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/home/u/.francois-worktrees/api/feat-x",
+                "--",
+                "claude",
+                "--version"
             ]
         );
     }

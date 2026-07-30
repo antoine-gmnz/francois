@@ -4,6 +4,8 @@ import type { AppError } from '../../../contract/common';
 import type { DiffSummary, DiffFileSummary, DiffFileStatus, FileDiff, DiffHunk, DiffLine } from '../../../contract/diff-view';
 import { diffCommit, diffGetFileDiff, diffGetSummary, diffStageAll, onDiffEvent } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { siblingWorktreeSummaryLine } from '../sessions/worktree';
+import { IS_WINDOWS } from '../../lib/platform';
 
 const C = {
   accent: 'var(--accent)',
@@ -43,6 +45,11 @@ interface CommitState {
 export default function DiffView({ sessionId }: { sessionId: string }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const mainTab = useStore((s) => s.mainTab);
+  // session-worktree FR-15: dim, read-only sibling-worktree hint. Derived purely
+  // from the session cache — no new IPC, no persistence.
+  const sessions = useStore((s) => s.sessions);
+  const meta = sessions.find((s) => s.id === sessionId) ?? null;
+  const siblingLine = meta ? siblingWorktreeSummaryLine(meta, sessions, IS_WINDOWS) : null;
 
   const [summary, setSummary] = useState<DiffSummary | null>(null);
   const [summaryError, setSummaryError] = useState<AppError | null>(null);
@@ -288,6 +295,30 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-deep)' }}>
+      {/* session-worktree FR-15: read-only — no links, no buttons, no hover affordance */}
+      {siblingLine && (
+        <div
+          // design brief §Notes: a truncated value always carries its full text in a title.
+          title={siblingLine}
+          style={{
+            padding: '6px 14px',
+            borderBottom: `1px solid ${C.border}`,
+            fontSize: 10.5,
+            color: C.faint,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            flexShrink: 0,
+            // design brief §"Narrow window": middle-/left-truncate rather than a
+            // trailing ellipsis, so the branch list at the tail stays visible —
+            // same intent as the FR-13 branch chip's truncateBranchLeft.
+            direction: 'rtl',
+            textAlign: 'left',
+          }}
+        >
+          {siblingLine}
+        </div>
+      )}
       {/* main area: vertical file selector (left) + diff body (right) */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* file list — a vertical selector (replaces the horizontal chip strip, which

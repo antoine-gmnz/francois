@@ -481,7 +481,7 @@ pub(crate) fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&
 pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str) {
     let engine = app.state::<Engine>();
     let block_id = uuid();
-    let (cwd, model_id, runtime, slot) = {
+    let (cwd, model_id, runtime, worktree_distro, slot) = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(session_id) else {
             return;
@@ -502,7 +502,13 @@ pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str
         };
         s.buf_command_pending(&block_id, command);
         s.last_activity_at = now_ms();
-        (s.cwd.clone(), s.model_id.clone(), s.runtime.clone(), slot)
+        (
+            s.cwd.clone(),
+            s.model_id.clone(),
+            s.runtime.clone(),
+            s.worktree_distro.clone(),
+            slot,
+        )
     };
     emit(
         app,
@@ -516,12 +522,25 @@ pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str
     let sid = session_id.to_string();
     let command = command.to_string();
     std::thread::spawn(move || {
-        run_probe(app, sid, block_id, command, cwd, model_id, runtime, slot)
+        run_probe(
+            app,
+            sid,
+            block_id,
+            command,
+            cwd,
+            model_id,
+            runtime,
+            worktree_distro,
+            slot,
+        )
     });
 }
 
 /// FR-7/8/9/10: the detached probe body. Same invocation machinery as turns
 /// (session runtime incl. WSL + session cwd); NO --resume, no permission flags.
+/// `worktree_distro` (session-worktree FR-10): the session's stored distro, so
+/// a WSL worktree probe routes to the repo's actual distro rather than the
+/// machine's default one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_probe(
     app: AppHandle,
@@ -531,6 +550,7 @@ pub(crate) fn run_probe(
     cwd: String,
     model_id: String,
     runtime: String,
+    worktree_distro: Option<String>,
     slot: Arc<Mutex<Option<Child>>>,
 ) {
     let args: Vec<String> = vec![
@@ -542,7 +562,7 @@ pub(crate) fn run_probe(
         "--model".into(),
         model_id,
     ];
-    let (program, argv) = claude_invocation(&runtime, &cwd, args);
+    let (program, argv) = claude_invocation(&runtime, &cwd, args, worktree_distro.as_deref());
     let mut cmd = Command::new(program);
     cmd.args(argv);
     if runtime != "wsl" {

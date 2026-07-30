@@ -42,6 +42,10 @@ export type ErrorCode =
   | 'PROJECT_ROOT_MISSING' // projects: the project's root no longer exists on disk
   | 'STANDARDS_WRITE_FAILED' // projects: CLAUDE.md could not be read-merged-written
   | 'REMOTE_CONTROL_FAILED' // remote-control: the host process died, or published no URL before the deadline
+  | 'WORKTREE_BRANCH_IN_USE' // session-worktree: the branch is already checked out at another path (detail: { path })
+  | 'WORKTREE_CREATE_FAILED' // session-worktree: prune/add failed; the core reversed what it did (FR-11)
+  | 'WORKTREE_DIRTY' // session-worktree: removal refused: uncommitted changes or unpushed commits (FR-19)
+  | 'WORKTREE_NOT_FOUND' // session-worktree: no worktree registered at that path
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -95,6 +99,19 @@ export interface SessionMeta {
    * entry is dropped on load.
    */
   projectId?: ProjectId;
+  /** Present ⇔ this session runs in a Francois-created or Francois-adopted git worktree. */
+  worktree?: SessionWorktree;
+}
+
+/** Worktree provenance for a session created with isolation (session-worktree FR-12). */
+export interface SessionWorktree {
+  branch: string; // the checked-out branch, verbatim
+  baseRef: string; // the ref it was forked from; echoed verbatim, ignored when createdBranch is false
+  path: string; // absolute worktree path, in the HOST's dialect (FR-10)
+  sourceRepoRoot: string; // absolute root of the repo this tree belongs to, host dialect
+  createdBranch: boolean; // false ⇒ the branch already existed, or the tree was adopted (FR-5)
+  fetched: boolean; // a fetch ran and succeeded (FR-7)
+  fetchError?: string; // one-line reason; absent when fetched, or when there is no remote
 }
 
 // ---------- projects ----------

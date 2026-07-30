@@ -215,7 +215,7 @@ pub fn remote_start(
         // the lookup below then returns SESSION_NOT_FOUND.
     }
 
-    let Some((cwd, runtime, session_name, claude_session_id)) =
+    let Some((cwd, runtime, session_name, claude_session_id, worktree_distro)) =
         engine.remote_target_of(&session_id)
     else {
         return err("SESSION_NOT_FOUND", "no such session");
@@ -243,7 +243,12 @@ pub fn remote_start(
         _ => (uuid::Uuid::new_v4().to_string(), false),
     };
 
-    let (exe, argv) = claude_invocation(&runtime, &cwd, remote_args(&thread_id, resume, &name));
+    let (exe, argv) = claude_invocation(
+        &runtime,
+        &cwd,
+        remote_args(&thread_id, resume, &name),
+        worktree_distro.as_deref(),
+    );
 
     let pty_system = native_pty_system();
     let pair = match pty_system.openpty(PtySize {
@@ -795,6 +800,7 @@ mod tests {
             "native",
             &cwd,
             remote_args(&thread_id, false, "Francois live probe"),
+            None,
         );
 
         let pair = native_pty_system()

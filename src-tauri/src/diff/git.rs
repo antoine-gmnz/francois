@@ -303,4 +303,123 @@ mod tests {
         );
         assert_eq!(wsl_cd_target("/home/u/api"), "/home/u/api");
     }
+
+    // ---- session-worktree FR-21: repo_info from inside a LINKED worktree ----
+    // (a linked worktree's `.git` is a FILE, not a directory — `--show-toplevel`
+    // must still resolve to the worktree's own root, not the main repo's.)
+
+    #[test]
+    fn repo_info_resolves_a_linked_worktrees_own_root() {
+        use std::process::Command;
+
+        fn git(dir: &std::path::Path, args: &[&str]) {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .expect("git spawn");
+            assert!(status.success(), "git {args:?} failed in {dir:?}");
+        }
+
+        let base = std::env::temp_dir().join(format!(
+            "francois-repoinfo-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        git(&base, &["init", "-q", "-b", "main"]);
+        git(&base, &["config", "user.email", "t@example.com"]);
+        git(&base, &["config", "user.name", "Test"]);
+        std::fs::write(base.join("a.txt"), "hi").unwrap();
+        git(&base, &["add", "."]);
+        git(&base, &["commit", "-q", "-m", "init"]);
+
+        let wt_path = base.parent().unwrap().join(format!(
+            "{}-wt",
+            base.file_name().unwrap().to_string_lossy()
+        ));
+        let wt_str = wt_path.to_string_lossy().to_string();
+        git(&base, &["worktree", "add", "-b", "feat/x", &wt_str, "main"]);
+
+        // The linked worktree's `.git` is a FILE (pointer), not a directory.
+        assert!(wt_path.join(".git").is_file());
+
+        let cwd = wt_str;
+        let (host, root, _base) = repo_info(&cwd).expect("repo_info resolves");
+        assert_eq!(host, GitHost::Native);
+        // The resolved root is the WORKTREE's own root, not the main repo's.
+        assert_eq!(
+            root.trim_end_matches('/').to_lowercase(),
+            cwd.replace('\\', "/").trim_end_matches('/').to_lowercase()
+        );
+    }
+
+    /// The WSL-host half of `repo_info_resolves_a_linked_worktrees_own_root`
+    /// above (FR-21/acceptance §9: "covered by a test on each host"). `#[ignore]`
+    /// because it needs a real, running WSL distro reachable at `\\wsl$\<distro>`
+    /// — run manually with:
+    ///   cargo test --  --ignored repo_info_resolves_a_linked_worktrees_own_root_on_wsl --nocapture
+    #[test]
+    #[ignore = "live: needs a running WSL distro reachable at \\\\wsl$\\<distro>"]
+    fn repo_info_resolves_a_linked_worktrees_own_root_on_wsl() {
+        use std::process::Command;
+
+        fn git(dir: &std::path::Path, args: &[&str]) {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .expect("git spawn");
+            assert!(status.success(), "git {args:?} failed in {dir:?}");
+        }
+
+        let Some(root_unc) = wsl::wsl_unc_root(None) else {
+            eprintln!("skipping: no WSL distro reachable at \\\\wsl$\\/\\\\wsl.localhost\\");
+            return;
+        };
+        let Some((distro, _)) = wsl::wsl_unc_to_linux(&root_unc) else {
+            eprintln!("skipping: could not determine the default distro's name from {root_unc}");
+            return;
+        };
+
+        let base = std::path::Path::new(&root_unc).join(format!(
+            "tmp/francois-repoinfo-wsl-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        git(&base, &["init", "-q", "-b", "main"]);
+        git(&base, &["config", "user.email", "t@example.com"]);
+        git(&base, &["config", "user.name", "Test"]);
+        std::fs::write(base.join("a.txt"), "hi").unwrap();
+        git(&base, &["add", "."]);
+        git(&base, &["commit", "-q", "-m", "init"]);
+
+        let wt_path = base.parent().unwrap().join(format!(
+            "{}-wt",
+            base.file_name().unwrap().to_string_lossy()
+        ));
+        let wt_str = wt_path.to_string_lossy().to_string();
+        git(
+            &base,
+            &["worktree", "add", "-b", "feat/wsl-x", &wt_str, "main"],
+        );
+
+        // The linked worktree's `.git` is a FILE (pointer), not a directory —
+        // same shape as the native case, just mounted through the WSL UNC path.
+        assert!(wt_path.join(".git").is_file());
+
+        let cwd = wt_str;
+        let (host, root, _base) = repo_info(&cwd).expect("repo_info resolves");
+        assert_eq!(host, GitHost::Wsl(distro));
+        // The resolved root is the WORKTREE's own Linux-dialect root, not the
+        // main repo's — mirrors the native assertion above, translated to the
+        // Linux path `--show-toplevel` returns from inside the distro.
+        let (_, wt_linux) = wsl::wsl_unc_to_linux(&cwd).expect("wt cwd is a wsl unc path");
+        assert_eq!(root.trim_end_matches('/'), wt_linux.trim_end_matches('/'));
+    }
 }

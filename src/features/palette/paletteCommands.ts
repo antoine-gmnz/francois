@@ -9,6 +9,7 @@ import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPale
 import { agentsKill, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { requestUsageRefresh } from '../usage/usage';
+import { requestWorktreePreset } from '../sessions/worktree';
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
 
@@ -231,6 +232,20 @@ export function registerBuiltinCommands(): void {
     hint: () => 'defaults & standards',
     run: () => {
       useStore.getState().setProjectsOpen(true);
+    },
+  });
+
+  // 13b — New session in worktree (session-worktree FR-16): opens the same modal
+  // pre-checked. Listed unconditionally — a non-repo cwd simply hides the
+  // checkbox once picked (FR-1).
+  registerPaletteCommand({
+    id: 'new-session-worktree',
+    glyph: '⎇',
+    name: 'New session in worktree…',
+    hint: () => 'isolated git worktree',
+    run: () => {
+      requestWorktreePreset();
+      useStore.getState().setNewSessionOpen(true);
     },
   });
 
