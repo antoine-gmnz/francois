@@ -60,6 +60,9 @@ never in a new top-level file.
 - Keeping the model in `mod.rs` is deliberate: Rust lets a child read an ancestor's private fields,
   so children need no widened visibility.
 - Shared test fixtures live in a `#[cfg(test)] mod testutil`.
+- Cross-cutting helpers that belong to no single domain are small top-level modules
+  (`fs_util.rs`, `process_util.rs`, `wsl.rs`, `window.rs`, `diagnostics.rs`) — check these
+  before adding a private copy inside a domain.
 - Git is the system `git` CLI invoked from Rust (no libgit binding). The PTY layer is
   `portable-pty`. Claude Code integration spawns `claude -p --output-format stream-json
   --include-partial-messages` and parses the NDJSON event stream.

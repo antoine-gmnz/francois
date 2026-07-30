@@ -54,14 +54,26 @@ shared surface is the frozen contract and the spec.
 Group by **feature**, not by technical kind. New code goes in the folder that owns the feature —
 never in a new top-level file.
 
-- `src/features/<feature>/` holds that feature's panel, its pure helpers, and its tests together
-  (`agents`, `commands`, `conversation`, `diff`, `mcp`, `palette`, `permissions`, `questions`,
-  `remote`, `sessions`, `shell`, `skills`, `usage`).
-- `src/lib/` holds only what every feature imports (`api.ts`, `store.ts`); `src/app/` holds the
-  shell. `main.tsx` and `styles.css` stay at the root.
-- No barrel files — import the module directly.
-- Styling: plain CSS with the design tokens in `src/styles.css`; JetBrains Mono. Never ad-hoc colors
-  or spacing.
+- `src/features/<feature>/` holds that feature's components, its pure helpers, its tests, **and its
+  stylesheet** together (`agents`, `commands`, `conversation`, `diff`, `mcp`, `overview`, `palette`,
+  `permissions`, `projects`, `questions`, `remote`, `sessions`, `shell`, `skills`, `usage`).
+- **Styling is per-feature CSS + classNames, never inline `style={{}}`.** Each feature owns
+  `<feature>.css` next to its components, and every component rendering those classes imports it
+  directly (`import './conversation.css'`). Class names are BEM-lite: `block`, `block__element`,
+  `block--modifier`. Only design **tokens** live in `src/styles.css`; `src/app/app.css` styles the
+  shell. Inline `style` is acceptable only for a value computed at runtime (e.g. a token chosen by
+  state). Never ad-hoc colors or spacing — always a token. JetBrains Mono throughout.
+- **`src/ui/`** is the shared UI kit — the primitives every feature composes with (`Button`, `Chip`,
+  `ChipGroup`, `ListRow`, `Modal`, `PanelHeader`, `StatusDot`, `BadgePill`, `EmptyPane`, `HintBar`,
+  …). **Look here before building a component**; add to it only when a primitive is genuinely
+  reusable across features.
+- **`src/lib/`** holds what every feature imports: `api.ts` (the contract-typed `invoke` wrappers),
+  the zustand stores split per domain (`sessionsStore`, `projectsStore`, `overviewStore`,
+  `remoteStore`, `usageStore`, `layoutStore`, `agentTabStore`, plus `store.ts`), shared helpers, and
+  `src/lib/hooks/` for cross-feature hooks (`useDismiss`, `useTimedError`, `useElapsedClock`, …).
+  Reach for an existing hook before writing a new one.
+- `src/app/` holds the shell; `main.tsx` and `styles.css` stay at the root.
+- No barrel files anywhere — import the module directly.
 - State: zustand.
 
 ### Testing (frontend)

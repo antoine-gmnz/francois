@@ -17,6 +17,7 @@
 
 mod agent_transcript;
 mod agents;
+mod attachments;
 mod blocks;
 mod commands;
 mod control;
@@ -39,6 +40,7 @@ mod worktree;
 
 pub(crate) use agent_transcript::*;
 pub(crate) use agents::*;
+pub(crate) use attachments::*;
 pub(crate) use blocks::*;
 pub(crate) use commands::*;
 pub(crate) use control::*;
@@ -383,6 +385,12 @@ pub(crate) struct Session {
     /// FR-5: blocks evicted past the window — the tab's `… N earlier blocks` row.
     agent_blocks_dropped: HashMap<String, u32>,
     block_buffer: Vec<BufBlock>, // §6: read by conversation-view's getTranscript
+    /// session-attachments §6: the staged/sent refs of this session, persisted
+    /// alongside the rest of the record in sessions.json so FR-17's start-up
+    /// sweep survives a crash. The attachments DIR is never stored — it is
+    /// derived from `cwd` + the session id (FR-2), which is what keeps a
+    /// worktree session's files under the worktree.
+    attachments: Vec<Attachment>,
     mcp: HashMap<String, McpServerInfo>,
     // slash-menu FR-2: the CLI's slash_commands captured from the latest
     // stream-json init (bare names, init order). In-memory only — never
@@ -451,6 +459,7 @@ impl Session {
             agent_block_seq: HashMap::new(),
             agent_blocks_dropped: HashMap::new(),
             block_buffer,
+            attachments: Vec::new(),
             mcp: HashMap::new(),
             cli_commands: Vec::new(),
         }

@@ -24,6 +24,8 @@ import { useStore } from '../../lib/store';
 import './conversation.css';
 import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
 import WorktreeNotice from './WorktreeNotice';
+import DropOverlay from './DropOverlay';
+import { useSessionAttachments } from './useSessionAttachments';
 
 // Block apply rules (reducer) and the SessionEvent dispatch table live in
 // ./conversation-blocks — pure + unit-tested. Hydration/subscription plumbing
@@ -64,6 +66,17 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const disabled = status === 'done' || status === 'error';
+
+  const autoGrow = (el: HTMLTextAreaElement) => {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 130) + 'px';
+  };
+
+  // ---------- session-attachments ----------
+  // The staged list + the three gestures (drop / paste / picker). Component-local
+  // by design (spec §6): ConversationView is keyed by sessionId, so a switch drops
+  // it, and chips are derived from (input, staged) on every render (FR-12).
+  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow });
 
   // ---------- slash-menu popup (FR-5..FR-9/12) ----------
 
@@ -109,6 +122,11 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     if (isClearCommand(text)) {
       setInput('');
       if (inputRef.current) inputRef.current.style.height = 'auto';
+      // The prompt is discarded, so nothing staged was ever referenced: commit
+      // against empty text releases every staged copy (already-`sent` records
+      // are untouched — the transcript still points at them). Without this the
+      // copies linger on disk until the FR-17 start-up sweep.
+      attachments.commit('');
       const res = await sessionClear(sessionId);
       if (!res.ok) {
         setSendError(res.error.message);
@@ -127,7 +145,12 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
       setInput(text);
       setSendError(res.error.message);
       setTimeout(() => setSendError(null), 4000);
+      return;
     }
+    // session-attachments FR-15: reconcile the staged refs against what was
+    // actually sent — refs present become 'sent', the rest are released. Only on
+    // a SUCCESSFUL send, since a failure puts the text (and its refs) back.
+    attachments.commit(text);
   };
 
   const onInputKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -168,11 +191,6 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const autoGrow = (el: HTMLTextAreaElement) => {
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 130) + 'px';
-  };
-
   // session-questions FR-20 / permission-guardrails FR-23: the placeholder swaps
   // while a pending question or approval card exists in this session's
   // transcript and reverts when none is.
@@ -185,6 +203,9 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="conv-root">
+      {/* session-attachments design §2: covers the SESSION tab (transcript +
+          composer) during a drag, never the sidebar or the status bar. */}
+      <DropOverlay state={attachments.overlay} />
       {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript
           so it never scrolls away. */}
       {meta?.worktree && !worktreeNoticeDismissed && (
@@ -241,6 +262,12 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         inputRef={inputRef}
         placeholder={placeholder}
         sendError={sendError}
+        // §7: its own slot — a send failure and an attachment refusal can be live
+        // at the same time and each has its own timer.
+        attachError={attachments.attachError}
+        attachments={attachments.chips}
+        onAttachClick={attachments.onAttachClick}
+        onRemoveAttachment={attachments.onRemoveAttachment}
         onInputChange={(e) => {
           setInput(e.target.value);
           autoGrow(e.target);

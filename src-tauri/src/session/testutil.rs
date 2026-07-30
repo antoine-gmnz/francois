@@ -45,6 +45,7 @@ pub(crate) fn test_session() -> Session {
         agent_block_seq: HashMap::new(),
         agent_blocks_dropped: HashMap::new(),
         block_buffer: Vec::new(),
+        attachments: Vec::new(),
         mcp: HashMap::new(),
         cli_commands: Vec::new(),
     }

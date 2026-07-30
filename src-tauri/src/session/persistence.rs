@@ -269,6 +269,13 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
             if let Some(distro) = &s.worktree_distro {
                 rec["worktreeDistro"] = Value::String(distro.clone());
             }
+            // session-attachments §6: the staged/sent refs ride along with the
+            // session record — that is what makes FR-17's start-up sweep
+            // crash-proof. Same omit-not-null convention: a session that never
+            // attached anything writes no key at all.
+            if !s.attachments.is_empty() {
+                rec["attachments"] = serde_json::to_value(&s.attachments).unwrap_or(Value::Null);
+            }
             rec
         })
         .collect();
@@ -311,6 +318,10 @@ pub(crate) struct PersistedMeta {
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
+    /// session-attachments §6: empty on every pre-feature record. Parsed
+    /// per-element and best-effort — one malformed entry is skipped rather than
+    /// costing the session its whole record.
+    attachments: Vec<Attachment>,
 }
 
 pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
@@ -387,6 +398,15 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .get("contextUsedTokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
+        attachments: rec
+            .get("attachments")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|a| serde_json::from_value::<Attachment>(a.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -488,6 +508,12 @@ pub fn load_persisted(app: &AppHandle) {
                 agent_block_seq: HashMap::new(),
                 agent_blocks_dropped: HashMap::new(),
                 block_buffer,
+                // session-attachments FR-17: the file of every attachment still
+                // 'staged' is deleted right here, and the record dropped —
+                // composer drafts do not survive a restart, so a surviving
+                // staged record is by definition abandoned. Crash-proof in a way
+                // a shutdown hook is not.
+                attachments: sweep_staged(m.attachments),
                 mcp: HashMap::new(),
                 cli_commands: Vec::new(),
             },
@@ -670,6 +696,57 @@ mod tests {
                 .worktree_distro,
             None
         );
+    }
+
+    #[test]
+    fn attachments_round_trip_through_a_persisted_record() {
+        // session-attachments §6: the Vec<Attachment> is persisted alongside the
+        // session (same store as SessionMeta) — that is what makes FR-17's
+        // start-up sweep survive a crash.
+        let a = Attachment {
+            id: "at-1".into(),
+            session_id: "s1".into(),
+            kind: "image".into(),
+            origin_path: None,
+            stored_path: "/repo/.francois/attachments/a3f9c1e2/p.png".into(),
+            ref_path: ".francois/attachments/a3f9c1e2/p.png".into(),
+            name: "p.png".into(),
+            bytes: 3,
+            copied: true,
+            state: "sent".into(),
+            created_at: 9,
+        };
+        let mut rec = json!({ "id": "s1", "name": "n", "cwd": "/x" });
+        rec["attachments"] = serde_json::to_value(vec![a.clone()]).unwrap();
+        assert_eq!(parse_session_record(&rec, 0).unwrap().attachments, vec![a]);
+
+        // a pre-feature record simply has no key
+        let base = json!({ "id": "s1", "name": "n", "cwd": "/x" });
+        assert!(parse_session_record(&base, 0)
+            .unwrap()
+            .attachments
+            .is_empty());
+
+        // one malformed entry is skipped, never costing the session its record
+        let mut bad = base.clone();
+        bad["attachments"] = json!([{ "id": "broken" }, "nonsense"]);
+        assert!(parse_session_record(&bad, 0)
+            .unwrap()
+            .attachments
+            .is_empty());
+    }
+
+    #[test]
+    fn a_session_with_no_attachments_writes_no_attachments_key() {
+        // Same omit-not-null convention as projectId/worktree: a pre-feature
+        // reader must see no key at all (the rec-building logic `persist` uses,
+        // reproduced here as the worktree round-trip test does).
+        let s = test_session();
+        let mut rec = serde_json::json!({ "id": s.id });
+        if !s.attachments.is_empty() {
+            rec["attachments"] = serde_json::to_value(&s.attachments).unwrap();
+        }
+        assert!(rec.get("attachments").is_none());
     }
 
     #[test]

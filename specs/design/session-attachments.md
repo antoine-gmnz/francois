@@ -13,28 +13,55 @@ screen: one overlay and two additions to the SESSION tab's existing composer foo
 
 ## Screens / views
 
-### 1. Composer footer — the primary surface
+### 1. Composer — the primary surface
 
-The existing footer row in `ConversationView.tsx` is a single flex line:
-`[› glyph] [textarea] [⌃C interrupt · ⌘K palette]`, `padding: 10px 14px`,
-`border-top: 1px solid var(--border)`. Two additions, no relayout of what is there.
+Lives in `src/features/conversation/Composer.tsx`, styled by
+`src/features/conversation/conversation.css`. **All styling is CSS classes in that file** —
+BEM-lite, tokens only, no inline `style` except a value computed from state (the existing
+`composer-arrow` color is the one precedent). The pixel figures below are intent, not inline CSS.
 
-- **`+` attach button** — sits **left of the `›` glyph**, same 13px optical size, `--text-muted`
-  resting, `--accent` on hover, `--text-disabled` when the composer is disabled. Square hit area,
-  no border, no background. Tooltip: *"Attach files"*. It must read as a sibling of `›`, not as a
-  web-style icon button — no pill, no circle.
-- **Chips row** — a wrapping row **above** the textarea, inside the same footer block, `gap: 6px`,
-  `margin-bottom: 8px`, only rendered when at least one image chip exists.
+Current structure — two additions, no relayout of what is there:
 
-- **Chip** — height ~28px, `background: var(--bg-raised)`, `1px solid var(--border)`,
-  `border-radius: 3px` (the app's sharp radius, not a pill), `padding: 0 6px 0 3px`, contents in a
-  6px-gap row:
-  - 22×22 thumbnail, `object-fit: cover`, `border-radius: 2px`
-  - filename, 11px, `--text-dim`, middle-truncated at ~18 characters
-  - `×`, 11px, `--text-faint` resting → `--text-bright` on hover
-  - States: **resting** · **hover** (border → `--border-2`) · **thumbnail loading** (flat
-    `--bg-hover` block, no spinner) · **thumbnail failed** (a dim `▣` glyph in the 22px slot —
-    the chip must never disappear because an image failed to decode)
+```
+.composer-wrap > .composer-col
+    ├── SlashMenu popup        (conditional)
+    ├── .composer-attachments  ← NEW: chips row
+    ├── .send-error-banner     (conditional — reused for refusals, see §3)
+    ├── .composer-bar
+    │     ├── .composer-attach ← NEW: the + button
+    │     ├── .composer-arrow  ›
+    │     ├── .composer-input  textarea
+    │     └── .composer-send   Send
+    └── .composer-hint         ⌃C interrupt · ⌘K commands · ⇧⏎ newline
+```
+
+`Composer` is **presentational** — every piece of state and every handler lives in
+`ConversationView` and arrives as props. The new affordances follow that exactly: add
+`attachments`, `onAttachClick`, `onRemoveAttachment` to `ComposerProps`; the staged list and all
+ingestion logic stay in the parent.
+
+- **`.composer-attach`** — the `+` button, **left of `.composer-arrow`**, matching its optical size
+  and baseline. `--text-muted` resting, `--accent` on hover. **Never disabled** — §7 gates *sending*,
+  not *staging*, so all three gestures (drop, paste, `+`) stay live in every session state; there is
+  deliberately no `--text-disabled` treatment. No border, no background, no pill — it must read as a
+  sibling of `›`, not as a web-style icon button. `aria-label="Attach files"`,
+  `title="Attach files"`.
+- **`.composer-attachments`** — a wrapping row directly above `.send-error-banner`, `gap: 6px`,
+  rendered only when at least one image chip exists. It sits **inside `.composer-col`**, so it
+  inherits the composer's capped, centered reading column.
+
+- **`.attachment-chip`** — ~28px tall, `--bg-raised` on `1px solid var(--border)`, `border-radius: 3px`
+  (the app's sharp radius, not a pill), contents in a 6px-gap row:
+  - `.attachment-chip__thumb` — 22×22, `object-fit: cover`, `border-radius: 2px`
+  - `.attachment-chip__name` — 11px, `--text-dim`, middle-truncated at ~18 characters
+  - `.attachment-chip__remove` — `×`, 11px, `--text-faint` → `--text-bright` on hover
+  - States: resting · hover (`--border-2`) · thumbnail loading (flat `--bg-hover`, no spinner) ·
+    thumbnail failed (`.attachment-chip__thumb--failed`, a dim `▣` — the chip must never disappear
+    because an image failed to decode)
+
+  **Do not reuse `src/ui/Chip.tsx`** — despite the name it is a *selectable option pill*
+  (`selected`/`danger`, used for permission modes and the git toggle). This is a different object.
+  Build it in the conversation feature; promote it to `src/ui/` only if a second feature needs it.
 
   Only `kind: 'image'` attachments get a chip. Non-image files live purely as `@path` text in the
   textarea — that split is deliberate and must not be "fixed" by giving files chips too.
@@ -54,11 +81,14 @@ Purpose: make the whole tab an unmissable drop target during a drag.
 
 ### 3. Refusal line
 
-One line rendered where the existing `sendError` line renders (same slot, same 11px, `--error`),
-auto-clearing after 4s, matching the existing error affordance exactly. Copy is concrete about the
-number: *"payload.zip is 24 MB — the limit is 10 MB."* · *"Folders can't be attached — drop the
-files instead."* Multiple refusals in one drop collapse to one line: *"3 files skipped — 2 too
-large, 1 folder."*
+**Reuse `.send-error-banner`** — the existing transient error slot in `.composer-col`, already
+styled and already wired to a `sendError: string | null` prop that auto-clears after 4s
+(`src/lib/hooks/useTimedError.ts` is the existing hook for that timing — use it rather than a new
+`setTimeout`). No new component, no new class.
+
+Copy is concrete about the number: *"payload.zip is 24 MB — the limit is 10 MB."* · *"Folders can't
+be attached — drop the files instead."* Multiple refusals in one drop collapse to one line: *"3
+files skipped — 2 too large, 1 folder."*
 
 ### 4. Command palette entry
 
@@ -86,7 +116,10 @@ Desktop-only app, but the composer must survive a narrow window and a tall chips
 - **Narrow (≤ 720px tab width)** — chips wrap to multiple lines; filenames truncate harder (~10
   chars). The `+` button never collapses into a menu.
 - **Many chips** — the chips row caps at ~3 lines then scrolls internally (`overflow-y: auto`), so
-  the textarea never gets pushed off-screen. The textarea's existing `maxHeight: 130` is unchanged.
+  the textarea never gets pushed off-screen. `.composer-input`'s existing max height is unchanged.
+- **Reading column** — `.composer-attachments` lives inside `.composer-col`, which is width-capped
+  and centered on the transcript's reading column. Chips must not escape that column or the
+  composer stops lining up with the blocks it answers.
 - **Overlay** — always fills the tab region, never the whole window (the sidebar and status bar stay
   visible and legible so the user keeps their bearings mid-drag).
 
@@ -100,6 +133,9 @@ internal.
 ## Notes / constraints
 
 - **UI language: English** (`PIPELINE.md` → `ui_language`).
+- **Styling idiom** — per-feature CSS + classNames, BEM-lite, tokens only. Everything new here goes
+  in `src/features/conversation/conversation.css`; components import it directly. No inline
+  `style={{}}` except a value computed from state. Check `src/ui/` before building any primitive.
 - **Paste must not regress.** ⌘V with only text on the clipboard is the common case and must behave
   exactly as it does today. Any visual feedback on paste-attach must not fire on a text paste.
 - **The `@path` is visible and that is intended.** The textarea is the single source of truth

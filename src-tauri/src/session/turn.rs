@@ -230,8 +230,8 @@ pub(crate) fn begin_turn(
     mode: TurnMode,
 ) {
     let engine = app.state::<Engine>();
-    let Some((cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro)) =
-        engine.with_session_mut(session_id, |s| {
+    let Some((cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro)) = engine
+        .with_session_mut(session_id, |s| {
             // ResumeRetry forces resume off regardless of the stored id, so a
             // still-good id is never dropped preemptively — a fresh init
             // overwrites it only on success.
