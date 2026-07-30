@@ -1,7 +1,7 @@
 ---
 id: permission-guardrails
 title: Permission guardrails — approve tool calls in-app, remember them as real Claude rules
-status: frozen
+status: shipped
 created: 2026-07-24
 depends_on: [session-engine, conversation-view, session-questions, command-palette]
 ---

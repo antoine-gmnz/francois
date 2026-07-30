@@ -1,7 +1,7 @@
 ---
 id: skills-panel
 title: Skills panel
-status: frozen
+status: shipped
 created: 2026-07-18
 updated: 2026-07-18
 depends_on: [session-engine, app-shell]

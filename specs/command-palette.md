@@ -1,7 +1,7 @@
 ---
 id: command-palette
 title: Command Palette (⌘K)
-status: frozen
+status: shipped
 created: 2026-07-18
 depends_on: [app-shell, session-engine, sessions-sidebar, diff-view, agents-panel, mcp-panel, skills-panel]
 ---

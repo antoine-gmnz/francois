@@ -1,7 +1,7 @@
 ---
 id: session-engine
 title: Session Engine
-status: frozen
+status: shipped
 created: 2026-07-18
 depends_on: []
 ---
