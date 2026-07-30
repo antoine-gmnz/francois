@@ -41,7 +41,10 @@ surfaces:
     tools: [Read, Write, Edit, Bash, Grep, Glob, DesignSync, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
     model: inherit
     test_cmd: npm test
+    # Bridled variant — what agents actually RUN, so a green run costs lines, not pages.
+    test_quiet_cmd: npm test -- --reporter=dot
     lint_cmd: ""                              # no eslint configured; tsc is the static gate
+    lint_quiet_cmd: ""
     format_cmd: ""
     typecheck_cmd: npx tsc --noEmit
     build_cmd: npm run build
@@ -53,7 +56,9 @@ surfaces:
     tools: [Read, Write, Edit, Bash, Grep, Glob, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
     model: inherit
     test_cmd: cd src-tauri && cargo test
+    test_quiet_cmd: cd src-tauri && cargo test --quiet
     lint_cmd: ""
+    lint_quiet_cmd: ""
     format_cmd: cd src-tauri && cargo fmt
     typecheck_cmd: cd src-tauri && cargo check
     build_cmd: ""                             # release builds via tauri build / CI matrix
@@ -73,9 +78,11 @@ commands:
   install: npm install
   dev: npm run dev:app
   lint: ""
+  lint_quiet: ""
   format: ""
   typecheck: npx tsc --noEmit
   test: npm test && cd src-tauri && cargo test
+  test_quiet: npm test -- --reporter=dot && cd src-tauri && cargo test --quiet
   migrate: ""                                 # no DB
   make_migration: ""
 
@@ -118,6 +125,13 @@ gate:
     - "git merge"
     - "git rebase"
     - "git reset"
+  # Phase gate: review/smoke dispatches require a fresh `.claude/preflight.ok` stamp,
+  # written by pipeline/scripts/preflight.sh when typecheck+tests are green — gate.py
+  # "ask"s the dispatch when the stamp is missing, stale, or HEAD moved.
+  preflight:
+    enabled: true
+    agents: [review, smoke]                   # subagent_types the stamp gates
+    max_age_minutes: 30
 ```
 
 ## Stack (decided)

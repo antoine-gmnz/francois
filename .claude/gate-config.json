@@ -11,5 +11,10 @@
     "git merge",
     "git rebase",
     "git reset"
-  ]
+  ],
+  "preflight": {
+    "enabled": true,
+    "agents": ["review", "smoke"],
+    "max_age_minutes": 30
+  }
 }

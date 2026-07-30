@@ -14,7 +14,11 @@
       "Bash(cd src-tauri && cargo fmt:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(~/.claude/pipeline/scripts/preflight.sh:*)",
+      "Bash(.claude/pipeline/scripts/preflight.sh:*)",
+      "mcp__serena"
     ]
   }
 }
