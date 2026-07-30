@@ -51,6 +51,9 @@ These are **unsigned** — the browser download marks them, so on Windows you'll
 - **`git`** on your `PATH` — powers the DIFF tab.
 - **Windows only**: the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
   (already installed on Windows 11 and current Windows 10).
+- **Using WSL?** A session created with the WSL runtime runs `claude` and git *inside* your
+  **default** WSL distro — so both must be installed and authenticated there too, not just on
+  Windows. See [Diff & shell → WSL support](/guide/diff-and-shell#wsl-support).
 
 ## Build from source
 

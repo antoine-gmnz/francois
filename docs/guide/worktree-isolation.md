@@ -30,7 +30,9 @@ a timeout), and creates the worktree on the branch you named — then opens the 
 tree is a **bare checkout**: no dependency install, and no gitignored local config (like
 `.claude/settings.local.json` or a local `.mcp.json`) is carried over. A persistent, dismissible
 banner above the SESSION transcript says so, because it means permission rules and MCP servers
-can differ from the parent checkout.
+can differ from the parent checkout. If the pre-create fetch failed (offline, or a slow remote
+hitting the timeout), the worktree is still created and the same banner adds a line saying the
+branch was forked from your **local** base ref rather than a freshly fetched one.
 
 ## Branch name already in use
 

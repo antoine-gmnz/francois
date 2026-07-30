@@ -104,6 +104,25 @@ repo is the authoritative way to see what git currently considers a live worktre
 cruft; Francois never re-derives paths from the directory naming scheme, so trust that output over
 guessing from the folder name.
 
+## A WSL session misbehaves (spawn fails, no diff, wrong git identity)
+
+A session created with the **WSL runtime** runs `claude`, git, and its shell inside your
+**default** WSL distro — Windows-side installs don't count. If a WSL session fails to spawn or
+behaves oddly, check inside the distro (`wsl -e bash`):
+
+- `claude` is installed **and authenticated** there (`claude --version`, then any prompt to
+  confirm auth).
+- `git` is installed there, and its identity (`git config user.name` / `user.email`) is what you
+  expect — commits made from a WSL session use the **distro's** git config, not Windows'.
+- The repo actually lives on the WSL filesystem (`~/...`), not on a Windows drive mounted into
+  WSL (`/mnt/c/...`) — cross-filesystem setups work but pay the 9P translation cost both ways,
+  which can make the DIFF tab noticeably slower to refresh.
+
+Only the **default** distro is supported — `wsl -l -v` shows which one that is, and
+`wsl --set-default <name>` changes it. See
+[Diff & shell → WSL support](/guide/diff-and-shell#wsl-support) for how routing works when
+everything is set up correctly.
+
 ## Uninstalling cleanly
 
 Use the app's own uninstall command rather than a bare npm uninstall:

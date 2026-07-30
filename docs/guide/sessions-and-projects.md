@@ -72,6 +72,15 @@ Its fields, in order:
    entry unless a project default overrides it.
 5. **Effort** and **permission mode** — additional per-session settings, also pre-filled from
    a project's defaults when one is selected.
+6. **Runtime** — native, or **WSL** (Windows only): a WSL session runs `claude`, git, and its
+   shell inside your default WSL distro rather than on Windows. See
+   [Diff & shell → WSL support](/guide/diff-and-shell#wsl-support) for how paths, git, and the
+   shell behave.
+7. **Allow git** — auto-approves direct `git`/`gh` commands without a permission prompt, on top
+   of whatever permission mode is selected.
+8. **Isolate in worktree** — appears only when the chosen directory is a git repo; gives the
+   session its own checkout on its own branch. See
+   [Worktree isolation](/guide/worktree-isolation).
 
 Any field pre-filled by a project can still be overridden before submitting — an override
 only affects that one session and never changes the project's own defaults. Submitting spawns

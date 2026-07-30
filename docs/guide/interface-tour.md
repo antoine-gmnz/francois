@@ -1,7 +1,7 @@
 # Interface tour
 
 A single window, three columns, a status bar. Every pane is focusable with the number keys or a
-click; the focused pane gets an accent ring and an accent-colored title.
+click; the focused pane gets an accent ring and, where it has one, an accent-colored title.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -22,7 +22,15 @@ click; the focused pane gets an accent ring and an accent-colored title.
 ## Title bar
 
 Shows the app name, the currently active project, and a live pulsing indicator with the count of
-running agents across the fleet.
+running agents across the fleet. The three dots on the left are the window controls — minimize,
+maximize, close.
+
+## Usage bar
+
+A slim strip under the title bar with your Claude plan-limit meters: current session, current
+week across all models, and the per-model weekly figure. Meters change color as you approach a
+limit, and the strip shows when the figures were last refreshed. Full detail in
+[Command palette → The usage bar](/guide/command-palette#the-usage-bar).
 
 ## Left column — Sessions `[1]`
 
@@ -55,11 +63,16 @@ Three stacked panels showing everything running underneath the selected session:
 progress, MCP server connection health, and installed/available skills. Full detail in
 [Agents, MCP & skills](/guide/agents-mcp-skills).
 
+Both side columns are collapsible: `[` hides or shows the left column, `]` the right one — handy
+when you want a full-width diff or transcript.
+
 ## Status bar
 
-Always visible: the active keymap (`1-5` switch pane, `⏎` open, `/` search, `⌘K` commands, plus
-context-specific keys like `a` new agent, `d` diff, `t` shell), the current focus label, and the
-app version. The full keymap is in [Keyboard shortcuts](/reference/keyboard-shortcuts).
+Always visible: a fixed set of keymap hints (`1-5` switch pane, `⏎` open, `/` search,
+`⌘K` commands, `a` new agent, `d` diff, `t` shell), a **theme toggle** (`☾`/`☀` — switches
+between the dark and light themes, and the choice persists across restarts), the current focus
+label, and the app version. The full keymap is in
+[Keyboard shortcuts](/reference/keyboard-shortcuts).
 
 ## Command palette
 
@@ -68,7 +81,9 @@ model, attach an MCP server, run a skill, and more. See [Command palette](/guide
 
 ## Visual language
 
-Dark only, monospace everywhere (JetBrains Mono). An amber accent marks focus rings, prompts,
-cursors, and hotkeys; status colors distinguish running / done / error / connecting / idle at a
-glance. The whole thing is designed to read like a TUI you'd actually want to look at — but with
-full mouse support, so keyboard-first never means keyboard-only.
+Monospace everywhere (JetBrains Mono), in your choice of a dark or light theme — the `☾`/`☀`
+toggle lives in the status bar, and the native window caption follows along. An amber accent
+marks focus rings, prompts, cursors, and hotkeys; status colors distinguish running / done /
+error / connecting / idle at a glance. The whole thing is designed to read like a TUI you'd
+actually want to look at — but with full mouse support, so keyboard-first never means
+keyboard-only.
