@@ -5,7 +5,7 @@ status: shipped
 created: 2026-07-29
 depends_on: [session-engine, sessions-sidebar, diff-view, projects, command-palette, app-shell]
 reviewed_base: 1490f8561db8f846f579a15bb7cdc200621283c4
-reviewed_digest: 84e6a6b7dff17346
+reviewed_digest: 39734f640fb27818
 ---
 
 # Open session in worktree
@@ -337,6 +337,10 @@ state. Tokens, glyphs and motion come from `Claude Terminal.dc.html`.
       distro. (FR-10) — **open**: GitHost routing verified by code review + native tests; the live WSL flow needs `/smoke`.
 
 ## Remediation
+
+### 2026-07-30 — review round 8 (1 finding, human-reported post-ship)
+
+- [x] HIGH · `src/features/sessions/NewSessionModal.tsx:444-467` · quality (spec-violation, design brief) · The modal overlay (`alignItems: 'flex-start'`, fixed `paddingTop: 118`) and the card itself have no `maxHeight`/`overflowY` — the card grows unbounded with content. With **Isolate in worktree** checked, the Branch/Base ref/path-preview fields push the card taller than the viewport on ordinary window sizes, and since nothing scrolls, the Cancel/Create session buttons go off-screen and become **unreachable** (confirmed via screenshot: buttons visible at one window height, gone at another with the checkbox on). Fix: give the card a viewport-relative `maxHeight` (e.g. `calc(100vh - <paddingTop> - <bottom margin>)`) and `overflowY: 'auto'`, so the form scrolls internally and the action buttons stay reachable regardless of window height or which optional fields are expanded. — fixed: card given `maxHeight: calc(100vh - 118px - 24px)` + flex column; header/footer `flexShrink: 0`; form body `overflowY: 'auto'`, `minHeight: 0`, `className="scz"` — same pattern as `ProjectsModal.tsx`.
 
 ### 2026-07-30 — review round 1 (8 findings)
 

@@ -459,6 +459,15 @@ export default function NewSessionModal({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 480,
+          // The card can grow taller than the viewport once "Isolate in worktree"
+          // expands the branch/base-ref/path-preview fields (bug found via
+          // screenshot: Cancel/Create went off-screen with nothing to scroll).
+          // maxHeight against the overlay's own top offset (paddingTop 118) plus a
+          // matching bottom margin keeps the card fully on-screen at any window
+          // height; the body below scrolls internally instead.
+          maxHeight: 'calc(100vh - 118px - 24px)',
+          display: 'flex',
+          flexDirection: 'column',
           background: 'var(--bg-panel)',
           border: '1px solid var(--bg-hover-2)',
           borderRadius: 8,
@@ -466,11 +475,22 @@ export default function NewSessionModal({
           boxShadow: '0 30px 80px -20px rgba(0,0,0,0.85)',
         }}
       >
-        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', fontSize: 14, color: C.bright }}>
+        <div
+          style={{
+            padding: '14px 16px',
+            borderBottom: '1px solid var(--border)',
+            fontSize: 14,
+            color: C.bright,
+            flexShrink: 0,
+          }}
+        >
           <span style={{ color: C.accent }}>›</span> new session
         </div>
 
-        <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div
+          className="scz"
+          style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', minHeight: 0 }}
+        >
           {/* projects: the project comes FIRST — picking one settles the working
               directory and every default below, so it is the decision the rest
               of the form hangs off. Hidden entirely when no project exists yet,
@@ -818,6 +838,7 @@ export default function NewSessionModal({
             display: 'flex',
             justifyContent: 'flex-end',
             gap: 10,
+            flexShrink: 0,
           }}
         >
           <button onClick={onClose} style={btn(false, C.dim)}>
