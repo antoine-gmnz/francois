@@ -115,7 +115,7 @@ fn read_credentials_json() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn keychain_credentials_json() -> Option<String> {
-    let out = Command::new("security")
+    let out = std::process::Command::new("security")
         .args([
             "find-generic-password",
             "-s",
