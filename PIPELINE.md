@@ -107,10 +107,12 @@ isolation:
 
 # ── gate (drives .claude/gate-config.json) ──────────────────────────────────
 gate:
+  default_branch: main                        # the protected branch (mirrors vcs.default_branch)
   deny:
     - "git push --force"
     - "git push -f"
-  ask:
+  ask: []
+  ask_on_default_branch:                        # free on feature branches, confirm on default_branch
     - "git commit"
     - "git push"
     - "git merge"

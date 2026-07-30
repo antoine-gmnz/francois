@@ -116,7 +116,12 @@ fn read_credentials_json() -> Option<String> {
 #[cfg(target_os = "macos")]
 fn keychain_credentials_json() -> Option<String> {
     let out = Command::new("security")
-        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        .args([
+            "find-generic-password",
+            "-s",
+            "Claude Code-credentials",
+            "-w",
+        ])
         .output()
         .ok()?;
     out.status.success().then_some(())?;

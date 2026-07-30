@@ -26,6 +26,7 @@ import PaletteRoot from '../features/palette/PaletteView';
 import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
 import { setPaletteDiffCount } from '../features/palette/paletteData';
 import { registerBuiltinCommands } from '../features/palette/paletteCommands';
+import { truncateBranchLeft } from '../features/sessions/worktree';
 
 // Register the built-in palette commands once, before first paint (FR-6).
 registerBuiltinCommands();
@@ -418,6 +419,12 @@ export default function App() {
                   </span>
                 )}
                 {active.runtime === 'wsl' && <span style={{ color: C.faint }}>wsl</span>}
+                {/* session-worktree FR-13: branch glyph + name, focused session only */}
+                {active.worktree && (
+                  <span title={active.worktree.branch} style={{ color: C.accent }}>
+                    ⎇ {truncateBranchLeft(active.worktree.branch, 24)}
+                  </span>
+                )}
                 {/* remote-control: host this session on claude.ai/code + mobile */}
                 <RemoteControlBadge key={active.id} sessionId={active.id} />
                 <span>

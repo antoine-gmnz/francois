@@ -5,11 +5,22 @@ import { formatContextTokens } from '../../../contract/conversation-view';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { filterSessionsByProject } from '../../../contract/projects';
 import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
-import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList, sessionRemove } from '../../lib/api';
+import type { WorktreeStatusData } from '../../../contract/session-worktree';
+import {
+  diffGetSummary,
+  onDiffEvent,
+  onSessionEvent,
+  sessionList,
+  sessionRemove,
+  sessionWorktreeRemove,
+  sessionWorktreeStatus,
+} from '../../lib/api';
 import { prunePaletteSession } from '../palette/paletteData';
+import { showToast } from '../palette/palette';
 import ProjectSwitcher from '../projects/ProjectSwitcher';
 import { filteredEmptyLabel, visibleSessions } from '../projects/projects';
 import { useStore } from '../../lib/store';
+import { truncateBranchLeft, worktreeRemovalBlockReason } from './worktree';
 
 // pane [1] — the fleet board (Mission Control). Evolves the sessions-sidebar row
 // list into rich per-session status cards, aggregated from existing channels
@@ -38,6 +49,16 @@ interface MenuState {
   y: number;
   confirming: boolean;
   error: AppError | null;
+  // session-worktree FR-17/18: the dirty/unpushed probe for the delete-confirm's
+  // removal checkbox. Absent for a session with no worktree.
+  worktreeChecking?: boolean;
+  worktreeStatus?: WorktreeStatusData | null;
+  worktreeGone?: boolean; // WORKTREE_NOT_FOUND: the directory is already gone
+  // A non-WORKTREE_NOT_FOUND status-check failure (FR-20): the confirm step still
+  // renders normally, but the removal checkbox is disabled — a git-side check
+  // failure must never block removing the session itself.
+  worktreeStatusFailed?: boolean;
+  removeWorktree?: boolean;
 }
 
 export default function Sidebar({ home }: { home: string }) {
@@ -350,7 +371,32 @@ export default function Sidebar({ home }: { home: string }) {
     };
   }, [menu]);
 
-  const doRemove = async (sessionId: string) => {
+  // session-worktree FR-17: kicks off the dirty/unpushed probe when the confirm
+  // step opens for a session that has a worktree.
+  const startWorktreeCheck = (sessionId: string) => {
+    setMenu((m) => (m ? { ...m, worktreeChecking: true } : m));
+    void sessionWorktreeStatus(sessionId).then((res) => {
+      setMenu((m) => {
+        if (!m || m.sessionId !== sessionId) return m; // menu moved on
+        if (res.ok) return { ...m, worktreeChecking: false, worktreeStatus: res.data };
+        if (res.error.code === 'WORKTREE_NOT_FOUND') return { ...m, worktreeChecking: false, worktreeGone: true };
+        // FR-20: a git-side status-check failure (e.g. GIT_ERROR/INTERNAL) must not
+        // block removing the session — keep the normal confirm UI, just disable the
+        // worktree-removal checkbox.
+        return { ...m, worktreeChecking: false, worktreeStatusFailed: true };
+      });
+    });
+  };
+
+  // FR-20: session_worktree_remove runs first (it needs the session's worktree
+  // metadata), but session_remove always follows regardless of its outcome — a
+  // failed directory removal surfaces as a toast, never blocks removing the
+  // session from Francois.
+  const doRemove = async (sessionId: string, removeWorktree: boolean) => {
+    if (removeWorktree) {
+      const wtRes = await sessionWorktreeRemove(sessionId);
+      if (!wtRes.ok) showToast(wtRes.error.message, 'error');
+    }
     const res = await sessionRemove(sessionId);
     if (res.ok) {
       const st = useStore.getState();
@@ -513,7 +559,11 @@ export default function Sidebar({ home }: { home: string }) {
             <div style={{ padding: '8px 10px', fontSize: 11, color: C.error }}>{menu.error.message}</div>
           ) : !menu.confirming ? (
             <div
-              onClick={() => setMenu({ ...menu, confirming: true })}
+              onClick={() => {
+                const target = sessions.find((s) => s.id === menu.sessionId);
+                setMenu({ ...menu, confirming: true });
+                if (target?.worktree) startWorktreeCheck(menu.sessionId);
+              }}
               style={{ padding: '8px 10px', fontSize: 12, color: C.primary, cursor: 'pointer' }}
               onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
@@ -521,19 +571,64 @@ export default function Sidebar({ home }: { home: string }) {
               Remove session
             </div>
           ) : (
-            <div style={{ padding: '8px 10px' }}>
-              <div style={{ fontSize: 11.5, color: C.primary, marginBottom: 8 }}>
-                remove '{sessions.find((s) => s.id === menu.sessionId)?.name ?? '?'}'?
-              </div>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <span onClick={() => setMenu(null)} style={{ fontSize: 12, color: C.dim, cursor: 'pointer' }}>
-                  Cancel
-                </span>
-                <span onClick={() => void doRemove(menu.sessionId)} style={{ fontSize: 12, color: C.error, cursor: 'pointer' }}>
-                  Remove
-                </span>
-              </div>
-            </div>
+            (() => {
+              const target = sessions.find((s) => s.id === menu.sessionId);
+              const wt = target?.worktree;
+              const blockReason = menu.worktreeStatusFailed
+                ? 'could not check worktree status'
+                : menu.worktreeStatus
+                  ? worktreeRemovalBlockReason(menu.worktreeStatus)
+                  : null;
+              const removeWorktree = menu.removeWorktree ?? false;
+              return (
+                <div style={{ padding: '8px 10px', maxWidth: 260 }}>
+                  <div style={{ fontSize: 11.5, color: C.primary, marginBottom: 8 }}>remove '{target?.name ?? '?'}'?</div>
+                  {/* session-worktree §8 screen 5: the delete-confirm removal step. */}
+                  {wt && (
+                    <div style={{ fontSize: 10.5, marginBottom: 8 }}>
+                      {menu.worktreeChecking ? (
+                        <span style={{ color: C.faint }}>checking worktree…</span>
+                      ) : menu.worktreeGone ? (
+                        <span style={{ color: C.faint }}>worktree already removed</span>
+                      ) : (
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 6,
+                            cursor: blockReason ? 'default' : 'pointer',
+                            color: blockReason ? 'var(--warn)' : C.dim,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!blockReason ? false : removeWorktree}
+                            disabled={!!blockReason}
+                            onChange={() => setMenu((m) => (m ? { ...m, removeWorktree: !m.removeWorktree } : m))}
+                            style={{ marginTop: 2 }}
+                          />
+                          <span>
+                            Also remove the worktree at <code title={wt.path}>{wt.path}</code>
+                            {blockReason && <div style={{ marginTop: 2 }}>{blockReason}</div>}
+                          </span>
+                        </label>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <span onClick={() => setMenu(null)} style={{ fontSize: 12, color: C.dim, cursor: 'pointer' }}>
+                      Cancel
+                    </span>
+                    <span
+                      onClick={() => void doRemove(menu.sessionId, !blockReason && removeWorktree)}
+                      style={{ fontSize: 12, color: C.error, cursor: 'pointer' }}
+                    >
+                      Remove
+                    </span>
+                  </div>
+                </div>
+              );
+            })()
           )}
         </div>
       )}
@@ -645,9 +740,15 @@ function SessionCard({
         {displayWslCwd(s.cwd) ?? abbreviate(s.cwd, home)}
       </div>
 
-      {/* Row 3 — status line */}
+      {/* Row 3 — status line; session-worktree FR-13: branch glyph + name, appended */}
       <div style={{ fontSize: 10, letterSpacing: '0.02em', marginLeft: 17, color: sc, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {label} · {s.model.label}
+        {s.worktree && (
+          <span title={s.worktree.branch} style={{ color: C.faint }}>
+            {' '}
+            · <span style={{ color: C.accent }}>⎇</span> {truncateBranchLeft(s.worktree.branch, 20)}
+          </span>
+        )}
       </div>
 
       {/* Row 4 — meta: context + diff badge + agent count */}

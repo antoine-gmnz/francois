@@ -28,6 +28,8 @@ pub(crate) fn test_session() -> Session {
         runtime: "native".into(),
         allow_git: false,
         project_id: None,
+        worktree: None,
+        worktree_distro: None,
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,

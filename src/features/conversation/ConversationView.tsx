@@ -3,7 +3,7 @@ import type { SessionEvent, SlashCommandInfo } from '../../../contract/common';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { getTranscript, onSessionEvent, sessionClear, sessionInterrupt, sessionListCommands, sessionSend } from '../../lib/api';
 import Block from './Block';
-import { compactBlocks, isClearCommand, transcriptReducer } from './conversation-blocks';
+import { compactBlocks, isClearCommand, transcriptReducer, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { composerPlaceholder, hasPendingQuestionBlock } from '../questions/question-card';
 import {
@@ -20,6 +20,7 @@ import {
 } from '../commands/slash-menu';
 import SlashMenu from '../commands/SlashMenu';
 import { useStore } from '../../lib/store';
+import { dismissWorktreeNotice, isWorktreeNoticeDismissed, worktreeFetchWarningLine } from '../sessions/worktree';
 
 const C = {
   accent: 'var(--accent)',
@@ -48,6 +49,10 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   const [input, setInput] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
   const [resumeFailed, setResumeFailed] = useState(false); // durable-sessions FR-14 banner
+  // session-worktree FR-14: per-session dismissal, persisted in localStorage —
+  // once dismissed the banner never returns for this session (component is
+  // keyed by sessionId, so this state is naturally fresh per session).
+  const [worktreeNoticeDismissed, setWorktreeNoticeDismissed] = useState(() => isWorktreeNoticeDismissed(sessionId));
 
   // slash-menu popup state (spec §6): registry mirror for THIS session (cache-
   // seeded, FR-10), dismissal token (FR-9) and selection (FR-7). All component-
@@ -333,8 +338,47 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     hasPendingPermissionBlock(state.blocks),
   );
 
+  // session-worktree FR-14: computed once per render rather than twice inline in the banner JSX below.
+  const fetchWarning = meta?.worktree ? worktreeFetchWarningLine(meta.worktree) : null;
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript so
+          it never scrolls away. A live region on first render (spec §8 notes). */}
+      {meta?.worktree && !worktreeNoticeDismissed && (
+        <div
+          role="status"
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 9,
+            background: 'color-mix(in srgb, var(--warn) 9%, transparent)',
+            borderLeft: '2px solid var(--warn)',
+            borderRadius: 4,
+            padding: '8px 11px',
+            margin: '6px 8px',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ fontSize: 11.5, color: 'var(--text-hint)', flex: 1 }}>
+            this session runs in an isolated git worktree — no dependencies were installed, and
+            local-scope config (<code>.claude/settings.local.json</code>, local <code>.mcp.json</code>) was not
+            carried over, so permission rules and MCP servers may differ from the parent checkout.
+            {fetchWarning && <div style={{ marginTop: 4 }}>{fetchWarning}</div>}
+          </div>
+          <span
+            onClick={() => {
+              dismissWorktreeNotice(sessionId);
+              setWorktreeNoticeDismissed(true);
+            }}
+            style={{ fontSize: 10, color: C.faint, cursor: 'pointer' }}
+            title="dismiss"
+          >
+            ✕
+          </span>
+        </div>
+      )}
+
       {/* resume-fail banner (durable-sessions FR-14) */}
       {resumeFailed && (
         <div
@@ -374,7 +418,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
             gap: 14,
             // The app root disables selection (styles.css body rule) for chrome;
             // the transcript is CONTENT — copying out of it must work.
-            userSelect: 'text',
+            ...TRANSCRIPT_TEXT_SELECT_STYLE,
             cursor: 'auto',
           }}
         >

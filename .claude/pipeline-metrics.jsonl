@@ -5,3 +5,19 @@
 {"ts":"2026-07-29T12:53:36+02:00","feature":"plugin-system","phase":"review","surface":"core","seconds":595,"result":"SHIP:12"}
 {"ts":"2026-07-29T12:53:36+02:00","feature":"plugin-system","phase":"review","surface":"frontend","seconds":513,"result":"SHIP:17"}
 {"ts":"2026-07-29T16:30:54+02:00","feature":"agent-tab","phase":"review","seconds":694,"surfaces":{"frontend":"SHIP:4","core":"SHIP:0"}}
+{"ts":"2026-07-29T22:12:20Z","feature":"session-worktree","phase":"build","seconds":862,"surfaces":{"frontend":"ok","core":"ok"}}
+{"ts":"2026-07-29T22:24:24Z","feature":"session-worktree","phase":"review","seconds":425,"surfaces":{"frontend":"REVISE:4","core":"REVISE:4"}}
+{"ts":"2026-07-29T22:31:54Z","feature":"session-worktree","phase":"fix","seconds":410,"results":"8/8","surfaces":{"frontend":"ok","core":"ok"}}
+{"ts":"2026-07-29T22:38:46Z","feature":"session-worktree","phase":"review","seconds":382,"surfaces":{"core":"BLOCK:5","frontend":"REVISE:3"}}
+{"ts": "2026-07-30", "feature": "session-worktree", "phase": "fix", "surfaces": ["core", "frontend"], "seconds": 2144, "results": "8/8", "notes": "review round 2: 2 CRITICAL, 1 HIGH, 3 MEDIUM, 2 LOW; contract item fixed by lead"}
+{"ts":"2026-07-29T23:00:15Z","feature":"session-worktree","phase":"review","seconds":440,"surfaces":{"core":"REVISE:6","frontend":"REVISE:3"}}
+{"ts":"2026-07-29T23:11:13Z","feature":"session-worktree","phase":"fix","seconds":615,"surfaces":{"core":"ok","frontend":"ok"}}
+{"ts":"2026-07-29T23:24:14Z","feature":"session-worktree","phase":"review","seconds":315,"surfaces":{"core":"BLOCK:2","frontend":"REVISE:2"}}
+{"ts":"2026-07-30","feature":"session-worktree","phase":"fix","surfaces":["core","frontend"],"results":"4/4","seconds":343}
+{"ts":"2026-07-29T23:41:25Z","feature":"session-worktree","phase":"review","seconds":275,"surfaces":{"core":"SHIP:4","frontend":"SHIP:2"}}
+{"ts":"2026-07-29T23:53:45Z","feature":"session-worktree","phase":"fix","seconds":522,"surfaces":{"core":"ok","frontend":"ok"}}
+{"ts":"2026-07-30T00:05:45Z","feature":"session-worktree","phase":"review","seconds":622,"surfaces":{"core":"REVISE:3","frontend":"SHIP:4"}}
+{"ts":"2026-07-30T00:13:20Z","feature":"session-worktree","phase":"fix","seconds":278,"surfaces":{"core":"3/3","frontend":"3/3"}}
+{"ts":"2026-07-30T08:25:46Z","feature":"session-worktree","phase":"review","seconds":366,"surfaces":{"frontend":"SHIP:2","core":"SHIP:0"}}
+{"ts":"2026-07-30T08:37:11Z","feature":"session-worktree","phase":"fix","seconds":295,"results":"2/2","surfaces":{"frontend":"ok"}}
+{"ts":"2026-07-30T08:38:48Z","feature":"session-worktree","phase":"review","seconds":64,"surfaces":{"frontend":"SHIP:0","core":"SHIP:0 (carried forward, unchanged)"}}

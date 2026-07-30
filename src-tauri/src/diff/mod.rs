@@ -89,7 +89,7 @@ pub struct CommitResult {
 }
 
 pub(crate) struct GitOut {
-    code: i32,
-    stdout: Vec<u8>,
-    stderr: String,
+    pub(crate) code: i32,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: String,
 }
