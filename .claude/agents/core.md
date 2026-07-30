@@ -42,7 +42,8 @@ shared surface is the frozen contract and the spec.
 - **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `mcp` · `skills` ·
   `palette` · `cli` · `project` · `remote`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
-- **Feature ids**: kebab-case. Specs live in `specs/<id>.md`.
+- **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`,
+  statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
 - **Errors**: `AppError { code, message, detail? }` with codes from `ErrorCode` in
   `contract/common.ts`; extend the union in a feature contract only for feature-specific codes.
