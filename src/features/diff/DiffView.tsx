@@ -2,6 +2,8 @@ import { useCallback, useRef, useState } from 'react';
 import type { DiffSummary } from '../../../contract/diff-view';
 import { diffCommit, diffStageAll } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { IS_WINDOWS } from '../../lib/platform';
+import { siblingWorktreeSummaryLine } from '../sessions/worktree';
 import { DiffListBody } from './DiffListBody';
 import { useDiffFeed } from './useDiffFeed';
 import { useDiffKeyboard } from './useDiffKeyboard';
@@ -17,6 +19,11 @@ interface CommitState {
 export default function DiffView({ sessionId }: { sessionId: string }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const mainTab = useStore((s) => s.mainTab);
+  // session-worktree FR-15: dim, read-only sibling-worktree hint. Derived purely
+  // from the session cache — no new IPC, no persistence.
+  const sessions = useStore((s) => s.sessions);
+  const meta = sessions.find((s) => s.id === sessionId) ?? null;
+  const siblingLine = meta ? siblingWorktreeSummaryLine(meta, sessions, IS_WINDOWS) : null;
 
   const feed = useDiffFeed(sessionId);
   const {
@@ -112,6 +119,13 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="diff-view">
+      {/* session-worktree FR-15: read-only — no links, no buttons, no hover affordance.
+          design brief §Notes: a truncated value always carries its full text in a title. */}
+      {siblingLine && (
+        <div className="diff-sibling-line" title={siblingLine}>
+          {siblingLine}
+        </div>
+      )}
       <DiffListBody
         files={files}
         selectedPath={selectedPath}

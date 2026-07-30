@@ -256,6 +256,19 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
             if let Some(pid) = &s.project_id {
                 rec["projectId"] = Value::String(pid.clone());
             }
+            // session-worktree FR-12: written only when present, same omit-not-null
+            // convention as projectId (a pre-feature reader must see no key).
+            if let Some(wt) = &s.worktree {
+                rec["worktree"] = serde_json::to_value(wt).unwrap_or(Value::Null);
+            }
+            // session-worktree FR-10: the `GitHost` distro this session's cwd was
+            // resolved under, written as a sibling key (never inside the contract
+            // `worktree` object) so it survives a restart — without it, a reloaded
+            // WSL worktree session's bare Linux-path cwd has no distro to route
+            // git/turn-spawn calls to.
+            if let Some(distro) = &s.worktree_distro {
+                rec["worktreeDistro"] = Value::String(distro.clone());
+            }
             rec
         })
         .collect();
@@ -290,6 +303,11 @@ pub(crate) struct PersistedMeta {
     /// projects FR-18: None when absent (every pre-projects record). Whether the
     /// id still RESOLVES is decided at load, not here — parsing stays pure.
     project_id: Option<String>,
+    /// session-worktree FR-12: None on every pre-feature record.
+    worktree: Option<SessionWorktree>,
+    /// session-worktree FR-10: the sibling `worktreeDistro` key (see `persist`).
+    /// None on every pre-feature record and every native-host worktree.
+    worktree_distro: Option<String>,
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
@@ -342,6 +360,18 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
         // sessions.json can't mint an unlinkable id.
         project_id: rec
             .get("projectId")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(String::from),
+        // session-worktree FR-12: best-effort round trip — a malformed/legacy
+        // record simply loads as unlinked-from-a-worktree rather than failing
+        // the whole session.
+        worktree: rec
+            .get("worktree")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        worktree_distro: rec
+            .get("worktreeDistro")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(String::from),
@@ -441,6 +471,8 @@ pub fn load_persisted(app: &AppHandle) {
                 // DROPPED here — the session loads unlinked and the pruned value is
                 // persisted by the next write (§7 #14).
                 project_id: resolve_link(m.project_id, &known),
+                worktree: m.worktree,
+                worktree_distro: m.worktree_distro,
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
@@ -593,6 +625,51 @@ mod tests {
         );
         // missing required field → None
         assert!(parse_session_record(&json!({ "name": "x" }), 0).is_none());
+    }
+
+    #[test]
+    fn worktree_and_worktree_distro_round_trip_through_a_persisted_record() {
+        // session-worktree FR-12/FR-10: `SessionWorktree` and the sibling
+        // `worktreeDistro` key both round-trip through the same rec-building
+        // logic `persist` uses (reproduced here, same pattern as the projectId
+        // round-trip test above, to avoid needing a live AppHandle).
+        let wt = SessionWorktree {
+            branch: "feat/x".into(),
+            base_ref: "main".into(),
+            path: "/home/u/.francois-worktrees/api/feat-x".into(),
+            source_repo_root: "/home/u/api".into(),
+            created_branch: true,
+            fetched: true,
+            fetch_error: None,
+        };
+        let mut s = test_session();
+        s.worktree = Some(wt.clone());
+        s.worktree_distro = Some("Ubuntu".into());
+
+        let mut rec = serde_json::json!({ "id": s.id, "name": s.name, "cwd": s.cwd });
+        if let Some(wt) = &s.worktree {
+            rec["worktree"] = serde_json::to_value(wt).unwrap();
+        }
+        if let Some(distro) = &s.worktree_distro {
+            rec["worktreeDistro"] = Value::String(distro.clone());
+        }
+
+        let parsed = parse_session_record(&rec, 0).expect("parse");
+        assert_eq!(parsed.worktree, Some(wt.clone()));
+        assert_eq!(parsed.worktree_distro.as_deref(), Some("Ubuntu"));
+
+        // A native-host worktree (no distro) omits the key entirely, same
+        // omit-not-null convention as projectId — a pre-feature reader must never
+        // see a null.
+        let mut native_rec = serde_json::json!({ "id": "n1", "name": "n", "cwd": "/x" });
+        native_rec["worktree"] = serde_json::to_value(&wt).unwrap();
+        assert!(native_rec.get("worktreeDistro").is_none());
+        assert_eq!(
+            parse_session_record(&native_rec, 0)
+                .unwrap()
+                .worktree_distro,
+            None
+        );
     }
 
     #[test]

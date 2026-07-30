@@ -934,6 +934,14 @@ a {
   align-items: center;
   justify-content: center;
   z-index: 20;
+  /* Paired with `.modal-panel { max-height: 100% }` below: a panel can now grow
+     taller than the viewport (session-worktree's "Isolate in worktree" group
+     expands the new-session form), and without a bottom gutter its footer —
+     Cancel/Create — went off-screen with nothing to scroll. `box-sizing:
+     border-box` (the global `*` rule) makes 100% resolve against the padded
+     content box, so this works for the top-aligned modals too, whose larger
+     `padding-top` is set inline by `Modal`'s align prop. */
+  padding-bottom: var(--space-24);
 }
 .modal-panel {
   background: var(--bg-panel);
@@ -941,6 +949,9 @@ a {
   border-radius: var(--radius-xl);
   overflow: hidden;
   box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
 }
 .modal-header {
   padding: var(--space-14) var(--space-16);
@@ -953,6 +964,8 @@ a {
   flex-direction: column;
   gap: var(--space-14);
   overflow-y: auto;
+  /* the body is the only part that scrolls; header/footer are flex-shrink: 0 */
+  min-height: 0;
 }
 /* Identical to .hint-bar below (every modal's footer IS a hint bar) — grouped
    rather than duplicated, same spirit as the qcard-/pcard-* consolidation

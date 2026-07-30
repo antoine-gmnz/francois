@@ -17,6 +17,9 @@ import { useModelCatalog } from './useModelCatalog';
 import { useProjectList } from './useProjectList';
 import { useProjectDefaults } from './useProjectDefaults';
 import { useDirectoryPicker } from './useDirectoryPicker';
+import { useWorktreeGroup } from './useWorktreeGroup';
+import { WorktreeField } from './WorktreeField';
+import { submitErrorBanner, worktreeBranchInUsePath } from './worktree';
 import './new-session-modal.css';
 
 // PermissionMode choices (contract/common.ts): label + the plain-language consequence.
@@ -103,6 +106,9 @@ export default function NewSessionModal({
     setRuntime,
   });
 
+  // session-worktree FR-1..FR-5: the "Isolate in worktree" group.
+  const worktree = useWorktreeGroup({ cwd, name, openRef, modelId, projectRootMissing, submitting });
+
   const modelEfforts = models.find((m) => m.id === modelId)?.efforts ?? [];
 
   // Reset effort if the newly selected model doesn't support the current level.
@@ -113,17 +119,18 @@ export default function NewSessionModal({
   // FR-23: a project whose root is gone blocks creation until another project
   // (or "none") is chosen — the core would reject it with PROJECT_ROOT_MISSING.
   const canCreate =
-    cwd.trim() !== '' && name.trim() !== '' && modelId !== '' && !submitting && !projectRootMissing;
+    cwd.trim() !== '' && name.trim() !== '' && modelId !== '' && !submitting && !projectRootMissing && !worktree.blocked;
   // FR-16/17: whether the picked directory is a WSL UNC path, drives the
   // auto-suggest + mismatch hints below the CLAUDE RUNTIME row.
   const cwdIsWsl = isWslUncPath(cwd);
 
-  const submit = async () => {
-    if (!canCreate) return;
+  // Shared by the normal submit and the FR-5 recovery offer — only `cwd` and the
+  // `worktree` options ever differ between the two.
+  const createSession = async (overrideCwd: string, worktreeOpts?: { branch: string; baseRef: string; adopt?: boolean }) => {
     setSubmitting(true);
     setSubmitError(null);
     const res = await sessionCreate({
-      cwd: cwd.trim(),
+      cwd: overrideCwd,
       name,
       modelId,
       effort: effort || undefined,
@@ -133,6 +140,7 @@ export default function NewSessionModal({
       // FR-19: sent verbatim; the core does no default merging, so what is on
       // screen right now is exactly what gets created.
       projectId: projectId || undefined,
+      worktree: worktreeOpts,
     });
     if (!openRef.current) {
       // Modal was cancelled mid-flight: still real, upsert but don't force-select.
@@ -140,19 +148,43 @@ export default function NewSessionModal({
       return;
     }
     setSubmitting(false);
+    worktree.setRecovering(false);
     if (res.ok) {
       onCreated(res.data);
       onClose();
     } else {
-      setSubmitError(res.error);
+      // §7 race path: an error that becomes the FR-5 recovery offer below shows
+      // ONLY that offer — `submitErrorBanner` nulls it here so the red banner
+      // never even flashes on top of the amber one.
+      setSubmitError(submitErrorBanner(res.error));
       // §7 case 13: the project was removed (or its root vanished) between opening
       // the modal and submitting. Re-read the registry and drop back to "— none —",
       // otherwise the select keeps offering a project that no longer exists and every
       // retry fails identically with no cue that the fix is to pick none.
       if (res.error.code === 'PROJECT_NOT_FOUND' || res.error.code === 'PROJECT_ROOT_MISSING') {
         await recoverFromProjectError();
+      } else {
+        const racePath = worktreeBranchInUsePath(res.error);
+        if (racePath) worktree.applyRacePath(racePath);
       }
     }
+  };
+
+  const submit = async () => {
+    if (!canCreate) return;
+    const worktreeOpts =
+      worktree.worktreeEnabled && worktree.probe?.isRepo
+        ? { branch: worktree.branch.trim(), baseRef: worktree.baseRef.trim() || worktree.probe.defaultBranch || 'main' }
+        : undefined;
+    await createSession(cwd.trim(), worktreeOpts);
+  };
+
+  // FR-5: the branch is already checked out elsewhere — open a session there
+  // instead, with NO git mutation (worktree.adopt = true).
+  const openRecoverySession = async () => {
+    if (!worktree.recoveryPath || !worktree.canOpenRecovery) return;
+    worktree.setRecovering(true);
+    await createSession(worktree.recoveryPath, { branch: worktree.branch.trim(), baseRef: worktree.baseRef.trim(), adopt: true });
   };
 
   // Escape-to-close and Enter-to-submit share one listener (Enter needs
@@ -278,6 +310,8 @@ export default function NewSessionModal({
             )}
           </div>
         )}
+
+        <WorktreeField worktree={worktree} onOpenRecovery={() => void openRecoverySession()} />
 
         {submitError && <div className="form-error">{submitError.message}</div>}
       </ModalBody>

@@ -9,6 +9,7 @@ import type { ConversationBlock } from '../../../contract/conversation-view';
 import { formatElapsed } from '../../../contract/conversation-view';
 import { agentsList, agentsTranscript, onAgentEvent, onSessionEvent } from '../../lib/api';
 import Block from '../conversation/Block';
+import { TRANSCRIPT_TEXT_SELECT_STYLE } from '../conversation/conversation-blocks';
 import { ASYNC_MARKER, STEP_GLYPH, STEP_GLYPH_COLOR, TRAIL_EMPTY_LABEL, isAtBottom, showAsyncMarker } from './agent-trail';
 import {
   CLOSED_TRANSCRIPT,
@@ -135,6 +136,10 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
           const at = isAtBottom(e.currentTarget);
           setState((prev) => (prev.atBottom === at ? prev : { ...prev, atBottom: at }));
         }}
+        // mac-text-selection FR-1: the .agent-view-body rule already sets
+        // `user-select: text`; WKWebView needs the -webkit- prefixed form too,
+        // which this adds on top of the class — see TRANSCRIPT_TEXT_SELECT_STYLE.
+        style={TRANSCRIPT_TEXT_SELECT_STYLE}
       >
         {state.loading ? null : state.error ? ( // FR-16: nothing while in flight
           <div className="agent-view-error">{state.error.message}</div>

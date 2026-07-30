@@ -9,6 +9,22 @@
   min-height: 0;
   background: var(--bg-deep);
 }
+/* session-worktree FR-15: dim, read-only sibling-worktree hint — no links, no
+   buttons, no hover affordance. design brief §"Narrow window": middle-/left-
+   truncate (direction: rtl) rather than a trailing ellipsis, so the branch list
+   at the tail stays visible — same intent as the FR-13 branch chip. */
+.diff-sibling-line {
+  padding: 6px var(--space-14);
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  direction: rtl;
+  text-align: left;
+}
 .diff-main {
   flex: 1;
   display: flex;

@@ -20,6 +20,7 @@ import {
   meterFillColor,
   switchModelFromCard,
   transcriptReducer,
+  TRANSCRIPT_TEXT_SELECT_STYLE,
   type ConversationEventSetters,
   type TranscriptState,
 } from './conversation-blocks';
@@ -958,5 +959,64 @@ describe('groupToolRuns (design-refresh FR-7: consecutive tool calls share one b
       { kind: 'single', block: assistant('a1') },
       { kind: 'single', block: assistant('a2') },
     ]);
+  });
+});
+
+describe('TRANSCRIPT_TEXT_SELECT_STYLE (mac-text-selection FR-1)', () => {
+  it('sets both the standard and WebKit-prefixed user-select properties to text', () => {
+    // WKWebView (macOS) has a documented history of ignoring the unprefixed
+    // property for drag-to-select; Windows/Linux already honor it unprefixed
+    // (FR-5 regression guard), so both must be present and both must be 'text'.
+    expect(TRANSCRIPT_TEXT_SELECT_STYLE.userSelect).toBe('text');
+    expect(TRANSCRIPT_TEXT_SELECT_STYLE.WebkitUserSelect).toBe('text');
+  });
+});
+
+describe('transcriptReducer — a delta on one block never disturbs another (mac-text-selection FR-4)', () => {
+  it('leaves an earlier block referentially unchanged while a later block streams', () => {
+    // A live browser selection anchored inside `user`'s DOM subtree must survive
+    // an assistant.delta appending elsewhere: React only re-renders the DOM for
+    // blocks whose props changed, and this asserts `user` never becomes a new
+    // object (nor moves) across two delta dispatches targeting a different block.
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'earlier message', queued: false };
+    const s1: TranscriptState = { blocks: [user] };
+    const s2 = transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'Hel' });
+    const s3 = transcriptReducer(s2, { t: 'delta', blockId: 'a1', text: 'lo' });
+    expect(s2.blocks[0]).toBe(user);
+    expect(s3.blocks[0]).toBe(user);
+    expect(s3.blocks[0]).toBe(s2.blocks[0]);
+  });
+
+  it('keeps every sibling block referentially stable across a run of deltas on one block', () => {
+    const a: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'a', queued: false };
+    const b: ConversationBlock = { kind: 'user', blockId: 'u2', isStreaming: false, text: 'b', queued: false };
+    let s: TranscriptState = { blocks: [a, b] };
+    for (const chunk of ['Hel', 'lo ', 'wor', 'ld']) {
+      s = transcriptReducer(s, { t: 'delta', blockId: 'a1', text: chunk });
+    }
+    expect(s.blocks[0]).toBe(a);
+    expect(s.blocks[1]).toBe(b);
+  });
+});
+
+describe('compactBlocks preserves block identity for untouched blocks (mac-text-selection FR-4)', () => {
+  it('returns the same object references for blocks it does not merge', () => {
+    // compactBlocks runs on every ConversationView render, right before the
+    // key={b.blockId} map to <Block>. If it recreated non-merged blocks the
+    // reconciler would still key them the same, but keeping reference identity
+    // here is the cheapest guarantee that unrelated re-renders stay no-ops.
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false };
+    const assistant: ConversationBlock = {
+      kind: 'assistant',
+      blockId: 'a1',
+      isStreaming: true,
+      glyph: '●',
+      glyphColor: '#e0a84e',
+      bodyColor: '#e6e9ef',
+      text: 'Hello',
+    };
+    const out = compactBlocks([user, assistant]);
+    expect(out[0]).toBe(user);
+    expect(out[1]).toBe(assistant);
   });
 });

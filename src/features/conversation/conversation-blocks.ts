@@ -17,6 +17,19 @@ import type { CommandConversationBlock } from '../../../contract/interactive-com
 import type { PermissionConversationBlock } from '../../../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
 
+// mac-text-selection FR-1: the transcript container overrides the app-wide
+// `body { user-select: none }` chrome rule (styles.css) so transcript CONTENT
+// stays selectable/copyable. WKWebView (macOS's Tauri webview engine) has a
+// documented history of silently ignoring the unprefixed `user-select`
+// property for drag-to-select — Windows (WebView2) and Linux (WebKitGTK)
+// already honor it unprefixed, so the -webkit- form is additive, not a
+// replacement. Exported (rather than inlined in ConversationView's JSX) so
+// the fix is unit-testable without a DOM environment.
+export const TRANSCRIPT_TEXT_SELECT_STYLE: { userSelect: 'text'; WebkitUserSelect: 'text' } = {
+  userSelect: 'text',
+  WebkitUserSelect: 'text',
+};
+
 export interface TranscriptState {
   blocks: ConversationBlock[];
 }

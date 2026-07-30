@@ -14,6 +14,8 @@ import type {
 } from '../../contract/projects';
 import type { PermissionDecision, PermissionRule, PermissionTier } from '../../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
+import type { SessionCreateInput } from '../../contract/session-engine';
+import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
@@ -36,9 +38,21 @@ export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
 export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
 // projects FR-19: session_create gained an optional projectId, stored verbatim —
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
-export const sessionCreate = (req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'>) =>
-  ipc<Result<SessionMeta>>('session_create', req);
+// session-worktree: session_create also gained an optional `worktree` (spec §5),
+// sourced from the canonical SessionCreateInput field rather than re-declared here.
+export const sessionCreate = (
+  req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'> & Pick<SessionCreateInput, 'worktree'>,
+) => ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
+// session-worktree §5: probe a candidate cwd for worktree isolation (FR-1).
+export const sessionWorktreeProbe = (req: WorktreeProbeRequest) =>
+  ipc<Result<WorktreeProbeData>>('session_worktree_probe', req);
+// session-worktree §5: dirty/unpushed check before offering removal (FR-18).
+export const sessionWorktreeStatus = (sessionId: SessionId) =>
+  ipc<Result<WorktreeStatusData>>('session_worktree_status', { sessionId });
+// session-worktree §5: `git worktree remove` + prune; never deletes the branch (FR-20).
+export const sessionWorktreeRemove = (sessionId: SessionId) =>
+  ipc<Result<null>>('session_worktree_remove', { sessionId });
 export const sessionPickDirectory = () => ipc<Result<PickDirectoryData>>('session_pick_directory');
 export const sessionSend = (sessionId: SessionId, blockId: string, text: string) =>
   ipc<Result<{ queued: boolean; queuePosition?: number }>>('session_send', { sessionId, blockId, text });

@@ -52,13 +52,30 @@ pub(crate) fn permission_args(mode: &str) -> Vec<String> {
 /// path (`--cd '\\wsl.localhost\…'` fails with Wsl/E_INVALIDARG — verified
 /// live); a drive-letter cwd passes verbatim (wsl.exe maps it to /mnt/… itself).
 /// native: plain `claude …`; the caller sets current_dir.
+///
+/// `distro`: session-worktree FR-10's stored `Session::worktree_distro`. When
+/// `Some`, it OVERRIDES the UNC-derived distro — required for a WSL worktree
+/// session, whose `cwd` is already a bare Linux path (no `\\wsl$\<distro>\…`
+/// prefix left for `wsl_base_args` to recover the distro from) — `cwd` is then
+/// passed to `--cd` verbatim, since it is already in the distro's own dialect.
+/// `None` preserves the pre-existing UNC-derived behavior for every other
+/// (non-worktree) WSL session.
 pub(crate) fn claude_invocation(
     runtime: &str,
     cwd: &str,
     claude_args: Vec<String>,
+    distro: Option<&str>,
 ) -> (String, Vec<String>) {
     if runtime == "wsl" {
-        let mut argv = crate::wsl::wsl_base_args(cwd);
+        let mut argv = match distro {
+            Some(d) => vec![
+                "-d".to_string(),
+                d.to_string(),
+                "--cd".to_string(),
+                cwd.to_string(),
+            ],
+            None => crate::wsl::wsl_base_args(cwd),
+        };
         argv.push("--".to_string());
         argv.push("claude".to_string());
         argv.extend(claude_args);
@@ -160,12 +177,13 @@ mod tests {
 
     #[test]
     fn claude_invocation_wraps_wsl() {
-        let (prog, args) = claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()]);
+        let (prog, args) =
+            claude_invocation("native", "D:\\repo", vec!["-p".into(), "hi".into()], None);
         assert_eq!(prog, "claude");
         assert_eq!(args, vec!["-p", "hi"]);
         // wsl + drive cwd: wsl.exe maps it to /mnt/… itself — passed verbatim,
         // no -d (no distro info → default distro is the only sane target)
-        let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()]);
+        let (prog, args) = claude_invocation("wsl", "D:\\repo", vec!["--version".into()], None);
         assert_eq!(prog, "wsl.exe");
         assert_eq!(args, vec!["--cd", "D:\\repo", "--", "claude", "--version"]);
         // wsl + WSL UNC cwd: MUST pre-translate (`--cd \\wsl…` = Wsl/E_INVALIDARG
@@ -175,6 +193,7 @@ mod tests {
             "wsl",
             "\\\\wsl.localhost\\Ubuntu\\home\\u\\api",
             vec!["-p".into(), "hi".into()],
+            None,
         );
         assert_eq!(prog, "wsl.exe");
         assert_eq!(
@@ -188,6 +207,32 @@ mod tests {
                 "claude",
                 "-p",
                 "hi"
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_invocation_distro_override_targets_the_stored_distro_from_a_linux_path() {
+        // session-worktree FR-10: a WSL worktree session's cwd is a bare Linux
+        // path (no `\\wsl$\<distro>\…` prefix) — the stored distro must still
+        // route to the repo's actual distro, not the machine's default one.
+        let (prog, args) = claude_invocation(
+            "wsl",
+            "/home/u/.francois-worktrees/api/feat-x",
+            vec!["--version".into()],
+            Some("Ubuntu"),
+        );
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(
+            args,
+            vec![
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/home/u/.francois-worktrees/api/feat-x",
+                "--",
+                "claude",
+                "--version"
             ]
         );
     }

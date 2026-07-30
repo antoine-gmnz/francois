@@ -3,11 +3,14 @@
 // across the bridge, so the frontend always gets `{ ok, ... }`.
 
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Serialize, Clone)]
 pub struct AppError {
     pub code: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -27,6 +30,24 @@ pub fn err<T: Serialize>(code: &str, message: impl Into<String>) -> IpcResult<T>
         error: AppError {
             code: code.into(),
             message: message.into(),
+            detail: None,
+        },
+    }
+}
+
+/// session-worktree FR-11 (WORKTREE_BRANCH_IN_USE detail: `{ path }`) — an error
+/// with a machine-readable `detail` payload alongside the human message.
+pub fn err_detail<T: Serialize>(
+    code: &str,
+    message: impl Into<String>,
+    detail: Value,
+) -> IpcResult<T> {
+    IpcResult::Err {
+        ok: false,
+        error: AppError {
+            code: code.into(),
+            message: message.into(),
+            detail: Some(detail),
         },
     }
 }

@@ -4,7 +4,7 @@ import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionClear, sessionInterrupt, sessionSend } from '../../lib/api';
 import Block, { ToolGroup } from './Block';
 import Composer from './Composer';
-import { compactBlocks, groupToolRuns, isClearCommand } from './conversation-blocks';
+import { compactBlocks, groupToolRuns, isClearCommand, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import { useConversationTranscript } from './useConversationTranscript';
@@ -22,6 +22,8 @@ import {
 } from '../commands/slash-menu';
 import { useStore } from '../../lib/store';
 import './conversation.css';
+import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
+import WorktreeNotice from './WorktreeNotice';
 
 // Block apply rules (reducer) and the SessionEvent dispatch table live in
 // ./conversation-blocks — pure + unit-tested. Hydration/subscription plumbing
@@ -48,6 +50,10 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 
   const [input, setInput] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
+  // session-worktree FR-14: per-session dismissal, persisted in localStorage —
+  // once dismissed the banner never returns for this session (component is
+  // keyed by sessionId, so this state is naturally fresh per session).
+  const [worktreeNoticeDismissed, setWorktreeNoticeDismissed] = useState(() => isWorktreeNoticeDismissed(sessionId));
 
   // slash-menu popup state (spec §6): dismissal token (FR-9) and selection
   // (FR-7). Component-local — a session switch remounts (keyed by sessionId)
@@ -179,12 +185,32 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="conv-root">
+      {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript
+          so it never scrolls away. */}
+      {meta?.worktree && !worktreeNoticeDismissed && (
+        <WorktreeNotice
+          worktree={meta.worktree}
+          onDismiss={() => {
+            dismissWorktreeNotice(sessionId);
+            setWorktreeNoticeDismissed(true);
+          }}
+        />
+      )}
+
       {/* resume-fail banner (durable-sessions FR-14) */}
       {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
 
       {/* transcript */}
       <div className="conv-transcript-wrap">
-        <div ref={scrollRef} onScroll={onScroll} className="scz conv-scroll">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="scz conv-scroll"
+          // mac-text-selection FR-1: .conv-scroll already sets `user-select: text`;
+          // WKWebView needs the -webkit- prefixed form too — see
+          // TRANSCRIPT_TEXT_SELECT_STYLE.
+          style={TRANSCRIPT_TEXT_SELECT_STYLE}
+        >
           {hydrationError ? (
             <Centered>
               <span className="conv-error-text">{hydrationError}</span>

@@ -1,9 +1,11 @@
 {
+  "default_branch": "main",
   "deny": [
     "git push --force",
     "git push -f"
   ],
-  "ask": [
+  "ask": [],
+  "ask_on_default_branch": [
     "git commit",
     "git push",
     "git merge",

@@ -106,3 +106,58 @@
   gap: var(--space-10);
   margin-left: auto;
 }
+
+/* session-worktree §8 screen 1 — the "Isolate in worktree" group's expanded
+   body (branch / base ref / path preview / inline notice). */
+.worktree-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  margin-top: var(--space-10);
+}
+
+.worktree-field__mono {
+  font-family: var(--font-mono);
+}
+
+.worktree-field__mono--disabled {
+  opacity: 0.5;
+}
+
+/* FR-9 path preview. design brief §"Narrow window": middle-/left-truncate
+   rather than losing the meaningful tail to a trailing ellipsis. */
+.worktree-field__preview {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+/* FR-5 recovery offer — amber, and the ONLY action shown when the branch is
+   already checked out elsewhere. */
+.worktree-field__recovery {
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-11);
+  color: var(--warn);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.worktree-field__recovery-action {
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 600;
+  align-self: flex-start;
+}
+
+.worktree-field__recovery-action--disabled {
+  cursor: default;
+  opacity: 0.5;
+}

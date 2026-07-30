@@ -9,6 +9,7 @@ import { BadgePill } from '../../ui/BadgePill';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { StatusDot } from '../../ui/StatusDot';
 import { filteredEmptyLabel } from '../projects/projects';
+import { truncateBranchLeft } from './worktree';
 import './sidebar.css';
 
 export interface SessionListBodyProps {
@@ -175,6 +176,14 @@ function SessionCard({
         <ContextFigure used={session.contextUsedTokens} limit={session.contextLimitTokens} />
         <span className="sidebar-card__faint">{formatRelativeTime(session.lastActivityAt)}</span>
       </div>
+
+      {/* session-worktree FR-13: branch glyph + name, on its own line so it never
+          squeezes the meta row's usage bar. */}
+      {session.worktree && (
+        <div className="sidebar-card__branch" title={session.worktree.branch}>
+          <span className="sidebar-card__branch-glyph">⎇</span> {truncateBranchLeft(session.worktree.branch, 20)}
+        </div>
+      )}
 
       {/* Row 4 — only when there is something to say: running subagents and the
           uncommitted-file count (both from fleet-board's derived figures). */}

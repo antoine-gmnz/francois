@@ -66,6 +66,7 @@ pub(crate) fn user_line(text: &str) -> String {
     line
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_claude(
     cwd: &str,
     model_id: &str,
@@ -74,9 +75,10 @@ pub(crate) fn spawn_claude(
     effort: Option<&str>,
     permission_mode: &str,
     runtime: &str,
+    worktree_distro: Option<&str>,
 ) -> std::io::Result<Child> {
     let args = turn_args(model_id, resume, effort, permission_mode);
-    let (program, argv) = claude_invocation(runtime, cwd, args);
+    let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
     let mut cmd = Command::new(program);
     cmd.args(argv);
     if runtime != "wsl" {
@@ -228,7 +230,7 @@ pub(crate) fn begin_turn(
     mode: TurnMode,
 ) {
     let engine = app.state::<Engine>();
-    let Some((cwd, model_id, resume, effort, permission_mode, runtime)) =
+    let Some((cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro)) =
         engine.with_session_mut(session_id, |s| {
             // ResumeRetry forces resume off regardless of the stored id, so a
             // still-good id is never dropped preemptively — a fresh init
@@ -245,6 +247,7 @@ pub(crate) fn begin_turn(
                 s.effort.clone(),
                 s.permission_mode.clone(),
                 s.runtime.clone(),
+                s.worktree_distro.clone(),
             )
         })
     else {
@@ -282,6 +285,7 @@ pub(crate) fn begin_turn(
         effort.as_deref(),
         &permission_mode,
         &runtime,
+        worktree_distro.as_deref(),
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -390,6 +394,7 @@ pub(crate) fn finish_turn(
                 error: AppError {
                     code: "INTERNAL".into(),
                     message: msg,
+                    detail: None,
                 },
             },
         );
@@ -445,6 +450,7 @@ pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &
             error: AppError {
                 code: code.into(),
                 message: msg.into(),
+                detail: None,
             },
         },
     );

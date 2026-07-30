@@ -10,6 +10,7 @@
 // command RESOLVES a `Result<T>` (never rejects across the bridge).
 
 import type { SessionId, ModelInfo, SessionEvent, Result, PermissionMode, ClaudeRuntime } from './common';
+import type { WorktreeCreateOptions } from './session-worktree';
 
 // ---------- francois:session:create ----------
 
@@ -22,6 +23,8 @@ export interface SessionCreateInput {
   permissionMode?: PermissionMode;
   /** omit for 'native'. 'wsl' is INVALID_INPUT off Windows. */
   runtime?: ClaudeRuntime;
+  /** omit to create a normal (non-isolated) session; see session-worktree.ts. */
+  worktree?: WorktreeCreateOptions;
 }
 // invoke('session_create', req: SessionCreateInput): Promise<Result<SessionMeta>>
 

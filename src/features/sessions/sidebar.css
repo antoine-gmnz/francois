@@ -238,6 +238,19 @@
 .sidebar-card__faint {
   color: var(--text-faint);
 }
+/* session-worktree FR-13: the card's branch line. Left-truncated in JS
+   (truncateBranchLeft) so the leaf segment stays readable. */
+.sidebar-card__branch {
+  font-size: var(--font-size-10-5);
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-card__branch-glyph {
+  color: var(--accent);
+}
 .sidebar-card__meta {
   color: var(--text-dim);
 }
@@ -283,6 +296,37 @@
   font-size: var(--font-size-11-5);
   color: var(--text);
   margin-bottom: var(--space-8);
+}
+/* session-worktree §8 screen 5: the confirm step grows a worktree-removal
+   option, so the menu needs a width cap it never needed as a bare y/n. */
+.context-menu__body--confirm {
+  max-width: 260px;
+}
+.context-menu__worktree {
+  font-size: var(--font-size-10-5);
+  margin-bottom: var(--space-8);
+}
+.context-menu__worktree-hint {
+  color: var(--text-faint);
+}
+.context-menu__worktree-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+  cursor: pointer;
+  color: var(--text-dim);
+}
+/* FR-18/FR-20: dirty, unpushed, or unknown — the checkbox is disabled and the
+   reason is shown rather than hidden behind a tooltip. */
+.context-menu__worktree-opt--blocked {
+  cursor: default;
+  color: var(--warn);
+}
+.context-menu__worktree-opt input {
+  margin-top: 2px;
+}
+.context-menu__worktree-reason {
+  margin-top: 2px;
 }
 .context-menu__actions {
   display: flex;

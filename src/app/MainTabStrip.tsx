@@ -2,6 +2,7 @@ import type { SessionMeta } from '../../contract/common';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
 import { agentTabId, agentTabLabel, type AgentTabRef } from '../features/agents/agent-tab';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
+import { truncateBranchLeft } from '../features/sessions/worktree';
 import type { MainTab } from '../lib/store';
 import { BadgePill } from '../ui/BadgePill';
 import { StatusDot } from '../ui/StatusDot';
@@ -73,6 +74,12 @@ export default function MainTabStrip({ mainTab, setMainTab, diffCount, agentTabs
             </span>
           )}
           {active.runtime === 'wsl' && <span className="app-text-faint">wsl</span>}
+          {/* session-worktree FR-13: branch glyph + name, focused session only */}
+          {active.worktree && (
+            <span title={active.worktree.branch} className="app-text-accent">
+              ⎇ {truncateBranchLeft(active.worktree.branch, 24)}
+            </span>
+          )}
           {/* remote-control: host this session on claude.ai/code + mobile */}
           <RemoteControlBadge key={active.id} sessionId={active.id} />
           {/* design-refresh FR-5: the mock pairs the context figure with a mini

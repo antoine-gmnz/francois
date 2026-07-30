@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { filterSessionsByProject } from '../../../contract/projects';
-import { sessionRemove } from '../../lib/api';
+import { sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
 import { prunePaletteSession } from '../palette/paletteData';
+import { showToast } from '../palette/palette';
 import ProjectSwitcher from '../projects/ProjectSwitcher';
 import { visibleSessions } from '../projects/projects';
 import { useStore } from '../../lib/store';
@@ -104,7 +105,32 @@ export default function Sidebar({ home }: { home: string }) {
     };
   }, [menu]);
 
-  const doRemove = async (sessionId: string) => {
+  // session-worktree FR-17: kicks off the dirty/unpushed probe when the confirm
+  // step opens for a session that has a worktree.
+  const startWorktreeCheck = (sessionId: string) => {
+    setMenu((m) => (m ? { ...m, worktreeChecking: true } : m));
+    void sessionWorktreeStatus(sessionId).then((res) => {
+      setMenu((m) => {
+        if (!m || m.sessionId !== sessionId) return m; // menu moved on
+        if (res.ok) return { ...m, worktreeChecking: false, worktreeStatus: res.data };
+        if (res.error.code === 'WORKTREE_NOT_FOUND') return { ...m, worktreeChecking: false, worktreeGone: true };
+        // FR-20: a git-side status-check failure (e.g. GIT_ERROR/INTERNAL) must not
+        // block removing the session — keep the normal confirm UI, just disable the
+        // worktree-removal checkbox.
+        return { ...m, worktreeChecking: false, worktreeStatusFailed: true };
+      });
+    });
+  };
+
+  // FR-20: session_worktree_remove runs first (it needs the session's worktree
+  // metadata), but session_remove always follows regardless of its outcome — a
+  // failed directory removal surfaces as a toast, never blocks removing the
+  // session from Francois.
+  const doRemove = async (sessionId: string, removeWorktree: boolean) => {
+    if (removeWorktree) {
+      const wtRes = await sessionWorktreeRemove(sessionId);
+      if (!wtRes.ok) showToast(wtRes.error.message, 'error');
+    }
     const res = await sessionRemove(sessionId);
     if (res.ok) {
       const st = useStore.getState();
@@ -170,10 +196,18 @@ export default function Sidebar({ home }: { home: string }) {
         <SessionContextMenu
           menu={menu}
           sessionName={sessions.find((session) => session.id === menu.sessionId)?.name ?? '?'}
+          worktree={sessions.find((session) => session.id === menu.sessionId)?.worktree ?? null}
           containerRef={menuRef}
-          onStartConfirm={() => setMenu({ ...menu, confirming: true })}
+          onStartConfirm={() => {
+            const target = sessions.find((session) => session.id === menu.sessionId);
+            setMenu({ ...menu, confirming: true });
+            // session-worktree FR-17: probe dirty/unpushed only once the confirm
+            // step is actually open, and only for a session that has a worktree.
+            if (target?.worktree) startWorktreeCheck(menu.sessionId);
+          }}
           onCancel={() => setMenu(null)}
-          onRemove={() => void doRemove(menu.sessionId)}
+          onToggleRemoveWorktree={() => setMenu((m) => (m ? { ...m, removeWorktree: !m.removeWorktree } : m))}
+          onRemove={(removeWorktree) => void doRemove(menu.sessionId, removeWorktree)}
         />
       )}
     </section>

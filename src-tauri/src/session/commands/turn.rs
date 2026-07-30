@@ -137,7 +137,7 @@ pub fn session_compact(
     session_id: String,
 ) -> IpcResult<Option<()>> {
     // Snapshot cwd/model/resume/effort; enforce status.
-    let (cwd, model_id, resume, effort, permission_mode, runtime) = {
+    let (cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro) = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(&session_id) else {
             return err("SESSION_NOT_FOUND", "no such session");
@@ -155,6 +155,7 @@ pub fn session_compact(
             s.effort.clone(),
             s.permission_mode.clone(),
             s.runtime.clone(),
+            s.worktree_distro.clone(),
         )
     };
     emit(
@@ -177,6 +178,7 @@ pub fn session_compact(
         effort.as_deref(),
         &permission_mode,
         &runtime,
+        worktree_distro.as_deref(),
     ) {
         // session-questions FR-5: /compact rides the stdin path like any turn, but a
         // compaction can never park on a question — close the pipe right away; the

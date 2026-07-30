@@ -36,3 +36,8 @@ Parked at the round-2 `/review` SHIP verdict (2026-07-29). None are CRITICAL/HIG
   → **Fix:** either wrap the empty-state branch in a centering container (`flex:1, display:flex,
   alignItems:center, justifyContent:center`) or add `alignItems: 'center', justifyContent: 'center'`
   conditionally to the scroller when `state.blocks.length === 0`.
+
+## deferred:session-worktree
+
+_(un-parked 2026-07-30 — both findings moved back to `specs/session-worktree.md` § Remediation round 7
+and run through `/fix`; see that spec for current status.)_

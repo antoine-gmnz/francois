@@ -1,6 +1,6 @@
 //! session lifecycle: create, remove, switch model, interrupt (specs/session-engine.md).
 
-use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::{err, err_detail, ok, IpcResult};
 use crate::session::*;
 use serde_json::Value;
 use std::process::{Command, Stdio};
@@ -23,22 +23,37 @@ pub(crate) fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> 
 /// FR-7/13's cwd/model/permission_mode/runtime/wsl-gate validation ladder for
 /// `session_create`. Pure aside from the FR-7 filesystem check. Returns the
 /// normalized (model_id, permission_mode, runtime) or an (code, message) error.
+///
+/// `adopt` is session-worktree's `WorktreeCreateInput::adopt` (false when the
+/// session carries no worktree input) — it only steers how the FR-7 check
+/// resolves `cwd`, see below.
 pub(crate) fn validate_create_input(
     cwd: &str,
     model_id: Option<String>,
     permission_mode: Option<String>,
     runtime: Option<String>,
+    adopt: bool,
 ) -> Result<(String, String, String), (&'static str, &'static str)> {
     // FR-7: cwd must exist and be a directory.
-    let meta = std::fs::metadata(cwd);
-    match meta {
-        Ok(m) if m.is_dir() => {}
-        _ => {
-            return Err((
-                "INVALID_INPUT",
-                "working directory does not exist or is not a directory",
-            ))
-        }
+    //
+    // CRITICAL remediation: the FR-5 "already checked out" recovery flow calls
+    // session_create with `cwd` = `probe.branchCheckedOutAt` — a path read back
+    // from `git worktree list --porcelain`'s own stdout, which for a WSL repo is
+    // a BARE Linux path (no `\\wsl$\<distro>\…` prefix). A plain
+    // `std::fs::metadata` stat on Windows always fails INVALID_INPUT for that
+    // path, even though the directory is perfectly real inside the distro.
+    // Route the existence check the same way `resolve_worktree` will (via
+    // `adopt_host`) instead of assuming every cwd is Windows-native.
+    let precheck_host = adopt_host(cwd, adopt);
+    let cwd_ok = match &precheck_host {
+        crate::diff::GitHost::Native => matches!(std::fs::metadata(cwd), Ok(m) if m.is_dir()),
+        crate::diff::GitHost::Wsl(_) => path_exists(&precheck_host, cwd),
+    };
+    if !cwd_ok {
+        return Err((
+            "INVALID_INPUT",
+            "working directory does not exist or is not a directory",
+        ));
     }
     // Model is chosen from the live list (session_models); accept any non-empty
     // id and let the CLI reject a truly invalid one at turn time. Being
@@ -65,12 +80,15 @@ pub(crate) fn validate_create_input(
 }
 
 /// FR-9: eager spawn check — verify the claude binary runs under the session's
-/// runtime, before anything is created.
+/// runtime, before anything is created. Runs against the ORIGINAL cwd (the repo
+/// path the modal probed), before session-worktree's `resolve_worktree`: a probe
+/// failure here must not leave a worktree/branch behind (FR-11), and the probe
+/// itself doesn't care which directory inside the repo it runs from.
 pub(crate) fn probe_claude_binary(
     runtime: &str,
     cwd: &str,
 ) -> Result<(), (&'static str, &'static str)> {
-    let (probe, probe_args) = claude_invocation(runtime, cwd, vec!["--version".to_string()]);
+    let (probe, probe_args) = claude_invocation(runtime, cwd, vec!["--version".to_string()], None);
     let mut probe_cmd = Command::new(&probe);
     probe_cmd
         .args(&probe_args)
@@ -102,9 +120,11 @@ pub fn session_create(
     runtime: Option<String>,
     allow_git: Option<bool>,
     project_id: Option<String>,
+    worktree: Option<WorktreeCreateInput>,
 ) -> IpcResult<Value> {
+    let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
     let (model_id, permission_mode, runtime) =
-        match validate_create_input(&cwd, model_id, permission_mode, runtime) {
+        match validate_create_input(&cwd, model_id, permission_mode, runtime, adopt) {
             Ok(v) => v,
             Err((code, msg)) => return err(code, msg),
         };
@@ -120,6 +140,33 @@ pub fn session_create(
     if let Some(pid) = &project_id {
         if let Err((code, msg)) = crate::project::check_session_link(&app, pid) {
             return err(code, msg);
+        }
+    }
+
+    // session-worktree FR-5/FR-6/FR-11/FR-12: resolve LAST, only once every other
+    // fallible validation (permission_mode, runtime, WSL availability, the FR-9
+    // spawn probe, the project-link check) has passed. `resolve_worktree` is the
+    // only step that mutates git state (a new worktree + branch); running it last
+    // means a later validation failure never orphans that state (FR-11) — there
+    // is nothing fallible left to run after it.
+    let mut cwd = cwd;
+    let mut session_worktree: Option<SessionWorktree> = None;
+    let mut worktree_distro: Option<String> = None;
+    if let Some(opts) = &worktree {
+        match resolve_worktree(&cwd, opts) {
+            Ok((actual_cwd, sw, distro)) => {
+                cwd = actual_cwd;
+                session_worktree = Some(sw);
+                worktree_distro = distro;
+            }
+            Err((code, msg)) if code == "WORKTREE_BRANCH_IN_USE" => {
+                return err_detail(
+                    &code,
+                    "that branch is already checked out at another path",
+                    serde_json::json!({ "path": msg }),
+                )
+            }
+            Err((code, msg)) => return err(&code, msg),
         }
     }
 
@@ -142,6 +189,8 @@ pub fn session_create(
         runtime,
         allow_git.unwrap_or(false),
         project_id.clone(),
+        session_worktree,
+        worktree_distro,
         None, // claude_session_id
         Vec::new(),
     );
@@ -274,7 +323,7 @@ mod tests {
 
     #[test]
     fn create_input_rejects_missing_cwd() {
-        let err = validate_create_input("/definitely/not/a/real/path/anywhere", None, None, None)
+        let err = validate_create_input("/definitely/not/a/real/path/anywhere", None, None, None, false)
             .unwrap_err();
         assert_eq!(err.0, "INVALID_INPUT");
     }
@@ -284,12 +333,12 @@ mod tests {
         // A real directory every test runner has: the crate root.
         let cwd = env!("CARGO_MANIFEST_DIR");
         let (model_id, permission_mode, runtime) =
-            validate_create_input(cwd, None, None, None).unwrap();
+            validate_create_input(cwd, None, None, None, false).unwrap();
         assert_eq!(model_id, DEFAULT_MODEL);
         assert_eq!(permission_mode, "default");
         assert_eq!(runtime, "native");
 
-        assert!(validate_create_input(cwd, None, Some("bogus".into()), None).is_err());
-        assert!(validate_create_input(cwd, None, None, Some("bogus".into())).is_err());
+        assert!(validate_create_input(cwd, None, Some("bogus".into()), None, false).is_err());
+        assert!(validate_create_input(cwd, None, None, Some("bogus".into()), false).is_err());
     }
 }
