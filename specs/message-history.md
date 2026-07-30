@@ -1,7 +1,7 @@
 ---
 id: message-history
 title: Composer message history (arrow-up recall)
-status: in-review
+status: shipped
 created: 2026-07-30
 depends_on: [conversation-view, slash-menu]
 ---
