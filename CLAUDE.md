@@ -1,6 +1,6 @@
 > Project profile & pipeline facts: **@PIPELINE.md**
 >
-> Pipeline: global core (`~/.claude`) — run `npx thebidouille-agents install --global` if
+> Pipeline: global core (`~/.claude`) — run `npx cohorte install --global` if
 > `/brainstorm`, `/build` etc. are missing.
 
 # Francois

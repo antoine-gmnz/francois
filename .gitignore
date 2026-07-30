@@ -12,3 +12,6 @@ packaging/npm/vendor/
 .DS_Store
 Thumbs.db
 .serena/
+
+# pipeline build/review timing metrics — local only
+.claude/pipeline-metrics.jsonl
