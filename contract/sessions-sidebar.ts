@@ -40,6 +40,12 @@ export interface NewSessionRequest {
   allowGit?: boolean;
   /** omit ⇒ the isDefault account (multi-account FR-18). Unknown id ⇒ ACCOUNT_NOT_FOUND. */
   accountId?: AccountId;
+  /**
+   * Opt the session into multi-agent workflow orchestration. NOT an effort
+   * level — orthogonal to `effort`, which still applies per spawned agent.
+   * Omit for false. See SessionCreateInput.ultracode for the mechanism.
+   */
+  ultracode?: boolean;
 }
 
 // ---------- consumed (owned by session-engine; pinned here for build-ability) ----------

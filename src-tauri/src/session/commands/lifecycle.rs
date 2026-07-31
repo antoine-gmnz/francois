@@ -154,6 +154,7 @@ pub fn session_create(
     permission_mode: Option<String>,
     runtime: Option<String>,
     allow_git: Option<bool>,
+    ultracode: Option<bool>,
     project_id: Option<String>,
     account_id: Option<String>,
     worktree: Option<WorktreeCreateInput>,
@@ -263,6 +264,7 @@ pub fn session_create(
         permission_mode,
         runtime,
         allow_git.unwrap_or(false),
+        ultracode.unwrap_or(false),
         project_id.clone(),
         session_worktree,
         worktree_distro,
@@ -508,7 +510,10 @@ mod tests {
         // FR-3.
         let engine = test_engine_with(test_session());
         assert!(rename_in_engine(&engine, "nope", "x".into()).is_none());
-        assert_eq!(engine.with_session("s1", |s| s.name.clone()), Some("n".into()));
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("n".into())
+        );
     }
 
     #[test]
@@ -527,7 +532,44 @@ mod tests {
                 engine.with_session("s1", |s| s.claude_session_id.clone()),
                 Some(Some("claude-1".into()))
             );
-            assert_eq!(engine.with_session("s1", |s| s.worktree.is_none()), Some(true));
+            assert_eq!(
+                engine.with_session("s1", |s| s.worktree.is_none()),
+                Some(true)
+            );
+        }
+    }
+
+    // ---------- ultracode (contract SessionCreateInput.ultracode → SessionMeta.ultracode) ----------
+
+    #[test]
+    fn session_new_threads_ultracode_verbatim_into_meta() {
+        // Mirrors what session_create does: `ultracode.unwrap_or(false)` flows
+        // straight into Session::new, stored VERBATIM (same discipline as
+        // allow_git) and echoed back on the very next meta() snapshot.
+        for want in [true, false] {
+            let s = Session::new(
+                "s1".into(),
+                "n".into(),
+                "/x".into(),
+                "sonnet".into(),
+                0,
+                200_000,
+                0,
+                0,
+                None,
+                "default".into(),
+                "native".into(),
+                false, // allow_git
+                want,  // ultracode
+                None,
+                None,
+                None,
+                "default".into(),
+                None,
+                Vec::new(),
+            );
+            let json = serde_json::to_value(s.meta()).unwrap();
+            assert_eq!(json.get("ultracode").is_some(), want);
         }
     }
 

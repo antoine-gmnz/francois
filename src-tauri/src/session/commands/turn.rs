@@ -202,6 +202,9 @@ pub fn session_compact(
         &runtime,
         worktree_distro.as_deref(),
         account_config_dir.as_deref(),
+        // /compact is a synthetic, engine-issued command text, not a user turn —
+        // ultracode's keyword injection is scoped to real turns only (turn::begin_turn).
+        false,
     ) {
         // session-questions FR-5: /compact rides the stdin path like any turn, but a
         // compaction can never park on a question — close the pipe right away; the

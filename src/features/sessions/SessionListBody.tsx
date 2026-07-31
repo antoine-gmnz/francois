@@ -162,6 +162,11 @@ function SessionCard({
             {accountBadge.text}
           </span>
         )}
+        {/* ultracode: quiet marker only — not a status, so no status hue and
+            no accent (that means "the live thing", one per view). */}
+        {session.ultracode && (
+          <BadgePill title="ultracode — multi-agent workflow orchestration, uses substantially more tokens">ultra</BadgePill>
+        )}
         <span className="sidebar-card__status" style={{ color: statusColor }}>
           <StatusDot color={statusColor} size={6} pulsing={statusPulses(session.status)} />
           {label}

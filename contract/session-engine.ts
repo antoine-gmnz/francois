@@ -25,6 +25,15 @@ export interface SessionCreateInput {
   runtime?: ClaudeRuntime;
   /** omit to create a normal (non-isolated) session; see session-worktree.ts. */
   worktree?: WorktreeCreateOptions;
+  /**
+   * Opt this session into Claude Code's multi-agent workflow orchestration.
+   * NOT an effort level — it composes with `effort`, it does not replace it.
+   * There is no CLI flag for it: the only supported trigger is the literal
+   * keyword `ultracode` in the prompt, so the core prefixes it onto the WIRE
+   * text of every turn while this is true. The transcript keeps the user's
+   * text verbatim — the keyword is never shown back. Omit for false.
+   */
+  ultracode?: boolean;
 }
 // invoke('session_create', req: SessionCreateInput): Promise<Result<SessionMeta>>
 
