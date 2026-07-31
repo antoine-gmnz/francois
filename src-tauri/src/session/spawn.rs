@@ -131,29 +131,81 @@ pub(crate) fn claude_path_env() -> Option<String> {
     })
 }
 
-/// wsl.exe children need `TERM` forwarded across the distro boundary explicitly:
-/// setting it on this (Windows-side) process's own env does not cross wsl.exe's
-/// boundary; `WSLENV` with the `/u` flag does. Append (':'-joined) to any existing
-/// `WSLENV` list rather than overwrite it — the inherited environment may already
-/// carry one. Shared by shell-terminal's `shell_ensure` (main.rs) and
-/// remote-control's PTY host (remote.rs) — for the wsl runtime, remote-control's
-/// PTY stream is the feature's ONLY url source (spec §7 #7), so a missing `TERM`
-/// there breaks it outright, not just cosmetically.
-pub(crate) fn wsl_term_env() -> String {
-    let wslenv = std::env::var("WSLENV").ok().filter(|v| !v.is_empty());
-    match wslenv {
-        // Already forwarded (any flag variant counts) → leave the list untouched;
-        // otherwise trim a trailing ':' so we never emit an empty entry.
-        Some(existing)
-            if existing
+/// wsl.exe children need environment variables forwarded across the distro
+/// boundary explicitly: setting one on this (Windows-side) process's own env
+/// does not cross wsl.exe's boundary; `WSLENV` does. Append (':'-joined) to any
+/// existing `WSLENV` list rather than overwrite it — the inherited environment
+/// may already carry one — and never add an entry whose variable is already
+/// listed under any flag variant.
+///
+/// multi-account FR-24 generalized this from the single hard-coded `TERM/u` to
+/// a list merge: an account's `CLAUDE_CONFIG_DIR` reaches the distro through
+/// `CLAUDE_CONFIG_DIR/up` (`/u` = pass in, `/p` = translate the Windows path to
+/// `/mnt/…`), merged exactly the same way. The previous single-purpose
+/// `TERM`-only helper is gone — callers now pass `&["TERM/u"]` (or whatever
+/// they need) straight into `wsl_env_list`/`account_env`.
+pub(crate) fn wsl_env_list(entries: &[&str]) -> String {
+    merge_wsl_env(std::env::var("WSLENV").ok().as_deref(), entries)
+}
+
+/// The pure half of `wsl_env_list`: merge `entries` into an existing `WSLENV`
+/// value. Kept separate from the process environment so the merge rules are
+/// unit-testable without mutating a global every other test can see.
+pub(crate) fn merge_wsl_env(existing: Option<&str>, entries: &[&str]) -> String {
+    let mut list: Vec<String> = existing
+        .filter(|v| !v.is_empty())
+        .map(|v| {
+            v.trim_end_matches(':')
                 .split(':')
-                .any(|e| e == "TERM/u" || e.starts_with("TERM/")) =>
-        {
-            existing
+                .filter(|e| !e.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    for entry in entries {
+        // `NAME/flags` — an entry already forwarding this variable (whatever its
+        // flags) wins, so we never emit the same variable twice.
+        let name = entry.split('/').next().unwrap_or(entry);
+        let already = list
+            .iter()
+            .any(|e| e == entry || e.split('/').next().unwrap_or(e) == name);
+        if !already {
+            list.push((*entry).to_string());
         }
-        Some(existing) => format!("{}:TERM/u", existing.trim_end_matches(':')),
-        None => "TERM/u".to_string(),
     }
+    list.join(":")
+}
+
+/// multi-account FR-21/FR-24: the environment EVERY spawn made on behalf of a
+/// session must add — the turn spawn, the /usage-/cost side-probe, the
+/// create-time claude probe, the remote-control PTY and the SHELL tab's PTY.
+///
+/// `config_dir` is the session's account's `configDir`: `None` (the built-in
+/// `default` account) sets NOTHING at all, which is byte-for-byte the
+/// pre-feature behavior. `extra_wslenv` carries entries the call site needs for
+/// its own reasons (the two PTY sites pass `TERM/u`), merged into the same
+/// `WSLENV` list so neither can clobber the other.
+pub(crate) fn account_env(
+    config_dir: Option<&str>,
+    runtime: &str,
+    extra_wslenv: &[&str],
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    if let Some(dir) = config_dir {
+        out.push(("CLAUDE_CONFIG_DIR".to_string(), dir.to_string()));
+    }
+    if runtime == "wsl" {
+        let mut entries: Vec<&str> = extra_wslenv.to_vec();
+        if config_dir.is_some() {
+            // `/u` passes it INTO the distro, `/p` translates the Windows path
+            // to its `/mnt/…` form — the argv never carries the path (FR-24).
+            entries.push("CLAUDE_CONFIG_DIR/up");
+        }
+        if !entries.is_empty() {
+            out.push(("WSLENV".to_string(), wsl_env_list(&entries)));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -208,6 +260,78 @@ mod tests {
                 "-p",
                 "hi"
             ]
+        );
+    }
+
+    // ---- multi-account FR-21/FR-24: the per-account spawn environment ----
+
+    #[test]
+    fn the_default_account_adds_no_environment_at_all() {
+        // FR-21: a null configDir sets NOTHING — byte-for-byte the pre-feature
+        // spawn, for both runtimes.
+        assert!(account_env(None, "native", &[]).is_empty());
+        assert!(account_env(None, "wsl", &[]).is_empty());
+        // …except what the call site itself needs (the PTY sites' TERM/u).
+        // (Only the VARIABLE is asserted, never the flags: this reads the real
+        // process WSLENV, which may already forward TERM under other flags.)
+        let pty = account_env(None, "wsl", &["TERM/u"]);
+        assert_eq!(pty.len(), 1);
+        assert_eq!(pty[0].0, "WSLENV");
+        assert!(pty[0].1.split(':').any(|e| e.starts_with("TERM/")));
+    }
+
+    #[test]
+    fn a_native_spawn_only_sets_claude_config_dir() {
+        let env = account_env(Some("D:\\francois\\accounts\\a1"), "native", &[]);
+        assert_eq!(
+            env,
+            vec![(
+                "CLAUDE_CONFIG_DIR".to_string(),
+                "D:\\francois\\accounts\\a1".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_wsl_spawn_passes_the_config_dir_through_wslenv_not_the_argv() {
+        // FR-24: CLAUDE_CONFIG_DIR keeps its WINDOWS value; `/u` passes it in and
+        // `/p` translates it to /mnt/… inside the distro.
+        let env = account_env(Some("D:\\francois\\accounts\\a1"), "wsl", &["TERM/u"]);
+        let map: std::collections::HashMap<&str, &str> =
+            env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(
+            map["CLAUDE_CONFIG_DIR"], "D:\\francois\\accounts\\a1",
+            "the Windows value is passed verbatim; WSL translates it"
+        );
+        let entries: Vec<&str> = map["WSLENV"].split(':').collect();
+        assert!(entries.contains(&"CLAUDE_CONFIG_DIR/up"));
+        assert!(
+            entries.iter().any(|e| e.starts_with("TERM/")),
+            "the caller's own TERM entry survives the merge: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn wslenv_merging_appends_without_clobbering_or_duplicating() {
+        // The pre-feature TERM/u behavior, unchanged:
+        assert_eq!(merge_wsl_env(None, &["TERM/u"]), "TERM/u");
+        assert_eq!(merge_wsl_env(Some(""), &["TERM/u"]), "TERM/u");
+        assert_eq!(merge_wsl_env(Some("FOO/u"), &["TERM/u"]), "FOO/u:TERM/u");
+        assert_eq!(merge_wsl_env(Some("FOO/u:"), &["TERM/u"]), "FOO/u:TERM/u");
+        // an entry already forwarding the variable wins, whatever its flags
+        assert_eq!(merge_wsl_env(Some("TERM/u"), &["TERM/u"]), "TERM/u");
+        assert_eq!(merge_wsl_env(Some("TERM/w"), &["TERM/u"]), "TERM/w");
+        // FR-24: both entries land, in one list, exactly once each
+        assert_eq!(
+            merge_wsl_env(Some("FOO/u"), &["TERM/u", "CLAUDE_CONFIG_DIR/up"]),
+            "FOO/u:TERM/u:CLAUDE_CONFIG_DIR/up"
+        );
+        assert_eq!(
+            merge_wsl_env(
+                Some("CLAUDE_CONFIG_DIR/up"),
+                &["TERM/u", "CLAUDE_CONFIG_DIR/up"]
+            ),
+            "CLAUDE_CONFIG_DIR/up:TERM/u"
         );
     }
 

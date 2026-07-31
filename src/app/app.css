@@ -48,6 +48,13 @@
   flex: 1.05;
   min-height: 0;
 }
+/* workflow-panel: the fourth right-column pane. Smallest share of the column —
+   a session usually has zero or one runs, where the three panes above it are
+   list-shaped, so the same flex weight would leave it mostly empty. */
+.app-panel-workflows {
+  flex: 0.8;
+  min-height: 0;
+}
 
 /* collapse-right-column FR-15: a collapsed card's wrapper shrinks to its
    natural header height instead of sharing the column's flex ratios — the

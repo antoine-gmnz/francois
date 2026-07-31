@@ -41,6 +41,7 @@ surfaces:
     tools: [Read, Write, Edit, Bash, Grep, Glob, DesignSync, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
     model: inherit
     test_cmd: npm test
+    # Bridled variant — what agents actually RUN, so a green run costs lines, not pages.
     test_quiet_cmd: npm test -- --reporter=dot
     lint_cmd: ""                              # no eslint configured; tsc is the static gate
     lint_quiet_cmd: ""
@@ -55,7 +56,7 @@ surfaces:
     tools: [Read, Write, Edit, Bash, Grep, Glob, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
     model: inherit
     test_cmd: cd src-tauri && cargo test
-    test_quiet_cmd: cd src-tauri && cargo test -q
+    test_quiet_cmd: cd src-tauri && cargo test --quiet
     lint_cmd: ""
     lint_quiet_cmd: ""
     format_cmd: cd src-tauri && cargo fmt
@@ -81,7 +82,7 @@ commands:
   format: ""
   typecheck: npx tsc --noEmit
   test: npm test && cd src-tauri && cargo test
-  test_quiet: npm test -- --reporter=dot && cd src-tauri && cargo test -q
+  test_quiet: npm test -- --reporter=dot && cd src-tauri && cargo test --quiet
   migrate: ""                                 # no DB
   make_migration: ""
 
@@ -125,8 +126,8 @@ gate:
     - "git rebase"
     - "git reset"
   # Phase gate: review/smoke dispatches require a fresh `.claude/preflight.ok` stamp,
-  # written by pipeline/scripts/preflight.sh when typecheck+lint+tests are green —
-  # gate.py "ask"s the dispatch when the stamp is missing, stale, or HEAD moved.
+  # written by pipeline/scripts/preflight.sh when typecheck+tests are green — gate.py
+  # "ask"s the dispatch when the stamp is missing, stale, or HEAD moved.
   preflight:
     enabled: true
     agents: [review, smoke]                   # subagent_types the stamp gates
@@ -180,47 +181,52 @@ gate:
 
 ## Conventions
 
-> Read by the implementer + review agents. `### Shared` + each `### Surface: <key>` stanza below
-> are baked verbatim into that surface's rendered agent file (`.claude/agents/<agent>.md`) at
-> `/update-pipeline` reconcile time — edit conventions here, never in the agent files.
-
-### Shared
-
 - **Logical channels**: specs and contracts name the frontend↔core interface as `francois:<domain>:<verb>` (request/response) and `francois:<domain>:event` (event streams). These names are canonical and transport-agnostic. **Physical binding on Tauri**:
   - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`). Commands never reject for domain failures — every fallible call resolves to `Result`.
   - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in `contract/common.ts`).
   - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and reads as: the Tauri mapping above / "Rust core".
-- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `mcp` · `skills` · `palette` · `cli` · `project` · `remote`
+- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
 - **Errors**: `AppError { code, message, detail? }` with codes from `ErrorCode` in `contract/common.ts`; extend the union in a feature contract only for feature-specific codes.
-- **Code layout**: both surfaces group by **feature**, not by technical kind. New code goes in
-  the folder that owns the feature — never in a new top-level file.
-- **Size**: no source file over ~1000 lines. Past that, split by concern rather than
-  growing the file — and move each test with the code it covers.
 
-### Surface: `frontend` (`src`)
+### Code layout
 
-- `src/features/<feature>/` holds that feature's panel, its pure
-  helpers, and its tests together (`agents`, `commands`, `conversation`, `diff`, `mcp`,
-  `palette`, `permissions`, `questions`, `remote`, `sessions`, `shell`, `skills`,
-  `usage`).
-  `src/lib/` holds only what every feature imports (`api.ts`, `store.ts`); `src/app/`
-  holds the shell. `main.tsx` and `styles.css` stay at the root. No barrel files — import
-  the module directly.
+Both surfaces group by **feature**, not by technical kind. New code goes in the folder
+that owns the feature — never in a new top-level file.
 
-### Surface: `core` (`src-tauri`)
-
-- `src-tauri/src/`: each large domain is a module directory (`session/`,
+- **frontend** (`src/`): `src/features/<feature>/` holds that feature's components, its
+  pure helpers, its tests, **and its stylesheet** together (`agents`, `commands`,
+  `conversation`, `diff`, `mcp`, `overview`, `palette`, `permissions`, `projects`,
+  `questions`, `remote`, `sessions`, `shell`, `skills`, `usage`).
+  - **Styling is per-feature CSS + classNames, never inline `style={{}}`.** Each feature
+    owns `<feature>.css` next to its components, and every component that renders those
+    classes imports it directly (`import './conversation.css'`). Class names are BEM-lite:
+    `block`, `block__element`, `block--modifier`. Only design **tokens** live in
+    `src/styles.css`; `src/app/app.css` styles the shell. Inline `style` is acceptable
+    only for a value computed at runtime (e.g. a token chosen by state).
+  - **`src/ui/`** is the shared UI kit — the primitives every feature composes with
+    (`Button`, `Chip`, `ChipGroup`, `ListRow`, `Modal`, `PanelHeader`, `StatusDot`,
+    `BadgePill`, `EmptyPane`, `HintBar`, …). **Look here before building a component**;
+    add to it only when a primitive is genuinely reusable across features.
+  - **`src/lib/`** holds what every feature imports: `api.ts` (the contract-typed `invoke`
+    wrappers), the zustand stores split per domain (`sessionsStore`, `projectsStore`,
+    `overviewStore`, `remoteStore`, `usageStore`, `layoutStore`, `agentTabStore`, plus
+    `store.ts`), shared helpers, and `src/lib/hooks/` for cross-feature hooks
+    (`useDismiss`, `useTimedError`, `useElapsedClock`, …). Reach for an existing hook
+    before writing a new one.
+  - `src/app/` holds the shell; `main.tsx` and `styles.css` stay at the root. No barrel
+    files anywhere — import the module directly.
+- **core** (`src-tauri/src/`): each large domain is a module directory (`session/`,
   `diff/`, `permissions/`). Its `mod.rs` owns the **shared data model** — the types whose
   fields the whole domain touches — and declares the child modules; each child owns one
   concern plus its own `#[cfg(test)] mod tests`. Keeping the model in `mod.rs` is
   deliberate: Rust lets a child read an ancestor's private fields, so children need no
   widened visibility. Shared test fixtures live in a `#[cfg(test)] mod testutil`.
-
-### Non-surface code (not part of the contract; no implementer agent owns these trees)
-
+  Cross-cutting helpers that belong to no single domain are small top-level modules
+  (`fs_util.rs`, `process_util.rs`, `wsl.rs`, `window.rs`, `diagnostics.rs`) — check
+  these before adding a private copy inside a domain.
 - **packaging** (`packaging/npm/`): the `francois` npm package — **not a surface**, so no
   agent owns it and it is not part of the contract. Plain CommonJS with **zero
   dependencies**, because it runs inside `npm install` before anything else exists;
@@ -234,6 +240,8 @@ gate:
   with no build and no install. Split pure-from-I/O the same way everywhere:
   `scripts/release/version.mjs` decides (and is unit-tested), `bump.mjs` touches git
   and the filesystem (and takes `--dry-run`).
+- **Size**: no source file over ~1000 lines. Past that, split by concern rather than
+  growing the file — and move each test with the code it covers.
 
 ## Testing — strict TDD (red → green → refactor)
 
@@ -265,3 +273,4 @@ gate:
 | `overview` | main tab OVERVIEW: cross-project dashboard (fleet totals, needs-attention, per-project rollup, activity feed); auto-selected on "All projects" | projects, fleet-board, session-engine, sessions-sidebar, app-shell, diff-view, agents-panel, command-palette |
 | `remote-control` | HOST Claude Code's native Remote Control per session (interactive `claude --remote-control` in a core-owned PTY) so the same thread continues on phone/claude.ai; URL + copy (QR deferred) | session-engine, durable-sessions, conversation-view, app-shell |
 | `agent-tab` | dynamic main tabs after SHELL: click a pane [3] card to read that subagent's own conversation (per-agent block transcript, `francois:agents:transcript` + `agent.block`) | async-agents, agents-panel, conversation-view, app-shell |
+| `workflow-panel` | pane [6]: `Workflow` tool runs read off the session stream — name/description/phases from the script's `meta`, live elapsed, ack + completion notice (`francois:workflows:list` + `workflow.update`) | session-engine, agents-panel, async-agents, app-shell |

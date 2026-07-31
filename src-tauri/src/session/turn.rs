@@ -76,6 +76,7 @@ pub(crate) fn spawn_claude(
     permission_mode: &str,
     runtime: &str,
     worktree_distro: Option<&str>,
+    account_config_dir: Option<&str>,
 ) -> std::io::Result<Child> {
     let args = turn_args(model_id, resume, effort, permission_mode);
     let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
@@ -86,6 +87,10 @@ pub(crate) fn spawn_claude(
     }
     if let Some(path) = claude_path_env() {
         cmd.env("PATH", path);
+    }
+    // multi-account FR-21/FR-24: this turn runs under its session's account.
+    for (k, v) in account_env(account_config_dir, runtime, &[]) {
+        cmd.env(k, v);
     }
     no_window(&mut cmd);
     // session-questions FR-1: stdin is piped — the turn text goes down it as one
@@ -230,29 +235,56 @@ pub(crate) fn begin_turn(
     mode: TurnMode,
 ) {
     let engine = app.state::<Engine>();
-    let Some((cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro)) =
-        engine.with_session_mut(session_id, |s| {
-            // ResumeRetry forces resume off regardless of the stored id, so a
-            // still-good id is never dropped preemptively — a fresh init
-            // overwrites it only on success.
-            let resume = if mode == TurnMode::ResumeRetry {
-                None
-            } else {
-                s.claude_session_id.clone()
-            };
-            (
-                s.cwd.clone(),
-                s.model_id.clone(),
-                resume,
-                s.effort.clone(),
-                s.permission_mode.clone(),
-                s.runtime.clone(),
-                s.worktree_distro.clone(),
-            )
-        })
+    let Some((
+        cwd,
+        model_id,
+        resume,
+        effort,
+        permission_mode,
+        runtime,
+        worktree_distro,
+        account_id,
+    )) = engine.with_session_mut(session_id, |s| {
+        // ResumeRetry forces resume off regardless of the stored id, so a
+        // still-good id is never dropped preemptively — a fresh init
+        // overwrites it only on success.
+        let resume = if mode == TurnMode::ResumeRetry {
+            None
+        } else {
+            s.claude_session_id.clone()
+        };
+        (
+            s.cwd.clone(),
+            s.model_id.clone(),
+            resume,
+            s.effort.clone(),
+            s.permission_mode.clone(),
+            s.runtime.clone(),
+            s.worktree_distro.clone(),
+            s.account_id.clone(),
+        )
+    })
     else {
         return;
     };
+
+    // multi-account FR-22: an account with a config dir whose `.claude.json` is
+    // gone (deleted behind Francois' back) has no credentials — spawning would
+    // hang on an interactive login prompt no one can answer. Fail the turn with
+    // ACCOUNT_NOT_AUTHENTICATED and flag the row for `Re-login` instead.
+    let account_config_dir = crate::account::config_dir_of(app, &account_id);
+    if let Some(dir) = account_config_dir.as_deref() {
+        if !crate::account::identity_file_exists(dir) {
+            crate::account::mark_auth_failed(app, &account_id);
+            fail_session(
+                app,
+                session_id,
+                "ACCOUNT_NOT_AUTHENTICATED",
+                "this session's account is not signed in — use Re-login in the Accounts modal",
+            );
+            return;
+        }
+    }
 
     let resume_used = resume.is_some();
 
@@ -286,6 +318,7 @@ pub(crate) fn begin_turn(
         &permission_mode,
         &runtime,
         worktree_distro.as_deref(),
+        account_config_dir.as_deref(),
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -350,28 +383,36 @@ pub(crate) fn finish_turn(
     // at turn end — 'error' when the turn errored (session-engine FR-40), else
     // 'done' — with endedAt and an `ended with the turn` notice step. This is the
     // backstop that keeps the elapsed clock correct when FR-13's notice never came.
-    let result: Option<(Option<(String, String)>, Vec<AgentEmission>)> =
-        engine.with_session_mut(session_id, |s| {
-            s.current = None;
-            let agent_ems = finalize_agents(s, errored, now_ms());
-            let next = if errored {
-                s.status = "error".into();
-                s.error_message = error_msg.clone();
-                s.queue.clear();
-                None
-            } else if let Some(entry) = s.queue.pop_front() {
-                Some(entry)
-            } else {
-                s.status = "idle".into();
-                None
-            };
-            (next, agent_ems)
-        });
-    let Some((next, agent_ems)) = result else {
+    // workflow-panel FR-9: the same backstop for `Workflow` runs — no run of a
+    // finished turn is left `running` with a ticking clock.
+    let result: Option<(
+        Option<(String, String)>,
+        Vec<AgentEmission>,
+        Vec<WorkflowRun>,
+    )> = engine.with_session_mut(session_id, |s| {
+        s.current = None;
+        let at = now_ms();
+        let agent_ems = finalize_agents(s, errored, at);
+        let workflow_runs = finalize_workflows(s, errored, at);
+        let next = if errored {
+            s.status = "error".into();
+            s.error_message = error_msg.clone();
+            s.queue.clear();
+            None
+        } else if let Some(entry) = s.queue.pop_front() {
+            Some(entry)
+        } else {
+            s.status = "idle".into();
+            None
+        };
+        (next, agent_ems, workflow_runs)
+    });
+    let Some((next, agent_ems, workflow_runs)) = result else {
         return;
     };
     // Emitted BEFORE the turn's terminal session.status (FR-16), with no lock held.
     emit_agent_emissions(app, session_id, agent_ems);
+    emit_workflow_updates(app, workflow_runs);
 
     // Persist updated usage/activity/thread-id at turn boundary (durable-sessions FR-3).
     persist(app, &engine);
@@ -379,12 +420,24 @@ pub(crate) fn finish_turn(
     // usage-bar FR-13: this session just left `running` (idle or error), so plan
     // usage moved — schedule the debounced app-scoped probe. Called with NO engine
     // lock held; usage state is a leaf that never reaches back into the engine.
+    // multi-account FR-29: the post-turn probe targets THIS session's account,
+    // and only it.
     if errored || next.is_none() {
-        crate::usage::note_turn_ended(app);
+        if let Some(account_id) = engine.account_of(session_id) {
+            crate::usage::note_turn_ended(app, &account_id);
+        }
     }
 
     if errored {
         let msg = error_msg.unwrap_or_else(|| "session error".into());
+        // multi-account FR-23: a turn that died on a credential failure flags its
+        // account, so the Accounts modal offers `Re-login` on that row. Done with
+        // no engine lock held — account state is a leaf (multi-account §6).
+        if crate::account::is_credential_failure(&msg) {
+            if let Some(account_id) = engine.account_of(session_id) {
+                crate::account::mark_auth_failed(app, &account_id);
+            }
+        }
         // (The agent.update for every agent just errored was emitted above by the
         // FR-16 finalization — one update per agent, carrying its notice step.)
         emit(
@@ -425,24 +478,38 @@ pub(crate) fn finish_turn(
 /// error is a legitimate `endedAt` setter (FR-7), so a card never keeps
 /// ticking against a dead session. Returns the emissions the caller must send
 /// BEFORE the terminal `session.status` / `session.error` (FR-16 ordering).
-pub(crate) fn apply_fail_session(s: &mut Session, msg: &str, at: u64) -> Vec<AgentEmission> {
+/// workflow-panel FR-9 rides along: a dead session closes its `Workflow` runs
+/// for the same reason it closes its agents.
+pub(crate) fn apply_fail_session(
+    s: &mut Session,
+    msg: &str,
+    at: u64,
+) -> (Vec<AgentEmission>, Vec<WorkflowRun>) {
     s.status = "error".into();
     s.error_message = Some(msg.to_string());
     s.current = None;
     s.queue.clear();
-    finalize_agents(s, true, at)
+    (
+        finalize_agents(s, true, at),
+        finalize_workflows(s, true, at),
+    )
 }
 
 pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &str) {
-    let agent_ems = app
-        .state::<Engine>()
+    let engine = app.state::<Engine>();
+    let (agent_ems, workflow_runs) = engine
         .with_session_mut(session_id, |s| apply_fail_session(s, msg, now_ms()))
         .unwrap_or_default();
-    crate::usage::note_turn_ended(app); // usage-bar FR-13: running → error
+    // usage-bar FR-13: running → error. multi-account FR-29: that session's
+    // account only.
+    if let Some(account_id) = engine.account_of(session_id) {
+        crate::usage::note_turn_ended(app, &account_id);
+    }
 
     // async-agents FR-16 ordering rule: agent finalization is emitted BEFORE the
     // turn's terminal session.error / session.status (mirrors finish_turn).
     emit_agent_emissions(app, session_id, agent_ems);
+    emit_workflow_updates(app, workflow_runs);
     emit(
         app,
         SessionEvent::Error {
@@ -597,7 +664,13 @@ mod tests {
 
         let mut s = test_session();
         mint_agent(&mut s, "a1", "explorer", "toolu_1", true);
-        let ems = apply_fail_session(&mut s, "spawn crashed", 9_000);
+        mint_workflow(&mut s, "s1", "w1", "toolu_2", 1_000);
+        let (ems, runs) = apply_fail_session(&mut s, "spawn crashed", 9_000);
+
+        // workflow-panel FR-9: the session's runs close for the same reason.
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "error");
+        assert_eq!(runs[0].ended_at, Some(9_000));
 
         assert_eq!(s.status, "error");
         assert_eq!(s.error_message.as_deref(), Some("spawn crashed"));

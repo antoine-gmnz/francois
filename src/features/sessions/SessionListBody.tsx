@@ -5,11 +5,14 @@ import { STATUS_COLOR, STATUS_LABEL, formatRelativeTime, statusPulses, type Sess
 import { formatContextTokens } from '../../../contract/conversation-view';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { abbreviate } from '../../lib/path';
+import { useStore } from '../../lib/store';
 import { BadgePill } from '../../ui/BadgePill';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { StatusDot } from '../../ui/StatusDot';
+import { sessionAccountBadge } from '../accounts/accounts';
 import { filteredEmptyLabel } from '../projects/projects';
 import { truncateBranchLeft } from './worktree';
+import '../accounts/accounts.css';
 import './sidebar.css';
 
 export interface SessionListBodyProps {
@@ -127,6 +130,10 @@ function SessionCard({
   const label = STATUS_LABEL[session.status] ?? session.status;
   const fileCount = derived?.fileCount ?? null;
   const agents = derived?.runningAgentCount ?? 0;
+  // multi-account FR-32: nothing at all on the isDefault account, so the badge
+  // always reads as "not the usual account".
+  const accounts = useStore((s) => s.accounts);
+  const accountBadge = sessionAccountBadge(accounts, session);
 
   const classNames = ['sidebar-card'];
   if (selected) classNames.push('sidebar-card--selected');
@@ -150,6 +157,11 @@ function SessionCard({
         <span className={selected ? 'sidebar-card__name sidebar-card__name--selected truncate' : 'sidebar-card__name truncate'}>
           {session.name}
         </span>
+        {accountBadge && (
+          <span className="acc-badge" title={accountBadge.title}>
+            {accountBadge.text}
+          </span>
+        )}
         <span className="sidebar-card__status" style={{ color: statusColor }}>
           <StatusDot color={statusColor} size={6} pulsing={statusPulses(session.status)} />
           {label}

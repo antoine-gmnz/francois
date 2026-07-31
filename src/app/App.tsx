@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import AccountsModal from '../features/accounts/AccountsModal';
+import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab } from '../features/agents/agent-tab';
 import McpPanel from '../features/mcp/McpPanel';
@@ -11,6 +13,7 @@ import Sidebar from '../features/sessions/Sidebar';
 import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
 import UsageBar from '../features/usage/UsageBar';
+import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { useStore } from '../lib/store';
 import './app.css';
@@ -49,6 +52,9 @@ export default function App() {
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
   const projectsOpen = useStore((s) => s.projectsOpen);
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
+  const accountsOpen = useStore((s) => s.accountsOpen);
+  const setAccountsOpen = useStore((s) => s.setAccountsOpen);
+  const setAccounts = useStore((s) => s.setAccounts);
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
   // agent-tab FR-9: the dynamic per-subagent tabs, after SHELL in the strip.
@@ -62,6 +68,12 @@ export default function App() {
   useEffect(() => {
     initShellEvents();
   }, []);
+
+  // multi-account §6: ONE app-wide registry feed — account_list at boot, then
+  // francois://account/event. Everything that shows an account (the ACCOUNT
+  // field, the sidebar badge, the status-bar chip, the Accounts modal) reads
+  // the store this writes, so no surface ever fetches the registry itself.
+  useEffect(() => startAccountFeed(setAccounts), [setAccounts]);
 
   const { home, appVersion } = useAppIdentity(active?.name);
 
@@ -105,6 +117,7 @@ export default function App() {
     newAgentOpen,
     permissionsOpen,
     projectsOpen,
+    accountsOpen,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,
@@ -188,10 +201,11 @@ export default function App() {
           <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} shell={shell} />
         </section>
 
-        {/* right column: agents [3] + mcp [4] + skills [5] — collapse-right-column
-            FR-15: a collapsed card's wrapper shrinks to its natural header height
-            (flex: 0 0 auto); expanded cards keep their 1.3/0.95/1.05 ratios and
-            share the freed space. */}
+        {/* right column: agents [3] + mcp [4] + skills [5] + workflows [6] —
+            collapse-right-column FR-15: a collapsed card's wrapper shrinks to its
+            natural header height (flex: 0 0 auto); expanded cards keep their
+            1.3/0.95/1.05 ratios and share the freed space. Workflows isn't
+            collapsible (out of scope for collapse-right-column). */}
         <div className="app-col-right" style={{ display: showRightPane ? undefined : 'none' }}>
           <div className={collapsedPanes.agents ? 'app-panel-agents app-panel-agents--collapsed' : 'app-panel-agents'}>
             <AgentsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} collapsed={collapsedPanes.agents} />
@@ -201,6 +215,9 @@ export default function App() {
           </div>
           <div className={collapsedPanes.skills ? 'app-panel-skills app-panel-skills--collapsed' : 'app-panel-skills'}>
             <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} collapsed={collapsedPanes.skills} />
+          </div>
+          <div className="app-panel-workflows">
+            <WorkflowsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
         </div>
       </div>
@@ -236,6 +253,10 @@ export default function App() {
           needs NO session — a project is configured whether or not anything is
           running — so it is gated on `projectsOpen` alone. */}
       {projectsOpen && <ProjectsModal home={home} onClose={() => setProjectsOpen(false)} />}
+
+      {/* multi-account FR-34: the Accounts modal. Like Projects it needs NO
+          session — an account is registered whether or not anything is running. */}
+      {accountsOpen && <AccountsModal onClose={() => setAccountsOpen(false)} />}
 
       <PaletteRoot />
     </div>

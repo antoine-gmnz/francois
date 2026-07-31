@@ -20,10 +20,15 @@ import {
   meterChipViews,
   parseResetAt,
   requestUsageRefresh,
+  resetUsageFeed,
+  seedAccountUsage,
   sessionResetLabel,
   startUsageFeed,
   usageBarView,
 } from './usage';
+
+/** multi-account FR-27: every snapshot below belongs to one account. */
+const ACCOUNT = 'default';
 
 const EMPTY: UsageSnapshot = { status: 'empty', meters: [], fetchedAt: null, error: null };
 
@@ -46,34 +51,35 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   invokeMock.mockReset();
   listenMock.mockReset();
-  useStore.setState({ usage: EMPTY });
+  resetUsageFeed();
+  useStore.setState({ usageByAccount: {} });
 });
 
 // ---------------------------------------------------------------- store slice
 
-describe('usage store slice (§6)', () => {
-  it('starts empty — the contract-shaped snapshot, nothing derived', () => {
-    expect(useStore.getState().usage).toEqual(EMPTY);
+describe('usage store slice (§6, keyed by account — multi-account FR-27)', () => {
+  it('starts with no snapshot at all — the bar falls back to the empty shape', () => {
+    expect(useStore.getState().usageByAccount).toEqual({});
   });
 
-  it('setUsage replaces the whole snapshot and stores no derived state', () => {
+  it('setAccountUsage replaces the whole snapshot and stores no derived state', () => {
     const snap = ready([meter('Current session', 42)]);
-    useStore.getState().setUsage(snap);
-    const stored = useStore.getState().usage;
+    useStore.getState().setAccountUsage(ACCOUNT, snap);
+    const stored = useStore.getState().usageByAccount[ACCOUNT];
     expect(stored).toEqual(snap);
     expect(Object.keys(stored).sort()).toEqual(['error', 'fetchedAt', 'meters', 'status']);
   });
 
   it('stores an error snapshot verbatim, keeping the stale meters the core retained (FR-18)', () => {
     const stale = [meter('Current week (all models)', 91)];
-    useStore.getState().setUsage(ready(stale));
-    useStore.getState().setUsage({
+    useStore.getState().setAccountUsage(ACCOUNT, ready(stale));
+    useStore.getState().setAccountUsage(ACCOUNT, {
       status: 'error',
       meters: stale,
       fetchedAt: 1_000_000,
       error: { code: 'USAGE_UNAVAILABLE', message: 'Timed out fetching usage.' },
     });
-    const stored = useStore.getState().usage;
+    const stored = useStore.getState().usageByAccount[ACCOUNT];
     expect(stored.status).toBe('error');
     expect(stored.meters).toEqual(stale);
     expect(stored.fetchedAt).toBe(1_000_000);
@@ -97,6 +103,18 @@ describe('api wrappers (§5.1 physical binding)', () => {
     expect(invokeMock).toHaveBeenCalledWith('app_refresh_usage', undefined);
   });
 
+  // multi-account FR-27: an accountId travels as a payload; omitting it must
+  // keep sending NO payload, which is what the core reads as "the isDefault
+  // account" — a `{ accountId: undefined }` object is a different thing.
+  it('both app usage commands carry an explicit accountId when one is given', async () => {
+    invokeMock.mockResolvedValue({ ok: true, data: EMPTY });
+    await appGetUsage('acc-1');
+    expect(invokeMock).toHaveBeenCalledWith('app_get_usage', { accountId: 'acc-1' });
+    invokeMock.mockResolvedValue({ ok: true, data: { started: true } });
+    await appRefreshUsage('acc-1');
+    expect(invokeMock).toHaveBeenCalledWith('app_refresh_usage', { accountId: 'acc-1' });
+  });
+
   it('appGetUsage surfaces an ok:false Result rather than throwing', async () => {
     invokeMock.mockResolvedValue({ ok: false, error: { code: 'INTERNAL', message: 'poisoned' } });
     const res = await appGetUsage();
@@ -115,8 +133,8 @@ describe('api wrappers (§5.1 physical binding)', () => {
     expect(listenMock).toHaveBeenCalledWith('francois://app/event', expect.any(Function));
 
     const snap = ready([meter('Current session', 7)]);
-    handler?.({ payload: { type: 'usage.state', snapshot: snap } });
-    expect(seen).toEqual([{ type: 'usage.state', snapshot: snap }]);
+    handler?.({ payload: { type: 'usage.state', accountId: 'default', snapshot: snap } });
+    expect(seen).toEqual([{ type: 'usage.state', accountId: 'default', snapshot: snap }]);
 
     off();
     expect(unlisten).toHaveBeenCalledTimes(1);
@@ -125,7 +143,7 @@ describe('api wrappers (§5.1 physical binding)', () => {
 
 // ------------------------------------------------------- feed / event handler
 
-describe('startUsageFeed (FR-21/22, §7 #12/#13)', () => {
+describe('startUsageFeed + seedAccountUsage (FR-21/22, §7 #12/#13, multi-account FR-27)', () => {
   let handler: ((e: { payload: AppEvent }) => void) | undefined;
   let unlisten: ReturnType<typeof vi.fn>;
   let listenResolve: ((u: () => void) => void) | undefined;
@@ -145,41 +163,50 @@ describe('startUsageFeed (FR-21/22, §7 #12/#13)', () => {
 
   const settleListen = () => listenResolve?.(unlisten);
 
-  it('seeds from the cached snapshot exactly once and subscribes (FR-21)', async () => {
+  it('seeds ONE account from its cached snapshot, addressed by id (FR-21/FR-27)', async () => {
     const cached = ready([meter('Current session', 42)]);
     invokeMock.mockResolvedValue({ ok: true, data: cached });
-    const applied: UsageSnapshot[] = [];
+    const applied: [string, UsageSnapshot][] = [];
 
-    const stop = startUsageFeed((s) => applied.push(s));
-    settleListen();
+    const stop = seedAccountUsage('acc-1', (id, s) => applied.push([id, s]));
     await tick();
 
     expect(invokeMock).toHaveBeenCalledTimes(1);
-    expect(invokeMock).toHaveBeenCalledWith('app_get_usage', undefined);
-    expect(listenMock).toHaveBeenCalledWith('francois://app/event', expect.any(Function));
-    expect(applied).toEqual([cached]);
+    expect(invokeMock).toHaveBeenCalledWith('app_get_usage', { accountId: 'acc-1' });
+    expect(applied).toEqual([['acc-1', cached]]);
     stop();
   });
 
-  it('applies the snapshot from every usage.state event', async () => {
-    const applied: UsageSnapshot[] = [];
-    const stop = startUsageFeed((s) => applied.push(s));
+  it('subscribes without probing — the seed is the only read (FR-22)', async () => {
+    const stop = startUsageFeed(() => {});
     settleListen();
     await tick();
-    applied.length = 0;
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(listenMock).toHaveBeenCalledWith('francois://app/event', expect.any(Function));
+    stop();
+  });
+
+  it('routes every usage.state event by the account it describes (FR-27)', async () => {
+    const applied: [string, UsageSnapshot][] = [];
+    const stop = startUsageFeed((id, s) => applied.push([id, s]));
+    settleListen();
+    await tick();
 
     const loading: UsageSnapshot = { status: 'loading', meters: [], fetchedAt: null, error: null };
     const done = ready([meter('Current session', 42)]);
-    handler?.({ payload: { type: 'usage.state', snapshot: loading } });
-    handler?.({ payload: { type: 'usage.state', snapshot: done } });
+    handler?.({ payload: { type: 'usage.state', accountId: 'default', snapshot: loading } });
+    handler?.({ payload: { type: 'usage.state', accountId: 'acc-1', snapshot: done } });
 
-    expect(applied).toEqual([loading, done]);
+    expect(applied).toEqual([
+      ['default', loading],
+      ['acc-1', done],
+    ]);
     stop();
   });
 
   it('ignores an app event that is not usage.state (the union is extensible)', async () => {
     const applied: UsageSnapshot[] = [];
-    const stop = startUsageFeed((s) => applied.push(s));
+    const stop = startUsageFeed((_id, s) => applied.push(s));
     settleListen();
     await tick();
     applied.length = 0;
@@ -189,59 +216,90 @@ describe('startUsageFeed (FR-21/22, §7 #12/#13)', () => {
     stop();
   });
 
-  it('does not let a late seed clobber a newer event', async () => {
+  it('does not let a late seed clobber a newer event for the SAME account', async () => {
     let resolveGet: ((r: unknown) => void) | undefined;
     invokeMock.mockImplementation(() => new Promise((r) => (resolveGet = r)));
-    const applied: UsageSnapshot[] = [];
-    const stop = startUsageFeed((s) => applied.push(s));
+    const applied: [string, UsageSnapshot][] = [];
+    const apply = (id: string, s: UsageSnapshot) => applied.push([id, s]);
+    const stopFeed = startUsageFeed(apply);
+    const stopSeed = seedAccountUsage('acc-1', apply);
     settleListen();
     await tick();
 
     const fresh = ready([meter('Current session', 42)]);
-    handler?.({ payload: { type: 'usage.state', snapshot: fresh } });
+    handler?.({ payload: { type: 'usage.state', accountId: 'acc-1', snapshot: fresh } });
     resolveGet?.({ ok: true, data: EMPTY }); // stale cache read lands after the event
     await tick();
 
-    expect(applied).toEqual([fresh]);
-    stop();
+    expect(applied).toEqual([['acc-1', fresh]]);
+    stopSeed();
+    stopFeed();
+  });
+
+  it('still seeds an account the live channel has never spoken for', async () => {
+    const applied: [string, UsageSnapshot][] = [];
+    const apply = (id: string, s: UsageSnapshot) => applied.push([id, s]);
+    const stopFeed = startUsageFeed(apply);
+    settleListen();
+    await tick();
+
+    const fresh = ready([meter('Current session', 42)]);
+    handler?.({ payload: { type: 'usage.state', accountId: 'acc-1', snapshot: fresh } });
+    applied.length = 0;
+
+    invokeMock.mockResolvedValue({ ok: true, data: EMPTY });
+    const stopSeed = seedAccountUsage('acc-2', apply);
+    await tick();
+    expect(applied).toEqual([['acc-2', EMPTY]]);
+    stopSeed();
+    stopFeed();
   });
 
   it('tears the subscription down on stop and applies nothing afterwards (§7 #12)', async () => {
     const applied: UsageSnapshot[] = [];
-    const stop = startUsageFeed((s) => applied.push(s));
+    const stop = startUsageFeed((_id, s) => applied.push(s));
     settleListen();
     await tick();
     applied.length = 0;
 
     stop();
     expect(unlisten).toHaveBeenCalledTimes(1);
-    handler?.({ payload: { type: 'usage.state', snapshot: ready([meter('Current session', 42)]) } });
+    handler?.({ payload: { type: 'usage.state', accountId: 'default', snapshot: ready([meter('Current session', 42)]) } });
     expect(applied).toEqual([]);
   });
 
   it('unsubscribes even when stop() runs before listen() resolves', async () => {
     const applied: UsageSnapshot[] = [];
-    const stop = startUsageFeed((s) => applied.push(s));
+    const stop = startUsageFeed((_id, s) => applied.push(s));
     stop();
     settleListen();
     await tick();
 
     expect(unlisten).toHaveBeenCalledTimes(1);
-    expect(applied).toEqual([]); // the seed must not land on an unmounted bar either
+    expect(applied).toEqual([]);
+  });
+
+  it('drops a seed whose account switched away before it resolved (§7 #12)', async () => {
+    let resolveGet: ((r: unknown) => void) | undefined;
+    invokeMock.mockImplementation(() => new Promise((r) => (resolveGet = r)));
+    const applied: UsageSnapshot[] = [];
+    const stop = seedAccountUsage('acc-1', (_id, s) => applied.push(s));
+    stop();
+    resolveGet?.({ ok: true, data: EMPTY });
+    await tick();
+    expect(applied).toEqual([]);
   });
 
   it('survives an ok:false seed and a rejected seed without throwing', async () => {
     invokeMock.mockResolvedValue({ ok: false, error: { code: 'INTERNAL', message: 'poisoned' } });
     const applied: UsageSnapshot[] = [];
-    const stop1 = startUsageFeed((s) => applied.push(s));
-    settleListen();
+    const stop1 = seedAccountUsage('acc-1', (_id, s) => applied.push(s));
     await tick();
     expect(applied).toEqual([]);
     stop1();
 
     invokeMock.mockRejectedValue(new Error('ipc down'));
-    const stop2 = startUsageFeed((s) => applied.push(s));
-    settleListen();
+    const stop2 = seedAccountUsage('acc-1', (_id, s) => applied.push(s));
     await tick();
     expect(applied).toEqual([]);
     stop2();
@@ -263,7 +321,14 @@ describe('requestUsageRefresh (FR-27/28)', () => {
     invokeMock.mockResolvedValue({ ok: true, data: { started: false } });
     requestUsageRefresh();
     await tick();
-    expect(useStore.getState().usage).toEqual(EMPTY); // no local state change from the ack
+    expect(useStore.getState().usageByAccount).toEqual({}); // no local state change from the ack
+  });
+
+  it('refreshes ONE account when the bar names one (multi-account FR-27/FR-30)', async () => {
+    invokeMock.mockResolvedValue({ ok: true, data: { started: true } });
+    requestUsageRefresh('acc-1');
+    await tick();
+    expect(invokeMock).toHaveBeenCalledWith('app_refresh_usage', { accountId: 'acc-1' });
   });
 
   it('swallows an ok:false ack and a rejected call', async () => {
@@ -412,6 +477,16 @@ describe('reset countdown (FR-30)', () => {
       expect(parseResetAt('Jul 22', now)).toBe(at(2026, 6, 22, 0, 0));
     });
 
+    it('parses whole-hour times with no minutes — the CLI drops ":00"', () => {
+      // Real probed output: `resets Jul 31, 2am (Europe/Paris)`. Requiring H:MM
+      // dropped the clock entirely and counted down to midnight, i.e. `resets now`.
+      const now = at(2026, 6, 31, 0, 30);
+      expect(parseResetAt('Jul 31, 2am (Europe/Paris)', now)).toBe(at(2026, 6, 31, 2, 0));
+      expect(parseResetAt('Aug 4, 12am (Europe/Paris)', now)).toBe(at(2026, 7, 4, 0, 0));
+      expect(parseResetAt('Jul 31, 5pm', now)).toBe(at(2026, 6, 31, 17, 0));
+      expect(parseResetAt('Jul 31, 12pm', now)).toBe(at(2026, 6, 31, 12, 0));
+    });
+
     it('handles the 12am/12pm boundary', () => {
       const now = at(2026, 6, 22, 13, 0);
       expect(parseResetAt('Jul 23, 12:00am', now)).toBe(at(2026, 6, 23, 0, 0));
@@ -432,6 +507,10 @@ describe('reset countdown (FR-30)', () => {
       expect(parseResetAt('Smarch 4, 1:00pm', now)).toBeNull();
       expect(parseResetAt('Feb 30, 1:00pm', now)).toBeNull(); // must not roll into Mar 2
       expect(parseResetAt('Jul 22, 25:00', now)).toBeNull();
+      expect(parseResetAt('Jul 22, 13pm', now)).toBeNull();
+      // A clock half we cannot read must NOT degrade to midnight — that reads as
+      // an authoritative (and usually wrong) `resets now`.
+      expect(parseResetAt('Jul 22, whenever', now)).toBeNull();
     });
   });
 
@@ -465,6 +544,14 @@ describe('reset countdown (FR-30)', () => {
       expect(sessionResetLabel([meter('Current session', 14, 'soon')], now)).toBe('resets soon');
     });
 
+    it('counts down a whole-hour reset instead of claiming "resets now"', () => {
+      // The bug this branch fixes: `2am` an hour and a half out rendered as `resets now`.
+      const beforeReset = at(2026, 6, 31, 0, 30);
+      expect(sessionResetLabel([meter('Current session', 79, 'Jul 31, 2am (Europe/Paris)')], beforeReset)).toBe(
+        'resets in 1h 30m',
+      );
+    });
+
     it('says "resets now" rather than "resets in now" at the boundary', () => {
       expect(sessionResetLabel([meter('Current session', 99, 'Jul 22, 1:00pm')], now)).toBe('resets now');
     });
@@ -489,6 +576,17 @@ describe('reset countdown (FR-30)', () => {
       expect(v.reset).toBeNull();
       expect(v.trailing).toBe('updated 10m ago');
       expect(v.resetTitle).toBe('click to refresh');
+    });
+
+    // multi-account FR-30: the bar silently follows the selected session, so
+    // the tooltip must say WHOSE meters these are.
+    it("names the account in the tooltip when one is given", () => {
+      const v = usageBarView(ready([meter('Current session', 14, 'Jul 22, 5:29pm')], now - 120_000), now, 'perso');
+      expect(v.resetTitle).toBe('Current session — resets Jul 22, 5:29pm · perso · click to refresh');
+    });
+
+    it('names the account even with no meters at all', () => {
+      expect(usageBarView(EMPTY, now, 'perso').resetTitle).toBe('perso · click to refresh');
     });
 
     it('never renders an empty trailing slot — it is the click target', () => {

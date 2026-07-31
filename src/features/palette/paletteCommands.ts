@@ -6,10 +6,11 @@
 import type { Result } from '../../../contract/common';
 import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './palette';
 import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
-import { agentsKill, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
+import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
 import { useStore, type RightPane } from '../../lib/store';
 import { requestUsageRefresh } from '../usage/usage';
 import { requestWorktreePreset } from '../sessions/worktree';
+import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
 
@@ -30,6 +31,16 @@ function delegate(p: Promise<Result<unknown>>): void {
   p.then((res) => {
     if (!res.ok) showToast(res.error.message, 'error');
   }).catch(() => showToast('Command failed unexpectedly', 'error'));
+}
+
+/**
+ * session-attachments FR-18: which project "Clear project attachments" sweeps —
+ * the selected one, else the active session's. ClearScope has no "everything"
+ * member, so a null disables the command.
+ */
+function clearAttachmentsProjectId(activeSessionId: string | null): string | null {
+  const st = useStore.getState();
+  return resolveClearProjectId(st.activeProjectId, activeSessionId, st.sessions);
 }
 
 let registered = false;
@@ -271,6 +282,34 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // 13c/13d — Accounts (multi-account FR-33): the mouse-free route to the same
+  // modal the status-bar chip opens, plus a direct "Add account" that lands
+  // straight in the login view via the one-shot accountsAutoAdd flag. Neither
+  // needs a session — an account is registered whether or not anything runs.
+  registerPaletteCommand({
+    id: 'manage-accounts',
+    glyph: '◈',
+    name: 'Accounts',
+    hint: () => {
+      const n = useStore.getState().accounts.length;
+      return `${n} account${n === 1 ? '' : 's'}`;
+    },
+    run: () => {
+      useStore.getState().setAccountsOpen(true);
+    },
+  });
+  registerPaletteCommand({
+    id: 'add-account',
+    glyph: '＋',
+    name: 'Add account',
+    hint: () => 'sign in to Claude Code',
+    run: () => {
+      const st = useStore.getState();
+      st.setAccountsAutoAdd(true);
+      st.setAccountsOpen(true);
+    },
+  });
+
   // 13b — New session in worktree (session-worktree FR-16): opens the same modal
   // pre-checked. Listed unconditionally — a non-repo cwd simply hides the
   // checkbox once picked (FR-1).
@@ -282,6 +321,37 @@ export function registerBuiltinCommands(): void {
     run: () => {
       requestWorktreePreset();
       useStore.getState().setNewSessionOpen(true);
+    },
+  });
+
+  // 13c — Clear project attachments (session-attachments FR-18): sweeps the
+  // attachments dir of every session registered under the project — driven by the
+  // session registry, so worktree sessions are included. Destructive, so it goes
+  // through a confirmation step before anything is deleted.
+  registerPaletteCommand({
+    id: 'clear-project-attachments',
+    glyph: '⌫',
+    name: 'Clear project attachments',
+    hint: () => 'delete attached files',
+    enabled: (ctx) => clearAttachmentsProjectId(ctx.activeSessionId) !== null,
+    run: (ctx) => {
+      const projectId = clearAttachmentsProjectId(ctx.activeSessionId);
+      return {
+        placeholder: 'delete every attached file in this project?',
+        items: [
+          { id: 'confirm', label: 'Clear attachments', hint: 'deletes the files on disk' },
+          { id: 'cancel', label: 'Cancel', hint: 'keep them' },
+        ],
+        onPick: (id) => {
+          if (id !== 'confirm' || !projectId) return;
+          sessionClearAttachments({ kind: 'project', projectId })
+            .then((res) => {
+              if (!res.ok) showToast(res.error.message, 'error');
+              else showToast(clearReport(res.data), res.data.failed > 0 ? 'error' : 'info');
+            })
+            .catch(() => showToast('Command failed unexpectedly', 'error'));
+        },
+      };
     },
   });
 

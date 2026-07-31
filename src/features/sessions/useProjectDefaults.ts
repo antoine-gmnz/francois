@@ -4,9 +4,11 @@
 // by appliedRef), so a manual edit afterwards always wins.
 
 import { useEffect, useRef } from 'react';
-import type { ClaudeRuntime, ModelInfo, PermissionMode } from '../../../contract/common';
+import type { AccountId, ClaudeRuntime, ModelInfo, PermissionMode } from '../../../contract/common';
 import { isWslUncPath } from '../../../contract/wsl-filesystem';
+import type { Account } from '../../../contract/multi-account';
 import type { ProjectMeta } from '../../../contract/projects';
+import { resolveNewSessionAccountId } from '../accounts/accounts';
 import { applyProjectDefaults, baseFormValues } from '../projects/projects';
 import { IS_WINDOWS } from '../../lib/platform';
 import { basename } from './new-session-form';
@@ -26,6 +28,11 @@ export interface UseProjectDefaultsParams {
   setRuntime: (runtime: ClaudeRuntime) => void;
   setCwd: (cwd: string) => void;
   setName: (name: string) => void;
+  /** multi-account FR-20: the registry the project's default is resolved against. */
+  accounts: Account[];
+  setAccountId: (accountId: AccountId) => void;
+  /** Records whether the applied account came from the project (FR-31 affordance). */
+  setAccountFromProject: (from: boolean) => void;
 }
 
 export function useProjectDefaults(params: UseProjectDefaultsParams): void {
@@ -44,6 +51,9 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     setRuntime,
     setCwd,
     setName,
+    accounts,
+    setAccountId,
+    setAccountFromProject,
   } = params;
 
   const appliedRef = useRef<string | null>(null);
@@ -51,6 +61,13 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     if (modelsLoading) return;
     if (appliedRef.current === projectId) return;
     appliedRef.current = projectId;
+
+    // multi-account FR-20: snapshot-style like every other default. A project
+    // default naming a REMOVED account falls back to the isDefault one rather
+    // than sending an id session_create would refuse with ACCOUNT_NOT_FOUND.
+    const wantedAccount = project?.defaults.accountId;
+    setAccountId(resolveNewSessionAccountId(accounts, wantedAccount));
+    setAccountFromProject(wantedAccount !== undefined);
 
     const base = baseFormValues(models);
     const applied = applyProjectDefaults(base, project?.defaults, { models, allowWsl: IS_WINDOWS });
@@ -78,4 +95,20 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     if (!nameTouched) setName(project ? basename(project.root) : '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, project, models, modelsLoading]);
+
+  // The registry is hydrated at app boot, but the modal can (in principle) open
+  // before it lands — in which case the effect above resolved against an EMPTY
+  // list and settled on the reserved 'default' id. Re-resolve once, the first
+  // time a non-empty registry appears (AccountField itself renders
+  // unconditionally per FR-31, including a single-account install's own
+  // Default row — see its own doc comment).
+  const accountsSeenRef = useRef(false);
+  useEffect(() => {
+    if (accountsSeenRef.current || accounts.length === 0) return;
+    accountsSeenRef.current = true;
+    const wanted = project?.defaults.accountId;
+    setAccountId(resolveNewSessionAccountId(accounts, wanted));
+    setAccountFromProject(wanted !== undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts]);
 }

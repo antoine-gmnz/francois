@@ -1,3 +1,4 @@
+import { AccountChip } from '../features/accounts/AccountChip';
 import { togglePalette } from '../features/palette/palette';
 import type { Pane, Theme } from '../lib/store';
 
@@ -50,6 +51,11 @@ export default function StatusBar({ theme, toggleTheme, focusedPane, activeAgent
         </>
       )}
       <span className="app-flex-spacer" />
+      {/* multi-account FR-33: which account the selected session runs on —
+          first in the right cluster, per the design brief. Renders
+          unconditionally, including a single-account install's own Default
+          row (see AccountChip's own doc comment). */}
+      <AccountChip />
       <span
         onClick={toggleTheme}
         className="app-clickable app-text-dim"

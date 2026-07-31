@@ -7,6 +7,8 @@
 export type SessionId = string; // uuid v4
 export type AgentId = string; // uuid v4
 export type BlockId = string; // uuid v4 — one conversation block (message, tool call, …)
+/** uuid v4, or the reserved 'default' (the built-in account, multi-account FR-2). */
+export type AccountId = string;
 
 /** Every fallible IPC call resolves to this — never throws across IPC. */
 export type Result<T> =
@@ -46,6 +48,15 @@ export type ErrorCode =
   | 'WORKTREE_CREATE_FAILED' // session-worktree: prune/add failed; the core reversed what it did (FR-11)
   | 'WORKTREE_DIRTY' // session-worktree: removal refused: uncommitted changes or unpushed commits (FR-19)
   | 'WORKTREE_NOT_FOUND' // session-worktree: no worktree registered at that path
+  | 'ATTACHMENT_TOO_LARGE' // session-attachments FR-8: over the 10 MiB cap (detail: { bytes, cap })
+  | 'ATTACHMENT_IS_DIRECTORY' // session-attachments FR-8: folders are refused, not walked
+  | 'ATTACHMENT_NOT_FOUND' // session-attachments: release addressed an unknown attachment id
+  | 'ATTACHMENT_IO_FAILED' // session-attachments: copy/write/delete failed (detail: { path })
+  | 'ACCOUNT_NOT_FOUND' // multi-account: an accountId that is not in the registry
+  | 'ACCOUNT_NOT_REMOVABLE' // multi-account: attempted removal of the built-in 'default' account
+  | 'ACCOUNT_DUPLICATE' // multi-account: login identity matches an already-registered account (FR-14)
+  | 'ACCOUNT_LOGIN_FAILED' // multi-account: login timed out or the PTY exited without an identity (FR-15)
+  | 'ACCOUNT_NOT_AUTHENTICATED' // multi-account: a turn's account has no credentials on disk (FR-22)
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -101,6 +112,13 @@ export interface SessionMeta {
   projectId?: ProjectId;
   /** Present ⇔ this session runs in a Francois-created or Francois-adopted git worktree. */
   worktree?: SessionWorktree;
+  /**
+   * The account this session's every claude spawn runs under (multi-account FR-19/FR-21).
+   * Set at creation ONLY — never re-derived or changed afterwards, except when the account
+   * is removed (FR-9) or a persisted value no longer resolves (FR-10), both of which fall
+   * back to 'default'. Required: persisted sessions without it load as 'default'.
+   */
+  accountId: AccountId;
 }
 
 /** Worktree provenance for a session created with isolation (session-worktree FR-12). */
@@ -131,6 +149,8 @@ export interface ProjectDefaults {
   permissionMode?: PermissionMode;
   runtime?: ClaudeRuntime;
   allowGit?: boolean;
+  /** A removed account falls back to the isDefault account in the modal (multi-account FR-20). */
+  accountId?: AccountId;
 }
 
 // ---------- subagents ----------
@@ -179,6 +199,46 @@ export interface AgentStep {
   label: string;
   /** kind 'tool' only: the derived meta once the step's tool_result arrived; absent while open. */
   meta?: string;
+}
+
+// ---------- workflows ----------
+// workflow-panel §5: a run of the harness's `Workflow` tool — the multi-agent
+// orchestration script the assistant dispatches during a turn. WorkflowRun rides
+// on SessionEvent (workflow.update), so it is shared vocabulary and lives here.
+
+export type WorkflowRunId = string; // uuid v4 — minted by the core, not the harness
+
+export type WorkflowStatus = 'running' | 'done' | 'error';
+
+/** One phase declared in the script's `meta.phases` block. */
+export interface WorkflowPhaseInfo {
+  title: string;
+  /** The phase's one-line `detail`, when the script declared one. */
+  detail?: string;
+}
+
+export interface WorkflowRun {
+  id: WorkflowRunId;
+  sessionId: SessionId;
+  /** `meta.name` from the script — else the saved-workflow name, else the script file's stem. */
+  name: string;
+  /** `meta.description`; empty when the dispatch carried no script to read it from. */
+  description: string;
+  status: WorkflowStatus;
+  /** epoch ms the dispatch was first seen (anchor for the elapsed timer). */
+  startedAt: number;
+  /** epoch ms it reached done/error; absent while running (freezes the timer). */
+  endedAt?: number;
+  /**
+   * The phases the script declared, in order. Empty when the dispatch named a
+   * saved workflow (no script text to parse) — the panel then shows none rather
+   * than inventing progress the stream never reported.
+   */
+  phases: WorkflowPhaseInfo[];
+  /** The harness run id (`wf_…`) parsed out of the dispatch ack; absent until it lands. */
+  runId?: string;
+  /** One line of the newest thing observed for this run (the ack, or the completion notice). */
+  lastActivity?: string;
 }
 
 // ---------- MCP ----------
@@ -348,6 +408,7 @@ export type SessionEvent =
   | { type: 'session.commands'; sessionId: SessionId; commands: SlashCommandInfo[] } // slash-menu FR-2: merged registry after an init changed the cli set
   | { type: 'agent.update'; agent: AgentInfo }
   | { type: 'agent.step'; sessionId: SessionId; agentId: AgentId; step: AgentStep } // async-agents FR-10: a trail step was appended, or an existing seq re-emitted with meta filled
+  | { type: 'workflow.update'; run: WorkflowRun } // workflow-panel FR-3: a run was minted, acked, or reached a terminal state
   | { type: 'mcp.update'; sessionId: SessionId; server: McpServerInfo }
   | { type: 'context.usage'; sessionId: SessionId; usedTokens: number; limitTokens: number }
   | { type: 'session.resumeFailed'; sessionId: SessionId } // a --resume turn was rejected; the core continued on a fresh thread (durable-sessions FR-9/14)

@@ -690,6 +690,7 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
       errorMessage: 'boom',
       permissionMode: 'default' as const,
       runtime: 'native' as const,
+      accountId: 'default',
     };
     applySessionEvent(dispatch, setters, { type: 'session.meta', meta });
     expect(setters.setStatus).toHaveBeenCalledWith('error');

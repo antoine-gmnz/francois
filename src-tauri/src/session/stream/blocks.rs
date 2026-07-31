@@ -105,6 +105,7 @@ fn start_tool_use_block(
     let (tool, tool_use_id, start_input) = parse_tool_use_block(content_block);
     blocks.insert(idx, (block_id.clone(), BlockKind::Tool, String::new()));
     let is_task = is_subagent_tool(&tool);
+    let is_workflow = is_workflow_tool(&tool);
     tools.insert(
         tool_use_id.clone(),
         ToolRec {
@@ -112,6 +113,7 @@ fn start_tool_use_block(
             tool: tool.clone(),
             input: start_input,
             is_task,
+            is_workflow,
         },
     );
     // stash tool_use_id in the block accum slot's kind — track via separate map:
@@ -120,6 +122,15 @@ fn start_tool_use_block(
         .map(|entry| entry.2 = tool_use_id.clone());
     if is_task {
         mint_subagent(app, session_id, &tool_use_id, tools);
+    }
+    // workflow-panel FR-2: the run's clock starts at the dispatch, exactly like
+    // a subagent's. Its name/phases stay provisional until the input finishes
+    // accumulating (FR-4, in finish_tool_block).
+    if is_workflow {
+        let run_uuid = on_workflow_start(app, session_id, &tool_use_id);
+        if let Some(rec) = tools.get_mut(&tool_use_id) {
+            rec.input["__workflowId"] = Value::String(run_uuid);
+        }
     }
 }
 
@@ -369,6 +380,14 @@ fn finish_tool_block(
         ems
     };
     emit_agent_emissions(app, session_id, background_emissions);
+    // workflow-panel FR-4: the script (and so its `export const meta` block) is
+    // only complete now — read the run's real name, description, and phases off it.
+    if rec.is_workflow {
+        if let Some(run_uuid) = rec.input.get("__workflowId").and_then(|v| v.as_str()) {
+            let (run_uuid, input) = (run_uuid.to_string(), rec.input.clone());
+            on_workflow_input_complete(app, session_id, &run_uuid, &input);
+        }
+    }
     *open_block = Some((block_id.to_string(), BlockKind::Tool));
     emit(
         app,

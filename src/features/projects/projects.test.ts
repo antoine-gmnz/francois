@@ -64,6 +64,7 @@ function sess(id: string, projectId?: string): SessionMeta {
     lastActivityAt: 0,
     permissionMode: 'default',
     runtime: 'native',
+    accountId: 'default',
     ...(projectId ? { projectId } : {}),
   };
 }
@@ -383,6 +384,32 @@ describe('project defaults form (FR-34)', () => {
     expect(patchDefaults({}, 'runtime', 'wsl')).toEqual({ runtime: 'wsl' });
     // pure
     expect(d).toEqual({ modelId: 'claude-opus-5', effort: 'high', allowGit: true });
+  });
+
+  // multi-account FR-20: a project can pre-fill the new-session ACCOUNT field.
+  it('offers an account select only once a SECOND account exists', () => {
+    expect(defaultFieldDefs(MODELS, {}, true, []).map((d) => d.key)).not.toContain('accountId');
+    expect(defaultFieldDefs(MODELS, {}, true, [{ id: 'default', label: 'Default' }]).map((d) => d.key)).not.toContain(
+      'accountId',
+    );
+
+    const defs = defaultFieldDefs(MODELS, {}, true, [
+      { id: 'default', label: 'Default' },
+      { id: 'a1', label: 'perso' },
+    ]);
+    expect(defs[0].key).toBe('accountId');
+    expect(defs[0].options).toEqual([
+      { value: '', label: 'inherit' },
+      { value: 'default', label: 'Default' },
+      { value: 'a1', label: 'perso' },
+    ]);
+  });
+
+  it('patches and clears the account default like every other field', () => {
+    expect(patchDefaults({ modelId: 'm' }, 'accountId', 'a1')).toEqual({ modelId: 'm', accountId: 'a1' });
+    expect(patchDefaults({ modelId: 'm', accountId: 'a1' }, 'accountId', '')).toEqual({ modelId: 'm' });
+    expect(defaultsSelectValue({ accountId: 'a1' }, 'accountId')).toBe('a1');
+    expect(defaultsSelectValue({}, 'accountId')).toBe('');
   });
 });
 

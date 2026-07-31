@@ -3,7 +3,20 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId } from '../../contract/common';
+import type { AccountId, Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun } from '../../contract/common';
+import type {
+  AccountAddPayload,
+  AccountAddResponse,
+  AccountEvent,
+  AccountListResponse,
+  AccountLoginAck,
+  AccountLoginCancelPayload,
+  AccountLoginResizePayload,
+  AccountLoginWritePayload,
+  AccountRemoveResponse,
+  AccountRenameResponse,
+  AccountSetDefaultResponse,
+} from '../../contract/multi-account';
 import type {
   ProjectAwareSessionCreateRequest,
   ProjectCreateRequest,
@@ -16,6 +29,13 @@ import type { PermissionDecision, PermissionRule, PermissionTier } from '../../c
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { SessionCreateInput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
+import type {
+  Attachment,
+  ClearAttachmentsResult,
+  ClearScope,
+  CommitAttachmentsResult,
+  PickAttachmentsResponse,
+} from '../../contract/session-attachments';
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
@@ -59,6 +79,29 @@ export const sessionSend = (sessionId: SessionId, blockId: string, text: string)
 // Kill the running turn (⌃C). No-op if the session isn't running (core FR-23).
 export const sessionInterrupt = (sessionId: SessionId) =>
   ipc<Result<null>>('session_interrupt', { sessionId });
+// session-attachments (§5.2). Request/response only — no event channel. Each call
+// resolves a Result; a refusal (too large, folder, io) is ok:false per file, so a
+// multi-file drop keeps its successes (FR-9).
+export const sessionAttachFile = (sessionId: SessionId, path: string) =>
+  ipc<Result<Attachment>>('session_attach_file', { sessionId, path });
+export const sessionAttachClipboardImage = (sessionId: SessionId, mime: string, dataBase64: string) =>
+  ipc<Result<Attachment>>('session_attach_clipboard_image', { sessionId, mime, dataBase64 });
+/**
+ * Opens the native multi-select dialog IN THE CORE. Successes and per-file
+ * refusals travel together (FR-9); a cancel is ok:true with both arrays empty.
+ */
+export const sessionPickAttachments = (sessionId: SessionId) =>
+  ipc<Result<PickAttachmentsResponse>>('session_pick_attachments', { sessionId });
+/** FR-13: deletes the copy immediately; a copied:false origin is never touched. */
+export const sessionReleaseAttachment = (sessionId: SessionId, attachmentId: string) =>
+  ipc<Result<null>>('session_release_attachment', { sessionId, attachmentId });
+/** FR-15: refs present in the sent text become 'sent'; the rest are released. */
+export const sessionCommitAttachments = (sessionId: SessionId, text: string) =>
+  ipc<Result<CommitAttachmentsResult>>('session_commit_attachments', { sessionId, text });
+/** FR-18: sweeps a session's or a whole project's attachments dirs. */
+export const sessionClearAttachments = (scope: ClearScope) =>
+  ipc<Result<ClearAttachmentsResult>>('session_clear_attachments', { scope });
+
 export const getTranscript = (sessionId: SessionId) =>
   ipc<Result<ConversationBlock[]>>('conversation_get_transcript', { sessionId });
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
@@ -115,6 +158,12 @@ export const agentsActivity = (agentId: string) =>
 export const agentsTranscript = (agentId: string) =>
   ipc<Result<AgentTranscript>>('agents_transcript', { agentId });
 
+// workflow-panel §5: this session's `Workflow` runs, in first-seen order. The
+// panel is read-only — a run is dispatched by the assistant during a turn, so
+// there is no create/stop verb to wrap here.
+export const workflowsList = (sessionId: SessionId) =>
+  ipc<Result<WorkflowRun[]>>('workflows_list', { sessionId });
+
 /** Subscribe to francois://agents/event (agent.block, agent-tab FR-8). */
 export function onAgentEvent(cb: (e: AgentEvent) => void): Promise<UnlistenFn> {
   return listen<AgentEvent>('francois://agents/event', (e) => cb(e.payload));
@@ -152,12 +201,36 @@ export function onDiffEvent(cb: (e: DiffEvent) => void): Promise<UnlistenFn> {
 
 // usage-bar (app domain, app-scoped plan limits). getUsage NEVER triggers a probe
 // (FR-22); refreshUsage only acks — the result always arrives as a usage.state event.
-export const appGetUsage = () => ipc<Result<UsageSnapshot>>('app_get_usage');
-export const appRefreshUsage = () => ipc<Result<UsageRefreshAck>>('app_refresh_usage');
+// multi-account FR-27: both take an optional accountId; omitted means the payload
+// itself is omitted (undefined), which the core reads as "the isDefault account".
+export const appGetUsage = (accountId?: AccountId) =>
+  ipc<Result<UsageSnapshot>>('app_get_usage', accountId ? { accountId } : undefined);
+export const appRefreshUsage = (accountId?: AccountId) =>
+  ipc<Result<UsageRefreshAck>>('app_refresh_usage', accountId ? { accountId } : undefined);
 
 /** Subscribe to francois://app/event (usage.state, extensible tagged union). */
 export function onAppEvent(cb: (e: AppEvent) => void): Promise<UnlistenFn> {
   return listen<AppEvent>('francois://app/event', (e) => cb(e.payload));
+}
+
+// multi-account (§5). Registry mutations resolve the FRESH re-read list (like
+// permission-guardrails), so the caller never re-derives it from a stale copy.
+// account:add starts (or FR-17 re-runs) an in-app login PTY; its bytes/outcome
+// arrive on the shared francois://account/event stream, not the response.
+export const accountList = () => ipc<AccountListResponse>('account_list');
+export const accountAdd = (payload: AccountAddPayload = {}) => ipc<AccountAddResponse>('account_add', payload);
+export const accountLoginWrite = (payload: AccountLoginWritePayload) => ipc<AccountLoginAck>('account_login_write', payload);
+export const accountLoginResize = (payload: AccountLoginResizePayload) => ipc<AccountLoginAck>('account_login_resize', payload);
+export const accountLoginCancel = (payload: AccountLoginCancelPayload) => ipc<AccountLoginAck>('account_login_cancel', payload);
+export const accountRename = (accountId: AccountId, label: string) =>
+  ipc<AccountRenameResponse>('account_rename', { accountId, label });
+export const accountSetDefault = (accountId: AccountId) =>
+  ipc<AccountSetDefaultResponse>('account_set_default', { accountId });
+export const accountRemove = (accountId: AccountId) => ipc<AccountRemoveResponse>('account_remove', { accountId });
+
+/** Subscribe to francois://account/event (account.list + the login sub-stream). */
+export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {
+  return listen<AccountEvent>('francois://account/event', (e) => cb(e.payload));
 }
 
 // remote-control: Francois HOSTS Claude Code's native Remote Control for a session

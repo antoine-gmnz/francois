@@ -6,7 +6,7 @@
 import type { StateCreator } from 'zustand';
 import type { AppState } from './store';
 
-export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills';
+export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills' | 'workflows';
 
 // collapse-right-column: the three right-column cards that can be individually
 // folded to their header row (FR-1).
@@ -31,6 +31,14 @@ function persistPane(key: string, visible: boolean): void {
 }
 const LEFT_KEY = 'francois.showLeftPane';
 const RIGHT_KEY = 'francois.showRightPane';
+// Every pane that lives in the right column, collapsible or not — 'workflows'
+// isn't collapsible (out of scope for collapse-right-column) but still needs to
+// reveal/hide the column like the other three.
+const RIGHT_COLUMN_PANES: readonly Pane[] = ['agents', 'mcp', 'skills', 'workflows'];
+function isRightColumnPane(p: Pane): boolean {
+  return RIGHT_COLUMN_PANES.includes(p);
+}
+
 const RIGHT_PANES: readonly RightPane[] = ['agents', 'mcp', 'skills'];
 /** Exported so app-shell's `c` shortcut (FR-10) can reuse this test without duplicating it. */
 export function isRightPane(p: Pane): p is RightPane {
@@ -84,7 +92,7 @@ export interface LayoutSlice {
   // minimal app-shell state
   focusedPane: Pane;
   setFocusedPane: (p: Pane) => void;
-  // layout: left (sessions) / right (agents+mcp+skills) column visibility.
+  // layout: left (sessions) / right (agents+mcp+skills+workflows) column visibility.
   // Persisted to localStorage; hiding the column that owns focus hands focus to
   // 'main', and focusing a pane always reveals its column (setFocusedPane).
   showLeftPane: boolean;
@@ -111,7 +119,7 @@ export interface LayoutSlice {
 export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (set) => ({
   focusedPane: 'sidebar',
   // Invariant: the focused pane's column is always visible — focusing a hidden
-  // pane (key 1/3/4/5, palette commands, `a`) reveals its column first.
+  // pane (key 1/3/4/5/6, palette commands, `a`) reveals its column first.
   setFocusedPane: (focusedPane) =>
     set((s) => {
       const patch: Partial<AppState> = { focusedPane };
@@ -119,14 +127,15 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         patch.showLeftPane = true;
         persistPane(LEFT_KEY, true);
       }
-      if (isRightPane(focusedPane)) {
+      if (isRightColumnPane(focusedPane)) {
         if (!s.showRightPane) {
           patch.showRightPane = true;
           persistPane(RIGHT_KEY, true);
         }
         // FR-6: focusing a collapsed right pane always expands it too, so 3/4/5,
         // `a`, and every palette command that focuses a pane land on a readable card.
-        if (s.collapsedPanes[focusedPane]) {
+        // 'workflows' isn't collapsible, so it's excluded here (isRightPane narrows).
+        if (isRightPane(focusedPane) && s.collapsedPanes[focusedPane]) {
           const collapsedPanes = { ...s.collapsedPanes, [focusedPane]: false };
           patch.collapsedPanes = collapsedPanes;
           persistCollapsedPanes(collapsedPanes);
@@ -150,7 +159,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       persistPane(RIGHT_KEY, show);
       // FR-7: hiding/showing the column never touches collapsedPanes — the two
       // toggles are independent.
-      const focusedPane = !show && isRightPane(s.focusedPane) ? 'main' : s.focusedPane;
+      const focusedPane = !show && isRightColumnPane(s.focusedPane) ? 'main' : s.focusedPane;
       return { showRightPane: show, focusedPane };
     }),
   newSessionOpen: false,

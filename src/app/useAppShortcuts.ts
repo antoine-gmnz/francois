@@ -8,6 +8,8 @@ export interface AppShortcutState {
   newAgentOpen: boolean;
   permissionsOpen: boolean;
   projectsOpen: boolean;
+  /** multi-account FR-34: the Accounts modal owns a/r/Del/Enter while it is up. */
+  accountsOpen: boolean;
   setNewSessionOpen: (open: boolean) => void;
   setNewAgentOpen: (open: boolean) => void;
   setFocusedPane: (pane: Pane) => void;
@@ -28,8 +30,17 @@ export interface AppShortcutState {
  *   focused (permission-guardrails FR-29 / projects FR-37).
  */
 export function useAppShortcuts(state: AppShortcutState): void {
-  const { newSessionOpen, newAgentOpen, permissionsOpen, projectsOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab } =
-    state;
+  const {
+    newSessionOpen,
+    newAgentOpen,
+    permissionsOpen,
+    projectsOpen,
+    accountsOpen,
+    setNewSessionOpen,
+    setNewAgentOpen,
+    setFocusedPane,
+    setMainTab,
+  } = state;
 
   useEffect(() => {
     const onKeyCapture = (e: KeyboardEvent) => {
@@ -54,7 +65,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
       const inTerminal = !!activeEl && activeEl.closest('.xterm') !== null;
       // permission-guardrails FR-29 / projects FR-37: an open editor suppresses the
       // single-letter globals too, exactly like the other modals.
-      if (newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || inInput || inTerminal) return;
+      if (newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || accountsOpen || inInput || inTerminal) return;
       const actions = buildShortcutActions({
         preventDefault: () => e.preventDefault(),
         getActiveSessionId: () => useStore.getState().activeSessionId,
@@ -74,5 +85,15 @@ export function useAppShortcuts(state: AppShortcutState): void {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newSessionOpen, newAgentOpen, permissionsOpen, projectsOpen, setNewSessionOpen, setNewAgentOpen, setFocusedPane, setMainTab]);
+  }, [
+    newSessionOpen,
+    newAgentOpen,
+    permissionsOpen,
+    projectsOpen,
+    accountsOpen,
+    setNewSessionOpen,
+    setNewAgentOpen,
+    setFocusedPane,
+    setMainTab,
+  ]);
 }
