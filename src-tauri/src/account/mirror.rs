@@ -149,7 +149,8 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("francois-mirror-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("francois-mirror-{name}-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -157,7 +158,13 @@ mod tests {
 
     #[test]
     fn pending_takes_only_allowlisted_entries_the_source_actually_has() {
-        let source = ["commands", "skills", "sessions", "projects", "history.jsonl"];
+        let source = [
+            "commands",
+            "skills",
+            "sessions",
+            "projects",
+            "history.jsonl",
+        ];
         let got = pending(&source, &[]);
         assert_eq!(got, vec!["commands", "skills"]);
         // per-account state is never mirrored back, even when both sides have it
@@ -198,8 +205,13 @@ mod tests {
 
         let source_names = entry_names(&source);
         let refs: Vec<&str> = source_names.iter().map(String::as_str).collect();
-        for name in pending(&refs, &entry_names(&target).iter().map(String::as_str).collect::<Vec<_>>())
-        {
+        for name in pending(
+            &refs,
+            &entry_names(&target)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        ) {
             link_entry(&source.join(name), &target.join(name)).unwrap();
         }
 

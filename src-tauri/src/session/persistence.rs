@@ -246,6 +246,7 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
                 "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
                 "permissionMode": s.permission_mode, "runtime": s.runtime,
                 "allowGit": s.allow_git,
+                "ultracode": s.ultracode,
                 "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
                 "lastActivityAt": s.last_activity_at,
                 "contextUsedTokens": s.context_used_tokens,
@@ -310,6 +311,10 @@ pub(crate) struct PersistedMeta {
     permission_mode: String, // "default" when absent (pre-feature records)
     runtime: String,         // "native" when absent, or when "wsl" off-Windows
     allow_git: bool,         // false when absent (pre-feature records)
+    /// ultracode: false when absent (pre-feature records) — same discipline as
+    /// `allow_git`. Parsed per-element and best-effort: a malformed value on
+    /// the key (not a bool) loads as false rather than failing the record.
+    ultracode: bool,
     /// projects FR-18: None when absent (every pre-projects record). Whether the
     /// id still RESOLVES is decided at load, not here — parsing stays pure.
     project_id: Option<String>,
@@ -371,6 +376,10 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .to_string(),
         allow_git: rec
             .get("allowGit")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        ultracode: rec
+            .get("ultracode")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         // projects FR-18: a blank string is treated as absent so a hand-edited
@@ -533,6 +542,7 @@ pub fn load_persisted(app: &AppHandle) {
                 permission_mode: m.permission_mode,
                 runtime: m.runtime,
                 allow_git: m.allow_git,
+                ultracode: m.ultracode,
                 // projects FR-18: a link whose project is gone from the registry is
                 // DROPPED here — the session loads unlinked and the pruned value is
                 // persisted by the next write (§7 #14).
@@ -800,6 +810,40 @@ mod tests {
             rec["attachments"] = serde_json::to_value(&s.attachments).unwrap();
         }
         assert!(rec.get("attachments").is_none());
+    }
+
+    // ---------- ultracode ----------
+
+    #[test]
+    fn ultracode_round_trips_through_a_persisted_record() {
+        let full = json!({ "id": "a", "name": "n", "cwd": "/x", "ultracode": true });
+        assert!(parse_session_record(&full, 0).unwrap().ultracode);
+
+        let off = json!({ "id": "a", "name": "n", "cwd": "/x", "ultracode": false });
+        assert!(!parse_session_record(&off, 0).unwrap().ultracode);
+    }
+
+    #[test]
+    fn ultracode_loads_false_for_a_legacy_record_missing_the_key() {
+        // A record written before this flag existed has no such key — same
+        // per-element, best-effort discipline as every other field here: it
+        // must load as false, not fail the whole record.
+        let legacy = json!({ "id": "a", "name": "n", "cwd": "/x" });
+        let m = parse_session_record(&legacy, 0).expect("legacy record still parses");
+        assert!(!m.ultracode);
+    }
+
+    #[test]
+    fn ultracode_survives_a_full_persist_and_reload_cycle_via_the_rec_builder() {
+        // Reproduces the exact rec-building logic `persist` uses (same pattern
+        // as the worktree/attachments round-trip tests above, to avoid needing
+        // a live AppHandle).
+        let mut s = test_session();
+        s.ultracode = true;
+        let rec = serde_json::json!({
+            "id": s.id, "name": s.name, "cwd": s.cwd, "ultracode": s.ultracode,
+        });
+        assert!(parse_session_record(&rec, 0).unwrap().ultracode);
     }
 
     #[test]

@@ -55,6 +55,21 @@ pub(crate) fn turn_args(
     args
 }
 
+/// ultracode: Claude Code's opt-in for multi-agent workflow orchestration.
+/// There is no CLI flag or settings key for it — the only supported trigger is
+/// the literal keyword `ultracode` in the prompt, so this prefixes it onto the
+/// WIRE copy of a turn's text while `ultracode` is true. Byte-identical to
+/// `text` when `ultracode` is false. Pure — apply at every point turn text
+/// reaches the wire; NEVER apply to the buffered/transcript copy or the
+/// `message.user` event — the user must see exactly what they typed.
+pub(crate) fn wire_text(text: &str, ultracode: bool) -> String {
+    if ultracode {
+        format!("ultracode\n\n{text}")
+    } else {
+        text.to_string()
+    }
+}
+
 /// The §5.5 NDJSON user line carrying a turn's text over stdin (FR-1).
 pub(crate) fn user_line(text: &str) -> String {
     let mut line = serde_json::json!({
@@ -77,6 +92,7 @@ pub(crate) fn spawn_claude(
     runtime: &str,
     worktree_distro: Option<&str>,
     account_config_dir: Option<&str>,
+    ultracode: bool,
 ) -> std::io::Result<Child> {
     let args = turn_args(model_id, resume, effort, permission_mode);
     let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
@@ -104,7 +120,7 @@ pub(crate) fn spawn_claude(
         use std::io::Write as _;
         match child.stdin.as_mut() {
             Some(w) => w
-                .write_all(user_line(text).as_bytes())
+                .write_all(user_line(&wire_text(text, ultracode)).as_bytes())
                 .and_then(|_| w.flush()),
             None => Ok(()),
         }
@@ -244,6 +260,7 @@ pub(crate) fn begin_turn(
         runtime,
         worktree_distro,
         account_id,
+        ultracode,
     )) = engine.with_session_mut(session_id, |s| {
         // ResumeRetry forces resume off regardless of the stored id, so a
         // still-good id is never dropped preemptively — a fresh init
@@ -262,6 +279,7 @@ pub(crate) fn begin_turn(
             s.runtime.clone(),
             s.worktree_distro.clone(),
             s.account_id.clone(),
+            s.ultracode,
         )
     })
     else {
@@ -319,6 +337,7 @@ pub(crate) fn begin_turn(
         &runtime,
         worktree_distro.as_deref(),
         account_config_dir.as_deref(),
+        ultracode,
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -700,5 +719,23 @@ mod tests {
             json!({ "type": "user", "message": { "role": "user",
                 "content": [{ "type": "text", "text": "fix the bug" }] } })
         );
+    }
+
+    // ---------- ultracode (session-engine: contract SessionCreateInput.ultracode) ----------
+
+    #[test]
+    fn wire_text_is_byte_identical_when_ultracode_is_off() {
+        // A false flag must never touch the string — no allocation surprises,
+        // no whitespace, byte-identical to the input.
+        assert_eq!(wire_text("fix the bug", false), "fix the bug");
+        assert_eq!(wire_text("", false), "");
+    }
+
+    #[test]
+    fn wire_text_prefixes_the_literal_keyword_when_ultracode_is_on() {
+        // There is no CLI flag / settings key — the keyword IS the trigger, and
+        // it must be separated from the user's own text by a blank line.
+        assert_eq!(wire_text("fix the bug", true), "ultracode\n\nfix the bug");
+        assert_eq!(wire_text("", true), "ultracode\n\n");
     }
 }

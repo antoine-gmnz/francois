@@ -94,6 +94,12 @@ const DEFAULT_MODEL: &str = "sonnet";
 /// Reused by the app-scoped usage-bar probe (usage.rs, usage-bar FR-8).
 pub(crate) const PROBE_TIMEOUT_SECS: u64 = 30;
 
+/// serde helper: `#[serde(skip_serializing_if)]` predicate for the ultracode
+/// wire convention below — a `false` flag is omitted entirely, not written null.
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 #[derive(Serialize, Clone)]
 pub(crate) struct SessionMeta {
     id: String,
@@ -130,6 +136,12 @@ pub(crate) struct SessionMeta {
     /// `default` (FR-10).
     #[serde(rename = "accountId")]
     account_id: String,
+    /// True ⇔ this session was created with multi-agent workflow orchestration
+    /// (ultracode) on. Set at creation ONLY, never re-derived. Omitted (never
+    /// `false`) on the wire — a pre-feature frontend and a pre-feature
+    /// sessions.json both read identically.
+    #[serde(skip_serializing_if = "is_false")]
+    ultracode: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -379,6 +391,15 @@ pub(crate) struct Session {
     /// control channel instead of denying them (NewSessionRequest.allowGit) —
     /// lets a session run git commit/push without bypassing every permission.
     allow_git: bool,
+    /// Claude Code's opt-in for multi-agent workflow orchestration. Set at
+    /// creation ONLY, stored VERBATIM — never re-derived, same discipline as
+    /// `allow_git`. NOT an effort level; composes with `effort`. There is no
+    /// CLI flag or settings key for it — the only supported trigger is the
+    /// literal keyword `ultracode` in the prompt text, so this flag steers
+    /// `turn::wire_text` to prefix it onto the WIRE copy of every real turn
+    /// while true. The transcript (`block_buffer`) and every emitted
+    /// `message.user` always keep the user's text verbatim.
+    ultracode: bool,
     /// projects FR-18/FR-19: the project this session belongs to, stored VERBATIM
     /// as `session_create` received it — the core does no auto-adoption and no
     /// default merging, so what the modal showed is exactly what was created.
@@ -474,6 +495,7 @@ impl Session {
         permission_mode: String,
         runtime: String,
         allow_git: bool,
+        ultracode: bool,
         project_id: Option<String>,
         worktree: Option<SessionWorktree>,
         worktree_distro: Option<String>,
@@ -496,6 +518,7 @@ impl Session {
             permission_mode,
             runtime,
             allow_git,
+            ultracode,
             project_id,
             worktree,
             worktree_distro,
@@ -542,6 +565,7 @@ impl Session {
             project_id: self.project_id.clone(),
             worktree: self.worktree.clone(),
             account_id: self.account_id.clone(),
+            ultracode: self.ultracode,
         }
     }
 
@@ -1028,5 +1052,24 @@ mod tests {
         assert_eq!(engine.running_count(), 1);
         engine.with_session_mut("s1", |s| s.status = "error".into());
         assert_eq!(engine.running_count(), 0);
+    }
+
+    // ---------- ultracode (contract SessionMeta.ultracode) ----------
+
+    #[test]
+    fn ultracode_off_by_default_and_omitted_from_the_wire() {
+        let s = test_session();
+        assert!(!s.ultracode);
+        let json = serde_json::to_value(s.meta()).unwrap();
+        // Absent — never a `false` — matches the contract's "omit for false".
+        assert!(json.get("ultracode").is_none());
+    }
+
+    #[test]
+    fn ultracode_true_is_echoed_verbatim_on_session_meta() {
+        let mut s = test_session();
+        s.ultracode = true;
+        let json = serde_json::to_value(s.meta()).unwrap();
+        assert_eq!(json["ultracode"], true);
     }
 }
