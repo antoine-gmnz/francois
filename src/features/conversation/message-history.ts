@@ -54,17 +54,19 @@ export function recallPrev(
   history: History,
   browse: Browse | null,
   current: string,
-): { browse: Browse; text: string } | null {
+): { browse: Browse; text: string; changed: boolean } | null {
   if (history.length === 0) return null; // FR-2: fall through to caret movement
   if (browse === null) {
     // FR-3 — enter browsing on the newest entry, the live text becomes the draft.
     const index = history.length - 1;
-    return { browse: { index, draft: current }, text: history[index] };
+    return { browse: { index, draft: current }, text: history[index], changed: true };
   }
-  // FR-4 — one older; at the oldest we still intercept, the text just does not
-  // change (no wrap-around).
+  // FR-4 — one older; at the oldest we still intercept (so the key event is still
+  // consumed and the browse state stays put), but `changed: false` tells the
+  // caller no text/caret movement is coming — pressing ArrowUp again once already
+  // at the oldest entry must leave the caret exactly where the user left it.
   const index = Math.max(0, browse.index - 1);
-  return { browse: { index, draft: browse.draft }, text: history[index] };
+  return { browse: { index, draft: browse.draft }, text: history[index], changed: index !== browse.index };
 }
 
 /**

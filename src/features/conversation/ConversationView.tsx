@@ -191,7 +191,10 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         if (step) {
           e.preventDefault();
           setBrowse(step.browse);
-          applyRecall(step.text);
+          // FR-4: at the oldest entry, a repeated ArrowUp is still swallowed (no
+          // caret movement, per §7/FR-2) but must not touch the caret — the user
+          // may have repositioned it inside the recalled text.
+          if (step.changed) applyRecall(step.text);
           return;
         }
       }
@@ -220,8 +223,12 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 
   // message-history FR-7: caret at the end of the recalled text + a re-run of the
   // auto-grow sizing. The textarea is controlled, so the DOM only holds the new
-  // value after the commit — hence the layout effect. When the text does not
-  // change (FR-4 at the oldest entry) no commit is coming, so do it inline.
+  // value after the commit — hence the layout effect. When the recalled text
+  // happens to already equal what's on screen (e.g. entering browsing while the
+  // draft already matches the newest entry) no commit is coming, so do it
+  // inline instead. Callers must not invoke this at all when nothing should
+  // change — see the FR-4 `step.changed` guard around ArrowUp above, which keeps
+  // a repeated ArrowUp at the oldest entry from forcing the caret to the end.
   const recallCaretRef = useRef(false);
   const applyRecall = (text: string) => {
     setInput(text);

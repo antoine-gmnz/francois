@@ -121,21 +121,30 @@ describe('recallPrev (FR-3/FR-4)', () => {
 
   it('enters browsing on the newest entry and saves the draft (FR-3)', () => {
     const res = recallPrev(['one', 'two'], null, 'half typed ');
-    expect(res).toEqual({ browse: { index: 1, draft: 'half typed ' }, text: 'two' });
+    expect(res).toEqual({ browse: { index: 1, draft: 'half typed ' }, text: 'two', changed: true });
   });
 
   it('saves an empty draft when the composer was empty (FR-3)', () => {
-    expect(recallPrev(['one'], null, '')).toEqual({ browse: { index: 0, draft: '' }, text: 'one' });
+    expect(recallPrev(['one'], null, '')).toEqual({
+      browse: { index: 0, draft: '' },
+      text: 'one',
+      changed: true,
+    });
   });
 
   it('steps one entry older while browsing, keeping the draft (FR-4)', () => {
     const browse: Browse = { index: 2, draft: 'd' };
-    expect(recallPrev(['a', 'b', 'c'], browse, 'c')).toEqual({ browse: { index: 1, draft: 'd' }, text: 'b' });
+    expect(recallPrev(['a', 'b', 'c'], browse, 'c')).toEqual({
+      browse: { index: 1, draft: 'd' },
+      text: 'b',
+      changed: true,
+    });
   });
 
-  it('stays on the oldest entry without wrapping (FR-4)', () => {
+  it('stays on the oldest entry without wrapping, and reports no change (FR-4)', () => {
     const browse: Browse = { index: 0, draft: 'd' };
-    expect(recallPrev(['a', 'b'], browse, 'a')).toEqual({ browse: { index: 0, draft: 'd' }, text: 'a' });
+    const res = recallPrev(['a', 'b'], browse, 'a');
+    expect(res).toEqual({ browse: { index: 0, draft: 'd' }, text: 'a', changed: false });
   });
 
   it('does not overwrite the saved draft with the recalled text on later steps', () => {
@@ -149,6 +158,24 @@ describe('recallPrev (FR-3/FR-4)', () => {
     const browse: Browse = { index: 2, draft: 'd' };
     recallPrev(['a', 'b', 'c'], browse, 'c');
     expect(browse).toEqual({ index: 2, draft: 'd' });
+  });
+});
+
+describe('recallPrev — changed flag lets the caller leave the caret alone (FR-4)', () => {
+  it('reports changed:true on the step that reaches the oldest entry', () => {
+    const first = recallPrev(['only'], null, 'draft')!;
+    expect(first).toEqual({ browse: { index: 0, draft: 'draft' }, text: 'only', changed: true });
+  });
+
+  it('reports changed:false on a repeated ArrowUp once already at the oldest entry — the caller must not move the caret', () => {
+    // Simulates the user pressing ArrowUp once (reaching the oldest entry),
+    // repositioning the caret inside the recalled text, then pressing ArrowUp
+    // again: the second step must signal "no-op" so a caller (ConversationView)
+    // knows not to touch the caret/selection at all.
+    const atOldest = recallPrev(['only'], null, 'draft')!;
+    expect(atOldest.changed).toBe(true);
+    const repeated = recallPrev(['only'], atOldest.browse, atOldest.text)!;
+    expect(repeated).toEqual({ browse: { index: 0, draft: 'draft' }, text: 'only', changed: false });
   });
 });
 

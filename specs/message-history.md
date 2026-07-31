@@ -4,6 +4,8 @@ title: Composer message history (arrow-up recall)
 status: shipped
 created: 2026-07-30
 depends_on: [conversation-view, slash-menu]
+reviewed_base: 55616e66ad1fb7d2f5c10f3d49167c55de4a1b39
+reviewed_digest: 20e9a07d44afe516
 ---
 
 # Composer message history (arrow-up recall)
@@ -158,9 +160,11 @@ export function atLastLine(value: string, selectionStart: number, selectionEnd: 
  * FR-3/FR-4 — one step older. `browse` is the current state (null = not browsing),
  * `current` the composer's live text (saved as the draft on entry).
  * Returns null when there is nothing to do (empty history), so the caller falls through.
+ * `changed` is false when the step is a no-op (already at the oldest entry): the caller
+ * still calls preventDefault (FR-4 intercepts) but must NOT touch the text or the caret.
  */
 export function recallPrev(history: History, browse: Browse | null, current: string):
-  { browse: Browse; text: string } | null;
+  { browse: Browse; text: string; changed: boolean } | null;
 
 /**
  * FR-6 — one step newer. Returns `browse: null` + the saved draft when stepping past
@@ -230,18 +234,35 @@ a design-owned element for a discoverable-by-reflex binding.
       line 1 it recalls (FR-2).
 - [ ] While the slash-menu popup is open, ArrowUp/ArrowDown move the popup selection and history is not
       touched (FR-13).
-- [ ] A `/`-prefixed message (typed or run from the slash menu) never appears in history (FR-1a).
+- [x] A `/`-prefixed message (typed or run from the slash menu) never appears in history (FR-1a).
 - [ ] A failed send does not appear in history, and its text is still restored to the composer (FR-1b).
-- [ ] Sending the same text twice in a row yields one history entry (FR-1c).
+- [x] Sending the same text twice in a row yields one history entry (FR-1c).
 - [ ] Editing a recalled entry and pressing ArrowUp starts a fresh walk from the newest entry; ArrowDown
       back down restores the edited text (FR-8).
 - [ ] Switching to another session and back preserves that session's history; a reload clears it
       (FR-11).
-- [ ] `git diff` touches no file under `contract/`, and no file under `src-tauri/` **other than the
+- [x] `git diff` touches no file under `contract/`, and no file under `src-tauri/` **other than the
       one-line `use tauri::Manager` restore** carried as its own commit (see FR-12 note) (FR-12).
-- [ ] `npx tsc --noEmit` and `npm test` are green, with unit tests covering `appendEntry`,
+- [x] `npx tsc --noEmit` and `npm test` are green, with unit tests covering `appendEntry`,
       `isSlashEntry`, `atFirstLine`, `atLastLine`, `recallPrev`, and `recallNext`.
 
 ## Remediation
 
 ### cohorte-cycle round 5
+
+### /review round 6 (2026-07-31)
+
+- [x] MEDIUM · `src/features/conversation/ConversationView.tsx:226-234` · spec-violation · FR-4
+      requires that at the oldest history entry a repeated ArrowUp leaves "the caret does not move,"
+      but `applyRecall`'s same-value shortcut (`el.value === text` branch) unconditionally calls
+      `el.setSelectionRange(text.length, text.length)`; because `recallPrev` returns the identical
+      text/index when already at the oldest entry (`message-history.ts:64-67`), `setInput(text)` is a
+      no-op (same string, no re-render) and this inline branch fires, forcibly moving the caret to the
+      end even if the user had repositioned it inside the recalled text before pressing ArrowUp again.
+      Fix: in `applyRecall`, skip the `setSelectionRange`/`autoGrow` call when the new text equals the
+      text already shown, or have `recallPrev` signal "no-op" so the caller can `preventDefault()`
+      without touching the caret at all.
+      — fixed: `recallPrev` now returns a `changed: boolean`; the ArrowUp handler
+      (`ConversationView.tsx:187-198`) calls `applyRecall` only when `changed` is true, so a repeat
+      ArrowUp at the oldest entry still `preventDefault()`s but leaves the caret untouched. New test
+      at `message-history.test.ts:164-179`.
