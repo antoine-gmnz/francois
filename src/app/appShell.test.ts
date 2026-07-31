@@ -46,11 +46,13 @@ describe('buildShortcutActions', () => {
       closeAgentTab: vi.fn(),
       toggleLeftPane: vi.fn(),
       toggleRightPane: vi.fn(),
+      toggleCollapsedPane: vi.fn(),
     };
     const ctx: ShortcutActionsContext = {
       preventDefault: spies.preventDefault,
       getActiveSessionId: () => null,
       getMainTab: () => 'session',
+      getFocusedPane: () => 'sidebar',
       setFocusedPane: spies.setFocusedPane,
       setMainTab: spies.setMainTab,
       setNewSessionOpen: spies.setNewSessionOpen,
@@ -58,6 +60,7 @@ describe('buildShortcutActions', () => {
       closeAgentTab: spies.closeAgentTab,
       toggleLeftPane: spies.toggleLeftPane,
       toggleRightPane: spies.toggleRightPane,
+      toggleCollapsedPane: spies.toggleCollapsedPane,
       ...overrides,
     };
     return { ctx, spies };
@@ -67,7 +70,7 @@ describe('buildShortcutActions', () => {
     const { ctx } = fakeCtx();
     const actions = buildShortcutActions(ctx);
     expect(Object.keys(actions).sort()).toEqual(
-      ['1', '2', '3', '4', '5', '6', '[', ']', 'A', 'D', 'N', 'O', 'T', 'W', 'a', 'd', 'n', 'o', 't', 'w'].sort(),
+      ['1', '2', '3', '4', '5', '6', '[', ']', 'A', 'C', 'D', 'N', 'O', 'T', 'W', 'a', 'c', 'd', 'n', 'o', 't', 'w'].sort(),
     );
   });
 
@@ -154,5 +157,23 @@ describe('buildShortcutActions', () => {
     actions[']']();
     expect(spies.toggleLeftPane).toHaveBeenCalledTimes(1);
     expect(spies.toggleRightPane).toHaveBeenCalledTimes(1);
+  });
+
+  it('c/C collapses the focused right pane (FR-10)', () => {
+    const { ctx, spies } = fakeCtx({ getFocusedPane: () => 'mcp' });
+    buildShortcutActions(ctx).c();
+    expect(spies.toggleCollapsedPane).toHaveBeenCalledWith('mcp');
+    buildShortcutActions(ctx).C();
+    expect(spies.toggleCollapsedPane).toHaveBeenCalledTimes(2);
+  });
+
+  it('c is a no-op when focusedPane is sidebar or main (FR-10)', () => {
+    const { ctx: sidebarCtx, spies: sidebarSpies } = fakeCtx({ getFocusedPane: () => 'sidebar' });
+    buildShortcutActions(sidebarCtx).c();
+    expect(sidebarSpies.toggleCollapsedPane).not.toHaveBeenCalled();
+
+    const { ctx: mainCtx, spies: mainSpies } = fakeCtx({ getFocusedPane: () => 'main' });
+    buildShortcutActions(mainCtx).c();
+    expect(mainSpies.toggleCollapsedPane).not.toHaveBeenCalled();
   });
 });

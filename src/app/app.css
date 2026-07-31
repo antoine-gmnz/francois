@@ -56,6 +56,16 @@
   min-height: 0;
 }
 
+/* collapse-right-column FR-15: a collapsed card's wrapper shrinks to its
+   natural header height instead of sharing the column's flex ratios — the
+   freed space goes to whichever cards stay expanded. With all three
+   collapsed the column shows three header strips top-aligned. */
+.app-panel-agents--collapsed,
+.app-panel-mcp--collapsed,
+.app-panel-skills--collapsed {
+  flex: 0 0 auto;
+}
+
 /* design-refresh: every pane is a --bg-panel card on a --bg-app window, with
    the OUTER border (--border-2) and the 8px panel radius; --border/--radius-md
    are the INNER divider/chip scale and read as a hairline seam out here. */

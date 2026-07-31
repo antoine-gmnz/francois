@@ -70,6 +70,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
         preventDefault: () => e.preventDefault(),
         getActiveSessionId: () => useStore.getState().activeSessionId,
         getMainTab: () => useStore.getState().mainTab,
+        getFocusedPane: () => useStore.getState().focusedPane,
         setFocusedPane,
         setMainTab,
         setNewSessionOpen,
@@ -77,6 +78,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
         closeAgentTab: (agentId) => useStore.getState().closeAgentTab(agentId),
         toggleLeftPane: () => useStore.getState().toggleLeftPane(),
         toggleRightPane: () => useStore.getState().toggleRightPane(),
+        toggleCollapsedPane: (pane) => useStore.getState().toggleCollapsedPane(pane),
       });
       const action = actions[e.key];
       if (action) action();

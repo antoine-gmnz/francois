@@ -21,9 +21,10 @@ function ordered(map: Map<string, AgentInfo>): AgentInfo[] {
     .map(({ agent }) => agent);
 }
 
-export default function AgentsPanel({ sessionId }: { sessionId: string | null }) {
+export default function AgentsPanel({ sessionId, collapsed }: { sessionId: string | null; collapsed: boolean }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
+  const toggleCollapsedPane = useStore((s) => s.toggleCollapsedPane);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
   const openAgentTab = useStore((s) => s.openAgentTab);
@@ -129,33 +130,42 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
       onClick={() => setFocusedPane('agents')}
       className={focused ? 'agents-panel agents-panel--focused' : 'agents-panel'}
     >
-      <PanelHeader title="AGENTS" count={agents.size} paneKey={3} focused={focused} />
-
-      <AgentsListBody
-        listError={listError}
-        loading={loading}
-        list={list}
-        now={clockNow}
-        selectedId={selectedId}
-        trail={trail}
-        hoverId={hoverId}
-        pendingKill={pendingKill}
-        onSelect={(agent, e) => {
-          if (agent.id !== trail.agentId) setTrail(collapseTrail); // FR-13: selection collapses
-          setSelectedId(agent.id);
-          // agent-tab FR-10: a CLICK also opens (or re-activates) this
-          // agent's main-pane tab and hands it focus — you clicked to read
-          // it. stopPropagation keeps the section's own handler from
-          // immediately pulling focus back to pane [3]. The keyboard path
-          // (↑/↓ + ⏎, the in-place trail) is deliberately unchanged.
-          e.stopPropagation();
-          openAgentTab({ id: agent.id, name: agent.name, status: agent.status });
-          setFocusedPane('main');
-        }}
-        onHover={setHoverId}
-        onKill={kill}
-        onAtBottom={(v) => setTrail((t) => (t.atBottom === v ? t : { ...t, atBottom: v }))}
+      <PanelHeader
+        title="AGENTS"
+        count={agents.size}
+        paneKey={3}
+        focused={focused}
+        collapsed={collapsed}
+        onToggleCollapse={() => toggleCollapsedPane('agents')}
       />
+
+      {!collapsed && (
+        <AgentsListBody
+          listError={listError}
+          loading={loading}
+          list={list}
+          now={clockNow}
+          selectedId={selectedId}
+          trail={trail}
+          hoverId={hoverId}
+          pendingKill={pendingKill}
+          onSelect={(agent, e) => {
+            if (agent.id !== trail.agentId) setTrail(collapseTrail); // FR-13: selection collapses
+            setSelectedId(agent.id);
+            // agent-tab FR-10: a CLICK also opens (or re-activates) this
+            // agent's main-pane tab and hands it focus — you clicked to read
+            // it. stopPropagation keeps the section's own handler from
+            // immediately pulling focus back to pane [3]. The keyboard path
+            // (↑/↓ + ⏎, the in-place trail) is deliberately unchanged.
+            e.stopPropagation();
+            openAgentTab({ id: agent.id, name: agent.name, status: agent.status });
+            setFocusedPane('main');
+          }}
+          onHover={setHoverId}
+          onKill={kill}
+          onAtBottom={(v) => setTrail((t) => (t.atBottom === v ? t : { ...t, atBottom: v }))}
+        />
+      )}
 
       {newAgentOpen && sessionId && (
         <NewAgentModal sessionId={sessionId} onClose={() => setNewAgentOpen(false)} />

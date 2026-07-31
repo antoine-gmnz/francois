@@ -7,12 +7,24 @@ import type { Result } from '../../../contract/common';
 import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './palette';
 import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
 import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
-import { useStore } from '../../lib/store';
+import { useStore, type RightPane } from '../../lib/store';
 import { requestUsageRefresh } from '../usage/usage';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
+
+// collapse-right-column FR-11: toggling a collapsed card to expanded also
+// reveals the right column if it was hidden — the palette command list
+// otherwise offers no way to notice the toggle "did nothing".
+function toggleRightPanelCommand(pane: RightPane): () => void {
+  return () => {
+    const st = useStore.getState();
+    const wasCollapsed = st.collapsedPanes[pane];
+    st.toggleCollapsedPane(pane);
+    if (wasCollapsed && !st.showRightPane) st.toggleRightPane();
+  };
+}
 
 /** Fire-and-forget a delegated IPC call, toasting on ok:false or rejection (FR-18). */
 function delegate(p: Promise<Result<unknown>>): void {
@@ -205,6 +217,30 @@ export function registerBuiltinCommands(): void {
     run: () => {
       useStore.getState().toggleRightPane();
     },
+  });
+
+  // 10b/c/d — collapse-right-column FR-11: per-card collapse, one command
+  // each. Expanding from the palette also reveals the column if hidden.
+  registerPaletteCommand({
+    id: 'toggle-agents-panel',
+    glyph: '▾',
+    name: 'Toggle agents panel',
+    hint: () => (useStore.getState().collapsedPanes.agents ? 'expand · [3]' : 'collapse · [3]'),
+    run: toggleRightPanelCommand('agents'),
+  });
+  registerPaletteCommand({
+    id: 'toggle-mcp-panel',
+    glyph: '▾',
+    name: 'Toggle MCP panel',
+    hint: () => (useStore.getState().collapsedPanes.mcp ? 'expand · [4]' : 'collapse · [4]'),
+    run: toggleRightPanelCommand('mcp'),
+  });
+  registerPaletteCommand({
+    id: 'toggle-skills-panel',
+    glyph: '▾',
+    name: 'Toggle skills panel',
+    hint: () => (useStore.getState().collapsedPanes.skills ? 'expand · [5]' : 'collapse · [5]'),
+    run: toggleRightPanelCommand('skills'),
   });
 
   // 11 — Refresh usage limits (usage-bar FR-28): the mouse-free route to the same

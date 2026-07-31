@@ -56,9 +56,10 @@ function useMcpServers(sessionId: string | null) {
   return { servers, setServers, listError };
 }
 
-export default function McpPanel({ sessionId }: { sessionId: string | null }) {
+export default function McpPanel({ sessionId, collapsed }: { sessionId: string | null; collapsed: boolean }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
+  const toggleCollapsedPane = useStore((s) => s.toggleCollapsedPane);
   // attach overlay lives in the store so the command palette can open it too (FR-23)
   const attachOpen = useStore((s) => s.mcpAttachOpen);
   const setAttachOpen = useStore((s) => s.setMcpAttachOpen);
@@ -122,8 +123,18 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
 
   return (
     <section onClick={() => setFocusedPane('mcp')} className={focused ? 'mcp-panel mcp-panel--focused' : 'mcp-panel'}>
-      <div className="mcp-header">
-        <span className={focused ? 'mcp-header-title mcp-header-title--focused' : 'mcp-header-title'}>MCP SERVERS</span>
+      <div
+        className={`mcp-header mcp-header--clickable${collapsed ? ' mcp-header--collapsed' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleCollapsedPane('mcp');
+        }}
+        title={collapsed ? 'expand' : 'collapse'}
+      >
+        <span className={focused ? 'mcp-header-title mcp-header-title--focused' : 'mcp-header-title'}>
+          <span className="panel-header-chevron">{collapsed ? '▸' : '▾'}</span>
+          MCP SERVERS
+        </span>
         <div className="mcp-header-right">
           <span className="mcp-header-count">{servers.length} · [4]</span>
           <span
@@ -139,25 +150,27 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
         </div>
       </div>
 
-      <div ref={rowsRef} className="scz mcp-rows">
-        {listError ? (
-          <div className="mcp-list-error">session unavailable</div>
-        ) : servers.length === 0 ? (
-          <div className="mcp-empty">no MCP servers · attach one with ⌘K</div>
-        ) : (
-          servers.map((server, i) => (
-            <ServerRow
-              key={server.name}
-              server={server}
-              selected={i === selected}
-              onClick={() => {
-                setFocusedPane('mcp');
-                openDetail(i);
-              }}
-            />
-          ))
-        )}
-      </div>
+      {!collapsed && (
+        <div ref={rowsRef} className="scz mcp-rows">
+          {listError ? (
+            <div className="mcp-list-error">session unavailable</div>
+          ) : servers.length === 0 ? (
+            <div className="mcp-empty">no MCP servers · attach one with ⌘K</div>
+          ) : (
+            servers.map((server, i) => (
+              <ServerRow
+                key={server.name}
+                server={server}
+                selected={i === selected}
+                onClick={() => {
+                  setFocusedPane('mcp');
+                  openDetail(i);
+                }}
+              />
+            ))
+          )}
+        </div>
+      )}
 
       {popover && sessionId && (
         <DetailPopover
