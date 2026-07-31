@@ -23,37 +23,56 @@ shared surface is the frozen contract and the spec.
 ## Your conventions (baked from `PIPELINE.md` at render time)
 
 <!-- Rendered by /init-pipeline (and refreshed by /update-pipeline's reconcile) from
-     §Conventions `### Shared` + `### Surface: core` + your §Testing lines.
+     §Conventions `### Shared` + `### Surface: <your key>` + your §Testing lines.
      Edit conventions in PIPELINE.md, never here — this block is regenerated. -->
 
 ### Shared
 
-- **Logical channels**: specs and contracts name the frontend↔core interface as `francois:<domain>:<verb>` (request/response) and `francois:<domain>:event` (event streams). These names are canonical and transport-agnostic. **Physical binding on Tauri**:
-  - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`). Commands never reject for domain failures — every fallible call resolves to `Result`.
-  - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in `contract/common.ts`).
-  - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and reads as: the Tauri mapping above / "Rust core".
-- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `mcp` · `skills` · `palette` · `cli` · `project` · `remote`
+- **Logical channels**: specs and contracts name the frontend↔core interface as
+  `francois:<domain>:<verb>` (request/response) and `francois:<domain>:event` (event streams). These
+  names are canonical and transport-agnostic. **Physical binding on Tauri**:
+  - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via
+    `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`).
+    Commands never reject for domain failures — every fallible call resolves to `Result`.
+  - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via
+    `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in
+    `contract/common.ts`).
+  - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and
+    reads as: the Tauri mapping above / "Rust core".
+- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `mcp` · `skills` ·
+  `palette` · `cli` · `project` · `remote`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
-- **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
+- **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`,
+  statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
-- **Errors**: `AppError { code, message, detail? }` with codes from `ErrorCode` in `contract/common.ts`; extend the union in a feature contract only for feature-specific codes.
-- **Code layout**: both surfaces group by **feature**, not by technical kind. New code goes in
-  the folder that owns the feature — never in a new top-level file.
-- **Size**: no source file over ~1000 lines. Past that, split by concern rather than
-  growing the file — and move each test with the code it covers.
+- **Errors**: `AppError { code, message, detail? }` with codes from `ErrorCode` in
+  `contract/common.ts`; extend the union in a feature contract only for feature-specific codes.
+- **Size**: no source file over ~1000 lines. Past that, split by concern rather than growing the
+  file — and move each test with the code it covers.
 
-### Surface: `core` (`src-tauri`)
+### Surface: core
 
-- `src-tauri/src/`: each large domain is a module directory (`session/`,
-  `diff/`, `permissions/`). Its `mod.rs` owns the **shared data model** — the types whose
-  fields the whole domain touches — and declares the child modules; each child owns one
-  concern plus its own `#[cfg(test)] mod tests`. Keeping the model in `mod.rs` is
-  deliberate: Rust lets a child read an ancestor's private fields, so children need no
-  widened visibility. Shared test fixtures live in a `#[cfg(test)] mod testutil`.
+Group by **feature**, not by technical kind. New code goes in the folder that owns the feature —
+never in a new top-level file.
 
-### Testing
+- Each large domain is a module directory (`session/`, `diff/`, `permissions/`).
+- Its `mod.rs` owns the **shared data model** — the types whose fields the whole domain touches —
+  and declares the child modules; each child owns one concern plus its own `#[cfg(test)] mod tests`.
+- Keeping the model in `mod.rs` is deliberate: Rust lets a child read an ancestor's private fields,
+  so children need no widened visibility.
+- Shared test fixtures live in a `#[cfg(test)] mod testutil`.
+- Cross-cutting helpers that belong to no single domain are small top-level modules
+  (`fs_util.rs`, `process_util.rs`, `wsl.rs`, `window.rs`, `diagnostics.rs`) — check these
+  before adding a private copy inside a domain.
+- Git is the system `git` CLI invoked from Rust (no libgit binding). The PTY layer is
+  `portable-pty`. Claude Code integration spawns `claude -p --output-format stream-json
+  --include-partial-messages` and parses the NDJSON event stream.
 
-- **core** (`cargo test` in `src-tauri`): cover command handlers against the contract shapes (serde round-trips of payloads and the tagged event unions), NDJSON stream parsing, and git operations against throwaway temp repos. No shared global state between tests.
+### Testing (core)
+
+Strict TDD (red → green → refactor), `cargo test` in `src-tauri`: cover command handlers against the
+contract shapes (serde round-trips of payloads and the tagged event unions), NDJSON stream parsing,
+and git operations against throwaway temp repos. No shared global state between tests.
 
 ## You must NEVER
 
@@ -89,14 +108,13 @@ tools are unavailable or come up empty.
 
 ## How you work — strict TDD (red → green → refactor)
 
-1. **Read the frozen contract** for the feature and list the Tauri commands (`<domain>_<verb>`) and
-   event payloads (`francois://<domain>/event`) your surface must provide, per the §Conventions
-   channel binding.
-2. **Write the failing test(s) first** from the frozen contract. Cover exactly what your baked
+Locate the domain module that owns this feature (or create it per your baked layout rules). Then:
+
+1. **Write the failing test(s) first** from the frozen contract. Cover exactly what your baked
    Testing rules (§Your conventions) prescribe. Run the test command and watch it fail (red).
-3. Implement until green, following your baked conventions.
-4. Refactor to the conventions. Keep tests green.
-5. **Lint + format before handoff:** run your surface's lint and fix every issue. If the project
+2. Implement until green, following your baked conventions.
+3. Refactor to the conventions. Keep tests green.
+4. **Lint + format before handoff:** run your surface's lint and fix every issue. If the project
    registers a PostToolUse format hook (see `.claude/settings.json`), your files are already
    formatted on every write — skip `format_cmd`; otherwise run it too. Code you hand off must be
    lint-clean and formatted.

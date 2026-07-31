@@ -23,11 +23,12 @@ mod wsl;
 // keeps resolving exactly as before this domain moved out of main.rs.
 pub(crate) use shell::dispose_session_shell;
 
-// `Manager` is what provides `get_webview_window` on `&App` — used by the
-// #[cfg(windows)] chrome tint in setup() below. Without it the Windows build
-// fails to compile (E0599); the Linux/macOS builds compile the call out and
-// never noticed.
-use tauri::{Manager, RunEvent};
+use tauri::RunEvent;
+// `get_webview_window` is a `Manager` method; only the windows-only chrome tint
+// below calls it, so the import is gated too (an unconditional one warns as
+// unused on macOS/Linux).
+#[cfg(windows)]
+use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
@@ -75,6 +76,12 @@ fn main() {
             session::session_list_commands,
             session::session_models,
             session::session_pick_directory,
+            session::session_attach_file,
+            session::session_attach_clipboard_image,
+            session::session_pick_attachments,
+            session::session_release_attachment,
+            session::session_commit_attachments,
+            session::session_clear_attachments,
             project::project_list,
             project::project_create,
             project::project_update,
@@ -87,6 +94,7 @@ fn main() {
             session::agents_kill,
             session::agents_activity,
             session::agents_transcript,
+            session::workflows_list,
             session::mcp_registry,
             session::mcp_list,
             session::mcp_detail,

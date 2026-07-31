@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId } from '../../contract/common';
+import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun } from '../../contract/common';
 import type {
   ProjectAwareSessionCreateRequest,
   ProjectCreateRequest,
@@ -16,6 +16,13 @@ import type { PermissionDecision, PermissionRule, PermissionTier } from '../../c
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { SessionCreateInput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
+import type {
+  Attachment,
+  ClearAttachmentsResult,
+  ClearScope,
+  CommitAttachmentsResult,
+  PickAttachmentsResponse,
+} from '../../contract/session-attachments';
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
@@ -59,6 +66,29 @@ export const sessionSend = (sessionId: SessionId, blockId: string, text: string)
 // Kill the running turn (⌃C). No-op if the session isn't running (core FR-23).
 export const sessionInterrupt = (sessionId: SessionId) =>
   ipc<Result<null>>('session_interrupt', { sessionId });
+// session-attachments (§5.2). Request/response only — no event channel. Each call
+// resolves a Result; a refusal (too large, folder, io) is ok:false per file, so a
+// multi-file drop keeps its successes (FR-9).
+export const sessionAttachFile = (sessionId: SessionId, path: string) =>
+  ipc<Result<Attachment>>('session_attach_file', { sessionId, path });
+export const sessionAttachClipboardImage = (sessionId: SessionId, mime: string, dataBase64: string) =>
+  ipc<Result<Attachment>>('session_attach_clipboard_image', { sessionId, mime, dataBase64 });
+/**
+ * Opens the native multi-select dialog IN THE CORE. Successes and per-file
+ * refusals travel together (FR-9); a cancel is ok:true with both arrays empty.
+ */
+export const sessionPickAttachments = (sessionId: SessionId) =>
+  ipc<Result<PickAttachmentsResponse>>('session_pick_attachments', { sessionId });
+/** FR-13: deletes the copy immediately; a copied:false origin is never touched. */
+export const sessionReleaseAttachment = (sessionId: SessionId, attachmentId: string) =>
+  ipc<Result<null>>('session_release_attachment', { sessionId, attachmentId });
+/** FR-15: refs present in the sent text become 'sent'; the rest are released. */
+export const sessionCommitAttachments = (sessionId: SessionId, text: string) =>
+  ipc<Result<CommitAttachmentsResult>>('session_commit_attachments', { sessionId, text });
+/** FR-18: sweeps a session's or a whole project's attachments dirs. */
+export const sessionClearAttachments = (scope: ClearScope) =>
+  ipc<Result<ClearAttachmentsResult>>('session_clear_attachments', { scope });
+
 export const getTranscript = (sessionId: SessionId) =>
   ipc<Result<ConversationBlock[]>>('conversation_get_transcript', { sessionId });
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
@@ -114,6 +144,12 @@ export const agentsActivity = (agentId: string) =>
 // count evicted past it — what the dynamic agent tab renders.
 export const agentsTranscript = (agentId: string) =>
   ipc<Result<AgentTranscript>>('agents_transcript', { agentId });
+
+// workflow-panel §5: this session's `Workflow` runs, in first-seen order. The
+// panel is read-only — a run is dispatched by the assistant during a turn, so
+// there is no create/stop verb to wrap here.
+export const workflowsList = (sessionId: SessionId) =>
+  ipc<Result<WorkflowRun[]>>('workflows_list', { sessionId });
 
 /** Subscribe to francois://agents/event (agent.block, agent-tab FR-8). */
 export function onAgentEvent(cb: (e: AgentEvent) => void): Promise<UnlistenFn> {

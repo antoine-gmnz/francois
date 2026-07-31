@@ -15,9 +15,13 @@
 // All logic lives in ./usage (covered by src/features/usage/usage.test.ts); this file only maps
 // the view model onto §8's tokens.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
+import ProjectMenu from '../projects/ProjectMenu';
+import { switcherLabel } from '../projects/projects';
+import { useProjectRegistrySync } from '../projects/useProjectRegistrySync';
 import { abbreviate } from '../../lib/path';
+import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useStore } from '../../lib/store';
 import './usage.css';
 import { requestUsageRefresh, startUsageFeed, usageBarView, type MeterChipView } from './usage';
@@ -43,6 +47,8 @@ export default function UsageBar({ home }: { home: string }) {
   const [now, setNow] = useState(() => Date.now());
   const [freshHover, setFreshHover] = useState(false);
   const [pathHover, setPathHover] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // design-refresh FR-4: the project-path button reads whichever cwd is most
   // specific right now — the scoped project's root, else the active session's
@@ -51,11 +57,25 @@ export default function UsageBar({ home }: { home: string }) {
   const activeProjectId = useStore((s) => s.activeProjectId);
   const sessions = useStore((s) => s.sessions);
   const activeSessionId = useStore((s) => s.activeSessionId);
-  const setProjectsOpen = useStore((s) => s.setProjectsOpen);
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
   const rawPath = activeProject?.root ?? activeSession?.cwd ?? home;
-  const pathLabel = rawPath ? (displayWslCwd(rawPath) ?? abbreviate(rawPath, home)) : '';
+  // Falls back to the scope name rather than to nothing: this button is the only
+  // project switcher, so it must stay clickable even before `home` has resolved
+  // (and in a fresh install with no project and no session).
+  const pathLabel = rawPath ? (displayWslCwd(rawPath) ?? abbreviate(rawPath, home)) : switcherLabel(activeProject);
+
+  // The titlebar owns the project switcher, so it also owns keeping the registry
+  // (and with it the restored scope, FR-26) in step with the core.
+  useProjectRegistrySync();
+
+  // Escape / outside click close the scope dropdown. The ref wraps the trigger
+  // AND the panel, so a click on either is "inside" (see useDismiss).
+  useDismiss(menuRef, {
+    onEscape: () => setMenuOpen(false),
+    onOutsideClick: () => setMenuOpen(false),
+    enabled: menuOpen,
+  });
 
   // FR-21/22: seed once from the core cache, then follow francois://app/event;
   // the returned teardown unsubscribes on unmount (§7 #12).
@@ -75,25 +95,32 @@ export default function UsageBar({ home }: { home: string }) {
   return (
     <div className="usage-bar">
       {/* design-refresh FR-4: left brand cluster — diamond glyph + wordmark +
-          project-path button. Click opens the Projects modal (the nearest
-          existing "manage this" affordance) — no dropdown of its own. */}
+          project-path button. The caret is a real disclosure: it opens the shared
+          project scope menu (projects FR-25), whose last row still reaches the
+          Projects modal. This is the app's only project switcher — pane [1]'s
+          strip is not mounted in the refreshed shell. */}
       <div className="titlebar-brand">
         <span className="titlebar-logo" />
         <span className="titlebar-wordmark">Francois</span>
-        {rawPath && (
+        <div ref={menuRef} className="titlebar-path-wrap">
           <button
             type="button"
-            onClick={() => setProjectsOpen(true)}
+            aria-haspopup="listbox"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
             onMouseEnter={() => setPathHover(true)}
             onMouseLeave={() => setPathHover(false)}
-            title={rawPath}
+            title={rawPath || undefined}
             className={pathHover ? 'titlebar-path titlebar-path--hover' : 'titlebar-path'}
           >
             <span className="titlebar-path-dot" />
             <span className="truncate titlebar-path-text">{pathLabel}</span>
-            <span className="titlebar-path-caret">▾</span>
+            <span className="titlebar-path-caret">{menuOpen ? '▴' : '▾'}</span>
           </button>
-        )}
+          {menuOpen && (
+            <ProjectMenu home={home} onClose={() => setMenuOpen(false)} className="pjsw-dropdown--anchored" />
+          )}
+        </div>
       </div>
 
       {/* meter region — the whole strip left of the freshness label is the click target (FR-27) */}

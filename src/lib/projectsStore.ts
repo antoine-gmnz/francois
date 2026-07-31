@@ -15,7 +15,7 @@ import type { AppState } from './store';
 export const INITIAL_ACTIVE_PROJECT = loadActiveProjectId();
 
 export const createProjectsSlice: StateCreator<AppState, [], [], ProjectsState> = (set) => ({
-  // The registry cache is written by ProjectSwitcher / ProjectsModal after every
+  // The registry cache is written by useProjectRegistrySync / ProjectsModal after every
   // project_list; activeProjectId (null = All) is restored from localStorage at
   // launch and reconciled against the fetched list on every write (FR-26, §7
   // case 16).

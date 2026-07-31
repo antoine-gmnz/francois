@@ -69,7 +69,7 @@ export interface ShortcutActionsContext {
 }
 
 /**
- * app-shell's minimal global keys: n (new session), a (new agent), 1-5 (pane
+ * app-shell's minimal global keys: n (new session), a (new agent), 1-6 (pane
  * focus), d/t/o (toggle diff/shell/overview ↔ session), w (close the active
  * agent tab), [ / ] (toggle the side columns). Built fresh per keydown by the
  * caller (which also builds `ctx` fresh per keydown), so every branch always
@@ -116,6 +116,7 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
     '3': () => ctx.setFocusedPane('agents'),
     '4': () => ctx.setFocusedPane('mcp'),
     '5': () => ctx.setFocusedPane('skills'),
+    '6': () => ctx.setFocusedPane('workflows'),
     d: toggleDiffTab,
     D: toggleDiffTab,
     t: toggleShellTab,

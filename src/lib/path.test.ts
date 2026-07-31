@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { abbreviate } from './path';
+import { abbreviate, basename } from './path';
+
+describe('basename', () => {
+  it('takes the last segment of a POSIX path', () => {
+    expect(basename('/home/u/shots/a.png')).toBe('a.png');
+  });
+
+  it('takes the last segment of a Windows path', () => {
+    expect(basename('C:\\repo\\docs\\report.pdf')).toBe('report.pdf');
+  });
+
+  it('ignores a trailing separator (a dropped folder)', () => {
+    expect(basename('/home/u/src/')).toBe('src');
+  });
+
+  it('returns a bare name unchanged', () => {
+    expect(basename('a.png')).toBe('a.png');
+  });
+
+  it('returns "" for an empty path', () => {
+    expect(basename('')).toBe('');
+  });
+});
 
 describe('abbreviate', () => {
   it('returns "" for an empty cwd', () => {

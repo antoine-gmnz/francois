@@ -63,6 +63,15 @@ pub(crate) fn handle_tool_results(
             }
         }
 
+        // workflow-panel FR-6: the `Workflow` tool returns as soon as the run is
+        // queued, so a successful result is a spawn ACK carrying the `wf_…` id —
+        // only an error result ends the run here.
+        if rec.is_workflow {
+            if let Some(run_uuid) = rec.input.get("__workflowId").and_then(|val| val.as_str()) {
+                on_workflow_dispatch_result(app, session_id, run_uuid, &result_text, is_error);
+            }
+        }
+
         let done_block = {
             let engine = app.state::<Engine>();
             let mut map = engine.sessions.lock().unwrap();
