@@ -23,7 +23,11 @@ mod wsl;
 // keeps resolving exactly as before this domain moved out of main.rs.
 pub(crate) use shell::dispose_session_shell;
 
-use tauri::{RunEvent};
+// `Manager` is only reached from the windows-gated chrome tint in `setup`, so it
+// is gated the same way — importing it unconditionally warns on every other OS.
+#[cfg(windows)]
+use tauri::Manager;
+use tauri::RunEvent;
 
 fn main() {
     tauri::Builder::default()
@@ -83,6 +87,7 @@ fn main() {
             session::agents_kill,
             session::agents_activity,
             session::agents_transcript,
+            session::workflows_list,
             session::mcp_registry,
             session::mcp_list,
             session::mcp_detail,

@@ -46,7 +46,26 @@ pub(crate) fn test_session() -> Session {
         agent_blocks_dropped: HashMap::new(),
         block_buffer: Vec::new(),
         mcp: HashMap::new(),
+        workflows: HashMap::new(),
+        workflow_order: Vec::new(),
+        workflow_by_tool: HashMap::new(),
         cli_commands: Vec::new(),
+    }
+}
+
+/// workflow-panel: a minimal running run, for the event/serde shape tests.
+pub(crate) fn test_workflow_run() -> WorkflowRun {
+    WorkflowRun {
+        id: "w1".into(),
+        session_id: "s1".into(),
+        name: "review-changes".into(),
+        description: "Review changed files across dimensions".into(),
+        status: "running".into(),
+        started_at: 1_000,
+        ended_at: None,
+        phases: Vec::new(),
+        run_id: None,
+        last_activity: None,
     }
 }
 
