@@ -62,6 +62,11 @@ pub struct ProjectDefaults {
     runtime: Option<String>,
     #[serde(rename = "allowGit", default, skip_serializing_if = "Option::is_none")]
     allow_git: Option<bool>,
+    /// multi-account FR-20: the account a new session under this project opens
+    /// on. Stored verbatim like every other default — a removed account falls
+    /// back to the isDefault one in the modal, never here.
+    #[serde(rename = "accountId", default, skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
 }
 
 /// One registry entry, exactly as persisted in projects.json (FR-1). `rootExists`

@@ -608,6 +608,7 @@ mod tests {
             permission_mode: Some("acceptEdits".into()),
             runtime: None,
             allow_git: Some(true),
+            account_id: Some("a1".into()),
         };
         let v = serde_json::to_value(meta_of(&p)).unwrap();
         assert_eq!(v["id"], "p1");
@@ -618,11 +619,34 @@ mod tests {
         assert_eq!(v["defaults"]["modelId"], "opus");
         assert_eq!(v["defaults"]["permissionMode"], "acceptEdits");
         assert_eq!(v["defaults"]["allowGit"], true);
+        assert_eq!(v["defaults"]["accountId"], "a1");
         // an unset default is an OMITTED key, never null — that is how the modal
         // tells "inherit" from "explicitly set".
         assert!(v["defaults"].get("effort").is_none());
         assert!(v["defaults"].get("runtime").is_none());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_projects_account_default_survives_the_update_round_trip() {
+        // multi-account FR-20: the frontend sends `defaults.accountId` on
+        // project_update. Before this field existed on the Rust mirror serde
+        // dropped it silently, so the Projects-modal ACCOUNT select reverted to
+        // "inherit" on the next list — the select looked inert.
+        let sent: ProjectDefaults =
+            serde_json::from_value(json!({ "modelId": "opus", "accountId": "a1" })).unwrap();
+        assert_eq!(sent.account_id.as_deref(), Some("a1"));
+        assert_eq!(
+            serde_json::to_value(&sent).unwrap(),
+            json!({ "modelId": "opus", "accountId": "a1" })
+        );
+        // "inherit" stays an omitted key, never a null or an empty string.
+        let cleared: ProjectDefaults = serde_json::from_value(json!({ "modelId": "opus" })).unwrap();
+        assert_eq!(cleared.account_id, None);
+        assert!(serde_json::to_value(&cleared)
+            .unwrap()
+            .get("accountId")
+            .is_none());
     }
 
     // ---- FR-2/FR-5: listing ----

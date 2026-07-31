@@ -314,6 +314,17 @@ pub fn load_accounts(app: &AppHandle) {
     if let Some(dir) = accounts_dir(app) {
         sanitize_config_dirs(&mut records, &dir);
     }
+    // Backfill the global-config mirror on every load, not just at creation
+    // (mirror.rs): it heals accounts minted before this existed, and picks up an
+    // entry — a `skills/`, a `hooks/` — that appeared in `~/.claude` after the
+    // account was made. Only for a dir that still exists, so a hand-deleted
+    // account is never resurrected as a shell of symlinks.
+    for r in records.iter() {
+        let dir = Path::new(&r.config_dir);
+        if dir.is_dir() {
+            crate::account::mirror_global(dir);
+        }
+    }
     let (email, organization) = read_default_identity(); // FR-3
     let Some(state) = app.try_state::<AccountState>() else {
         return;

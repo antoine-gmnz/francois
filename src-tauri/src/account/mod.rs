@@ -16,6 +16,9 @@
 //  * registry.rs — accounts.json persistence, ordering, default resolution,
 //    the FR-6/7/8 mutation logic.
 //  * login.rs — the in-app login PTY + `<configDir>/.claude.json` identity poll.
+//  * mirror.rs — seeding an account's config dir from the global `~/.claude`,
+//    so the override isolates credentials without also isolating the user's
+//    commands, agents, skills and hooks.
 //  * commands.rs — the francois:account:<verb> Tauri command surface.
 //
 // LOCK ORDER: `AccountState` is a LEAF like `usage::UsageState` — nothing here
@@ -25,10 +28,12 @@
 
 mod commands;
 mod login;
+mod mirror;
 mod registry;
 
 pub(crate) use commands::*;
 pub(crate) use login::*;
+pub(crate) use mirror::*;
 pub(crate) use registry::*;
 
 #[cfg(test)]
