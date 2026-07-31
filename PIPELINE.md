@@ -274,3 +274,18 @@ that owns the feature — never in a new top-level file.
 | `remote-control` | HOST Claude Code's native Remote Control per session (interactive `claude --remote-control` in a core-owned PTY) so the same thread continues on phone/claude.ai; URL + copy (QR deferred) | session-engine, durable-sessions, conversation-view, app-shell |
 | `agent-tab` | dynamic main tabs after SHELL: click a pane [3] card to read that subagent's own conversation (per-agent block transcript, `francois:agents:transcript` + `agent.block`) | async-agents, agents-panel, conversation-view, app-shell |
 | `workflow-panel` | pane [6]: `Workflow` tool runs read off the session stream — name/description/phases from the script's `meta`, live elapsed, ack + completion notice (`francois:workflows:list` + `workflow.update`) | session-engine, agents-panel, async-agents, app-shell |
+| `durable-sessions` | sessions survive quit/reopen — persisted transcript, status, model, context usage; resume over `claude --resume` | session-engine, sessions-sidebar |
+| `fleet-board` | per-session status cards (state, model, context usage, diff badge, agent count, last activity), keyboard-navigable | session-engine, sessions-sidebar, app-shell |
+| `interactive-commands` | SESSION tab: slash commands that need a round-trip (`/model`, `/compact`, …) driven through the stdio control channel | session-engine, conversation-view |
+| `message-history` | SESSION composer: recall previously sent messages with `↑`/`↓`, per session | conversation-view |
+| `multi-account` | several Anthropic accounts side by side — per-account config dir (mirrored from the global `~/.claude`), account picker, per-project default account | session-engine, projects, app-shell, usage-bar |
+| `session-attachments` | SESSION composer: attach files from disk or the clipboard (images included) to a turn | conversation-view, session-engine |
+| `session-worktree` | open a session in a dedicated `git worktree` so its edits never touch the main checkout | session-engine, sessions-sidebar, diff-view |
+| `session-rename` | rename a session's display name from the sidebar context menu or the palette; propagates over `session.meta` | session-engine, sessions-sidebar, command-palette |
+| `usage-bar` | account plan limits under the system title bar — app-scoped probe + cache, reset clock | multi-account, app-shell |
+| `wsl-filesystem` | Windows: git follows the filesystem, shell and `claude` follow the WSL runtime — path translation across the boundary | session-engine, shell-terminal, diff-view |
+| `collapse-right-column` | per-card collapse/expand for panes [3]–[6] (click, `c`, palette), persisted | app-shell, agents-panel, mcp-panel, skills-panel |
+| `mac-text-selection` | macOS: text selection + copy in the SESSION transcript | conversation-view |
+| `notifications` *(frozen)* | desktop notification when a background session finishes, errors, or needs input | session-engine, app-shell |
+| `session-brake` *(frozen)* | stop a running turn mid-flight | session-engine, conversation-view |
+| `design-refresh` *(frozen)* | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |
