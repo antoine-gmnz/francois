@@ -1,0 +1,245 @@
+/* self-update — feature styles for the status-bar chip (FR-8) and the update
+   modal (FR-10/FR-11/FR-12). Every value is a token from src/styles.css — no
+   raw hex, no magic px. The modal reuses src/ui/Modal.tsx verbatim (design
+   brief), so only the panel's responsive cap and its contents live here;
+   `.scz` (thin scrollbar) comes from styles.css. */
+
+/* ── status-bar chip ────────────────────────────────────────────────────── */
+/* Ambient information: no animation, no pulse, no focus stealing. Same 10px
+   uppercase mono metrics as the neighbouring `.app-key` chips so the bar's
+   rhythm does not shift when the state flips. */
+.upd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-1) var(--space-6);
+  background: var(--accent-soft-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.upd-chip:hover {
+  color: var(--accent-bright);
+}
+.upd-chip:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 0;
+}
+
+/* ── modal ──────────────────────────────────────────────────────────────── */
+/* Modal's `width` prop is a number, so the responsive half of the brief's
+   `min(560px, 92vw)` is expressed as a max-width on the panel — max-width wins
+   over the inline width with no !important. */
+.upd-backdrop .modal-panel {
+  max-width: 92vw;
+}
+.upd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.upd-header__title {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.upd-close {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: var(--font-size-12);
+  cursor: pointer;
+}
+.upd-close:hover {
+  color: var(--text-bright);
+}
+
+/* headline — the first thing read; nothing sits above it */
+.upd-headline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-15);
+}
+.upd-headline__from {
+  color: var(--text-muted);
+}
+.upd-headline__arrow {
+  color: var(--text-faint);
+}
+.upd-headline__to {
+  color: var(--accent-bright);
+}
+
+/* notes — third-party text from a GitHub release body: PREFORMATTED, never
+   HTML and never markdown (FR-10). */
+.upd-notes {
+  margin: 0;
+  padding: var(--space-10);
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11-5);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.upd-notes--empty {
+  overflow: hidden;
+  text-align: center;
+  color: var(--text-faint);
+  white-space: normal;
+}
+
+/* one-line states (up to date / failed check) */
+.upd-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  padding: var(--space-10) 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-12);
+  text-align: center;
+}
+.upd-line--error {
+  color: var(--error);
+}
+.upd-ok {
+  color: var(--success);
+}
+.upd-note {
+  color: var(--text-muted);
+  font-size: var(--font-size-11);
+  line-height: 1.5;
+}
+.upd-error {
+  color: var(--error);
+  font-size: var(--font-size-11);
+}
+
+/* footer — link on the left, the one action on the right, with the blocked /
+   manual explanation stacked beneath (design brief §States). */
+.upd-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  width: 100%;
+}
+.upd-footer__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.upd-link {
+  color: var(--text-dim);
+  font-size: var(--font-size-11);
+  text-decoration: none;
+}
+.upd-link:hover {
+  color: var(--text-bright);
+}
+
+/* primary action */
+.upd-apply {
+  height: 26px;
+  padding: 0 var(--space-14);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pill);
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: var(--font-size-11);
+  font-weight: 600;
+  cursor: pointer;
+}
+.upd-apply:hover {
+  background: var(--accent-bright);
+}
+.upd-apply:disabled {
+  cursor: not-allowed;
+}
+/* applying: the accent at reduced emphasis, label dimmed — no spinner, no motion */
+.upd-apply--busy:disabled {
+  background: var(--accent);
+  box-shadow: none;
+  opacity: 0.6;
+}
+/* blocked: reason carried by TEXT as well as colour (§Accessibility) */
+.upd-apply--blocked:disabled {
+  background: var(--bg-elevated);
+  box-shadow: none;
+  color: var(--text-disabled);
+}
+
+/* manual install — the copyable command that replaces the button (FR-11) */
+.upd-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-10);
+  padding: var(--space-6) var(--space-10);
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.upd-command__text {
+  color: var(--text-bright);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11-5);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.upd-copy {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.upd-copy:hover {
+  color: var(--text-bright);
+}
+.upd-copy--copied,
+.upd-copy--copied:hover {
+  color: var(--success);
+}
+
+/* ghost button — Retry on a failed check */
+.upd-ghost {
+  align-self: center;
+  height: 24px;
+  padding: 0 var(--space-12);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--font-size-11);
+  cursor: pointer;
+}
+.upd-ghost:hover {
+  color: var(--text-bright);
+  border-color: var(--border-emphasis);
+}
