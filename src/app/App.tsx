@@ -39,6 +39,7 @@ export default function App() {
   const toggleTheme = useStore((s) => s.toggleTheme);
   const showLeftPane = useStore((s) => s.showLeftPane);
   const showRightPane = useStore((s) => s.showRightPane);
+  const collapsedPanes = useStore((s) => s.collapsedPanes);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
@@ -187,16 +188,19 @@ export default function App() {
           <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} shell={shell} />
         </section>
 
-        {/* right column: agents [3] + mcp [4] + skills [5] */}
+        {/* right column: agents [3] + mcp [4] + skills [5] — collapse-right-column
+            FR-15: a collapsed card's wrapper shrinks to its natural header height
+            (flex: 0 0 auto); expanded cards keep their 1.3/0.95/1.05 ratios and
+            share the freed space. */}
         <div className="app-col-right" style={{ display: showRightPane ? undefined : 'none' }}>
-          <div className="app-panel-agents">
-            <AgentsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
+          <div className={collapsedPanes.agents ? 'app-panel-agents app-panel-agents--collapsed' : 'app-panel-agents'}>
+            <AgentsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} collapsed={collapsedPanes.agents} />
           </div>
-          <div className="app-panel-mcp">
-            <McpPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
+          <div className={collapsedPanes.mcp ? 'app-panel-mcp app-panel-mcp--collapsed' : 'app-panel-mcp'}>
+            <McpPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} collapsed={collapsedPanes.mcp} />
           </div>
-          <div className="app-panel-skills">
-            <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
+          <div className={collapsedPanes.skills ? 'app-panel-skills app-panel-skills--collapsed' : 'app-panel-skills'}>
+            <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} collapsed={collapsedPanes.skills} />
           </div>
         </div>
       </div>

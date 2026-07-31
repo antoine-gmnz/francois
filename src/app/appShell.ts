@@ -7,8 +7,9 @@
 
 import { displayWslCwd } from '../../contract/wsl-filesystem';
 import { agentIdFromTab } from '../features/agents/agent-tab';
+import { isRightPane } from '../lib/layoutStore';
 import { abbreviate } from '../lib/path';
-import type { MainTab, Pane } from '../lib/store';
+import type { MainTab, Pane, RightPane } from '../lib/store';
 
 // ---------- tab strip ----------
 
@@ -59,6 +60,8 @@ export interface ShortcutActionsContext {
   preventDefault: () => void;
   getActiveSessionId: () => string | null;
   getMainTab: () => MainTab;
+  /** collapse-right-column FR-10: which pane `c` acts on. */
+  getFocusedPane: () => Pane;
   setFocusedPane: (pane: Pane) => void;
   setMainTab: (tab: MainTab) => void;
   setNewSessionOpen: (open: boolean) => void;
@@ -66,14 +69,17 @@ export interface ShortcutActionsContext {
   closeAgentTab: (agentId: string) => void;
   toggleLeftPane: () => void;
   toggleRightPane: () => void;
+  /** collapse-right-column FR-10: `c` collapses the focused right pane. */
+  toggleCollapsedPane: (pane: RightPane) => void;
 }
 
 /**
  * app-shell's minimal global keys: n (new session), a (new agent), 1-5 (pane
  * focus), d/t/o (toggle diff/shell/overview ↔ session), w (close the active
- * agent tab), [ / ] (toggle the side columns). Built fresh per keydown by the
- * caller (which also builds `ctx` fresh per keydown), so every branch always
- * reads current state rather than a stale render-time closure.
+ * agent tab), [ / ] (toggle the side columns), c (collapse-right-column FR-10:
+ * collapse the focused right pane). Built fresh per keydown by the caller
+ * (which also builds `ctx` fresh per keydown), so every branch always reads
+ * current state rather than a stale render-time closure.
  */
 export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string, () => void> {
   const openNewSession = () => {
@@ -106,6 +112,12 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
       ctx.closeAgentTab(agentId);
     }
   };
+  // FR-10: no-op from sidebar/main — a collapsed card can't own focus, so
+  // there is nothing to collapse from those two panes.
+  const collapseFocusedPane = () => {
+    const pane = ctx.getFocusedPane();
+    if (isRightPane(pane)) ctx.toggleCollapsedPane(pane);
+  };
   return {
     n: openNewSession,
     N: openNewSession,
@@ -124,6 +136,8 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
     O: toggleOverviewTab,
     w: closeActiveAgentTab,
     W: closeActiveAgentTab,
+    c: collapseFocusedPane,
+    C: collapseFocusedPane,
     '[': ctx.toggleLeftPane,
     ']': ctx.toggleRightPane,
   };

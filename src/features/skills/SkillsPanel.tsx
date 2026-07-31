@@ -10,9 +10,10 @@ import { useSkillsFeed } from './useSkillsFeed';
 import { useSkillsKeyboard } from './useSkillsKeyboard';
 import './skills.css';
 
-export default function SkillsPanel({ sessionId }: { sessionId: string | null }) {
+export default function SkillsPanel({ sessionId, collapsed }: { sessionId: string | null; collapsed: boolean }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
+  const toggleCollapsedPane = useStore((s) => s.toggleCollapsedPane);
   const focused = focusedPane === 'skills';
 
   const { skills, status, listError, refetch } = useSkillsFeed(sessionId);
@@ -45,27 +46,36 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
 
   return (
     <section onClick={() => setFocusedPane('skills')} className={focused ? 'skills-panel skills-panel--focused' : 'skills-panel'}>
-      <PanelHeader title="SKILLS" count={skills.length} paneKey={5} focused={focused} />
-
-      <SkillsListBody
-        filterOpen={filterOpen}
-        query={query}
-        filterRef={filterRef}
-        onQueryChange={(q) => {
-          setQuery(q);
-          setSelected(0);
-        }}
-        status={status}
-        listError={listError}
-        skills={skills}
-        visible={visible}
-        selected={selected}
-        onRowClick={(i, skill) => {
-          setFocusedPane('skills');
-          setSelected(i);
-          activate(skill);
-        }}
+      <PanelHeader
+        title="SKILLS"
+        count={skills.length}
+        paneKey={5}
+        focused={focused}
+        collapsed={collapsed}
+        onToggleCollapse={() => toggleCollapsedPane('skills')}
       />
+
+      {!collapsed && (
+        <SkillsListBody
+          filterOpen={filterOpen}
+          query={query}
+          filterRef={filterRef}
+          onQueryChange={(q) => {
+            setQuery(q);
+            setSelected(0);
+          }}
+          status={status}
+          listError={listError}
+          skills={skills}
+          visible={visible}
+          selected={selected}
+          onRowClick={(i, skill) => {
+            setFocusedPane('skills');
+            setSelected(i);
+            activate(skill);
+          }}
+        />
+      )}
 
       {runModal && sessionId && (
         <RunModal sessionId={sessionId} name={runModal.name} onClose={() => setRunModal(null)} />

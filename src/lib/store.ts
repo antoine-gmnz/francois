@@ -15,7 +15,7 @@
 import { create } from 'zustand';
 import type { ProjectsState } from '../../contract/projects';
 import { createAgentTabSlice, type AgentTabSlice, type MainTab } from './agentTabStore';
-import { createLayoutSlice, type LayoutSlice, type Pane } from './layoutStore';
+import { createLayoutSlice, type LayoutSlice, type Pane, type RightPane } from './layoutStore';
 import { createOverviewSlice, type OverviewSlice } from './overviewStore';
 import { createProjectsSlice } from './projectsStore';
 import { createRemoteSlice, type RemoteSlice } from './remoteStore';
@@ -23,7 +23,7 @@ import { createSessionsSlice, type SessionsSlice } from './sessionsStore';
 import { createThemeSlice, type Theme, type ThemeSlice } from './theme';
 import { createUsageSlice, type UsageSlice } from './usageStore';
 
-export type { Pane, MainTab, Theme };
+export type { Pane, RightPane, MainTab, Theme };
 
 // `& ProjectsState` pins the projects slice to the contract's declaration
 // (contract/projects.ts §5) — a drift there breaks the build here.

@@ -1015,6 +1015,25 @@ a {
   color: var(--text-dim);
 }
 
+/* collapse-right-column FR-16: the header row becomes a click target when a
+   collapse handler is present — leading chevron, pointer cursor, hover
+   treatment off the existing row-hover token (no new hard-coded color). */
+.panel-header--clickable {
+  cursor: pointer;
+}
+.panel-header--clickable:hover {
+  background: var(--bg-hover);
+}
+/* FR-15: the bottom rule is dropped on a collapsed card — nothing sits below it. */
+.panel-header--collapsed {
+  border-bottom: none;
+}
+.panel-header-chevron {
+  color: var(--text-dim);
+  margin-right: var(--space-6);
+  display: inline-block;
+}
+
 /* Generic "inert" state (ProjectsModal.tsx:597-599 disabledIf()). */
 .is-disabled {
   opacity: 0.45;

@@ -8,6 +8,11 @@ import type { AppState } from './store';
 
 export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills';
 
+// collapse-right-column: the three right-column cards that can be individually
+// folded to their header row (FR-1).
+export type RightPane = 'agents' | 'mcp' | 'skills';
+export type CollapsedPanes = Record<RightPane, boolean>;
+
 // localStorage persistence for the column toggles — guarded so a restricted
 // storage environment (or node test env) degrades to defaults silently.
 function loadPane(key: string): boolean {
@@ -26,7 +31,54 @@ function persistPane(key: string, visible: boolean): void {
 }
 const LEFT_KEY = 'francois.showLeftPane';
 const RIGHT_KEY = 'francois.showRightPane';
-const RIGHT_PANES: readonly Pane[] = ['agents', 'mcp', 'skills'];
+const RIGHT_PANES: readonly RightPane[] = ['agents', 'mcp', 'skills'];
+/** Exported so app-shell's `c` shortcut (FR-10) can reuse this test without duplicating it. */
+export function isRightPane(p: Pane): p is RightPane {
+  return (RIGHT_PANES as readonly Pane[]).includes(p);
+}
+
+export const COLLAPSED_PANES_STORAGE_KEY = 'francois.collapsedPanes';
+const DEFAULT_COLLAPSED_PANES: CollapsedPanes = { agents: false, mcp: false, skills: false };
+
+/**
+ * Pure, exported for tests: normalizes whatever came out of localStorage
+ * (FR-4) — a malformed/non-object/partial value never throws: unknown keys
+ * are dropped, missing keys default to false, non-boolean values default to
+ * false.
+ */
+export function parseCollapsedPanes(raw: string | null): CollapsedPanes {
+  if (raw === null) return { ...DEFAULT_COLLAPSED_PANES };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ...DEFAULT_COLLAPSED_PANES };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ...DEFAULT_COLLAPSED_PANES };
+  }
+  const obj = parsed as Record<string, unknown>;
+  return {
+    agents: obj.agents === true,
+    mcp: obj.mcp === true,
+    skills: obj.skills === true,
+  };
+}
+
+function loadCollapsedPanes(): CollapsedPanes {
+  try {
+    return parseCollapsedPanes(localStorage.getItem(COLLAPSED_PANES_STORAGE_KEY));
+  } catch {
+    return { ...DEFAULT_COLLAPSED_PANES };
+  }
+}
+function persistCollapsedPanes(panes: CollapsedPanes): void {
+  try {
+    localStorage.setItem(COLLAPSED_PANES_STORAGE_KEY, JSON.stringify(panes));
+  } catch {
+    /* ignore */
+  }
+}
 
 export interface LayoutSlice {
   // minimal app-shell state
@@ -49,6 +101,11 @@ export interface LayoutSlice {
   // permission-guardrails FR-26: the rules editor modal, opened from the palette.
   permissionsOpen: boolean;
   setPermissionsOpen: (o: boolean) => void;
+  // collapse-right-column: per-card collapse state for the right column, independent
+  // of showRightPane (FR-1/FR-7). Persisted to localStorage as one JSON record.
+  collapsedPanes: CollapsedPanes;
+  toggleCollapsedPane: (pane: RightPane) => void;
+  setCollapsedPane: (pane: RightPane, collapsed: boolean) => void;
 }
 
 export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (set) => ({
@@ -62,9 +119,18 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         patch.showLeftPane = true;
         persistPane(LEFT_KEY, true);
       }
-      if (RIGHT_PANES.includes(focusedPane) && !s.showRightPane) {
-        patch.showRightPane = true;
-        persistPane(RIGHT_KEY, true);
+      if (isRightPane(focusedPane)) {
+        if (!s.showRightPane) {
+          patch.showRightPane = true;
+          persistPane(RIGHT_KEY, true);
+        }
+        // FR-6: focusing a collapsed right pane always expands it too, so 3/4/5,
+        // `a`, and every palette command that focuses a pane land on a readable card.
+        if (s.collapsedPanes[focusedPane]) {
+          const collapsedPanes = { ...s.collapsedPanes, [focusedPane]: false };
+          patch.collapsedPanes = collapsedPanes;
+          persistCollapsedPanes(collapsedPanes);
+        }
       }
       return patch;
     }),
@@ -82,7 +148,9 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
     set((s) => {
       const show = !s.showRightPane;
       persistPane(RIGHT_KEY, show);
-      const focusedPane = !show && RIGHT_PANES.includes(s.focusedPane) ? 'main' : s.focusedPane;
+      // FR-7: hiding/showing the column never touches collapsedPanes — the two
+      // toggles are independent.
+      const focusedPane = !show && isRightPane(s.focusedPane) ? 'main' : s.focusedPane;
       return { showRightPane: show, focusedPane };
     }),
   newSessionOpen: false,
@@ -93,4 +161,23 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
   setMcpAttachOpen: (mcpAttachOpen) => set({ mcpAttachOpen }),
   permissionsOpen: false,
   setPermissionsOpen: (permissionsOpen) => set({ permissionsOpen }),
+  collapsedPanes: loadCollapsedPanes(),
+  toggleCollapsedPane: (pane) =>
+    set((s) => {
+      const collapsed = !s.collapsedPanes[pane];
+      const collapsedPanes = { ...s.collapsedPanes, [pane]: collapsed };
+      persistCollapsedPanes(collapsedPanes);
+      // FR-5: collapsing the currently focused pane hands focus to 'main' —
+      // mirroring toggleRightPane; a collapsed pane never owns focus.
+      const focusedPane = collapsed && s.focusedPane === pane ? 'main' : s.focusedPane;
+      return { collapsedPanes, focusedPane };
+    }),
+  setCollapsedPane: (pane, collapsed) =>
+    set((s) => {
+      if (s.collapsedPanes[pane] === collapsed) return {};
+      const collapsedPanes = { ...s.collapsedPanes, [pane]: collapsed };
+      persistCollapsedPanes(collapsedPanes);
+      const focusedPane = collapsed && s.focusedPane === pane ? 'main' : s.focusedPane;
+      return { collapsedPanes, focusedPane };
+    }),
 });

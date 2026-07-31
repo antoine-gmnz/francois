@@ -7,6 +7,12 @@
 // Chip's selected — so it is a modifier class (`panel-header--focused`),
 // not an inline color. Nothing else here is genuinely dynamic: title and
 // count are content, not style.
+//
+// collapse-right-column FR-16: `collapsed`/`onToggleCollapse` are additive and
+// optional so existing call sites compile unchanged. When `onToggleCollapse`
+// is present the header row becomes a click target (leading chevron, pointer
+// cursor, hover treatment); FR-8's stopPropagation lives here so the click
+// never also fires the card's own focus handler.
 
 export interface PanelHeaderProps {
   /** Rendered verbatim — already the correct copy for the pane (e.g. 'AGENTS'). */
@@ -15,16 +21,39 @@ export interface PanelHeaderProps {
   /** The pane hotkey, rendered as `· [paneKey]` (e.g. 3 → `· [3]`). */
   paneKey: string | number;
   focused: boolean;
+  /** Renders ▸ instead of ▾ when true. */
+  collapsed?: boolean;
+  /** Present ⇒ header row is clickable (cursor: pointer, chevron, hover). */
+  onToggleCollapse?: () => void;
 }
 
-export function panelHeaderClassName(focused: boolean): string {
-  return focused ? 'panel-header panel-header--focused' : 'panel-header';
+export function panelHeaderClassName(focused: boolean, clickable = false, collapsed = false): string {
+  const parts = ['panel-header'];
+  if (focused) parts.push('panel-header--focused');
+  if (clickable) parts.push('panel-header--clickable');
+  if (collapsed) parts.push('panel-header--collapsed');
+  return parts.join(' ');
 }
 
-export function PanelHeader({ title, count, paneKey, focused }: PanelHeaderProps): JSX.Element {
+export function PanelHeader({ title, count, paneKey, focused, collapsed, onToggleCollapse }: PanelHeaderProps): JSX.Element {
+  const clickable = onToggleCollapse !== undefined;
   return (
-    <div className={panelHeaderClassName(focused)}>
-      <span>{title}</span>
+    <div
+      className={panelHeaderClassName(focused, clickable, collapsed)}
+      onClick={
+        onToggleCollapse
+          ? (e: React.MouseEvent) => {
+              e.stopPropagation();
+              onToggleCollapse();
+            }
+          : undefined
+      }
+      title={clickable ? (collapsed ? 'expand' : 'collapse') : undefined}
+    >
+      <span>
+        {clickable && <span className="panel-header-chevron">{collapsed ? '▸' : '▾'}</span>}
+        {title}
+      </span>
       <span>
         {count} · [{paneKey}]
       </span>
