@@ -86,6 +86,18 @@ after `MODEL`.
   persisted) and each emits a `session.meta` event. Their ids come back in `AccountRemoveData`.
 - **FR-10** At session load, an `accountId` that resolves to no registry entry is replaced by
   `default` — same pruning discipline as `projectId` (projects FR-18).
+- **FR-10a** An account's `configDir` **mirrors the user's global `~/.claude`** for the shared,
+  non-credential entries: `commands`, `agents`, `skills`, `templates`, `pipeline`, `workflows`,
+  `hooks`, `plugins`, `settings.json`. `CLAUDE_CONFIG_DIR` REPLACES the user config root rather than
+  layering onto it, so without this an added account loses every slash command, subagent, skill and
+  hook the user installed globally — multi-account isolates credentials, not the toolbox. The
+  mirror is by **symlink** (Windows: directory junction, since an unprivileged `CreateSymbolicLink`
+  is unavailable; `settings.json`, being a file, is copied there), so a global install stays live
+  for every account. It is applied at creation *and* re-applied at every load as a backfill, and it
+  **never replaces an entry the account already owns** — an account's own `settings.json` survives.
+  The allowlist is explicit: per-account state (`sessions/`, `projects/`, `.claude.json`,
+  `history.jsonl`, `cache/`) is never mirrored back. Best-effort throughout — a failed mirror
+  degrades the account, never the login.
 
 ### Login
 
@@ -282,6 +294,9 @@ export type AccountEvent =
 | Logged-in identity already registered | `ACCOUNT_DUPLICATE`, dir deleted; message explains the credential store may be shared on this platform (FR-14) |
 | `Esc` / modal close during login | `account:loginCancel` — PTY killed, dir deleted (FR-16) |
 | App quits during login | Same cleanup on exit; no orphan dir, no orphan PTY |
+| No `~/.claude` on the machine | Nothing to mirror; the account dir stays bare and behaves as it did pre-FR-10a |
+| A mirrored entry appears in `~/.claude` after the account was made | The next load backfills it (FR-10a) |
+| An account dir was hand-deleted | The load-time backfill skips it rather than resurrecting it as a shell of links (FR-10a) |
 | Second `account:add` while one is in flight | `INVALID_INPUT`, first login untouched (FR-16) |
 | `configDir` deleted outside Francois | Row stays, marked unauthenticated; turns fail `ACCOUNT_NOT_AUTHENTICATED`; `Re-login` fixes it (FR-17/FR-22) |
 | Credentials expire mid-turn | Turn errors as it does today; `authFailedAt` set, `account.list` emitted (FR-23) |

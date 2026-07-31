@@ -135,6 +135,11 @@ pub fn account_add(
         clear_login_pending(&state);
         return err("INTERNAL", format!("could not create {config_dir}: {e}"));
     }
+    // Seed the fresh dir from `~/.claude` BEFORE the login PTY starts, so the
+    // `claude` process this account first meets already sees the user's
+    // commands, agents, skills and hooks (mirror.rs). Best-effort by design —
+    // an un-mirrored account still logs in fine.
+    crate::account::mirror_global(std::path::Path::new(&config_dir));
 
     let spawn = match spawn_login(&id, &config_dir, label, existing) {
         Ok(spawn) => spawn,
