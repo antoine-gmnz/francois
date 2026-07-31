@@ -3,7 +3,6 @@ import { filterSessionsByProject } from '../../../contract/projects';
 import { sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
 import { prunePaletteSession } from '../palette/paletteData';
 import { showToast } from '../palette/palette';
-import ProjectSwitcher from '../projects/ProjectSwitcher';
 import { visibleSessions } from '../projects/projects';
 import { useStore } from '../../lib/store';
 import { FilterInput } from './FilterInput';
@@ -157,9 +156,6 @@ export default function Sidebar({ home }: { home: string }) {
         {/* projects FR-27: the count is post-filter — project scope AND '/' query. */}
         <span className="sidebar__count">{visible.length} · [1]</span>
       </div>
-
-      {/* projects FR-25: the switcher strip, above the cards */}
-      {/* <ProjectSwitcher home={home} /> */}
 
       {/* filter */}
       {sidebarFilter !== null && <FilterInput value={sidebarFilter} onChange={setSidebarFilter} inputRef={filterRef} />}

@@ -1,9 +1,15 @@
 // usage-bar (specs/usage-bar.md §8) — the always-mounted plan-limit strip that
 // sits between the native OS caption and the content grid. design-refresh
 // FR-4 turns it into the app's custom titlebar row: left brand cluster
-// (diamond glyph + wordmark + project-path button) alongside the unchanged
+// (diamond glyph + wordmark + project switcher) alongside the unchanged
 // usage meters on the right — same data, same events, restyled/relocated
 // only. No account UI (4a is out of scope).
+//
+// titlebar-project-switcher FR-1: the brand cluster's third element is
+// ProjectSwitcher (src/features/projects/ProjectSwitcher.tsx) — the app's
+// only project control. UsageBar owns nothing about it beyond passing `home`
+// and the active session's cwd down (FR-6); the switcher does not reach into
+// `sessions` itself.
 //
 // Pure chrome: it is NOT a focusable pane (FR-3 — no tabIndex, no key handling,
 // no focus ring, absent from the 1–5 cycle) and it has NO motion at all (FR-25 —
@@ -15,13 +21,8 @@
 // All logic lives in ./usage (covered by src/features/usage/usage.test.ts); this file only maps
 // the view model onto §8's tokens.
 
-import { useEffect, useRef, useState } from 'react';
-import { displayWslCwd } from '../../../contract/wsl-filesystem';
-import ProjectMenu from '../projects/ProjectMenu';
-import { switcherLabel } from '../projects/projects';
-import { useProjectRegistrySync } from '../projects/useProjectRegistrySync';
-import { abbreviate } from '../../lib/path';
-import { useDismiss } from '../../lib/hooks/useDismiss';
+import { useEffect, useState } from 'react';
+import ProjectSwitcher from '../projects/ProjectSwitcher';
 import { useStore } from '../../lib/store';
 import { accountDisplayLabel, findAccount, usageAccountId } from '../accounts/accounts';
 import { EMPTY_USAGE } from '../../lib/usageStore';
@@ -48,36 +49,13 @@ export default function UsageBar({ home }: { home: string }) {
   const setAccountUsage = useStore((s) => s.setAccountUsage);
   const [now, setNow] = useState(() => Date.now());
   const [freshHover, setFreshHover] = useState(false);
-  const [pathHover, setPathHover] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  // design-refresh FR-4: the project-path button reads whichever cwd is most
-  // specific right now — the scoped project's root, else the active session's
-  // cwd, else the bare home dir. No new IPC: every value is already in the store.
-  const projects = useStore((s) => s.projects);
-  const activeProjectId = useStore((s) => s.activeProjectId);
   const sessions = useStore((s) => s.sessions);
   const activeSessionId = useStore((s) => s.activeSessionId);
-  const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+  // titlebar-project-switcher FR-6: the switcher's tooltip fallback chain needs
+  // the active session's cwd; UsageBar reads it here and passes it down rather
+  // than letting the switcher reach into `sessions` itself.
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
-  const rawPath = activeProject?.root ?? activeSession?.cwd ?? home;
-  // Falls back to the scope name rather than to nothing: this button is the only
-  // project switcher, so it must stay clickable even before `home` has resolved
-  // (and in a fresh install with no project and no session).
-  const pathLabel = rawPath ? (displayWslCwd(rawPath) ?? abbreviate(rawPath, home)) : switcherLabel(activeProject);
-
-  // The titlebar owns the project switcher, so it also owns keeping the registry
-  // (and with it the restored scope, FR-26) in step with the core.
-  useProjectRegistrySync();
-
-  // Escape / outside click close the scope dropdown. The ref wraps the trigger
-  // AND the panel, so a click on either is "inside" (see useDismiss).
-  useDismiss(menuRef, {
-    onEscape: () => setMenuOpen(false),
-    onOutsideClick: () => setMenuOpen(false),
-    enabled: menuOpen,
-  });
 
   // multi-account FR-30: the bar renders the SELECTED session's account —
   // derived, never stored, so it can never drift from the session cache.
@@ -111,35 +89,15 @@ export default function UsageBar({ home }: { home: string }) {
   return (
     <div className="usage-bar">
       {/* design-refresh FR-4: left brand cluster — diamond glyph + wordmark +
-          project-path button. The caret is a real disclosure: it opens the shared
-          project scope menu (projects FR-25), whose last row still reaches the
-          Projects modal. This is the app's only project switcher — pane [1]'s
-          strip is not mounted in the refreshed shell. */}
+          project switcher (titlebar-project-switcher FR-1). This is the app's
+          only project control — pane [1]'s strip is not mounted. */}
       <div className="titlebar-brand">
         {/* 16px is the ramp's tab/titlebar size (specimen 7d) — formula-exact,
             not the mock's hand-rounded 16×14 box; see the report for why.
             Decorative: the wordmark right next to it already carries the name. */}
         <Logo size={16} />
         <span className="titlebar-wordmark">Francois</span>
-        <div ref={menuRef} className="titlebar-path-wrap">
-          <button
-            type="button"
-            aria-haspopup="listbox"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((v) => !v)}
-            onMouseEnter={() => setPathHover(true)}
-            onMouseLeave={() => setPathHover(false)}
-            title={rawPath || undefined}
-            className={pathHover ? 'titlebar-path titlebar-path--hover' : 'titlebar-path'}
-          >
-            <span className="titlebar-path-dot" />
-            <span className="truncate titlebar-path-text">{pathLabel}</span>
-            <span className="titlebar-path-caret">{menuOpen ? '▴' : '▾'}</span>
-          </button>
-          {menuOpen && (
-            <ProjectMenu home={home} onClose={() => setMenuOpen(false)} className="pjsw-dropdown--anchored" />
-          )}
-        </div>
+        <ProjectSwitcher home={home} sessionCwd={activeSession?.cwd ?? null} />
       </div>
 
       {/* meter region — the whole strip left of the freshness label is the click target (FR-27) */}
