@@ -23,7 +23,12 @@ mod wsl;
 // keeps resolving exactly as before this domain moved out of main.rs.
 pub(crate) use shell::dispose_session_shell;
 
-use tauri::{RunEvent};
+use tauri::RunEvent;
+// `get_webview_window` is a `Manager` method; only the windows-only chrome tint
+// below calls it, so the import is gated too (an unconditional one warns as
+// unused on macOS/Linux).
+#[cfg(windows)]
+use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
