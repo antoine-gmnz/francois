@@ -322,9 +322,10 @@ type SessionEventHandler<T extends SessionEvent['type']> = (
   e: SessionEventOf<T>,
 ) => void;
 
-/** session.removed / agent.update / agent.step / mcp.update: owned by other
- * panels' own subscriptions (sidebar / agents-panel / mcp-panel) — no-op here,
- * matching the original switch's `default: break`. */
+/** session.removed / agent.update / agent.step / mcp.update / workflow.update:
+ * owned by other panels' own subscriptions (sidebar / agents-panel / mcp-panel /
+ * workflows-panel) — no-op here, matching the original switch's
+ * `default: break`. */
 function ignoreEvent(): void {}
 
 /**
@@ -386,6 +387,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'agent.update': ignoreEvent,
   'agent.step': ignoreEvent,
   'mcp.update': ignoreEvent,
+  'workflow.update': ignoreEvent,
 };
 
 /** Apply one SessionEvent to the transcript reducer / component setters. */

@@ -489,6 +489,9 @@ pub fn load_persisted(app: &AppHandle) {
                 agent_blocks_dropped: HashMap::new(),
                 block_buffer,
                 mcp: HashMap::new(),
+                workflows: HashMap::new(),
+                workflow_order: Vec::new(),
+                workflow_by_tool: HashMap::new(),
                 cli_commands: Vec::new(),
             },
         );

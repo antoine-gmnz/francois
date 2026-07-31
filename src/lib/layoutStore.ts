@@ -6,7 +6,7 @@
 import type { StateCreator } from 'zustand';
 import type { AppState } from './store';
 
-export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills';
+export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills' | 'workflows';
 
 // localStorage persistence for the column toggles — guarded so a restricted
 // storage environment (or node test env) degrades to defaults silently.
@@ -26,13 +26,13 @@ function persistPane(key: string, visible: boolean): void {
 }
 const LEFT_KEY = 'francois.showLeftPane';
 const RIGHT_KEY = 'francois.showRightPane';
-const RIGHT_PANES: readonly Pane[] = ['agents', 'mcp', 'skills'];
+const RIGHT_PANES: readonly Pane[] = ['agents', 'mcp', 'skills', 'workflows'];
 
 export interface LayoutSlice {
   // minimal app-shell state
   focusedPane: Pane;
   setFocusedPane: (p: Pane) => void;
-  // layout: left (sessions) / right (agents+mcp+skills) column visibility.
+  // layout: left (sessions) / right (agents+mcp+skills+workflows) column visibility.
   // Persisted to localStorage; hiding the column that owns focus hands focus to
   // 'main', and focusing a pane always reveals its column (setFocusedPane).
   showLeftPane: boolean;
@@ -54,7 +54,7 @@ export interface LayoutSlice {
 export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (set) => ({
   focusedPane: 'sidebar',
   // Invariant: the focused pane's column is always visible — focusing a hidden
-  // pane (key 1/3/4/5, palette commands, `a`) reveals its column first.
+  // pane (key 1/3/4/5/6, palette commands, `a`) reveals its column first.
   setFocusedPane: (focusedPane) =>
     set((s) => {
       const patch: Partial<AppState> = { focusedPane };

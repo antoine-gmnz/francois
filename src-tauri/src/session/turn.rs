@@ -230,8 +230,8 @@ pub(crate) fn begin_turn(
     mode: TurnMode,
 ) {
     let engine = app.state::<Engine>();
-    let Some((cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro)) =
-        engine.with_session_mut(session_id, |s| {
+    let Some((cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro)) = engine
+        .with_session_mut(session_id, |s| {
             // ResumeRetry forces resume off regardless of the stored id, so a
             // still-good id is never dropped preemptively — a fresh init
             // overwrites it only on success.
@@ -350,28 +350,36 @@ pub(crate) fn finish_turn(
     // at turn end — 'error' when the turn errored (session-engine FR-40), else
     // 'done' — with endedAt and an `ended with the turn` notice step. This is the
     // backstop that keeps the elapsed clock correct when FR-13's notice never came.
-    let result: Option<(Option<(String, String)>, Vec<AgentEmission>)> =
-        engine.with_session_mut(session_id, |s| {
-            s.current = None;
-            let agent_ems = finalize_agents(s, errored, now_ms());
-            let next = if errored {
-                s.status = "error".into();
-                s.error_message = error_msg.clone();
-                s.queue.clear();
-                None
-            } else if let Some(entry) = s.queue.pop_front() {
-                Some(entry)
-            } else {
-                s.status = "idle".into();
-                None
-            };
-            (next, agent_ems)
-        });
-    let Some((next, agent_ems)) = result else {
+    // workflow-panel FR-9: the same backstop for `Workflow` runs — no run of a
+    // finished turn is left `running` with a ticking clock.
+    let result: Option<(
+        Option<(String, String)>,
+        Vec<AgentEmission>,
+        Vec<WorkflowRun>,
+    )> = engine.with_session_mut(session_id, |s| {
+        s.current = None;
+        let at = now_ms();
+        let agent_ems = finalize_agents(s, errored, at);
+        let workflow_runs = finalize_workflows(s, errored, at);
+        let next = if errored {
+            s.status = "error".into();
+            s.error_message = error_msg.clone();
+            s.queue.clear();
+            None
+        } else if let Some(entry) = s.queue.pop_front() {
+            Some(entry)
+        } else {
+            s.status = "idle".into();
+            None
+        };
+        (next, agent_ems, workflow_runs)
+    });
+    let Some((next, agent_ems, workflow_runs)) = result else {
         return;
     };
     // Emitted BEFORE the turn's terminal session.status (FR-16), with no lock held.
     emit_agent_emissions(app, session_id, agent_ems);
+    emit_workflow_updates(app, workflow_runs);
 
     // Persist updated usage/activity/thread-id at turn boundary (durable-sessions FR-3).
     persist(app, &engine);
@@ -425,16 +433,25 @@ pub(crate) fn finish_turn(
 /// error is a legitimate `endedAt` setter (FR-7), so a card never keeps
 /// ticking against a dead session. Returns the emissions the caller must send
 /// BEFORE the terminal `session.status` / `session.error` (FR-16 ordering).
-pub(crate) fn apply_fail_session(s: &mut Session, msg: &str, at: u64) -> Vec<AgentEmission> {
+/// workflow-panel FR-9 rides along: a dead session closes its `Workflow` runs
+/// for the same reason it closes its agents.
+pub(crate) fn apply_fail_session(
+    s: &mut Session,
+    msg: &str,
+    at: u64,
+) -> (Vec<AgentEmission>, Vec<WorkflowRun>) {
     s.status = "error".into();
     s.error_message = Some(msg.to_string());
     s.current = None;
     s.queue.clear();
-    finalize_agents(s, true, at)
+    (
+        finalize_agents(s, true, at),
+        finalize_workflows(s, true, at),
+    )
 }
 
 pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &str) {
-    let agent_ems = app
+    let (agent_ems, workflow_runs) = app
         .state::<Engine>()
         .with_session_mut(session_id, |s| apply_fail_session(s, msg, now_ms()))
         .unwrap_or_default();
@@ -443,6 +460,7 @@ pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &
     // async-agents FR-16 ordering rule: agent finalization is emitted BEFORE the
     // turn's terminal session.error / session.status (mirrors finish_turn).
     emit_agent_emissions(app, session_id, agent_ems);
+    emit_workflow_updates(app, workflow_runs);
     emit(
         app,
         SessionEvent::Error {
@@ -597,7 +615,13 @@ mod tests {
 
         let mut s = test_session();
         mint_agent(&mut s, "a1", "explorer", "toolu_1", true);
-        let ems = apply_fail_session(&mut s, "spawn crashed", 9_000);
+        mint_workflow(&mut s, "s1", "w1", "toolu_2", 1_000);
+        let (ems, runs) = apply_fail_session(&mut s, "spawn crashed", 9_000);
+
+        // workflow-panel FR-9: the session's runs close for the same reason.
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "error");
+        assert_eq!(runs[0].ended_at, Some(9_000));
 
         assert_eq!(s.status, "error");
         assert_eq!(s.error_message.as_deref(), Some("spawn crashed"));

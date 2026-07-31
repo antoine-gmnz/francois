@@ -323,8 +323,14 @@ mod tests {
 
     #[test]
     fn create_input_rejects_missing_cwd() {
-        let err = validate_create_input("/definitely/not/a/real/path/anywhere", None, None, None, false)
-            .unwrap_err();
+        let err = validate_create_input(
+            "/definitely/not/a/real/path/anywhere",
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err();
         assert_eq!(err.0, "INVALID_INPUT");
     }
 
