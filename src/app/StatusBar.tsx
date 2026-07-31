@@ -1,5 +1,6 @@
 import { AccountChip } from '../features/accounts/AccountChip';
 import { togglePalette } from '../features/palette/palette';
+import { UpdateChip } from '../features/update/UpdateChip';
 import type { Pane, Theme } from '../lib/store';
 
 export interface StatusBarProps {
@@ -63,7 +64,10 @@ export default function StatusBar({ theme, toggleTheme, focusedPane, activeAgent
       >
         {theme === 'dark' ? '☾' : '☀'} {theme}
       </span>
-      <span className="app-key">{appVersion || 'dev'}</span>
+      {/* self-update FR-8: the same version readout, plus one state — an accent
+          `↑ <latest>` button that opens the update modal. Last in the right
+          cluster, exactly where the plain <span> sat. */}
+      <UpdateChip appVersion={appVersion} />
     </div>
   );
 }

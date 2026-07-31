@@ -816,6 +816,18 @@ impl Engine {
             .collect()
     }
 
+    /// self-update FR-12: how many sessions are mid-turn. Read by
+    /// `update::app_apply_update` BEFORE it touches the update state, so the two
+    /// locks are never held together (see the LOCK ORDER note in update/mod.rs).
+    pub fn running_count(&self) -> usize {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|s| s.status == "running")
+            .count()
+    }
+
     /// multi-account FR-29: every account with at least one live session — the
     /// background usage tick probes exactly these, plus the isDefault account,
     /// and never an account with no sessions at all.
@@ -1004,5 +1016,17 @@ mod tests {
         let engine = test_engine_with(test_session());
         assert_eq!(engine.with_session_mut("nope", |s| s.name.clone()), None);
         assert_eq!(engine.with_session("nope", |s| s.name.clone()), None);
+    }
+
+    // self-update FR-12: only `running` counts — an idle, done or errored
+    // session is not work in flight and must not block an update.
+    #[test]
+    fn running_count_counts_only_mid_turn_sessions() {
+        let engine = test_engine_with(test_session());
+        assert_eq!(engine.running_count(), 0); // the fixture is idle
+        engine.with_session_mut("s1", |s| s.status = "running".into());
+        assert_eq!(engine.running_count(), 1);
+        engine.with_session_mut("s1", |s| s.status = "error".into());
+        assert_eq!(engine.running_count(), 0);
     }
 }

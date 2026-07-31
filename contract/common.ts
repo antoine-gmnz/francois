@@ -57,6 +57,9 @@ export type ErrorCode =
   | 'ACCOUNT_DUPLICATE' // multi-account: login identity matches an already-registered account (FR-14)
   | 'ACCOUNT_LOGIN_FAILED' // multi-account: login timed out or the PTY exited without an identity (FR-15)
   | 'ACCOUNT_NOT_AUTHENTICATED' // multi-account: a turn's account has no credentials on disk (FR-22)
+  | 'UPDATE_CHECK_FAILED' // self-update: the npm registry was unreachable or unparseable (FR-6)
+  | 'UPDATE_APPLY_FAILED' // self-update: npm/temp dir/spawn failed, or method is 'manual' (FR-18)
+  | 'UPDATE_BLOCKED' // self-update: sessions are running (detail: { running: number }) (FR-12)
   | 'INTERNAL';
 
 // ---------- sessions ----------

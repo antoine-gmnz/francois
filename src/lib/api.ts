@@ -44,6 +44,7 @@ import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
+import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
 
 // Exported so other invoke sites (e.g. ShellTerminal.tsx, which redefines this
 // byte-identically) can share the one wrapper instead of redeclaring it.
@@ -211,6 +212,14 @@ export const appGetUsage = (accountId?: AccountId) =>
   ipc<Result<UsageSnapshot>>('app_get_usage', accountId ? { accountId } : undefined);
 export const appRefreshUsage = (accountId?: AccountId) =>
   ipc<Result<UsageRefreshAck>>('app_refresh_usage', accountId ? { accountId } : undefined);
+
+// self-update (§5). No payload either way, and NO event channel — the frontend
+// drives both calls: once at shell mount (FR-7, silent) and on demand from the
+// palette (FR-9). `app_apply_update` acks BEFORE the core starts shutting down
+// (FR-16), so a refusal (UPDATE_BLOCKED / UPDATE_APPLY_FAILED) always reaches
+// the webview.
+export const appCheckUpdate = () => ipc<CheckUpdateResult>('app_check_update');
+export const appApplyUpdate = () => ipc<ApplyUpdateResult>('app_apply_update');
 
 /** Subscribe to francois://app/event (usage.state, extensible tagged union). */
 export function onAppEvent(cb: (e: AppEvent) => void): Promise<UnlistenFn> {

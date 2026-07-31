@@ -9,6 +9,7 @@ import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPale
 import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
 import { useStore, type RightPane } from '../../lib/store';
 import { requestUsageRefresh } from '../usage/usage';
+import { checkUpdateManually } from '../update/update';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 
@@ -366,6 +367,22 @@ export function registerBuiltinCommands(): void {
             .catch(() => showToast('Command failed unexpectedly', 'error'));
         },
       };
+    },
+  });
+
+  // 13e — Check for updates (self-update FR-9): always available, and the ONLY
+  // path that reports back a failed or up-to-date check — the launch check is
+  // silent (FR-7). Runs a fresh check, then opens the modal on the outcome.
+  registerPaletteCommand({
+    id: 'check-for-updates',
+    glyph: '↑',
+    name: 'Check for updates',
+    hint: () => {
+      const check = useStore.getState().update;
+      return check?.updateAvailable ? `${check.latest} available` : 'npm registry';
+    },
+    run: () => {
+      void checkUpdateManually();
     },
   });
 
