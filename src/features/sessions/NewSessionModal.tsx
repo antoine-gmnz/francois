@@ -9,6 +9,9 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
 import { Chip } from '../../ui/Chip';
 import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
+import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
+import { accountIdForSessionCreate } from '../accounts/accounts';
+import { AccountField } from './AccountField';
 import { ProjectField } from './ProjectField';
 import { DirectoryField } from './DirectoryField';
 import { NameField } from './NameField';
@@ -63,6 +66,11 @@ export default function NewSessionModal({
   // whether the user has explicitly clicked a runtime chip this open, so
   // FR-16's auto-suggest never clobbers a deliberate choice.
   const [runtimeTouched, setRuntimeTouched] = useState(false);
+  // multi-account FR-18: the account this session will be bound to for life.
+  // Seeded from the app default and re-seeded from the project's (FR-20) by
+  // useProjectDefaults below.
+  const [accountId, setAccountId] = useState<string>(DEFAULT_ACCOUNT_ID);
+  const [accountFromProject, setAccountFromProject] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<AppError | null>(null);
   // RE-ARM on every mount. StrictMode runs mount → cleanup → mount on the same
@@ -81,6 +89,10 @@ export default function NewSessionModal({
   const project = projects.find((p) => p.id === projectId) ?? null;
   const projectRootMissing = project !== null && !project.rootExists;
 
+  // multi-account: hydrated app-wide by App.tsx's account feed — the modal
+  // never reads the registry itself.
+  const accounts = useStore((s) => s.accounts);
+
   useProjectDefaults({
     projectId,
     project,
@@ -96,6 +108,9 @@ export default function NewSessionModal({
     setRuntime,
     setCwd,
     setName,
+    accounts,
+    setAccountId,
+    setAccountFromProject,
   });
 
   const { picking, pickerError, applyCwd, browse } = useDirectoryPicker({
@@ -141,6 +156,10 @@ export default function NewSessionModal({
       // screen right now is exactly what gets created.
       projectId: projectId || undefined,
       worktree: worktreeOpts,
+      // multi-account FR-18/FR-19: bound at creation and never changed after,
+      // sent verbatim — see accountIdForSessionCreate for why the built-in
+      // 'default' id is never special-cased into an omitted field.
+      accountId: accountIdForSessionCreate(accountId),
     });
     if (!openRef.current) {
       // Modal was cancelled mid-flight: still real, upsert but don't force-select.
@@ -245,6 +264,17 @@ export default function NewSessionModal({
         />
 
         <ModelField models={models} modelId={modelId} loading={modelsLoading} onChange={setModelId} />
+
+        {/* multi-account FR-31: directly after MODEL, joining the tab order there */}
+        <AccountField
+          accounts={accounts}
+          accountId={accountId}
+          fromProject={accountFromProject}
+          onChange={(id) => {
+            setAccountId(id);
+            setAccountFromProject(false);
+          }}
+        />
 
         {modelEfforts.length > 0 && (
           <div>

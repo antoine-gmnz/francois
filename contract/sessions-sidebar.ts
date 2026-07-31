@@ -6,7 +6,7 @@
 // `session_pick_directory`. The consumed session-engine channels bind per
 // contract/session-engine.ts. The event stream is francois://session/event.
 
-import type { SessionId, SessionMeta, ModelInfo, Result, SessionEvent, PermissionMode, ClaudeRuntime } from './common';
+import type { AccountId, SessionId, SessionMeta, ModelInfo, Result, SessionEvent, PermissionMode, ClaudeRuntime } from './common';
 
 // ---------- owned by this feature ----------
 
@@ -38,6 +38,8 @@ export interface NewSessionRequest {
    * runs (instead of denying every permission prompt) — lets it commit/push
    * without bypassing all permissions. Omit for false. */
   allowGit?: boolean;
+  /** omit ⇒ the isDefault account (multi-account FR-18). Unknown id ⇒ ACCOUNT_NOT_FOUND. */
+  accountId?: AccountId;
 }
 
 // ---------- consumed (owned by session-engine; pinned here for build-ability) ----------

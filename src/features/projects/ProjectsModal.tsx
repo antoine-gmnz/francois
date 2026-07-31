@@ -16,6 +16,7 @@
 import { useRef, useState } from 'react';
 import type { ProjectMeta } from '../../../contract/projects';
 import { IS_WINDOWS } from '../../lib/platform';
+import { useStore } from '../../lib/store';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { ListRow } from '../../ui/ListRow';
 import { DefaultsSection } from './DefaultsSection';
@@ -59,7 +60,11 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
   });
 
   const { selected, rootMissing } = registry;
-  const fieldDefs = defaultFieldDefs(registry.models, selected?.defaults ?? {}, IS_WINDOWS);
+  // multi-account FR-20: a project can pre-fill the new-session ACCOUNT field.
+  // Read from the app-wide registry the account feed keeps current — the modal
+  // never fetches accounts itself.
+  const accounts = useStore((s) => s.accounts);
+  const fieldDefs = defaultFieldDefs(registry.models, selected?.defaults ?? {}, IS_WINDOWS, accounts);
 
   return (
     <div onClick={onClose} className="pj-backdrop">

@@ -7,6 +7,8 @@
 export type SessionId = string; // uuid v4
 export type AgentId = string; // uuid v4
 export type BlockId = string; // uuid v4 — one conversation block (message, tool call, …)
+/** uuid v4, or the reserved 'default' (the built-in account, multi-account FR-2). */
+export type AccountId = string;
 
 /** Every fallible IPC call resolves to this — never throws across IPC. */
 export type Result<T> =
@@ -46,6 +48,11 @@ export type ErrorCode =
   | 'WORKTREE_CREATE_FAILED' // session-worktree: prune/add failed; the core reversed what it did (FR-11)
   | 'WORKTREE_DIRTY' // session-worktree: removal refused: uncommitted changes or unpushed commits (FR-19)
   | 'WORKTREE_NOT_FOUND' // session-worktree: no worktree registered at that path
+  | 'ACCOUNT_NOT_FOUND' // multi-account: an accountId that is not in the registry
+  | 'ACCOUNT_NOT_REMOVABLE' // multi-account: attempted removal of the built-in 'default' account
+  | 'ACCOUNT_DUPLICATE' // multi-account: login identity matches an already-registered account (FR-14)
+  | 'ACCOUNT_LOGIN_FAILED' // multi-account: login timed out or the PTY exited without an identity (FR-15)
+  | 'ACCOUNT_NOT_AUTHENTICATED' // multi-account: a turn's account has no credentials on disk (FR-22)
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -101,6 +108,13 @@ export interface SessionMeta {
   projectId?: ProjectId;
   /** Present ⇔ this session runs in a Francois-created or Francois-adopted git worktree. */
   worktree?: SessionWorktree;
+  /**
+   * The account this session's every claude spawn runs under (multi-account FR-19/FR-21).
+   * Set at creation ONLY — never re-derived or changed afterwards, except when the account
+   * is removed (FR-9) or a persisted value no longer resolves (FR-10), both of which fall
+   * back to 'default'. Required: persisted sessions without it load as 'default'.
+   */
+  accountId: AccountId;
 }
 
 /** Worktree provenance for a session created with isolation (session-worktree FR-12). */
@@ -131,6 +145,8 @@ export interface ProjectDefaults {
   permissionMode?: PermissionMode;
   runtime?: ClaudeRuntime;
   allowGit?: boolean;
+  /** A removed account falls back to the isDefault account in the modal (multi-account FR-20). */
+  accountId?: AccountId;
 }
 
 // ---------- subagents ----------

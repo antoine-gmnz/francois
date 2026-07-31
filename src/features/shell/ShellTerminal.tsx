@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Terminal, type ITheme } from '@xterm/xterm';
+import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -14,6 +14,7 @@ import type {
   ShellDisposePayload,
 } from '../../../contract/shell-terminal';
 import { setShellState } from './shellStore';
+import { buildTheme } from './xterm-theme';
 import { useStore } from '../../lib/store';
 
 const FAINT = '\x1b[38;2;107;115;133m'; // #6b7385 — design-refresh FR-13, new --text-muted
@@ -25,52 +26,9 @@ function ipc<T>(cmd: string, args: object): Promise<T> {
   return invoke<T>(cmd, args as Record<string, unknown>);
 }
 
-// xterm renders to a canvas and CANNOT resolve CSS var(...)/color-mix(...) — so
-// every theme color is resolved to a concrete string at runtime from the CSS
-// variables (owned by src/styles.css). Rebuilt on each light/dark switch below.
-function cssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-// Selection tint = the accent at 25% (design-refresh FR-13: new --accent
-// #e0a84e → rgba(224,168,78,0.25)). The accent resolves to a hex, so convert
-// to rgba to keep the alpha the theme can't carry.
-function accentSelection(): string {
-  const h = cssVar('--accent').replace('#', '');
-  if (h.length < 6) return 'rgba(224,168,78,0.25)';
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, 0.25)`;
-}
-
-// Full xterm theme (base + ANSI 16-color mapping — specs/shell-terminal.md §8
-// FR-24), resolved from the CSS variables at call time.
-function buildTheme(): ITheme {
-  return {
-    background: cssVar('--bg-app'),
-    foreground: cssVar('--text-bright'),
-    cursor: cssVar('--accent'),
-    cursorAccent: cssVar('--bg-app'),
-    selectionBackground: accentSelection(),
-    black: cssVar('--bg-panel'),
-    red: cssVar('--error'),
-    green: cssVar('--success'),
-    yellow: cssVar('--accent'),
-    blue: cssVar('--text-hint'),
-    magenta: cssVar('--hue-purple-soft'),
-    cyan: cssVar('--hue-teal'),
-    white: cssVar('--text'),
-    brightBlack: cssVar('--text-muted'),
-    brightRed: cssVar('--error-bright'),
-    brightGreen: cssVar('--success-bright'),
-    brightYellow: cssVar('--accent-2'),
-    brightBlue: cssVar('--text-strong'),
-    brightMagenta: cssVar('--hue-purple-soft'),
-    brightCyan: cssVar('--hue-teal'),
-    brightWhite: cssVar('--text-bright'),
-  };
-}
+// The theme itself moved to ./xterm-theme so multi-account's embedded login
+// terminal (FR-12) can render the real `claude` TUI with the identical theme
+// object — behavior here is unchanged.
 
 // sessionId is REQUIRED — the pre-wsl-filesystem global default-session shell is
 // gone; a silent fallback here could resurrect it from a future call site.

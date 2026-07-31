@@ -14,6 +14,7 @@
 
 import { create } from 'zustand';
 import type { ProjectsState } from '../../contract/projects';
+import { createAccountsSlice, type AccountsSlice } from './accountsStore';
 import { createAgentTabSlice, type AgentTabSlice, type MainTab } from './agentTabStore';
 import { createLayoutSlice, type LayoutSlice, type Pane } from './layoutStore';
 import { createOverviewSlice, type OverviewSlice } from './overviewStore';
@@ -34,6 +35,7 @@ export type AppState = SessionsSlice &
   ThemeSlice &
   LayoutSlice &
   UsageSlice &
+  AccountsSlice &
   ProjectsState;
 
 export const useStore = create<AppState>((set, get, api) => ({
@@ -44,5 +46,6 @@ export const useStore = create<AppState>((set, get, api) => ({
   ...createThemeSlice(set, get, api),
   ...createLayoutSlice(set, get, api),
   ...createUsageSlice(set, get, api),
+  ...createAccountsSlice(set, get, api),
   ...createProjectsSlice(set, get, api),
 }));

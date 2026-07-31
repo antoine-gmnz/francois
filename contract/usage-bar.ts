@@ -4,15 +4,18 @@
 // the /usage card — the parse grammar is shared, so the shape must be too.
 //
 // Channels (PIPELINE §Conventions binding):
-//   francois:app:getUsage     → invoke('app_get_usage')     → Promise<Result<UsageSnapshot>>
-//   francois:app:refreshUsage → invoke('app_refresh_usage') → Promise<Result<UsageRefreshAck>>
+//   francois:app:getUsage     → invoke('app_get_usage', payload)     → Promise<Result<UsageSnapshot>>
+//   francois:app:refreshUsage → invoke('app_refresh_usage', payload) → Promise<Result<UsageRefreshAck>>
 //   francois:app:event        → listen('francois://app/event')  // payload: AppEvent
+//
+// Both payloads gain accountId (multi-account FR-27): omitted ⇒ the isDefault account.
+// The cache itself is keyed by AccountId (one UsageSnapshot per account, core-side).
 //
 // `francois://app/event` is NEW — the app domain had only invoke commands before.
 // It is a tagged union with one member today so later app-scoped events join it
 // rather than adding channels.
 
-import type { AppError, UsageMeter } from './common';
+import type { AccountId, AppError, UsageMeter } from './common';
 
 /**
  * Lifecycle of the app-scoped usage cache (spec FR-4, FR-16..FR-20).
@@ -22,6 +25,12 @@ import type { AppError, UsageMeter } from './common';
  * - 'error'   — the last probe failed; `error` is set; `meters` may hold a stale result.
  */
 export type UsageStatus = 'empty' | 'loading' | 'ready' | 'error';
+
+/** francois:app:getUsage / francois:app:refreshUsage payload (multi-account FR-27). */
+export interface AppUsageRequest {
+  /** omit ⇒ the isDefault account. */
+  accountId?: AccountId;
+}
 
 /**
  * The app-scoped usage cache. In-memory in the core, never persisted (FR-4).
@@ -49,7 +58,7 @@ export interface UsageRefreshAck {
 }
 
 /** Payload of francois://app/event. Tagged union — one member today, extensible. */
-export type AppEvent = { type: 'usage.state'; snapshot: UsageSnapshot };
+export type AppEvent = { type: 'usage.state'; accountId: AccountId; snapshot: UsageSnapshot };
 
 /** FR-24 threshold — shared by the bar and any future meter renderer. */
 export const USAGE_HIGH_THRESHOLD = 80;

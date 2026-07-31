@@ -15,15 +15,16 @@
 // engine. Keep it that way.
 
 use crate::ipc::{ok, AppError, IpcResult};
-use crate::session::{claude_path_env, no_window, now_ms, PROBE_TIMEOUT_SECS};
+use crate::session::{account_env, claude_path_env, no_window, now_ms, PROBE_TIMEOUT_SECS};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// francois:app:event → the new app-domain event channel (§5.1).
 const EVENT_CHANNEL: &str = "francois://app/event";
@@ -166,17 +167,26 @@ pub struct UsageRefreshAck {
 }
 
 /// Payload of francois://app/event — a tagged union with one member today.
+/// multi-account FR-27: every `usage.state` names the account it describes.
 #[derive(Serialize, Clone)]
 #[serde(tag = "type")]
 enum AppEvent {
     #[serde(rename = "usage.state")]
-    UsageState { snapshot: UsageSnapshot },
+    UsageState {
+        #[serde(rename = "accountId")]
+        account_id: String,
+        snapshot: UsageSnapshot,
+    },
 }
 
 // ---------- managed state (§6) ----------
 
+/// multi-account FR-27: the cache is keyed by AccountId — one snapshot, one
+/// in-flight slot and one throttle floor PER ACCOUNT, so a probe that fails for
+/// one account leaves every other account's snapshot untouched (§7). An account
+/// with no entry has simply never been probed (`UsageSnapshot::default`).
 #[derive(Default)]
-pub struct UsageState(Mutex<UsageInner>);
+pub struct UsageState(Mutex<HashMap<String, UsageInner>>);
 
 struct UsageInner {
     snapshot: UsageSnapshot,
@@ -320,29 +330,35 @@ fn probe_cwd() -> Option<std::path::PathBuf> {
 
 // ---------- probe driver ----------
 
-fn emit_snapshot(app: &AppHandle, snapshot: &UsageSnapshot) {
+fn emit_snapshot(app: &AppHandle, account_id: &str, snapshot: &UsageSnapshot) {
     let _ = app.emit(
         EVENT_CHANNEL,
         AppEvent::UsageState {
+            account_id: account_id.to_string(),
             snapshot: snapshot.clone(),
         },
     );
 }
 
-/// Start a probe unless FR-7/FR-14 forbid it. Returns whether one was started —
-/// the `{ started }` of FR-15 (a spawn failure still counts as started: it emits
-/// its own outcome event). Emits the FR-17 `loading` event BEFORE the spawn.
+/// Start a probe for ONE account unless FR-7/FR-14 forbid it. Returns whether
+/// one was started — the `{ started }` of FR-15 (a spawn failure still counts as
+/// started: it emits its own outcome event). Emits the FR-17 `loading` event
+/// BEFORE the spawn.
 ///
 /// The whole start sequence runs under the usage lock so two callers can never
-/// both pass the FR-7 check; the lock is a leaf, so this blocks nothing but other
-/// usage work.
-fn request_probe(app: &AppHandle, manual: bool) -> bool {
+/// both pass the FR-7 check for the same account; the lock is a leaf, so this
+/// blocks nothing but other usage work. multi-account FR-28: the account's
+/// `CLAUDE_CONFIG_DIR` is resolved BEFORE that lock is taken — account state is
+/// another leaf, and the two are never held at once.
+fn request_probe(app: &AppHandle, account_id: &str, manual: bool) -> bool {
+    let config_dir = crate::account::config_dir_of(app, account_id);
     let Some(state) = app.try_state::<UsageState>() else {
         return false;
     };
-    let Ok(mut inner) = state.0.lock() else {
+    let Ok(mut map) = state.0.lock() else {
         return false; // poisoned — the commands surface INTERNAL, timers just skip
     };
+    let inner = map.entry(account_id.to_string()).or_default();
     let now = now_ms();
     if !should_start(inner.probe.is_some(), manual, inner.last_started_at, now) {
         return false;
@@ -352,7 +368,7 @@ fn request_probe(app: &AppHandle, manual: bool) -> bool {
     let generation = inner.generation;
 
     mark_loading(&mut inner.snapshot);
-    emit_snapshot(app, &inner.snapshot); // FR-17 — before the spawn
+    emit_snapshot(app, account_id, &inner.snapshot); // FR-17 — before the spawn
 
     let (program, args) = probe_invocation();
     let mut cmd = Command::new(program);
@@ -362,6 +378,11 @@ fn request_probe(app: &AppHandle, manual: bool) -> bool {
     }
     if let Some(path) = claude_path_env() {
         cmd.env("PATH", path);
+    }
+    // multi-account FR-28: each probe reports plan limits from ITS account's
+    // perspective. The probe is always native (FR-6), so there is no WSLENV leg.
+    for (k, v) in account_env(config_dir.as_deref(), "native", &[]) {
+        cmd.env(k, v);
     }
     no_window(&mut cmd); // FR-10 — no console flash
     cmd.stdin(Stdio::null())
@@ -376,26 +397,28 @@ fn request_probe(app: &AppHandle, manual: bool) -> bool {
                 ProbeOutcome::Failed(spawn_failed()),
                 now_ms(),
             );
-            emit_snapshot(app, &inner.snapshot); // FR-16 — exactly one outcome event
+            emit_snapshot(app, account_id, &inner.snapshot); // FR-16 — exactly one outcome event
             return true;
         }
     };
     let stdout = child.stdout.take();
     inner.probe = Some(child);
-    drop(inner);
+    drop(map);
 
     let handle = app.clone();
-    std::thread::spawn(move || drain_probe(handle, generation, stdout));
+    let account_id = account_id.to_string();
+    std::thread::spawn(move || drain_probe(handle, account_id, generation, stdout));
     true
 }
 
 /// The detached probe body: read stdout to EOF under a 30s watchdog, then fold the
-/// verdict into the snapshot and emit it.
-fn drain_probe(app: AppHandle, generation: u64, stdout: Option<ChildStdout>) {
+/// verdict into the account's snapshot and emit it.
+fn drain_probe(app: AppHandle, account_id: String, generation: u64, stdout: Option<ChildStdout>) {
     let done = Arc::new(AtomicBool::new(false));
     let timed_out = Arc::new(AtomicBool::new(false));
     {
         let (app, done, timed_out) = (app.clone(), done.clone(), timed_out.clone());
+        let account_id = account_id.clone();
         std::thread::spawn(move || {
             for _ in 0..(PROBE_TIMEOUT_SECS * 10) {
                 std::thread::sleep(Duration::from_millis(100));
@@ -404,14 +427,14 @@ fn drain_probe(app: AppHandle, generation: u64, stdout: Option<ChildStdout>) {
                 }
             }
             timed_out.store(true, Ordering::SeqCst);
-            // Last-moment re-check: if the reader finished in the finalpoll interval
+            // Last-moment re-check: if the reader finished in the final poll interval
             // it will settle with its own (possibly parsed) verdict, which FR-8 says
             // must win. `time_out_probe` re-checks the generation under the lock, so
             // this is only an optimization, not the correctness barrier.
             if done.load(Ordering::SeqCst) {
                 return;
             }
-            time_out_probe(&app, generation);
+            time_out_probe(&app, &account_id, generation);
         });
     }
 
@@ -427,25 +450,31 @@ fn drain_probe(app: AppHandle, generation: u64, stdout: Option<ChildStdout>) {
     done.store(true, Ordering::SeqCst);
 
     let outcome = probe_outcome(&lines, timed_out.load(Ordering::SeqCst));
-    if let Some(mut child) = settle(&app, generation, outcome) {
+    if let Some(mut child) = settle(&app, &account_id, generation, outcome) {
         let _ = child.wait(); // reaped outside the lock
     }
 }
 
-/// Release the probe slot and publish its outcome in one critical section, so a
-/// probe that started in the meantime can never have its state overwritten.
-/// Returns the finished child for the caller to reap.
-fn settle(app: &AppHandle, generation: u64, outcome: ProbeOutcome) -> Option<Child> {
+/// Release the account's probe slot and publish its outcome in one critical
+/// section, so a probe that started in the meantime can never have its state
+/// overwritten. Returns the finished child for the caller to reap.
+fn settle(
+    app: &AppHandle,
+    account_id: &str,
+    generation: u64,
+    outcome: ProbeOutcome,
+) -> Option<Child> {
     let state = app.try_state::<UsageState>()?;
-    let mut inner = state.0.lock().ok()?;
+    let mut map = state.0.lock().ok()?;
+    let inner = map.get_mut(account_id)?;
     if inner.generation != generation {
         return None; // superseded — never publish a stale verdict
     }
     let child = inner.probe.take();
     apply_outcome(&mut inner.snapshot, outcome, now_ms());
-    emit_snapshot(app, &inner.snapshot); // FR-16 — exactly one outcome event
-                                         // Retire this generation so the watchdog, if it fires between our lock release
-                                         // and its own acquisition, finds a mismatch and stays silent (FR-16).
+    emit_snapshot(app, account_id, &inner.snapshot); // FR-16 — exactly one outcome event
+                                                     // Retire this generation so the watchdog, if it fires between our lock release
+                                                     // and its own acquisition, finds a mismatch and stays silent (FR-16).
     inner.generation = inner.generation.wrapping_add(1);
     child
 }
@@ -457,17 +486,21 @@ fn settle(app: &AppHandle, generation: u64, outcome: ProbeOutcome) -> Option<Chi
 /// is what stops FR-7 from leaking. A killed `claude` can leave a descendant holding
 /// the stdout pipe; the reader then never reaches EOF, `settle` never runs, and
 /// `inner.probe` would stay `Some` forever, wedging `should_start` into `false` for
-/// every future trigger and freezing the bar in `loading` app-wide with no way back.
+/// every future trigger and freezing the bar in `loading` for that account with no
+/// way back.
 ///
 /// Retiring the generation makes the two finishers mutually exclusive: whichever
 /// takes the lock first publishes, the other sees the mismatch and returns, so
 /// exactly one outcome event is emitted either way (FR-16).
-fn time_out_probe(app: &AppHandle, generation: u64) {
+fn time_out_probe(app: &AppHandle, account_id: &str, generation: u64) {
     let Some(state) = app.try_state::<UsageState>() else {
         return;
     };
     let child = {
-        let Ok(mut inner) = state.0.lock() else {
+        let Ok(mut map) = state.0.lock() else {
+            return;
+        };
+        let Some(inner) = map.get_mut(account_id) else {
             return;
         };
         if inner.generation != generation {
@@ -479,7 +512,7 @@ fn time_out_probe(app: &AppHandle, generation: u64) {
             ProbeOutcome::Failed(unavailable(MSG_TIMED_OUT)),
             now_ms(),
         );
-        emit_snapshot(app, &inner.snapshot); // FR-16 — exactly one outcome event
+        emit_snapshot(app, account_id, &inner.snapshot); // FR-16 — exactly one outcome event
         inner.generation = inner.generation.wrapping_add(1);
         child
     };
@@ -489,16 +522,18 @@ fn time_out_probe(app: &AppHandle, generation: u64) {
     }
 }
 
-/// §7 #9: kill the probe on app exit — no orphan `claude` process.
+/// §7 #9: kill every account's probe on app exit — no orphan `claude` process.
 pub fn kill_probe(app: &AppHandle) {
     let Some(state) = app.try_state::<UsageState>() else {
         return;
     };
-    let Ok(mut inner) = state.0.lock() else {
+    let Ok(mut map) = state.0.lock() else {
         return;
     };
-    if let Some(mut child) = inner.probe.take() {
-        let _ = child.kill();
+    for inner in map.values_mut() {
+        if let Some(mut child) = inner.probe.take() {
+            let _ = child.kill();
+        }
     }
 }
 
@@ -506,64 +541,130 @@ pub fn kill_probe(app: &AppHandle) {
 
 /// FR-11 + FR-12: probe once during setup, then every 5 minutes. Core-side so the
 /// schedule survives a frontend reload.
+///
+/// multi-account FR-29: each tick probes the `isDefault` account plus every
+/// account bound to at least one live session — never an account with no
+/// sessions at all. The engine is read first and its lock released before any
+/// usage lock is taken (usage-bar LOCK ORDER).
 pub fn start_timers(app: AppHandle) {
     {
         let app = app.clone();
         std::thread::spawn(move || {
-            request_probe(&app, false);
+            // multi-account FR-29: the boot probe covers every account the first
+            // tick would — the isDefault account plus every account already bound
+            // to a live session — so a non-default-account session never sits on
+            // an `empty` snapshot until the first 5-minute tick.
+            for account_id in tick_targets(&app) {
+                request_probe(&app, &account_id, false);
+            }
         });
     }
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(TICK_INTERVAL_SECS));
-        request_probe(&app, false);
+        for account_id in tick_targets(&app) {
+            request_probe(&app, &account_id, false);
+        }
     });
 }
 
-/// FR-13: a session left `running`, so usage moved — probe 15s later. Concurrent
-/// turn-ends coalesce into a single probe, and the fired timer is still subject to
+/// FR-29: the accounts one background tick probes — the `isDefault` account
+/// first, then every account bound to a live session, each exactly once.
+fn tick_targets(app: &AppHandle) -> Vec<String> {
+    let mut targets = vec![crate::account::default_account_id(app)];
+    if let Some(engine) = app.try_state::<crate::session::Engine>() {
+        for id in engine.live_account_ids() {
+            if !targets.contains(&id) {
+                targets.push(id);
+            }
+        }
+    }
+    targets
+}
+
+/// FR-13 + multi-account FR-29: a session left `running`, so ITS account's usage
+/// moved — probe that account 15s later. Concurrent turn-ends on the same
+/// account coalesce into a single probe, and the fired timer is still subject to
 /// FR-7/FR-14. Called from session.rs OUTSIDE the engine lock (see LOCK ORDER).
-pub fn note_turn_ended(app: &AppHandle) {
+pub fn note_turn_ended(app: &AppHandle, account_id: &str) {
     let Some(state) = app.try_state::<UsageState>() else {
         return;
     };
     {
-        let Ok(mut inner) = state.0.lock() else {
+        let Ok(mut map) = state.0.lock() else {
             return;
         };
+        let inner = map.entry(account_id.to_string()).or_default();
         if !claim_debounce(&mut inner.debounce_pending) {
             return;
         }
     }
     let app = app.clone();
+    let account_id = account_id.to_string();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(POST_TURN_DEBOUNCE_SECS));
         if let Some(state) = app.try_state::<UsageState>() {
-            if let Ok(mut inner) = state.0.lock() {
-                inner.debounce_pending = false;
+            if let Ok(mut map) = state.0.lock() {
+                if let Some(inner) = map.get_mut(&account_id) {
+                    inner.debounce_pending = false;
+                }
             }
         }
-        request_probe(&app, false);
+        request_probe(&app, &account_id, false);
     });
 }
 
 // ---------- commands (§5.1) ----------
 
-/// francois:app:getUsage — the cached snapshot. FR-22: never triggers a probe.
+/// francois:app:getUsage — the cached snapshot of ONE account (multi-account
+/// FR-27: omitted `accountId` ⇒ the `isDefault` account). FR-22: never triggers
+/// a probe; an account that has never been probed reads as `empty`.
 #[tauri::command(async)]
-pub fn app_get_usage(state: State<'_, UsageState>) -> IpcResult<UsageSnapshot> {
-    match state.0.lock() {
-        Ok(inner) => ok(inner.snapshot.clone()),
+pub fn app_get_usage(app: AppHandle, account_id: Option<String>) -> IpcResult<UsageSnapshot> {
+    let account_id = resolve_usage_account(&app, account_id);
+    let Some(state) = app.try_state::<UsageState>() else {
+        return crate::ipc::err("INTERNAL", "usage state is unavailable");
+    };
+    // The lock lives in a STATEMENT, never in the tail expression: a tail
+    // expression's temporaries outlive the block's locals, so a guard borrowed
+    // from the local `state` would be dropped after `state` itself (E0597).
+    let snapshot = match state.0.lock() {
+        Ok(map) => map
+            .get(&account_id)
+            .map(|i| i.snapshot.clone())
+            .unwrap_or_default(),
         // §5.4: INTERNAL is reserved for a poisoned state lock.
-        Err(_) => crate::ipc::err("INTERNAL", "usage state is unavailable"),
-    }
+        Err(_) => return crate::ipc::err("INTERNAL", "usage state is unavailable"),
+    };
+    ok(snapshot)
 }
 
-/// francois:app:refreshUsage — request a probe (FR-15). Never carries the result.
+/// francois:app:refreshUsage — request a probe for one account (FR-15).
+/// Never carries the result.
 #[tauri::command(async)]
-pub fn app_refresh_usage(app: AppHandle) -> IpcResult<UsageRefreshAck> {
+pub fn app_refresh_usage(app: AppHandle, account_id: Option<String>) -> IpcResult<UsageRefreshAck> {
+    let account_id = resolve_usage_account(&app, account_id);
     ok(UsageRefreshAck {
-        started: request_probe(&app, true),
+        started: request_probe(&app, &account_id, true),
     })
+}
+
+/// multi-account FR-27: an omitted (or blank) `accountId` means the `isDefault`
+/// account. An unknown/removed one is NOT an error here, but it must not be
+/// trusted either: `config_dir_of` resolves an unknown id to `None` — the SAME
+/// as the built-in `default` — so passing it through unresolved would spawn
+/// under the default account's credentials while the emitted/cached snapshot
+/// stayed labeled with the caller's (stale or foreign) id, mislabeling the
+/// default account's real usage as belonging to someone else. Falling back to
+/// `isDefault` here keeps the spawn and the label in agreement.
+fn resolve_usage_account(app: &AppHandle, requested: Option<String>) -> String {
+    let trimmed = requested
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    match trimmed {
+        Some(id) if crate::account::known_ids(app).contains(id) => id.to_string(),
+        _ => crate::account::default_account_id(app),
+    }
 }
 
 #[cfg(test)]
@@ -680,13 +781,16 @@ mod tests {
             })
         );
 
+        // multi-account FR-27: the event names the account it describes.
         let event = serde_json::to_value(AppEvent::UsageState {
+            account_id: "a1".into(),
             snapshot: snap.clone(),
         })
         .unwrap();
         assert_eq!(
             event,
-            json!({ "type": "usage.state", "snapshot": serde_json::to_value(&snap).unwrap() })
+            json!({ "type": "usage.state", "accountId": "a1",
+                    "snapshot": serde_json::to_value(&snap).unwrap() })
         );
     }
 
@@ -882,6 +986,40 @@ mod tests {
         ] {
             assert!(!argv.contains(&banned), "{banned} must never be passed");
         }
+    }
+
+    #[test]
+    fn each_account_keeps_its_own_snapshot_and_in_flight_slot() {
+        // multi-account FR-27: the cache is keyed by AccountId, and a failure for
+        // one account leaves every other account's snapshot untouched (§7).
+        let mut map: HashMap<String, UsageInner> = HashMap::new();
+        apply_outcome(
+            &mut map.entry("a1".into()).or_default().snapshot,
+            ProbeOutcome::Ready(vec![sample_meter()]),
+            1_000,
+        );
+        apply_outcome(
+            &mut map.entry("default".into()).or_default().snapshot,
+            ProbeOutcome::Failed(spawn_failed()),
+            2_000,
+        );
+
+        assert_eq!(map["a1"].snapshot.status, "ready");
+        assert_eq!(map["a1"].snapshot.meters.len(), 1);
+        assert_eq!(map["default"].snapshot.status, "error");
+        assert!(map["default"].snapshot.meters.is_empty());
+        // an account never probed has no entry at all, and reads as `empty`
+        assert!(!map.contains_key("a2"));
+        assert_eq!(
+            map.get("a2")
+                .map(|i| i.snapshot.clone())
+                .unwrap_or_default()
+                .status,
+            "empty"
+        );
+        // FR-28: one in-flight probe PER account — the FR-7 gate is per entry
+        assert!(map["a1"].probe.is_none());
+        assert!(should_start(false, false, map["a1"].last_started_at, 5_000));
     }
 
     #[test]

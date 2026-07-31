@@ -1,5 +1,5 @@
 // usage-bar (specs/usage-bar.md) — everything the bar does that is not markup:
-// the mount-time cache seed + francois://app/event subscription (FR-21/22), the
+// the cache seed + francois://app/event subscription (FR-21/22), the
 // fire-and-forget manual refresh (FR-27/28), and the render derivations
 // (FR-23/24/25/26/29). UsageBar.tsx is a thin renderer over these so the logic
 // stays coverable by vitest's node environment.
@@ -9,9 +9,14 @@
 //
 // The trailing slot shows the SESSION limit's reset countdown (FR-30) and falls
 // back to the freshness label only when no reset can be derived.
+//
+// multi-account FR-27: the cache is keyed by accountId on both sides. The
+// subscription is app-wide and routes each usage.state event by the accountId
+// it carries; the SEED is per account, fired whenever the bar starts showing
+// an account it has no snapshot for (FR-30).
 
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { UsageMeter } from '../../../contract/common';
+import type { AccountId, UsageMeter } from '../../../contract/common';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 import { freshnessLabel, isMeterHigh, meterFillPercent, meterTooltip } from '../../../contract/usage-bar';
 import { appGetUsage, appRefreshUsage, onAppEvent } from '../../lib/api';
@@ -141,7 +146,7 @@ export function meterChipViews(meters: UsageMeter[]): MeterChipView[] {
   return meters.map(meterChipView);
 }
 
-export function usageBarView(snapshot: UsageSnapshot, now: number): UsageBarView {
+export function usageBarView(snapshot: UsageSnapshot, now: number, accountLabel?: string): UsageBarView {
   const chips = meterChipViews(snapshot.meters);
   const isError = snapshot.status === 'error';
   const sessionMeter = snapshot.meters.find((m) => /session/i.test(m.label)) ?? snapshot.meters[0];
@@ -159,35 +164,43 @@ export function usageBarView(snapshot: UsageSnapshot, now: number): UsageBarView
     reset,
     trailing: parts.length > 0 ? parts.join(' · ') : freshness,
     // The countdown is derived and rounded, so the tooltip keeps the CLI's exact
-    // wording available alongside the refresh hint.
-    resetTitle: sessionMeter ? `${meterTooltip(sessionMeter)} · click to refresh` : 'click to refresh',
+    // wording available alongside the refresh hint — and, multi-account FR-30,
+    // NAMES the account these meters belong to, since the bar silently follows
+    // whichever session is selected.
+    resetTitle: [sessionMeter ? meterTooltip(sessionMeter) : null, accountLabel ?? null, 'click to refresh']
+      .filter(Boolean)
+      .join(' · '),
   };
 }
 
 /**
- * FR-21: seed once from the core's cache (no probe — FR-22), then follow
- * francois://app/event. Returns the teardown; it is safe to call before the
- * listen() promise settles and guarantees no apply() after it (§7 #12).
- * A seed that lands after a live event is dropped rather than rewinding the bar.
+ * Accounts whose snapshot has already arrived on the LIVE channel this run.
+ * A per-account generalization of the former `sawEvent` flag: it is what makes
+ * a seed that resolves after an event a no-op instead of a rewind (§7 #13),
+ * across the seed/subscription split multi-account FR-27 forces.
  */
-export function startUsageFeed(apply: (snapshot: UsageSnapshot) => void): () => void {
-  let live = true;
-  let sawEvent = false;
-  let unlisten: UnlistenFn | undefined;
+const liveAccounts = new Set<AccountId>();
 
-  void appGetUsage()
-    .then((res) => {
-      if (!live || sawEvent || !res.ok) return;
-      apply(res.data);
-    })
-    .catch(() => {
-      /* the bar is chrome — a dead seed degrades to 'never', never throws (§2) */
-    });
+/** Test seam — the set above is app-scoped state, so each test starts clean. */
+export function resetUsageFeed(): void {
+  liveAccounts.clear();
+}
+
+/**
+ * FR-21/FR-27: follow francois://app/event, routing each snapshot by the
+ * accountId it describes. App-wide and mounted for the app's life — the
+ * per-account cache seed is `seedAccountUsage` below. Returns the teardown; it
+ * is safe to call before the listen() promise settles and guarantees no apply()
+ * after it (§7 #12).
+ */
+export function startUsageFeed(apply: (accountId: AccountId, snapshot: UsageSnapshot) => void): () => void {
+  let live = true;
+  let unlisten: UnlistenFn | undefined;
 
   void onAppEvent((e) => {
     if (!live || e.type !== 'usage.state') return;
-    sawEvent = true;
-    apply(e.snapshot);
+    liveAccounts.add(e.accountId);
+    apply(e.accountId, e.snapshot);
   })
     .then((u) => {
       if (!live) u();
@@ -205,12 +218,37 @@ export function startUsageFeed(apply: (snapshot: UsageSnapshot) => void): () => 
 }
 
 /**
- * FR-27/28: ask the core for a probe. Fire-and-forget by contract — the ack
+ * FR-21/FR-22: seed ONE account from the core's cache. Never probes. Returns a
+ * teardown so an account switch (or an unmount) makes a late resolution a no-op;
+ * a resolution for an account the live channel has already spoken for is dropped
+ * too, so the seed can never rewind a fresher snapshot (§7 #13).
+ */
+export function seedAccountUsage(
+  accountId: AccountId,
+  apply: (accountId: AccountId, snapshot: UsageSnapshot) => void,
+): () => void {
+  let live = true;
+  void appGetUsage(accountId)
+    .then((res) => {
+      if (!live || liveAccounts.has(accountId) || !res.ok) return;
+      apply(accountId, res.data);
+    })
+    .catch(() => {
+      /* the bar is chrome — a dead seed degrades to 'never', never throws (§2) */
+    });
+  return () => {
+    live = false;
+  };
+}
+
+/**
+ * FR-27/28: ask the core for a probe of ONE account (omitted ⇒ the isDefault
+ * account, multi-account FR-27). Fire-and-forget by contract — the ack
  * ({ started: false } when one is already in flight, FR-7) changes nothing on
  * screen; the UI only ever reacts to the resulting usage.state events.
  */
-export function requestUsageRefresh(): void {
-  void appRefreshUsage()
+export function requestUsageRefresh(accountId?: AccountId): void {
+  void appRefreshUsage(accountId)
     .then((res) => {
       if (!res.ok) console.warn('[usage] refresh rejected:', res.error.message);
     })

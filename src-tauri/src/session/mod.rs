@@ -120,6 +120,12 @@ pub(crate) struct SessionMeta {
     /// Francois-created or Francois-adopted git worktree.
     #[serde(skip_serializing_if = "Option::is_none")]
     worktree: Option<SessionWorktree>,
+    /// multi-account FR-19: the account EVERY claude spawn of this session runs
+    /// under. REQUIRED on the wire (never omitted, unlike projectId): a session
+    /// always has an account, and a persisted record without one loads as
+    /// `default` (FR-10).
+    #[serde(rename = "accountId")]
+    account_id: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -354,6 +360,11 @@ pub(crate) struct Session {
     /// alongside `worktree` (sibling `worktreeDistro` key, see persistence.rs) so
     /// it survives a restart.
     worktree_distro: Option<String>,
+    /// multi-account FR-19: the account this session was created under, stored
+    /// VERBATIM at creation and never re-derived. Only two things ever change
+    /// it: the account being removed (FR-9) and a persisted value that no longer
+    /// resolves (FR-10) — both fall back to `default`.
+    account_id: String,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
@@ -415,6 +426,7 @@ impl Session {
         project_id: Option<String>,
         worktree: Option<SessionWorktree>,
         worktree_distro: Option<String>,
+        account_id: String,
         claude_session_id: Option<String>,
         block_buffer: Vec<BufBlock>,
     ) -> Session {
@@ -436,6 +448,7 @@ impl Session {
             project_id,
             worktree,
             worktree_distro,
+            account_id,
             queue: VecDeque::new(),
             claude_session_id,
             current: None,
@@ -473,6 +486,7 @@ impl Session {
             runtime: self.runtime.clone(),
             project_id: self.project_id.clone(),
             worktree: self.worktree.clone(),
+            account_id: self.account_id.clone(),
         }
     }
 
@@ -694,10 +708,18 @@ impl Engine {
     /// conversation. `worktreeDistro` (session-worktree FR-10) is the stored
     /// `GitHost`/distro to route the spawn to when this session runs in a WSL
     /// worktree, rather than re-deriving it from `cwd`.
+    #[allow(clippy::type_complexity)]
     pub(crate) fn remote_target_of(
         &self,
         session_id: &str,
-    ) -> Option<(String, String, String, Option<String>, Option<String>)> {
+    ) -> Option<(
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> {
         self.with_session(session_id, |s| {
             (
                 s.cwd.clone(),
@@ -705,6 +727,8 @@ impl Engine {
                 s.name.clone(),
                 s.claude_session_id.clone(),
                 s.worktree_distro.clone(),
+                // multi-account FR-21: the host spawns under the session's account.
+                s.account_id.clone(),
             )
         })
     }
@@ -713,6 +737,42 @@ impl Engine {
     /// domain's per-session spawn matrix (wsl-filesystem FR-10/FR-11). None if unknown.
     pub fn runtime_of(&self, session_id: &str) -> Option<String> {
         self.with_session(session_id, |s| s.runtime.clone())
+    }
+
+    /// multi-account FR-21: the account a session's spawns run under — read by
+    /// the `shell` domain, so a hand-typed `claude` in the SHELL tab matches the
+    /// session it belongs to. None if unknown.
+    pub fn account_of(&self, session_id: &str) -> Option<String> {
+        self.with_session(session_id, |s| s.account_id.clone())
+    }
+
+    /// multi-account FR-9: repoint every session bound to the removed account
+    /// onto `default`. Returns the fresh meta of each session that changed — one
+    /// `session.meta` emission each. The sessions keep running; only their NEXT
+    /// turn spawns on `default` (§7).
+    pub(crate) fn clear_account(&self, account_id: &str) -> Vec<SessionMeta> {
+        let mut map = self.sessions.lock().unwrap();
+        map.values_mut()
+            .filter(|s| s.account_id == account_id)
+            .map(|s| {
+                s.account_id = crate::account::DEFAULT_ACCOUNT_ID.to_string();
+                s.meta()
+            })
+            .collect()
+    }
+
+    /// multi-account FR-29: every account with at least one live session — the
+    /// background usage tick probes exactly these, plus the isDefault account,
+    /// and never an account with no sessions at all.
+    pub fn live_account_ids(&self) -> Vec<String> {
+        let map = self.sessions.lock().unwrap();
+        let mut out: Vec<String> = Vec::new();
+        for s in map.values() {
+            if !out.contains(&s.account_id) {
+                out.push(s.account_id.clone());
+            }
+        }
+        out
     }
 }
 
@@ -770,7 +830,7 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn uuid() -> String {
+pub(crate) fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 

@@ -33,10 +33,11 @@ pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str
             s.model_id.clone(),
             s.runtime.clone(),
             s.worktree_distro.clone(),
+            s.account_id.clone(),
             slot,
         ))
     });
-    let (cwd, model_id, runtime, worktree_distro, slot) = match reserved {
+    let (cwd, model_id, runtime, worktree_distro, account_id, slot) = match reserved {
         None => return, // no such session
         Some(None) => {
             // FR-11: one in-flight probe per session → instant notice on a fresh block.
@@ -61,6 +62,9 @@ pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str
             command: command.into(),
         },
     );
+    // multi-account FR-21: the side-probe reports THIS session's account's usage,
+    // so it spawns under that account's config dir.
+    let account_config_dir = crate::account::config_dir_of(app, &account_id);
     let app = app.clone();
     let sid = session_id.to_string();
     let command = command.to_string();
@@ -74,6 +78,7 @@ pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str
             model_id,
             runtime,
             worktree_distro,
+            account_config_dir,
             slot,
         )
     });
@@ -94,6 +99,7 @@ pub(crate) fn run_probe(
     model_id: String,
     runtime: String,
     worktree_distro: Option<String>,
+    account_config_dir: Option<String>,
     slot: Arc<Mutex<Option<Child>>>,
 ) {
     let args: Vec<String> = vec![
@@ -113,6 +119,10 @@ pub(crate) fn run_probe(
     }
     if let Some(path) = claude_path_env() {
         cmd.env("PATH", path);
+    }
+    // multi-account FR-21/FR-24.
+    for (k, v) in account_env(account_config_dir.as_deref(), &runtime, &[]) {
+        cmd.env(k, v);
     }
     no_window(&mut cmd);
     cmd.stdin(Stdio::null())

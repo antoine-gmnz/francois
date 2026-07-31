@@ -45,6 +45,7 @@ fn spawn_shell_child(
     args: &[String],
     spawn_cwd: Option<&str>,
     runtime: &str,
+    account_config_dir: Option<&str>,
 ) -> Result<SpawnedShell, String> {
     let mut cmd = CommandBuilder::new(exe);
     for a in args {
@@ -57,10 +58,12 @@ fn spawn_shell_child(
         cmd.env(k, v);
     }
     cmd.env("TERM", "xterm-256color");
-    if runtime == "wsl" {
-        // FR-14: forward TERM into the distro (shared with remote-control's PTY
-        // host, which needs the identical merge — see `session::wsl_term_env`).
-        cmd.env("WSLENV", session::wsl_term_env());
+    // multi-account FR-21: the SHELL tab belongs to a session, so a hand-typed
+    // `claude` in it must match that session's account. FR-14 (unchanged):
+    // forward TERM into the distro — `account_env` merges both entries into the
+    // one WSLENV list (multi-account FR-24).
+    for (k, v) in session::account_env(account_config_dir, runtime, &["TERM/u"]) {
+        cmd.env(k, v);
     }
 
     let child = pair
@@ -171,6 +174,11 @@ pub fn shell_ensure(
     let runtime = engine
         .runtime_of(&session_id)
         .unwrap_or_else(|| "native".to_string());
+    // multi-account FR-21: the session's account, resolved to its config dir
+    // (None for the built-in `default` account — no override, as before).
+    let account_config_dir = engine
+        .account_of(&session_id)
+        .and_then(|id| crate::account::config_dir_of(&app, &id));
 
     let (cols, rows) = (80u16, 24u16);
     let (exe, args, shell_name, spawn_cwd) = shell_spawn_target(&runtime, &cwd);
@@ -180,7 +188,14 @@ pub fn shell_ensure(
         Err(msg) => return err("PTY_ERROR", msg),
     };
 
-    let spawned = match spawn_shell_child(pair, &exe, &args, spawn_cwd.as_deref(), &runtime) {
+    let spawned = match spawn_shell_child(
+        pair,
+        &exe,
+        &args,
+        spawn_cwd.as_deref(),
+        &runtime,
+        account_config_dir.as_deref(),
+    ) {
         Ok(s) => s,
         Err(msg) => return err("PTY_ERROR", msg),
     };

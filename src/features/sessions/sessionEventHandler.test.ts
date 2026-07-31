@@ -31,6 +31,7 @@ const meta: SessionMeta = {
   lastActivityAt: 0,
   permissionMode: 'default',
   runtime: 'native',
+  accountId: 'default',
 };
 
 const agent: AgentInfo = {

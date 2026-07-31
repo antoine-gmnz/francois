@@ -1,0 +1,411 @@
+/* multi-account — feature styles for AccountsModal (FR-34..FR-36), the
+   embedded login terminal, the status-bar chip (FR-33) and the sidebar badge
+   (FR-32). Every value is a token from src/styles.css — no raw hex, no magic px.
+   `.scz` / `.truncate` / `.list-row*` / `.form-error` live there and are reused
+   here as-is.
+
+   The modal shell mirrors ProjectsModal's chrome (design brief: "identical to
+   the Projects modal; reuse it verbatim") rather than src/ui/Modal, because the
+   panel needs the same responsive `min(px, vw)` width + `min(px, vh)` max-height
+   Modal has no slot for. The two differ only in the size caps the brief pins. */
+
+/* ── shell ──────────────────────────────────────────────────────────────── */
+.acc-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+.acc-panel {
+  /* §Responsive: capped at min(720px, 92vw) × min(560px, 80vh); the row list
+     scrolls internally while header and footer stay pinned. */
+  width: min(720px, 92vw);
+  max-height: min(560px, 80vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+.acc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.acc-title {
+  font-size: var(--font-size-11);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+.acc-add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 24px;
+  padding: 0 var(--space-10);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--font-size-10);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.acc-add:hover:not(:disabled) {
+  background: var(--accent-soft-bg);
+}
+.acc-add:disabled {
+  color: var(--text-disabled);
+  border-color: var(--border-2);
+  cursor: default;
+}
+.acc-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-6) 0;
+}
+.acc-footer {
+  flex-shrink: 0;
+  padding: var(--space-9) var(--space-16);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+.acc-error {
+  margin: var(--space-6) var(--space-16);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+
+/* ── one account row ────────────────────────────────────────────────────── */
+.acc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-16);
+  cursor: pointer;
+}
+.acc-row--cursor {
+  background: var(--bg-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* success flash on the row a login just minted (design brief: login → success) */
+.acc-row--fresh {
+  box-shadow: inset 2px 0 0 var(--success);
+}
+
+/* colored initial tile — the one structural cue borrowed from the redesign
+   exploration (turn 4a); everything around it stays this feature's own chrome. */
+.acc-avatar {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-11);
+  font-weight: 700;
+  color: var(--bg-app);
+}
+
+.acc-identity {
+  flex: 1 1 auto;
+  /* label + email never truncate below ~10 chars (§Responsive) */
+  min-width: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.acc-identity-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.acc-label {
+  font-size: var(--font-size-12);
+  color: var(--text-bright);
+  min-width: 0;
+}
+.acc-email {
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+}
+.acc-rename-input {
+  min-width: 0;
+  width: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-5);
+  font-family: inherit;
+  font-size: var(--font-size-12);
+  color: var(--text-bright);
+  outline: none;
+}
+
+.acc-pill {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: var(--space-1) var(--space-6);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--accent);
+  background: var(--accent-soft-bg);
+  color: var(--accent);
+}
+/* NEEDS LOGIN is conveyed by TEXT as well as colour (§Accessibility). */
+.acc-pill--alert {
+  border-color: var(--error-dim);
+  background: var(--bg-elevated);
+  color: var(--error);
+}
+
+/* meters — the first thing dropped when the row runs out of room (§Responsive) */
+.acc-meters {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  overflow: hidden;
+}
+.acc-meters-placeholder {
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+.acc-meters-error {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+@media (max-width: 620px) {
+  .acc-meters {
+    display: none;
+  }
+}
+
+.acc-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  /* revealed on row hover/focus; the NEEDS LOGIN row keeps RE-LOGIN visible */
+  opacity: 0;
+  transition: opacity 80ms ease-out;
+}
+.acc-row:hover .acc-actions,
+.acc-row:focus-within .acc-actions,
+.acc-actions--pinned {
+  opacity: 1;
+}
+.acc-action {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--font-size-10);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.acc-action:hover {
+  color: var(--text-bright);
+}
+.acc-action--danger:hover {
+  color: var(--error);
+}
+.acc-action:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.acc-action-icon {
+  display: none;
+}
+/* §Responsive: row actions collapse to icon-only below ~560px of panel width —
+   narrower than the meters' own 620px cutoff above, since meters are dropped
+   first as the row runs out of room. The `title` attribute on each button
+   (set above) is what carries the label once the text is gone. */
+@media (max-width: 560px) {
+  .acc-action-label {
+    display: none;
+  }
+  .acc-action-icon {
+    display: inline;
+    font-size: var(--font-size-11);
+  }
+}
+
+/* ── remove confirmation (design brief) ─────────────────────────────────── */
+.acc-confirm {
+  margin: var(--space-8) var(--space-16);
+  padding: var(--space-12);
+  background: var(--bg-elevated);
+  border: 1px solid var(--error-dim);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.acc-confirm-title {
+  font-size: var(--font-size-12);
+  color: var(--text-bright);
+}
+.acc-confirm-line {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+}
+.acc-confirm-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+}
+.acc-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-12);
+  padding-top: var(--space-4);
+}
+
+/* ── login view (FR-11..FR-16) ──────────────────────────────────────────── */
+.acc-login {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16) var(--space-14);
+}
+.acc-login-title {
+  flex-shrink: 0;
+  font-size: var(--font-size-11);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.acc-login-frame {
+  flex: 1;
+  min-height: 220px;
+  position: relative;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.acc-login-connecting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-12);
+  color: var(--text-muted);
+}
+.acc-login-term {
+  position: absolute;
+  inset: var(--space-10) var(--space-12);
+}
+.acc-login-hint {
+  flex-shrink: 0;
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.acc-login-failure {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-14);
+  padding: var(--space-24);
+  text-align: center;
+}
+.acc-login-failure-text {
+  font-size: var(--font-size-12-5);
+  color: var(--error);
+}
+.acc-login-failure-actions {
+  display: flex;
+  gap: var(--space-12);
+}
+
+/* ── status-bar chip (FR-33) ────────────────────────────────────────────── */
+.acc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+  height: 18px;
+  padding: 0 var(--space-6);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-base);
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+/* the default account is the quiet case — a chip you are not meant to notice */
+.acc-chip--default {
+  color: var(--text-muted);
+}
+.acc-chip--alert {
+  color: var(--error);
+}
+.acc-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+.acc-chip-glyph {
+  font-size: var(--font-size-9);
+  line-height: 1;
+}
+/* NEEDS LOGIN cue that survives colour-blindness / grayscale (§Accessibility) —
+   the alert state is never colour alone. */
+.acc-chip-alert {
+  font-weight: 700;
+  line-height: 1;
+}
+@media (max-width: 900px) {
+  .acc-chip-label {
+    max-width: 62px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* ── sidebar badge (FR-32) ──────────────────────────────────────────────── */
+.acc-badge {
+  flex-shrink: 0;
+  font-size: var(--font-size-9);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: var(--space-1) var(--space-5);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  color: var(--hue-blue);
+}
+
+/* ── new-session ACCOUNT field hint (FR-31) ─────────────────────────────── */
+.acc-field-alert {
+  color: var(--error);
+}
