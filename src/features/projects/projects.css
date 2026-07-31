@@ -297,6 +297,15 @@
   padding: var(--space-4) 0;
   animation: dropIn 90ms ease-out;
 }
+/* Anchored variant (the titlebar project button): that trigger sizes itself to
+   its label, so stretching the panel to `right: 0` would make it as narrow as a
+   short path. It takes its own width and hangs off the trigger's left edge. */
+.pjsw-dropdown--anchored {
+  right: auto;
+  min-width: 280px;
+  max-width: 440px;
+  margin-top: var(--space-4);
+}
 .pjsw-listbox {
   max-height: 260px;
   /* Vertical scroll only — a row must never widen the panel and mint a
