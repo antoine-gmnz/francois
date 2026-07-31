@@ -249,6 +249,9 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
                 "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
                 "lastActivityAt": s.last_activity_at,
                 "contextUsedTokens": s.context_used_tokens,
+                // multi-account FR-19: always written (unlike projectId) — a
+                // session always has an account, and 'default' is a real value.
+                "accountId": s.account_id,
             });
             // projects FR-18: write projectId ONLY when linked. An unlinked session
             // must omit the key entirely rather than emit null, so a record written
@@ -315,6 +318,9 @@ pub(crate) struct PersistedMeta {
     /// session-worktree FR-10: the sibling `worktreeDistro` key (see `persist`).
     /// None on every pre-feature record and every native-host worktree.
     worktree_distro: Option<String>,
+    /// multi-account FR-19: None on every pre-multi-account record. Whether the
+    /// id still RESOLVES is decided at load (FR-10), not here — parsing stays pure.
+    account_id: Option<String>,
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
@@ -386,6 +392,13 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(String::from),
+        // multi-account FR-19: a blank string is treated as absent so a
+        // hand-edited sessions.json can't bind a session to an unusable id.
+        account_id: rec
+            .get("accountId")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(String::from),
         claude_session_id: rec
             .get("claudeSessionId")
             .and_then(|v| v.as_str())
@@ -431,6 +444,36 @@ pub(crate) fn resolve_link(persisted: Option<String>, known: &HashSet<String>) -
     persisted.filter(|id| known.contains(id))
 }
 
+/// multi-account FR-10: the same pruning discipline for `accountId`, except the
+/// field is REQUIRED — an absent or no-longer-resolving value loads as the
+/// built-in `default` account rather than as "unlinked".
+pub(crate) fn resolve_account(persisted: Option<String>, known: &HashSet<String>) -> String {
+    persisted
+        .filter(|id| known.contains(id))
+        .unwrap_or_else(|| crate::account::DEFAULT_ACCOUNT_ID.to_string())
+}
+
+/// multi-account FR-9: the removal side-effect on sessions. Repoints every
+/// session bound to the now-gone account onto `default`, persists the pruned
+/// sessions.json and emits one `session.meta` per affected session. Returns
+/// their ids — `AccountRemoveData.reassignedSessions`.
+///
+/// Called from the account command layer with the account lock already
+/// released, so the engine lock is taken alone (multi-account §6 LOCK ORDER).
+pub fn reassign_account_sessions(app: &AppHandle, account_id: &str) -> Vec<String> {
+    let engine = app.state::<Engine>();
+    let changed = engine.clear_account(account_id);
+    if changed.is_empty() {
+        return Vec::new();
+    }
+    persist(app, &engine);
+    let ids: Vec<String> = changed.iter().map(|m| m.id.clone()).collect();
+    for meta in changed {
+        emit(app, SessionEvent::Meta { meta });
+    }
+    ids
+}
+
 pub(crate) fn unlink_project_sessions(app: &AppHandle, project_id: &str) {
     let engine = app.state::<Engine>();
     let changed = engine.clear_project(project_id);
@@ -457,6 +500,9 @@ pub fn load_persisted(app: &AppHandle) {
     // projects FR-18: read the registry ONCE for the whole load — main.rs runs
     // project::load_projects before this, so it is already populated.
     let known = crate::project::known_ids(app);
+    // multi-account FR-10: same discipline, same one-read-for-the-whole-load —
+    // main.rs runs account::load_accounts before this too.
+    let known_accounts = crate::account::known_ids(app);
     let mut watched: Vec<(String, String)> = Vec::new();
     let mut map = engine.sessions.lock().unwrap();
     for rec in list {
@@ -493,6 +539,10 @@ pub fn load_persisted(app: &AppHandle) {
                 project_id: resolve_link(m.project_id, &known),
                 worktree: m.worktree,
                 worktree_distro: m.worktree_distro,
+                // multi-account FR-10: an accountId that resolves to no registry
+                // entry — and every pre-feature record, which has none — loads
+                // as `default`; the pruned value is written by the next persist.
+                account_id: resolve_account(m.account_id, &known_accounts),
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
@@ -1015,6 +1065,109 @@ mod project_link_tests {
         // an unlinked session has nothing to lose either way
         assert_eq!(toctou_outcome(None, true), None);
         assert_eq!(toctou_outcome(None, false), None);
+    }
+
+    // ---------- multi-account FR-9/FR-10/FR-19: the account link ----------
+
+    #[test]
+    fn session_meta_always_carries_an_account_id() {
+        // FR-19 / contract: `accountId` is REQUIRED on the wire — unlike
+        // projectId it is never omitted, because a session always has an account.
+        let v = serde_json::to_value(test_session().meta()).unwrap();
+        assert_eq!(v["accountId"], "default");
+
+        let mut s = test_session();
+        s.account_id = "a1".into();
+        assert_eq!(
+            serde_json::to_value(s.meta()).unwrap()["accountId"],
+            "a1",
+            "the stored value is reported verbatim, never re-derived"
+        );
+    }
+
+    #[test]
+    fn account_id_round_trips_through_a_persisted_record() {
+        // FR-19: "restarting the app preserves every session's account" (§9).
+        let mut s = test_session();
+        s.account_id = "a1".into();
+        let rec = json!({ "id": s.id, "name": s.name, "cwd": s.cwd, "accountId": s.account_id });
+        assert_eq!(
+            parse_session_record(&rec, 0).unwrap().account_id.as_deref(),
+            Some("a1")
+        );
+        // a pre-multi-account record simply has no key
+        let old = json!({ "id": "s1", "name": "n", "cwd": "/x" });
+        assert_eq!(parse_session_record(&old, 0).unwrap().account_id, None);
+        // a hand-edited blank must not bind the session to an unusable id
+        for blank in [json!(""), json!("   "), json!(null), json!(42)] {
+            let mut r = old.clone();
+            r["accountId"] = blank;
+            assert_eq!(parse_session_record(&r, 0).unwrap().account_id, None);
+        }
+    }
+
+    #[test]
+    fn resolve_account_falls_back_to_default_rather_than_unlinking() {
+        // FR-10 / §7: an accountId that resolves to no registry entry — and every
+        // pre-feature record — loads as 'default'.
+        let reg = known(&["default", "a1"]);
+        assert_eq!(resolve_account(Some("a1".into()), &reg), "a1");
+        assert_eq!(resolve_account(Some("gone".into()), &reg), "default");
+        assert_eq!(resolve_account(None, &reg), "default");
+        // an empty registry still resolves the built-in id (FR-2)
+        assert_eq!(resolve_account(Some("a1".into()), &known(&[])), "default");
+    }
+
+    #[test]
+    fn clear_account_repoints_only_matching_sessions_and_reports_them() {
+        // FR-9: the sessions keep running, merely repointed onto `default`.
+        let mut bound = test_session();
+        bound.id = "s1".into();
+        bound.account_id = "a1".into();
+        let engine = test_engine_with(bound);
+        {
+            let mut map = engine.sessions.lock().unwrap();
+            let mut other = test_session();
+            other.id = "s2".into();
+            other.account_id = "a2".into();
+            map.insert("s2".into(), other);
+            let mut plain = test_session();
+            plain.id = "s3".into();
+            map.insert("s3".into(), plain);
+        }
+
+        let changed = engine.clear_account("a1");
+
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].id, "s1");
+        assert_eq!(changed[0].account_id, "default");
+
+        {
+            let map = engine.sessions.lock().unwrap();
+            assert_eq!(map.get("s1").unwrap().account_id, "default");
+            assert_eq!(map.get("s2").unwrap().account_id, "a2", "untouched");
+            assert_eq!(map.get("s3").unwrap().account_id, "default");
+            assert_eq!(map.len(), 3, "no session is ever removed by a repoint");
+        }
+        assert!(engine.clear_account("nobody").is_empty());
+    }
+
+    #[test]
+    fn live_account_ids_reports_each_bound_account_once() {
+        // FR-29: the background tick probes exactly these (plus the isDefault
+        // account) — never an account with no sessions at all.
+        let mut a = test_session();
+        a.id = "s1".into();
+        a.account_id = "a1".into();
+        let engine = test_engine_with(a);
+        {
+            let mut map = engine.sessions.lock().unwrap();
+            let mut b = test_session();
+            b.id = "s2".into();
+            b.account_id = "a1".into();
+            map.insert("s2".into(), b);
+        }
+        assert_eq!(engine.live_account_ids(), vec!["a1".to_string()]);
     }
 
     #[test]

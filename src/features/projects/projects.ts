@@ -279,16 +279,43 @@ const RUNTIMES: ClaudeRuntime[] = ['native', 'wsl'];
 const INHERIT: FieldOption = { value: '', label: 'inherit' };
 
 /**
- * FR-34.2: five uniform selects, every one carrying `inherit` first (which is how
+ * The slice of `Account` (contract/multi-account.ts) the defaults form needs.
+ * Structural on purpose: this module stays free of the multi-account feature so
+ * the dependency runs one way only (sessions/accounts import projects, not the
+ * reverse).
+ */
+export interface AccountOptionSource {
+  id: string;
+  label: string;
+}
+
+/**
+ * FR-34.2: uniform selects, every one carrying `inherit` first (which is how
  * a default is cleared — FR-7 replaces the whole defaults object).
  * `allow git` is a select, not a toggle, precisely because it has three states.
+ *
+ * multi-account FR-20 adds a sixth, `account`, but ONLY once a second account
+ * exists: with a single account the control would offer one real choice, and
+ * omitting it keeps the pre-multi-account form byte-identical.
  */
 export function defaultFieldDefs(
   models: ModelInfo[],
   defaults: ProjectDefaults,
   allowWsl: boolean,
+  accounts: AccountOptionSource[] = [],
 ): DefaultFieldDef[] {
+  const accountField: DefaultFieldDef[] =
+    accounts.length > 1
+      ? [
+          {
+            key: 'accountId',
+            label: 'account',
+            options: [INHERIT, ...accounts.map((a) => ({ value: a.id, label: a.label }))],
+          },
+        ]
+      : [];
   return [
+    ...accountField,
     {
       key: 'modelId',
       label: 'model',
@@ -359,6 +386,10 @@ export function patchDefaults(
       break;
     case 'allowGit':
       next.allowGit = value === 'yes';
+      break;
+    // multi-account FR-20: the account a new session under this project opens on.
+    case 'accountId':
+      next.accountId = value;
       break;
   }
   return next;

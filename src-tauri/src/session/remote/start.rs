@@ -103,6 +103,7 @@ fn spawn_host_process(
     argv: &[String],
     cwd: &str,
     runtime: &str,
+    account_config_dir: Option<&str>,
 ) -> Result<SpawnedHost, (&'static str, String)> {
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -129,11 +130,14 @@ fn spawn_host_process(
     if let Some(path) = claude_path_env() {
         cmd.env("PATH", path);
     }
-    if runtime == "wsl" {
-        // H4: forward TERM across the wsl.exe boundary. This is the ONLY URL
-        // source for the wsl runtime (spec §7 #7), so a TUI degraded by a missing
-        // TERM breaks the feature there outright.
-        cmd.env("WSLENV", wsl_term_env());
+    // multi-account FR-21: the Remote Control host is a claude spawn made on
+    // behalf of the session, so it runs under the session's account.
+    // H4 (unchanged): for wsl, TERM must ALSO cross the wsl.exe boundary — this
+    // PTY is the ONLY URL source there (spec §7 #7), so a TUI degraded by a
+    // missing TERM breaks the feature outright. `account_env` merges both
+    // entries into one WSLENV list (FR-24).
+    for (k, v) in account_env(account_config_dir, runtime, &["TERM/u"]) {
+        cmd.env(k, v);
     }
 
     let child = pair
@@ -345,11 +349,12 @@ pub fn remote_start(
         // the lookup below then returns SESSION_NOT_FOUND.
     }
 
-    let Some((cwd, runtime, session_name, claude_session_id, worktree_distro)) =
+    let Some((cwd, runtime, session_name, claude_session_id, worktree_distro, account_id)) =
         engine.remote_target_of(&session_id)
     else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
+    let account_config_dir = crate::account::config_dir_of(&app, &account_id);
 
     if let Some(entry) = map.remove(&session_id) {
         // C4: tear the dead host down for real — a bare `remove` used to just drop
@@ -367,7 +372,8 @@ pub fn remote_start(
         worktree_distro.as_deref(),
     );
 
-    let host = match spawn_host_process(&exe, &argv, &cwd, &runtime) {
+    let host = match spawn_host_process(&exe, &argv, &cwd, &runtime, account_config_dir.as_deref())
+    {
         Ok(host) => host,
         Err((code, message)) => return err(code, message),
     };

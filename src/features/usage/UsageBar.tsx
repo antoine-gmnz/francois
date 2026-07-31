@@ -23,8 +23,10 @@ import { useProjectRegistrySync } from '../projects/useProjectRegistrySync';
 import { abbreviate } from '../../lib/path';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useStore } from '../../lib/store';
+import { accountDisplayLabel, findAccount, usageAccountId } from '../accounts/accounts';
+import { EMPTY_USAGE } from '../../lib/usageStore';
 import './usage.css';
-import { requestUsageRefresh, startUsageFeed, usageBarView, type MeterChipView } from './usage';
+import { requestUsageRefresh, seedAccountUsage, startUsageFeed, usageBarView, type MeterChipView } from './usage';
 
 function MeterChip({ chip }: { chip: MeterChipView }) {
   return (
@@ -42,8 +44,7 @@ function MeterChip({ chip }: { chip: MeterChipView }) {
 }
 
 export default function UsageBar({ home }: { home: string }) {
-  const snapshot = useStore((s) => s.usage);
-  const setUsage = useStore((s) => s.setUsage);
+  const setAccountUsage = useStore((s) => s.setAccountUsage);
   const [now, setNow] = useState(() => Date.now());
   const [freshHover, setFreshHover] = useState(false);
   const [pathHover, setPathHover] = useState(false);
@@ -77,9 +78,22 @@ export default function UsageBar({ home }: { home: string }) {
     enabled: menuOpen,
   });
 
-  // FR-21/22: seed once from the core cache, then follow francois://app/event;
-  // the returned teardown unsubscribes on unmount (§7 #12).
-  useEffect(() => startUsageFeed(setUsage), [setUsage]);
+  // multi-account FR-30: the bar renders the SELECTED session's account —
+  // derived, never stored, so it can never drift from the session cache.
+  const accounts = useStore((s) => s.accounts);
+  const accountId = usageAccountId(accounts, sessions, activeSessionId);
+  const account = findAccount(accounts, accountId);
+  const accountLabel = account ? accountDisplayLabel(account) : null;
+  const snapshot = useStore((s) => s.usageByAccount[accountId]) ?? EMPTY_USAGE;
+
+  // FR-21/22: follow francois://app/event for every account's snapshot; the
+  // returned teardown unsubscribes on unmount (§7 #12).
+  useEffect(() => startUsageFeed(setAccountUsage), [setAccountUsage]);
+
+  // FR-21 + multi-account FR-27: seed the cache for whichever account is on
+  // screen. Re-runs on an account switch; the teardown makes a resolution that
+  // lands after the switch a no-op.
+  useEffect(() => seedAccountUsage(accountId, setAccountUsage), [accountId, setAccountUsage]);
 
   // Trailing-label granularity only (the reset countdown, FR-30): one text tick a
   // minute. Not motion — a single setState/min, no repaint loop (contrast with an
@@ -89,8 +103,9 @@ export default function UsageBar({ home }: { home: string }) {
     return () => clearInterval(id);
   }, []);
 
-  const view = usageBarView(snapshot, now);
+  const view = usageBarView(snapshot, now, accountLabel ?? undefined);
   const fullError = view.error && !view.error.compact ? view.error : null;
+  const refresh = () => requestUsageRefresh(accountId);
 
   return (
     <div className="usage-bar">
@@ -125,7 +140,7 @@ export default function UsageBar({ home }: { home: string }) {
 
       {/* meter region — the whole strip left of the freshness label is the click target (FR-27) */}
       <div
-        onClick={requestUsageRefresh}
+        onClick={refresh}
         // Keep focus where it was: a bare div steals it to <body> on mousedown, and
         // App.tsx's global keys only stand down while focus is in an input/terminal —
         // so without this the next keystroke after a click fires `n`/`d`/`t` (FR-3).
@@ -155,7 +170,7 @@ export default function UsageBar({ home }: { home: string }) {
           </>
         )}
         <span
-        onClick={requestUsageRefresh}
+        onClick={refresh}
         onMouseDown={(e) => e.preventDefault()} // see the meter region above (FR-3)
         onMouseEnter={() => setFreshHover(true)}
         onMouseLeave={() => setFreshHover(false)}

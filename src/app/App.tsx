@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import AccountsModal from '../features/accounts/AccountsModal';
+import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab } from '../features/agents/agent-tab';
 import McpPanel from '../features/mcp/McpPanel';
@@ -49,6 +51,9 @@ export default function App() {
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
   const projectsOpen = useStore((s) => s.projectsOpen);
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
+  const accountsOpen = useStore((s) => s.accountsOpen);
+  const setAccountsOpen = useStore((s) => s.setAccountsOpen);
+  const setAccounts = useStore((s) => s.setAccounts);
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
   // agent-tab FR-9: the dynamic per-subagent tabs, after SHELL in the strip.
@@ -62,6 +67,12 @@ export default function App() {
   useEffect(() => {
     initShellEvents();
   }, []);
+
+  // multi-account §6: ONE app-wide registry feed — account_list at boot, then
+  // francois://account/event. Everything that shows an account (the ACCOUNT
+  // field, the sidebar badge, the status-bar chip, the Accounts modal) reads
+  // the store this writes, so no surface ever fetches the registry itself.
+  useEffect(() => startAccountFeed(setAccounts), [setAccounts]);
 
   const { home, appVersion } = useAppIdentity(active?.name);
 
@@ -105,6 +116,7 @@ export default function App() {
     newAgentOpen,
     permissionsOpen,
     projectsOpen,
+    accountsOpen,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,
@@ -236,6 +248,10 @@ export default function App() {
           needs NO session — a project is configured whether or not anything is
           running — so it is gated on `projectsOpen` alone. */}
       {projectsOpen && <ProjectsModal home={home} onClose={() => setProjectsOpen(false)} />}
+
+      {/* multi-account FR-34: the Accounts modal. Like Projects it needs NO
+          session — an account is registered whether or not anything is running. */}
+      {accountsOpen && <AccountsModal onClose={() => setAccountsOpen(false)} />}
 
       <PaletteRoot />
     </div>

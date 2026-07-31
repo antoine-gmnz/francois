@@ -3,7 +3,20 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun } from '../../contract/common';
+import type { AccountId, Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun } from '../../contract/common';
+import type {
+  AccountAddPayload,
+  AccountAddResponse,
+  AccountEvent,
+  AccountListResponse,
+  AccountLoginAck,
+  AccountLoginCancelPayload,
+  AccountLoginResizePayload,
+  AccountLoginWritePayload,
+  AccountRemoveResponse,
+  AccountRenameResponse,
+  AccountSetDefaultResponse,
+} from '../../contract/multi-account';
 import type {
   ProjectAwareSessionCreateRequest,
   ProjectCreateRequest,
@@ -188,12 +201,36 @@ export function onDiffEvent(cb: (e: DiffEvent) => void): Promise<UnlistenFn> {
 
 // usage-bar (app domain, app-scoped plan limits). getUsage NEVER triggers a probe
 // (FR-22); refreshUsage only acks — the result always arrives as a usage.state event.
-export const appGetUsage = () => ipc<Result<UsageSnapshot>>('app_get_usage');
-export const appRefreshUsage = () => ipc<Result<UsageRefreshAck>>('app_refresh_usage');
+// multi-account FR-27: both take an optional accountId; omitted means the payload
+// itself is omitted (undefined), which the core reads as "the isDefault account".
+export const appGetUsage = (accountId?: AccountId) =>
+  ipc<Result<UsageSnapshot>>('app_get_usage', accountId ? { accountId } : undefined);
+export const appRefreshUsage = (accountId?: AccountId) =>
+  ipc<Result<UsageRefreshAck>>('app_refresh_usage', accountId ? { accountId } : undefined);
 
 /** Subscribe to francois://app/event (usage.state, extensible tagged union). */
 export function onAppEvent(cb: (e: AppEvent) => void): Promise<UnlistenFn> {
   return listen<AppEvent>('francois://app/event', (e) => cb(e.payload));
+}
+
+// multi-account (§5). Registry mutations resolve the FRESH re-read list (like
+// permission-guardrails), so the caller never re-derives it from a stale copy.
+// account:add starts (or FR-17 re-runs) an in-app login PTY; its bytes/outcome
+// arrive on the shared francois://account/event stream, not the response.
+export const accountList = () => ipc<AccountListResponse>('account_list');
+export const accountAdd = (payload: AccountAddPayload = {}) => ipc<AccountAddResponse>('account_add', payload);
+export const accountLoginWrite = (payload: AccountLoginWritePayload) => ipc<AccountLoginAck>('account_login_write', payload);
+export const accountLoginResize = (payload: AccountLoginResizePayload) => ipc<AccountLoginAck>('account_login_resize', payload);
+export const accountLoginCancel = (payload: AccountLoginCancelPayload) => ipc<AccountLoginAck>('account_login_cancel', payload);
+export const accountRename = (accountId: AccountId, label: string) =>
+  ipc<AccountRenameResponse>('account_rename', { accountId, label });
+export const accountSetDefault = (accountId: AccountId) =>
+  ipc<AccountSetDefaultResponse>('account_set_default', { accountId });
+export const accountRemove = (accountId: AccountId) => ipc<AccountRemoveResponse>('account_remove', { accountId });
+
+/** Subscribe to francois://account/event (account.list + the login sub-stream). */
+export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {
+  return listen<AccountEvent>('francois://account/event', (e) => cb(e.payload));
 }
 
 // remote-control: Francois HOSTS Claude Code's native Remote Control for a session

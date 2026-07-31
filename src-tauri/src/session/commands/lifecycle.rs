@@ -84,9 +84,13 @@ pub(crate) fn validate_create_input(
 /// path the modal probed), before session-worktree's `resolve_worktree`: a probe
 /// failure here must not leave a worktree/branch behind (FR-11), and the probe
 /// itself doesn't care which directory inside the repo it runs from.
+/// `config_dir` (multi-account FR-21): the chosen account's `CLAUDE_CONFIG_DIR`,
+/// so the create-time probe runs under the very configuration the session's
+/// turns will use — `None` for the built-in `default` account (no override).
 pub(crate) fn probe_claude_binary(
     runtime: &str,
     cwd: &str,
+    config_dir: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
     let (probe, probe_args) = claude_invocation(runtime, cwd, vec!["--version".to_string()], None);
     let mut probe_cmd = Command::new(&probe);
@@ -97,6 +101,9 @@ pub(crate) fn probe_claude_binary(
         .stderr(Stdio::null());
     if let Some(path) = claude_path_env() {
         probe_cmd.env("PATH", path);
+    }
+    for (k, v) in account_env(config_dir, runtime, &[]) {
+        probe_cmd.env(k, v);
     }
     crate::process_util::no_window(&mut probe_cmd);
     match probe_cmd.status() {
@@ -120,6 +127,7 @@ pub fn session_create(
     runtime: Option<String>,
     allow_git: Option<bool>,
     project_id: Option<String>,
+    account_id: Option<String>,
     worktree: Option<WorktreeCreateInput>,
 ) -> IpcResult<Value> {
     let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
@@ -128,7 +136,38 @@ pub fn session_create(
             Ok(v) => v,
             Err((code, msg)) => return err(code, msg),
         };
-    if let Err((code, msg)) = probe_claude_binary(&runtime, &cwd) {
+
+    // multi-account FR-18: resolve the account BEFORE anything is spawned or
+    // created — an unknown id creates no session at all, and the create-time
+    // probe below must run under the very config dir the turns will use (FR-21).
+    let account_id = match crate::account::resolve_new_session_account(&app, account_id.as_deref())
+    {
+        Ok(id) => id,
+        Err((code, msg)) => return err(code, msg),
+    };
+    let account_config_dir = crate::account::config_dir_of(&app, &account_id);
+    // FR-25: a WSL session reaches its config dir through `WSLENV`'s `/p` path
+    // translation, which only works for a drive-letter path. Fail at creation,
+    // NAMING the account, rather than spawning a claude that would silently use
+    // a different configuration inside the distro.
+    if runtime == "wsl" {
+        if let Some(dir) = account_config_dir
+            .as_deref()
+            .filter(|d| !crate::account::wsl_translatable_config_dir(d))
+        {
+            let label =
+                crate::account::label_of(&app, &account_id).unwrap_or_else(|| account_id.clone());
+            return err(
+                "INVALID_INPUT",
+                format!(
+                    "account {label} keeps its Claude Code configuration at {dir}, which WSL \
+                     cannot translate — use the native runtime for this account"
+                ),
+            );
+        }
+    }
+
+    if let Err((code, msg)) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref()) {
         return err(code, msg);
     }
 
@@ -191,7 +230,8 @@ pub fn session_create(
         project_id.clone(),
         session_worktree,
         worktree_distro,
-        None, // claude_session_id
+        account_id, // multi-account FR-19: stored VERBATIM, never re-derived
+        None,       // claude_session_id
         Vec::new(),
     );
     let meta_before = session.meta();
@@ -356,5 +396,18 @@ mod tests {
 
         assert!(validate_create_input(cwd, None, Some("bogus".into()), None, false).is_err());
         assert!(validate_create_input(cwd, None, None, Some("bogus".into()), false).is_err());
+    }
+
+    #[test]
+    fn a_wsl_session_refuses_an_account_dir_wsl_cannot_translate() {
+        // multi-account FR-25: the gate `session_create` applies before spawning
+        // anything. A drive-letter dir is reachable (wsl.exe maps it to /mnt/…);
+        // a UNC one is not, and the failure must name the account.
+        assert!(crate::account::wsl_translatable_config_dir(
+            "D:\\francois\\accounts\\a1"
+        ));
+        assert!(!crate::account::wsl_translatable_config_dir(
+            "\\\\server\\share\\accounts\\a1"
+        ));
     }
 }

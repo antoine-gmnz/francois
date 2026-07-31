@@ -37,6 +37,7 @@ function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
     lastActivityAt: 1_000,
     permissionMode: 'default',
     runtime: 'native',
+    accountId: 'default',
     ...over,
   };
 }

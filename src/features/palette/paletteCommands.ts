@@ -246,6 +246,34 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // 13c/13d — Accounts (multi-account FR-33): the mouse-free route to the same
+  // modal the status-bar chip opens, plus a direct "Add account" that lands
+  // straight in the login view via the one-shot accountsAutoAdd flag. Neither
+  // needs a session — an account is registered whether or not anything runs.
+  registerPaletteCommand({
+    id: 'manage-accounts',
+    glyph: '◈',
+    name: 'Accounts',
+    hint: () => {
+      const n = useStore.getState().accounts.length;
+      return `${n} account${n === 1 ? '' : 's'}`;
+    },
+    run: () => {
+      useStore.getState().setAccountsOpen(true);
+    },
+  });
+  registerPaletteCommand({
+    id: 'add-account',
+    glyph: '＋',
+    name: 'Add account',
+    hint: () => 'sign in to Claude Code',
+    run: () => {
+      const st = useStore.getState();
+      st.setAccountsAutoAdd(true);
+      st.setAccountsOpen(true);
+    },
+  });
+
   // 13b — New session in worktree (session-worktree FR-16): opens the same modal
   // pre-checked. Listed unconditionally — a non-repo cwd simply hides the
   // checkbox once picked (FR-1).

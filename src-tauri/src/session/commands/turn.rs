@@ -137,7 +137,7 @@ pub fn session_compact(
     session_id: String,
 ) -> IpcResult<Option<()>> {
     // Snapshot cwd/model/resume/effort; enforce status.
-    let (cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro) = {
+    let (cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro, account_id) = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(&session_id) else {
             return err("SESSION_NOT_FOUND", "no such session");
@@ -156,8 +156,30 @@ pub fn session_compact(
             s.permission_mode.clone(),
             s.runtime.clone(),
             s.worktree_distro.clone(),
+            s.account_id.clone(),
         )
     };
+    // multi-account FR-21: a /compact turn is a claude spawn on behalf of the
+    // session, so it runs under the session's account like any other.
+    let account_config_dir = crate::account::config_dir_of(&app, &account_id);
+
+    // multi-account FR-22: same guard as begin_turn — an account whose
+    // `.claude.json` has vanished has no credentials, so a /compact spawn
+    // would hang on an interactive login prompt no one can answer. Fail the
+    // compact instead of spawning.
+    if let Some(dir) = account_config_dir.as_deref() {
+        if !crate::account::identity_file_exists(dir) {
+            crate::account::mark_auth_failed(&app, &account_id);
+            fail_session(
+                &app,
+                &session_id,
+                "ACCOUNT_NOT_AUTHENTICATED",
+                "this session's account is not signed in — use Re-login in the Accounts modal",
+            );
+            return ok(None);
+        }
+    }
+
     emit(
         &app,
         SessionEvent::Status {
@@ -179,6 +201,7 @@ pub fn session_compact(
         &permission_mode,
         &runtime,
         worktree_distro.as_deref(),
+        account_config_dir.as_deref(),
     ) {
         // session-questions FR-5: /compact rides the stdin path like any turn, but a
         // compaction can never park on a question — close the pipe right away; the
@@ -221,7 +244,9 @@ pub fn session_compact(
             s.status = "idle".into();
         }
     }
-    crate::usage::note_turn_ended(&app); // usage-bar FR-13: a /compact turn ended too
+    // usage-bar FR-13: a /compact turn ended too — multi-account FR-29 scopes it
+    // to that session's account.
+    crate::usage::note_turn_ended(&app, &account_id);
     if let Some(u) = used {
         emit(
             &app,
