@@ -67,7 +67,7 @@ describe('buildShortcutActions', () => {
     const { ctx } = fakeCtx();
     const actions = buildShortcutActions(ctx);
     expect(Object.keys(actions).sort()).toEqual(
-      ['1', '2', '3', '4', '5', '[', ']', 'A', 'D', 'N', 'O', 'T', 'W', 'a', 'd', 'n', 'o', 't', 'w'].sort(),
+      ['1', '2', '3', '4', '5', '6', '[', ']', 'A', 'D', 'N', 'O', 'T', 'W', 'a', 'd', 'n', 'o', 't', 'w'].sort(),
     );
   });
 
@@ -96,7 +96,7 @@ describe('buildShortcutActions', () => {
     expect(spies.setNewAgentOpen).toHaveBeenCalledWith(true);
   });
 
-  it('1-5 focus their pane without preventing default', () => {
+  it('1-6 focus their pane without preventing default', () => {
     const { ctx, spies } = fakeCtx();
     const actions = buildShortcutActions(ctx);
     actions['1']();
@@ -104,7 +104,15 @@ describe('buildShortcutActions', () => {
     actions['3']();
     actions['4']();
     actions['5']();
-    expect(spies.setFocusedPane.mock.calls.map((c) => c[0])).toEqual(['sidebar', 'main', 'agents', 'mcp', 'skills']);
+    actions['6']();
+    expect(spies.setFocusedPane.mock.calls.map((c) => c[0])).toEqual([
+      'sidebar',
+      'main',
+      'agents',
+      'mcp',
+      'skills',
+      'workflows',
+    ]);
     expect(spies.preventDefault).not.toHaveBeenCalled();
   });
 

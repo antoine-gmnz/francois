@@ -24,9 +24,12 @@ mod wsl;
 // keeps resolving exactly as before this domain moved out of main.rs.
 pub(crate) use shell::dispose_session_shell;
 
+use tauri::RunEvent;
+// `get_webview_window` is a `Manager` method; only the windows-only chrome tint
+// below calls it, so the import is gated too (an unconditional one warns as
+// unused on macOS/Linux).
 #[cfg(windows)]
 use tauri::Manager;
-use tauri::RunEvent;
 
 fn main() {
     tauri::Builder::default()
@@ -81,6 +84,12 @@ fn main() {
             session::session_list_commands,
             session::session_models,
             session::session_pick_directory,
+            session::session_attach_file,
+            session::session_attach_clipboard_image,
+            session::session_pick_attachments,
+            session::session_release_attachment,
+            session::session_commit_attachments,
+            session::session_clear_attachments,
             project::project_list,
             project::project_create,
             project::project_update,
@@ -93,6 +102,7 @@ fn main() {
             session::agents_kill,
             session::agents_activity,
             session::agents_transcript,
+            session::workflows_list,
             session::mcp_registry,
             session::mcp_list,
             session::mcp_detail,

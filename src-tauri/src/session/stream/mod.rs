@@ -33,6 +33,9 @@ pub(crate) struct ToolRec {
     tool: String,
     input: Value,
     is_task: bool,
+    /// workflow-panel FR-2: this call is a `Workflow` dispatch, so its input and
+    /// its tool_result feed pane [6] as well as the transcript.
+    is_workflow: bool,
 }
 
 /// What kind of content block a stream index is carrying.
@@ -111,7 +114,16 @@ pub(crate) fn run_reader(
             LineRoute::Notice => {
                 // async-agents FR-13: a harness-injected task-notification closes
                 // its background agent and never reaches the transcript.
-                if handle_task_notification(&app, &session_id, &v) {
+                // workflow-panel FR-8: three rungs, most specific first. The
+                // workflow ladder's NAMED rungs (run id / name) go before the
+                // agent ladder, whose own last rung would otherwise let a lone
+                // background agent swallow a workflow's completion notice; the
+                // workflow ladder's sole-candidate rung goes after it, for the
+                // symmetric reason.
+                if handle_workflow_notification(&app, &session_id, &v, false)
+                    || handle_task_notification(&app, &session_id, &v)
+                    || handle_workflow_notification(&app, &session_id, &v, true)
+                {
                     continue;
                 }
             }

@@ -13,6 +13,7 @@ import Sidebar from '../features/sessions/Sidebar';
 import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
 import UsageBar from '../features/usage/UsageBar';
+import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { useStore } from '../lib/store';
 import './app.css';
@@ -199,7 +200,7 @@ export default function App() {
           <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} shell={shell} />
         </section>
 
-        {/* right column: agents [3] + mcp [4] + skills [5] */}
+        {/* right column: agents [3] + mcp [4] + skills [5] + workflows [6] */}
         <div className="app-col-right" style={{ display: showRightPane ? undefined : 'none' }}>
           <div className="app-panel-agents">
             <AgentsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
@@ -209,6 +210,9 @@ export default function App() {
           </div>
           <div className="app-panel-skills">
             <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
+          </div>
+          <div className="app-panel-workflows">
+            <WorkflowsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
           </div>
         </div>
       </div>

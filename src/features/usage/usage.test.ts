@@ -477,6 +477,16 @@ describe('reset countdown (FR-30)', () => {
       expect(parseResetAt('Jul 22', now)).toBe(at(2026, 6, 22, 0, 0));
     });
 
+    it('parses whole-hour times with no minutes — the CLI drops ":00"', () => {
+      // Real probed output: `resets Jul 31, 2am (Europe/Paris)`. Requiring H:MM
+      // dropped the clock entirely and counted down to midnight, i.e. `resets now`.
+      const now = at(2026, 6, 31, 0, 30);
+      expect(parseResetAt('Jul 31, 2am (Europe/Paris)', now)).toBe(at(2026, 6, 31, 2, 0));
+      expect(parseResetAt('Aug 4, 12am (Europe/Paris)', now)).toBe(at(2026, 7, 4, 0, 0));
+      expect(parseResetAt('Jul 31, 5pm', now)).toBe(at(2026, 6, 31, 17, 0));
+      expect(parseResetAt('Jul 31, 12pm', now)).toBe(at(2026, 6, 31, 12, 0));
+    });
+
     it('handles the 12am/12pm boundary', () => {
       const now = at(2026, 6, 22, 13, 0);
       expect(parseResetAt('Jul 23, 12:00am', now)).toBe(at(2026, 6, 23, 0, 0));
@@ -497,6 +507,10 @@ describe('reset countdown (FR-30)', () => {
       expect(parseResetAt('Smarch 4, 1:00pm', now)).toBeNull();
       expect(parseResetAt('Feb 30, 1:00pm', now)).toBeNull(); // must not roll into Mar 2
       expect(parseResetAt('Jul 22, 25:00', now)).toBeNull();
+      expect(parseResetAt('Jul 22, 13pm', now)).toBeNull();
+      // A clock half we cannot read must NOT degrade to midnight — that reads as
+      // an authoritative (and usually wrong) `resets now`.
+      expect(parseResetAt('Jul 22, whenever', now)).toBeNull();
     });
   });
 
@@ -528,6 +542,14 @@ describe('reset countdown (FR-30)', () => {
 
     it('shows an unparseable resetsAt verbatim instead of dropping it', () => {
       expect(sessionResetLabel([meter('Current session', 14, 'soon')], now)).toBe('resets soon');
+    });
+
+    it('counts down a whole-hour reset instead of claiming "resets now"', () => {
+      // The bug this branch fixes: `2am` an hour and a half out rendered as `resets now`.
+      const beforeReset = at(2026, 6, 31, 0, 30);
+      expect(sessionResetLabel([meter('Current session', 79, 'Jul 31, 2am (Europe/Paris)')], beforeReset)).toBe(
+        'resets in 1h 30m',
+      );
     });
 
     it('says "resets now" rather than "resets in now" at the boundary', () => {

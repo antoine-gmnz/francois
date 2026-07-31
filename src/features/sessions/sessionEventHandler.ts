@@ -58,6 +58,7 @@ export function handleSessionEvent(e: SessionEvent, ctx: SessionEventContext): v
     case 'session.commands':
     case 'agent.step':
     case 'mcp.update':
+    case 'workflow.update':
     case 'session.resumeFailed':
     case 'session.cleared':
       break;

@@ -17,6 +17,7 @@
 
 mod agent_transcript;
 mod agents;
+mod attachments;
 mod blocks;
 mod commands;
 mod control;
@@ -35,10 +36,12 @@ mod stream;
 mod tools;
 mod turn;
 mod usage_probe;
+mod workflows;
 mod worktree;
 
 pub(crate) use agent_transcript::*;
 pub(crate) use agents::*;
+pub(crate) use attachments::*;
 pub(crate) use blocks::*;
 pub(crate) use commands::*;
 pub(crate) use control::*;
@@ -57,6 +60,7 @@ pub(crate) use stream::*;
 pub(crate) use tools::*;
 pub(crate) use turn::*;
 pub(crate) use usage_probe::*;
+pub(crate) use workflows::*;
 pub(crate) use worktree::*;
 
 #[cfg(test)]
@@ -208,6 +212,38 @@ pub(crate) enum AgentEmission {
 /// some harnesses expose it as `Agent`. Mirrored in classifyToolStart (TS).
 fn is_subagent_tool(tool: &str) -> bool {
     matches!(tool, "Task" | "Agent")
+}
+
+/// contract WorkflowRun (workflow-panel §5) — one dispatch of the harness's
+/// `Workflow` tool, tracked from the stream. Everything here is derived from
+/// the session's own NDJSON: the panel is read-only, so there is no verb that
+/// can create or stop one.
+#[derive(Serialize, Clone, PartialEq, Debug)]
+pub struct WorkflowRun {
+    id: String,
+    #[serde(rename = "sessionId")]
+    session_id: String,
+    name: String,
+    description: String,
+    status: String, // running | done | error
+    #[serde(rename = "startedAt")]
+    started_at: u64,
+    #[serde(rename = "endedAt", skip_serializing_if = "Option::is_none")]
+    ended_at: Option<u64>,
+    phases: Vec<WorkflowPhaseInfo>,
+    /// The harness run id (`wf_…`) from the dispatch ack; absent until it lands.
+    #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
+    #[serde(rename = "lastActivity", skip_serializing_if = "Option::is_none")]
+    last_activity: Option<String>,
+}
+
+/// contract WorkflowPhaseInfo — one entry of the script's `meta.phases`.
+#[derive(Serialize, Clone, PartialEq, Debug)]
+pub struct WorkflowPhaseInfo {
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -394,7 +430,22 @@ pub(crate) struct Session {
     /// FR-5: blocks evicted past the window — the tab's `… N earlier blocks` row.
     agent_blocks_dropped: HashMap<String, u32>,
     block_buffer: Vec<BufBlock>, // §6: read by conversation-view's getTranscript
+    /// session-attachments §6: the staged/sent refs of this session, persisted
+    /// alongside the rest of the record in sessions.json so FR-17's start-up
+    /// sweep survives a crash. The attachments DIR is never stored — it is
+    /// derived from `cwd` + the session id (FR-2), which is what keeps a
+    /// worktree session's files under the worktree.
+    attachments: Vec<Attachment>,
     mcp: HashMap<String, McpServerInfo>,
+    // ---- workflow-panel §6 (in-memory, cleared with the session — never persisted) ----
+    /// FR-2: every `Workflow` dispatch seen this session, by run id.
+    workflows: HashMap<String, WorkflowRun>,
+    /// FR-7: first-seen order for `workflows_list`.
+    workflow_order: Vec<String>,
+    /// FR-2 correlation key: dispatch tool_use_id → run id. Session-scoped (not
+    /// turn-local) so the ack and the completion notice both reach it after the
+    /// tool call closed.
+    workflow_by_tool: HashMap<String, String>,
     // slash-menu FR-2: the CLI's slash_commands captured from the latest
     // stream-json init (bare names, init order). In-memory only — never
     // persisted; a fresh app relearns it on the next turn (spec §6).
@@ -464,7 +515,11 @@ impl Session {
             agent_block_seq: HashMap::new(),
             agent_blocks_dropped: HashMap::new(),
             block_buffer,
+            attachments: Vec::new(),
             mcp: HashMap::new(),
+            workflows: HashMap::new(),
+            workflow_order: Vec::new(),
+            workflow_by_tool: HashMap::new(),
             cli_commands: Vec::new(),
         }
     }

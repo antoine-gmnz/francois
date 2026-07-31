@@ -45,6 +45,13 @@
 /* A real button, per the mock: 24px tall, --bg-hover fill inside a
    --border-emphasis outline. It was previously transparent and chromeless,
    which read as plain text rather than the switcher affordance it is. */
+/* Positioning context for the project scope dropdown; `min-width: 0` keeps the
+   button's own truncation working now that it is no longer a direct flex child. */
+.titlebar-path-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
 .titlebar-path {
   display: flex;
   align-items: center;
