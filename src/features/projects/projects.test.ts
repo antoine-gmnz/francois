@@ -41,7 +41,9 @@ import {
   safeCall,
   sanitizeRuleText,
   standardsFooterPath,
+  switcherDotTone,
   switcherLabel,
+  switcherTooltip,
   visibleSessions,
 } from './projects';
 
@@ -295,6 +297,49 @@ describe('switcher labels & rows (FR-25/FR-29)', () => {
   it('marks the All row when nothing is filtered', () => {
     expect(buildSwitcherRows(list, null)[0]).toMatchObject({ selected: true, mark: '✦' });
   });
+});
+
+describe('switcherDotTone (FR-5 — titlebar-project-switcher)', () => {
+  const list: ProjectMeta[] = [
+    proj({ id: 'p1', name: 'francois', root: 'D:/francois' }),
+    proj({ id: 'p2', name: 'infra', root: 'D:/ops/infra', rootExists: false }),
+  ];
+
+  it('is "ok" for a scoped project whose root exists', () => {
+    expect(switcherDotTone(list[0])).toBe('ok');
+  });
+
+  it('is "missing" for a scoped project whose root is gone', () => {
+    expect(switcherDotTone(list[1])).toBe('missing');
+  });
+
+  it('is "none" when unscoped (All projects)', () => {
+    expect(switcherDotTone(null)).toBe('none');
+  });
+});
+
+describe('switcherTooltip (FR-6 — titlebar-project-switcher)', () => {
+  const project: ProjectMeta = proj({ id: 'p1', name: 'francois', root: 'D:/francois' });
+
+  it('prefers the scoped project\'s root', () => {
+    expect(switcherTooltip(project, 'D:/other/session', 'D:/home')).toBe('D:/francois');
+  });
+
+  it('falls back to the active session cwd when unscoped', () => {
+    expect(switcherTooltip(null, 'D:/session/cwd', 'D:/home')).toBe('D:/session/cwd');
+  });
+
+  it('falls back to home when unscoped and no active session', () => {
+    expect(switcherTooltip(null, null, 'D:/home')).toBe('D:/home');
+  });
+
+  it('renders a WSL cwd in its compact distro:path form', () => {
+    expect(switcherTooltip(null, '\\\\wsl$\\Ubuntu\\home\\u\\api', 'D:/home')).toBe('Ubuntu:/home/u/api');
+  });
+});
+
+describe('filteredEmptyLabel (FR-29)', () => {
+  const list: ProjectMeta[] = [proj({ id: 'p1', name: 'francois', root: 'D:/francois' })];
 
   it('names the project in the filtered-empty board state (FR-29)', () => {
     expect(filteredEmptyLabel(list[0])).toBe('no sessions in francois');
