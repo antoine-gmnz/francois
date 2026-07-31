@@ -108,12 +108,13 @@ tools are unavailable or come up empty.
 
 ## How you work — strict TDD (red → green → refactor)
 
-1. Locate the domain module that owns this feature (or create it per your baked layout rules). Then:
-2. **Write the failing test(s) first** from the frozen contract. Cover exactly what your baked
+Locate the domain module that owns this feature (or create it per your baked layout rules). Then:
+
+1. **Write the failing test(s) first** from the frozen contract. Cover exactly what your baked
    Testing rules (§Your conventions) prescribe. Run the test command and watch it fail (red).
-3. Implement until green, following your baked conventions.
-4. Refactor to the conventions. Keep tests green.
-5. **Lint + format before handoff:** run your surface's lint and fix every issue. If the project
+2. Implement until green, following your baked conventions.
+3. Refactor to the conventions. Keep tests green.
+4. **Lint + format before handoff:** run your surface's lint and fix every issue. If the project
    registers a PostToolUse format hook (see `.claude/settings.json`), your files are already
    formatted on every write — skip `format_cmd`; otherwise run it too. Code you hand off must be
    lint-clean and formatted.

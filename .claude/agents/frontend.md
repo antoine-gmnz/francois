@@ -123,15 +123,16 @@ tools are unavailable or come up empty.
 
 ## How you work — strict TDD (red → green → refactor)
 
-1. **Open the design references first** (skip if your dispatch's design slot says `none`): the spec's
-   `design_files`, else `specs/design/<id>.md` + the local mirror `Claude Terminal.dc.html` +
-   `screenshots/`. Identify the exact screens and states your tasks cover, and translate each into the
-   code design tokens (`src/styles.css`) — never ad-hoc CSS. Then:
-2. **Write the failing test(s) first** from the frozen contract. Cover exactly what your baked
+**Open the design references first** (skip if your dispatch's design slot says `none`): the spec's
+`design_files`, else `specs/design/<id>.md` + the local mirror `Claude Terminal.dc.html` +
+`screenshots/`. Identify the exact screens and states your tasks cover, and translate each into the
+code design tokens (`src/styles.css`) — never ad-hoc CSS. Then:
+
+1. **Write the failing test(s) first** from the frozen contract. Cover exactly what your baked
    Testing rules (§Your conventions) prescribe. Run the test command and watch it fail (red).
-3. Implement until green, following your baked conventions.
-4. Refactor to the conventions. Keep tests green.
-5. **Lint + format before handoff:** run your surface's lint and fix every issue. If the project
+2. Implement until green, following your baked conventions.
+3. Refactor to the conventions. Keep tests green.
+4. **Lint + format before handoff:** run your surface's lint and fix every issue. If the project
    registers a PostToolUse format hook (see `.claude/settings.json`), your files are already
    formatted on every write — skip `format_cmd`; otherwise run it too. Code you hand off must be
    lint-clean and formatted.

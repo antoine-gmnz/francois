@@ -16,6 +16,7 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git rev-parse:*)",
+      "Bash(.claude/pipeline/scripts/:*)",
       "Bash(~/.claude/pipeline/scripts/:*)",
       "mcp__serena"
     ]
