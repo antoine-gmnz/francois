@@ -10,6 +10,9 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* positioning context for session-attachments' .drop-overlay, which covers the
+     SESSION tab region only (never the sidebar or the status bar). */
+  position: relative;
 }
 
 /* durable-sessions FR-14 resume-fail banner */
@@ -149,21 +152,36 @@
   border-top: 1px solid var(--border);
   background: var(--bg-deep);
 }
+/* A column flex container ONLY so `order` can be used: the chips row sits AFTER
+   the input bar in the DOM (design §Accessibility — tab reaches the textarea
+   before any chip `×`) but renders above it. The two popovers inside are
+   absolutely positioned, so they stay out of this flow. */
 .composer-col {
   position: relative;
+  display: flex;
+  flex-direction: column;
   max-width: 680px;
   margin: 0 auto;
 }
 
-/* Same visual treatment as .form-error (background/color/font-size/radius)
-   but this site's padding is 6/10, not 8/10, plus popover positioning — kept
-   local rather than forcing the shared utility. See handoff. */
-.send-error-banner {
+/* The stack of composer error lines (send failure / attachment refusal — §7 of
+   session-attachments). The WRAPPER carries the popover positioning so a second
+   line stacks above the first instead of covering it. */
+.composer-banners {
   position: absolute;
   bottom: 100%;
   left: 0;
   right: 0;
   margin-bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Same visual treatment as .form-error (background/color/font-size/radius)
+   but this site's padding is 6/10, not 8/10 — kept local rather than forcing
+   the shared utility. See handoff. */
+.send-error-banner {
   background: color-mix(in srgb, var(--error) 9%, transparent);
   color: var(--error);
   font-size: var(--font-size-11);
@@ -172,6 +190,8 @@
 }
 
 .composer-bar {
+  /* visual order — see .composer-col (chips 1, bar 2, hint 3) */
+  order: 2;
   background: var(--bg-hover);
   border: 1px solid var(--border-emphasis);
   border-radius: 11px;
@@ -229,6 +249,7 @@
 /* Beneath the card, not inside it (the mock's hint row sits outside the input
    surface — it annotates the composer, it is not part of the field). */
 .composer-hint {
+  order: 3;
   display: flex;
   align-items: center;
   gap: var(--space-16);
@@ -240,6 +261,146 @@
 .composer-hint__key {
   font-family: var(--font-mono);
   color: var(--text-dim);
+}
+
+/* ── session-attachments (specs/design/session-attachments.md) ──────────────
+   Two composer affordances and one overlay. Motion: the overlay fades in over
+   120ms; chips appear instantly (terminal-like — nothing bounces, nothing
+   slides). Tokens only. */
+
+/* design §1: the `+` — a sibling of the › glyph, not a web-style icon button
+   (no border, no background, no pill), sized to match its optical weight. */
+.composer-attach {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-14);
+  line-height: 1.5;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.composer-attach:hover {
+  color: var(--accent);
+}
+/* No disabled state: spec §7 gates *sending* on the composer's `disabled`, not
+   *staging* — drop and paste stay live while a turn runs, so the `+` does too. */
+
+/* design §1: the chips row, inside .composer-col so it inherits the composer's
+   capped, centered reading column. Caps at ~3 rows then scrolls, so a big
+   paste-fest never pushes the textarea off-screen (design §Responsive).
+   `order: 1` puts it back ABOVE the bar visually — it is rendered after the bar
+   so the textarea comes first in tab order (design §Accessibility).
+   `flex-shrink: 0` keeps a wrapped row at its natural height. */
+.composer-attachments {
+  order: 1;
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-bottom: var(--space-8);
+  max-height: 104px;
+  overflow-y: auto;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 28px;
+  padding: 0 var(--space-6);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-width: 100%;
+}
+.attachment-chip:hover {
+  border-color: var(--border-2);
+}
+.attachment-chip__thumb {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: var(--radius-xs);
+  /* flat while the image decodes — no spinner (design §1) */
+  background: var(--bg-hover);
+}
+/* the chip must never disappear because an image failed to decode */
+.attachment-chip__thumb--failed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: var(--font-size-11);
+}
+.attachment-chip__name {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.attachment-chip__remove {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  line-height: 1;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.attachment-chip__remove:hover {
+  color: var(--text-bright);
+}
+/* design §Responsive: below 720px of tab width the names truncate harder — the
+   `+` never collapses into a menu. */
+@media (max-width: 720px) {
+  .attachment-chip__name {
+    max-width: 76px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* design §2: the drop target — the whole SESSION tab region, above all content
+   but inside .conv-root, so the sidebar and status bar stay legible mid-drag. */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg-deep) 82%, transparent);
+  animation: fadeIn 120ms ease-out;
+  pointer-events: none;
+}
+.drop-overlay__frame {
+  position: absolute;
+  inset: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+}
+.drop-overlay__label {
+  font-size: var(--font-size-13);
+  color: var(--accent-bright);
+}
+.drop-overlay__hint {
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+}
+.drop-overlay--rejecting .drop-overlay__frame {
+  border-color: var(--error);
+}
+.drop-overlay--rejecting .drop-overlay__label {
+  color: var(--error-bright);
 }
 
 /* ── Block.tsx (design-refresh FR-7: 15px/1.65 --font-ui reading body) ── */

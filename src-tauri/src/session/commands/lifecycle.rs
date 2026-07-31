@@ -246,6 +246,16 @@ pub fn session_remove(
             if let Some(p) = &session.pending_probe {
                 p.kill(); // interactive-commands: the probe dies with the session (§7)
             }
+            // session-attachments FR-16: delete every file THIS session created
+            // under its attachments dir, then the dir if that emptied it. Only
+            // its own records are touched — a copied: false origin (and another
+            // session sharing the short-id folder) is left alone.
+            // Coverage: `purge_session` is unit-tested directly against a temp
+            // dir (attachments::retention). This call site is not, matching the
+            // rest of this file — no Tauri command here is, since the core wires
+            // up no AppHandle test harness and adding one for a single line
+            // would introduce a pattern nothing else in the module follows.
+            purge_session(&session.cwd, &session_id, &session.attachments);
             persist(&app, &engine);
             if let Some(path) = transcript_path(&app, &session_id) {
                 let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)

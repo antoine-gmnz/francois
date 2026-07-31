@@ -46,6 +46,10 @@ export type ErrorCode =
   | 'WORKTREE_CREATE_FAILED' // session-worktree: prune/add failed; the core reversed what it did (FR-11)
   | 'WORKTREE_DIRTY' // session-worktree: removal refused: uncommitted changes or unpushed commits (FR-19)
   | 'WORKTREE_NOT_FOUND' // session-worktree: no worktree registered at that path
+  | 'ATTACHMENT_TOO_LARGE' // session-attachments FR-8: over the 10 MiB cap (detail: { bytes, cap })
+  | 'ATTACHMENT_IS_DIRECTORY' // session-attachments FR-8: folders are refused, not walked
+  | 'ATTACHMENT_NOT_FOUND' // session-attachments: release addressed an unknown attachment id
+  | 'ATTACHMENT_IO_FAILED' // session-attachments: copy/write/delete failed (detail: { path })
   | 'INTERNAL';
 
 // ---------- sessions ----------

@@ -4,6 +4,27 @@ Deferred, non-blocking findings parked at a SHIP verdict. Each entry is tagged
 `deferred:<feature-id>` and carries its own `file:line` · severity · concrete fix, so it can be
 picked up by `/refactor` without re-reading the original review report.
 
+## deferred:session-attachments
+
+Parked at the `/review` SHIP verdict (2026-07-30). None are CRITICAL/HIGH or security. The one
+MEDIUM finding from that review (missing `is_absolute()` guard in `ingest_path`) was **not** deferred
+— it is being fixed in the same cycle.
+
+- **[LOW]** `src-tauri/src/session/attachments/paths.rs:59` (`attachment_kind_for_name`) /
+  `contract/session-attachments.ts:136` · quality · a clipboard paste whose mime maps to an extension
+  outside the FR-5 allowlist (e.g. `image/bmp` → `.bmp` via `extension_for_mime`) is classified
+  `kind: "file"` even though FR-6 treats it as a pasted screenshot, so it never gets an asset-scope
+  thumbnail grant (`asset_scope.rs` filters on `kind == "image"`). → **Fix:** either drop
+  `bmp`/similar from `extension_for_mime`'s fallback set (normalize unknown mimes straight to `png`)
+  or extend the FR-5 image-extension list in both the contract and `paths.rs` to include them,
+  keeping the two in sync.
+
+- **[LOW]** `src/features/conversation/attachments.ts:1024-1028` (`refusalLine`) · quality · the
+  `ATTACHMENT_TOO_LARGE` single-failure branch computes `size` via a ternary on `bytes === undefined`
+  and then immediately re-branches on the same condition to pick the return string, duplicating the
+  check. → **Fix:** collapse to one branch (`return bytes === undefined ? … : …`) and drop the
+  intermediate `size` variable.
+
 ## deferred:agent-tab
 
 Parked at the round-2 `/review` SHIP verdict (2026-07-29). None are CRITICAL/HIGH or security.
@@ -41,3 +62,24 @@ Parked at the round-2 `/review` SHIP verdict (2026-07-29). None are CRITICAL/HIG
 
 _(un-parked 2026-07-30 — both findings moved back to `specs/session-worktree.md` § Remediation round 7
 and run through `/fix`; see that spec for current status.)_
+
+## deferred:test-flake — store tests near the vitest default timeout
+
+_(parked 2026-07-30 during `/fix session-attachments` round 5. **Not caused by that feature** — it
+touches none of the modules involved. Recorded here rather than as a Remediation item so it does not
+re-trigger that feature's fix loop.)_
+
+- **[LOW]** `src/lib/projectsStore.test.ts`, `src/lib/overviewStore.test.ts`, `src/lib/theme.test.ts`
+  · quality (flake) · the "empty storage" defaults tests each pay a cold `resetModules` + dynamic
+  import transform cost and land close to vitest's 5000 ms default `testTimeout` (observed 4072 ms,
+  4106 ms, 1704 ms). Under machine load one can cross it, so the suite fails intermittently with no
+  code change. Observed twice on 2026-07-30 (once 1/921, once 2/921) and **not reproduced in 5
+  consecutive clean runs** either side, which is what makes it a flake rather than a regression — and
+  also what makes it dangerous: it will surface as a red CI run on an unrelated PR.
+  → **Fix:** give those tests an explicit generous `testTimeout`, or warm the dynamic import once in
+  a `beforeAll` so the transform cost is not inside the timed assertion.
+
+## deferred:session-attachments — SHIP-round leftovers (review round 7)
+
+_(un-parked 2026-07-30 — all three findings moved back to `specs/session-attachments.md`
+§ Remediation round 8 and run through `/fix`; see that spec for current status.)_

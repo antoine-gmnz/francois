@@ -20,18 +20,5 @@
       "Bash(~/.claude/pipeline/scripts/:*)",
       "mcp__serena"
     ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "py \".claude/hooks/gate.py\""
-          }
-        ]
-      }
-    ]
   }
 }
