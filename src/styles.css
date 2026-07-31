@@ -51,14 +51,21 @@ html[data-hidden='1'] [style*='animation'] {
   --text-muted: #6b7385;
   --text-faint: #565e6e;
   --text-disabled: #3a4049;
-  /* accent */
-  --accent: #e0a84e;
-  --accent-2: #e0a84e;
-  --accent-bright: #f0c47c;
-  --accent-soft-bg: #332a18;
+  /* accent — acid (Francois Design System v2 §Colour). Acid marks the live
+     thing and the recovering action: one acid per view. */
+  --accent: #c3f53f;
+  --accent-2: #c3f53f;
+  --accent-bright: #d6fa7e;
+  --accent-soft-bg: #1b240f;
+  --accent-soft-edge: #35401f;
   --warn: #d4c46f;
-  /* green */
-  --success: #6fae7d;
+  /* logo (consumed by src/ui/Logo.tsx) — the dim slab is the idle session,
+     not a shadow, so it never takes the accent. */
+  --logo-slab: #c3f53f;
+  --logo-slab-dim: #5f7a1e;
+  /* green — "ready" moved off #6fae7d once the accent became acid, so a status
+     dot can never be mistaken for the accent. */
+  --success: #4fae86;
   --success-bright: #8bc292;
   --success-dim: #517a55;
   /* red */
@@ -189,14 +196,29 @@ html[data-hidden='1'] [style*='animation'] {
   --text-muted: #6d717a;
   --text-faint: #878c95;
   --text-disabled: #b6bac2;
-  /* accent — gold darkened for contrast on light (fails on white at the dark value) */
-  --accent: #b07d24;
-  --accent-2: #a67b28;
-  --accent-bright: #8c661d;
-  --accent-soft-bg: #f4ead0;
+  /* accent — acid darkens to #4e6a14 for contrast on light (Francois Design
+     System v2 §Colour). accent-2 kept equal to accent (mirroring :root, which
+     also carries them equal) — the design system names only the one
+     darkened value, and this app has no light-theme case that wants them to
+     diverge. accent-bright (hover) darkens further, same relative step
+     :root[data-theme='light'] already used for the amber it replaces: on a
+     light surface "brighter" means "more contrast", not "more luminance".
+     accent-soft-bg is a pale, low-saturation tint of the acid hue — near-black
+     text reads on it easily; accent-soft-edge sits between that tint and the
+     accent for the "working" chip border it pairs with. */
+  --accent: #4e6a14;
+  --accent-2: #4e6a14;
+  --accent-bright: #3e5510;
+  --accent-soft-bg: #eef4e1;
+  --accent-soft-edge: #c9dca3;
   --warn: #8f7f2e;
-  /* green — shifted darker for legibility */
-  --success: #4d7a48;
+  /* logo (consumed by src/ui/Logo.tsx) */
+  --logo-slab: #4e6a14;
+  --logo-slab-dim: #a8b98a;
+  /* green — darkened and shifted a step toward teal so "ready" stays a
+     distinct signal from the lime accent (same rationale as :root's --success
+     move, carried through to the light palette). */
+  --success: #3b745c;
   --success-bright: #285024;
   --success-dim: #7e9b79;
   /* red */

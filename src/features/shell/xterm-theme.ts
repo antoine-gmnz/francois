@@ -16,12 +16,13 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-// Selection tint = the accent at 25% (design-refresh FR-13: new --accent
-// #e0a84e → rgba(224,168,78,0.25)). The accent resolves to a hex, so convert
-// to rgba to keep the alpha the theme can't carry.
+// Selection tint = the accent at 25% (design-refresh FR-13, updated for the
+// "acid" accent swap: new --accent #c3f53f → rgba(195,245,63,0.25)). The
+// accent resolves to a hex, so convert to rgba to keep the alpha the theme
+// can't carry.
 function accentSelection(): string {
   const h = cssVar('--accent').replace('#', '');
-  if (h.length < 6) return 'rgba(224,168,78,0.25)';
+  if (h.length < 6) return 'rgba(195,245,63,0.25)';
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);

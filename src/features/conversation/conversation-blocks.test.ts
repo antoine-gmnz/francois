@@ -531,7 +531,7 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
           blockId: 'a1',
           isStreaming: true,
           glyph: '●',
-          glyphColor: '#e0a84e',
+          glyphColor: '#c3f53f',
           bodyColor: '#e6e9ef',
           text: 'Hel',
         },
@@ -1012,7 +1012,7 @@ describe('compactBlocks preserves block identity for untouched blocks (mac-text-
       blockId: 'a1',
       isStreaming: true,
       glyph: '●',
-      glyphColor: '#e0a84e',
+      glyphColor: '#c3f53f',
       bodyColor: '#e6e9ef',
       text: 'Hello',
     };

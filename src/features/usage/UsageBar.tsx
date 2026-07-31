@@ -25,6 +25,7 @@ import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useStore } from '../../lib/store';
 import { accountDisplayLabel, findAccount, usageAccountId } from '../accounts/accounts';
 import { EMPTY_USAGE } from '../../lib/usageStore';
+import { Logo } from '../../ui/Logo';
 import './usage.css';
 import { requestUsageRefresh, seedAccountUsage, startUsageFeed, usageBarView, type MeterChipView } from './usage';
 
@@ -115,7 +116,10 @@ export default function UsageBar({ home }: { home: string }) {
           Projects modal. This is the app's only project switcher — pane [1]'s
           strip is not mounted in the refreshed shell. */}
       <div className="titlebar-brand">
-        <span className="titlebar-logo" />
+        {/* 16px is the ramp's tab/titlebar size (specimen 7d) — formula-exact,
+            not the mock's hand-rounded 16×14 box; see the report for why.
+            Decorative: the wordmark right next to it already carries the name. */}
+        <Logo size={16} />
         <span className="titlebar-wordmark">Francois</span>
         <div ref={menuRef} className="titlebar-path-wrap">
           <button

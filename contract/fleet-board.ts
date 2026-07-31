@@ -57,8 +57,8 @@ export const STATUS_LABEL: Record<SessionStatus, string> = {
 
 /** Dot fill + status-line colour per status (tokens from PROJECT.md's palette). */
 export const STATUS_COLOR: Record<SessionStatus, string> = {
-  running: '#e0a84e',
-  idle: '#6fae7d',
+  running: '#c3f53f',
+  idle: '#4fae86',
   done: '#8b93a3',
   error: '#d1685e',
 };
