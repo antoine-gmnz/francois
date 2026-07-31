@@ -889,6 +889,33 @@ pub(crate) fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// session-rename FR-1 step 1+2: strip every C0/C1 control character (so a pasted
+/// newline or tab can never reach `sessions.json` or a tab label), then trim.
+/// Split out from the validator so `session_create` can ask "is this blank?"
+/// without turning the blank case into an error (FR-2).
+pub(crate) fn clean_session_name(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| !c.is_control() && !('\u{80}'..='\u{9f}').contains(c))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// session-rename FR-1: THE session-name validator, shared by `session_create`
+/// (FR-2) and `session_rename` (FR-3). Cleans, then rejects an empty result or
+/// one over 80 Unicode scalar values — counted in `chars()`, never bytes, so an
+/// 80-emoji name is as valid as an 80-ascii one. All other Unicode is allowed.
+pub(crate) fn validate_session_name(raw: &str) -> Result<String, (&'static str, &'static str)> {
+    let name = clean_session_name(raw);
+    if name.is_empty() {
+        return Err(("INVALID_INPUT", "session name cannot be empty"));
+    }
+    if name.chars().count() > 80 {
+        return Err(("INVALID_INPUT", "session name cannot exceed 80 characters"));
+    }
+    Ok(name)
+}
+
 fn basename(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -901,6 +928,54 @@ fn basename(path: &str) -> String {
 mod tests {
     use super::*;
     use crate::session::testutil::{test_engine_with, test_session};
+
+    // ---------- session-rename FR-1: the shared name validator ----------
+
+    #[test]
+    fn name_validator_strips_control_characters_and_trims() {
+        assert_eq!(
+            validate_session_name("  api\n refactor\t ").unwrap(),
+            "api refactor"
+        );
+        assert_eq!(validate_session_name("\u{7f}a\u{9f}b\r\n").unwrap(), "ab");
+        // Stripping happens BEFORE the trim, so a control-only fringe still trims.
+        assert_eq!(validate_session_name("\u{1}\u{2} x \u{3}").unwrap(), "x");
+    }
+
+    #[test]
+    fn name_validator_rejects_an_empty_result() {
+        for raw in ["", "   ", "\n\t\r", "\u{1}\u{9f}"] {
+            let (code, msg) = validate_session_name(raw).unwrap_err();
+            assert_eq!(code, "INVALID_INPUT");
+            assert_eq!(msg, "session name cannot be empty");
+        }
+    }
+
+    #[test]
+    fn name_validator_caps_at_eighty_scalar_values() {
+        let eighty = "é".repeat(80); // 160 bytes, 80 chars — accepted
+        assert_eq!(validate_session_name(&eighty).unwrap(), eighty);
+
+        let (code, msg) = validate_session_name(&"a".repeat(81)).unwrap_err();
+        assert_eq!(code, "INVALID_INPUT");
+        assert_eq!(msg, "session name cannot exceed 80 characters");
+
+        // The cap applies to the CLEANED name: 81 chars of padding trims to 79.
+        assert_eq!(
+            validate_session_name(&format!("  {}  ", "a".repeat(79)))
+                .unwrap()
+                .chars()
+                .count(),
+            79
+        );
+    }
+
+    #[test]
+    fn name_validator_allows_all_other_unicode() {
+        for raw in ["café ☕", "セッション", "🚀 ship it"] {
+            assert_eq!(validate_session_name(raw).unwrap(), raw);
+        }
+    }
 
     #[test]
     fn subagent_tool_recognizes_task_and_agent() {

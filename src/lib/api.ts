@@ -29,6 +29,7 @@ import type { PermissionDecision, PermissionRule, PermissionTier } from '../../c
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { SessionCreateInput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
+import type { SessionRenameRequest, SessionRenameResponse } from '../../contract/session-rename';
 import type {
   Attachment,
   ClearAttachmentsResult,
@@ -64,6 +65,9 @@ export const sessionCreate = (
   req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'> & Pick<SessionCreateInput, 'worktree'>,
 ) => ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
+// session-rename §5: mutate a session's display name. The core validates/cleans it
+// (FR-1) and emits session.meta — the frontend's single update path (FR-13).
+export const sessionRename = (req: SessionRenameRequest) => ipc<SessionRenameResponse>('session_rename', req);
 // session-worktree §5: probe a candidate cwd for worktree isolation (FR-1).
 export const sessionWorktreeProbe = (req: WorktreeProbeRequest) =>
   ipc<Result<WorktreeProbeData>>('session_worktree_probe', req);

@@ -79,6 +79,7 @@ fn main() {
             session::session_interrupt,
             session::session_answer_question,
             session::session_switch_model,
+            session::session_rename,
             session::session_compact,
             session::session_clear,
             session::session_list_commands,
