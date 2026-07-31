@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body, #root { margin:0; padding:0; background:#0a0b0e; }
+  * { box-sizing:border-box; }
+  body { font-family:'IBM Plex Sans', system-ui, sans-serif; -webkit-font-smoothing:antialiased; color:#c3c9d4; }
+  a { color:#e0a84e; text-decoration:none; }
+  a:hover { color:#f0c47c; }
+</style>
+</helmet>
+
+<section style="--s:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); padding:56px 64px 40px; display:flex; flex-direction:column; gap:34px; background:#0a0b0e;">
+
+  <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#c3f53f;">TURN 7 · SPECIMEN</div>
+      <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">The mark at every size it will ever be used</h1>
+      <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">One rule generates all of them: slab height 27.5% of the mark height, gap 8.75%, each slab stepping 10% right of the one below, total width 110%. Everything here is that formula at a different height — no size gets a hand-drawn exception.</p>
+    </div>
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:6px; text-align:right; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+      <span>128 → 16 px</span>
+      <span>floor: 16 px full, 12 px single-tone</span>
+    </div>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:30px; width:1160px;">
+
+    
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">7a</span>
+          <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Size ramp</span>
+        </div>
+        <div style="display:flex; align-items:flex-end; gap:34px; flex-wrap:wrap; padding:34px 32px; background:#0d0f13; border:1px solid #232833; border-radius:11px;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:140.8px; height:128px; flex-shrink:0;"><span style="position:absolute; left:25.6px; top:0; width:115.2px; height:35.2px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:12.8px; top:46.4px; width:115.2px; height:35.2px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:92.8px; width:115.2px; height:35.2px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">128</span></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:105.6px; height:96px; flex-shrink:0;"><span style="position:absolute; left:19.2px; top:0; width:86.4px; height:26.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:9.6px; top:34.8px; width:86.4px; height:26.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:69.6px; width:86.4px; height:26.4px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">96</span></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:70.4px; height:64px; flex-shrink:0;"><span style="position:absolute; left:12.8px; top:0; width:57.6px; height:17.6px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:6.4px; top:23.2px; width:57.6px; height:17.6px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:46.4px; width:57.6px; height:17.6px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">64</span></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:52.8px; height:48px; flex-shrink:0;"><span style="position:absolute; left:9.6px; top:0; width:43.2px; height:13.2px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:4.8px; top:17.4px; width:43.2px; height:13.2px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:34.8px; width:43.2px; height:13.2px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">48</span></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:44px; height:40px; flex-shrink:0;"><span style="position:absolute; left:8px; top:0; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:4px; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">40</span></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:35.2px; height:32px; flex-shrink:0;"><span style="position:absolute; left:6.4px; top:0; width:28.8px; height:8.8px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:3.2px; top:11.6px; width:28.8px; height:8.8px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:23.2px; width:28.8px; height:8.8px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">32</span></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:26.4px; height:24px; flex-shrink:0;"><span style="position:absolute; left:4.8px; top:0; width:21.6px; height:6.6px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:2.4px; top:8.7px; width:21.6px; height:6.6px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:17.4px; width:21.6px; height:6.6px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">24</span></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:22px; height:20px; flex-shrink:0;"><span style="position:absolute; left:4px; top:0; width:18px; height:5.5px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:2px; top:7.25px; width:18px; height:5.5px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:14.5px; width:18px; height:5.5px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">20</span></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;"><span style="position:relative; display:inline-block; width:17.6px; height:16px; flex-shrink:0;"><span style="position:absolute; left:3.2px; top:0; width:14.4px; height:4.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:1.6px; top:5.8px; width:14.4px; height:4.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:11.6px; width:14.4px; height:4.4px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">16</span></div>
+          </div>
+        <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; max-width:78ch; text-wrap:pretty;">Down to 16px the three slabs and both tones hold. Below that the gap closes before the slab does, so the 12px variant drops to one tone (see 7b) rather than thinning the shapes.</div>
+      </div>
+
+    
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">7b</span>
+          <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Tone variants</span>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:14px;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:16px; padding:30px 0; background:#0d0f13; border:1px solid #232833; border-radius:10px;"><span style="position:relative; display:inline-block; width:61.6px; height:56px; flex-shrink:0;"><span style="position:absolute; left:11.2px; top:0; width:50.4px; height:15.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:5.6px; top:20.3px; width:50.4px; height:15.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:40.6px; width:50.4px; height:15.4px; clip-path:var(--s); background:#5f7a1e;"></span></span><div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">full colour</span><span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#3f4655;">#c3f53f / #5f7a1e</span></div></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:16px; padding:30px 0; background:#0d0f13; border:1px solid #232833; border-radius:10px;"><span style="position:relative; display:inline-block; width:61.6px; height:56px; flex-shrink:0;"><span style="position:absolute; left:11.2px; top:0; width:50.4px; height:15.4px; clip-path:var(--s); background:#f2f4f8;"></span><span style="position:absolute; left:5.6px; top:20.3px; width:50.4px; height:15.4px; clip-path:var(--s); background:#f2f4f8;"></span><span style="position:absolute; left:0; top:40.6px; width:50.4px; height:15.4px; clip-path:var(--s); background:#5b616e;"></span></span><div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">mono light</span><span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#3f4655;">#f2f4f8 / #5b616e</span></div></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:16px; padding:30px 0; background:#f4f5f7; border:1px solid #d8dce4; border-radius:10px;"><span style="position:relative; display:inline-block; width:61.6px; height:56px; flex-shrink:0;"><span style="position:absolute; left:11.2px; top:0; width:50.4px; height:15.4px; clip-path:var(--s); background:#14171c;"></span><span style="position:absolute; left:5.6px; top:20.3px; width:50.4px; height:15.4px; clip-path:var(--s); background:#14171c;"></span><span style="position:absolute; left:0; top:40.6px; width:50.4px; height:15.4px; clip-path:var(--s); background:#a4abb8;"></span></span><div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#7b8494;">mono ink</span><span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#9aa2b1;">#14171c / #a4abb8</span></div></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:16px; padding:30px 0; background:#f4f5f7; border:1px solid #d8dce4; border-radius:10px;"><span style="position:relative; display:inline-block; width:61.6px; height:56px; flex-shrink:0;"><span style="position:absolute; left:11.2px; top:0; width:50.4px; height:15.4px; clip-path:var(--s); background:#4e6a14;"></span><span style="position:absolute; left:5.6px; top:20.3px; width:50.4px; height:15.4px; clip-path:var(--s); background:#4e6a14;"></span><span style="position:absolute; left:0; top:40.6px; width:50.4px; height:15.4px; clip-path:var(--s); background:#a8b98a;"></span></span><div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#7b8494;">light theme</span><span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#9aa2b1;">#4e6a14 / #a8b98a</span></div></div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:16px; padding:30px 0; background:#c3f53f; border:1px solid #96c62b; border-radius:10px;"><span style="position:relative; display:inline-block; width:61.6px; height:56px; flex-shrink:0;"><span style="position:absolute; left:11.2px; top:0; width:50.4px; height:15.4px; clip-path:var(--s); background:#0d1004;"></span><span style="position:absolute; left:5.6px; top:20.3px; width:50.4px; height:15.4px; clip-path:var(--s); background:#0d1004;"></span><span style="position:absolute; left:0; top:40.6px; width:50.4px; height:15.4px; clip-path:var(--s); background:rgba(13,16,4,.42);"></span></span><div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#2c3b0c;">knockout</span><span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#42560f;">#0d1004 / 42%</span></div></div>
+          </div>
+          <div style="display:flex; align-items:center; gap:26px; padding:20px 26px; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+            <div style="display:flex; align-items:center; gap:14px;"><span style="position:relative; display:inline-block; width:17.6px; height:16px; flex-shrink:0;"><span style="position:absolute; left:3.2px; top:0; width:14.4px; height:4.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:1.6px; top:5.8px; width:14.4px; height:4.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:11.6px; width:14.4px; height:4.4px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">16 · full</span></div>
+            <span style="width:1px; height:24px; background:#1f242d;"></span>
+            <div style="display:flex; align-items:center; gap:14px;"><span style="position:relative; display:inline-block; width:13.2px; height:12px; flex-shrink:0;"><span style="position:absolute; left:2.4px; top:0; width:10.8px; height:3.3px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:1.2px; top:4.35px; width:10.8px; height:3.3px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:8.7px; width:10.8px; height:3.3px; clip-path:var(--s); background:#c3f53f;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">12 · single tone</span></div>
+            <span style="width:1px; height:24px; background:#1f242d;"></span>
+            <div style="display:flex; align-items:center; gap:14px;"><span style="position:relative; display:inline-block; width:13.2px; height:12px; flex-shrink:0;"><span style="position:absolute; left:2.4px; top:0; width:10.8px; height:3.3px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:1.2px; top:4.35px; width:10.8px; height:3.3px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:8.7px; width:10.8px; height:3.3px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#a4675e;">12 · two tone — don't</span></div>
+          </div>
+        <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; max-width:78ch; text-wrap:pretty;">Full colour is the default. Mono is for anywhere the accent would compete — a dark UI chrome, an embossed surface, a partner wall. Knockout is the only version allowed to sit on the acid field.</div>
+      </div>
+
+    
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">7c</span>
+          <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Lockups</span>
+        </div>
+        <div style="display:flex; gap:14px; align-items:stretch;">
+            <div style="flex:1; display:flex; flex-direction:column;">
+              <div style="flex:1; display:flex; flex-direction:column; justify-content:center; gap:26px; padding:32px 34px; background:#0d0f13; border:1px solid #232833; border-radius:10px 10px 0 0;">
+                <div style="display:flex; align-items:center; gap:19px;"><span style="position:relative; display:inline-block; width:52.8px; height:48px; flex-shrink:0;"><span style="position:absolute; left:9.6px; top:0; width:43.2px; height:13.2px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:4.8px; top:17.4px; width:43.2px; height:13.2px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:34.8px; width:43.2px; height:13.2px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-size:38px; font-weight:600; letter-spacing:-.03em; color:#f2f4f8;">Francois</span></div>
+                <div style="display:flex; align-items:center; gap:11px;"><span style="position:relative; display:inline-block; width:30.8px; height:28px; flex-shrink:0;"><span style="position:absolute; left:5.6px; top:0; width:25.2px; height:7.7px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:2.8px; top:10.15px; width:25.2px; height:7.7px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:20.3px; width:25.2px; height:7.7px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-size:22px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span></div>
+                <div style="display:flex; align-items:center; gap:7px;"><span style="position:relative; display:inline-block; width:19.8px; height:18px; flex-shrink:0;"><span style="position:absolute; left:3.6px; top:0; width:16.2px; height:4.95px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:1.8px; top:6.53px; width:16.2px; height:4.95px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:13.05px; width:16.2px; height:4.95px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-size:14px; font-weight:600; letter-spacing:-.01em; color:#e6e9ef;">Francois</span></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:19px; padding:26px 34px; background:#f4f5f7; border:1px solid #d8dce4; border-top:0; border-radius:0 0 10px 10px;">
+                <span style="position:relative; display:inline-block; width:37.4px; height:34px; flex-shrink:0;"><span style="position:absolute; left:6.8px; top:0; width:30.6px; height:9.35px; clip-path:var(--s); background:#4e6a14;"></span><span style="position:absolute; left:3.4px; top:12.33px; width:30.6px; height:9.35px; clip-path:var(--s); background:#4e6a14;"></span><span style="position:absolute; left:0; top:24.65px; width:30.6px; height:9.35px; clip-path:var(--s); background:#a8b98a;"></span></span><span style="font-size:27px; font-weight:600; letter-spacing:-.028em; color:#14171c;">Francois</span>
+              </div>
+            </div>
+            <div style="width:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px; padding:32px 0; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+              <div style="display:flex; flex-direction:column; align-items:center; gap:15px;"><span style="position:relative; display:inline-block; width:63.8px; height:58px; flex-shrink:0;"><span style="position:absolute; left:11.6px; top:0; width:52.2px; height:15.95px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:5.8px; top:21.03px; width:52.2px; height:15.95px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:42.05px; width:52.2px; height:15.95px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-size:25px; font-weight:600; letter-spacing:-.025em; color:#f2f4f8;">Francois</span></div>
+              <span style="width:44px; height:1px; background:#232833;"></span>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:9px;"><span style="position:relative; display:inline-block; width:33px; height:30px; flex-shrink:0;"><span style="position:absolute; left:6px; top:0; width:27px; height:8.25px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:3px; top:10.88px; width:27px; height:8.25px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:21.75px; width:27px; height:8.25px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-size:15px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span><span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:.1em; color:#6b7385;">SUPERVISE THE SWARM</span></div>
+            </div>
+          </div>
+        <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; max-width:78ch; text-wrap:pretty;">Horizontal is the default and the only one used in product chrome. Stacked is for square placements — an avatar, a splash, a sticker. The gap between mark and name is always 40% of the mark height; the name never gets larger than 1.3× it.</div>
+      </div>
+
+    
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">7d</span>
+          <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">In place</span>
+        </div>
+        <div style="display:flex; gap:14px; flex-wrap:wrap;">
+            <div style="display:flex; flex-direction:column; gap:12px; padding:20px; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+              <div style="display:flex; align-items:flex-end; gap:6px;">
+                <div style="display:flex; align-items:center; gap:9px; height:32px; padding:0 13px 0 11px; background:#1a1e26; border-radius:8px 8px 0 0;"><span style="position:relative; display:inline-block; width:16.5px; height:15px; flex-shrink:0;"><span style="position:absolute; left:3px; top:0; width:13.5px; height:4.13px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:1.5px; top:5.44px; width:13.5px; height:4.13px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:10.88px; width:13.5px; height:4.13px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-size:12px; color:#e6e9ef;">Francois — 3 running</span><span style="font-size:11px; color:#565e6e;">✕</span></div>
+                <div style="display:flex; align-items:center; gap:9px; height:28px; padding:0 13px; background:#12151a; border-radius:8px 8px 0 0;"><span style="font-size:12px; color:#6b7385;">docs</span></div>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">browser tab · 16</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px; padding:20px; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+              <div style="display:flex; align-items:center; gap:14px;">
+                <span style="width:62px; height:62px; border-radius:50%; background:#12160e; display:flex; align-items:center; justify-content:center; box-shadow:inset 0 0 0 1px #2a3320;"><span style="position:relative; display:inline-block; width:30.8px; height:28px; flex-shrink:0;"><span style="position:absolute; left:5.6px; top:0; width:25.2px; height:7.7px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:2.8px; top:10.15px; width:25.2px; height:7.7px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:20.3px; width:25.2px; height:7.7px; clip-path:var(--s); background:#5f7a1e;"></span></span></span>
+                <span style="width:40px; height:40px; border-radius:50%; background:#c3f53f; display:flex; align-items:center; justify-content:center;"><span style="position:relative; display:inline-block; width:19.8px; height:18px; flex-shrink:0;"><span style="position:absolute; left:3.6px; top:0; width:16.2px; height:4.95px; clip-path:var(--s); background:#0d1004;"></span><span style="position:absolute; left:1.8px; top:6.53px; width:16.2px; height:4.95px; clip-path:var(--s); background:#0d1004;"></span><span style="position:absolute; left:0; top:13.05px; width:16.2px; height:4.95px; clip-path:var(--s); background:rgba(13,16,4,.42);"></span></span></span>
+                <span style="width:28px; height:28px; border-radius:50%; background:#12160e; display:flex; align-items:center; justify-content:center; box-shadow:inset 0 0 0 1px #2a3320;"><span style="position:relative; display:inline-block; width:14.3px; height:13px; flex-shrink:0;"><span style="position:absolute; left:2.6px; top:0; width:11.7px; height:3.58px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:1.3px; top:4.71px; width:11.7px; height:3.58px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:9.42px; width:11.7px; height:3.58px; clip-path:var(--s); background:#5f7a1e;"></span></span></span>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">avatars · 62 / 40 / 28</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px; padding:20px; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+              <div style="display:flex; align-items:center; gap:10px; height:46px; padding:0 12px; background:#11141a; border:1px solid #232833; border-radius:9px;">
+                <span style="width:34px; height:34px; border-radius:8px; background:#12160e; display:flex; align-items:center; justify-content:center; box-shadow:inset 0 0 0 1px #2a3320;"><span style="position:relative; display:inline-block; width:17.6px; height:16px; flex-shrink:0;"><span style="position:absolute; left:3.2px; top:0; width:14.4px; height:4.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:1.6px; top:5.8px; width:14.4px; height:4.4px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:11.6px; width:14.4px; height:4.4px; clip-path:var(--s); background:#5f7a1e;"></span></span></span>
+                <span style="width:34px; height:34px; border-radius:8px; background:#151920;"></span>
+                <span style="width:34px; height:34px; border-radius:8px; background:#151920;"></span>
+                <span style="width:3px; height:3px; border-radius:50%; background:#c3f53f;"></span>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">taskbar · 32</span>
+            </div>
+            <div style="flex:1; min-width:260px; display:flex; flex-direction:column; gap:12px; padding:20px; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+              <div style="display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:8px; overflow:hidden;">
+                <div style="display:flex; align-items:center; gap:9px; padding:9px 12px; background:#1a1e26;"><span style="position:relative; display:inline-block; width:22px; height:20px; flex-shrink:0;"><span style="position:absolute; left:4px; top:0; width:18px; height:5.5px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:2px; top:7.25px; width:18px; height:5.5px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:14.5px; width:18px; height:5.5px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-size:12.5px; font-weight:600; color:#f2f4f8;">Francois</span><span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#565e6e;">⌘K</span></div>
+                <div style="padding:9px 12px; font-size:12.5px; color:#9aa2b1; border-top:1px solid #1f242d;">New session…</div>
+                <div style="padding:9px 12px; font-size:12.5px; color:#9aa2b1; border-top:1px solid #1f242d;">Switch account…</div>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">menu header · 20</span>
+            </div>
+          </div>
+        <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; max-width:78ch; text-wrap:pretty;">Every context uses the ramp value nearest to what the platform asks for — 16px in a tab and a titlebar, 20px in a menu row, 32px in a taskbar, 40px in an avatar. No optical resizing between them.</div>
+      </div>
+
+    
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">7e</span>
+          <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Clearspace and misuse</span>
+        </div>
+        <div style="display:flex; gap:14px; align-items:stretch;">
+            <div style="display:flex; align-items:center; justify-content:center; padding:30px 40px; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+              <span style="position:relative; display:inline-block; padding:19.25px; box-shadow:inset 0 0 0 1px #2f3a1c;">
+                <span style="position:absolute; left:19.25px; top:19.25px; right:19.25px; bottom:19.25px; box-shadow:0 0 0 1px #232833;"></span>
+                <span style="position:relative; display:inline-block; width:77px; height:70px; flex-shrink:0;"><span style="position:absolute; left:14px; top:0; width:63px; height:19.25px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:7px; top:25.38px; width:63px; height:19.25px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:50.75px; width:63px; height:19.25px; clip-path:var(--s); background:#5f7a1e;"></span></span>
+              </span>
+              <span style="margin-left:20px; font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">clearspace = 1 slab (27.5%)</span>
+            </div>
+            <div style="flex:1; display:grid; grid-template-columns:repeat(4, 1fr); gap:12px;">
+              <div style="display:flex; flex-direction:column; align-items:center; gap:14px; padding:22px 0; background:#0d0f13; border:1px solid #2b1f1e; border-radius:10px;"><span style="position:relative; display:inline-block; width:44px; height:40px; flex-shrink:0; transform:rotate(-14deg);"><span style="position:absolute; left:8px; top:0; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:4px; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#a4675e;">✕ rotated</span></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:14px; padding:22px 0; background:#0d0f13; border:1px solid #2b1f1e; border-radius:10px;"><span style="position:relative; display:inline-block; width:44px; height:40px;"><span style="position:absolute; left:8px; top:0; width:36px; height:11px; clip-path:var(--s); background:#8b5cf6;"></span><span style="position:absolute; left:4px; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#e0918a;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#a4675e;">✕ three tones</span></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:14px; padding:22px 0; background:#0d0f13; border:1px solid #2b1f1e; border-radius:10px;"><span style="position:relative; display:inline-block; width:44px; height:40px;"><span style="position:absolute; left:0; top:0; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#a4675e;">✕ no step</span></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:14px; padding:22px 0; background:#0d0f13; border:1px solid #2b1f1e; border-radius:10px;"><span style="position:relative; display:inline-block; width:44px; height:40px; filter:drop-shadow(0 3px 6px rgba(195,245,63,.55));"><span style="position:absolute; left:8px; top:0; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:4px; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span><span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#5f7a1e;"></span></span><span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#a4675e;">✕ glow</span></div>
+            </div>
+          </div>
+        <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; max-width:78ch; text-wrap:pretty;">Clearspace is one slab height on all four sides — measured from the widest slab, not the bounding box. The mark is never rotated, re-spaced, recoloured per slab, or given a third tone: the step and the two tones are the whole idea.</div>
+      </div>
+
+  </div>
+</section>
+
+<section style="--s:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); padding:56px 64px 40px; display:flex; flex-direction:column; gap:32px; background:#0a0b0e;">
+
+  <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#c3f53f;">TURN 6 · 5A IN THE WILD</div>
+      <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Acid, applied</h1>
+      <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">The accent is now <span style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#c3f53f;">#c3f53f</span> everywhere — <a href="#4a">the shell</a> and the design system are updated, the mark replaces the old diamond in the titlebar, and "ready" green moved to <span style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#4fae86;">#4fae86</span> so status never reads as accent. Below: the marketing set built from the same three slabs.</p>
+    </div>
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:6px; text-align:right; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+      <span>slab · gap · step = 27 / 9 / 6%</span>
+      <span>light mark #4e6a14</span>
+    </div>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:14px; width:1160px;">
+
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">6a</span>
+      <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Site hero — 1160 × 440</span>
+    </div>
+    <div style="position:relative; height:440px; overflow:hidden; background:#0d0f13; border:1px solid #232833; border-radius:12px;">
+      <span style="position:absolute; right:-40px; top:-30px; width:520px; height:150px; clip-path:var(--s); background:#141a10;"></span>
+      <span style="position:absolute; right:-90px; top:150px; width:520px; height:150px; clip-path:var(--s); background:#12160f;"></span>
+      <span style="position:absolute; right:-140px; top:330px; width:520px; height:150px; clip-path:var(--s); background:#101310;"></span>
+      <div style="position:relative; height:100%; display:flex; flex-direction:column; justify-content:center; gap:26px; padding:0 64px; max-width:820px;">
+        <div style="display:flex; align-items:center; gap:13px;">
+          <span style="position:relative; display:inline-block; width:31px; height:28px;">
+            <span style="position:absolute; left:6px; top:0; width:25px; height:7.5px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:3px; top:10.2px; width:25px; height:7.5px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:0; top:20.4px; width:25px; height:7.5px; clip-path:var(--s); background:#5f7a1e;"></span>
+          </span>
+          <span style="font-size:22px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#c3f53f; background:#1b240f; border:1px solid #35401f; border-radius:20px; padding:3px 10px;">v2 · Windows</span>
+        </div>
+        <h2 style="margin:0; font-size:58px; line-height:1.04; font-weight:600; letter-spacing:-.035em; color:#f2f4f8; text-wrap:balance;">Six agents.<br />One screen you trust.</h2>
+        <p style="margin:0; font-size:17.5px; line-height:1.6; color:#9aa2b1; max-width:52ch; text-wrap:pretty;">Francois supervises parallel Claude sessions on your machine — real shell, real diffs, one billing account each. When a limit hits, the work moves; it never disappears.</p>
+        <div style="display:flex; align-items:center; gap:14px;">
+          <button type="button" style="height:44px; padding:0 22px; background:#c3f53f; border:0; border-radius:8px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:15px; font-weight:600; color:#0d1004;">Download for Windows</button>
+          <button type="button" style="height:44px; padding:0 20px; background:transparent; border:1px solid #2d333f; border-radius:8px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:15px; font-weight:500; color:#dfe4ec;">Read the docs</button>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#565e6e;">MIT · 4.1 MB</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:18px; align-items:stretch;">
+
+      <div style="width:592px; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">6b</span>
+          <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Social card — 1200 × 630 @ 0.49</span>
+        </div>
+        <div style="position:relative; height:311px; overflow:hidden; background:#c3f53f; border:1px solid #232833; border-radius:12px;">
+          <span style="position:absolute; left:-30px; bottom:-46px; width:300px; height:86px; clip-path:var(--s); background:#0d0f13; opacity:.09;"></span>
+          <span style="position:absolute; left:-60px; bottom:34px; width:300px; height:86px; clip-path:var(--s); background:#0d0f13; opacity:.09;"></span>
+          <div style="position:relative; height:100%; display:flex; flex-direction:column; justify-content:space-between; padding:34px 38px;">
+            <div style="display:flex; align-items:center; gap:11px;">
+              <span style="position:relative; display:inline-block; width:24px; height:22px;">
+                <span style="position:absolute; left:4.5px; top:0; width:19.5px; height:6px; clip-path:var(--s); background:#0d1004;"></span>
+                <span style="position:absolute; left:2.25px; top:8px; width:19.5px; height:6px; clip-path:var(--s); background:#0d1004;"></span>
+                <span style="position:absolute; left:0; top:16px; width:19.5px; height:6px; clip-path:var(--s); background:#0d1004; opacity:.45;"></span>
+              </span>
+              <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#0d1004;">Francois</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px;">
+              <div style="font-size:40px; line-height:1.06; font-weight:600; letter-spacing:-.035em; color:#0d1004; text-wrap:balance;">Supervise the swarm.</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:13.5px; color:#2c3b0c;">francois.dev — parallel Claude sessions, one window</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex:1; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">6c</span>
+          <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">App icon &amp; taskbar</span>
+        </div>
+        <div style="flex:1; display:flex; flex-direction:column; gap:18px; padding:26px 28px; background:#14171d; border:1px solid #232833; border-radius:12px;">
+          <div style="display:flex; align-items:flex-end; gap:22px;">
+            <span style="position:relative; display:inline-block; width:104px; height:104px; border-radius:22px; background:#12160e; box-shadow:inset 0 0 0 1px #2a3320;">
+              <span style="position:absolute; left:34px; top:26px; width:52px; height:15px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:28px; top:47px; width:52px; height:15px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:22px; top:68px; width:52px; height:15px; clip-path:var(--s); background:#5f7a1e;"></span>
+            </span>
+            <span style="position:relative; display:inline-block; width:56px; height:56px; border-radius:12px; background:#12160e; box-shadow:inset 0 0 0 1px #2a3320;">
+              <span style="position:absolute; left:19px; top:14px; width:28px; height:8px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:15.5px; top:25.5px; width:28px; height:8px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:12px; top:37px; width:28px; height:8px; clip-path:var(--s); background:#5f7a1e;"></span>
+            </span>
+            <span style="position:relative; display:inline-block; width:32px; height:32px; border-radius:7px; background:#12160e; box-shadow:inset 0 0 0 1px #2a3320;">
+              <span style="position:absolute; left:11px; top:8px; width:16px; height:4.5px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:9px; top:14.5px; width:16px; height:4.5px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:7px; top:21px; width:16px; height:4.5px; clip-path:var(--s); background:#5f7a1e;"></span>
+            </span>
+          </div>
+          <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">The icon tile is near-black, not acid — a bright tile in a taskbar is a distraction; a bright mark on a dark tile is a status light. At 32px the step reads as motion and the dim slab still survives.</div>
+          <div style="display:flex; align-items:center; gap:11px; height:38px; padding:0 12px; background:#11141a; border:1px solid #232833; border-radius:8px;">
+            <span style="position:relative; display:inline-block; width:16px; height:14px;">
+              <span style="position:absolute; left:2.5px; top:0; width:13.5px; height:4px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:1.25px; top:5px; width:13.5px; height:4px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:0; top:10px; width:13.5px; height:4px; clip-path:var(--s); background:#5f7a1e;"></span>
+            </span>
+            <span style="font-size:12.5px; font-weight:600; letter-spacing:-.01em; color:#e6e9ef;">Francois</span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#c3f53f;">3 running</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:10px; margin-top:4px;">
+      <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">6d</span>
+      <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Strip banners — dark and light</span>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:12px;">
+      <div style="display:flex; align-items:center; gap:18px; height:96px; padding:0 26px; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+        <span style="position:relative; display:inline-block; width:44px; height:40px; flex-shrink:0;">
+          <span style="position:absolute; left:8px; top:0; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span>
+          <span style="position:absolute; left:4px; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span>
+          <span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#5f7a1e;"></span>
+        </span>
+        <span style="font-size:24px; font-weight:600; letter-spacing:-.025em; color:#f2f4f8;">Francois</span>
+        <span style="width:1px; height:34px; background:#232833;"></span>
+        <span style="font-size:17px; color:#9aa2b1;">Run six agents. Read one screen.</span>
+        <span style="flex:1;"></span>
+        <span style="display:flex; align-items:center; gap:9px; height:34px; padding:0 16px; background:#c3f53f; border-radius:7px; font-size:14px; font-weight:600; color:#0d1004;">Get Francois</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:18px; height:96px; padding:0 26px; background:#f4f5f7; border:1px solid #d8dce4; border-radius:10px;">
+        <span style="position:relative; display:inline-block; width:44px; height:40px; flex-shrink:0;">
+          <span style="position:absolute; left:8px; top:0; width:36px; height:11px; clip-path:var(--s); background:#4e6a14;"></span>
+          <span style="position:absolute; left:4px; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#4e6a14;"></span>
+          <span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#a8b98a;"></span>
+        </span>
+        <span style="font-size:24px; font-weight:600; letter-spacing:-.025em; color:#14171c;">Francois</span>
+        <span style="width:1px; height:34px; background:#d8dce4;"></span>
+        <span style="font-size:17px; color:#5a6272;">One account per session. No lost work.</span>
+        <span style="flex:1;"></span>
+        <span style="display:flex; align-items:center; gap:9px; height:34px; padding:0 16px; background:#4e6a14; border-radius:7px; font-size:14px; font-weight:600; color:#f2f7e6;">Get Francois</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="--s:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); padding:56px 64px 40px; display:flex; flex-direction:column; gap:32px; background:#0a0b0e;">
+
+  <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#c3f53f;">TURN 5 · NO BOLT, NEW ACCENT</div>
+      <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Three marks that could ship tomorrow</h1>
+      <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">Each one drops the lightning bolt and takes a different accent with it — the mark and the product's signal colour are the same decision, so they are shown together. All three are two or three flat shapes: buildable as one small component, and each is shown in a real titlebar at the bottom of its card.</p>
+    </div>
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:6px; text-align:right; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+      <span>acid · violet · spring</span>
+      <span>replaces amber #e0a84e</span>
+    </div>
+  </div>
+
+  <div style="display:flex; flex-wrap:nowrap; width:max-content; gap:24px; align-items:stretch;">
+
+    <div id="5a" style="width:340px; display:flex; flex-direction:column; gap:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">5a</span>
+        <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Offset — acid</span>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:10px; overflow:hidden;">
+        <div style="display:flex; align-items:center; justify-content:center; padding:46px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:132px; height:120px;">
+            <span style="position:absolute; left:24px; top:0; width:108px; height:32px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:12px; top:44px; width:108px; height:32px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:0; top:88px; width:108px; height:32px; clip-path:var(--s); background:#5f7a1e;"></span>
+          </span>
+        </div>
+        <div style="padding:13px 15px; border-bottom:1px solid #1f242d; display:flex; flex-direction:column; gap:7px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#c3f53f;">#c3f53f on graphite</div>
+          <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">Three slanted slabs, each offset from the one above — the bolt's diagonal without the bolt. The bottom slab sits dim: two sessions live, one idle. Acid green reads as terminal-native and nothing else in this category owns it.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:18px; padding:14px 15px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:44px; height:40px;">
+            <span style="position:absolute; left:8px; top:0; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:4px; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#5f7a1e;"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:27px; height:24px;">
+            <span style="position:absolute; left:5px; top:0; width:22px; height:6.5px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:2.5px; top:8.7px; width:22px; height:6.5px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:0; top:17.4px; width:22px; height:6.5px; clip-path:var(--s); background:#5f7a1e;"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:18px; height:16px;">
+            <span style="position:absolute; left:3px; top:0; width:15px; height:4.5px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:1.5px; top:5.8px; width:15px; height:4.5px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:0; top:11.6px; width:15px; height:4.5px; clip-path:var(--s); background:#5f7a1e;"></span>
+          </span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">40·24·16</span>
+        </div>
+        <div style="display:flex; align-items:stretch;">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:11px; padding:18px 0;">
+            <span style="position:relative; display:inline-block; width:22px; height:20px;">
+              <span style="position:absolute; left:4px; top:0; width:18px; height:5.5px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:2px; top:7.2px; width:18px; height:5.5px; clip-path:var(--s); background:#c3f53f;"></span>
+              <span style="position:absolute; left:0; top:14.4px; width:18px; height:5.5px; clip-path:var(--s); background:#5f7a1e;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+          </div>
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:11px; padding:18px 0; background:#f4f5f7; border-left:1px solid #1f242d;">
+            <span style="position:relative; display:inline-block; width:22px; height:20px;">
+              <span style="position:absolute; left:4px; top:0; width:18px; height:5.5px; clip-path:var(--s); background:#4e6a14;"></span>
+              <span style="position:absolute; left:2px; top:7.2px; width:18px; height:5.5px; clip-path:var(--s); background:#4e6a14;"></span>
+              <span style="position:absolute; left:0; top:14.4px; width:18px; height:5.5px; clip-path:var(--s); background:#a8b98a;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:9px; padding:11px 14px; background:#101319; border-top:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:18px; height:16px;">
+            <span style="position:absolute; left:3px; top:0; width:15px; height:4.5px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:1.5px; top:5.8px; width:15px; height:4.5px; clip-path:var(--s); background:#c3f53f;"></span>
+            <span style="position:absolute; left:0; top:11.6px; width:15px; height:4.5px; clip-path:var(--s); background:#5f7a1e;"></span>
+          </span>
+          <span style="font-size:12.5px; font-weight:500; color:#dfe4ec;">auth-refactor</span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#c3f53f;">62%</span>
+          <span style="width:22px; height:16px; border-radius:4px; background:#1d3a6b; color:#9fc0f5; font-family:'JetBrains Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">W</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="5b" style="width:340px; display:flex; flex-direction:column; gap:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#9b8cff; border-radius:4px; padding:3px 8px;">5b</span>
+        <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Custody — violet</span>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:10px; overflow:hidden;">
+        <div style="display:flex; align-items:center; justify-content:center; padding:46px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="display:flex; align-items:center; gap:14px; height:120px;">
+            <span style="width:26px; height:100%; border:9px solid #9b8cff; border-right:0;"></span>
+            <span style="width:34px; height:34px; background:#9b8cff;"></span>
+            <span style="width:26px; height:100%; border:9px solid #9b8cff; border-left:0;"></span>
+          </span>
+        </div>
+        <div style="padding:13px 15px; border-bottom:1px solid #1f242d; display:flex; flex-direction:column; gap:7px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#9b8cff;">#9b8cff on graphite</div>
+          <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">Two brackets holding a solid block: the agent is inside your supervision, not loose. Pure shell punctuation, so it belongs in a monospace tool — and violet keeps status colours (green, amber, red) free for status.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:18px; padding:14px 15px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="display:flex; align-items:center; gap:5px; height:40px;">
+            <span style="width:9px; height:100%; border:3px solid #9b8cff; border-right:0;"></span>
+            <span style="width:11px; height:11px; background:#9b8cff;"></span>
+            <span style="width:9px; height:100%; border:3px solid #9b8cff; border-left:0;"></span>
+          </span>
+          <span style="display:flex; align-items:center; gap:3px; height:24px;">
+            <span style="width:6px; height:100%; border:2px solid #9b8cff; border-right:0;"></span>
+            <span style="width:7px; height:7px; background:#9b8cff;"></span>
+            <span style="width:6px; height:100%; border:2px solid #9b8cff; border-left:0;"></span>
+          </span>
+          <span style="display:flex; align-items:center; gap:2px; height:16px;">
+            <span style="width:4px; height:100%; border:1.5px solid #9b8cff; border-right:0;"></span>
+            <span style="width:5px; height:5px; background:#9b8cff;"></span>
+            <span style="width:4px; height:100%; border:1.5px solid #9b8cff; border-left:0;"></span>
+          </span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">40·24·16</span>
+        </div>
+        <div style="display:flex; align-items:stretch;">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:11px; padding:18px 0;">
+            <span style="display:flex; align-items:center; gap:3.5px; height:22px;">
+              <span style="width:7px; height:100%; border:2.5px solid #9b8cff; border-right:0;"></span>
+              <span style="width:8px; height:8px; background:#9b8cff;"></span>
+              <span style="width:7px; height:100%; border:2.5px solid #9b8cff; border-left:0;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+          </div>
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:11px; padding:18px 0; background:#f4f5f7; border-left:1px solid #1f242d;">
+            <span style="display:flex; align-items:center; gap:3.5px; height:22px;">
+              <span style="width:7px; height:100%; border:2.5px solid #5b48d6; border-right:0;"></span>
+              <span style="width:8px; height:8px; background:#5b48d6;"></span>
+              <span style="width:7px; height:100%; border:2.5px solid #5b48d6; border-left:0;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:9px; padding:11px 14px; background:#101319; border-top:1px solid #1f242d;">
+          <span style="display:flex; align-items:center; gap:2px; height:16px;">
+            <span style="width:4px; height:100%; border:1.5px solid #9b8cff; border-right:0;"></span>
+            <span style="width:5px; height:5px; background:#9b8cff;"></span>
+            <span style="width:4px; height:100%; border:1.5px solid #9b8cff; border-left:0;"></span>
+          </span>
+          <span style="font-size:12.5px; font-weight:500; color:#dfe4ec;">auth-refactor</span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#9b8cff;">62%</span>
+          <span style="width:22px; height:16px; border-radius:4px; background:#1d3a6b; color:#9fc0f5; font-family:'JetBrains Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">W</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="5c" style="width:340px; display:flex; flex-direction:column; gap:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#3ddc97; border-radius:4px; padding:3px 8px;">5c</span>
+        <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Dispatch — spring</span>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:10px; overflow:hidden;">
+        <div style="display:flex; align-items:center; justify-content:center; padding:46px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:124px; height:120px;">
+            <span style="position:absolute; left:0; top:0; width:14px; height:120px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:14px; top:8px; width:62px; height:14px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:14px; top:53px; width:96px; height:14px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:14px; top:98px; width:40px; height:14px; background:#1f6b4c;"></span>
+            <span style="position:absolute; left:96px; top:45px; width:28px; height:30px; background:#3ddc97;"></span>
+          </span>
+        </div>
+        <div style="padding:13px 15px; border-bottom:1px solid #1f242d; display:flex; flex-direction:column; gap:7px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#3ddc97;">#3ddc97 on graphite</div>
+          <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">One spine, three branches of different length — work dispatched in parallel, the leading one carrying a block. It is literally the session list turned on its side, which is the picture the product actually draws.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:18px; padding:14px 15px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:41px; height:40px;">
+            <span style="position:absolute; left:0; top:0; width:5px; height:40px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:5px; top:3px; width:20px; height:5px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:5px; top:17.5px; width:31px; height:5px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:5px; top:32px; width:13px; height:5px; background:#1f6b4c;"></span>
+            <span style="position:absolute; left:31px; top:15px; width:10px; height:10px; background:#3ddc97;"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:25px; height:24px;">
+            <span style="position:absolute; left:0; top:0; width:3px; height:24px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:3px; top:2px; width:12px; height:3px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:3px; top:10.5px; width:19px; height:3px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:3px; top:19px; width:8px; height:3px; background:#1f6b4c;"></span>
+            <span style="position:absolute; left:19px; top:9px; width:6px; height:6px; background:#3ddc97;"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:17px; height:16px;">
+            <span style="position:absolute; left:0; top:0; width:2.5px; height:16px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:2.5px; top:1.5px; width:8px; height:2.5px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:2.5px; top:6.75px; width:13px; height:2.5px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:2.5px; top:12px; width:6px; height:2.5px; background:#1f6b4c;"></span>
+          </span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">40·24·16</span>
+        </div>
+        <div style="display:flex; align-items:stretch;">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:11px; padding:18px 0;">
+            <span style="position:relative; display:inline-block; width:23px; height:22px;">
+              <span style="position:absolute; left:0; top:0; width:3px; height:22px; background:#3ddc97;"></span>
+              <span style="position:absolute; left:3px; top:2px; width:11px; height:3px; background:#3ddc97;"></span>
+              <span style="position:absolute; left:3px; top:9.5px; width:17px; height:3px; background:#3ddc97;"></span>
+              <span style="position:absolute; left:3px; top:17px; width:7px; height:3px; background:#1f6b4c;"></span>
+              <span style="position:absolute; left:17px; top:8px; width:6px; height:6px; background:#3ddc97;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+          </div>
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:11px; padding:18px 0; background:#f4f5f7; border-left:1px solid #1f242d;">
+            <span style="position:relative; display:inline-block; width:23px; height:22px;">
+              <span style="position:absolute; left:0; top:0; width:3px; height:22px; background:#0f8a5c;"></span>
+              <span style="position:absolute; left:3px; top:2px; width:11px; height:3px; background:#0f8a5c;"></span>
+              <span style="position:absolute; left:3px; top:9.5px; width:17px; height:3px; background:#0f8a5c;"></span>
+              <span style="position:absolute; left:3px; top:17px; width:7px; height:3px; background:#8fbfa9;"></span>
+              <span style="position:absolute; left:17px; top:8px; width:6px; height:6px; background:#0f8a5c;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:9px; padding:11px 14px; background:#101319; border-top:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:17px; height:16px;">
+            <span style="position:absolute; left:0; top:0; width:2.5px; height:16px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:2.5px; top:1.5px; width:8px; height:2.5px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:2.5px; top:6.75px; width:13px; height:2.5px; background:#3ddc97;"></span>
+            <span style="position:absolute; left:2.5px; top:12px; width:6px; height:2.5px; background:#1f6b4c;"></span>
+          </span>
+          <span style="font-size:12.5px; font-weight:500; color:#dfe4ec;">auth-refactor</span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#3ddc97;">62%</span>
+          <span style="width:22px; height:16px; border-radius:4px; background:#1d3a6b; color:#9fc0f5; font-family:'JetBrains Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">W</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section style="--b:polygon(72% 0%, 18% 56%, 42% 56%, 30% 100%, 82% 42%, 56% 42%); --g:linear-gradient(196deg, #f4d268 0%, #eaab3c 44%, #db6821 100%); padding:56px 64px 40px; display:flex; flex-direction:column; gap:32px; background:#0a0b0e;">
+
+  <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#e0a84e;">TURN 4 · FROM YOUR REFERENCE</div>
+      <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">The bolt, sharpened</h1>
+      <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">Your mark, rebuilt on one polygon so every version is the same silhouette at a different offset — gold at the top, orange at the tail. Three readings of the same idea: the nested bolt you drew, the outline alone, and the bolt cut into running sessions.</p>
+    </div>
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:6px; text-align:right; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+      <span>#f4d268 → #db6821</span>
+      <span>tested at 40 / 24 / 16 px</span>
+    </div>
+  </div>
+
+  <div style="display:flex; flex-wrap:nowrap; width:max-content; gap:24px; align-items:stretch;">
+
+    <div id="4a" style="width:330px; display:flex; flex-direction:column; gap:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">4a</span>
+        <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Nested</span>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:10px; overflow:hidden;">
+        <div style="display:flex; align-items:center; justify-content:center; padding:40px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:106px; height:170px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:12%; top:12%; width:76%; height:76%; clip-path:var(--b); background:#0d0f13;"></span>
+            <span style="position:absolute; left:33%; top:32%; width:34%; height:36%; clip-path:var(--b); background:var(--g);"></span>
+          </span>
+        </div>
+        <div style="padding:13px 15px; border-bottom:1px solid #1f242d; display:flex; flex-direction:column; gap:7px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#e0a84e;">your drawing, tightened</div>
+          <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">A bolt inside a bolt: the supervisor and the agent it is watching, same shape at two scales. The stroke is thickened so the ring never closes up when it shrinks.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:18px; padding:14px 15px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:25px; height:40px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:12%; top:12%; width:76%; height:76%; clip-path:var(--b); background:#0d0f13;"></span>
+            <span style="position:absolute; left:33%; top:32%; width:34%; height:36%; clip-path:var(--b); background:var(--g);"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:15px; height:24px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:14%; top:14%; width:72%; height:72%; clip-path:var(--b); background:#0d0f13;"></span>
+            <span style="position:absolute; left:33%; top:32%; width:34%; height:36%; clip-path:var(--b); background:var(--g);"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:10px; height:16px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:16%; top:16%; width:68%; height:68%; clip-path:var(--b); background:#0d0f13;"></span>
+          </span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">40·24·16</span>
+        </div>
+        <div style="display:flex; align-items:stretch;">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:10px; padding:18px 0;">
+            <span style="position:relative; display:inline-block; width:18px; height:29px;">
+              <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+              <span style="position:absolute; left:13%; top:13%; width:74%; height:74%; clip-path:var(--b); background:#14171d;"></span>
+              <span style="position:absolute; left:33%; top:32%; width:34%; height:36%; clip-path:var(--b); background:var(--g);"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+          </div>
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:10px; padding:18px 0; background:#f4f5f7; border-left:1px solid #1f242d;">
+            <span style="position:relative; display:inline-block; width:18px; height:29px;">
+              <span style="position:absolute; inset:0; clip-path:var(--b); background:linear-gradient(196deg, #e0ae35 0%, #d8902a 44%, #c4551a 100%);"></span>
+              <span style="position:absolute; left:13%; top:13%; width:74%; height:74%; clip-path:var(--b); background:#f4f5f7;"></span>
+              <span style="position:absolute; left:33%; top:32%; width:34%; height:36%; clip-path:var(--b); background:linear-gradient(196deg, #e0ae35 0%, #c4551a 100%);"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="4b" style="width:330px; display:flex; flex-direction:column; gap:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">4b</span>
+        <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Outline</span>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:10px; overflow:hidden;">
+        <div style="display:flex; align-items:center; justify-content:center; padding:40px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:106px; height:170px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:15%; top:15%; width:70%; height:70%; clip-path:var(--b); background:#0d0f13;"></span>
+          </span>
+        </div>
+        <div style="padding:13px 15px; border-bottom:1px solid #1f242d; display:flex; flex-direction:column; gap:7px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#e0a84e;">the ring alone</div>
+          <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">Drop the inner bolt and the mark becomes a frame — a window with power running round it. Quietest of the three in a titlebar, and the only one that stays readable as a 16px stroke.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:18px; padding:14px 15px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:25px; height:40px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:16%; top:16%; width:68%; height:68%; clip-path:var(--b); background:#0d0f13;"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:15px; height:24px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:18%; top:18%; width:64%; height:64%; clip-path:var(--b); background:#0d0f13;"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:10px; height:16px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:20%; top:20%; width:60%; height:60%; clip-path:var(--b); background:#0d0f13;"></span>
+          </span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">40·24·16</span>
+        </div>
+        <div style="display:flex; align-items:stretch;">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:10px; padding:18px 0;">
+            <span style="position:relative; display:inline-block; width:18px; height:29px;">
+              <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+              <span style="position:absolute; left:17%; top:17%; width:66%; height:66%; clip-path:var(--b); background:#14171d;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+          </div>
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:10px; padding:18px 0; background:#f4f5f7; border-left:1px solid #1f242d;">
+            <span style="position:relative; display:inline-block; width:18px; height:29px;">
+              <span style="position:absolute; inset:0; clip-path:var(--b); background:linear-gradient(196deg, #e0ae35 0%, #d8902a 44%, #c4551a 100%);"></span>
+              <span style="position:absolute; left:17%; top:17%; width:66%; height:66%; clip-path:var(--b); background:#f4f5f7;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="4c" style="width:330px; display:flex; flex-direction:column; gap:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">4c</span>
+        <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">Sessions</span>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:10px; overflow:hidden;">
+        <div style="display:flex; align-items:center; justify-content:center; padding:40px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:106px; height:170px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:0; top:26%; width:100%; height:7px; background:#0d0f13;"></span>
+            <span style="position:absolute; left:0; top:52%; width:100%; height:7px; background:#0d0f13;"></span>
+            <span style="position:absolute; left:0; top:78%; width:100%; height:7px; background:#0d0f13;"></span>
+          </span>
+        </div>
+        <div style="padding:13px 15px; border-bottom:1px solid #1f242d; display:flex; flex-direction:column; gap:7px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#e0a84e;">one bolt, many sessions</div>
+          <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">The solid bolt sliced into stacked bands — the fleet reading of the same silhouette. Heaviest presence, and the cuts are the first thing to go if it ever needs to live at 16px.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:18px; padding:14px 15px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+          <span style="position:relative; display:inline-block; width:25px; height:40px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:0; top:26%; width:100%; height:2.5px; background:#0d0f13;"></span>
+            <span style="position:absolute; left:0; top:52%; width:100%; height:2.5px; background:#0d0f13;"></span>
+            <span style="position:absolute; left:0; top:78%; width:100%; height:2.5px; background:#0d0f13;"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:15px; height:24px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+            <span style="position:absolute; left:0; top:34%; width:100%; height:2px; background:#0d0f13;"></span>
+            <span style="position:absolute; left:0; top:66%; width:100%; height:2px; background:#0d0f13;"></span>
+          </span>
+          <span style="position:relative; display:inline-block; width:10px; height:16px;">
+            <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+          </span>
+          <span style="flex:1;"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">40·24·16</span>
+        </div>
+        <div style="display:flex; align-items:stretch;">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:10px; padding:18px 0;">
+            <span style="position:relative; display:inline-block; width:18px; height:29px;">
+              <span style="position:absolute; inset:0; clip-path:var(--b); background:var(--g);"></span>
+              <span style="position:absolute; left:0; top:32%; width:100%; height:2px; background:#14171d;"></span>
+              <span style="position:absolute; left:0; top:66%; width:100%; height:2px; background:#14171d;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+          </div>
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:10px; padding:18px 0; background:#f4f5f7; border-left:1px solid #1f242d;">
+            <span style="position:relative; display:inline-block; width:18px; height:29px;">
+              <span style="position:absolute; inset:0; clip-path:var(--b); background:linear-gradient(196deg, #e0ae35 0%, #d8902a 44%, #c4551a 100%);"></span>
+              <span style="position:absolute; left:0; top:32%; width:100%; height:2px; background:#f4f5f7;"></span>
+              <span style="position:absolute; left:0; top:66%; width:100%; height:2px; background:#f4f5f7;"></span>
+            </span>
+            <span style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section style="padding:56px 64px 40px; display:flex; flex-direction:column; gap:32px; background:#0a0b0e;">
+
+  <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#e0a84e;">TURN 3 · FROM THE README</div>
+      <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Eight marks, no bolt</h1>
+      <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">Each one comes from a line in the README rather than from the word "electric": the three-pane window, the Claudettes in sync, the fleet board, the real shell, air-traffic control, the choreography, the stage, the name itself. All built from rectangles, circles and one straight cut — flat colour, no curves, legible at 16px.</p>
+    </div>
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:6px; text-align:right; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+      <span>amber #e0a84e · slate #5a6272</span>
+      <span>tested at 40 / 24 / 16 px</span>
+    </div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:repeat(4, 300px); gap:24px;">
+    <sc-for list="{{ readme }}" as="o" hint-placeholder-count="8">
+      <div id="{{ o.id }}" style="display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">{{ o.id }}</span>
+          <span style="font-size:15.5px; font-weight:600; color:#f2f4f8;">{{ o.name }}</span>
+        </div>
+        <div style="flex:1; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:10px; overflow:hidden;">
+          <div style="display:flex; align-items:center; justify-content:center; padding:44px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+            <span style="{{ o.hero }}">
+              <sc-for list="{{ o.heroL }}" as="l" hint-placeholder-count="4">
+                <span style="{{ l }}"></span>
+              </sc-for>
+            </span>
+          </div>
+          <div style="padding:13px 15px; border-bottom:1px solid #1f242d; display:flex; flex-direction:column; gap:7px;">
+            <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#e0a84e;">{{ o.source }}</div>
+            <div style="font-size:12.5px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">{{ o.note }}</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:16px; padding:14px 15px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+            <span style="{{ o.b40 }}"><sc-for list="{{ o.l40 }}" as="l" hint-placeholder-count="4"><span style="{{ l }}"></span></sc-for></span>
+            <span style="{{ o.b24 }}"><sc-for list="{{ o.l24 }}" as="l" hint-placeholder-count="4"><span style="{{ l }}"></span></sc-for></span>
+            <span style="{{ o.b16 }}"><sc-for list="{{ o.l16 }}" as="l" hint-placeholder-count="4"><span style="{{ l }}"></span></sc-for></span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">40·24·16</span>
+          </div>
+          <div style="display:flex; align-items:stretch;">
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:10px; padding:16px 0;">
+              <span style="{{ o.lockBox }}"><sc-for list="{{ o.lockL }}" as="l" hint-placeholder-count="4"><span style="{{ l }}"></span></sc-for></span>
+              <span style="font-size:16px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+            </div>
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:10px; padding:16px 0; background:#f4f5f7; border-left:1px solid #1f242d;">
+              <span style="{{ o.papBox }}"><sc-for list="{{ o.papL }}" as="l" hint-placeholder-count="4"><span style="{{ l }}"></span></sc-for></span>
+              <span style="font-size:16px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</section>
+
+<section style="padding:56px 64px 40px; display:flex; flex-direction:column; gap:32px; background:#0a0b0e;">
+
+  <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#e0a84e;">TURN 2 · LOUDER</div>
+      <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Bolts with the volume up</h1>
+      <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">Same bolt silhouette, no longer polite: multiplied, misregistered and bursting. Each one still resolves to flat colour with no curves, so it survives shrinking — but these want to be seen rather than to sit quietly in a titlebar.</p>
+    </div>
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:6px; text-align:right; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+      <span>amber · teal · purple · red</span>
+      <span>tested at 40 / 24 / 16 px</span>
+    </div>
+  </div>
+
+  <div style="display:flex; flex-wrap:nowrap; width:max-content; gap:28px; align-items:stretch;">
+    <sc-for list="{{ wild }}" as="o" hint-placeholder-count="3">
+      <div id="{{ o.id }}" style="width:404px; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; align-items:center; gap:11px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">{{ o.id }}</span>
+          <span style="font-size:16px; font-weight:600; color:#f2f4f8;">{{ o.name }}</span>
+        </div>
+        <div style="flex:1; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:11px; overflow:hidden;">
+          <div style="display:flex; align-items:center; justify-content:center; padding:56px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+            <span style="{{ o.hero }}"><span style="{{ o.h1 }}"></span><span style="{{ o.h2 }}"></span><span style="{{ o.h3 }}"></span></span>
+          </div>
+          <div style="padding:16px 18px; border-bottom:1px solid #1f242d;">
+            <div style="font-size:13px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">{{ o.note }}</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:20px; padding:18px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+            <span style="{{ o.s40 }}"><span style="{{ o.a40 }}"></span><span style="{{ o.b40 }}"></span><span style="{{ o.c40 }}"></span></span>
+            <span style="{{ o.s24 }}"><span style="{{ o.a24 }}"></span><span style="{{ o.b24 }}"></span><span style="{{ o.c24 }}"></span></span>
+            <span style="{{ o.s16 }}"><span style="{{ o.a16 }}"></span><span style="{{ o.b16 }}"></span><span style="{{ o.c16 }}"></span></span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#565e6e;">40 · 24 · 16</span>
+          </div>
+          <div style="display:flex; align-items:stretch;">
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:12px; padding:22px 0;">
+              <span style="{{ o.lock }}"><span style="{{ o.l1 }}"></span><span style="{{ o.l2 }}"></span><span style="{{ o.l3 }}"></span></span>
+              <span style="font-size:19px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+            </div>
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:12px; padding:22px 0; background:#f4f5f7; border-left:1px solid #1f242d;">
+              <span style="{{ o.paper }}"><span style="{{ o.p1 }}"></span><span style="{{ o.p2 }}"></span><span style="{{ o.p3 }}"></span></span>
+              <span style="font-size:19px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</section>
+
+<section style="padding:56px 64px 96px; display:flex; flex-direction:column; gap:32px; background:#0a0b0e;">
+
+  <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#e0a84e;">TURN 1 · IDENTITY</div>
+      <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Three bolts for Francois</h1>
+      <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">All three are built from straight cuts only — no curves, no gradient, one amber — so the mark survives a 16px titlebar and a monochrome favicon. <a href="#1a">1a</a> abstracts the bolt into two offset slabs, <a href="#1b">1b</a> knocks it out of a solid tile, <a href="#1c">1c</a> keeps today's diamond and puts the bolt inside it.</p>
+    </div>
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:6px; text-align:right; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+      <span>amber #e0a84e · ink #0d0f13</span>
+      <span>tested at 96 / 40 / 24 / 16 px</span>
+    </div>
+  </div>
+
+  <div style="display:flex; flex-wrap:nowrap; width:max-content; gap:28px; align-items:stretch;">
+
+    <sc-for list="{{ options }}" as="o" hint-placeholder-count="3">
+      <div id="{{ o.id }}" style="width:404px; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; align-items:center; gap:11px;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">{{ o.id }}</span>
+          <span style="font-size:16px; font-weight:600; color:#f2f4f8;">{{ o.name }}</span>
+        </div>
+
+        <div style="flex:1; display:flex; flex-direction:column; gap:0; background:#14171d; border:1px solid #232833; border-radius:11px; overflow:hidden;">
+
+          <div style="display:flex; align-items:center; justify-content:center; padding:52px 0; background:#0d0f13; border-bottom:1px solid #1f242d;">
+            <span style="{{ o.hero }}"><span style="{{ o.heroInner }}"></span><span style="{{ o.heroInner2 }}"></span></span>
+          </div>
+
+          <div style="padding:16px 18px; border-bottom:1px solid #1f242d;">
+            <div style="font-size:13px; line-height:1.6; color:#9aa2b1; text-wrap:pretty;">{{ o.note }}</div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:20px; padding:18px; background:#0d0f13; border-bottom:1px solid #1f242d;">
+            <span style="{{ o.s40 }}"><span style="{{ o.s40i }}"></span><span style="{{ o.s40i2 }}"></span></span>
+            <span style="{{ o.s24 }}"><span style="{{ o.s24i }}"></span><span style="{{ o.s24i2 }}"></span></span>
+            <span style="{{ o.s16 }}"><span style="{{ o.s16i }}"></span><span style="{{ o.s16i2 }}"></span></span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#565e6e;">40 · 24 · 16</span>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:12px; padding:18px; border-bottom:1px solid #1f242d;">
+            <span style="{{ o.s24 }}"><span style="{{ o.s24i }}"></span><span style="{{ o.s24i2 }}"></span></span>
+            <span style="font-size:21px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Francois</span>
+            <span style="width:1px; height:20px; background:#2d333f;"></span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">session orchestrator</span>
+          </div>
+
+          <div style="display:flex; align-items:stretch;">
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:12px; padding:22px 0; background:#f4f5f7;">
+              <span style="{{ o.light }}"><span style="{{ o.lightI }}"></span><span style="{{ o.lightI2 }}"></span></span>
+              <span style="font-size:16px; font-weight:600; color:#14171c;">Francois</span>
+            </div>
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:12px; padding:22px 0; background:#14171d; border-left:1px solid #1f242d;">
+              <span style="{{ o.mono }}"><span style="{{ o.monoI }}"></span><span style="{{ o.monoI2 }}"></span></span>
+              <span style="font-size:16px; font-weight:600; color:#e6e9ef;">Francois</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1360,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  renderVals() {
+    const BOLT = 'polygon(62% 0%, 24% 58%, 46% 58%, 38% 100%, 78% 40%, 54% 40%)';
+    const none = 'display:none;';
+
+    // ── 1a: two offset slabs (parallelograms) ────────────────────────────────
+    const slabs = (size, color) => {
+      const box = `position:relative; display:block; width:${size}px; height:${size}px; flex-shrink:0;`;
+      const w = size * 0.30, h = size * 0.46, sk = 'skewX(-20deg)';
+      const a = `position:absolute; left:${size * 0.30}px; top:${size * 0.05}px; width:${w}px; height:${h}px; background:${color}; transform:${sk}; display:block;`;
+      const b = `position:absolute; left:${size * 0.44}px; top:${size * 0.49}px; width:${w}px; height:${h}px; background:${color}; transform:${sk}; display:block;`;
+      return { box, a, b };
+    };
+
+    // ── 1b: bolt knocked out of a solid tile ─────────────────────────────────
+    const knock = (size, tile, ink) => ({
+      box: `position:relative; display:block; width:${size}px; height:${size}px; flex-shrink:0; background:${tile}; border-radius:${Math.max(2, size * 0.22)}px;`,
+      a: `position:absolute; left:${size * 0.18}px; top:${size * 0.15}px; width:${size * 0.64}px; height:${size * 0.7}px; background:${ink}; clip-path:${BOLT}; display:block;`,
+      b: none
+    });
+
+    // ── 1c: bolt inside the diamond ──────────────────────────────────────────
+    const diamond = (size, color, boltColor) => ({
+      box: `position:relative; display:block; width:${size}px; height:${size}px; flex-shrink:0;`,
+      a: `position:absolute; inset:${size * 0.06}px; background:${color}; transform:rotate(45deg); border-radius:${Math.max(1, size * 0.06)}px; display:block;`,
+      b: `position:absolute; left:${size * 0.28}px; top:${size * 0.2}px; width:${size * 0.44}px; height:${size * 0.6}px; background:${boltColor}; clip-path:${BOLT}; display:block; z-index:1;`
+    });
+
+    const AMBER = '#e0a84e', INK = '#0d0f13', DARKAMBER = '#b07d24', PAPER = '#f4f5f7', WHITE = '#e6e9ef', PANEL = '#14171d';
+
+    const build = (id, name, note, maker, makerLight, makerMono) => {
+      const hero = maker(112), s40 = maker(40), s24 = maker(24), s16 = maker(16);
+      const light = makerLight(24), mono = makerMono(24);
+      return {
+        id, name, note,
+        hero: hero.box, heroInner: hero.a, heroInner2: hero.b,
+        s40: s40.box, s40i: s40.a, s40i2: s40.b,
+        s24: s24.box, s24i: s24.a, s24i2: s24.b,
+        s16: s16.box, s16i: s16.a, s16i2: s16.b,
+        light: light.box, lightI: light.a, lightI2: light.b,
+        mono: mono.box, monoI: mono.a, monoI2: mono.b
+      };
+    };
+
+    // ── extravagant set ──────────────────────────────────────────────────────
+    const echo = (s, c1, c2, c3) => ({
+      box: `position:relative; display:block; width:${s}px; height:${s}px; flex-shrink:0;`,
+      a: `position:absolute; left:${s * -0.1}px; top:${s * 0.1}px; width:${s * 0.62}px; height:${s * 0.78}px; background:${c3}; clip-path:${BOLT}; opacity:.35; display:block;`,
+      b: `position:absolute; left:${s * 0.04}px; top:${s * 0.07}px; width:${s * 0.7}px; height:${s * 0.86}px; background:${c2}; clip-path:${BOLT}; opacity:.6; display:block;`,
+      c: `position:absolute; left:${s * 0.2}px; top:${s * 0.04}px; width:${s * 0.8}px; height:${s * 0.94}px; background:${c1}; clip-path:${BOLT}; display:block;`
+    });
+
+    const chroma = (s, c1, c2, c3) => ({
+      box: `position:relative; display:block; width:${s}px; height:${s}px; flex-shrink:0;`,
+      a: `position:absolute; left:${s * 0.04}px; top:${s * 0.12}px; width:${s * 0.76}px; height:${s * 0.84}px; background:${c2}; clip-path:${BOLT}; transform:rotate(-11deg); display:block;`,
+      b: `position:absolute; left:${s * 0.26}px; top:${s * 0.16}px; width:${s * 0.76}px; height:${s * 0.84}px; background:${c3}; clip-path:${BOLT}; transform:rotate(11deg); display:block;`,
+      c: `position:absolute; left:${s * 0.15}px; top:${s * 0.04}px; width:${s * 0.76}px; height:${s * 0.84}px; background:${c1}; clip-path:${BOLT}; display:block;`
+    });
+
+    const burst = (s, tile, star, bolt) => ({
+      box: `position:relative; display:block; width:${s}px; height:${s}px; flex-shrink:0; background:${tile}; border-radius:${Math.max(2, s * 0.22)}px; overflow:hidden;`,
+      a: `position:absolute; left:${s * 0.1}px; top:${s * 0.1}px; width:${s * 0.8}px; height:${s * 0.8}px; background:${star}; display:block;`,
+      b: `position:absolute; left:${s * 0.1}px; top:${s * 0.1}px; width:${s * 0.8}px; height:${s * 0.8}px; background:${star}; transform:rotate(45deg); display:block;`,
+      c: `position:absolute; left:${s * 0.24}px; top:${s * 0.13}px; width:${s * 0.52}px; height:${s * 0.74}px; background:${bolt}; clip-path:${BOLT}; z-index:1; display:block;`
+    });
+
+    const build3 = (id, name, note, maker, mDark, mLight) => {
+      const hero = maker(124), s40 = maker(40), s24 = maker(24), s16 = maker(16);
+      const dark = mDark(26), light = mLight(26);
+      return {
+        id, name, note,
+        hero: hero.box, h1: hero.a, h2: hero.b, h3: hero.c,
+        s40: s40.box, a40: s40.a, b40: s40.b, c40: s40.c,
+        s24: s24.box, a24: s24.a, b24: s24.b, c24: s24.c,
+        s16: s16.box, a16: s16.a, b16: s16.b, c16: s16.c,
+        lock: dark.box, l1: dark.a, l2: dark.b, l3: dark.c,
+        paper: light.box, p1: light.a, p2: light.b, p3: light.c
+      };
+    };
+
+    // ── README-derived set ───────────────────────────────────────────────────
+    const R = (s, x, y, w, h, c, extra) => `position:absolute; left:${s * x}px; top:${s * y}px; width:${s * w}px; height:${s * h}px; background:${c}; display:block; ${extra || ''}`;
+    const BOXOF = (s) => `position:relative; display:block; width:${s}px; height:${s}px; flex-shrink:0;`;
+    const r2 = (s) => `border-radius:${Math.max(1, s * 0.02)}px;`;
+
+    const mPanes = (s, A, B) => ({ box: BOXOF(s), layers: [
+      R(s, .10, .16, .17, .68, B, r2(s)),
+      R(s, .33, .16, .32, .68, A, r2(s)),
+      R(s, .71, .16, .19, .30, B, r2(s)),
+      R(s, .71, .52, .19, .32, B, r2(s))
+    ]});
+
+    const mLine = (s, A, B) => ({ box: BOXOF(s), layers: [
+      R(s, .08, .30, .10, .46, A, r2(s)),
+      R(s, .27, .30, .10, .46, B, r2(s)),
+      R(s, .46, .30, .10, .46, B, r2(s)),
+      R(s, .65, .30, .10, .46, B, r2(s)),
+      R(s, .84, .30, .10, .46, B, r2(s)),
+      R(s, .08, .16, .10, .08, A, r2(s))
+    ]});
+
+    const mFleet = (s, A, B) => ({ box: BOXOF(s), layers: [
+      R(s, .16, .16, .28, .28, A, 'border-radius:50%;'),
+      R(s, .56, .16, .28, .28, B, 'border-radius:50%;'),
+      R(s, .16, .56, .28, .28, B, 'border-radius:50%;'),
+      R(s, .56, .56, .28, .28, B, 'border-radius:50%;')
+    ]});
+
+    const mCaret = (s, A, B) => ({ box: BOXOF(s), layers: [
+      R(s, .12, .22, .44, .56, A, 'clip-path:polygon(0% 0%, 30% 0%, 100% 50%, 30% 100%, 0% 100%, 64% 50%);'),
+      R(s, .64, .26, .22, .48, B, r2(s))
+    ]});
+
+    const mRadar = (s, A, B) => ({ box: BOXOF(s), layers: [
+      `position:absolute; left:${s * .08}px; top:${s * .08}px; width:${s * .84}px; height:${s * .84}px; border:${Math.max(1, s * .08)}px solid ${B}; border-radius:50%; display:block;`,
+      `position:absolute; left:${s * .5}px; top:${s * .5}px; width:${s * .3}px; height:${s * .3}px; background:${A}; border-radius:0 0 100% 0; display:block;`
+    ]});
+
+    const mBaton = (s, A, B) => ({ box: BOXOF(s), layers: [
+      R(s, .30, .14, .12, .62, A, `transform:rotate(22deg); ${r2(s)}`),
+      R(s, .18, .78, .64, .10, B, r2(s)),
+      `position:absolute; left:${s * .56}px; top:${s * .10}px; width:${s * .2}px; height:${s * .2}px; background:${A}; border-radius:50%; display:block;`
+    ]});
+
+    const mStage = (s, A, B) => ({ box: BOXOF(s), layers: [
+      R(s, .16, .10, .10, .48, B, 'transform:skewX(-16deg);'),
+      R(s, .45, .10, .10, .48, B, 'transform:skewX(0deg);'),
+      R(s, .74, .10, .10, .48, B, 'transform:skewX(16deg);'),
+      `position:absolute; left:${s * .06}px; top:${s * .64}px; width:${s * .88}px; height:${s * .26}px; background:${A}; clip-path:polygon(12% 0%, 88% 0%, 100% 100%, 0% 100%); display:block;`
+    ]});
+
+    const mMono = (s, A, B) => ({ box: BOXOF(s), layers: [
+      R(s, .22, .14, .13, .72, A, r2(s)),
+      R(s, .35, .14, .44, .13, A, r2(s)),
+      R(s, .35, .42, .32, .13, B, r2(s))
+    ]});
+
+    const buildN = (id, name, source, note, maker, dark, light) => {
+      const hero = maker(120, ...dark), a = maker(40, ...dark), b = maker(24, ...dark), c = maker(16, ...dark);
+      const lock = maker(26, ...dark), pap = maker(26, ...light);
+      return { id, name, source, note,
+        hero: hero.box, heroL: hero.layers,
+        b40: a.box, l40: a.layers, b24: b.box, l24: b.layers, b16: c.box, l16: c.layers,
+        lockBox: lock.box, lockL: lock.layers, papBox: pap.box, papL: pap.layers };
+    };
+
+    const D = ['#e0a84e', '#5a6272'];
+    const L = ['#b07d24', '#6f7683'];
+
+    return {
+      readme: [
+        buildN('3a', 'Three panes', 'one window: sessions · main · rail',
+          'The layout is the product. A tall column, a wide one, two stacked blocks — the shell reduced to four rectangles, which is also exactly what you see when you squint at the app.',
+          mPanes, D, L),
+        buildN('3b', 'Claudettes', 'a stage full of Claudettes, perfectly in sync',
+          'Five identical bars on one baseline with the lead marked above it. Choreography as a mark: the fleet in step, one of them calling it.',
+          mLine, D, L),
+        buildN('3c', 'Fleet', 'the state of every workstream, one glance',
+          'Four status dots, one live. The most literal reading of the fleet board, and the only mark here that stays legible as a 16px tray icon.',
+          mFleet, D, L),
+        buildN('3d', 'Prompt', 'a real shell, not a toy console',
+          "The ❯ caret plus a block cursor. Says terminal before it says app, which is what the README spends its first paragraph earning.",
+          mCaret, D, L),
+        buildN('3e', 'Radar', "air-traffic control with sticky notes",
+          'A ring with a single sweep wedge. Supervision rather than execution — the app watches, you decide.',
+          mRadar, D, L),
+        buildN('3f', 'Baton', 'immaculate choreography',
+          'A raked baton over the stage line, with the weight as a dot. Conducting, not typing — the one mark that reads as direction rather than machinery.',
+          mBaton, D, L),
+        buildN('3g', 'Stage', 'mission control for your fleet',
+          'Three beams landing on a lit stage. Warmest of the set and the most brand-forward; weakest at very small sizes.',
+          mStage, D, L),
+        buildN('3h', 'F monogram', 'francois — the app on your PATH',
+          'An F cut from three bars, the middle one dimmed so the letter also reads as a pane stack. The safe, wordmark-friendly answer.',
+          mMono, D, L)
+      ],
+      wild: [
+        build3(
+          '2a', 'Afterburn',
+          'The bolt struck three times — a decaying trail behind the mark. Reads as speed rather than electricity, and the echo doubles as the loading state: the trail animates in when a session starts.',
+          (s) => echo(s, '#e0a84e', '#d1685e', '#b39ede'),
+          (s) => echo(s, '#e0a84e', '#d1685e', '#b39ede'),
+          (s) => echo(s, '#b07d24', '#b0463d', '#6a55a0')
+        ),
+        build3(
+          '2b', 'Misprint',
+          'Three plates knocked out of register, riso-style — amber, teal, purple at ±7°. Maximum personality, and the three hues are exactly the three account tints, so the logo previews the product.',
+          (s) => chroma(s, '#e0a84e', '#8fbab8', '#b39ede'),
+          (s) => chroma(s, '#e0a84e', '#8fbab8', '#b39ede'),
+          (s) => chroma(s, '#b07d24', '#3f8582', '#6a55a0')
+        ),
+        build3(
+          '2c', 'Big bang',
+          'Two squares crossed into an eight-point burst with the bolt cut out over it. Loud, toy-like, unmistakable at any size — the one that looks like a game icon instead of a dev tool.',
+          (s) => burst(s, '#e0a84e', '#f0c47c', '#0d0f13'),
+          (s) => burst(s, '#e0a84e', '#f0c47c', '#0d0f13'),
+          (s) => burst(s, '#b07d24', '#d8a44a', '#f4f5f7')
+        )
+      ],
+      options: [
+        build(
+          '1a', 'Split bolt',
+          'Two offset slabs at the same 20° rake. The bolt is implied by the gap between them, which keeps the silhouette open at small sizes — the version most unlike a stock lightning glyph.',
+          (s) => { const x = slabs(s, AMBER); return { box: x.box, a: x.a, b: x.b }; },
+          (s) => { const x = slabs(s, DARKAMBER); return { box: x.box, a: x.a, b: x.b }; },
+          (s) => { const x = slabs(s, WHITE); return { box: x.box, a: x.a, b: x.b }; }
+        ),
+        build(
+          '1b', 'Cut tile',
+          'A solid amber tile with the bolt cut straight out of it. The strongest presence in a dock or taskbar, and the only variant that reads as a filled app icon rather than a glyph.',
+          (s) => knock(s, AMBER, INK),
+          (s) => knock(s, DARKAMBER, PAPER),
+          (s) => knock(s, WHITE, PANEL)
+        ),
+        build(
+          '1c', 'Diamond bolt',
+          "Keeps the rotated square already sitting in today's titlebar and drops the bolt inside it — continuity with the current build, at the cost of a busier 16px rendering.",
+          (s) => diamond(s, AMBER, INK),
+          (s) => diamond(s, DARKAMBER, PAPER),
+          (s) => diamond(s, WHITE, PANEL)
+        )
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>

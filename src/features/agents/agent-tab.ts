@@ -204,3 +204,38 @@ export function receiveAgentTranscript(
 export function earlierBlocksNotice(dropped: number): string | null {
   return dropped > 0 ? `… ${dropped} earlier block${dropped === 1 ? '' : 's'}` : null;
 }
+
+// ---------- provenance banner (design chore: "you are inside a subagent") ----------
+
+export interface AgentBannerMeta {
+  /**
+   * The parent session's display name, or null when it isn't (yet) in the
+   * sessions store — never invented. Model and context-usage are deliberately
+   * absent here: the contract carries neither a per-agent model nor a
+   * per-agent context figure (`AgentInfo` has no such fields, and
+   * `SessionEvent`'s `context.usage` is per SESSION, not per agent).
+   */
+  sessionName: string | null;
+  /**
+   * `AgentInfo.stepCount` is "total steps ever observed" — steps, not tool
+   * calls, so it is labelled for what it actually is rather than borrowing
+   * the mock's "N tools" wording.
+   */
+  stepsLabel: string;
+}
+
+export function agentBannerMeta(stepCount: number, sessionName: string | null): AgentBannerMeta {
+  return {
+    sessionName,
+    stepsLabel: `${stepCount} step${stepCount === 1 ? '' : 's'}`,
+  };
+}
+
+/**
+ * The only real stop is `session_interrupt`, which kills the whole parent
+ * turn — not a per-agent kill. So Stop is offered only while the agent is
+ * actually running (there is nothing to interrupt once it's idle/done/error).
+ */
+export function agentBannerShowsStop(status: AgentStatus): boolean {
+  return status === 'running';
+}

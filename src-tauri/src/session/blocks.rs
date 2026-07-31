@@ -23,7 +23,7 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
         }),
         BlockKind::Assistant => {
             let (gc, bc) = if b.streaming {
-                ("#e0a84e", "#e6e9ef")
+                ("#c3f53f", "#e6e9ef")
             } else {
                 ("#8b93a3", "#c3c9d4")
             };
@@ -147,7 +147,7 @@ mod tests {
         s.buf_assistant("a1", "hi".into());
         s.block_buffer[0].streaming = true;
         let streaming = classify_block(&s.block_buffer[0]);
-        assert_eq!(streaming["glyphColor"], "#e0a84e");
+        assert_eq!(streaming["glyphColor"], "#c3f53f");
         assert_eq!(streaming["bodyColor"], "#e6e9ef");
 
         s.block_buffer[0].streaming = false;

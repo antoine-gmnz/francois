@@ -26,14 +26,6 @@
   min-width: 0;
   flex-shrink: 1;
 }
-.titlebar-logo {
-  width: 9px;
-  height: 9px;
-  flex-shrink: 0;
-  background: var(--accent);
-  transform: rotate(45deg);
-  border-radius: var(--radius-xs);
-}
 .titlebar-wordmark {
   font-family: var(--font-ui);
   font-weight: 600;
