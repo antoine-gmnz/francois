@@ -72,10 +72,13 @@ fn unlink(path: &Path) -> std::io::Result<()> {
 
 /// Delete one leaf, folding its size into `stats`. A leaf that cannot be removed
 /// counts as `failed` rather than aborting the sweep. The size comes from
-/// `symlink_metadata`, so a link contributes its own size and never its target's.
+/// `symlink_metadata`, so nothing is ever read through a link; and a LINK itself
+/// contributes ZERO — unlinking it reclaims no data bytes, and its reported size
+/// is meaningless anyway (the target path's length on unix, the reparse buffer on
+/// Windows), which would make `removed_bytes` vary with where the link points.
 fn remove_counted(path: &Path, stats: &mut ClearAttachmentsResult) {
     let size = std::fs::symlink_metadata(path)
-        .map(|m| m.len())
+        .map(|m| if is_link(&m) { 0 } else { m.len() })
         .unwrap_or(0);
     match unlink(path) {
         Ok(()) => {
@@ -145,23 +148,29 @@ pub(crate) fn clear_session(
     clear_dir(cwd, session_id)
 }
 
-/// True only for a REAL directory — never for a symlink, and never for a Windows
-/// junction/reparse point. `Path::is_dir` (and `Metadata::is_dir` on a junction)
-/// would say yes to a link, which is precisely what lets a planted link walk the
-/// sweep out of the attachments dir and delete files anywhere on disk.
-fn is_real_dir(meta: &std::fs::Metadata) -> bool {
+/// True for a link of either flavour: a symlink, or a Windows junction (which
+/// `is_symlink` does NOT report — it is a reparse point of a different tag).
+fn is_link(meta: &std::fs::Metadata) -> bool {
     if meta.file_type().is_symlink() {
-        return false;
+        return true;
     }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400; // junctions included
         if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return false;
+            return true;
         }
     }
-    meta.is_dir()
+    false
+}
+
+/// True only for a REAL directory — never for a symlink, and never for a Windows
+/// junction/reparse point. `Path::is_dir` (and `Metadata::is_dir` on a junction)
+/// would say yes to a link, which is precisely what lets a planted link walk the
+/// sweep out of the attachments dir and delete files anywhere on disk.
+fn is_real_dir(meta: &std::fs::Metadata) -> bool {
+    !is_link(meta) && meta.is_dir()
 }
 
 fn clear_tree(dir: &Path, stats: &mut ClearAttachmentsResult) {
