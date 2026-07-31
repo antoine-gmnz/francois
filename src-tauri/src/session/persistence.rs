@@ -515,6 +515,9 @@ pub fn load_persisted(app: &AppHandle) {
                 // a shutdown hook is not.
                 attachments: sweep_staged(m.attachments),
                 mcp: HashMap::new(),
+                workflows: HashMap::new(),
+                workflow_order: Vec::new(),
+                workflow_by_tool: HashMap::new(),
                 cli_commands: Vec::new(),
             },
         );

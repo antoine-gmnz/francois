@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId } from '../../contract/common';
+import type { Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun } from '../../contract/common';
 import type {
   ProjectAwareSessionCreateRequest,
   ProjectCreateRequest,
@@ -144,6 +144,12 @@ export const agentsActivity = (agentId: string) =>
 // count evicted past it — what the dynamic agent tab renders.
 export const agentsTranscript = (agentId: string) =>
   ipc<Result<AgentTranscript>>('agents_transcript', { agentId });
+
+// workflow-panel §5: this session's `Workflow` runs, in first-seen order. The
+// panel is read-only — a run is dispatched by the assistant during a turn, so
+// there is no create/stop verb to wrap here.
+export const workflowsList = (sessionId: SessionId) =>
+  ipc<Result<WorkflowRun[]>>('workflows_list', { sessionId });
 
 /** Subscribe to francois://agents/event (agent.block, agent-tab FR-8). */
 export function onAgentEvent(cb: (e: AgentEvent) => void): Promise<UnlistenFn> {

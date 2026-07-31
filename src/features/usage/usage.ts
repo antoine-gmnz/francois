@@ -62,28 +62,59 @@ export interface UsageBarView {
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
+/** `Mon D` plus, optionally, everything after the comma (the clock + timezone). */
+const DATE_RE = /^([A-Za-z]{3,9})\s+(\d{1,2})(?:\s*,\s*(.*))?$/;
+/**
+ * The clock half. Minutes are OPTIONAL because the CLI drops them on the hour —
+ * `resets Jul 31, 2am`, `resets Aug 4, 12am`. Requiring `H:MM` here made the whole
+ * time group fail to match, which silently left the hour at midnight and rendered a
+ * reset hours away as `resets now`.
+ */
+const TIME_12_RE = /^(\d{1,2})(?::(\d{2}))?\s*([ap])m\b/i;
+/** 24h fallback (`14:00`) — minutes required, since a bare `14` is ambiguous. */
+const TIME_24_RE = /^(\d{1,2}):(\d{2})\b/;
+
 /**
  * FR-30: best-effort epoch-ms for a verbatim `resetsAt`, or null when it isn't a
  * timestamp at all. The CLI emits forms like `Jul 22, 5:29pm (Europe/Paris)`,
- * `Jul 25, 11:00am`, bare `Jul 22`, and free text such as `soon` — so this must
- * DEGRADE, never guess. The trailing parenthetical is informational: the clock
- * reading is already in the machine's local zone, so it parses as local time.
+ * `Jul 31, 2am (Europe/Paris)`, bare `Jul 22`, and free text such as `soon` — so
+ * this must DEGRADE, never guess. The trailing parenthetical is informational: the
+ * clock reading is already in the machine's local zone, so it parses as local time.
+ *
+ * A clock half that is present but unreadable returns null rather than falling back
+ * to midnight: a wrong countdown ("now" for a reset hours out) reads as fact, while
+ * the verbatim text at least tells the truth.
  *
  * The CLI omits the year. Limits reset hours-to-days out, so the candidate year
  * closest to `now` is the right one — which also makes a Dec→Jan boundary work
  * in both directions.
  */
 export function parseResetAt(resetsAt: string, now: number): number | null {
-  const m = /^([A-Za-z]{3,9})\s+(\d{1,2})(?:,\s*(\d{1,2}):(\d{2})\s*([ap]m)?)?/i.exec(resetsAt.trim());
+  const m = DATE_RE.exec(resetsAt.trim());
   if (!m) return null;
   const monthIdx = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase());
   if (monthIdx < 0) return null;
   const day = Number(m[2]);
-  let hour = m[3] ? Number(m[3]) : 0;
-  const min = m[4] ? Number(m[4]) : 0;
-  const meridiem = m[5]?.toLowerCase();
-  if (meridiem === 'pm' && hour < 12) hour += 12;
-  if (meridiem === 'am' && hour === 12) hour = 0;
+
+  let hour = 0;
+  let min = 0;
+  const clock = m[3]?.trim();
+  if (clock) {
+    const t12 = TIME_12_RE.exec(clock);
+    const t24 = t12 ? null : TIME_24_RE.exec(clock);
+    if (!t12 && !t24) return null;
+    if (t12) {
+      hour = Number(t12[1]);
+      min = t12[2] ? Number(t12[2]) : 0;
+      const meridiem = t12[3].toLowerCase();
+      if (hour > 12) return null; // '13pm' is not a clock reading
+      if (meridiem === 'p' && hour < 12) hour += 12;
+      if (meridiem === 'a' && hour === 12) hour = 0;
+    } else if (t24) {
+      hour = Number(t24[1]);
+      min = Number(t24[2]);
+    }
+  }
   if (hour > 23 || min > 59) return null;
 
   let best: number | null = null;

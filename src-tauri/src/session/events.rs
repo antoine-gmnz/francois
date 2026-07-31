@@ -138,6 +138,10 @@ pub(crate) enum SessionEvent {
         agent_id: String,
         step: AgentStep,
     },
+    /// workflow-panel FR-3: a `Workflow` run was minted, acked, or reached a
+    /// terminal state. Carries the whole run — the panel has no other read.
+    #[serde(rename = "workflow.update")]
+    WorkflowUpdate { run: WorkflowRun },
     #[serde(rename = "mcp.update")]
     McpUpdate {
         #[serde(rename = "sessionId")]
@@ -383,5 +387,20 @@ mod tests {
         assert_eq!(v["step"]["seq"], 3);
         assert_eq!(v["step"]["kind"], "notice");
         assert_eq!(v["step"]["label"], "ended with the turn");
+    }
+
+    #[test]
+    fn workflow_update_event_serializes_to_contract_shape() {
+        // workflow-panel §5: { type: 'workflow.update', run } — the whole run,
+        // with no sessionId of its own at the envelope level (it rides on `run`).
+        let ev = SessionEvent::WorkflowUpdate {
+            run: test_workflow_run(),
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "workflow.update");
+        assert_eq!(v["run"]["sessionId"], "s1");
+        assert_eq!(v["run"]["name"], "review-changes");
+        assert_eq!(v["run"]["status"], "running");
+        assert!(v.get("sessionId").is_none());
     }
 }

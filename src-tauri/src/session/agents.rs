@@ -83,6 +83,11 @@ pub(crate) fn finalize_tool_input(input: &Value) -> Value {
     if let Some(aid) = input.get("__agentId").cloned() {
         parsed["__agentId"] = aid;
     }
+    // workflow-panel FR-2: same reasoning for a `Workflow` dispatch's run id —
+    // losing it here would strand the run with its placeholder name forever.
+    if let Some(wid) = input.get("__workflowId").cloned() {
+        parsed["__workflowId"] = wid;
+    }
     parsed
 }
 

@@ -24,9 +24,9 @@ mod wsl;
 pub(crate) use shell::dispose_session_shell;
 
 use tauri::RunEvent;
-// `Manager` is what brings `get_webview_window` into scope, and its only caller is the
-// windows-only chrome tint in setup() — importing it unconditionally makes it an unused
-// import everywhere else, so the import is gated exactly like the call site.
+// `get_webview_window` is a `Manager` method; only the windows-only chrome tint
+// below calls it, so the import is gated too (an unconditional one warns as
+// unused on macOS/Linux).
 #[cfg(windows)]
 use tauri::Manager;
 
@@ -94,6 +94,7 @@ fn main() {
             session::agents_kill,
             session::agents_activity,
             session::agents_transcript,
+            session::workflows_list,
             session::mcp_registry,
             session::mcp_list,
             session::mcp_detail,

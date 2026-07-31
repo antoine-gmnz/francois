@@ -185,6 +185,46 @@ export interface AgentStep {
   meta?: string;
 }
 
+// ---------- workflows ----------
+// workflow-panel §5: a run of the harness's `Workflow` tool — the multi-agent
+// orchestration script the assistant dispatches during a turn. WorkflowRun rides
+// on SessionEvent (workflow.update), so it is shared vocabulary and lives here.
+
+export type WorkflowRunId = string; // uuid v4 — minted by the core, not the harness
+
+export type WorkflowStatus = 'running' | 'done' | 'error';
+
+/** One phase declared in the script's `meta.phases` block. */
+export interface WorkflowPhaseInfo {
+  title: string;
+  /** The phase's one-line `detail`, when the script declared one. */
+  detail?: string;
+}
+
+export interface WorkflowRun {
+  id: WorkflowRunId;
+  sessionId: SessionId;
+  /** `meta.name` from the script — else the saved-workflow name, else the script file's stem. */
+  name: string;
+  /** `meta.description`; empty when the dispatch carried no script to read it from. */
+  description: string;
+  status: WorkflowStatus;
+  /** epoch ms the dispatch was first seen (anchor for the elapsed timer). */
+  startedAt: number;
+  /** epoch ms it reached done/error; absent while running (freezes the timer). */
+  endedAt?: number;
+  /**
+   * The phases the script declared, in order. Empty when the dispatch named a
+   * saved workflow (no script text to parse) — the panel then shows none rather
+   * than inventing progress the stream never reported.
+   */
+  phases: WorkflowPhaseInfo[];
+  /** The harness run id (`wf_…`) parsed out of the dispatch ack; absent until it lands. */
+  runId?: string;
+  /** One line of the newest thing observed for this run (the ack, or the completion notice). */
+  lastActivity?: string;
+}
+
 // ---------- MCP ----------
 
 export type McpStatus = 'connected' | 'connecting' | 'error';
@@ -352,6 +392,7 @@ export type SessionEvent =
   | { type: 'session.commands'; sessionId: SessionId; commands: SlashCommandInfo[] } // slash-menu FR-2: merged registry after an init changed the cli set
   | { type: 'agent.update'; agent: AgentInfo }
   | { type: 'agent.step'; sessionId: SessionId; agentId: AgentId; step: AgentStep } // async-agents FR-10: a trail step was appended, or an existing seq re-emitted with meta filled
+  | { type: 'workflow.update'; run: WorkflowRun } // workflow-panel FR-3: a run was minted, acked, or reached a terminal state
   | { type: 'mcp.update'; sessionId: SessionId; server: McpServerInfo }
   | { type: 'context.usage'; sessionId: SessionId; usedTokens: number; limitTokens: number }
   | { type: 'session.resumeFailed'; sessionId: SessionId } // a --resume turn was rejected; the core continued on a fresh thread (durable-sessions FR-9/14)
