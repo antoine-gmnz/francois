@@ -9,6 +9,7 @@ import { registerBuiltinCommands } from '../features/palette/paletteCommands';
 import PermissionsModal from '../features/permissions/PermissionsModal';
 import ProjectsModal from '../features/projects/ProjectsModal';
 import NewSessionModal from '../features/sessions/NewSessionModal';
+import RenameSessionModal from '../features/sessions/RenameSessionModal';
 import Sidebar from '../features/sessions/Sidebar';
 import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
@@ -47,6 +48,9 @@ export default function App() {
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
+  // session-rename FR-12/FR-14: opened from the sidebar context menu AND the palette.
+  const renameSessionId = useStore((s) => s.renameSessionId);
+  const setRenameSessionId = useStore((s) => s.setRenameSessionId);
   const activeProjectId = useStore((s) => s.activeProjectId);
   const permissionsOpen = useStore((s) => s.permissionsOpen);
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
@@ -118,6 +122,7 @@ export default function App() {
     permissionsOpen,
     projectsOpen,
     accountsOpen,
+    renameOpen: renameSessionId !== null,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,
@@ -240,6 +245,21 @@ export default function App() {
             upsertSession(m);
             if (useStore.getState().newSessionOpen) setActiveSessionId(m.id);
           }}
+        />
+      )}
+
+      {/* session-rename FR-8: the rename modal, keyed to the session so a second
+          open always restarts from that session's current name. Rendered here
+          because both entry points (row context menu, ⌘K) open the same one. */}
+      {/* Gated on the id alone, never on the session still existing: a session
+          removed while the modal is up must stay renameable-looking until the
+          commit answers SESSION_NOT_FOUND (§7), not vanish under the cursor. */}
+      {renameSessionId !== null && (
+        <RenameSessionModal
+          key={renameSessionId}
+          sessionId={renameSessionId}
+          currentName={sessions.find((s) => s.id === renameSessionId)?.name ?? ''}
+          onClose={() => setRenameSessionId(null)}
         />
       )}
 

@@ -28,6 +28,8 @@ export default function Sidebar({ home }: { home: string }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
+  // session-rename FR-8: the rename modal owns the keyboard while it is up.
+  const renameOpen = useStore((s) => s.renameSessionId !== null);
   // projects FR-27: the board's project scope (null = All projects).
   const activeProjectId = useStore((s) => s.activeProjectId);
   const projects = useStore((s) => s.projects);
@@ -86,6 +88,7 @@ export default function Sidebar({ home }: { home: string }) {
     newSessionOpen,
     projectsOpen,
     menuOpen: !!menu,
+    renameOpen,
     selectSession,
     setFocusedPane,
   });
@@ -204,6 +207,12 @@ export default function Sidebar({ home }: { home: string }) {
             // session-worktree FR-17: probe dirty/unpushed only once the confirm
             // step is actually open, and only for a session that has a worktree.
             if (target?.worktree) startWorktreeCheck(menu.sessionId);
+          }}
+          onRename={() => {
+            // session-rename FR-12: the menu closes, the modal (rendered by the
+            // shell, since ⌘K opens the same one) takes over.
+            setMenu(null);
+            useStore.getState().setRenameSessionId(menu.sessionId);
           }}
           onCancel={() => setMenu(null)}
           onToggleRemoveWorktree={() => setMenu((m) => (m ? { ...m, removeWorktree: !m.removeWorktree } : m))}

@@ -66,6 +66,20 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // 1b — Rename session (session-rename FR-14): opens the same modal the sidebar
+  // row's context menu opens, for the ACTIVE session. Not a SecondaryStep — it
+  // acts on one session, so it just opens the modal and closes the palette.
+  registerPaletteCommand({
+    id: 'rename-session',
+    glyph: '✎',
+    name: 'Rename session',
+    // design brief §3: this row carries no right-aligned hint.
+    enabled: (ctx) => ctx.activeSessionId !== null,
+    run: (ctx) => {
+      if (ctx.activeSessionId) useStore.getState().setRenameSessionId(ctx.activeSessionId);
+    },
+  });
+
   // 2 — Switch model (session-engine)
   registerPaletteCommand({
     id: 'switch-model',

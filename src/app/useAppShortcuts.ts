@@ -10,6 +10,8 @@ export interface AppShortcutState {
   projectsOpen: boolean;
   /** multi-account FR-34: the Accounts modal owns a/r/Del/Enter while it is up. */
   accountsOpen: boolean;
+  /** session-rename FR-8: the rename modal suppresses the globals like every other modal. */
+  renameOpen: boolean;
   setNewSessionOpen: (open: boolean) => void;
   setNewAgentOpen: (open: boolean) => void;
   setFocusedPane: (pane: Pane) => void;
@@ -36,6 +38,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
     permissionsOpen,
     projectsOpen,
     accountsOpen,
+    renameOpen,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,
@@ -65,7 +68,8 @@ export function useAppShortcuts(state: AppShortcutState): void {
       const inTerminal = !!activeEl && activeEl.closest('.xterm') !== null;
       // permission-guardrails FR-29 / projects FR-37: an open editor suppresses the
       // single-letter globals too, exactly like the other modals.
-      if (newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || accountsOpen || inInput || inTerminal) return;
+      if (newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || accountsOpen || renameOpen || inInput || inTerminal)
+        return;
       const actions = buildShortcutActions({
         preventDefault: () => e.preventDefault(),
         getActiveSessionId: () => useStore.getState().activeSessionId,
@@ -91,6 +95,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
     permissionsOpen,
     projectsOpen,
     accountsOpen,
+    renameOpen,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,
