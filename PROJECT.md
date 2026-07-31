@@ -38,6 +38,12 @@ A single window (design reference: 1360×864) with a title bar, a three-column g
 
 Every pane is focusable (keys `1`–`5` or click). The focused pane gets an accent ring and accent title. The title bar shows the app name, the active project, and a live pulsing indicator with the number of running agents.
 
+> **This document describes the design mock, not the shipped app.** It stays as the reference
+> for layout, colors, glyphs, and micro-interactions. The app has grown past it — a WORKFLOWS
+> pane `[6]`, an OVERVIEW tab, projects, multi-account + usage bar, permission cards, agent
+> tabs, remote control. The **shipped** feature set is the feature map in
+> [`PIPELINE.md`](PIPELINE.md), and each feature's behavior is its frozen spec in `specs/`.
+
 ## Features
 
 ### 1. Sessions sidebar `[1]`

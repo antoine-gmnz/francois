@@ -1,7 +1,7 @@
 ---
 id: workflow-panel
 title: Workflow panel (pane [6])
-status: frozen
+status: shipped
 created: 2026-07-31
 depends_on: [session-engine, agents-panel, async-agents, app-shell]
 ---

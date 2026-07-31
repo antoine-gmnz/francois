@@ -36,24 +36,34 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 
 **❯ A real shell** — PTY-backed terminal per session (xterm.js + `portable-pty`), in the session's working directory. Not a toy console — your actual shell.
 
-**⇉ The right rail** — live subagent progress, MCP server health (tool counts, handshakes, timeouts), and installed skills, per session.
+**⇉ The right rail** — live subagent progress, MCP server health (tool counts, handshakes, timeouts), installed skills, and running `Workflow` scripts (phases, elapsed, completion), per session. Click an agent card to open its own transcript in a tab.
 
-**⌘K everything** — command palette with fuzzy matching: new session, switch model, run skill, attach MCP server, compact context, kill agent, toggle layout…
+**⌘K everything** — command palette with fuzzy matching: new session, switch model, run skill, attach MCP server, compact context, kill agent, rename a session, toggle layout…
 
-**⟳ Durable sessions** — quit, reopen, and your fleet is still there: transcripts, status, model, context usage. Sessions are resumable, not disposable.
+**⌂ Projects & the OVERVIEW tab** — register your repos once, get per-project session defaults, and a cross-project dashboard: fleet totals, what needs attention, per-project rollup, activity feed.
 
-**▯ A layout that gets out of the way** — `[` and `]` collapse the side columns when you want a full-width diff or transcript. Preferences persist.
+**⚇ Several accounts at once** — run more than one Anthropic account side by side, each with its own config directory, and pick a default per project. A usage bar under the title bar tracks plan limits and the reset clock.
+
+**⇱ Approvals, questions and attachments** — permission cards for gated tool calls (with a rules editor over Claude Code's own `settings.json`), `AskUserQuestion` cards, `/` command autocomplete, arrow-up message recall, and file/clipboard attachments in the composer.
+
+**⇄ Remote control** — hand a session to Claude Code's native Remote Control and keep the same thread going from your phone or claude.ai.
+
+**⟳ Durable sessions** — quit, reopen, and your fleet is still there: transcripts, status, model, context usage. Sessions are resumable, not disposable. Optionally run one in its own `git worktree`.
+
+**▯ A layout that gets out of the way** — `[` and `]` collapse the side columns; `c` collapses an individual right-rail card. Preferences persist.
 
 ## Keyboard
 
 | Key | Action |
 |---|---|
-| `1`–`5` | Focus sessions / main / agents / mcp / skills |
+| `1`–`6` | Focus sessions / main / agents / mcp / skills / workflows |
 | `↑` `↓` `⏎` | Navigate the focused pane · commit selection |
-| `d` / `t` | Toggle DIFF / SHELL tab |
+| `d` / `t` / `o` | Toggle DIFF / SHELL / OVERVIEW tab |
+| `w` | Close the active agent tab |
 | `n` / `a` | New session / new agent |
 | `/` | Filter sessions |
 | `[` / `]` | Show/hide left / right column |
+| `c` | Collapse the focused right-rail card |
 | `⌘K` / `Ctrl+K` | Command palette |
 | `s` / `c` | Stage all / commit (in DIFF) |
 
@@ -112,14 +122,14 @@ separate data directories — run both at once, sessions never collide.
 - **Frontend**: React 18 + TypeScript (`strict`), zustand, xterm.js, plain CSS design tokens, JetBrains Mono.
 - **Contract-first**: every frontend↔core payload shape lives in [`contract/`](contract/) — the Rust core mirrors it with serde. No stringly-typed IPC.
 - **Spec-driven**: every feature ships from a frozen spec in [`specs/`](specs/), through an agent pipeline described in [`PIPELINE.md`](PIPELINE.md). The design reference lives in [`PROJECT.md`](PROJECT.md).
-- **CI**: typecheck + vitest + cargo test on every PR; every push to `main` refreshes the rolling [`dev` release](https://github.com/antoine-gmnz/francois/releases/tag/dev) for all three OSes, attaches installer-free archives, and republishes the [`francois` npm package](packaging/npm) against them.
+- **CI**: typecheck + vitest + cargo test on every PR. Every push to `main` cuts a version — the next semver is derived from the conventional commits since the last tag, built for all three OSes, attached to a GitHub release (installers + installer-free archives), and published to the [`francois` npm package](packaging/npm). No manual step at any point.
 
 ## Roadmap
 
 - **Desktop notifications** — get pinged when a *background* session finishes, errors, or needs you ([spec](specs/notifications.md))
-- **Session brake** — stop a running turn mid-flight, and opt-in `git worktree` isolation so a session's edits never touch your main tree ([spec](specs/session-brake.md))
+- **Session brake** — stop a running turn mid-flight ([spec](specs/session-brake.md))
 - **`francois` CLI** — talk to the running app from any terminal ([spec](specs/cli-companion.md))
-- **Expanded fleet board** — a full-window mission-control view for big fleets
+- **Design refresh** — Console chrome + a Focus reading treatment for the transcript ([spec](specs/design-refresh.md))
 
 ## The name
 
