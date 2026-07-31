@@ -23,7 +23,6 @@ import { useDirectoryPicker } from './useDirectoryPicker';
 import { useWorktreeGroup } from './useWorktreeGroup';
 import { WorktreeField } from './WorktreeField';
 import { submitErrorBanner, worktreeBranchInUsePath } from './worktree';
-import { buildEffortOptions, ultracodeField } from './new-session-form';
 import './new-session-modal.css';
 
 // PermissionMode choices (contract/common.ts): label + the plain-language consequence.
@@ -62,9 +61,6 @@ export default function NewSessionModal({
   const [effort, setEffort] = useState(''); // '' = model default
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [allowGit, setAllowGit] = useState(false);
-  // ultracode: multi-agent workflow orchestration — NOT an effort level, see
-  // new-session-form.ts's ultracodeField and the ULTRACODE row below.
-  const [ultracode, setUltracode] = useState(false);
   const [runtime, setRuntime] = useState<ClaudeRuntime>('native');
   // Reset each modal open (component remounts per open — see App.tsx). Tracks
   // whether the user has explicitly clicked a runtime chip this open, so
@@ -156,9 +152,6 @@ export default function NewSessionModal({
       permissionMode: permissionMode !== 'default' ? permissionMode : undefined,
       runtime: runtime !== 'native' ? runtime : undefined,
       allowGit: allowGit || undefined,
-      // NOT an effort level — orthogonal to `effort`, which still applies per
-      // spawned agent (contract/session-engine.ts SessionCreateInput.ultracode).
-      ultracode: ultracodeField(ultracode),
       // FR-19: sent verbatim; the core does no default merging, so what is on
       // screen right now is exactly what gets created.
       projectId: projectId || undefined,
@@ -287,7 +280,11 @@ export default function NewSessionModal({
           <div>
             <label className="new-session-modal__label">EFFORT</label>
             <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
-              <ChipGroup options={buildEffortOptions(modelEfforts)} value={effort} onChange={setEffort} />
+              <ChipGroup
+                options={[{ value: '', label: 'default' }, ...modelEfforts.map((effort_) => ({ value: effort_, label: effort_ }))]}
+                value={effort}
+                onChange={setEffort}
+              />
             </div>
           </div>
         )}
@@ -311,21 +308,6 @@ export default function NewSessionModal({
           </div>
           <div className="new-session-modal__hint new-session-modal__hint--below-chips">
             auto-approve git &amp; gh commands (commit, push, PRs) without a prompt — other tools still follow the permission setting above
-          </div>
-        </div>
-
-        {/* ultracode: its own lone-toggle row (like GIT above), deliberately NOT
-            a ChipGroup like EFFORT — it is not an effort level, it composes with
-            whatever effort is chosen and fans work out across subagents. */}
-        <div>
-          <label className="new-session-modal__label">ULTRACODE</label>
-          <div className="new-session-modal__chip-row">
-            <Chip selected={ultracode} onClick={() => setUltracode((v) => !v)}>
-              {ultracode ? '✓ ' : ''}multi-agent workflow orchestration
-            </Chip>
-          </div>
-          <div className="new-session-modal__hint new-session-modal__hint--below-chips">
-            fans work out across subagents and uses substantially more tokens than a normal turn
           </div>
         </div>
 

@@ -27,7 +27,6 @@ pub(crate) fn test_session() -> Session {
         permission_mode: "default".into(),
         runtime: "native".into(),
         allow_git: false,
-        ultracode: false,
         project_id: None,
         worktree: None,
         worktree_distro: None,

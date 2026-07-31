@@ -74,10 +74,6 @@ export default function MainTabStrip({ mainTab, setMainTab, diffCount, agentTabs
             </span>
           )}
           {active.runtime === 'wsl' && <span className="app-text-faint">wsl</span>}
-          {/* ultracode: quiet marker, not a status — neutral BadgePill, no accent/status hue */}
-          {active.ultracode && (
-            <BadgePill title="ultracode — multi-agent workflow orchestration, uses substantially more tokens">ultra</BadgePill>
-          )}
           {/* session-worktree FR-13: branch glyph + name, focused session only */}
           {active.worktree && (
             <span title={active.worktree.branch} className="app-text-accent">

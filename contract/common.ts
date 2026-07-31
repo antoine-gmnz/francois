@@ -119,13 +119,6 @@ export interface SessionMeta {
    * back to 'default'. Required: persisted sessions without it load as 'default'.
    */
   accountId: AccountId;
-  /**
-   * True ⇔ this session was created with multi-agent workflow orchestration on.
-   * Set at creation ONLY. Echoed here so the UI can show that a session is
-   * burning tokens on a fanned-out workflow; absent (⇒ false) on sessions
-   * persisted before the flag existed.
-   */
-  ultracode?: boolean;
 }
 
 /** Worktree provenance for a session created with isolation (session-worktree FR-12). */

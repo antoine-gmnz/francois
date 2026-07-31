@@ -9,13 +9,8 @@ import type { ReactNode } from 'react';
 export interface BadgePillProps {
   children: ReactNode;
   className?: string;
-  title?: string;
 }
 
-export function BadgePill({ children, className, title }: BadgePillProps): JSX.Element {
-  return (
-    <span className={className ? `badge-pill ${className}` : 'badge-pill'} title={title}>
-      {children}
-    </span>
-  );
+export function BadgePill({ children, className }: BadgePillProps): JSX.Element {
+  return <span className={className ? `badge-pill ${className}` : 'badge-pill'}>{children}</span>;
 }
