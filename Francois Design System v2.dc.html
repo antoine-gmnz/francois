@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body, #root { margin:0; padding:0; background:#0a0b0e; }
+  * { box-sizing:border-box; }
+  body { font-family:'IBM Plex Sans', system-ui, sans-serif; -webkit-font-smoothing:antialiased; color:#c3c9d4; }
+  a { color:#c3f53f; text-decoration:none; }
+  a:hover { color:#d6fa7e; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+</style>
+</helmet>
+
+<div style="min-height:100vh; background:#0a0b0e; padding:56px 64px 110px;">
+ <div style="max-width:1240px; margin:0 auto; display:flex; flex-direction:column; gap:60px;">
+
+  <header style="display:flex; align-items:flex-end; gap:24px; border-bottom:1px solid #232833; padding-bottom:26px;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#c3f53f;">FRANCOIS · V2</div>
+      <h1 style="margin:10px 0 0; font-size:32px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Design system</h1>
+      <p style="margin:12px 0 0; font-size:14.5px; line-height:1.7; color:#9aa2b1; max-width:72ch; text-wrap:pretty;">Extracted from the redesigned shell. The rule that generates everything else: <span style="color:#d6dae2;">sans carries the interface, mono carries facts</span> — paths, counts, keys, code and elapsed time. Depth comes from three stacked surfaces plus a hairline, never from heavy shadow except on things that float. One acid for action, four desaturated status hues, and a separate tinted family reserved for account identity.</p>
+    </div>
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:7px; text-align:right; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+      <span>IBM Plex Sans 400 / 500 / 600</span>
+      <span>JetBrains Mono 400 / 500</span>
+      <span>radius 5 · 6 · 7 · 8 · 11</span>
+    </div>
+  </header>
+
+  <!-- SURFACES -->
+  <section style="--s:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); display:flex; flex-direction:column; gap:18px;">
+    <div style="display:flex; align-items:baseline; gap:12px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:#c3f53f;">Mark</span>
+      <span style="font-size:12.5px; color:#6b7385;">three slabs, offset — two live, one idle; the accent and the mark are the same decision</span>
+    </div>
+    <div style="display:flex; gap:14px; flex-wrap:wrap;">
+      <div style="display:flex; align-items:center; justify-content:center; gap:28px; padding:26px 34px; background:#0d0f13; border:1px solid #232833; border-radius:10px;">
+        <span style="position:relative; display:inline-block; width:70px; height:64px;">
+          <span style="position:absolute; left:13px; top:0; width:57px; height:17px; clip-path:var(--s); background:#c3f53f;"></span>
+          <span style="position:absolute; left:6.5px; top:23.5px; width:57px; height:17px; clip-path:var(--s); background:#c3f53f;"></span>
+          <span style="position:absolute; left:0; top:47px; width:57px; height:17px; clip-path:var(--s); background:#5f7a1e;"></span>
+        </span>
+        <span style="position:relative; display:inline-block; width:44px; height:40px;">
+          <span style="position:absolute; left:8px; top:0; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span>
+          <span style="position:absolute; left:4px; top:14.5px; width:36px; height:11px; clip-path:var(--s); background:#c3f53f;"></span>
+          <span style="position:absolute; left:0; top:29px; width:36px; height:11px; clip-path:var(--s); background:#5f7a1e;"></span>
+        </span>
+        <span style="position:relative; display:inline-block; width:18px; height:16px;">
+          <span style="position:absolute; left:3px; top:0; width:15px; height:4.5px; clip-path:var(--s); background:#c3f53f;"></span>
+          <span style="position:absolute; left:1.5px; top:5.8px; width:15px; height:4.5px; clip-path:var(--s); background:#c3f53f;"></span>
+          <span style="position:absolute; left:0; top:11.6px; width:15px; height:4.5px; clip-path:var(--s); background:#5f7a1e;"></span>
+        </span>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#565e6e;">64·40·16</span>
+      </div>
+      <div style="flex:1; min-width:280px; display:flex; align-items:center; gap:14px; padding:26px 30px; background:#f4f5f7; border:1px solid #232833; border-radius:10px;">
+        <span style="position:relative; display:inline-block; width:29px; height:26px;">
+          <span style="position:absolute; left:5px; top:0; width:24px; height:7px; clip-path:var(--s); background:#4e6a14;"></span>
+          <span style="position:absolute; left:2.5px; top:9.5px; width:24px; height:7px; clip-path:var(--s); background:#4e6a14;"></span>
+          <span style="position:absolute; left:0; top:19px; width:24px; height:7px; clip-path:var(--s); background:#a8b98a;"></span>
+        </span>
+        <span style="font-size:22px; font-weight:600; letter-spacing:-.02em; color:#14171c;">Francois</span>
+        <span style="flex:1;"></span>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#7b8494;">light: #4e6a14 / #a8b98a</span>
+      </div>
+    </div>
+    <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+      <div style="font-size:11.5px; line-height:1.6; color:#565e6e;">Slab height is 27% of the mark's height, the gap 9%, and each slab steps 6% right of the one below. Clearspace equals one slab height on every side. The bottom slab is always the dim one — it is the idle session, not a shadow, so it never takes the accent.</div>
+    </sc-if>
+  </section>
+
+  <section style="display:flex; flex-direction:column; gap:18px;">
+    <div style="display:flex; align-items:baseline; gap:12px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:#c3f53f;">Surfaces</span>
+      <span style="font-size:12.5px; color:#6b7385;">app → deep → panel → raised → hover: five steps inside 15 points of luminance</span>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:12px;">
+      <sc-for list="{{ surfaces }}" as="c" hint-placeholder-count="5">
+        <div style="border:1px solid #232833; border-radius:8px; overflow:hidden;">
+          <div style="{{ c.swatch }}"></div>
+          <div style="padding:10px 12px; background:#14171d; border-top:1px solid #232833;">
+            <div style="font-size:12.5px; color:#e6e9ef;">{{ c.name }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385; margin-top:3px;">{{ c.hex }}</div>
+            <div style="font-size:11.5px; color:#565e6e; margin-top:6px; line-height:1.45;">{{ c.use }}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:12px;">
+      <sc-for list="{{ lines }}" as="c" hint-placeholder-count="4">
+        <div style="border:1px solid #232833; border-radius:8px; overflow:hidden;">
+          <div style="{{ c.swatch }}"></div>
+          <div style="padding:10px 12px; background:#14171d; border-top:1px solid #232833;">
+            <div style="font-size:12.5px; color:#e6e9ef;">{{ c.name }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385; margin-top:3px;">{{ c.hex }}</div>
+            <div style="font-size:11.5px; color:#565e6e; margin-top:6px; line-height:1.45;">{{ c.use }}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- TEXT -->
+  <section style="display:flex; flex-direction:column; gap:18px;">
+    <div style="display:flex; align-items:baseline; gap:12px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:#c3f53f;">Text</span>
+      <span style="font-size:12.5px; color:#6b7385;">eight steps; hierarchy is contrast first, size second, weight last</span>
+    </div>
+    <div style="border:1px solid #232833; border-radius:8px; background:#14171d; overflow:hidden;">
+      <sc-for list="{{ textLadder }}" as="t" hint-placeholder-count="8">
+        <div style="display:flex; align-items:center; gap:18px; padding:11px 16px; border-bottom:1px solid #1f242d;">
+          <span style="width:104px; flex-shrink:0; font-size:12px; color:#6b7385;">{{ t.name }}</span>
+          <span style="width:76px; flex-shrink:0; font-family:'JetBrains Mono',monospace; font-size:11px; color:#565e6e;">{{ t.hex }}</span>
+          <span style="{{ t.sample }}">Every session at a glance</span>
+          <span style="flex:1;"></span>
+          <span style="width:250px; flex-shrink:0; font-size:11.5px; color:#565e6e; text-align:right;">{{ t.use }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- TYPE ROLES -->
+  <section style="display:flex; flex-direction:column; gap:18px;">
+    <div style="display:flex; align-items:baseline; gap:12px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:#c3f53f;">Type roles</span>
+      <span style="font-size:12.5px; color:#6b7385;">the split is semantic, not decorative</span>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; align-items:baseline; gap:10px;">
+          <span style="font-size:13px; font-weight:600; color:#e6e9ef;">IBM Plex Sans</span>
+          <span style="font-size:11.5px; color:#6b7385;">interface</span>
+        </div>
+        <sc-for list="{{ sansScale }}" as="s" hint-placeholder-count="6">
+          <div style="display:flex; align-items:baseline; gap:14px; border-bottom:1px solid #1f242d; padding-bottom:10px;">
+            <span style="width:96px; flex-shrink:0; font-family:'JetBrains Mono',monospace; font-size:11px; color:#565e6e;">{{ s.spec }}</span>
+            <span style="{{ s.sample }}">{{ s.text }}</span>
+          </div>
+        </sc-for>
+        <div style="font-size:12px; line-height:1.6; color:#6b7385;">Labels, headings, body copy, buttons, tab names, empty states, prose in banners.</div>
+      </div>
+      <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; align-items:baseline; gap:10px;">
+          <span style="font-size:13px; font-weight:600; color:#e6e9ef; font-family:'JetBrains Mono',monospace;">JetBrains Mono</span>
+          <span style="font-size:11.5px; color:#6b7385;">facts</span>
+        </div>
+        <sc-for list="{{ monoScale }}" as="s" hint-placeholder-count="5">
+          <div style="display:flex; align-items:baseline; gap:14px; border-bottom:1px solid #1f242d; padding-bottom:10px;">
+            <span style="width:96px; flex-shrink:0; font-family:'JetBrains Mono',monospace; font-size:11px; color:#565e6e;">{{ s.spec }}</span>
+            <span style="{{ s.sample }}">{{ s.text }}</span>
+          </div>
+        </sc-for>
+        <div style="font-size:12px; line-height:1.6; color:#6b7385;">Paths, identifiers, diffs, token counts, percentages, elapsed time, keyboard hints, version numbers.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ACCENT + STATUS + ACCOUNTS -->
+  <section style="display:flex; flex-direction:column; gap:18px;">
+    <div style="display:flex; align-items:baseline; gap:12px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:#c3f53f;">Colour</span>
+      <span style="font-size:12.5px; color:#6b7385;">one accent, four status hues, three account tints — none of these families borrow from each other</span>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:16px;">
+      <sc-for list="{{ colourGroups }}" as="g" hint-placeholder-count="3">
+        <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:16px 18px; display:flex; flex-direction:column; gap:13px;">
+          <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">{{ g.title }}</div>
+          <div style="font-size:11.5px; line-height:1.55; color:#565e6e;">{{ g.note }}</div>
+          <sc-for list="{{ g.items }}" as="c" hint-placeholder-count="4">
+            <div style="display:flex; align-items:center; gap:11px;">
+              <span style="{{ c.dot }}"></span>
+              <span style="font-size:12.5px; color:#d6dae2; flex:1;">{{ c.name }}</span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">{{ c.hex }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+    <div style="display:flex; align-items:center; gap:22px; padding:16px 18px; background:#14171d; border:1px solid #232833; border-radius:8px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1; flex-shrink:0;">Account tiles</span>
+      <sc-for list="{{ accountTiles }}" as="a" hint-placeholder-count="3">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="{{ a.avatar }}">{{ a.initial }}</span>
+          <div>
+            <div style="font-size:12.5px; color:#e6e9ef;">{{ a.name }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#565e6e; margin-top:2px;">{{ a.hexes }}</div>
+          </div>
+        </div>
+      </sc-for>
+      <span style="flex:1;"></span>
+      <span style="font-size:11.5px; color:#565e6e; max-width:26ch; line-height:1.5; text-align:right;">Tile hue is assigned on sign-in and never reused for status.</span>
+    </div>
+  </section>
+
+  <!-- GEOMETRY -->
+  <section style="display:flex; flex-direction:column; gap:18px;">
+    <div style="display:flex; align-items:baseline; gap:12px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:#c3f53f;">Geometry &amp; elevation</span>
+      <span style="font-size:12.5px; color:#6b7385;">radius grows with the size of the thing; shadow only when it floats</span>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:14px;">
+        <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Radius</div>
+        <div style="display:grid; grid-template-columns:repeat(5, 1fr); align-items:start; gap:14px;">
+          <sc-for list="{{ radii }}" as="r" hint-placeholder-count="5">
+            <div style="display:grid; grid-template-rows:34px auto 1fr; justify-items:center; gap:8px;">
+              <span style="{{ r.box }}"></span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#8b93a3;">{{ r.px }}</span>
+              <span style="font-size:11px; color:#565e6e; text-align:center; line-height:1.4;">{{ r.use }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:14px;">
+        <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Elevation</div>
+        <sc-for list="{{ elevation }}" as="e" hint-placeholder-count="4">
+          <div style="display:flex; align-items:center; gap:16px;">
+            <span style="{{ e.box }}"></span>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:12.5px; color:#e6e9ef;">{{ e.name }}</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#565e6e; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ e.spec }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:18px; padding:16px 18px; background:#14171d; border:1px solid #232833; border-radius:8px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1; flex-shrink:0;">Spacing</span>
+      <sc-for list="{{ spacing }}" as="s" hint-placeholder-count="7">
+        <div style="display:flex; flex-direction:column; align-items:center; gap:7px;">
+          <span style="{{ s.bar }}"></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#8b93a3;">{{ s.px }}</span>
+          <span style="font-size:10.5px; color:#565e6e;">{{ s.use }}</span>
+        </div>
+      </sc-for>
+      <span style="flex:1;"></span>
+      <span style="font-size:11.5px; color:#565e6e; max-width:30ch; line-height:1.5; text-align:right;">Pane gutter is 12; panel padding 11/12; reading column padding 24/26.</span>
+    </div>
+  </section>
+
+  <!-- COMPONENTS -->
+  <section style="display:flex; flex-direction:column; gap:20px;">
+    <div style="display:flex; align-items:baseline; gap:12px;">
+      <span style="font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:#c3f53f;">Components</span>
+      <span style="font-size:12.5px; color:#6b7385;">live parts, lifted from the shell as drawn</span>
+    </div>
+
+    <!-- buttons + controls -->
+    <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:16px;">
+      <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Buttons, chips, meters</div>
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <button type="button" style="height:28px; padding:0 13px; background:#c3f53f; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;" style-hover="background:#d6fa7e">Primary</button>
+        <button type="button" style="height:28px; padding:0 12px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:#d6dae2;" style-hover="background:#232833; border-color:#3c4453">Secondary</button>
+        <button type="button" style="height:28px; padding:0 12px; background:#241a19; border:1px solid #4a2b27; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:#e0918a;" style-hover="background:#2e201e">Destructive</button>
+        <button type="button" style="height:28px; padding:0 12px; background:transparent; border:1px dashed #2d333f; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:#8b93a3;" style-hover="border-color:#3c4453; color:#d6dae2">+ Add</button>
+        <span style="width:1px; height:22px; background:#232833;"></span>
+        <span style="font-size:11px; color:#9aa2b1; background:#232833; border-radius:4px; padding:2px 7px;">Opus 5</span>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#0d0f13; background:#c3f53f; border-radius:9px; padding:1px 7px;">71</span>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3; background:#1f242d; border-radius:10px; padding:1px 7px;">40</span>
+        <span style="font-size:11px; color:#b39ede; background:#1b1826; border:1px solid #2e2a41; border-radius:20px; padding:2px 9px;">subagent</span>
+        <span style="display:flex; align-items:center; gap:6px; font-size:11px; color:#c3f53f; background:#1b240f; border:1px solid #35401f; border-radius:20px; padding:2px 9px;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>working</span>
+        <span style="width:1px; height:22px; background:#232833;"></span>
+        <span style="display:flex; align-items:center; gap:8px;">
+          <span style="width:70px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:23%; height:100%; background:#6f9fd8; border-radius:2px;"></span></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa2b1;">23%</span>
+        </span>
+        <span style="display:flex; align-items:center; gap:8px;">
+          <span style="width:70px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:100%; height:100%; background:#d1685e; border-radius:2px;"></span></span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#e0918a;">100%</span>
+        </span>
+        <span style="width:26px; height:15px; border-radius:8px; background:#c3f53f; position:relative; display:block;"><span style="position:absolute; top:2px; right:2px; width:11px; height:11px; border-radius:50%; background:#11141a; display:block;"></span></span>
+      </div>
+      <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+        <div style="font-size:11.5px; line-height:1.6; color:#565e6e;">Buttons are 27–32px tall, radius 6, label 12–12.5px. Acid is reserved for the single most likely action in a view — never two acid buttons in one row. Meters are 4px tall, radius 2, track <span style="font-family:'JetBrains Mono',monospace;">#232833</span>; the fill hue states what is being measured (blue context, acid quota, red exhausted).</div>
+      </sc-if>
+    </div>
+
+    <!-- tabs -->
+    <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:16px;">
+      <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Tab strip — fixed group + dynamic tabs</div>
+      <div style="display:flex; align-items:center; gap:12px; padding:10px 12px; background:#11141a; border:1px solid #1f242d; border-radius:8px;">
+        <div style="display:flex; align-items:center; gap:2px; padding:3px; background:#0f1217; border:1px solid #1f242d; border-radius:7px; flex-shrink:0;">
+          <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e;">Overview</span>
+          <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:600; color:#f2f4f8; background:#232833; box-shadow:0 1px 2px rgba(0,0,0,.4);">Session</span>
+          <span style="display:flex; align-items:center; gap:6px; padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#c3f53f; border-radius:9px; padding:1px 6px;">71</span></span>
+          <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e;">Shell</span>
+        </div>
+        <span style="width:1px; height:20px; background:#232833;"></span>
+        <div style="display:flex; align-items:center; gap:8px; height:28px; padding:0 8px 0 10px; background:#232833; border:1px solid #3c4453; border-radius:7px; box-shadow:0 1px 3px rgba(0,0,0,.45);">
+          <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
+          <span style="font-size:12.5px; font-weight:600; color:#f2f4f8;">token-sweeper</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3;">2m</span>
+          <span style="font-size:11px; color:#6b7385;">✕</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; height:28px; padding:0 8px 0 10px; background:#12151a; border:1px solid #1f242d; border-radius:7px; min-width:92px;">
+          <span style="width:6px; height:6px; border-radius:50%; background:#4fae86;"></span>
+          <span style="font-size:12.5px; color:#9aa2b1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">test-writer</span>
+          <span style="font-size:11px; color:#565e6e;">✕</span>
+        </div>
+        <span style="display:flex; align-items:center; height:28px; padding:0 9px; border:1px dashed #2d333f; border-radius:7px; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">+1</span>
+      </div>
+      <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+        <div style="font-size:11.5px; line-height:1.6; color:#565e6e;">Fixed views never shrink or reorder. Dynamic tabs live to the right of a hairline divider; the active one holds its intrinsic width, inactive ones truncate down to a 92px floor, and anything beyond that collapses into a <span style="font-family:'JetBrains Mono',monospace;">+N</span> chip pinned outside the scroll zone. <span style="font-family:'JetBrains Mono',monospace;">⌥1-9</span> jumps, <span style="font-family:'JetBrains Mono',monospace;">⌘W</span> closes.</div>
+      </sc-if>
+    </div>
+
+    <!-- session card + rows -->
+    <div style="display:grid; grid-template-columns:300px 1fr; gap:16px; align-items:start;">
+      <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:14px; display:flex; flex-direction:column; gap:12px;">
+        <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Session card</div>
+        <div style="position:relative; display:flex; flex-direction:column; gap:7px; padding:11px 12px 11px 14px; border-radius:7px; background:#1c212a; box-shadow:inset 0 0 0 1px #333a48;">
+          <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#c3f53f;"></span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="width:19px; height:19px; border-radius:5px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:600; background:#1b2836; border:1px solid #2e4a63; color:#9cc2e4;">W</span>
+            <span style="flex:1; min-width:0; font-size:13.5px; font-weight:600; color:#f2f4f8;">Refactoring</span>
+            <span style="display:flex; align-items:center; gap:5px;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span><span style="font-size:11px; color:#c3f53f;">working</span></span>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385; margin-left:27px;">D:\francois</div>
+          <div style="display:flex; align-items:center; gap:8px; margin-left:27px;">
+            <span style="font-size:10.5px; color:#9aa2b1; background:#232833; border-radius:4px; padding:2px 6px;">Opus 5</span>
+            <span style="flex:1; height:3px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:11%; height:100%; background:#6f9fd8; border-radius:2px;"></span></span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3;">105K</span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#565e6e;">38m</span>
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:7px; padding:11px 12px; border-radius:7px; background:#161a21; box-shadow:inset 0 0 0 1px #1f242d;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="width:19px; height:19px; border-radius:5px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:600; background:#18262a; border:1px solid #2c4a4a; color:#9fd0cd;">P</span>
+            <span style="flex:1; min-width:0; font-size:13.5px; font-weight:500; color:#d6dae2;">francois</span>
+            <span style="font-size:11px; color:#6b7385;">ready</span>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#565e6e; margin-left:27px;">D:\francois</div>
+        </div>
+        <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+          <div style="font-size:11.5px; line-height:1.6; color:#565e6e;">Selected state = raised surface + 1px inset ring + 2px acid spine. Everything after the title indents to 27px so the account tiles form a single scannable column.</div>
+        </sc-if>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:14px 16px; display:flex; flex-direction:column; gap:12px;">
+          <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Panel header · roster row · collapsed row</div>
+          <div style="border:1px solid #1f242d; border-radius:7px; overflow:hidden;">
+            <div style="display:flex; align-items:center; gap:9px; padding:11px 12px; border-bottom:1px solid #1f242d; background:#14171d;">
+              <span style="font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:#9aa2b1;">Agents</span>
+              <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#c3f53f;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
+              <span style="flex:1;"></span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e; border:1px solid #2d333f; border-radius:4px; padding:1px 5px;">3</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:9px; padding:9px 12px; background:#1c212a;">
+              <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
+              <span style="flex:1; font-size:12.5px; font-weight:600; color:#f2f4f8;">token-sweeper</span>
+              <span style="font-size:10.5px; color:#8b93a3; background:#2b323d; border-radius:4px; padding:1px 6px;">tab</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:9px; padding:9px 12px; background:#14171d;">
+              <span style="width:6px; height:6px; border-radius:50%; background:#4fae86;"></span>
+              <span style="flex:1; font-size:12.5px; color:#c3c9d4;">doc-check</span>
+              <span style="font-size:10.5px; color:#565e6e;">tab ↗</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:9px; padding:11px 12px; border-top:1px solid #1f242d; background:#14171d;">
+              <span style="font-size:9px; color:#565e6e; width:8px;">▸</span>
+              <span style="font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:#9aa2b1;">MCP</span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3; background:#1f242d; border-radius:10px; padding:1px 7px;">4</span>
+              <span style="flex:1;"></span>
+              <span style="font-size:11px; color:#565e6e;">2 connected</span>
+            </div>
+          </div>
+          <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size:11.5px; line-height:1.6; color:#565e6e;">An idle panel folds to a single 38px row that still reports its count and one summary phrase. Rails never show an empty box with "nothing yet" — the fold is the empty state.</div>
+          </sc-if>
+        </div>
+
+        <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:14px 16px; display:flex; flex-direction:column; gap:12px;">
+          <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Tool-call block</div>
+          <div style="display:flex; flex-direction:column; gap:1px; background:#1c2027; border:1px solid #22262f; border-radius:9px; overflow:hidden;">
+            <sc-for list="{{ toolCalls }}" as="t" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:12px; padding:10px 14px; background:#12151a;">
+                <span style="width:14px; text-align:center; font-size:12px; color:#8fbab8; flex-shrink:0;">{{ t.glyph }}</span>
+                <span style="font-size:12.5px; color:#8b93a3; width:52px; flex-shrink:0;">{{ t.kind }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#d6dae2; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ t.target }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:11.5px; color:#6b7385; flex-shrink:0;">{{ t.meta }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size:11.5px; line-height:1.6; color:#565e6e;">Consecutive tool calls collapse into one bordered block separated by 1px gaps — a single object in the transcript, not a stack of cards. Glyph teal, verb sans, target mono, metrics right-aligned mono.</div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+
+    <!-- transcript + composer + banner -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start;">
+      <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:16px 18px; display:flex; flex-direction:column; gap:14px;">
+        <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Transcript &amp; composer</div>
+        <div style="display:flex; flex-direction:column; gap:8px; padding:14px 16px; background:#171b22; border:1px solid #22262f; border-radius:10px;">
+          <span style="font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:#8b93a3;">You</span>
+          <span style="font-size:15px; line-height:1.65; color:#e6e9ef; text-wrap:pretty;">Make the right rail collapse when nothing is running.</span>
+        </div>
+        <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Reading the token surface first<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#c3f53f; animation:blink 1s step-end infinite;"></span></div>
+        <div style="display:flex; align-items:flex-end; gap:12px; padding:13px 15px; background:#1a1e26; border:1px solid #2d333f; border-radius:11px; box-shadow:0 8px 24px rgba(0,0,0,.4);">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#c3f53f;">›</span>
+          <span style="flex:1; font-size:14.5px; line-height:1.5; color:#565e6e;">Reply, or press <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#8b93a3;">/</span> for commands</span>
+          <button type="button" style="height:28px; padding:0 13px; background:#c3f53f; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;">Send</button>
+        </div>
+        <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+          <div style="font-size:11.5px; line-height:1.6; color:#565e6e;">Reading column caps at 680px inside a pane, 760 full-width. Body 15px / 1.7. The prompt is a card; the model's reply is bare text on the pane — the asymmetry is what makes the transcript scannable.</div>
+        </sc-if>
+      </div>
+
+      <div style="background:#14171d; border:1px solid #232833; border-radius:8px; padding:16px 18px; display:flex; flex-direction:column; gap:14px;">
+        <div style="font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#9aa2b1;">Banners</div>
+        <div style="display:flex; align-items:center; gap:12px; padding:11px 16px; background:#1c1413; border:1px solid #4a2b27; border-radius:8px;">
+          <span style="width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:600; background:#2a1a19; border:1px solid #4a2b27; color:#e0918a;">O</span>
+          <span style="flex:1; min-width:0; font-size:13px; line-height:1.5; color:#d6dae2;"><span style="font-weight:600;">ops@acme.dev</span> hit its weekly limit — <span style="color:#e0918a;">cartograph</span> is paused.</span>
+          <button type="button" style="height:27px; padding:0 11px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12px; color:#d6dae2; flex-shrink:0;">Wait</button>
+          <button type="button" style="height:27px; padding:0 11px; background:#c3f53f; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12px; font-weight:600; color:#0d0f13; flex-shrink:0;">Reroute</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px; padding:13px 16px; background:#16141f; border:1px solid #2e2a41; border-radius:10px;">
+          <span style="font-size:13px; color:#b39ede;">⇉</span>
+          <span style="flex:1; font-size:14px; line-height:1.6; color:#c3c9d4;"><span style="font-weight:600; color:#cbb9ec;">token-sweeper</span> is rewriting literals across <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px;">src/features/**</span></span>
+          <span style="font-size:12px; color:#6b7385;">2m</span>
+        </div>
+        <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+          <div style="font-size:11.5px; line-height:1.6; color:#565e6e;">A banner always states the cause, the consequence, and at most two actions — the recovering one in acid. Purple is only ever subagent provenance.</div>
+        </sc-if>
+      </div>
+    </div>
+  </section>
+
+  <!-- RULES -->
+  <sc-if value="{{ showDoNots }}" hint-placeholder-val="{{ true }}">
+    <section style="display:flex; flex-direction:column; gap:18px;">
+      <div style="display:flex; align-items:baseline; gap:12px;">
+        <span style="font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:#c3f53f;">Rules</span>
+        <span style="font-size:12.5px; color:#6b7385;">what keeps the density readable</span>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <sc-for list="{{ rules }}" as="r" hint-placeholder-count="6">
+          <div style="display:flex; gap:14px; padding:16px 18px; background:#14171d; border:1px solid #232833; border-radius:8px;">
+            <span style="{{ r.mark }}">{{ r.glyph }}</span>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:13.5px; font-weight:600; color:#e6e9ef;">{{ r.title }}</div>
+              <div style="font-size:12.5px; line-height:1.6; color:#8b93a3; margin-top:6px; text-wrap:pretty;">{{ r.body }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </sc-if>
+
+  <footer style="border-top:1px solid #232833; padding-top:22px; display:flex; align-items:baseline; gap:16px;">
+    <span style="font-size:12.5px; color:#6b7385;">Light theme is a token override of this same system — surfaces invert to near-white, the acid darkens to <span style="font-family:'JetBrains Mono',monospace; color:#c3f53f;">#4e6a14</span>, status hues darken for contrast. Geometry, type and spacing do not change.</span>
+    <span style="flex:1;"></span>
+    <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#565e6e;">extracted from 4a</span>
+  </footer>
+ </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showSpecs&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Annotations&quot;},&quot;showDoNots&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Annotations&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const sw = (hex) => `height:56px; background:${hex};`;
+    const tile = (bg, bd, fg) => `width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:600; background:${bg}; border:1px solid ${bd}; color:${fg};`;
+    const dot = (hex) => `width:9px; height:9px; border-radius:50%; background:${hex}; flex-shrink:0;`;
+    return {
+      showSpecs: this.props.showSpecs ?? true,
+      showDoNots: this.props.showDoNots ?? true,
+      surfaces: [
+        { name: 'app', hex: '#0d0f13', swatch: sw('#0d0f13'), use: 'window ground, behind the panes' },
+        { name: 'deep', hex: '#11141a', swatch: sw('#11141a'), use: 'titlebar, status bar, composer well' },
+        { name: 'panel', hex: '#14171d', swatch: sw('#14171d'), use: 'every pane and card body' },
+        { name: 'raised', hex: '#1c212a', swatch: sw('#1c212a'), use: 'selected row, active tab' },
+        { name: 'hover', hex: '#232833', swatch: sw('#232833'), use: 'hover, chips, meter track' }
+      ],
+      lines: [
+        { name: 'inner hairline', hex: '#1f242d', swatch: sw('#1f242d'), use: 'dividers inside a pane' },
+        { name: 'border', hex: '#232833', swatch: sw('#232833'), use: 'pane and card edge' },
+        { name: 'border strong', hex: '#2d333f', swatch: sw('#2d333f'), use: 'buttons, inputs, dashed slots' },
+        { name: 'border active', hex: '#3c4453', swatch: sw('#3c4453'), use: 'focus, active tab, hover edge' },
+        { name: 'overlay edge', hex: '#303845', swatch: sw('#303845'), use: 'floating cards and popovers' }
+      ],
+      textLadder: [
+        { name: 'bright', hex: '#f2f4f8', use: 'headings, active tab, session title', sample: "font-size:15px; font-weight:600; color:#f2f4f8;" },
+        { name: 'default', hex: '#e6e9ef', use: 'prompt text, panel item names', sample: "font-size:15px; color:#e6e9ef;" },
+        { name: 'strong', hex: '#d6dae2', use: 'secondary button labels, banner copy', sample: "font-size:14px; color:#d6dae2;" },
+        { name: 'body', hex: '#c3c9d4', use: 'assistant prose, list values', sample: "font-size:14px; color:#c3c9d4;" },
+        { name: 'label', hex: '#9aa2b1', use: 'panel titles, inactive tabs, meta', sample: "font-size:13px; color:#9aa2b1;" },
+        { name: 'meta', hex: '#8b93a3', use: 'counts, tool verbs, sub-copy', sample: "font-size:12.5px; color:#8b93a3;" },
+        { name: 'dim', hex: '#6b7385', use: 'paths, timestamps, hints', sample: "font-size:12px; color:#6b7385;" },
+        { name: 'faint', hex: '#565e6e', use: 'annotations, disabled, resets', sample: "font-size:11.5px; color:#565e6e;" }
+      ],
+      sansScale: [
+        { spec: '17 / 600', text: 'Session title', sample: 'font-size:17px; font-weight:600; letter-spacing:-.01em; color:#f2f4f8;' },
+        { spec: '15 / 400', text: 'Transcript body copy', sample: 'font-size:15px; line-height:1.7; color:#c3c9d4;' },
+        { spec: '13.5 / 600', text: 'Card title', sample: 'font-size:13.5px; font-weight:600; color:#f2f4f8;' },
+        { spec: '12.5 / 500', text: 'Tab · button label', sample: 'font-size:12.5px; font-weight:500; color:#d6dae2;' },
+        { spec: '11.5 / 600 · .09em', text: 'PANEL TITLE', sample: 'font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:#9aa2b1;' },
+        { spec: '11 / 400', text: 'Status and hint text', sample: 'font-size:11px; color:#6b7385;' }
+      ],
+      monoScale: [
+        { spec: '13 / 400', text: 'src/app/store.ts', sample: "font-family:'JetBrains Mono',monospace; font-size:13px; color:#d6dae2;" },
+        { spec: '12.5 / 400', text: 'diff + 34 − 19', sample: "font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#c3c9d4;" },
+        { spec: '11 / 400', text: '105.2K/1M · 38m', sample: "font-family:'JetBrains Mono',monospace; font-size:11px; color:#8b93a3;" },
+        { spec: '10.5 / 400', text: '⌘K · ⌥1-9 · esc', sample: "font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3;" },
+        { spec: '10 / 400', text: '0.14.0', sample: "font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;" }
+      ],
+      colourGroups: [
+        {
+          title: 'Accent',
+          note: 'One acid. Action, focus, the live thing.',
+          items: [
+            { name: 'accent', hex: '#c3f53f', dot: dot('#c3f53f') },
+            { name: 'accent hover', hex: '#d6fa7e', dot: dot('#d6fa7e') },
+            { name: 'accent soft bg', hex: '#1b240f', dot: dot('#1b240f') },
+            { name: 'accent soft edge', hex: '#35401f', dot: dot('#35401f') }
+          ]
+        },
+        {
+          title: 'Status',
+          note: 'Acid = working, green = ready, red = failed or blocked, blue = measurement.',
+          items: [
+            { name: 'running', hex: '#c3f53f', dot: dot('#c3f53f') },
+            { name: 'ready', hex: '#4fae86', dot: dot('#4fae86') },
+            { name: 'error', hex: '#d1685e', dot: dot('#d1685e') },
+            { name: 'error text', hex: '#e0918a', dot: dot('#e0918a') },
+            { name: 'context', hex: '#6f9fd8', dot: dot('#6f9fd8') }
+          ]
+        },
+        {
+          title: 'Semantic',
+          note: 'Teal marks tool activity, purple marks subagent provenance. Never decorative.',
+          items: [
+            { name: 'tool glyph', hex: '#8fbab8', dot: dot('#8fbab8') },
+            { name: 'subagent', hex: '#b39ede', dot: dot('#b39ede') },
+            { name: 'subagent name', hex: '#cbb9ec', dot: dot('#cbb9ec') },
+            { name: 'diff add', hex: '#9dbb98', dot: dot('#9dbb98') },
+            { name: 'diff remove', hex: '#d68f86', dot: dot('#d68f86') }
+          ]
+        }
+      ],
+      accountTiles: [
+        { initial: 'W', name: 'blue · work', hexes: '#1b2836 / #2e4a63 / #9cc2e4', avatar: tile('#1b2836', '#2e4a63', '#9cc2e4') },
+        { initial: 'P', name: 'teal · personal', hexes: '#18262a / #2c4a4a / #9fd0cd', avatar: tile('#18262a', '#2c4a4a', '#9fd0cd') },
+        { initial: 'O', name: 'red · limited', hexes: '#2a1a19 / #4a2b27 / #e0918a', avatar: tile('#2a1a19', '#4a2b27', '#e0918a') }
+      ],
+      radii: [
+        { px: '5', use: 'inner tab pill', box: 'width:54px; height:34px; border-radius:5px; background:#1c212a; box-shadow:inset 0 0 0 1px #2d333f; display:block;' },
+        { px: '6', use: 'button, chip, row', box: 'width:54px; height:34px; border-radius:6px; background:#1c212a; box-shadow:inset 0 0 0 1px #2d333f; display:block;' },
+        { px: '7', use: 'card, tab', box: 'width:54px; height:34px; border-radius:7px; background:#1c212a; box-shadow:inset 0 0 0 1px #2d333f; display:block;' },
+        { px: '8', use: 'pane', box: 'width:54px; height:34px; border-radius:8px; background:#1c212a; box-shadow:inset 0 0 0 1px #2d333f; display:block;' },
+        { px: '11', use: 'window, overlay, composer', box: 'width:54px; height:34px; border-radius:11px; background:#1c212a; box-shadow:inset 0 0 0 1px #2d333f; display:block;' }
+      ],
+      elevation: [
+        { name: 'pane — border only', spec: '1px solid #232833', box: 'width:64px; height:38px; border-radius:8px; background:#14171d; border:1px solid #232833; display:block; flex-shrink:0;' },
+        { name: 'raised row', spec: 'inset 0 0 0 1px #333a48', box: 'width:64px; height:38px; border-radius:7px; background:#1c212a; box-shadow:inset 0 0 0 1px #333a48; display:block; flex-shrink:0;' },
+        { name: 'composer', spec: '0 8px 24px rgba(0,0,0,.4)', box: 'width:64px; height:38px; border-radius:11px; background:#1a1e26; border:1px solid #2d333f; box-shadow:0 8px 24px rgba(0,0,0,.4); display:block; flex-shrink:0;' },
+        { name: 'overlay', spec: '0 30px 70px -18px rgba(0,0,0,.9)', box: 'width:64px; height:38px; border-radius:11px; background:#171b22; border:1px solid #303845; box-shadow:0 30px 70px -18px rgba(0,0,0,.9); display:block; flex-shrink:0;' }
+      ],
+      spacing: [
+        { px: '6', use: 'tab gap', bar: 'width:6px; height:26px; background:#2d333f; border-radius:2px; display:block;' },
+        { px: '8', use: 'row gap', bar: 'width:8px; height:26px; background:#2d333f; border-radius:2px; display:block;' },
+        { px: '10', use: 'panel gap', bar: 'width:10px; height:26px; background:#2d333f; border-radius:2px; display:block;' },
+        { px: '12', use: 'pane gutter', bar: 'width:12px; height:26px; background:#3c4453; border-radius:2px; display:block;' },
+        { px: '16', use: 'block gap', bar: 'width:16px; height:26px; background:#2d333f; border-radius:2px; display:block;' },
+        { px: '22', use: 'transcript gap', bar: 'width:22px; height:26px; background:#2d333f; border-radius:2px; display:block;' },
+        { px: '26', use: 'reading pad', bar: 'width:26px; height:26px; background:#2d333f; border-radius:2px; display:block;' }
+      ],
+      toolCalls: [
+        { glyph: '⧉', kind: 'Read', target: 'src/styles.css', meta: '986 lines' },
+        { glyph: '⌕', kind: 'Grep', target: 'fontSize: 1', meta: '412 matches · 31 files' },
+        { glyph: '✎', kind: 'Edit', target: 'src/app/store.ts', meta: '+34 −19' }
+      ],
+      rules: [
+        { glyph: '✓', title: 'Mono earns its place', body: 'If a string is something you could copy into a terminal — a path, a flag, a count, a key — it is mono. Everything else is sans. No mono headings, no sans file paths.', mark: 'width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:11px; background:#182219; border:1px solid #2c4a2e; color:#8fc394;' },
+        { glyph: '✓', title: 'One acid per view', body: 'Acid marks the live thing and the recovering action. Two acid buttons in one screen means neither is the answer.', mark: 'width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:11px; background:#182219; border:1px solid #2c4a2e; color:#8fc394;' },
+        { glyph: '✓', title: 'Idle folds, never empties', body: 'A panel with nothing in it collapses to one row carrying its count and a summary phrase. Space belongs to whatever is actually running.', mark: 'width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:11px; background:#182219; border:1px solid #2c4a2e; color:#8fc394;' },
+        { glyph: '✕', title: 'No shadow on flat surfaces', body: 'Panes and rows are separated by hairlines and one luminance step. Shadow is reserved for the composer, popovers, and the window itself.', mark: 'width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:11px; background:#241a19; border:1px solid #4a2b27; color:#e0918a;' },
+        { glyph: '✕', title: 'Status hues are not decoration', body: 'Green, red, teal, purple and blue each mean one thing. Do not tint a badge blue because it looks calmer — blue means measurement.', mark: 'width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:11px; background:#241a19; border:1px solid #4a2b27; color:#e0918a;' },
+        { glyph: '✕', title: 'Never shrink the fixed frame', body: 'Dynamic content (agent tabs, session lists, file strips) truncates or overflows into a +N chip. The fixed views, titlebar and status bar keep their size at every window width.', mark: 'width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:11px; background:#241a19; border:1px solid #4a2b27; color:#e0918a;' }
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>

@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppError, McpServerInfo, SessionEvent } from '../../../contract/common';
-import type { McpRegistryEntry, McpServerDetail } from '../../../contract/mcp-panel';
-import { mcpDetach, mcpDetail, mcpList, mcpReconnect, onSessionEvent } from '../../lib/api';
+import type { McpApprovalState, McpDecision, McpRegistryEntry, McpServerDetail } from '../../../contract/mcp-panel';
+import { mcpApprovals, mcpDecide, mcpDetach, mcpDetail, mcpList, mcpReconnect, onSessionEvent } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { HintBar } from '../../ui/HintBar';
 import { StatusDot } from '../../ui/StatusDot';
-import { detailText, dotColor, scopeColor, scopeText } from './mcp';
+import { approvalSummary, approveAllDecision, canReconnect, detailText, dotColor, hasApprovalWork, isApprovable, scopeColor, scopeText } from './mcp';
 import { useAttachFlow } from './useAttachFlow';
 import { RegistryStep } from './RegistryStep';
 import { ParamsStep } from './ParamsStep';
@@ -17,6 +17,10 @@ import './mcp.css';
 function useMcpServers(sessionId: string | null) {
   const [servers, setServers] = useState<McpServerInfo[]>([]);
   const [listError, setListError] = useState<AppError | null>(null);
+  // Bumped after a decision: approving a server changes its row's status, and the
+  // status is resolved in the core (against ~/.claude.json), not derivable here.
+  const [reloads, setReloads] = useState(0);
+  const reload = useCallback(() => setReloads((n) => n + 1), []);
 
   // Hydration + live mcp.update (FR-1/2/3/28).
   useEffect(() => {
@@ -51,9 +55,54 @@ function useMcpServers(sessionId: string | null) {
       mounted = false;
       if (unlisten) unlisten();
     };
+  }, [sessionId, reloads]);
+
+  return { servers, setServers, listError, reload };
+}
+
+// ---------- first-run approval hook ----------
+
+/**
+ * The project's MCP-consent / folder-trust state, and the one call that answers
+ * it. Kept beside the server list rather than folded into it because the two
+ * answer different questions: `mcp_list` says what each server IS doing,
+ * `mcp_approvals` says what Claude Code will ASK before any of them can.
+ */
+function useApprovals(sessionId: string | null, onDecided: () => void) {
+  const [approvals, setApprovals] = useState<McpApprovalState | null>(null);
+  const [deciding, setDeciding] = useState(false);
+  const [decideError, setDecideError] = useState<AppError | null>(null);
+
+  useEffect(() => {
+    setApprovals(null);
+    setDecideError(null);
+    if (!sessionId) return;
+    let mounted = true;
+    void mcpApprovals(sessionId).then((res) => {
+      if (mounted && res.ok) setApprovals(res.data);
+    });
+    return () => {
+      mounted = false;
+    };
   }, [sessionId]);
 
-  return { servers, setServers, listError };
+  const decide = useCallback(
+    async (decision: McpDecision) => {
+      if (!sessionId || deciding) return;
+      setDeciding(true);
+      setDecideError(null);
+      const res = await mcpDecide(sessionId, decision);
+      if (res.ok) {
+        setApprovals(res.data);
+        // The rows carry the approval status, so they have to be re-read too.
+        onDecided();
+      } else setDecideError(res.error);
+      setDeciding(false);
+    },
+    [sessionId, deciding, onDecided],
+  );
+
+  return { approvals, decide, deciding, decideError };
 }
 
 export default function McpPanel({ sessionId, collapsed }: { sessionId: string | null; collapsed: boolean }) {
@@ -64,7 +113,8 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
   const attachOpen = useStore((s) => s.mcpAttachOpen);
   const setAttachOpen = useStore((s) => s.setMcpAttachOpen);
 
-  const { servers, setServers, listError } = useMcpServers(sessionId);
+  const { servers, setServers, listError, reload } = useMcpServers(sessionId);
+  const { approvals, decide, deciding, decideError } = useApprovals(sessionId, reload);
   const [selected, setSelected] = useState(0);
   const [popover, setPopover] = useState<{ name: string; top: number; left: number } | null>(null);
   const focused = focusedPane === 'mcp';
@@ -150,6 +200,15 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
         </div>
       </div>
 
+      {!collapsed && hasApprovalWork(approvals) && approvals && (
+        <ApprovalBanner
+          state={approvals}
+          busy={deciding}
+          error={decideError}
+          onApproveAll={() => void decide(approveAllDecision(approvals))}
+        />
+      )}
+
       {!collapsed && (
         <div ref={rowsRef} className="scz mcp-rows">
           {listError ? (
@@ -178,6 +237,7 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
           name={popover.name}
           top={popover.top}
           left={popover.left}
+          onDecide={decide}
           onClose={() => setPopover(null)}
           onReconnected={(name) =>
             setServers((prev) =>
@@ -195,6 +255,50 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
         <AttachOverlay sessionId={sessionId} existing={existingNames} onClose={() => setAttachOpen(false)} />
       )}
     </section>
+  );
+}
+
+// ---------- first-run approval banner ----------
+
+/**
+ * The one thing a user opening an unapproved project needs: a statement of what
+ * Claude Code is waiting on, and one click that answers it. The per-server
+ * Approve/Reject pair lives in the detail popover for anyone who wants to decide
+ * server by server; this is the "yes, all of it" path the CLI's own dialog offers.
+ */
+function ApprovalBanner({
+  state,
+  busy,
+  error,
+  onApproveAll,
+}: {
+  state: McpApprovalState;
+  busy: boolean;
+  error: AppError | null;
+  onApproveAll: () => void;
+}) {
+  return (
+    <div className="mcp-approval" onClick={(e) => e.stopPropagation()}>
+      <div className="mcp-approval-row">
+        <span className="mcp-approval-text truncate" title={state.pending.join(', ')}>
+          {approvalSummary(state)}
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={onApproveAll}
+          className={busy ? 'mcp-action-link mcp-action-link--dim' : 'mcp-action-link'}
+        >
+          {busy ? 'saving…' : 'approve all'}
+        </span>
+      </div>
+      <div className="mcp-approval-note">
+        {state.trustRequired && state.pending.length === 0
+          ? 'Claude Code asks before running in a folder it has not seen. Remote Control cannot start until it is answered.'
+          : 'Servers take effect on this session’s next turn.'}
+      </div>
+      {error && <div className="mcp-approval-error">{error.message}</div>}
+    </div>
   );
 }
 
@@ -247,6 +351,7 @@ function DetailPopover({
   top,
   left,
   onClose,
+  onDecide,
   onReconnected,
   onDetached,
 }: {
@@ -255,6 +360,7 @@ function DetailPopover({
   top: number;
   left: number;
   onClose: () => void;
+  onDecide: (decision: McpDecision) => Promise<void>;
   onReconnected: (name: string) => void;
   onDetached: (name: string) => void;
 }) {
@@ -309,11 +415,45 @@ function DetailPopover({
             {data.transport === 'http' && data.url && <Field label="URL" value={data.url} mono />}
             {data.status === 'connected' && <Field label="TOOLS" value={String(data.toolCount ?? 0)} />}
             {data.status === 'error' && data.errorMessage && <Field label="ERROR" value={data.errorMessage} color="var(--error)" />}
+            {isApprovable(data.status) && (
+              <Field
+                label="APPROVAL"
+                value={
+                  data.status === 'rejected'
+                    ? 'refused for this project — Claude Code will not start it'
+                    : data.status === 'approved'
+                      ? 'approved for this project — starts on the next turn'
+                      : 'Claude Code asks before running a server declared by the repo'
+                }
+                color={data.status === 'approved' ? 'var(--text-dim)' : 'var(--warn)'}
+              />
+            )}
           </>
         ) : null}
 
         {actionError && <span className="mcp-popover-action-error">{actionError.message}</span>}
       </div>
+
+      {data && isApprovable(data.status) && (
+        <div className="mcp-popover-footer">
+          {data.status !== 'approved' && (
+            <span
+              onClick={() => void onDecide({ approve: [name], reject: [], trust: false }).then(onClose)}
+              className="mcp-action-link"
+            >
+              Approve
+            </span>
+          )}
+          {data.status !== 'rejected' && (
+            <span
+              onClick={() => void onDecide({ approve: [], reject: [name], trust: false }).then(onClose)}
+              className="mcp-action-link mcp-action-link--dim"
+            >
+              Reject
+            </span>
+          )}
+        </div>
+      )}
 
       {data && (
         <div className="mcp-popover-footer">
@@ -329,9 +469,14 @@ function DetailPopover({
             </>
           ) : (
             <>
-              <span onClick={() => void reconnect()} className="mcp-action-link">
-                Reconnect
-              </span>
+              {/* Reconnect only re-flags `connecting`, which for a server the session
+                  has not started — undecided OR merely approved — would paint the very
+                  handshake-that-never-completes this feature exists to remove. */}
+              {canReconnect(data.status) && (
+                <span onClick={() => void reconnect()} className="mcp-action-link">
+                  Reconnect
+                </span>
+              )}
               {(!data.scope || data.scope === 'project') && (
                 <span onClick={() => setConfirming(true)} className="mcp-action-link">
                   Detach

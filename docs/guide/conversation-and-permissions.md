@@ -25,9 +25,55 @@ or an app remount without gaps or repeated text.
 
 The transcript stays pinned to the bottom while new content arrives. Scrolling up to read history
 unpins it and shows a "jump to latest" pill; clicking the pill, or sending a new message, re-pins and
-scrolls back down. The composer below the transcript accepts multi-line input (`Shift+Enter` for a
-newline, `Enter` to send), lets you send while the assistant is still running (the message queues),
-and disables itself with an explanatory hint once the session has ended or errored.
+scrolls back down. The transcript reads inside a measured ~680px column rather than sprawling to the
+window width, with prompt cards for what you sent, grouped tool blocks, and a purple banner for
+subagent dispatches.
+
+The composer below it is a card with a visible **Send** button and a hint row. It accepts multi-line
+input (`Shift+Enter` for a newline, `Enter` to send), grows with the draft, lets you send while the
+assistant is still running (the message queues), and disables itself with an explanatory hint once
+the session has ended or errored.
+
+## Recalling what you already sent
+
+The composer keeps this session's sent messages and walks back through them with `↑`/`↓`, the way
+the Claude Code CLI and any readline shell do. `↑` is intercepted only when it wouldn't be doing
+something more useful — no slash menu open, nothing selected, and the caret already on the first
+line of the draft — so ordinary caret movement inside a multi-line message still works. Walking
+back past the newest entry with `↓` restores whatever draft you had in the box before you started
+browsing, so recall never eats work in progress, and any edit while browsing drops you straight
+back into normal typing.
+
+History is per session, capped at 100 entries, and skips anything starting with `/` (slash
+commands stay out) and anything whose send failed. It lives only in memory — quitting the app
+clears it — and never leaves the frontend.
+
+## Attaching files and screenshots
+
+Three gestures attach something to a turn: **drop** files onto the SESSION tab, **paste** an image
+from the clipboard into the composer, or use the composer's **`+`** button for a native file
+picker. All three collapse to the same two steps — get the bytes somewhere the session can read
+them, then insert an `@<path>` ref at the caret.
+
+- A file already under the session's working directory is referenced **in place**, never copied.
+- Anything else is copied into `<session cwd>/.francois/attachments/<session>/`, and clipboard
+  images are written there as `pasted-<date>-<time>.png`. That `.francois/` tree carries its own
+  `.gitignore` (`*`), so attachments never show up in the DIFF tab and Francois never edits your
+  own `.gitignore`. Nothing is ever overwritten — a name collision gets a `-2`, `-3` suffix.
+- Refs are always **relative and POSIX-separated**, which is what makes this work unchanged for a
+  WSL session.
+- Files over 10 MiB are refused, as are directories. A multi-file drop attaches each entry
+  independently — one refusal doesn't abort the rest.
+
+Attaching never sends: it stages a ref and you press Enter yourself. Image attachments render as a
+thumbnail chip under the composer, derived from the text itself — delete the `@path` from the box
+and the chip goes with it; click a chip's `×` and the ref and the copied file both go. Copies whose
+ref never made it into a sent message are cleaned up on send, on app start, and when the session is
+deleted. The palette's **Clear project attachments** sweeps every session under the active project,
+worktrees included, after a confirm.
+
+Because the ref goes through Claude Code's own `Read` tool, images and files are subject to the
+same permission rules as any other read — nothing multimodal is smuggled onto the stream.
 
 ## The slash menu
 

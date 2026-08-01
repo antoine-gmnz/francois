@@ -59,24 +59,36 @@ live `PaletteContext` (the active session id and the active session's running-ag
 recomputed fresh on every render pass while the palette is open). Disabled commands are
 omitted entirely — never shown grayed out.
 
-Seven built-in commands ship in the app, registered in this fixed order (the order an empty
-query displays):
+The commands that ship in the app, in registration order (the order an empty query displays):
 
-| order | command | owning feature | hint | what it does |
-|---|---|---|---|---|
-| 1 | New session | sessions-sidebar | `spin up in cwd` | opens sessions-sidebar's own new-session modal |
-| 2 | Switch model | session-engine | `sonnet · opus · haiku` | secondary step over the model catalog, then `session:switchModel` |
-| 3 | Attach MCP server | mcp-panel | `from registry` | opens mcp-panel's own attach flow |
-| 4 | Run skill | skills-panel | `browse installed` | secondary step over installed skills, then `skills:run` |
-| 5 | View diff | app-shell | `{n} file{s} changed` | switches the main tab to DIFF (toggles back to SESSION if already there) |
-| 6 | Compact context | session-engine | `{used} → summary` | fire-and-forget `session:compact` |
-| 7 | Kill agent | agents-panel | `select running` | secondary step over running agents, then `agents:kill` |
+| command | owning feature | what it does |
+|---|---|---|
+| New session | sessions-sidebar | opens the new-session modal |
+| Rename session | session-rename | opens the rename modal for the active session |
+| Switch model | session-engine | secondary step over the model catalog, then `session:switchModel` |
+| Attach MCP server | mcp-panel | opens mcp-panel's own attach flow |
+| Run skill | skills-panel | secondary step over installed skills, then `skills:run` |
+| View diff | app-shell | switches the main tab to DIFF (toggles back to SESSION if already there) |
+| Overview | overview | switches the main tab to OVERVIEW (toggles back the same way) |
+| Compact context | session-engine | fire-and-forget `session:compact` |
+| Kill agent | agents-panel | secondary step over running agents, then `agents:kill` |
+| New agent | agents-panel | opens the new-agent modal |
+| Toggle sessions column | app-shell | the `[` binding |
+| Toggle side panels | app-shell | the `]` binding |
+| Toggle agents / MCP / skills panel | collapse-right-column | collapses or expands that right-column card — the `c` binding, one entry per card |
+| Refresh usage limits | usage-bar | drives the same `app:refreshUsage` channel as clicking the meters |
+| Manage permissions | permission-guardrails | opens the rules editor over Claude Code's `settings.json` |
+| Manage projects | projects | opens the Projects modal |
+| Accounts | multi-account | opens the Accounts modal |
+| Add account | multi-account | starts an in-app `claude` login for a new account |
+| New session in worktree… | session-worktree | new session isolated in its own `git worktree` |
+| Clear project attachments | session-attachments | sweeps staged attachments across the active project, after a confirm |
+| Toggle theme | app-shell | switches between the dark and light themes |
 
-The registry is open beyond these seven: any feature can register additional commands, and
-they're filtered, ranked, and run identically to the built-ins once registered. Agents-panel,
-for example, registers an eighth command, "New agent", that opens its own new-agent modal.
-The usage bar registers a "Refresh usage limits" command that drives the same
-`app:refreshUsage` channel as clicking the bar itself.
+Most commands carry a live hint alongside the name — "View diff" reads `{n} files changed`,
+"Compact context" reads `{used} → summary`, "Switch model" lists the catalog. The registry is
+open: any feature can register more, and they're filtered, ranked, and run identically to the
+ones above once registered.
 
 Two commands resolve to a secondary step whose data must already be sitting in memory the
 moment `run` is called, since `run` can't return a promise: "Run skill" reads skills-panel's
@@ -117,10 +129,12 @@ instead of an empty list.
 
 ## The usage bar
 
-Directly under the native window title bar sits a second, always-visible strip: the usage
-bar. It shows the same plan-limit meters the Claude Code CLI reports for `/usage` — an
-account-level fact, not a session-level one, so it looks identical no matter which session is
-selected and never disappears when no session exists.
+Directly under the native window caption sits Francois's own title bar. Its left half carries
+the brand and the project switcher; its right half is the usage bar, showing the same
+plan-limit meters the Claude Code CLI reports for `/usage`. Usage is an **account-level** fact,
+not a session-level one, so the meters track whichever [account](/guide/accounts) the selected
+session runs on — switching between two sessions on the same account changes nothing, and the
+strip never disappears when no session exists.
 
 The bar renders every meter the core returns, in the order the core returned them, with no
 client-side filtering or relabeling. Each meter is a label, a track/fill bar, and a percent:
@@ -136,7 +150,8 @@ The bar's trailing slot always shows something — it doubles as the click targe
 refresh — combining cache freshness and the session limit's reset countdown, joined by `·`,
 e.g. `updated 2m ago · resets in 4h 12m`. It degrades gracefully: no meters yet means freshness
 alone; no successful probe yet means the reset text alone (since pairing a live countdown with
-"never" would be self-contradictory); neither means "never". The countdown is derived from the
+"never" would be self-contradictory); neither means "never". Its tooltip names the account these
+figures belong to, since the bar silently follows whichever session is selected. The countdown is derived from the
 first meter whose label matches `/session/i`, falling back to the first meter if none does, so
 a renamed or single-meter plan still reads sensibly; an unparseable reset string renders
 verbatim as "resets `<text>`" rather than guessing.
@@ -151,5 +166,5 @@ is a no-op, and the meters stay visibly dimmed to make that honest rather than a
 If the CLI is missing, unauthenticated, or its output format drifts so nothing parses, the bar
 degrades to an error affordance (`⚠ usage unavailable`, or just the glyph if stale meters are
 still on screen) instead of blanking, throwing, or popping a modal — clicking it retries. The
-usage bar is chrome, not a focusable pane: it never appears in the `1`-`5` pane cycle and takes
+usage bar is chrome, not a focusable pane: it never appears in the `1`–`6` pane cycle and takes
 no focus ring.

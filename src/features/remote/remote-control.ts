@@ -3,6 +3,7 @@
 // its state is folded and rendered.
 
 import type { AppError, SessionId } from '../../../contract/common';
+import type { McpApprovalState } from '../../../contract/mcp-panel';
 import type { RemoteControlEvent, RemoteControlState, RemoteControlStatus } from '../../../contract/remote-control';
 
 /** sessionId → host state. Sessions with no host are simply absent. */
@@ -124,6 +125,29 @@ export function remoteDotTone(state: RemoteControlState): 'idle' | 'pending' | '
     case 'failed':
       return 'error';
   }
+}
+
+/**
+ * The approval state carried by a `MCP_APPROVAL_REQUIRED` failure, or null.
+ *
+ * The host is a real interactive TUI, so an undecided MCP-consent or folder-trust
+ * dialog parks it forever; `remote_start` refuses up front and puts the decision
+ * it is waiting on in `error.detail`. Recovering it here is what lets the popover
+ * offer one click instead of sending the user to pane [4] and back. Defensive
+ * about the shape: `detail` is `unknown` on the wire, and a malformed one must
+ * degrade to the plain error message rather than render a broken button.
+ */
+export function approvalRequiredOf(state: RemoteControlState): McpApprovalState | null {
+  if (state.phase !== 'failed' || state.error.code !== 'MCP_APPROVAL_REQUIRED') return null;
+  const d = state.error.detail as Partial<McpApprovalState> | undefined;
+  if (!d || !Array.isArray(d.pending)) return null;
+  return {
+    pending: d.pending.filter((n): n is string => typeof n === 'string'),
+    approved: Array.isArray(d.approved) ? d.approved.filter((n): n is string => typeof n === 'string') : [],
+    rejected: Array.isArray(d.rejected) ? d.rejected.filter((n): n is string => typeof n === 'string') : [],
+    trustRequired: d.trustRequired === true,
+    enableAllProjectMcpServers: d.enableAllProjectMcpServers === true,
+  };
 }
 
 /** Sessions currently reachable from a phone/browser. */

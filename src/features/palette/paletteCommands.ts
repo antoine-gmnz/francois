@@ -10,6 +10,7 @@ import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, ses
 import { useNotificationsStore } from '../../lib/notificationsStore';
 import { useStore, type RightPane } from '../../lib/store';
 import { requestUsageRefresh } from '../usage/usage';
+import { checkUpdateManually } from '../update/update';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 
@@ -370,7 +371,23 @@ export function registerBuiltinCommands(): void {
     },
   });
 
-  // 13d/13e — Notifications (notifications FR-18): the blocking class first,
+  // 13e — Check for updates (self-update FR-9): always available, and the ONLY
+  // path that reports back a failed or up-to-date check — the launch check is
+  // silent (FR-7). Runs a fresh check, then opens the modal on the outcome.
+  registerPaletteCommand({
+    id: 'check-for-updates',
+    glyph: '↑',
+    name: 'Check for updates',
+    hint: () => {
+      const check = useStore.getState().update;
+      return check?.updateAvailable ? `${check.latest} available` : 'npm registry';
+    },
+    run: () => {
+      void checkUpdateManually();
+    },
+  });
+
+  // 13f/13g — Notifications (notifications FR-18): the blocking class first,
   // the noisy class second — the design brief's "non-destructive reads first"
   // ordering. Each hint reads the live toggle; running a row flips it and the
   // muted chip appears/disappears in the same frame.

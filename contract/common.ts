@@ -31,6 +31,7 @@ export type ErrorCode =
   | 'NOT_A_GIT_REPO'
   | 'PTY_ERROR'
   | 'MCP_ERROR'
+  | 'MCP_APPROVAL_REQUIRED' // mcp-panel: an interactive spawn (remote-control) would park on the consent/trust dialog (detail: McpApprovalState)
   | 'SKILL_ERROR'
   | 'AGENT_NOT_FOUND'
   | 'APP_NOT_RUNNING' // CLI companion: no app instance to talk to
@@ -57,6 +58,13 @@ export type ErrorCode =
   | 'ACCOUNT_DUPLICATE' // multi-account: login identity matches an already-registered account (FR-14)
   | 'ACCOUNT_LOGIN_FAILED' // multi-account: login timed out or the PTY exited without an identity (FR-15)
   | 'ACCOUNT_NOT_AUTHENTICATED' // multi-account: a turn's account has no credentials on disk (FR-22)
+  | 'WORKFLOW_NOT_FOUND' // workflow-details: runId matches no run this session has seen
+  | 'WORKFLOW_NO_TRANSCRIPT' // workflow-details FR-2/FR-7: the run has no usable transcriptDir
+  | 'WORKFLOW_AGENT_NOT_FOUND' // workflow-details FR-8: agentId matches no agent the scan has seen
+  | 'WORKFLOW_NO_SCRIPT' // workflow-details FR-9: the run has no readable scriptPath
+  | 'UPDATE_CHECK_FAILED' // self-update: the npm registry was unreachable or unparseable (FR-6)
+  | 'UPDATE_APPLY_FAILED' // self-update: npm/temp dir/spawn failed, or method is 'manual' (FR-18)
+  | 'UPDATE_BLOCKED' // self-update: sessions are running (detail: { running: number }) (FR-12)
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -239,11 +247,28 @@ export interface WorkflowRun {
   runId?: string;
   /** One line of the newest thing observed for this run (the ack, or the completion notice). */
   lastActivity?: string;
+  /** workflow-details FR-1: the ack's `Transcript dir:`, if it resolved to an existing directory. */
+  transcriptDir?: string;
+  /** workflow-details FR-24: count of asks currently attributed to this run; absent/0 when none. */
+  pendingAsks?: number;
 }
 
 // ---------- MCP ----------
 
-export type McpStatus = 'connected' | 'connecting' | 'error';
+/**
+ * `pending` / `rejected` are APPROVAL states, not connection states: Claude Code
+ * gates project-scope `.mcp.json` servers behind a first-run consent dialog, and a
+ * server on either side of that decision never starts, so it would otherwise sit
+ * at `connecting` forever. Only ever reported for a server the session's stream
+ * has said nothing about — a live status always wins.
+ */
+export type McpStatus =
+  | 'connected'
+  | 'connecting'
+  | 'error'
+  | 'pending' //  project-scope, no decision on record — Claude Code would ask
+  | 'rejected' // project-scope, explicitly refused
+  | 'approved'; // project-scope, decided yes but not started yet (next turn spawns it)
 
 /** Which Claude Code config declares an MCP server (mirrors `claude mcp list` scopes). */
 export type McpScope =
@@ -397,7 +422,9 @@ export type SessionEvent =
   | { type: 'message.user'; sessionId: SessionId; blockId: BlockId; text: string }
   | { type: 'assistant.delta'; sessionId: SessionId; blockId: BlockId; text: string } // streamed partial
   | { type: 'assistant.done'; sessionId: SessionId; blockId: BlockId }
-  | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string } // e.g. tool 'Read', summary 'src/auth/middleware.ts'
+  // e.g. tool 'Read', summary 'src/auth/middleware.ts'. `model` is set only on a
+  // subagent dispatch that named one — see SubagentConversationBlock.agentModel.
+  | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string }
   | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string } // e.g. '128 lines', '+34 −19'
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)

@@ -7,33 +7,37 @@ import type { AgentInfo, SessionEvent } from '../../../contract/common';
 import type { AgentBlock } from '../../../contract/agent-tab';
 import type { ConversationBlock } from '../../../contract/conversation-view';
 import { formatElapsed } from '../../../contract/conversation-view';
-import { agentsList, agentsTranscript, onAgentEvent, onSessionEvent } from '../../lib/api';
+import { agentsList, agentsTranscript, onAgentEvent, onSessionEvent, sessionInterrupt } from '../../lib/api';
+import { useStore } from '../../lib/store';
+import { useTimedError } from '../../lib/hooks/useTimedError';
 import Block from '../conversation/Block';
 import { TRANSCRIPT_TEXT_SELECT_STYLE } from '../conversation/conversation-blocks';
 import { ASYNC_MARKER, STEP_GLYPH, STEP_GLYPH_COLOR, TRAIL_EMPTY_LABEL, isAtBottom, showAsyncMarker } from './agent-trail';
 import {
   CLOSED_TRANSCRIPT,
+  agentBannerMeta,
+  agentBannerShowsStop,
   earlierBlocksNotice,
   openTranscript,
   receiveAgentTranscript,
   routeAgentEventToTranscript,
   type TranscriptState,
 } from './agent-tab';
-import { StatusDot } from '../../ui/StatusDot';
 import './agents.css';
 
-const statusColor: Record<string, string> = {
-  running: 'var(--accent-2)',
-  idle: 'var(--text-muted)',
-  done: 'var(--success)',
-  error: 'var(--error)',
-};
+/** Stop's failure banner clears itself after this long — same window as the
+    composer's send-error toast (useSessionAttachments.ts). */
+const STOP_ERROR_MS = 4000;
 
 export default function AgentView({ agentId, sessionId }: { agentId: string; sessionId: string }) {
   const [agent, setAgent] = useState<AgentInfo | null>(null);
   const [state, setState] = useState<TranscriptState>(CLOSED_TRANSCRIPT);
   const [clockNow, setClockNow] = useState(() => Date.now());
+  const [stopping, setStopping] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const setMainTab = useStore((s) => s.setMainTab);
+  const sessionName = useStore((s) => s.sessions.find((x) => x.id === sessionId)?.name ?? null);
+  const { error: stopError, setError: setStopError, schedule: scheduleStopError } = useTimedError();
 
   // FR-19: the header's own view of the agent — seeded from agents_list and kept
   // live by agent.update. Held here rather than read from pane [3] so the tab
@@ -105,28 +109,68 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
     el.scrollTop = el.scrollHeight;
   }, [newest, state.blocks.length, state.atBottom]);
 
-  const sc = statusColor[agent?.status ?? 'idle'] ?? 'var(--text-muted)';
   const elapsedMs = agent ? Math.max(0, (agent.endedAt ?? clockNow) - agent.startedAt) : 0;
   const earlier = earlierBlocksNotice(state.dropped);
+  const meta = agent ? agentBannerMeta(agent.stepCount, sessionName) : null;
+  const showStop = agent ? agentBannerShowsStop(agent.status) : false;
+
+  const doStop = async () => {
+    if (stopping) return;
+    setStopping(true);
+    const res = await sessionInterrupt(sessionId);
+    setStopping(false);
+    if (!res.ok) {
+      setStopError(res.error.message);
+      scheduleStopError(() => setStopError(null), STOP_ERROR_MS);
+    }
+  };
 
   return (
     <div className="agent-view">
-      {/* header (§8): who this tab is, and whether it is still working */}
-      <div className="agent-view-header">
-        <div className="agent-inline-row">
-          <StatusDot color={sc} pulsing={running} />
-          <span className="agent-view-name">{agent?.name ?? 'agent'}</span>
-          {agent && showAsyncMarker(agent) && <span className="agent-async-badge">{ASYNC_MARKER}</span>}
-          {agent && (
-            <span className="agent-view-status-text" style={{ color: sc }}>
-              {agent.status}
-            </span>
+      {/* banner (§8): the "you are inside a subagent" provenance banner — purple
+          marks subagent provenance app-wide, per Design System v2 §Banners. */}
+      <div className="agent-banner">
+        <div className="agent-banner__id">
+          <div className="agent-banner__row1">
+            <span className="agent-banner__name">{agent?.name ?? 'agent'}</span>
+            <span className="agent-banner__pill">subagent</span>
+            {agent && showAsyncMarker(agent) && <span className="agent-async-badge">{ASYNC_MARKER}</span>}
+          </div>
+          {meta && (
+            <div className="agent-banner__row2">
+              {meta.sessionName && (
+                <>
+                  <span>
+                    from <span className="agent-banner__session">{meta.sessionName}</span>
+                  </span>
+                  <span className="agent-banner__sep">·</span>
+                </>
+              )}
+              <span className="agent-banner__fact">{formatElapsed(elapsedMs)}</span>
+              <span className="agent-banner__sep">·</span>
+              <span className="agent-banner__fact">{meta.stepsLabel}</span>
+            </div>
           )}
-          <span className="agent-view-spacer" />
-          <span className="agent-view-elapsed">◷ {formatElapsed(elapsedMs)}</span>
         </div>
-        {agent?.task && <div className="agent-view-task truncate">{agent.task}</div>}
+        <span className="agent-banner__spacer" />
+        <div className="agent-banner__actions">
+          <button type="button" className="agent-banner__btn" onClick={() => setMainTab('session')}>
+            Back to session
+          </button>
+          {showStop && (
+            <button
+              type="button"
+              className="agent-banner__btn agent-banner__btn--danger"
+              disabled={stopping}
+              title="Interrupts the parent session's whole turn — not just this subagent"
+              onClick={() => void doStop()}
+            >
+              Stop
+            </button>
+          )}
+        </div>
       </div>
+      {stopError && <div className="form-error agent-banner__error">{stopError}</div>}
 
       {/* body: the subagent's own transcript */}
       <div
@@ -141,6 +185,14 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
         // which this adds on top of the class — see TRANSCRIPT_TEXT_SELECT_STYLE.
         style={TRANSCRIPT_TEXT_SELECT_STYLE}
       >
+        {/* the task card takes the same purple provenance treatment as the
+            banner's pill — it is the first thing read in the body, per the mock. */}
+        {agent?.task && (
+          <div className="agent-task">
+            <span className="agent-task__label">Task</span>
+            <span className="agent-task__text">{agent.task}</span>
+          </div>
+        )}
         {state.loading ? null : state.error ? ( // FR-16: nothing while in flight
           <div className="agent-view-error">{state.error.message}</div>
         ) : state.blocks.length === 0 ? (
@@ -162,8 +214,13 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
  * §8: engine notices render as a dim `·` row (the trail's notice vocabulary);
  * everything else is a real ConversationBlock and goes through the SESSION tab's
  * renderer untouched.
+ *
+ * Exported for workflow-details, whose transcript column renders the SAME
+ * `AgentBlock` vocabulary (its design brief's rule 1: "the transcript column is
+ * the SESSION tab's block rendering, unchanged") — one renderer, so the two
+ * cannot drift.
  */
-function AgentBlockRow({ block, sessionId }: { block: AgentBlock; sessionId: string }) {
+export function AgentBlockRow({ block, sessionId }: { block: AgentBlock; sessionId: string }) {
   if (block.kind === 'notice') {
     return (
       <div className="agent-block-notice-row">

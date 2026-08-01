@@ -3,7 +3,13 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AccountId, Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun } from '../../contract/common';
+import type { AccountId, Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type {
+  WorkflowAgentTranscript,
+  WorkflowDetail,
+  WorkflowDetailEvent,
+  WorkflowScript,
+} from '../../contract/workflow-details';
 import type {
   AccountAddPayload,
   AccountAddResponse,
@@ -39,11 +45,12 @@ import type {
 } from '../../contract/session-attachments';
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
-import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
+import type { McpApprovalState, McpDecision, McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
 import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
+import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
 
 // Exported so other invoke sites (e.g. ShellTerminal.tsx, which redefines this
 // byte-identically) can share the one wrapper instead of redeclaring it.
@@ -168,6 +175,23 @@ export const agentsTranscript = (agentId: string) =>
 export const workflowsList = (sessionId: SessionId) =>
   ipc<Result<WorkflowRun[]>>('workflows_list', { sessionId });
 
+// workflow-details §5: what the run's DIRECTORY says — its agents, their spans
+// and tokens, and any ask attributed to the run. `detail` also starts the core's
+// filesystem watch (FR-6), so the live stream below follows from this one call.
+export const workflowsDetail = (runId: WorkflowRunId) =>
+  ipc<Result<WorkflowDetail>>('workflows_detail', { runId });
+/** FR-8: one agent's own transcript, in the agent-tab block vocabulary. */
+export const workflowsAgent = (runId: WorkflowRunId, agentId: string) =>
+  ipc<Result<WorkflowAgentTranscript>>('workflows_agent', { runId, agentId });
+/** FR-9: the script the harness wrote to disk, capped at 200 KB. */
+export const workflowsScript = (runId: WorkflowRunId) =>
+  ipc<Result<WorkflowScript>>('workflows_script', { runId });
+
+/** Subscribe to francois://workflows/event (workflow.detail, FR-6/FR-23). */
+export function onWorkflowEvent(cb: (e: WorkflowDetailEvent) => void): Promise<UnlistenFn> {
+  return listen<WorkflowDetailEvent>('francois://workflows/event', (e) => cb(e.payload));
+}
+
 /** Subscribe to francois://agents/event (agent.block, agent-tab FR-8). */
 export function onAgentEvent(cb: (e: AgentEvent) => void): Promise<UnlistenFn> {
   return listen<AgentEvent>('francois://agents/event', (e) => cb(e.payload));
@@ -180,6 +204,9 @@ export const mcpDetach = (sessionId: SessionId, name: string) => ipc<Result<null
 export const mcpRegistry = () => ipc<Result<McpRegistryEntry[]>>('mcp_registry');
 export const mcpAttach = (sessionId: SessionId, entry: McpAttachRequest) =>
   ipc<Result<null>>('mcp_attach', { sessionId, entry });
+export const mcpApprovals = (sessionId: SessionId) => ipc<Result<McpApprovalState>>('mcp_approvals', { sessionId });
+export const mcpDecide = (sessionId: SessionId, decision: McpDecision) =>
+  ipc<Result<McpApprovalState>>('mcp_decide', { sessionId, ...decision });
 
 export const skillsList = (sessionId: SessionId) => ipc<Result<SkillInfo[]>>('skills_list', { sessionId });
 export const skillsInstall = (sessionId: SessionId, name: string) => ipc<Result<null>>('skills_install', { sessionId, name });
@@ -211,6 +238,14 @@ export const appGetUsage = (accountId?: AccountId) =>
   ipc<Result<UsageSnapshot>>('app_get_usage', accountId ? { accountId } : undefined);
 export const appRefreshUsage = (accountId?: AccountId) =>
   ipc<Result<UsageRefreshAck>>('app_refresh_usage', accountId ? { accountId } : undefined);
+
+// self-update (§5). No payload either way, and NO event channel — the frontend
+// drives both calls: once at shell mount (FR-7, silent) and on demand from the
+// palette (FR-9). `app_apply_update` acks BEFORE the core starts shutting down
+// (FR-16), so a refusal (UPDATE_BLOCKED / UPDATE_APPLY_FAILED) always reaches
+// the webview.
+export const appCheckUpdate = () => ipc<CheckUpdateResult>('app_check_update');
+export const appApplyUpdate = () => ipc<ApplyUpdateResult>('app_apply_update');
 
 /** Subscribe to francois://app/event (usage.state, extensible tagged union). */
 export function onAppEvent(cb: (e: AppEvent) => void): Promise<UnlistenFn> {

@@ -6,8 +6,11 @@ The name **Francois** is a nod to Claude François, the French singer. (The desi
 
 | File | Purpose |
 |---|---|
-| `Claude Terminal.dc.html` | Interactive design mock (source of truth for layout, colors, behavior) |
-| `support.js` | Runtime for the design mock (do not edit — generated) |
+| `Francois Redesign.dc.html` | The shell as it ships — variant 3a, with the v2 identity applied (source of truth) |
+| `Francois Design System v2.dc.html` | Surfaces, type roles, colour families, geometry, components, rules |
+| `Francois Logo.dc.html` | The three-slab mark — size ramp, tone variants, lockups, clearspace, misuse |
+| `Claude Terminal.dc.html` | The pre-v2 mock; still governs surfaces the redesign never re-drew |
+| `support.js` | Runtime for the design mocks (do not edit — generated) |
 | `screenshots/` | Captures of the session, diff, and shell views |
 
 ---
@@ -152,16 +155,35 @@ Keyboard-first throughout. Bindings from the design:
 
 ## Visual design system
 
-From the mock — dark only, monospace everywhere:
+Extracted in `Francois Design System v2.dc.html`. The rule that generates the rest: **sans carries the
+interface, mono carries facts** — paths, counts, keys, code, elapsed time. Dark is the base; light is a
+token override of the same system (geometry, type and spacing do not change).
 
-- **Typeface**: JetBrains Mono (400/500/700).
-- **Surfaces**: window `#121318` on `#08090b` radial backdrop; panels `#16171c`; main `#131419`; shell `#0f1015`; raised rows `#1a1c22`/`#1b1d23`; borders `#24262d` / `#2a2c33`.
-- **Accent**: amber `#c8a15a` (focus rings, prompts, cursors, hotkeys, selection markers).
-- **Status colors**: running `#d0a45c` · done/ok `#7fa07a` · error `#c46b62` · connecting `#c2b06a` · idle `#6b7079`.
-- **Text**: primary `#c4c7ce`, bright `#dfe2e8`, dim `#868a93`, faint `#565a63`.
-- **Diff tints**: adds `rgba(127,160,122,0.09)`, deletes `rgba(196,107,98,0.09)`.
-- **Motion**: 1.4s ease pulse for running/connecting dots; 1s step blink for cursors.
-- Rounded panels (5px), 10px gutters, 8px thin scrollbars.
+- **Typefaces**: IBM Plex Sans (400/500/600) for the interface; JetBrains Mono (400/500) for facts.
+  No mono headings, no sans file paths.
+- **Mark**: three slanted slabs, each stepping right of the one below. Slab height 27.5% of the mark
+  height, gap 8.75%, step 10%, total width 110%. The bottom slab is always dim — it is the idle
+  session, not a shadow, so it never takes the accent. Two-tone down to 16px; single-tone below.
+- **Surfaces** (three stacked steps + hover): app `#0d0f13` · deep `#11141a` (titlebar, status bar,
+  composer well) · panel `#14171d` · raised `#1c212a` · hover `#232833`.
+- **Lines**: inner hairline `#1f242d` · border `#232833` · strong `#2d333f` · active `#3c4453` ·
+  overlay edge `#303845`.
+- **Accent**: acid `#c3f53f`, hover `#d6fa7e`, soft bg `#1b240f`, soft edge `#35401f`. Acid marks the
+  live thing and the recovering action — **one acid per view**; two acid buttons means neither is the answer.
+- **Status hues** (each means exactly one thing, never decorative): working = the acid · ready `#4fae86` ·
+  error `#d1685e` (text `#e0918a`) · measurement/context `#6f9fd8`.
+- **Semantic**: tool glyph teal `#8fbab8` · subagent purple `#b39ede` (name `#cbb9ec`) · diff add
+  `#9dbb98` · diff remove `#d68f86`.
+- **Account tints** (fixed per account): blue `#1b2836`/`#2e4a63`/`#9cc2e4` · teal `#18262a`/`#2c4a4a`/`#9fd0cd` ·
+  red `#2a1a19`/`#4a2b27`/`#e0918a`.
+- **Text ladder**: bright `#f2f4f8` → default `#e6e9ef` → strong `#d6dae2` → body `#c3c9d4` →
+  label `#9aa2b1` → meta `#8b93a3` → dim `#6b7385` → faint `#565e6e`.
+- **Radii**: 5 inner tab pill · 6 button/chip/row · 7 card/tab · 8 pane · 11 window/overlay/composer.
+- **Spacing**: 6 tab gap · 8 row · 10 panel · 12 pane gutter · 16 block · 22 transcript · 26 reading pad.
+- **Elevation**: panes are hairline + one luminance step, never shadowed. Shadow is reserved for the
+  composer (`0 8px 24px rgba(0,0,0,.4)`), popovers and the window itself.
+- **Motion**: 1.6s stepped pulse for running dots; 1s step blink for cursors.
+- **Light theme**: surfaces invert to near-white, the acid darkens to `#4e6a14`, status hues darken for contrast.
 
 ## Under the hood (implementation notes)
 

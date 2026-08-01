@@ -70,6 +70,38 @@
   cursor: default;
 }
 
+/* ── first-run approval banner ──
+   Sits between the header and the rows, so it reads as a statement about the
+   PROJECT rather than about any one server. Warm-tinted, not error-tinted:
+   nothing is broken, a decision is simply owed. */
+.mcp-approval {
+  flex: none;
+  padding: var(--space-8);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+.mcp-approval-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+}
+.mcp-approval-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-11);
+  color: var(--warn);
+}
+.mcp-approval-note {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.mcp-approval-error {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-10);
+  color: var(--error);
+}
+
 /* ── server list ── */
 .mcp-rows {
   flex: 1;

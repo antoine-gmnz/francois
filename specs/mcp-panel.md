@@ -28,6 +28,89 @@ with `claude mcp remove`"); the UI hides Detach for non-project rows. Runtime `m
 carry no scope; the client preserves the scope `mcp_list` resolved. The empty-state copy is
 `no MCP servers · attach one with ⌘K`.
 
+## 0b. Amendment — first-run approval & folder trust (extends §4, §5, §7)
+
+> Ratified after the remote-control failure report: starting Remote Control in this very repo
+> refused with *"you haven't approved some MCP"*. Same root cause as a project server stuck on
+> `handshake…` forever.
+
+Claude Code gates a project-scope `.mcp.json` server behind a **first-run consent dialog** and a
+never-before-opened folder behind a **trust dialog**, storing both answers in its own user store —
+`<claude config>/.claude.json` → `projects[<cwd>]`: `enabledMcpjsonServers`,
+`disabledMcpjsonServers`, `hasTrustDialogAccepted`. Francois never read or wrote those keys, which
+produced two symptoms of one missing decision:
+
+- the per-turn `claude -p` spawn **skips** both dialogs, so an unapproved server never starts and
+  never reports — pane [4] showed a permanent `handshake…` for a server that would never handshake;
+- the Remote Control host is a real interactive TUI, so it **parks** on the dialog and the feature
+  fails outright (`blocking_prompt` caught the stall only after ~a screen of output, and told the
+  user to go run `claude` in a terminal).
+
+**FR-A1** — `mcp_approvals` reports `{ pending, approved, rejected, trustRequired,
+enableAllProjectMcpServers }` for the session's cwd: `.mcp.json` names sorted against the store,
+folded with every settings tier that can carry the same keys (project `settings.json`,
+`settings.local.json`, global `settings.json`). A refusal beats an approval; `enableAllProjectMcpServers`
+approves everything.
+
+**FR-A2** — `mcp_decide { approve, reject, trust }` writes those keys **surgically** (read → touch →
+atomic write, permission-guardrails FR-14 discipline): every other key of the user's CLI store is
+preserved, an unparseable store is never overwritten, and an unchanged decision never rewrites the
+file. The store is resolved the same way the spawn resolves its env — the account's
+`CLAUDE_CONFIG_DIR` when it has one, the distro's home for a `wsl` session, `~` otherwise — because a
+decision written to the wrong store is one the session's `claude` never reads.
+
+**FR-A3** — `McpStatus` gains `pending` and `rejected`. These are **approval** states, reported only
+for a **project-scope** server the session's stream has said nothing about; a live status always
+wins, and a name that also resolves to local/user scope is never flagged (the CLI does not ask about
+it either).
+
+**FR-A4** — pane [4] shows an approval banner above the rows whenever something is pending or the
+folder is untrusted, with one *approve all* action; the detail popover carries per-server
+**Approve / Reject**. Approved servers are re-flagged `connecting` and take effect on the session's
+next turn.
+
+**FR-A5** — `remote_start` pre-checks the same state and refuses with `MCP_APPROVAL_REQUIRED`,
+carrying the `McpApprovalState` in `error.detail`, instead of spawning a host that would stall for
+the 120s deadline. The badge popover renders *approve & start*. `blocking_prompt` stays as the
+backstop for a dialog that appears anyway, reworded to point at pane [4].
+
+Francois still **never auto-answers** a dialog — every write is the direct result of a click. What
+changed is where the click happens.
+
+## 0c. Amendment — the approval keys, as the CLI actually resolves them (corrects 0b)
+
+> Ratified after 0b shipped and did not fix the report: servers still sat on `handshake…` and Remote
+> Control still refused. 0b modelled the CLI's store from its field *names*; the three rules below
+> were then read out of the shipped `claude` binary's own bundle (`checkHasTrustDialogAccepted`,
+> `getProjectPathForConfig`, the `--remote-control` entry point) and verified against a live
+> `~/.claude.json`.
+
+**FR-A6 — trust resolves through ancestors, not one node.** `checkHasTrustDialogAccepted` is
+`projects[getProjectPathForConfig()].hasTrustDialogAccepted === true` **or any ancestor of the cwd**
+carrying it, walked to the filesystem root. Accepting the dialog once for `D:/` or `~/src` therefore
+trusts every repo underneath it forever — reading only the cwd's own node reported `trustRequired`
+for the overwhelming majority of real folders, which made FR-A5 refuse **every** Remote Control start
+and pinned the FR-A4 banner open. 0b's reading of `trustRequired` is replaced by this walk.
+
+**FR-A7 — the `projects` key is the repo root.** `getProjectPathForConfig()` is
+`norm(gitRoot(cwd) ?? resolve(cwd))`, not the cwd: a session opened in a subdirectory of a repo
+shares one node with the repo root. Both the read and the FR-A2 write use that key, so a decision
+lands where the CLI looks for it. (The key is also matched exactly by the CLI; Francois keeps its
+case-insensitive `path_eq` match for reads, which can only ever be more permissive.)
+
+**FR-A8 — `--remote-control` does not prompt, it refuses.** The host checks trust before anything is
+rendered and, on failure, prints `Error: Workspace not trusted.` and exits(1). There is no dialog to
+park on, so 0b's backstop matched nothing and the user watched the 120s deadline expire with no
+diagnosis. `blocking_prompt` now matches that refusal, plus the current dialog wording
+(`Trust this directory?`) alongside the older phrase.
+
+**FR-A9 — `McpStatus` gains `approved`; FR-A4's re-flag to `connecting` is withdrawn.** Approving a
+server starts nothing: the CLI spawns `.mcp.json` servers with the session's next turn. Painting
+`connecting` (detail `handshake…`) after a decision swapped one permanent stuck handshake for
+another. An approved-but-unstarted project server reads `starts next turn`; the first turn's
+`system.init` replaces it with the truth. **Reconnect** is hidden for every approval verdict — it only
+re-flags `connecting`, i.e. repaints the same lie.
+
 ## 1. Summary
 
 The MCP servers panel is right-column pane **[4]** of the main window. For the currently active session it shows every configured MCP server as a status row (connected / connecting / error, with tool count or error detail), lets the user drill into a row for full detail plus Reconnect / Detach actions, and drives a two-step attach flow — pick from a curated registry (or define a custom server) — that writes into the session's project `.mcp.json` and asks session-engine to connect it. The panel is a thin, event-driven reflection of runtime state owned by session-engine; it never runs an MCP client itself.

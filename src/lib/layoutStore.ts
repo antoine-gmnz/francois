@@ -31,6 +31,10 @@ function persistPane(key: string, visible: boolean): void {
 }
 const LEFT_KEY = 'francois.showLeftPane';
 const RIGHT_KEY = 'francois.showRightPane';
+// The tab strip's right-aligned session meta cluster. It never shrinks (the
+// tab strip scrolls instead), so on a narrow window a long agent-tab run gets
+// clipped — folding the cluster is what actually hands that width back.
+export const SESSION_META_KEY = 'francois.showSessionMeta';
 // Every pane that lives in the right column, collapsible or not — 'workflows'
 // isn't collapsible (out of scope for collapse-right-column) but still needs to
 // reveal/hide the column like the other three.
@@ -99,6 +103,11 @@ export interface LayoutSlice {
   showRightPane: boolean;
   toggleLeftPane: () => void;
   toggleRightPane: () => void;
+  // The SESSION meta cluster in the tab strip (model, permission mode, branch,
+  // context, elapsed). Folded to its chevron, the tab strip gets the full width.
+  // Persisted like the column toggles; independent of every other layout flag.
+  showSessionMeta: boolean;
+  toggleSessionMeta: () => void;
   newSessionOpen: boolean;
   setNewSessionOpen: (o: boolean) => void;
   newAgentOpen: boolean;
@@ -166,6 +175,14 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       // toggles are independent.
       const focusedPane = !show && isRightColumnPane(s.focusedPane) ? 'main' : s.focusedPane;
       return { showRightPane: show, focusedPane };
+    }),
+  showSessionMeta: loadPane(SESSION_META_KEY),
+  toggleSessionMeta: () =>
+    set((s) => {
+      const show = !s.showSessionMeta;
+      persistPane(SESSION_META_KEY, show);
+      // No focus consequence: the cluster is a readout, never a focusable pane.
+      return { showSessionMeta: show };
     }),
   newSessionOpen: false,
   setNewSessionOpen: (newSessionOpen) => set({ newSessionOpen }),

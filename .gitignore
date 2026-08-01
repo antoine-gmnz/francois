@@ -15,6 +15,7 @@ Thumbs.db
 
 # pipeline build/review timing metrics — local only
 .claude/pipeline-metrics.jsonl
+pipeline-metrics.jsonl
 
 # pipeline review/smoke staging buffer — ephemeral, regenerated every /review /smoke round
 specs/reports/

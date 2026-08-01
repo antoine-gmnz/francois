@@ -5,7 +5,7 @@
 // thin shell over these functions.
 
 import type { AppError, McpServerInfo, McpStatus } from '../../../contract/common';
-import type { McpAttachRequest, McpRegistryEntry } from '../../../contract/mcp-panel';
+import type { McpApprovalState, McpAttachRequest, McpRegistryEntry } from '../../../contract/mcp-panel';
 
 // ---------- scope vocabulary ----------
 
@@ -36,6 +36,10 @@ export const DOT_COLOR: Record<McpStatus, string> = {
   connected: 'var(--success)',
   connecting: 'var(--warn)',
   error: 'var(--error)',
+  // approval states, not connection states — a decision is owed, nothing is wrong
+  pending: 'var(--warn)',
+  rejected: 'var(--text-disabled)',
+  approved: 'var(--text-dim)',
 };
 
 export function dotColor(status: McpStatus): string {
@@ -46,7 +50,54 @@ export function dotColor(status: McpStatus): string {
 export function detailText(server: McpServerInfo): { text: string; color: string } {
   if (server.status === 'connected') return { text: `${server.toolCount ?? 0} tools`, color: 'var(--text-dim)' };
   if (server.status === 'connecting') return { text: 'handshake…', color: 'var(--text-dim)' };
+  if (server.status === 'pending') return { text: 'needs approval', color: 'var(--warn)' };
+  if (server.status === 'rejected') return { text: 'not approved', color: 'var(--text-disabled)' };
+  // Approved, but the CLI only starts `.mcp.json` servers when the next turn
+  // spawns — saying `handshake…` here would promise a connection nobody is making.
+  if (server.status === 'approved') return { text: 'starts next turn', color: 'var(--text-dim)' };
   return { text: server.errorMessage ?? 'error', color: 'var(--error)' };
+}
+
+// ---------- first-run approval ----------
+
+/** These statuses are approval verdicts, not connection states — the panel can offer a decision. */
+export function isApprovable(status: McpStatus): boolean {
+  return status === 'pending' || status === 'rejected' || status === 'approved';
+}
+
+/**
+ * Reconnect only means something for a server the session has actually started.
+ * Offering it on an approval verdict would re-flag `connecting` for a process
+ * nobody has spawned — a handshake that can never complete.
+ */
+export function canReconnect(status: McpStatus): boolean {
+  return !isApprovable(status);
+}
+
+/** Nothing to ask about — the banner stays hidden. */
+export function hasApprovalWork(state: McpApprovalState | null): boolean {
+  return !!state && (state.pending.length > 0 || state.trustRequired);
+}
+
+/**
+ * The banner's one line. Both halves matter and can co-occur: an unapproved server
+ * and an untrusted folder park an interactive `claude` for different reasons, and
+ * saying only one of them would send the user round the loop twice.
+ */
+export function approvalSummary(state: McpApprovalState | null): string {
+  if (!hasApprovalWork(state) || !state) return '';
+  const parts: string[] = [];
+  if (state.pending.length) {
+    const one = state.pending.length === 1;
+    parts.push(`${state.pending.length} server${one ? '' : 's'} ${one ? 'needs' : 'need'} approval`);
+  }
+  if (state.trustRequired) parts.push('this folder is not trusted');
+  return parts.join(' · ');
+}
+
+/** The "approve all" click: every pending server, plus the trust answer when it is owed. */
+export function approveAllDecision(state: McpApprovalState): { approve: string[]; reject: string[]; trust: boolean } {
+  return { approve: [...state.pending], reject: [], trust: state.trustRequired };
 }
 
 // ---------- attach request building ----------

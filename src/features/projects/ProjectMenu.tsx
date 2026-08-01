@@ -1,7 +1,7 @@
-// projects — the scope dropdown itself (FR-25/FR-26): the "All projects | <name>"
-// rows plus the "Manage projects…" action, extracted from ProjectSwitcher so the
-// titlebar project button (design-refresh FR-4) and pane [1]'s switcher strip
-// render the SAME menu. Only the trigger and the panel's anchoring differ.
+// projects — the scope dropdown itself (FR-25/FR-26; re-anchored by
+// titlebar-project-switcher FR-9): the "All projects | <name>" rows plus the
+// "Manage projects…" action, mounted under ProjectSwitcher — the app's only
+// project control.
 //
 // The parent owns `open` and dismissal (it owns the ref that contains both the
 // trigger and this panel); this component owns the registry read, the rows and
@@ -15,16 +15,7 @@ import { useMounted } from '../../lib/hooks/useMounted';
 import { ListRow } from '../../ui/ListRow';
 import './projects.css';
 
-export default function ProjectMenu({
-  home,
-  onClose,
-  className,
-}: {
-  home: string;
-  onClose: () => void;
-  /** Extra class on the panel — the anchoring variant the trigger needs. */
-  className?: string;
-}) {
+export default function ProjectMenu({ home, onClose }: { home: string; onClose: () => void }) {
   const projects = useStore((s) => s.projects);
   const setProjects = useStore((s) => s.setProjects);
   const activeProjectId = useStore((s) => s.activeProjectId);
@@ -46,7 +37,7 @@ export default function ProjectMenu({
 
   return (
     // stopPropagation: the panel can sit inside a pane that claims focus on click.
-    <div onClick={(e) => e.stopPropagation()} className={className ? `pjsw-dropdown ${className}` : 'pjsw-dropdown'}>
+    <div onClick={(e) => e.stopPropagation()} className="pjsw-dropdown">
       {/* The listbox is ONLY the selectable scopes — the manage action below is
           a sibling, so it is never announced as an option. The scroll cap lives
           here rather than on the panel so that action can't scroll out of reach. */}

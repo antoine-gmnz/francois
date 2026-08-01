@@ -84,6 +84,27 @@ re-trigger that feature's fix loop.)_
 _(un-parked 2026-07-30 — all three findings moved back to `specs/session-attachments.md`
 § Remediation round 8 and run through `/fix`; see that spec for current status.)_
 
+## deferred:self-update
+
+Parked at the `/review` SHIP verdict (2026-07-31, round 2). Both are LOW, neither is security-typed,
+and both are in the core surface. Recorded here rather than as `## Remediation` items in
+`specs/self-update.md` so they do not re-trigger that feature's fix loop.
+
+- **[LOW]** `src-tauri/src/update/check.rs:122` · quality · `fetch_release_notes(&latest)` fires the
+  GitHub request with the raw, unvalidated registry `latest` string before `check_from_parts`
+  (line 123) validates it is a parseable version triple, so a malformed or hostile registry response
+  spends a network round-trip building a URL from unsanitized data before format validation.
+  → **Fix:** call `is_newer`/`version_key` (or move the `check_from_parts` validation) before
+  `fetch_release_notes`, skipping the notes fetch entirely when `latest` does not parse.
+
+- **[LOW]** `src-tauri/src/update/commands.rs:101,107` · quality · the LOCK ORDER comment above
+  line 105 states "the engine is read FIRST", but `state.begin_apply()` (an update-state touch) runs
+  at line 101, before `engine.running_count()` at line 107. Harmless in practice — `begin_apply` is a
+  bare atomic CAS, not a held lock — but the comment misdescribes the actual order and will mislead
+  the next reader auditing for deadlock.
+  → **Fix:** reword the comment to note `begin_apply` is a lock-free CAS and does not count as
+  "touching" `UpdateState`'s mutex, or reorder the two calls to literally match the comment.
+
 ## deferred:notifications
 
 Parked at the `/review` SHIP verdict (2026-08-01). Neither is CRITICAL/HIGH or security.

@@ -57,6 +57,10 @@ pub(crate) enum SessionEvent {
         block_id: String,
         tool: String,
         summary: String,
+        /// The model a subagent dispatch named — omitted otherwise, so the live
+        /// path and `getTranscript` agree on "absent ⇒ inherits the session's".
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     #[serde(rename = "tool.done")]
     ToolDone {

@@ -1,0 +1,144 @@
+name: Discord release notification
+
+# Notifie un thread de forum Discord à chaque release publiée.
+#
+# Pourquoi workflow_run et pas `on: push` :
+# release.yml calcule la version, la commite sur main avec GITHUB_TOKEN et un
+# sujet `[skip ci]`. Ce push ne déclenche AUCUN workflow (par conception), donc
+# un déclencheur `push` ne verrait jamais le bump. On s'accroche donc à la fin
+# du workflow `release` et on lit la release qu'il vient de publier.
+#
+# Secrets attendus (Settings > Secrets and variables > Actions) :
+#   DISCORD_FORUM_WEBHOOK  webhook du salon forum (https://discord.com/api/webhooks/<id>/<token>)
+#   DISCORD_THREAD_ID      id du thread de ce repo dans le forum
+#
+# NB : un workflow `workflow_run` n'est actif que depuis la branche par défaut.
+# Rien ne se déclenchera tant que ce fichier n'est pas mergé sur main.
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-releases
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    name: Notify Discord forum
+    # Un run raté, annulé ou sauté n'a rien publié à annoncer.
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Discord
+        # Une panne Discord ne doit jamais faire échouer le workflow.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          RUN_STARTED_AT: ${{ github.event.workflow_run.created_at }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          DISCORD_FORUM_WEBHOOK: ${{ secrets.DISCORD_FORUM_WEBHOOK }}
+          DISCORD_THREAD_ID: ${{ secrets.DISCORD_THREAD_ID }}
+        run: |
+          set -euo pipefail
+
+          MAX_LEN=3800
+
+          warn()    { echo "::warning::$*"; }
+          summary() { echo "$*" >> "$GITHUB_STEP_SUMMARY"; }
+          bail()    { summary "### Notification Discord"; summary "- Ignoré — $1"; exit 0; }
+
+          # --- 1. la release que ce run vient de publier ---------------------------
+          if ! rel=$(gh release view --json tagName,body,publishedAt,isDraft,url 2>/dev/null); then
+            bail "aucune release publiée sur le repo."
+          fi
+
+          tag=$(printf '%s' "$rel" | jq -r '.tagName // empty')
+          published=$(printf '%s' "$rel" | jq -r '.publishedAt // empty')
+          draft=$(printf '%s' "$rel" | jq -r '.isDraft')
+          url=$(printf '%s' "$rel" | jq -r '.url // empty')
+
+          [ -n "$tag" ] || bail "la dernière release n'a pas de tag."
+          [ "$draft" != "true" ] || bail "la dernière release ($tag) est encore en brouillon."
+
+          # Garde d'idempotence : sans état persistant, on vérifie que la release
+          # a bien été publiée PENDANT ce run. Si release.yml s'est terminé sans
+          # rien publier (aucun commit ne justifiait de bump), la dernière release
+          # est antérieure au démarrage du run et on ne renotifie pas.
+          if [ -z "$published" ]; then
+            bail "release $tag sans date de publication."
+          fi
+          run_epoch=$(date -u -d "$RUN_STARTED_AT" +%s)
+          pub_epoch=$(date -u -d "$published" +%s)
+          if [ "$pub_epoch" -lt "$run_epoch" ]; then
+            echo "Release $tag publiée le $published, avant le début de ce run ($RUN_STARTED_AT)."
+            bail "aucune nouvelle release sur ce run (dernière : $tag)."
+          fi
+
+          version="${tag#v}"
+
+          # --- 2. description = notes de release, tronquées sur une frontière de ligne
+          tmp=$(mktemp)
+          printf '%s' "$rel" | jq -r '.body // ""' > "$tmp"
+          if [ "$(wc -c < "$tmp")" -gt "$MAX_LEN" ]; then
+            section=$(head -c "$MAX_LEN" "$tmp" | sed '$d')
+            # Cas limite : les 3800 premiers octets tiennent sur une seule ligne.
+            [ -n "$section" ] || section=$(head -c "$MAX_LEN" "$tmp")
+            section="$section"$'\n''…'
+          else
+            section=$(cat "$tmp")
+          fi
+          rm -f "$tmp"
+
+          # --- 3. envoi Discord ----------------------------------------------------
+          [ -n "${DISCORD_FORUM_WEBHOOK:-}" ] || bail "secret DISCORD_FORUM_WEBHOOK absent (release $tag)."
+          [ -n "${DISCORD_THREAD_ID:-}" ]     || bail "secret DISCORD_THREAD_ID absent (release $tag)."
+
+          # Payload construit par jq : les notes contiennent guillemets et retours
+          # à la ligne. Notes vides => la clé "description" est simplement omise.
+          payload=$(mktemp)
+          jq -n \
+            --arg title "$REPO_NAME v$version" \
+            --arg url "$url" \
+            --arg description "$section" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{embeds: [ {title: $title, color: 3066993, timestamp: $timestamp}
+                        + (if $url         == "" then {} else {url: $url}                 end)
+                        + (if $description == "" then {} else {description: $description} end) ]}' \
+            > "$payload"
+
+          # L'URL passe par un fichier de config (mode 600) : jamais dans argv, jamais dans les logs.
+          cfg=$(mktemp)
+          printf 'url = "%s"\n' "${DISCORD_FORUM_WEBHOOK}?thread_id=${DISCORD_THREAD_ID}&wait=true" > "$cfg"
+
+          body=$(mktemp); err=$(mktemp); rc=0
+          curl -sS --fail-with-body --config "$cfg" \
+            -X POST -H 'Content-Type: application/json' \
+            --data-binary "@$payload" -o "$body" 2>"$err" || rc=$?
+          rm -f "$cfg" "$payload"
+
+          summary "### Notification Discord"
+          if [ "$rc" -eq 0 ]; then
+            rm -f "$body" "$err"
+            echo "Notification envoyée pour $tag."
+            if [ -n "$section" ]; then
+              summary "- Notifié — \`$REPO_NAME\` $tag"
+            else
+              summary "- Notifié — \`$REPO_NAME\` $tag _(release sans notes)_"
+            fi
+            exit 0
+          fi
+
+          # Diagnostic sans fuite : toute URL présente dans stderr est masquée.
+          warn "échec de l'envoi Discord pour $tag (curl $rc) — $(
+            { head -c 400 "$body"; printf ' '; head -c 200 "$err"; } \
+              | tr '\n\r' '  ' | sed -E 's#https?://[^ ]*#<url masquée>#g'
+          )"
+          rm -f "$body" "$err"
+          summary "- Échec de l'appel Discord — \`$REPO_NAME\` $tag ([run]($RUN_URL))"

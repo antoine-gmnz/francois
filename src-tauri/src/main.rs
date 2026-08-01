@@ -15,6 +15,7 @@ mod process_util;
 mod project;
 mod session;
 mod shell;
+mod update;
 mod usage;
 mod window;
 mod wsl;
@@ -47,6 +48,10 @@ fn main() {
         // multi-account §6: the account registry + the single in-flight login.
         // Another LEAF lock — nothing under account/ ever takes Engine.sessions.
         .manage(account::AccountState::default())
+        // self-update §6/FR-19: the last UpdateCheck, in memory only. Another
+        // LEAF lock — `update::app_apply_update` reads the engine's running
+        // count BEFORE it ever touches this.
+        .manage(update::UpdateState::default())
         .setup(|app| {
             diagnostics::install_panic_log(app.handle());
             // Tint with the dark caption up front; the webview re-tints with the
@@ -105,12 +110,19 @@ fn main() {
             session::agents_activity,
             session::agents_transcript,
             session::workflows_list,
+            // workflow-details §5: the run's agents, one agent's transcript, and
+            // the script the harness wrote.
+            session::workflows_detail,
+            session::workflows_agent,
+            session::workflows_script,
             session::mcp_registry,
             session::mcp_list,
             session::mcp_detail,
             session::mcp_reconnect,
             session::mcp_detach,
             session::mcp_attach,
+            session::mcp_approvals,
+            session::mcp_decide,
             session::skills_list,
             session::skills_install,
             session::skills_run,
@@ -128,6 +140,8 @@ fn main() {
             window::app_set_window_theme,
             usage::app_get_usage,
             usage::app_refresh_usage,
+            update::app_check_update,
+            update::app_apply_update,
             account::account_list,
             account::account_add,
             account::account_login_write,

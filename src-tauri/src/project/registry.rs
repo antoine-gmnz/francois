@@ -641,7 +641,8 @@ mod tests {
             json!({ "modelId": "opus", "accountId": "a1" })
         );
         // "inherit" stays an omitted key, never a null or an empty string.
-        let cleared: ProjectDefaults = serde_json::from_value(json!({ "modelId": "opus" })).unwrap();
+        let cleared: ProjectDefaults =
+            serde_json::from_value(json!({ "modelId": "opus" })).unwrap();
         assert_eq!(cleared.account_id, None);
         assert!(serde_json::to_value(&cleared)
             .unwrap()

@@ -199,20 +199,72 @@ pub(crate) fn find_mcp_config(cwd: &str, name: &str) -> Option<(Value, String)> 
     None
 }
 
+/// Override a server's reported status with its APPROVAL status when there is no
+/// live connection to report.
+///
+/// Without this, an unapproved `.mcp.json` server sits at `connecting` forever:
+/// `claude -p` skips the consent dialog, so the server never starts and never
+/// reports anything, and the panel shows a handshake that will never complete.
+/// A live status always wins — once the server has actually connected, what the
+/// stream said is the truth.
+///
+/// Only `project` scope is eligible: the consent dialog exists because `.mcp.json`
+/// is checked into the repo, and a name the user ALSO declared locally or globally
+/// resolves to that config first (see `find_mcp_config`'s precedence) — the CLI
+/// never asks about it, so neither do we.
+pub(crate) fn approval_status(
+    name: &str,
+    scope: &str,
+    approvals: &McpApprovalState,
+) -> Option<&'static str> {
+    if scope != "project" {
+        return None;
+    }
+    if approvals.pending.iter().any(|n| n == name) {
+        Some("pending")
+    } else if approvals.rejected.iter().any(|n| n == name) {
+        Some("rejected")
+    } else if approvals.approved.iter().any(|n| n == name) {
+        // Approved but nothing has started it: the CLI only spawns `.mcp.json`
+        // servers when the next turn spawns, so `connecting` here would be a
+        // handshake nobody is performing — the exact stuck row this feature was
+        // meant to remove, just one click later.
+        Some("approved")
+    } else {
+        None
+    }
+}
+
 #[tauri::command(async)]
-pub fn mcp_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<Value>> {
-    let Some((cwd, runtime)) = engine.with_session(&session_id, |s| (s.cwd.clone(), s.mcp.clone()))
-    else {
+pub fn mcp_list(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+) -> IpcResult<Vec<Value>> {
+    let Some((cwd, claude_runtime, account_id, runtime)) = engine.with_session(&session_id, |s| {
+        (
+            s.cwd.clone(),
+            s.runtime.clone(),
+            s.account_id.clone(),
+            s.mcp.clone(),
+        )
+    }) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
+    let config_dir = crate::account::config_dir_of(&app, &account_id);
+    let approvals = approval_state(&cwd, &claude_runtime, config_dir.as_deref());
+
     let mut out: Vec<Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (name, scope) in merged_mcp_scopes(&cwd) {
         seen.insert(name.clone());
-        let mut info = runtime
-            .get(&name)
-            .cloned()
-            .unwrap_or_else(|| connecting_info(&name));
+        let live = runtime.get(&name).cloned();
+        let mut info = live.clone().unwrap_or_else(|| connecting_info(&name));
+        if live.is_none() {
+            if let Some(status) = approval_status(&name, &scope, &approvals) {
+                info.status = status.into();
+            }
+        }
         info.scope = Some(scope);
         out.push(serde_json::to_value(info).unwrap());
     }
@@ -226,10 +278,20 @@ pub fn mcp_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<
 }
 
 #[tauri::command(async)]
-pub fn mcp_detail(engine: State<'_, Engine>, session_id: String, name: String) -> IpcResult<Value> {
-    let Some((cwd, runtime)) =
-        engine.with_session(&session_id, |s| (s.cwd.clone(), s.mcp.get(&name).cloned()))
-    else {
+pub fn mcp_detail(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    name: String,
+) -> IpcResult<Value> {
+    let Some((cwd, claude_runtime, account_id, runtime)) = engine.with_session(&session_id, |s| {
+        (
+            s.cwd.clone(),
+            s.runtime.clone(),
+            s.account_id.clone(),
+            s.mcp.get(&name).cloned(),
+        )
+    }) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
     let Some((entry, scope)) = find_mcp_config(&cwd, &name) else {
@@ -239,7 +301,15 @@ pub fn mcp_detail(engine: State<'_, Engine>, session_id: String, name: String) -
         );
     };
     let transport = transport_of(&entry);
+    let live = runtime.is_some();
     let mut info = runtime.unwrap_or_else(|| connecting_info(&name));
+    if !live {
+        let config_dir = crate::account::config_dir_of(&app, &account_id);
+        let approvals = approval_state(&cwd, &claude_runtime, config_dir.as_deref());
+        if let Some(status) = approval_status(&name, &scope, &approvals) {
+            info.status = status.into();
+        }
+    }
     info.scope = Some(scope);
     let mut o = serde_json::to_value(&info).unwrap();
     o["transport"] = Value::String(transport.into());
@@ -428,6 +498,51 @@ mod tests {
         assert_eq!(norm_path("D:\\francois\\"), "D:/francois");
         assert_eq!(norm_path("D:/francois"), "D:/francois");
         assert_eq!(norm_path("/home/u/proj/"), "/home/u/proj");
+    }
+
+    #[test]
+    fn approval_status_maps_every_bucket_the_stream_has_not_spoken_for() {
+        let approvals = McpApprovalState {
+            pending: vec!["waiting".into()],
+            approved: vec!["ok".into()],
+            rejected: vec!["nope".into()],
+            trust_required: false,
+            enable_all_project_mcp_servers: false,
+        };
+        assert_eq!(
+            approval_status("waiting", "project", &approvals),
+            Some("pending")
+        );
+        assert_eq!(
+            approval_status("nope", "project", &approvals),
+            Some("rejected")
+        );
+        // An approved server the stream has not spoken for has NOT started: the CLI
+        // spawns `.mcp.json` servers with the next turn. Reporting `connecting` (the
+        // fallback when this returns None) promised a handshake nobody was
+        // performing, and the row sat on it forever.
+        assert_eq!(
+            approval_status("ok", "project", &approvals),
+            Some("approved")
+        );
+        assert_eq!(approval_status("unknown", "project", &approvals), None);
+    }
+
+    #[test]
+    fn approval_status_ignores_a_name_that_resolves_to_a_non_project_scope() {
+        // A `.mcp.json` name the user ALSO declared locally resolves to the local
+        // config first, so the CLI never asks about it — flagging it `pending`
+        // would offer a decision that changes nothing.
+        let approvals = McpApprovalState {
+            pending: vec!["serena".into()],
+            ..Default::default()
+        };
+        assert_eq!(approval_status("serena", "local", &approvals), None);
+        assert_eq!(approval_status("serena", "user", &approvals), None);
+        assert_eq!(
+            approval_status("serena", "project", &approvals),
+            Some("pending")
+        );
     }
 
     #[test]

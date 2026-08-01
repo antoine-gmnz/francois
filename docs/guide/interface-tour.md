@@ -4,33 +4,41 @@ A single window, three columns, a status bar. Every pane is focusable with the n
 click; the focused pane gets an accent ring and, where it has one, an accent-colored title.
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│  ● ● ●     francois · session orchestrator — <project>   ◉ N agents running │
-├────────────┬──────────────────────────────────┬────────────────┤
-│ SESSIONS   │  SESSION │ DIFF (7) │ SHELL      │ AGENTS         │
-│  [1]       │                                  │  [3]           │
-│            │   (active tab content)           ├────────────────┤
-│            │                                  │ MCP SERVERS    │
-│            │                                  │  [4]           │
-│            │                                  ├────────────────┤
-│ + new [n]  │  › input / prompt                │ SKILLS  [5]    │
-├────────────┴──────────────────────────────────┴────────────────┤
-│ 1-5 switch pane  ⏎ open  / search  ⌘K commands  a  d  t   focus: … │
-└────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ ◈ Francois  ● ~/code/francois ▾          session 42% ▮▮▯ · week 18% ▮▯▯ │
+├────────────┬──────────────────────────────────────┬──────────────────┤
+│ SESSIONS   │ ( SESSION │ DIFF 7 │ SHELL │ ⇉ agent )│ AGENTS       [3] │
+│  [1]       │                                      ├──────────────────┤
+│            │                                      │ MCP SERVERS  [4] │
+│            │       (active tab content)           ├──────────────────┤
+│            │                                      │ SKILLS       [5] │
+│            │                                      ├──────────────────┤
+│ + new [n]  │  › composer                 [ Send ] │ WORKFLOWS    [6] │
+├────────────┴──────────────────────────────────────┴──────────────────┤
+│ ⌘K commands   focus main   2 agents running     ⚇ account  ☾ dark  vX │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Title bar
 
-Shows the app name, the currently active project, and a live pulsing indicator with the count of
-running agents across the fleet. The three dots on the left are the window controls — minimize,
-maximize, close.
+A fixed 38px strip between the OS window caption and the content grid, and the only piece of
+chrome that is never scoped to a session. It carries two clusters:
 
-## Usage bar
+- **Left — the brand and the project switcher.** A diamond glyph, the Francois wordmark, and a
+  button showing the most specific working directory in play right now: the scoped project's
+  root, else the active session's cwd, else your home directory. Clicking it opens the project
+  scope menu — switch scope, or jump to the Projects modal from its last row. This is the app's
+  only project switcher.
+- **Right — the plan-limit meters.** Your Claude plan usage for the account the selected session
+  runs on: current session, current week, and the per-model weekly figure. Each meter is a
+  label, a fill bar and a percent; the fill turns error-red at 80% used. The trailing label
+  pairs cache freshness with the reset countdown (`updated 2m ago · resets in 4h 12m`), and the
+  whole meter region is the click target for a manual refresh. Full detail in
+  [Command palette → The usage bar](/guide/command-palette#the-usage-bar).
 
-A slim strip under the title bar with your Claude plan-limit meters: current session, current
-week across all models, and the per-model weekly figure. Meters change color as you approach a
-limit, and the strip shows when the figures were last refreshed. Full detail in
-[Command palette → The usage bar](/guide/command-palette#the-usage-bar).
+The title bar is pure chrome: it never takes focus, never appears in the `1`–`6` pane cycle, and
+has no animation at all — its height is identical in every state, so nothing it does reflows the
+grid below.
 
 ## Left column — Sessions `[1]`
 
@@ -44,7 +52,7 @@ dashboard — see [Overview dashboard](/guide/overview-dashboard).
 
 ## Middle column — the main pane `[2]`
 
-Three tabs, always in this order:
+A segmented pill control on a recessed track, with three built-in tabs, always in this order:
 
 - **SESSION** — the structured transcript for the selected session. See
   [Conversation & permissions](/guide/conversation-and-permissions).
@@ -57,22 +65,25 @@ The tab header also shows the session's model, context usage, and elapsed time w
 Clicking an agent card in the right column opens that subagent's own conversation as an
 additional dynamic tab after SHELL — see [Agents, MCP & skills](/guide/agents-mcp-skills#opening-an-agent-s-own-conversation-as-a-tab).
 
-## Right column — Agents, MCP, Skills `[3]` `[4]` `[5]`
+## Right column — Agents, MCP, Skills, Workflows `[3]`–`[6]`
 
-Three stacked panels showing everything running underneath the selected session: subagent
-progress, MCP server connection health, and installed/available skills. Full detail in
-[Agents, MCP & skills](/guide/agents-mcp-skills).
+Four stacked cards showing everything running underneath the selected session: subagent
+progress, MCP server connection health, installed/available skills, and this session's
+`Workflow` runs. Full detail in [Agents, MCP & skills](/guide/agents-mcp-skills).
 
-Both side columns are collapsible: `[` hides or shows the left column, `]` the right one — handy
-when you want a full-width diff or transcript.
+The AGENTS, MCP and SKILLS cards each collapse to their header strip — click the header, or focus
+the card and press `c` (there's a palette entry per card too). A collapsed card keeps its live
+count and hotkey visible, the cards that stay expanded absorb the freed height, and the collapsed
+set survives a restart. Whole columns collapse too: `[` hides or shows the left column, `]` the
+right one — handy when you want a full-width diff or transcript.
 
 ## Status bar
 
-Always visible: a fixed set of keymap hints (`1-5` switch pane, `⏎` open, `/` search,
-`⌘K` commands, `a` new agent, `d` diff, `t` shell), a **theme toggle** (`☾`/`☀` — switches
-between the dark and light themes, and the choice persists across restarts), the current focus
-label, and the app version. The full keymap is in
-[Keyboard shortcuts](/reference/keyboard-shortcuts).
+Always visible, and deliberately condensed: the `⌘K commands` hint (clickable), the current
+focus label, a running-agent count when any are running, the account the selected session runs
+on, a **theme toggle** (`☾`/`☀` — switches between the dark and light themes, and the choice
+persists across restarts), and the app version. The hotkeys it no longer spells out all still
+work — the full keymap is in [Keyboard shortcuts](/reference/keyboard-shortcuts).
 
 ## Command palette
 
@@ -81,9 +92,14 @@ model, attach an MCP server, run a skill, and more. See [Command palette](/guide
 
 ## Visual language
 
-Monospace everywhere (JetBrains Mono), in your choice of a dark or light theme — the `☾`/`☀`
-toggle lives in the status bar, and the native window caption follows along. An amber accent
-marks focus rings, prompts, cursors, and hotkeys; status colors distinguish running / done /
-error / connecting / idle at a glance. The whole thing is designed to read like a TUI you'd
-actually want to look at — but with full mouse support, so keyboard-first never means
-keyboard-only.
+Two typefaces, split by role: **IBM Plex Sans** for UI chrome, **JetBrains Mono** for everything
+that is code, a file path, a number, a timer, a badge or a hotkey chip. An amber accent
+(`#e0a84e`) marks focus rings, prompts, cursors and hotkeys, over warm grey layers; status
+colors distinguish running / done / error / connecting / idle at a glance. Subagent dispatches
+get their own purple banner in the transcript, and the conversation reads inside a measured
+~680px column rather than sprawling to the window width.
+
+Both a dark and a derived light theme ship — the `☾`/`☀` toggle lives in the status bar, the
+choice persists, and the native window caption and the SHELL terminal re-theme along with it.
+The whole thing is designed to read like a console you'd actually want to look at, but with full
+mouse support, so keyboard-first never means keyboard-only.

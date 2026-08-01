@@ -63,6 +63,36 @@ pub(crate) fn resolve_background(input: &Value, tool: &str) -> bool {
     }
 }
 
+/// FR-37: a dispatch's display identity — `subagent_type` names the agent,
+/// `description` says what it was asked to do; with no name, the task doubles as
+/// one. Derived TWICE per dispatch: at `content_block_start`, where the streamed
+/// input is still empty and both fall back to the placeholder, and again at
+/// `content_block_stop` once `__acc` has parsed — which is the only point the
+/// real name exists (without the second pass every agent reads "subagent").
+pub(crate) fn agent_identity(input: &Value) -> (String, String) {
+    let task = str_input(input, "description").unwrap_or_else(|| "subagent".into());
+    let name = str_input(input, "subagent_type").unwrap_or_else(|| task.clone());
+    (name, task)
+}
+
+/// The model a dispatch NAMED (`Agent`/`Task` input `model`) — a subagent can
+/// run on a different one from the session that spawned it. `None` when the
+/// dispatch named none: it inherits the session's, and the banner says nothing
+/// rather than restating what the session already shows.
+pub(crate) fn dispatch_model(input: &Value) -> Option<String> {
+    str_input(input, "model")
+}
+
+/// A non-empty string field of a tool input.
+fn str_input(input: &Value, key: &str) -> Option<String> {
+    input
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
 /// FR-2: once a tool's input JSON has fully accumulated as `__acc` (the
 /// concatenated `input_json_delta` fragments), replace the placeholder
 /// `input` with the parsed whole — but keep `__agentId` (stashed at
@@ -210,15 +240,26 @@ pub(crate) fn revive_agent(s: &mut Session, agent_id: &str) -> Vec<AgentEmission
     }
 }
 
-/// FR-2: record the resolved dispatch kind once the input JSON is complete.
-pub(crate) fn apply_background(
+/// FR-2: record the resolved dispatch kind once the input JSON is complete —
+/// and with it the FR-37 identity, which the record minted at
+/// `content_block_start` could not yet know. One emission, not two: the panel
+/// sees the kind and the name land together.
+pub(crate) fn apply_dispatch_input(
     s: &mut Session,
     agent_id: &str,
     background: bool,
+    name: &str,
+    task: &str,
 ) -> Vec<AgentEmission> {
     match s.agents.get_mut(agent_id) {
         Some(a) => {
             a.background = background;
+            if !name.is_empty() {
+                a.name = name.into();
+            }
+            if !task.is_empty() {
+                a.task = task.into();
+            }
             vec![AgentEmission::Update { agent: a.clone() }]
         }
         None => Vec::new(),
@@ -322,13 +363,14 @@ pub(crate) fn apply_attributed_line(
                 out.extend(ems);
                 // agent-tab FR-1: the tool card for the tab, classified like a
                 // top-level tool.start (a nested dispatch becomes a subagent block).
-                let block_id = match push_agent_tool(s, agent_id, &name, &label) {
-                    Some(nb) => {
-                        out.push(nb.emission);
-                        nb.block_id
-                    }
-                    None => String::new(),
-                };
+                let block_id =
+                    match push_agent_tool(s, agent_id, &name, &label, dispatch_model(&input)) {
+                        Some(nb) => {
+                            out.push(nb.emission);
+                            nb.block_id
+                        }
+                        None => String::new(),
+                    };
                 // FR-9: remember the inner tool_use_id against the step's seq, in a
                 // PER-AGENT map — never the parent turn's tool index. `block_id`
                 // rides along so one tool_result fills both projections (agent-tab FR-2).
@@ -880,6 +922,63 @@ mod tests {
             &json!({ "run_in_background": "yes" }),
             "Agent"
         ));
+    }
+
+    #[test]
+    fn identity_reads_subagent_type_then_description() {
+        // FR-37: the agent's name is its subagent_type; the task is the
+        // description. A nameless dispatch reuses the task as its label.
+        assert_eq!(
+            agent_identity(&json!({ "subagent_type": "explorer", "description": "find files" })),
+            ("explorer".into(), "find files".into())
+        );
+        assert_eq!(
+            agent_identity(&json!({ "description": "find files" })),
+            ("find files".into(), "find files".into())
+        );
+        // blank is not an answer — an empty subagent_type falls through
+        assert_eq!(
+            agent_identity(&json!({ "subagent_type": "  ", "description": "find files" })),
+            ("find files".into(), "find files".into())
+        );
+        // the placeholder minted at content_block_start, where input is still {}
+        assert_eq!(
+            agent_identity(&json!({})),
+            ("subagent".into(), "subagent".into())
+        );
+    }
+
+    #[test]
+    fn dispatch_model_is_the_one_the_dispatch_named() {
+        // A subagent can run on a different model from its session — but only a
+        // dispatch that NAMED one says so; inheriting reports nothing.
+        assert_eq!(
+            dispatch_model(&json!({ "subagent_type": "reviewer", "model": "opus" })),
+            Some("opus".into())
+        );
+        assert_eq!(
+            dispatch_model(&json!({ "subagent_type": "reviewer" })),
+            None
+        );
+        assert_eq!(dispatch_model(&json!({ "model": "  " })), None);
+    }
+
+    #[test]
+    fn dispatch_input_replaces_the_placeholder_identity() {
+        // The bug: a streamed dispatch mints its record from an EMPTY input, so
+        // every agent showed as "subagent". The name only exists once __acc has
+        // parsed — this is where it lands, in the same emission as the kind.
+        let mut s = test_session();
+        mint_agent(&mut s, "a1", "subagent", "toolu_d", false);
+        let (name, task) = agent_identity(&json!({
+            "subagent_type": "reviewer", "description": "review the diff"
+        }));
+        let ems = apply_dispatch_input(&mut s, "a1", true, &name, &task);
+        let a = s.agents.get("a1").unwrap();
+        assert_eq!(a.name, "reviewer");
+        assert_eq!(a.task, "review the diff");
+        assert!(a.background);
+        assert_eq!(emitted_updates(&ems).len(), 1);
     }
 
     #[test]

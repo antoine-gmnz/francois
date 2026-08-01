@@ -77,10 +77,12 @@ if you're testing a change while the installed version keeps running your real s
 2. Press `n` (or the **+ new session** action in the sidebar) to open the **New Session** modal.
 3. Pick the project, name the session, choose a model and effort level, and a permission mode.
    Leave **Isolate in worktree** unchecked for now — that's covered separately in
-   [Worktree isolation](/guide/worktree-isolation).
-4. **Create session** — the SESSION tab opens with an empty transcript and an input bar at the
+   [Worktree isolation](/guide/worktree-isolation). If you've registered more than one
+   [account](/guide/accounts), pick which one this session runs under while you're here — it's
+   fixed once the session exists.
+4. **Create session** — the SESSION tab opens with an empty transcript and a composer at the
    bottom. Type a prompt and go.
 
-From here, `1`–`5` moves focus between panes, `⌘K`/`Ctrl+K` opens the command palette for
+From here, `1`–`6` moves focus between panes, `⌘K`/`Ctrl+K` opens the command palette for
 everything else, and the [Interface tour](/guide/interface-tour) walks through what every part of
 the window does.

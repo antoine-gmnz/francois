@@ -174,13 +174,17 @@ pub(crate) fn push_agent_text(
 /// FR-1/FR-3: the subagent called a tool. Classified exactly as the parent
 /// transcript classifies a top-level tool.start, and left `isStreaming: true`
 /// until its `tool_result` fills the meta (FR-2).
+/// `model` names the one a NESTED dispatch asked for, and rides the block's
+/// `text` exactly as it does in the parent transcript (BufBlock field reuse).
 pub(crate) fn push_agent_tool(
     s: &mut Session,
     agent_id: &str,
     tool: &str,
     summary: &str,
+    model: Option<String>,
 ) -> Option<NewAgentBlock> {
-    let kind = if is_subagent_tool(tool) {
+    let is_dispatch = is_subagent_tool(tool);
+    let kind = if is_dispatch {
         BlockKind::Subagent
     } else {
         BlockKind::Tool
@@ -190,7 +194,11 @@ pub(crate) fn push_agent_tool(
         agent_id,
         buf_block(
             kind,
-            String::new(),
+            if is_dispatch {
+                model.unwrap_or_default()
+            } else {
+                String::new()
+            },
             tool.to_string(),
             summary.to_string(),
             true,
@@ -311,7 +319,7 @@ mod tests {
         // FR-2/FR-3: fill in place, same blockId, no append.
         let mut s = test_session();
         mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
-        let nb = push_agent_tool(&mut s, "a1", "Read", "src/session.rs").unwrap();
+        let nb = push_agent_tool(&mut s, "a1", "Read", "src/session.rs", None).unwrap();
         let open = emitted_block(&nb.emission);
         assert_eq!(open["kind"], "tool");
         assert_eq!(open["tool"], "Read");
@@ -335,10 +343,16 @@ mod tests {
         // PARENT agent's transcript, never an agent of its own.
         let mut s = test_session();
         mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
-        let nb = push_agent_tool(&mut s, "a1", "Agent", "reviewer").unwrap();
+        let nb = push_agent_tool(&mut s, "a1", "Agent", "reviewer", None).unwrap();
         let b = emitted_block(&nb.emission);
         assert_eq!(b["kind"], "subagent");
         assert_eq!(b["agentName"], "reviewer");
+        assert!(b.get("agentModel").is_none()); // inherited ⇒ the banner says nothing
+
+        // …and a nested dispatch that NAMES a model carries it, exactly as the
+        // parent transcript's banner does.
+        let nb = push_agent_tool(&mut s, "a1", "Agent", "reviewer", Some("opus".into())).unwrap();
+        assert_eq!(emitted_block(&nb.emission)["agentModel"], "opus");
     }
 
     #[test]

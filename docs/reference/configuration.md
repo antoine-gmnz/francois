@@ -1,12 +1,22 @@
 # Configuration
 
-Francois configures a session at three levels: a **permission mode** picked when the session
-is created, a per-tool **rules editor** that writes directly into Claude Code's own
-`settings.json`, and **project-level** defaults and standards that apply to every session
-started under a project. None of this is a Francois-specific settings format — with the
-exception of two small Francois-owned sidecar files noted below, everything is either a
-Claude Code file Francois reads and writes, or an in-app registry that only pre-fills
-Claude Code fields.
+Francois configures a session at four levels: the **account** it runs under (which Claude Code
+config directory it uses), a **permission mode** picked when the session is created, a per-tool
+**rules editor** that writes directly into Claude Code's own `settings.json`, and
+**project-level** defaults and standards that apply to every session started under a project.
+None of this is a Francois-specific settings format — with the exception of two small
+Francois-owned sidecar files noted below, everything is either a Claude Code file Francois reads
+and writes, or an in-app registry that only pre-fills Claude Code fields.
+
+## Accounts
+
+An account is a Claude Code config directory (`CLAUDE_CONFIG_DIR`). The built-in `default`
+account sets no override and uses your ordinary `~/.claude`; each added account owns
+`<app data>/accounts/<id>/` and is registered in `accounts.json` alongside `projects.json` and
+`sessions.json`. Every `claude` process a session spawns — the turn, the usage probe, the
+remote-control PTY, the SHELL tab — inherits that directory. The full flow, including what is
+mirrored from your global `~/.claude` and what is deliberately not, is in
+[Accounts & usage](/guide/accounts).
 
 ## Permission modes
 
@@ -97,7 +107,7 @@ A **project** is a named, persisted workspace rooted at a directory. It exists s
 session doesn't have to be configured from scratch every time — a project remembers a set
 of session defaults and a set of coding standards, and both are available from the New
 Session flow once the project has been created (via the command palette's **Manage
-projects** command or the project switcher above the session list).
+projects** command, or the title bar's project switcher).
 
 ### The project registry
 
@@ -115,6 +125,7 @@ Each project can set the following fields, every one optional — an unset field
 
 | Default | Effect when set |
 |---|---|
+| `accountId` | Pre-fills which [account](/guide/accounts) new sessions run under. A default naming a removed account falls back to the globally-default account. |
 | `modelId` | Pre-fills the model picker in the New Session modal. |
 | `effort` | Pre-fills the effort level (must be one the chosen model advertises; otherwise falls back to the model's own default). |
 | `permissionMode` | Pre-fills the permission mode described above. |

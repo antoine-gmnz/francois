@@ -16,8 +16,8 @@
   html, body, #root { margin:0; padding:0; background:#0a0b0e; }
   * { box-sizing:border-box; }
   body { font-family:'IBM Plex Sans', system-ui, sans-serif; -webkit-font-smoothing:antialiased; color:#e6e9ef; }
-  a { color:#e0a84e; text-decoration:none; }
-  a:hover { color:#f0c47c; }
+  a { color:#c3f53f; text-decoration:none; }
+  a:hover { color:#d6fa7e; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
   @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
   .scz::-webkit-scrollbar { width:8px; height:8px; }
@@ -30,7 +30,7 @@
 
   <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
     <div style="flex:1; min-width:0;">
-      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#e0a84e;">TURN 4 · MULTI-ACCOUNT</div>
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#c3f53f;">TURN 4 · MULTI-ACCOUNT</div>
       <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">One account per session</h1>
       <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">Built on <a href="#3a">3a</a>. Each account gets a fixed identity — a tinted initial tile plus its own quota meter — and every session carries the tile of the account it burns. The titlebar shows only the <em style="font-style:normal; color:#c3c9d4;">active</em> session's quota so the number in front of you always belongs to the work in front of you; the rail holds the whole roster. When an account hits its limit the sessions on it pause and the pane offers to reroute rather than silently stalling.</p>
     </div>
@@ -42,7 +42,7 @@
 
   <div id="4a" style="display:flex; flex-direction:column; gap:14px;">
     <div style="display:flex; align-items:center; gap:12px;">
-      <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">4a</span>
+      <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">4a</span>
       <span style="font-size:16px; font-weight:600; color:#f2f4f8;">Accounts</span>
       <span style="font-size:13px; color:#6b7385;">work@acme.dev active · ops@acme.dev rate-limited, one session paused</span>
     </div>
@@ -50,15 +50,15 @@
     <div style="width:1280px; height:800px; display:flex; flex-direction:column; background:#0d0f13; border:1px solid #232833; border-radius:10px; overflow:hidden; box-shadow:0 40px 90px -30px rgba(0,0,0,.9);">
 
       <div style="height:38px; flex:0 0 38px; display:flex; align-items:center; gap:12px; padding:0 14px; background:#11141a; border-bottom:1px solid #232833;">
-        <span style="width:9px; height:9px; border-radius:2px; background:#e0a84e; transform:rotate(45deg);"></span>
+        <span style="position:relative; display:inline-block; width:16px; height:14px; flex-shrink:0;"><span style="position:absolute; left:2.5px; top:0; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#c3f53f;"></span><span style="position:absolute; left:1.25px; top:5px; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#c3f53f;"></span><span style="position:absolute; left:0; top:10px; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#5f7a1e;"></span></span>
         <span style="font-size:12.5px; font-weight:600; letter-spacing:-.01em; color:#e6e9ef;">Francois</span>
         <button type="button" style="display:flex; align-items:center; gap:7px; height:24px; padding:0 9px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:11px; color:#c3c9d4;" style-hover="background:#232833">
-          <span style="width:6px; height:6px; border-radius:50%; background:#6fae7d;"></span>D:\francois<span style="color:#6b7385; font-size:9px;">▾</span>
+          <span style="width:6px; height:6px; border-radius:50%; background:#4fae86;"></span>D:\francois<span style="color:#6b7385; font-size:9px;">▾</span>
         </button>
         <span style="flex:1;"></span>
         <div style="display:flex; align-items:center; gap:9px;">
           <span style="font-size:11px; color:#6b7385;">session</span>
-          <span style="width:56px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:8%; height:100%; background:#6fae7d; border-radius:2px;"></span></span>
+          <span style="width:56px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:8%; height:100%; background:#4fae86; border-radius:2px;"></span></span>
           <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa2b1;">8%</span>
         </div>
         <span style="width:1px; height:18px; background:#232833;"></span>
@@ -83,13 +83,13 @@
           </div>
           <div class="scz" style="flex:1; overflow:auto; padding:0 10px; display:flex; flex-direction:column; gap:6px;">
             <div style="position:relative; display:flex; flex-direction:column; gap:7px; padding:11px 12px 11px 14px; border-radius:7px; background:#1c212a; box-shadow:inset 0 0 0 1px #333a48; cursor:pointer;">
-              <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#e0a84e;"></span>
+              <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#c3f53f;"></span>
               <div style="display:flex; align-items:center; gap:8px;">
                 <span style="width:19px; height:19px; border-radius:5px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:600; background:#1b2836; border:1px solid #2e4a63; color:#9cc2e4;">W</span>
                 <span style="flex:1; min-width:0; font-size:13.5px; font-weight:600; color:#f2f4f8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Refactoring</span>
                 <span style="display:flex; align-items:center; gap:5px; flex-shrink:0;">
-                  <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>
-                  <span style="font-size:11px; color:#e0a84e;">working</span>
+                  <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                  <span style="font-size:11px; color:#c3f53f;">working</span>
                 </span>
               </div>
               <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-left:27px;">D:\francois</div>
@@ -118,7 +118,7 @@
           </div>
           <div style="padding:10px; border-top:1px solid #1f242d; display:flex; flex-direction:column; gap:7px;">
             <button type="button" style="width:100%; height:32px; display:flex; align-items:center; justify-content:center; gap:8px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:500; color:#e6e9ef;" style-hover="background:#232833; border-color:#3c4453">
-              <span style="color:#e0a84e; font-size:14px; line-height:1;">+</span>New session
+              <span style="color:#c3f53f; font-size:14px; line-height:1;">+</span>New session
               <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">n</span>
             </button>
             <div style="display:flex; align-items:center; gap:7px; font-size:11px; color:#565e6e;">
@@ -135,13 +135,13 @@
             <div style="display:flex; align-items:center; gap:2px; padding:3px; background:#0f1217; border:1px solid #1f242d; border-radius:7px; flex-shrink:0;">
               <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e; cursor:pointer;">Overview</span>
               <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:600; color:#f2f4f8; background:#232833; box-shadow:0 1px 2px rgba(0,0,0,.4); cursor:pointer;">Session</span>
-              <span style="display:flex; align-items:center; gap:6px; padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#e0a84e; border-radius:9px; padding:1px 6px;">71</span></span>
+              <span style="display:flex; align-items:center; gap:6px; padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#c3f53f; border-radius:9px; padding:1px 6px;">71</span></span>
               <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e; cursor:pointer;">Shell</span>
             </div>
             <span style="width:1px; height:20px; background:#232833; flex-shrink:0;"></span>
             <div style="display:flex; align-items:center; gap:6px; flex:1; min-width:0; overflow:hidden;">
               <div style="display:flex; align-items:center; gap:8px; height:28px; padding:0 8px 0 10px; background:#12151a; border:1px solid #1f242d; border-radius:7px; cursor:pointer; flex:0 0 auto;" style-hover="background:#1a1e26; border-color:#2d333f">
-                <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
                 <span style="font-size:12.5px; color:#9aa2b1; white-space:nowrap;">token-sweeper</span>
                 <span style="font-size:11px; color:#565e6e; padding:0 1px; flex-shrink:0;">✕</span>
               </div>
@@ -158,7 +158,7 @@
             <span style="width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:600; background:#2a1a19; border:1px solid #4a2b27; color:#e0918a;">O</span>
             <span style="flex:1; min-width:0; font-size:13px; line-height:1.5; color:#d6dae2;"><span style="font-weight:600;">ops@acme.dev</span> hit its weekly limit — <span style="color:#e0918a;">cartograph</span> is paused until it resets in 38m.</span>
             <button type="button" style="height:27px; padding:0 11px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12px; color:#d6dae2; flex-shrink:0;" style-hover="background:#232833">Wait it out</button>
-            <button type="button" style="display:flex; align-items:center; gap:7px; height:27px; padding:0 11px; background:#e0a84e; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12px; font-weight:600; color:#0d0f13; flex-shrink:0;" style-hover="background:#f0c47c">Move to work@acme.dev</button>
+            <button type="button" style="display:flex; align-items:center; gap:7px; height:27px; padding:0 11px; background:#c3f53f; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12px; font-weight:600; color:#0d0f13; flex-shrink:0;" style-hover="background:#d6fa7e">Move to work@acme.dev</button>
           </div>
 
           <div class="scz" style="flex:1; min-height:0; overflow:auto; padding:24px 26px;">
@@ -178,16 +178,16 @@
                   </div>
                 </sc-for>
               </div>
-              <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Sweeping now — <span style="font-family:'JetBrains Mono',monospace; font-size:13.5px;">store.ts</span> first, then the panel components<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#e0a84e; animation:blink 1s step-end infinite;"></span></div>
+              <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Sweeping now — <span style="font-family:'JetBrains Mono',monospace; font-size:13.5px;">store.ts</span> first, then the panel components<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#c3f53f; animation:blink 1s step-end infinite;"></span></div>
             </div>
           </div>
 
           <div style="flex-shrink:0; padding:14px 26px 16px; border-top:1px solid #1f242d; background:#11141a;">
             <div style="max-width:680px; margin:0 auto;">
               <div style="display:flex; align-items:flex-end; gap:12px; padding:13px 15px; background:#1a1e26; border:1px solid #2d333f; border-radius:11px; box-shadow:0 8px 24px rgba(0,0,0,.4);">
-                <span style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#e0a84e;">›</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#c3f53f;">›</span>
                 <span style="flex:1; font-size:14.5px; line-height:1.5; color:#565e6e;">Reply, or press <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#8b93a3;">/</span> for skills and commands</span>
-                <button type="button" style="height:28px; padding:0 13px; background:#e0a84e; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;" style-hover="background:#f0c47c">Send</button>
+                <button type="button" style="height:28px; padding:0 13px; background:#c3f53f; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;" style-hover="background:#d6fa7e">Send</button>
               </div>
               <div style="display:flex; align-items:center; gap:16px; margin-top:10px; font-size:11.5px; color:#565e6e;">
                 <span><span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">esc</span> interrupt</span>
@@ -205,7 +205,7 @@
               <span style="font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:#9aa2b1;">Accounts</span>
               <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3; background:#1f242d; border-radius:10px; padding:1px 7px;">3</span>
               <span style="flex:1;"></span>
-              <span style="font-size:11px; color:#565e6e; cursor:pointer;" style-hover="color:#e0a84e">+ add</span>
+              <span style="font-size:11px; color:#565e6e; cursor:pointer;" style-hover="color:#c3f53f">+ add</span>
             </div>
             <div style="padding:8px; display:flex; flex-direction:column; gap:4px;">
               <sc-for list="{{ accounts }}" as="a" hint-placeholder-count="3">
@@ -230,13 +230,13 @@
           <section style="flex:1; min-height:0; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:8px; overflow:hidden;">
             <div style="display:flex; align-items:center; gap:9px; padding:11px 12px; border-bottom:1px solid #1f242d;">
               <span style="font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:#9aa2b1;">Agents</span>
-              <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#e0a84e;"><span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
+              <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#c3f53f;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
               <span style="flex:1;"></span>
               <span style="font-size:11px; color:#565e6e;">on <span style="color:#9cc2e4;">W</span></span>
             </div>
             <div style="padding:8px; display:flex; flex-direction:column; gap:2px;">
               <div style="display:flex; align-items:center; gap:9px; padding:8px 9px; border-radius:6px; background:#1c212a; cursor:pointer;">
-                <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
                 <span style="flex:1; min-width:0; font-size:12.5px; font-weight:600; color:#f2f4f8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">token-sweeper</span>
                 <span style="font-size:10.5px; color:#8b93a3; background:#2b323d; border-radius:4px; padding:1px 6px;">tab</span>
               </div>
@@ -262,7 +262,7 @@
       </div>
 
       <div style="height:30px; flex:0 0 30px; display:flex; align-items:center; gap:16px; padding:0 14px; background:#11141a; border-top:1px solid #232833; font-size:11px; color:#565e6e;">
-        <span style="display:flex; align-items:center; gap:6px; color:#8b93a3;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a84e;">⌘K</span>commands</span>
+        <span style="display:flex; align-items:center; gap:6px; color:#8b93a3;"><span style="font-family:'JetBrains Mono',monospace; color:#c3f53f;">⌘K</span>commands</span>
         <span style="display:flex; align-items:center; gap:6px;">account <span style="color:#9cc2e4;">work@acme.dev</span></span>
         <span>2 agents · 4 MCP · 40 skills</span>
         <span style="color:#e0918a;">1 session paused · ops limit 38m</span>
@@ -288,7 +288,7 @@
                 <div style="font-size:13px; color:#f2f4f8;">work@acme.dev</div>
                 <div style="font-size:11px; color:#6b7385; margin-top:2px;">Max 20× · 77% left this week</div>
               </div>
-              <span style="font-size:12px; color:#e0a84e;">✓</span>
+              <span style="font-size:12px; color:#c3f53f;">✓</span>
             </div>
             <div style="display:flex; align-items:center; gap:10px; padding:10px 11px; border-radius:7px; cursor:pointer;" style-hover="background:#1a1e26">
               <span style="width:22px; height:22px; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:600; background:#18262a; border:1px solid #2c4a4a; color:#9fd0cd;">P</span>
@@ -307,9 +307,9 @@
           </div>
           <div style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-top:1px solid #22262f;">
             <span style="font-size:11.5px; color:#565e6e;">Remember for this project</span>
-            <span style="width:26px; height:15px; border-radius:8px; background:#e0a84e; position:relative; display:block;"><span style="position:absolute; top:2px; right:2px; width:11px; height:11px; border-radius:50%; background:#11141a; display:block;"></span></span>
+            <span style="width:26px; height:15px; border-radius:8px; background:#c3f53f; position:relative; display:block;"><span style="position:absolute; top:2px; right:2px; width:11px; height:11px; border-radius:50%; background:#11141a; display:block;"></span></span>
             <span style="flex:1;"></span>
-            <button type="button" style="height:28px; padding:0 13px; background:#e0a84e; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;">Start</button>
+            <button type="button" style="height:28px; padding:0 13px; background:#c3f53f; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;">Start</button>
           </div>
         </div>
       </div>
@@ -349,7 +349,7 @@
 
   <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
     <div style="flex:1; min-width:0;">
-      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#e0a84e;">TURN 3 · AGENT TABS</div>
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#c3f53f;">TURN 3 · AGENT TABS</div>
       <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Agents as tabs, not a panel</h1>
       <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">Built on <a href="#2a">2a</a>. The tab strip splits in two: the four fixed views stay in a segmented group, then a divider, then one tab per live agent — spawned in, closable, each carrying its own status dot. Opening an agent tab replaces the transcript with that agent's own trace, so the right rail stops being a viewer and becomes a launcher: a roster with counts, not a second reading surface. Overflow collapses to a <span style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#c3c9d4;">+N</span> chip rather than shrinking the fixed tabs — here the third agent sits behind <span style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#c3c9d4;">+1</span>.</p>
     </div>
@@ -361,7 +361,7 @@
 
   <div id="3a" style="display:flex; flex-direction:column; gap:14px;">
     <div style="display:flex; align-items:center; gap:12px;">
-      <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">3a</span>
+      <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">3a</span>
       <span style="font-size:16px; font-weight:600; color:#f2f4f8;">Agent tabs</span>
       <span style="font-size:13px; color:#6b7385;">token-sweeper tab open — its own trace, its own footer actions</span>
     </div>
@@ -369,21 +369,21 @@
     <div style="width:1280px; height:800px; display:flex; flex-direction:column; background:#0d0f13; border:1px solid #232833; border-radius:10px; overflow:hidden; box-shadow:0 40px 90px -30px rgba(0,0,0,.9);">
 
       <div style="height:38px; flex:0 0 38px; display:flex; align-items:center; gap:14px; padding:0 14px; background:#11141a; border-bottom:1px solid #232833;">
-        <span style="width:9px; height:9px; border-radius:2px; background:#e0a84e; transform:rotate(45deg);"></span>
+        <span style="position:relative; display:inline-block; width:16px; height:14px; flex-shrink:0;"><span style="position:absolute; left:2.5px; top:0; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#c3f53f;"></span><span style="position:absolute; left:1.25px; top:5px; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#c3f53f;"></span><span style="position:absolute; left:0; top:10px; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#5f7a1e;"></span></span>
         <span style="font-size:12.5px; font-weight:600; letter-spacing:-.01em; color:#e6e9ef;">Francois</span>
         <button type="button" style="display:flex; align-items:center; gap:7px; height:24px; padding:0 9px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:11px; color:#c3c9d4;" style-hover="background:#232833">
-          <span style="width:6px; height:6px; border-radius:50%; background:#6fae7d;"></span>D:\francois<span style="color:#6b7385; font-size:9px;">▾</span>
+          <span style="width:6px; height:6px; border-radius:50%; background:#4fae86;"></span>D:\francois<span style="color:#6b7385; font-size:9px;">▾</span>
         </button>
         <span style="flex:1;"></span>
         <div style="display:flex; align-items:center; gap:14px;">
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-size:11px; color:#6b7385;">session</span>
-            <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:8%; height:100%; background:#6fae7d; border-radius:2px;"></span></span>
+            <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:8%; height:100%; background:#4fae86; border-radius:2px;"></span></span>
             <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa2b1;">8%</span>
           </div>
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-size:11px; color:#6b7385;">week</span>
-            <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:23%; height:100%; background:#e0a84e; border-radius:2px;"></span></span>
+            <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:23%; height:100%; background:#c3f53f; border-radius:2px;"></span></span>
             <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa2b1;">23%</span>
           </div>
           <span style="font-size:11px; color:#565e6e;">resets in 4h 9m</span>
@@ -407,12 +407,12 @@
           </div>
           <div class="scz" style="flex:1; overflow:auto; padding:0 10px; display:flex; flex-direction:column; gap:6px;">
             <div style="position:relative; display:flex; flex-direction:column; gap:7px; padding:11px 12px 11px 14px; border-radius:7px; background:#1c212a; box-shadow:inset 0 0 0 1px #333a48; cursor:pointer;">
-              <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#e0a84e;"></span>
+              <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#c3f53f;"></span>
               <div style="display:flex; align-items:center; gap:8px;">
                 <span style="flex:1; min-width:0; font-size:13.5px; font-weight:600; color:#f2f4f8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Refactoring</span>
                 <span style="display:flex; align-items:center; gap:5px; flex-shrink:0;">
-                  <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>
-                  <span style="font-size:11px; color:#e0a84e;">working</span>
+                  <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                  <span style="font-size:11px; color:#c3f53f;">working</span>
                 </span>
               </div>
               <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">D:\francois</div>
@@ -424,9 +424,9 @@
               </div>
               <div style="display:flex; align-items:center; gap:6px; margin-top:1px;">
                 <span style="font-size:11px; color:#6b7385;">2 agents</span>
-                <span style="width:5px; height:5px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>
-                <span style="width:5px; height:5px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>
-                <span style="width:5px; height:5px; border-radius:50%; background:#6fae7d;"></span>
+                <span style="width:5px; height:5px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                <span style="width:5px; height:5px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                <span style="width:5px; height:5px; border-radius:50%; background:#4fae86;"></span>
               </div>
             </div>
             <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="2">
@@ -446,7 +446,7 @@
           </div>
           <div style="padding:10px; border-top:1px solid #1f242d;">
             <button type="button" style="width:100%; height:32px; display:flex; align-items:center; justify-content:center; gap:8px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:500; color:#e6e9ef;" style-hover="background:#232833; border-color:#3c4453">
-              <span style="color:#e0a84e; font-size:14px; line-height:1;">+</span>New session
+              <span style="color:#c3f53f; font-size:14px; line-height:1;">+</span>New session
               <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">n</span>
             </button>
           </div>
@@ -458,7 +458,7 @@
             <div style="display:flex; align-items:center; gap:2px; padding:3px; background:#0f1217; border:1px solid #1f242d; border-radius:7px; flex-shrink:0;">
               <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e; cursor:pointer;">Overview</span>
               <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;" style-hover="color:#e6e9ef">Session</span>
-              <span style="display:flex; align-items:center; gap:6px; padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#e0a84e; border-radius:9px; padding:1px 6px;">71</span></span>
+              <span style="display:flex; align-items:center; gap:6px; padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#c3f53f; border-radius:9px; padding:1px 6px;">71</span></span>
               <span style="padding:5px 10px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e; cursor:pointer;">Shell</span>
             </div>
 
@@ -468,7 +468,7 @@
               <div style="display:flex; align-items:center; gap:6px; flex:1; min-width:0; overflow:hidden;">
                 <!-- active agent tab -->
                 <div style="display:flex; align-items:center; gap:8px; height:28px; padding:0 8px 0 10px; background:#232833; border:1px solid #3c4453; border-radius:7px; box-shadow:0 1px 3px rgba(0,0,0,.45); cursor:pointer; flex:0 0 auto;">
-                  <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                  <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
                   <span style="font-size:12.5px; font-weight:600; color:#f2f4f8; white-space:nowrap;">token-sweeper</span>
                   <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3; flex-shrink:0;">2m</span>
                   <span style="font-size:11px; color:#6b7385; padding:0 1px; cursor:pointer; flex-shrink:0;" style-hover="color:#e6e9ef">✕</span>
@@ -527,12 +527,12 @@
                 </sc-for>
               </div>
 
-              <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Three panels done, <span style="font-family:'JetBrains Mono',monospace; font-size:13.5px;">PanelRail.tsx</span> next<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#e0a84e; animation:blink 1s step-end infinite;"></span></div>
+              <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Three panels done, <span style="font-family:'JetBrains Mono',monospace; font-size:13.5px;">PanelRail.tsx</span> next<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#c3f53f; animation:blink 1s step-end infinite;"></span></div>
             </div>
           </div>
 
           <div style="flex-shrink:0; display:flex; align-items:center; gap:14px; padding:11px 20px; border-top:1px solid #1f242d; background:#11141a; font-size:11.5px; color:#6b7385;">
-            <span style="display:flex; align-items:center; gap:7px; color:#9aa2b1;"><span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>working · 2m 14s</span>
+            <span style="display:flex; align-items:center; gap:7px; color:#9aa2b1;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>working · 2m 14s</span>
             <span style="font-family:'JetBrains Mono',monospace;"><span style="color:#8fbab8;">+35</span> <span style="color:#e0918a;">−103</span> in 3 files</span>
             <span style="flex:1;"></span>
             <span>results merge into <span style="color:#9aa2b1;">Refactoring</span> when it finishes</span>
@@ -544,13 +544,13 @@
           <section style="flex:0 0 auto; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:8px; overflow:hidden;">
             <div style="display:flex; align-items:center; gap:9px; padding:11px 12px; border-bottom:1px solid #1f242d;">
               <span style="font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:#9aa2b1;">Agents</span>
-              <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#e0a84e;"><span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
+              <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#c3f53f;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
               <span style="flex:1;"></span>
               <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e; border:1px solid #2d333f; border-radius:4px; padding:1px 5px;">3</span>
             </div>
             <div style="padding:8px; display:flex; flex-direction:column; gap:2px;">
               <div style="display:flex; align-items:center; gap:9px; padding:8px 9px; border-radius:6px; background:#1c212a; cursor:pointer;">
-                <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
                 <span style="flex:1; min-width:0; font-size:12.5px; font-weight:600; color:#f2f4f8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">token-sweeper</span>
                 <span style="font-size:10.5px; color:#8b93a3; background:#2b323d; border-radius:4px; padding:1px 6px;">open</span>
               </div>
@@ -596,7 +596,7 @@
       </div>
 
       <div style="height:30px; flex:0 0 30px; display:flex; align-items:center; gap:16px; padding:0 14px; background:#11141a; border-top:1px solid #232833; font-size:11px; color:#565e6e;">
-        <span style="display:flex; align-items:center; gap:6px; color:#8b93a3;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a84e;">⌘K</span>commands</span>
+        <span style="display:flex; align-items:center; gap:6px; color:#8b93a3;"><span style="font-family:'JetBrains Mono',monospace; color:#c3f53f;">⌘K</span>commands</span>
         <span>focus <span style="color:#9aa2b1;">token-sweeper</span></span>
         <span><span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">⌥1-9</span> jump to tab</span>
         <span><span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">⌘W</span> close tab</span>
@@ -612,7 +612,7 @@
 
   <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
     <div style="flex:1; min-width:0;">
-      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#e0a84e;">TURN 2 · MERGE</div>
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#c3f53f;">TURN 2 · MERGE</div>
       <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Console shell, Focus conversation</h1>
       <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">The three-pane shell from <a href="#1a">1a</a> — titlebar meters, session cards, self-folding right rail, thin status bar — carrying the reading treatment from <a href="#1c">1c</a>: a single measured column at 15px, the prompt as a card rather than a line, tool calls grouped into one hairline-divided block, and the composer given room to breathe.</p>
     </div>
@@ -624,7 +624,7 @@
 
   <div id="2a" style="display:flex; flex-direction:column; gap:14px;">
     <div style="display:flex; align-items:center; gap:12px;">
-      <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">2a</span>
+      <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">2a</span>
       <span style="font-size:16px; font-weight:600; color:#f2f4f8;">Console · Focus</span>
       <span style="font-size:13px; color:#6b7385;">1a chrome, 1c transcript</span>
     </div>
@@ -632,21 +632,21 @@
     <div style="width:1280px; height:800px; display:flex; flex-direction:column; background:#0d0f13; border:1px solid #232833; border-radius:10px; overflow:hidden; box-shadow:0 40px 90px -30px rgba(0,0,0,.9);">
 
       <div style="height:38px; flex:0 0 38px; display:flex; align-items:center; gap:14px; padding:0 14px; background:#11141a; border-bottom:1px solid #232833;">
-        <span style="width:9px; height:9px; border-radius:2px; background:#e0a84e; transform:rotate(45deg);"></span>
+        <span style="position:relative; display:inline-block; width:16px; height:14px; flex-shrink:0;"><span style="position:absolute; left:2.5px; top:0; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#c3f53f;"></span><span style="position:absolute; left:1.25px; top:5px; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#c3f53f;"></span><span style="position:absolute; left:0; top:10px; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#5f7a1e;"></span></span>
         <span style="font-size:12.5px; font-weight:600; letter-spacing:-.01em; color:#e6e9ef;">Francois</span>
         <button type="button" style="display:flex; align-items:center; gap:7px; height:24px; padding:0 9px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:11px; color:#c3c9d4;" style-hover="background:#232833">
-          <span style="width:6px; height:6px; border-radius:50%; background:#6fae7d;"></span>D:\francois<span style="color:#6b7385; font-size:9px;">▾</span>
+          <span style="width:6px; height:6px; border-radius:50%; background:#4fae86;"></span>D:\francois<span style="color:#6b7385; font-size:9px;">▾</span>
         </button>
         <span style="flex:1;"></span>
         <div style="display:flex; align-items:center; gap:14px;">
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-size:11px; color:#6b7385;">session</span>
-            <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:8%; height:100%; background:#6fae7d; border-radius:2px;"></span></span>
+            <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:8%; height:100%; background:#4fae86; border-radius:2px;"></span></span>
             <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa2b1;">8%</span>
           </div>
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-size:11px; color:#6b7385;">week</span>
-            <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:23%; height:100%; background:#e0a84e; border-radius:2px;"></span></span>
+            <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:23%; height:100%; background:#c3f53f; border-radius:2px;"></span></span>
             <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa2b1;">23%</span>
           </div>
           <span style="font-size:11px; color:#565e6e;">resets in 4h 9m</span>
@@ -670,12 +670,12 @@
           </div>
           <div class="scz" style="flex:1; overflow:auto; padding:0 10px; display:flex; flex-direction:column; gap:6px;">
             <div style="position:relative; display:flex; flex-direction:column; gap:7px; padding:11px 12px 11px 14px; border-radius:7px; background:#1c212a; box-shadow:inset 0 0 0 1px #333a48; cursor:pointer;">
-              <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#e0a84e;"></span>
+              <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#c3f53f;"></span>
               <div style="display:flex; align-items:center; gap:8px;">
                 <span style="flex:1; min-width:0; font-size:13.5px; font-weight:600; color:#f2f4f8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Refactoring</span>
                 <span style="display:flex; align-items:center; gap:5px; flex-shrink:0;">
-                  <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>
-                  <span style="font-size:11px; color:#e0a84e;">working</span>
+                  <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                  <span style="font-size:11px; color:#c3f53f;">working</span>
                 </span>
               </div>
               <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">D:\francois</div>
@@ -703,7 +703,7 @@
           </div>
           <div style="padding:10px; border-top:1px solid #1f242d;">
             <button type="button" style="width:100%; height:32px; display:flex; align-items:center; justify-content:center; gap:8px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:500; color:#e6e9ef;" style-hover="background:#232833; border-color:#3c4453">
-              <span style="color:#e0a84e; font-size:14px; line-height:1;">+</span>New session
+              <span style="color:#c3f53f; font-size:14px; line-height:1;">+</span>New session
               <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">n</span>
             </button>
           </div>
@@ -715,12 +715,12 @@
             <div style="display:flex; align-items:center; gap:2px; padding:3px; background:#0f1217; border:1px solid #1f242d; border-radius:7px;">
               <span style="padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e; cursor:pointer;">Overview</span>
               <span style="padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:600; color:#f2f4f8; background:#232833; box-shadow:0 1px 2px rgba(0,0,0,.4); cursor:pointer;">Session</span>
-              <span style="display:flex; align-items:center; gap:7px; padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#e0a84e; border-radius:9px; padding:1px 6px;">71</span></span>
+              <span style="display:flex; align-items:center; gap:7px; padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#c3f53f; border-radius:9px; padding:1px 6px;">71</span></span>
               <span style="padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e; cursor:pointer;">Shell</span>
             </div>
             <span style="flex:1;"></span>
             <div style="display:flex; align-items:center; gap:12px;">
-              <span style="display:flex; align-items:center; gap:6px; font-size:11.5px; color:#9aa2b1;"><span style="width:6px; height:6px; border-radius:50%; background:#6fae7d;"></span>edits allowed</span>
+              <span style="display:flex; align-items:center; gap:6px; font-size:11.5px; color:#9aa2b1;"><span style="width:6px; height:6px; border-radius:50%; background:#4fae86;"></span>edits allowed</span>
               <span style="font-size:11.5px; color:#9aa2b1;">Opus 5</span>
               <span style="display:flex; align-items:center; gap:7px;">
                 <span style="width:52px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:11%; height:100%; background:#6f9fd8; border-radius:2px;"></span></span>
@@ -756,16 +756,16 @@
                 <span style="font-size:12px; color:#6b7385; flex-shrink:0;">2m</span>
               </div>
 
-              <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Sweeping now — <span style="font-family:'JetBrains Mono',monospace; font-size:13.5px;">store.ts</span> first, then the panel components<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#e0a84e; animation:blink 1s step-end infinite;"></span></div>
+              <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Sweeping now — <span style="font-family:'JetBrains Mono',monospace; font-size:13.5px;">store.ts</span> first, then the panel components<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#c3f53f; animation:blink 1s step-end infinite;"></span></div>
             </div>
           </div>
 
           <div style="flex-shrink:0; padding:14px 26px 16px; border-top:1px solid #1f242d; background:#11141a;">
             <div style="max-width:680px; margin:0 auto;">
               <div style="display:flex; align-items:flex-end; gap:12px; padding:13px 15px; background:#1a1e26; border:1px solid #2d333f; border-radius:11px; box-shadow:0 8px 24px rgba(0,0,0,.4);">
-                <span style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#e0a84e;">›</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#c3f53f;">›</span>
                 <span style="flex:1; font-size:14.5px; line-height:1.5; color:#565e6e;">Reply, or press <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#8b93a3;">/</span> for skills and commands</span>
-                <button type="button" style="height:28px; padding:0 13px; background:#e0a84e; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;" style-hover="background:#f0c47c">Send</button>
+                <button type="button" style="height:28px; padding:0 13px; background:#c3f53f; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;" style-hover="background:#d6fa7e">Send</button>
               </div>
               <sc-if value="{{ showKeyHints }}" hint-placeholder-val="{{ true }}">
                 <div style="display:flex; align-items:center; gap:16px; margin-top:10px; font-size:11.5px; color:#565e6e;">
@@ -784,7 +784,7 @@
           <section style="flex:1; min-height:0; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:8px; overflow:hidden;">
             <div style="display:flex; align-items:center; gap:9px; padding:11px 12px; border-bottom:1px solid #1f242d;">
               <span style="font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:#9aa2b1;">Agents</span>
-              <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#e0a84e;"><span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
+              <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#c3f53f;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
               <span style="flex:1;"></span>
               <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e; border:1px solid #2d333f; border-radius:4px; padding:1px 5px;">3</span>
             </div>
@@ -792,13 +792,13 @@
               <sc-for list="{{ agents }}" as="a" hint-placeholder-count="2">
                 <div style="display:flex; flex-direction:column; gap:8px; padding:11px; background:#1a1e26; border:1px solid #2d333f; border-radius:7px;">
                   <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                    <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
                     <span style="flex:1; min-width:0; font-size:13px; font-weight:600; color:#e6e9ef; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ a.name }}</span>
                     <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#6b7385;">{{ a.age }}</span>
                   </div>
                   <div style="font-size:12px; line-height:1.5; color:#8b93a3; text-wrap:pretty;">{{ a.task }}</div>
                   <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="flex:1; height:3px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:100%; height:100%; background:linear-gradient(90deg,#2d333f,#e0a84e); border-radius:2px;"></span></span>
+                    <span style="flex:1; height:3px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:100%; height:100%; background:linear-gradient(90deg,#2d333f,#c3f53f); border-radius:2px;"></span></span>
                     <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#6b7385;">{{ a.tools }}</span>
                   </div>
                 </div>
@@ -837,7 +837,7 @@
       </div>
 
       <div style="height:30px; flex:0 0 30px; display:flex; align-items:center; gap:16px; padding:0 14px; background:#11141a; border-top:1px solid #232833; font-size:11px; color:#565e6e;">
-        <span style="display:flex; align-items:center; gap:6px; color:#8b93a3;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a84e;">⌘K</span>commands</span>
+        <span style="display:flex; align-items:center; gap:6px; color:#8b93a3;"><span style="font-family:'JetBrains Mono',monospace; color:#c3f53f;">⌘K</span>commands</span>
         <span>focus <span style="color:#9aa2b1;">session</span></span>
         <span>2 agents · 4 MCP · 40 skills</span>
         <span style="flex:1;"></span>
@@ -852,7 +852,7 @@
 
   <div style="display:flex; align-items:flex-end; gap:24px; max-width:1100px;">
     <div style="flex:1; min-width:0;">
-      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#e0a84e;">TURN 1 · APP SHELL</div>
+      <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em; color:#c3f53f;">TURN 1 · APP SHELL</div>
       <h1 style="margin:10px 0 0; font-size:30px; font-weight:600; letter-spacing:-.02em; color:#f2f4f8;">Three directions for the Francois shell</h1>
       <p style="margin:12px 0 0; font-size:14.5px; line-height:1.65; color:#9aa2b1; max-width:70ch; text-wrap:pretty;">Modern dev-tool treatment: layered surfaces with real elevation, sans for chrome and mono reserved for code, paths and numbers. Each direction solves the idle right column differently — <a href="#1a">1a</a> collapses it, <a href="#1b">1b</a> removes it, <a href="#1c">1c</a> makes it an overlay.</p>
     </div>
@@ -867,7 +867,7 @@
     <!-- ══════════════════ 1a — CONSOLE ══════════════════ -->
     <div id="1a" style="display:flex; flex-direction:column; gap:14px;">
       <div style="display:flex; align-items:center; gap:12px;">
-        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">1a</span>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">1a</span>
         <span style="font-size:16px; font-weight:600; color:#f2f4f8;">Console</span>
         <span style="font-size:13px; color:#6b7385;">dark, familiar three-pane — the right rail self-collapses when idle</span>
       </div>
@@ -876,21 +876,21 @@
 
         <!-- titlebar -->
         <div style="height:38px; flex:0 0 38px; display:flex; align-items:center; gap:14px; padding:0 14px; background:#11141a; border-bottom:1px solid #232833;">
-          <span style="width:9px; height:9px; border-radius:2px; background:#e0a84e; transform:rotate(45deg);"></span>
+          <span style="position:relative; display:inline-block; width:16px; height:14px; flex-shrink:0;"><span style="position:absolute; left:2.5px; top:0; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#c3f53f;"></span><span style="position:absolute; left:1.25px; top:5px; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#c3f53f;"></span><span style="position:absolute; left:0; top:10px; width:13.5px; height:4px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#5f7a1e;"></span></span>
           <span style="font-size:12.5px; font-weight:600; letter-spacing:-.01em; color:#e6e9ef;">Francois</span>
           <button type="button" style="display:flex; align-items:center; gap:7px; height:24px; padding:0 9px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:11px; color:#c3c9d4;" style-hover="background:#232833">
-            <span style="width:6px; height:6px; border-radius:50%; background:#6fae7d;"></span>D:\francois<span style="color:#6b7385; font-size:9px;">▾</span>
+            <span style="width:6px; height:6px; border-radius:50%; background:#4fae86;"></span>D:\francois<span style="color:#6b7385; font-size:9px;">▾</span>
           </button>
           <span style="flex:1;"></span>
           <div style="display:flex; align-items:center; gap:14px;">
             <div style="display:flex; align-items:center; gap:8px;">
               <span style="font-size:11px; color:#6b7385;">session</span>
-              <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:8%; height:100%; background:#6fae7d; border-radius:2px;"></span></span>
+              <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:8%; height:100%; background:#4fae86; border-radius:2px;"></span></span>
               <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa2b1;">8%</span>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
               <span style="font-size:11px; color:#6b7385;">week</span>
-              <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:23%; height:100%; background:#e0a84e; border-radius:2px;"></span></span>
+              <span style="width:64px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:23%; height:100%; background:#c3f53f; border-radius:2px;"></span></span>
               <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa2b1;">23%</span>
             </div>
             <span style="font-size:11px; color:#565e6e;">resets in 4h 9m</span>
@@ -916,12 +916,12 @@
 
             <div class="scz" style="flex:1; overflow:auto; padding:0 10px; display:flex; flex-direction:column; gap:6px;">
               <div style="position:relative; display:flex; flex-direction:column; gap:7px; padding:11px 12px 11px 14px; border-radius:7px; background:#1c212a; box-shadow:inset 0 0 0 1px #333a48, 0 1px 0 rgba(255,255,255,.02); cursor:pointer;">
-                <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#e0a84e;"></span>
+                <span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#c3f53f;"></span>
                 <div style="display:flex; align-items:center; gap:8px;">
                   <span style="flex:1; min-width:0; font-size:13.5px; font-weight:600; color:#f2f4f8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Refactoring</span>
                   <span style="display:flex; align-items:center; gap:5px; flex-shrink:0;">
-                    <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>
-                    <span style="font-size:11px; color:#e0a84e;">working</span>
+                    <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                    <span style="font-size:11px; color:#c3f53f;">working</span>
                   </span>
                 </div>
                 <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">D:\francois</div>
@@ -951,7 +951,7 @@
 
             <div style="padding:10px; border-top:1px solid #1f242d;">
               <button type="button" style="width:100%; height:32px; display:flex; align-items:center; justify-content:center; gap:8px; background:#1a1e26; border:1px solid #2d333f; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:500; color:#e6e9ef;" style-hover="background:#232833; border-color:#3c4453">
-                <span style="color:#e0a84e; font-size:14px; line-height:1;">+</span>New session
+                <span style="color:#c3f53f; font-size:14px; line-height:1;">+</span>New session
                 <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e;">n</span>
               </button>
             </div>
@@ -963,12 +963,12 @@
               <div style="display:flex; align-items:center; gap:2px; padding:3px; background:#0f1217; border:1px solid #1f242d; border-radius:7px;">
                 <span style="padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e; cursor:pointer;">Overview</span>
                 <span style="padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:600; color:#f2f4f8; background:#232833; box-shadow:0 1px 2px rgba(0,0,0,.4); cursor:pointer;">Session</span>
-                <span style="display:flex; align-items:center; gap:7px; padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#e0a84e; border-radius:9px; padding:1px 6px;">71</span></span>
+                <span style="display:flex; align-items:center; gap:7px; padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:500; color:#9aa2b1; cursor:pointer;">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#0d0f13; background:#c3f53f; border-radius:9px; padding:1px 6px;">71</span></span>
                 <span style="padding:5px 12px; border-radius:5px; font-size:12.5px; font-weight:500; color:#565e6e; cursor:pointer;">Shell</span>
               </div>
               <span style="flex:1;"></span>
               <div style="display:flex; align-items:center; gap:12px;">
-                <span style="display:flex; align-items:center; gap:6px; font-size:11.5px; color:#9aa2b1;"><span style="width:6px; height:6px; border-radius:50%; background:#6fae7d;"></span>edits allowed</span>
+                <span style="display:flex; align-items:center; gap:6px; font-size:11.5px; color:#9aa2b1;"><span style="width:6px; height:6px; border-radius:50%; background:#4fae86;"></span>edits allowed</span>
                 <span style="font-size:11.5px; color:#9aa2b1;">Opus 5</span>
                 <span style="display:flex; align-items:center; gap:7px;">
                   <span style="width:52px; height:4px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:11%; height:100%; background:#6f9fd8; border-radius:2px;"></span></span>
@@ -980,7 +980,7 @@
 
             <div class="scz" style="flex:1; min-height:0; overflow:auto; padding:18px 20px; display:flex; flex-direction:column; gap:16px;">
               <div style="display:flex; gap:12px;">
-                <span style="flex:0 0 auto; width:22px; height:22px; border-radius:6px; background:#2a2216; border:1px solid #3d3320; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:600; color:#e0a84e;">Y</span>
+                <span style="flex:0 0 auto; width:22px; height:22px; border-radius:6px; background:#2a2216; border:1px solid #35401f; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:600; color:#c3f53f;">Y</span>
                 <div style="flex:1; min-width:0; font-size:14px; line-height:1.6; color:#e6e9ef; text-wrap:pretty;">Extract the theme tokens out of the feature components and make the right rail collapse when nothing is running.</div>
               </div>
 
@@ -1002,15 +1002,15 @@
                   <span style="font-size:11px; color:#6b7385;">running 2m</span>
                 </div>
 
-                <div style="font-size:14px; line-height:1.6; color:#c3c9d4;">Thirty-one files reference raw hex values; the rail collapse needs a new <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#e6e9ef; background:#1f242d; border-radius:4px; padding:1px 5px;">idleSince</span> field on the panel store<span style="display:inline-block; width:7px; height:15px; vertical-align:-2px; margin-left:4px; background:#e0a84e; animation:blink 1s step-end infinite;"></span></div>
+                <div style="font-size:14px; line-height:1.6; color:#c3c9d4;">Thirty-one files reference raw hex values; the rail collapse needs a new <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#e6e9ef; background:#1f242d; border-radius:4px; padding:1px 5px;">idleSince</span> field on the panel store<span style="display:inline-block; width:7px; height:15px; vertical-align:-2px; margin-left:4px; background:#c3f53f; animation:blink 1s step-end infinite;"></span></div>
               </div>
             </div>
 
             <div style="flex-shrink:0; padding:12px 14px; border-top:1px solid #1f242d; background:#11141a;">
               <div style="display:flex; align-items:flex-end; gap:10px; padding:10px 12px; background:#1a1e26; border:1px solid #2d333f; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,.35);">
-                <span style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#e0a84e; line-height:1.5;">›</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#c3f53f; line-height:1.5;">›</span>
                 <span style="flex:1; font-size:13.5px; line-height:1.5; color:#565e6e;">Send a follow-up, or type / for commands</span>
-                <button type="button" style="height:26px; padding:0 12px; background:#e0a84e; border:0; border-radius:5px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12px; font-weight:600; color:#0d0f13;" style-hover="background:#f0c47c">Send ⏎</button>
+                <button type="button" style="height:26px; padding:0 12px; background:#c3f53f; border:0; border-radius:5px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12px; font-weight:600; color:#0d0f13;" style-hover="background:#d6fa7e">Send ⏎</button>
               </div>
               <sc-if value="{{ showKeyHints }}" hint-placeholder-val="{{ true }}">
                 <div style="display:flex; align-items:center; gap:16px; margin-top:9px; font-size:11px; color:#565e6e;">
@@ -1029,7 +1029,7 @@
             <section style="flex:1; min-height:0; display:flex; flex-direction:column; background:#14171d; border:1px solid #232833; border-radius:8px; overflow:hidden;">
               <div style="display:flex; align-items:center; gap:9px; padding:11px 12px; border-bottom:1px solid #1f242d;">
                 <span style="font-size:11.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:#9aa2b1;">Agents</span>
-                <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#e0a84e;"><span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
+                <span style="display:flex; align-items:center; gap:5px; font-size:11px; color:#c3f53f;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>2 running</span>
                 <span style="flex:1;"></span>
                 <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#565e6e; border:1px solid #2d333f; border-radius:4px; padding:1px 5px;">3</span>
               </div>
@@ -1037,13 +1037,13 @@
                 <sc-for list="{{ agents }}" as="a" hint-placeholder-count="2">
                   <div style="display:flex; flex-direction:column; gap:8px; padding:11px; background:#1a1e26; border:1px solid #2d333f; border-radius:7px;">
                     <div style="display:flex; align-items:center; gap:8px;">
-                      <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                      <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;"></span>
                       <span style="flex:1; min-width:0; font-size:13px; font-weight:600; color:#e6e9ef; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ a.name }}</span>
                       <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#6b7385;">{{ a.age }}</span>
                     </div>
                     <div style="font-size:12px; line-height:1.5; color:#8b93a3; text-wrap:pretty;">{{ a.task }}</div>
                     <div style="display:flex; align-items:center; gap:8px;">
-                      <span style="flex:1; height:3px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:100%; height:100%; background:linear-gradient(90deg,#2d333f,#e0a84e); border-radius:2px;"></span></span>
+                      <span style="flex:1; height:3px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:100%; height:100%; background:linear-gradient(90deg,#2d333f,#c3f53f); border-radius:2px;"></span></span>
                       <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#6b7385;">{{ a.tools }}</span>
                     </div>
                   </div>
@@ -1084,7 +1084,7 @@
         </div>
 
         <div style="height:30px; flex:0 0 30px; display:flex; align-items:center; gap:16px; padding:0 14px; background:#11141a; border-top:1px solid #232833; font-size:11px; color:#565e6e;">
-          <span style="display:flex; align-items:center; gap:6px; color:#8b93a3;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a84e;">⌘K</span>commands</span>
+          <span style="display:flex; align-items:center; gap:6px; color:#8b93a3;"><span style="font-family:'JetBrains Mono',monospace; color:#c3f53f;">⌘K</span>commands</span>
           <span>focus <span style="color:#9aa2b1;">session</span></span>
           <span>2 agents · 4 MCP · 40 skills</span>
           <span style="flex:1;"></span>
@@ -1097,7 +1097,7 @@
     <!-- ══════════════════ 1b — DAYLIGHT ══════════════════ -->
     <div id="1b" style="display:flex; flex-direction:column; gap:14px;">
       <div style="display:flex; align-items:center; gap:12px;">
-        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">1b</span>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">1b</span>
         <span style="font-size:16px; font-weight:600; color:#f2f4f8;">Daylight</span>
         <span style="font-size:13px; color:#6b7385;">light, high contrast — right column gone, fleet strip on top, panels on demand</span>
       </div>
@@ -1215,7 +1215,7 @@
     <!-- ══════════════════ 1c — FOCUS ══════════════════ -->
     <div id="1c" style="display:flex; flex-direction:column; gap:14px;">
       <div style="display:flex; align-items:center; gap:12px;">
-        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#e0a84e; border-radius:4px; padding:3px 8px;">1c</span>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#c3f53f; border-radius:4px; padding:3px 8px;">1c</span>
         <span style="font-size:16px; font-weight:600; color:#f2f4f8;">Focus</span>
         <span style="font-size:13px; color:#6b7385;">one conversation, calmer type — sessions in a rail, panels as a floating overlay</span>
       </div>
@@ -1224,15 +1224,15 @@
 
         <!-- icon rail -->
         <nav style="flex:0 0 58px; display:flex; flex-direction:column; align-items:center; gap:10px; padding:14px 0; background:#0b0d10; border-right:1px solid #1c2027;">
-          <span style="width:11px; height:11px; border-radius:2px; background:#e0a84e; transform:rotate(45deg); margin-bottom:6px;"></span>
+          <span style="width:11px; height:11px; border-radius:2px; background:#c3f53f; transform:rotate(45deg); margin-bottom:6px;"></span>
           <div style="position:relative; width:38px; height:38px; border-radius:9px; background:#1c212a; box-shadow:inset 0 0 0 1px #2f3745; display:flex; align-items:center; justify-content:center; cursor:pointer;">
             <span style="font-size:13px; font-weight:600; color:#f2f4f8;">R</span>
-            <span style="position:absolute; right:-2px; top:-2px; width:9px; height:9px; border-radius:50%; background:#e0a84e; border:2px solid #0b0d10; animation:pulse 1.6s steps(6,end) infinite;"></span>
+            <span style="position:absolute; right:-2px; top:-2px; width:9px; height:9px; border-radius:50%; background:#c3f53f; border:2px solid #0b0d10; animation:pulse 1.6s steps(6,end) infinite;"></span>
           </div>
           <sc-for list="{{ railSessions }}" as="r" hint-placeholder-count="2">
             <div style="width:38px; height:38px; border-radius:9px; background:#14171d; box-shadow:inset 0 0 0 1px #1f242d; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:13px; color:#8b93a3;" style-hover="background:#1a1e26">{{ r }}</div>
           </sc-for>
-          <div style="width:38px; height:38px; border-radius:9px; border:1px dashed #2d333f; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; color:#565e6e;" style-hover="border-color:#e0a84e; color:#e0a84e">+</div>
+          <div style="width:38px; height:38px; border-radius:9px; border:1px dashed #2d333f; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; color:#565e6e;" style-hover="border-color:#c3f53f; color:#c3f53f">+</div>
           <span style="flex:1;"></span>
           <div style="width:38px; height:38px; border-radius:9px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:14px; color:#6b7385;" style-hover="color:#e6e9ef">☾</div>
         </nav>
@@ -1243,7 +1243,7 @@
             <div style="min-width:0;">
               <div style="display:flex; align-items:center; gap:10px;">
                 <h2 style="margin:0; font-size:17px; font-weight:600; letter-spacing:-.01em; color:#f2f4f8;">Refactoring</h2>
-                <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:#e0a84e; background:#241d10; border:1px solid #3d3320; border-radius:20px; padding:2px 9px;"><span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>working</span>
+                <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:#c3f53f; background:#1b240f; border:1px solid #35401f; border-radius:20px; padding:2px 9px;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>working</span>
               </div>
               <div style="display:flex; align-items:center; gap:12px; margin-top:5px; font-size:12px; color:#6b7385;">
                 <span style="font-family:'JetBrains Mono',monospace;">D:\francois</span>
@@ -1254,9 +1254,9 @@
             </div>
             <span style="flex:1;"></span>
             <div style="display:flex; align-items:center; gap:8px;">
-              <button type="button" style="display:flex; align-items:center; gap:8px; height:30px; padding:0 12px; background:#171b22; border:1px solid #262c37; border-radius:7px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:#d6dae2;" style-hover="background:#1e2430">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#0d0f13; background:#e0a84e; border-radius:9px; padding:1px 6px;">71</span></button>
+              <button type="button" style="display:flex; align-items:center; gap:8px; height:30px; padding:0 12px; background:#171b22; border:1px solid #262c37; border-radius:7px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:#d6dae2;" style-hover="background:#1e2430">Diff<span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#0d0f13; background:#c3f53f; border-radius:9px; padding:1px 6px;">71</span></button>
               <button type="button" style="height:30px; padding:0 12px; background:#171b22; border:1px solid #262c37; border-radius:7px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:#d6dae2;" style-hover="background:#1e2430">Shell</button>
-              <button type="button" style="display:flex; align-items:center; gap:8px; height:30px; padding:0 12px; background:#1c212a; border:1px solid #e0a84e; border-radius:7px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:#f0c47c;"><span style="width:6px; height:6px; border-radius:50%; background:#e0a84e;"></span>Panels<span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3;">]</span></button>
+              <button type="button" style="display:flex; align-items:center; gap:8px; height:30px; padding:0 12px; background:#1c212a; border:1px solid #c3f53f; border-radius:7px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:#d6fa7e;"><span style="width:6px; height:6px; border-radius:50%; background:#c3f53f;"></span>Panels<span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b93a3;">]</span></button>
             </div>
           </header>
 
@@ -1286,16 +1286,16 @@
                 <span style="font-size:12px; color:#6b7385;">2m · 14 tools</span>
               </div>
 
-              <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Sweeping now — <span style="font-family:'JetBrains Mono',monospace; font-size:13.5px;">store.ts</span> first, then the panel components<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#e0a84e; animation:blink 1s step-end infinite;"></span></div>
+              <div style="font-size:15px; line-height:1.7; color:#c3c9d4;">Sweeping now — <span style="font-family:'JetBrains Mono',monospace; font-size:13.5px;">store.ts</span> first, then the panel components<span style="display:inline-block; width:8px; height:16px; vertical-align:-3px; margin-left:5px; background:#c3f53f; animation:blink 1s step-end infinite;"></span></div>
             </div>
           </div>
 
           <div style="flex:0 0 auto; padding:14px 360px 18px 28px;">
             <div style="max-width:760px;">
               <div style="display:flex; align-items:flex-end; gap:12px; padding:13px 15px; background:#171b22; border:1px solid #2d333f; border-radius:11px; box-shadow:0 8px 24px rgba(0,0,0,.4);">
-                <span style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#e0a84e;">›</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#c3f53f;">›</span>
                 <span style="flex:1; font-size:14.5px; line-height:1.5; color:#565e6e;">Reply, or press <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#8b93a3;">/</span> for skills and commands</span>
-                <button type="button" style="height:28px; padding:0 13px; background:#e0a84e; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;" style-hover="background:#f0c47c">Send</button>
+                <button type="button" style="height:28px; padding:0 13px; background:#c3f53f; border:0; border-radius:6px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:600; color:#0d0f13;" style-hover="background:#d6fa7e">Send</button>
               </div>
               <div style="display:flex; align-items:center; gap:16px; margin-top:10px; font-size:11.5px; color:#565e6e;">
                 <span><span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">esc</span> interrupt</span>
@@ -1310,7 +1310,7 @@
         <!-- floating panels overlay -->
         <div style="position:absolute; top:70px; right:22px; width:326px; max-height:600px; display:flex; flex-direction:column; background:#171b22; border:1px solid #303845; border-radius:12px; box-shadow:0 30px 70px -18px rgba(0,0,0,.9); overflow:hidden;">
           <div style="display:flex; align-items:center; gap:3px; padding:9px; border-bottom:1px solid #22262f;">
-            <span style="padding:6px 11px; border-radius:6px; font-size:12.5px; font-weight:600; color:#f2f4f8; background:#232a35;">Agents <span style="color:#e0a84e;">2</span></span>
+            <span style="padding:6px 11px; border-radius:6px; font-size:12.5px; font-weight:600; color:#f2f4f8; background:#232a35;">Agents <span style="color:#c3f53f;">2</span></span>
             <span style="padding:6px 11px; border-radius:6px; font-size:12.5px; color:#8b93a3; cursor:pointer;">MCP 4</span>
             <span style="padding:6px 11px; border-radius:6px; font-size:12.5px; color:#8b93a3; cursor:pointer;">Skills 40</span>
             <span style="flex:1;"></span>
@@ -1320,13 +1320,13 @@
             <sc-for list="{{ agents }}" as="a" hint-placeholder-count="2">
               <div style="display:flex; flex-direction:column; gap:9px; padding:12px; background:#12151a; border:1px solid #262c37; border-radius:9px;">
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <span style="width:6px; height:6px; border-radius:50%; background:#e0a84e; animation:pulse 1.6s steps(6,end) infinite;"></span>
+                  <span style="width:6px; height:6px; border-radius:50%; background:#c3f53f; animation:pulse 1.6s steps(6,end) infinite;"></span>
                   <span style="flex:1; min-width:0; font-size:13.5px; font-weight:600; color:#f2f4f8;">{{ a.name }}</span>
                   <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">{{ a.age }}</span>
                 </div>
                 <div style="font-size:12.5px; line-height:1.55; color:#8b93a3; text-wrap:pretty;">{{ a.task }}</div>
                 <div style="display:flex; align-items:center; gap:9px;">
-                  <span style="flex:1; height:3px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:70%; height:100%; background:#e0a84e; border-radius:2px;"></span></span>
+                  <span style="flex:1; height:3px; border-radius:2px; background:#232833; overflow:hidden; display:block;"><span style="display:block; width:70%; height:100%; background:#c3f53f; border-radius:2px;"></span></span>
                   <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">{{ a.tools }}</span>
                 </div>
               </div>
@@ -1368,11 +1368,11 @@ class Component extends DCLogic {
         { name: 'test-writer', task: 'Covering the panel-collapse reducer in fleet-board.test.ts', age: '48s', tools: '5 tools' }
       ],
       agentTabs: [
-        { name: 'test-writer', dot: 'width:6px; height:6px; border-radius:50%; background:#e0a84e; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;' },
-        { name: 'doc-check', dot: 'width:6px; height:6px; border-radius:50%; background:#6fae7d; flex-shrink:0;' }
+        { name: 'test-writer', dot: 'width:6px; height:6px; border-radius:50%; background:#c3f53f; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;' },
+        { name: 'doc-check', dot: 'width:6px; height:6px; border-radius:50%; background:#4fae86; flex-shrink:0;' }
       ],
       agentTabsVisible: [
-        { name: 'test-writer', dot: 'width:6px; height:6px; border-radius:50%; background:#e0a84e; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;' }
+        { name: 'test-writer', dot: 'width:6px; height:6px; border-radius:50%; background:#c3f53f; flex-shrink:0; animation:pulse 1.6s steps(6,end) infinite;' }
       ],
       agentTrace: [
         { glyph: '⌕', kind: 'Grep', target: "color: '#", meta: '218 matches · 24 files' },

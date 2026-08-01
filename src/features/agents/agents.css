@@ -209,31 +209,121 @@
   flex-direction: column;
   min-height: 0;
 }
-.agent-view-header {
-  padding: var(--space-9) var(--space-14);
-  border-bottom: 1px solid var(--border);
+
+/* Provenance banner (agent-tab §8 design chore): makes the context switch
+   unmistakable — you are reading a SUBAGENT's own thread, not the session's.
+   Purple marks subagent provenance app-wide (Design System v2 §Banners); the
+   tinted surfaces below are derived from --hue-purple via color-mix rather
+   than new literal hexes. */
+.agent-banner {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-14);
+  padding: var(--space-13) var(--space-18);
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border);
 }
-.agent-view-name {
-  font-size: var(--font-size-12-5);
-  color: var(--text-strong);
-  font-weight: 500;
+.agent-banner__id {
+  min-width: 0;
 }
-.agent-view-status-text {
-  font-size: var(--font-size-10);
+.agent-banner__row1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
 }
-.agent-view-spacer {
+.agent-banner__name {
+  font-size: var(--font-size-14);
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.agent-banner__pill {
+  font-size: var(--font-size-11);
+  color: var(--hue-purple);
+  background: color-mix(in srgb, var(--hue-purple) 10%, var(--bg-app));
+  border: 1px solid color-mix(in srgb, var(--hue-purple) 22%, var(--bg-app));
+  border-radius: var(--radius-xl);
+  padding: var(--space-2) var(--space-8);
+}
+.agent-banner__row2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  margin-top: var(--space-4);
+  font-size: var(--font-size-11-5);
+  color: var(--text-muted);
+}
+.agent-banner__session {
+  color: var(--text-hint);
+}
+.agent-banner__fact {
+  font-family: var(--font-mono);
+}
+.agent-banner__sep {
+  color: var(--border-emphasis);
+}
+.agent-banner__spacer {
   flex: 1;
 }
-.agent-view-elapsed {
-  font-size: var(--font-size-10-5);
-  color: var(--text-faint);
+.agent-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-shrink: 0;
 }
-.agent-view-task {
+.agent-banner__btn {
+  height: 28px;
+  padding: 0 var(--space-11);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12);
+  color: var(--text);
+}
+.agent-banner__btn:hover {
+  background: var(--bg-raised);
+}
+/* Stop takes the error treatment, mixed off --error the same way the pill mixes
+   off --hue-purple — a status hue, not decoration (Design System v2 §Banners:
+   "status hues are not decoration"). */
+.agent-banner__btn--danger {
+  background: color-mix(in srgb, var(--error) 12%, var(--bg-app));
+  border-color: color-mix(in srgb, var(--error) 30%, var(--bg-app));
+  color: var(--error-bright);
+}
+.agent-banner__btn--danger:hover {
+  background: color-mix(in srgb, var(--error) 18%, var(--bg-app));
+}
+.agent-banner__error {
+  margin: 0 var(--space-18);
+  margin-top: var(--space-8);
+}
+
+/* Task card: same purple provenance treatment as the banner's pill. Rendered
+   as the FIRST item in the scrollable body (not the header) — matches the
+   mock, which places it inside the transcript column. */
+.agent-task {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-14) var(--space-16);
+  background: color-mix(in srgb, var(--hue-purple) 7%, var(--bg-app));
+  border: 1px solid color-mix(in srgb, var(--hue-purple) 22%, var(--bg-app));
+  border-radius: var(--radius-card);
+}
+.agent-task__label {
   font-size: var(--font-size-11);
-  color: var(--text-muted);
-  margin-top: var(--space-4);
-  margin-left: var(--space-16);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--hue-purple) 75%, var(--text-muted));
+}
+.agent-task__text {
+  font-size: var(--font-size-14);
+  line-height: 1.6;
+  color: var(--text-strong);
 }
 .agent-view-body {
   flex: 1;

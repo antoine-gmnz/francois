@@ -95,9 +95,9 @@ rbac:
 design:
   enabled: true
   provider: claude-design
-  design_system_project: "Claude terminal interface"
+  design_system_project: "Design system extraction plan"   # a4b15728-147c-4932-b83c-f60a5fc60db7
   design_project: none
-  snapshot_dir: ""                            # local mirror lives at the repo root: Claude Terminal.dc.html + screenshots/
+  snapshot_dir: ""                            # local mirror lives at the repo root: *.dc.html + screenshots/
   direction: design-to-code
   ui_kit_path: src
   tokens_path: src/styles.css
@@ -155,7 +155,12 @@ gate:
 ## design
 
 - `enabled: true`
-- Source: Claude Design project "Claude terminal interface", mirrored locally as `Claude Terminal.dc.html` (+ `screenshots/`). The mock is authoritative for layout, colors, glyphs, and micro-interactions. (The mock's "clyde" branding reads as "francois".)
+- Source: Claude Design project **"Design system extraction plan"** (`a4b15728-147c-4932-b83c-f60a5fc60db7`), mirrored locally at the repo root. The mocks are authoritative for layout, colors, glyphs, and micro-interactions. Pull a fresh copy with the `DesignSync` tool (`list_files` / `get_file`) — the local copies go stale silently.
+  - `Francois Redesign.dc.html` — the shell, variant 3a (Console chrome + Focus reading treatment + agent tabs). **The v2 identity is applied here**: turn 4 is the current shell.
+  - `Francois Design System v2.dc.html` — the extracted system: surfaces, type roles, the colour families, geometry, components, and the six do/don't rules.
+  - `Francois Logo.dc.html` — the mark. Turn 5a is the chosen direction, turn 6 applies it, turn 7 is the specimen sheet (size ramp, tone variants, lockups, clearspace, misuse).
+  - `Claude Terminal.dc.html` (+ `screenshots/`) — the pre-v2 mock, kept for the surfaces the redesign never re-drew. Where the two disagree, the redesign wins. (Its "clyde" branding reads as "francois".)
+- **Identity v2** (July 2026): the accent moved from amber `#e0a84e` to acid `#c3f53f`, and the diamond glyph was replaced by the three-slab offset mark. "Ready" green moved to `#4fae86` so status never reads as accent. Acid means *the live thing* — one per view.
 
 ## vcs
 
@@ -288,4 +293,4 @@ that owns the feature — never in a new top-level file.
 | `mac-text-selection` | macOS: text selection + copy in the SESSION transcript | conversation-view |
 | `notifications` *(frozen)* | desktop notification when a session is blocked on an approval/question, or its turn finished/errored | session-engine, app-shell, session-questions, permission-guardrails, command-palette |
 | `session-brake` *(frozen)* | stop a running turn mid-flight | session-engine, conversation-view |
-| `design-refresh` *(frozen)* | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |
+| `design-refresh` | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |

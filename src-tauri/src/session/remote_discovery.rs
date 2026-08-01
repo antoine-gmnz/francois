@@ -145,6 +145,11 @@ pub(crate) fn normalize_pty(raw: &str) -> String {
 /// rather than letting the user watch a two-minute timeout.
 ///
 /// Francois deliberately does NOT auto-answer: these are the user's trust decisions.
+/// It does now OFFER them, though — `mcp_approval.rs` writes the same
+/// `enabledMcpjsonServers` / `hasTrustDialogAccepted` keys the dialog writes, and
+/// `remote_start` pre-checks them, so this path is the backstop for a dialog that
+/// appears anyway (a `.mcp.json` edited mid-flight, a prompt whose store we could
+/// not read). The message therefore names the in-app fix first.
 ///
 /// M4: the MCP match additionally requires "Use this MCP server" (the captured
 /// dialog's numbered choice) in the SAME normalized window — the bare phrase "New
@@ -157,17 +162,30 @@ pub(crate) fn normalize_pty(raw: &str) -> String {
 pub(crate) fn blocking_prompt(normalized: &str) -> Option<&'static str> {
     const MCP: &str = "New MCP server found";
     const MCP_CONFIRM: &str = "Use this MCP server";
-    const TRUST: &str = "Do you trust the files in this folder";
+    // Two trust wordings, because the shipped CLI has two paths and neither is the
+    // one this matched originally. Interactively it renders a "Trust this
+    // directory?" dialog and parks; under `--remote-control` it does not prompt at
+    // all — `checkHasTrustDialogAccepted` fails closed and the process prints
+    // "Error: Workspace not trusted." and exits(1). Matching only the old
+    // "Do you trust the files in this folder" phrase meant the RC failure produced
+    // no diagnosis whatsoever: the host was already dead, the reader saw no URL,
+    // and the user watched the 120s deadline expire.
+    const TRUST_DIALOG: &str = "Trust this directory?";
+    const TRUST_LEGACY: &str = "Do you trust the files in this folder";
+    const TRUST_REFUSED: &str = "Workspace not trusted";
     if normalized.contains(MCP) && normalized.contains(MCP_CONFIRM) {
         return Some(
             "the Remote Control host is waiting for MCP server approval in this folder — \
-             run `claude` there once and approve it, then retry",
+             approve it in the MCP SERVERS panel [4], then retry",
         );
     }
-    if normalized.contains(TRUST) {
+    if normalized.contains(TRUST_DIALOG)
+        || normalized.contains(TRUST_LEGACY)
+        || normalized.contains(TRUST_REFUSED)
+    {
         return Some(
-            "the Remote Control host is waiting for the workspace trust prompt in this folder — \
-             run `claude` there once and accept it, then retry",
+            "Claude Code has not been told it may run in this folder — \
+             trust it in the MCP SERVERS panel [4], then retry",
         );
     }
     None
@@ -494,7 +512,10 @@ mod tests {
         let raw = "\u{1b}[3;3HNew\u{1b}[1CMCP\u{1b}[1Cserver\u{1b}[1Cfound\u{1b}[1Cin\u{1b}[1Cthis\u{1b}[1Cproject:\u{1b}[1Cserena\u{1b}[5;3HUse\u{1b}[1Cthis\u{1b}[1CMCP\u{1b}[1Cserver?";
         let why = blocking_prompt(&normalize_pty(raw)).expect("should detect the stall");
         assert!(why.contains("MCP server approval"), "actionable: {why}");
-        assert!(why.contains("`claude`"), "should say how to fix it: {why}");
+        assert!(
+            why.contains("panel [4]"),
+            "should point at the in-app fix, not a terminal: {why}"
+        );
     }
 
     #[test]
@@ -510,6 +531,26 @@ mod tests {
     fn blocking_prompt_catches_the_workspace_trust_dialog() {
         let raw = "Do\u{1b}[1Cyou\u{1b}[1Ctrust\u{1b}[1Cthe\u{1b}[1Cfiles\u{1b}[1Cin\u{1b}[1Cthis\u{1b}[1Cfolder?";
         assert!(blocking_prompt(&normalize_pty(raw)).is_some());
+    }
+
+    #[test]
+    fn blocking_prompt_catches_the_current_clis_trust_dialog() {
+        // The shipped CLI renders "Trust this directory?" — the phrase above is an
+        // older build's. Both stay matched; a host is dead either way.
+        let raw = "Trust\u{1b}[1Cthis\u{1b}[1Cdirectory?";
+        assert!(blocking_prompt(&normalize_pty(raw)).is_some());
+    }
+
+    #[test]
+    fn blocking_prompt_catches_the_remote_control_trust_refusal() {
+        // `--remote-control` does not prompt at all: checkHasTrustDialogAccepted
+        // fails closed, the process prints this and exits(1). With nothing matched,
+        // the reader saw no URL and the user watched the 120s deadline expire with
+        // no explanation — the failure that made this feature look broken.
+        let raw = "Error: Workspace not trusted. Please run `claude` in D:\\repo first \
+                   to review and accept the workspace trust dialog.";
+        let why = blocking_prompt(&normalize_pty(raw)).expect("must be diagnosed");
+        assert!(why.contains("panel [4]"), "actionable: {why}");
     }
 
     #[test]

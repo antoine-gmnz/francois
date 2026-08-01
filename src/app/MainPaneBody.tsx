@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import type { SessionMeta } from '../../contract/common';
 import AgentView from '../features/agents/AgentView';
+import { workflowIdFromTab } from '../features/agents/agent-tab';
 import ConversationView from '../features/conversation/ConversationView';
 import DiffView from '../features/diff/DiffView';
+import WorkflowView from '../features/workflows/WorkflowView';
 import type { ShellUiState } from '../features/shell/shellStore';
 import OverviewView from '../features/overview/OverviewView';
 import type { MainTab } from '../lib/store';
@@ -36,7 +38,20 @@ export default function MainPaneBody({ mainTab, activeAgentId, active, home, she
     );
   }
 
-  const renderers: Record<Exclude<MainPaneBranch, 'agent'>, () => ReactNode> = {
+  if (branch === 'workflow') {
+    // workflow-details FR-11: one `Workflow` run's agents, spans and
+    // transcripts. Keyed by run so switching tabs remounts rather than leaking
+    // the previous run's detail; the session is always present here (FR-13
+    // closes workflow tabs when it changes).
+    const runId = workflowIdFromTab(mainTab);
+    return active && runId !== null ? (
+      <WorkflowView key={runId} runId={runId} sessionId={active.id} />
+    ) : (
+      <EmptyPaneMessage>select a session</EmptyPaneMessage>
+    );
+  }
+
+  const renderers: Record<Exclude<MainPaneBranch, 'agent' | 'workflow'>, () => ReactNode> = {
     overview: () => <OverviewView home={home} />,
     session: () =>
       active ? (

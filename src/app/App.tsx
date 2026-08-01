@@ -14,6 +14,8 @@ import RenameSessionModal from '../features/sessions/RenameSessionModal';
 import Sidebar from '../features/sessions/Sidebar';
 import { initShellEvents, useShellState } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
+import UpdateModal from '../features/update/UpdateModal';
+import { checkUpdateOnLaunch } from '../features/update/update';
 import UsageBar from '../features/usage/UsageBar';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
@@ -45,6 +47,9 @@ export default function App() {
   const showLeftPane = useStore((s) => s.showLeftPane);
   const showRightPane = useStore((s) => s.showRightPane);
   const collapsedPanes = useStore((s) => s.collapsedPanes);
+  // Tab strip: the session meta cluster folds so a long agent-tab run isn't clipped.
+  const showSessionMeta = useStore((s) => s.showSessionMeta);
+  const toggleSessionMeta = useStore((s) => s.toggleSessionMeta);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
@@ -59,6 +64,8 @@ export default function App() {
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
   const accountsOpen = useStore((s) => s.accountsOpen);
   const setAccountsOpen = useStore((s) => s.setAccountsOpen);
+  const updateModalOpen = useStore((s) => s.updateModalOpen);
+  const setUpdateModalOpen = useStore((s) => s.setUpdateModalOpen);
   const setAccounts = useStore((s) => s.setAccounts);
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
@@ -82,6 +89,13 @@ export default function App() {
   // field, the sidebar badge, the status-bar chip, the Accounts modal) reads
   // the store this writes, so no surface ever fetches the registry itself.
   useEffect(() => startAccountFeed(setAccounts), [setAccounts]);
+
+  // self-update FR-7: ONE check when the shell mounts, and it is SILENT on
+  // failure — a launch-time network blip must not shout. The helper itself is
+  // idempotent per app run, so StrictMode's double mount still checks once.
+  useEffect(() => {
+    void checkUpdateOnLaunch();
+  }, []);
 
   const { home, appVersion } = useAppIdentity(active?.name);
 
@@ -127,6 +141,7 @@ export default function App() {
     projectsOpen,
     accountsOpen,
     renameOpen: renameSessionId !== null,
+    updateModalOpen,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,
@@ -206,6 +221,8 @@ export default function App() {
             closeAgentTab={closeAgentTab}
             active={active}
             elapsedMs={elapsedMs}
+            showSessionMeta={showSessionMeta}
+            toggleSessionMeta={toggleSessionMeta}
           />
           <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} shell={shell} />
         </section>
@@ -281,6 +298,10 @@ export default function App() {
       {/* multi-account FR-34: the Accounts modal. Like Projects it needs NO
           session — an account is registered whether or not anything is running. */}
       {accountsOpen && <AccountsModal onClose={() => setAccountsOpen(false)} />}
+
+      {/* self-update FR-10: opened by the status-bar chip and by the palette's
+          `Check for updates`. Needs no session — it is about the app itself. */}
+      {updateModalOpen && <UpdateModal onClose={() => setUpdateModalOpen(false)} />}
 
       <PaletteRoot />
     </div>

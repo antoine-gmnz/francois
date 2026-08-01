@@ -50,6 +50,7 @@ export default defineConfig({
         {
           text: 'Advanced',
           items: [
+            { text: 'Accounts & usage', link: '/guide/accounts' },
             { text: 'Worktree isolation', link: '/guide/worktree-isolation' },
             { text: 'Remote control', link: '/guide/remote-control' },
             { text: 'Overview dashboard', link: '/guide/overview-dashboard' },

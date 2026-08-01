@@ -337,6 +337,9 @@ pub fn session_remove(
                 let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)
             }
             crate::diff::unwatch_session(&session_id); // FR-15: dispose the watcher
+                                                       // workflow-details FR-6: the run directories of a removed session are
+                                                       // no longer watched, and the asks attributed to its runs go with it.
+            unwatch_session_workflows(&engine, &session.workflow_order);
             crate::dispose_session_shell(&app, &session_id); // wsl-filesystem FR-13: dispose the shell
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)
@@ -508,7 +511,10 @@ mod tests {
         // FR-3.
         let engine = test_engine_with(test_session());
         assert!(rename_in_engine(&engine, "nope", "x".into()).is_none());
-        assert_eq!(engine.with_session("s1", |s| s.name.clone()), Some("n".into()));
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("n".into())
+        );
     }
 
     #[test]
@@ -527,7 +533,10 @@ mod tests {
                 engine.with_session("s1", |s| s.claude_session_id.clone()),
                 Some(Some("claude-1".into()))
             );
-            assert_eq!(engine.with_session("s1", |s| s.worktree.is_none()), Some(true));
+            assert_eq!(
+                engine.with_session("s1", |s| s.worktree.is_none()),
+                Some(true)
+            );
         }
     }
 

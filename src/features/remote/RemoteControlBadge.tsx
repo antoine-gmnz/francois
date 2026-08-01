@@ -7,10 +7,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { SessionId } from '../../../contract/common';
-import { remoteGet, remoteStart, remoteStop } from '../../lib/api';
+import { mcpDecide, remoteGet, remoteStart, remoteStop } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import './remote.css';
 import {
+  approvalRequiredOf,
   isRemoteLive,
   remoteDotTone,
   remoteFailure,
@@ -74,6 +75,10 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
   const live = isRemoteLive(state);
   const url = remoteUrlOf(state);
   const handle = remoteSessionHandle(state);
+  // Set only when the host refused to spawn because Claude Code still owes a
+  // consent/trust decision for this folder — the one failure the user can fix
+  // from right here rather than in pane [4].
+  const approval = approvalRequiredOf(state);
 
   async function start() {
     if (busy) return;
@@ -84,6 +89,30 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
     else mergeRemoteResult({ sessionId, state: remoteFailure('', res.error) });
     setOpen(true);
     setBusy(false);
+  }
+
+  /**
+   * Answer the consent/trust dialog the host would have parked on, then start.
+   * One click, because the alternative here is a modal dance: the user already
+   * asked for Remote Control, and the decision this writes is exactly the one the
+   * CLI's own dialog would have asked for. Per-server refusal stays available in
+   * pane [4] for anyone who wants it.
+   */
+  async function approveAndStart() {
+    if (busy || !approval) return;
+    setBusy(true);
+    const res = await mcpDecide(sessionId, {
+      approve: approval.pending,
+      reject: [],
+      trust: approval.trustRequired,
+    });
+    if (!mounted.current) return;
+    setBusy(false);
+    if (!res.ok) {
+      mergeRemoteResult({ sessionId, state: remoteFailure('', res.error) });
+      return;
+    }
+    await start();
   }
 
   async function toggle() {
@@ -179,13 +208,27 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
 
           {state.phase === 'failed' && <div className="rc-popover-error">{state.error.message}</div>}
 
+          {approval && (
+            <div className="rc-popover-note">
+              {approval.pending.length > 0
+                ? `Claude Code has not been told whether to run ${approval.pending.join(', ')} in this project.`
+                : 'Claude Code has not been told whether it may run in this folder.'}
+              {approval.pending.length > 0 && approval.trustRequired && ' This folder is not trusted yet either.'}
+            </div>
+          )}
+
           <div className="rc-btn-row">
             {url && (
               <button className="rc-btn" onClick={() => void copy()}>
                 {copied ? 'copied' : 'copy url'}
               </button>
             )}
-            {state.phase === 'failed' && (
+            {approval && (
+              <button className="rc-btn" onClick={() => void approveAndStart()} disabled={busy}>
+                approve &amp; start
+              </button>
+            )}
+            {state.phase === 'failed' && !approval && (
               <button className="rc-btn" onClick={() => void start()} disabled={busy}>
                 retry
               </button>

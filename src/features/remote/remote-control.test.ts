@@ -3,6 +3,7 @@ import type { RemoteControlState } from '../../../contract/remote-control';
 import {
   applyRemoteEvent,
   applyRemoteResult,
+  approvalRequiredOf,
   applyRemoteStatus,
   applySeedStatus,
   isRemoteLive,
@@ -25,6 +26,57 @@ const failed: RemoteControlState = {
   name: 'My Project',
   error: { code: 'REMOTE_CONTROL_FAILED', message: 'no session URL before the deadline' },
 };
+
+describe('approvalRequiredOf', () => {
+  const approvalFailure = (detail: unknown): RemoteControlState => ({
+    phase: 'failed',
+    name: 'My Project',
+    error: { code: 'MCP_APPROVAL_REQUIRED', message: 'Remote Control cannot start: 1 MCP server needs approval.', detail },
+  });
+
+  it('recovers the decision the host is waiting on', () => {
+    const state = approvalFailure({
+      pending: ['serena'],
+      approved: ['fs'],
+      rejected: [],
+      trustRequired: true,
+      enableAllProjectMcpServers: false,
+    });
+    expect(approvalRequiredOf(state)).toEqual({
+      pending: ['serena'],
+      approved: ['fs'],
+      rejected: [],
+      trustRequired: true,
+      enableAllProjectMcpServers: false,
+    });
+  });
+
+  it('is null for every other state and error code', () => {
+    expect(approvalRequiredOf(starting)).toBeNull();
+    expect(approvalRequiredOf(active)).toBeNull();
+    expect(approvalRequiredOf(failed)).toBeNull();
+    expect(approvalRequiredOf({ phase: 'off' })).toBeNull();
+  });
+
+  it('degrades to null rather than rendering a broken button on a malformed detail', () => {
+    // `detail` is `unknown` on the wire — a shape change in the core must fall
+    // back to the plain error message, not throw inside the popover.
+    expect(approvalRequiredOf(approvalFailure(undefined))).toBeNull();
+    expect(approvalRequiredOf(approvalFailure('nope'))).toBeNull();
+    expect(approvalRequiredOf(approvalFailure({ trustRequired: true }))).toBeNull();
+  });
+
+  it('drops non-string names and defaults the missing flags', () => {
+    const state = approvalFailure({ pending: ['ok', 7, null] });
+    expect(approvalRequiredOf(state)).toEqual({
+      pending: ['ok'],
+      approved: [],
+      rejected: [],
+      trustRequired: false,
+      enableAllProjectMcpServers: false,
+    });
+  });
+});
 
 describe('applyRemoteEvent', () => {
   it('stores starting, then upgrades the same session to active', () => {

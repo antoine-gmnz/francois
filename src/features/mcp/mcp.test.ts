@@ -2,14 +2,19 @@
 
 import { describe, expect, it } from 'vitest';
 import type { McpServerInfo } from '../../../contract/common';
-import type { McpRegistryEntry } from '../../../contract/mcp-panel';
+import type { McpApprovalState, McpRegistryEntry } from '../../../contract/mcp-panel';
 import {
+  approvalSummary,
+  approveAllDecision,
   buildAttachRequest,
   buildCustomAttachRequest,
   buildRegistryAttachRequest,
+  canReconnect,
   canSubmitAttach,
   detailText,
   dotColor,
+  hasApprovalWork,
+  isApprovable,
   isNameTaken,
   scopeColor,
   scopeText,
@@ -77,6 +82,94 @@ describe('detailText', () => {
   it('error with no message falls back to "error"', () => {
     const server: McpServerInfo = { name: 's', status: 'error' };
     expect(detailText(server)).toEqual({ text: 'error', color: 'var(--error)' });
+  });
+
+  it('pending / rejected read as approval states, not as a stuck handshake', () => {
+    // The whole point of the two statuses: an unapproved server used to sit at
+    // "handshake…" forever, which reads as a server that is about to connect.
+    expect(detailText({ name: 's', status: 'pending' })).toEqual({ text: 'needs approval', color: 'var(--warn)' });
+    expect(detailText({ name: 's', status: 'rejected' })).toEqual({
+      text: 'not approved',
+      color: 'var(--text-disabled)',
+    });
+  });
+
+  it('approved says it starts next turn rather than faking a handshake', () => {
+    // The first fix left the row at `connecting` right after a decision, so
+    // approving a server swapped one permanent "handshake…" for another. Nothing
+    // is connecting: the CLI spawns `.mcp.json` servers with the next turn.
+    expect(detailText({ name: 's', status: 'approved' })).toEqual({
+      text: 'starts next turn',
+      color: 'var(--text-dim)',
+    });
+  });
+});
+
+describe('approval vocabulary', () => {
+  const state = (over: Partial<McpApprovalState> = {}): McpApprovalState => ({
+    pending: [],
+    approved: [],
+    rejected: [],
+    trustRequired: false,
+    enableAllProjectMcpServers: false,
+    ...over,
+  });
+
+  it('isApprovable covers exactly the approval verdicts', () => {
+    expect(isApprovable('pending')).toBe(true);
+    expect(isApprovable('rejected')).toBe(true);
+    expect(isApprovable('approved')).toBe(true);
+    expect(isApprovable('connected')).toBe(false);
+    expect(isApprovable('connecting')).toBe(false);
+    expect(isApprovable('error')).toBe(false);
+  });
+
+  it('canReconnect covers only servers the session has actually started', () => {
+    // Reconnect just re-flags `connecting`. On an approval verdict — including a
+    // freshly approved server — that repaints the stuck handshake it was supposed
+    // to remove, because no process exists to reconnect to.
+    expect(canReconnect('connected')).toBe(true);
+    expect(canReconnect('error')).toBe(true);
+    expect(canReconnect('connecting')).toBe(true);
+    expect(canReconnect('approved')).toBe(false);
+    expect(canReconnect('pending')).toBe(false);
+    expect(canReconnect('rejected')).toBe(false);
+  });
+
+  it('hasApprovalWork is false for a settled project and for no session', () => {
+    expect(hasApprovalWork(null)).toBe(false);
+    expect(hasApprovalWork(state({ approved: ['serena'], rejected: ['x'] }))).toBe(false);
+    expect(hasApprovalWork(state({ pending: ['serena'] }))).toBe(true);
+    // Trust alone still parks an interactive claude, even with no MCP servers.
+    expect(hasApprovalWork(state({ trustRequired: true }))).toBe(true);
+  });
+
+  it('approvalSummary names both blockers when both apply', () => {
+    expect(approvalSummary(state({ pending: ['a'] }))).toBe('1 server needs approval');
+    expect(approvalSummary(state({ pending: ['a', 'b'] }))).toBe('2 servers need approval');
+    expect(approvalSummary(state({ trustRequired: true }))).toBe('this folder is not trusted');
+    // Saying only one of the two would send the user round the loop twice.
+    expect(approvalSummary(state({ pending: ['a'], trustRequired: true }))).toBe(
+      '1 server needs approval · this folder is not trusted',
+    );
+    expect(approvalSummary(state())).toBe('');
+  });
+
+  it('approveAllDecision approves every pending server and only trusts when owed', () => {
+    expect(approveAllDecision(state({ pending: ['a', 'b'], trustRequired: true }))).toEqual({
+      approve: ['a', 'b'],
+      reject: [],
+      trust: true,
+    });
+    expect(approveAllDecision(state({ pending: ['a'] })).trust).toBe(false);
+  });
+
+  it('approveAllDecision never reaches into the state it was built from', () => {
+    // The banner hands this straight to mcpDecide; sharing the array would let a
+    // later render mutate an in-flight request.
+    const s = state({ pending: ['a'] });
+    approveAllDecision(s).approve.push('b');
+    expect(s.pending).toEqual(['a']);
   });
 });
 

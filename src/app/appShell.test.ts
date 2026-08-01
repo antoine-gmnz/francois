@@ -33,6 +33,11 @@ describe('mainPaneBranch', () => {
   it('collapses any dynamic agent:<id> tab onto the agent branch', () => {
     expect(mainPaneBranch('agent:abc-123')).toBe('agent');
   });
+
+  // workflow-details FR-11: the second dynamic tab kind gets its own branch.
+  it('routes a workflow:<id> tab to the workflow branch', () => {
+    expect(mainPaneBranch('workflow:run-1')).toBe('workflow');
+  });
 });
 
 describe('buildShortcutActions', () => {
@@ -148,6 +153,14 @@ describe('buildShortcutActions', () => {
     buildShortcutActions(ctx2).w();
     expect(spies2.preventDefault).toHaveBeenCalledTimes(1);
     expect(spies2.closeAgentTab).toHaveBeenCalledWith('xyz');
+  });
+
+  // workflow-details FR-12: `w` closes whichever dynamic tab is active.
+  it('w closes the active workflow tab too', () => {
+    const { ctx, spies } = fakeCtx({ getMainTab: () => 'workflow:run-1' });
+    buildShortcutActions(ctx).w();
+    expect(spies.preventDefault).toHaveBeenCalledTimes(1);
+    expect(spies.closeAgentTab).toHaveBeenCalledWith('run-1');
   });
 
   it('[ and ] toggle the side columns', () => {

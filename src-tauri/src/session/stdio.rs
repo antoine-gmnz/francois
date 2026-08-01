@@ -74,9 +74,23 @@ pub(crate) fn handle_control_request(
                 app,
                 SessionEvent::PermissionAsked {
                     session_id: session_id.into(),
-                    block_id,
+                    block_id: block_id.clone(),
                     ask,
                 },
+            );
+            // workflow-details FR-20/FR-21: the ask is parked and its SESSION card
+            // is already out — only THEN is it offered to the workflow ladder, so
+            // the `workflow.detail` FR-23 emits can never name a blockId whose card
+            // the frontend has not received yet. Attribution is additive: a match
+            // adds a correlation entry and nothing else, so a mis-attribution can
+            // mislabel a card but never lose one.
+            attribute_workflow_ask(
+                app,
+                session_id,
+                v,
+                &block_id,
+                "permission",
+                Some(tool_name.as_str()),
             );
         }
         ControlDecision::Respond(payload) => {
@@ -108,10 +122,13 @@ pub(crate) fn handle_control_request(
                 app,
                 SessionEvent::QuestionAsked {
                     session_id: session_id.into(),
-                    block_id: question_block_id,
+                    block_id: question_block_id.clone(),
                     questions,
                 },
             );
+            // workflow-details FR-20: same ladder, same card-first ordering. A
+            // question carries no tool name — the row label is the question's own.
+            attribute_workflow_ask(app, session_id, v, &question_block_id, "question", None);
         }
     }
 }
@@ -136,6 +153,10 @@ pub(crate) fn resolve_question(
     if let Some(b) = &block {
         append_transcript(app, session_id, b);
     }
+    // workflow-details FR-22/FR-26: every resolution path funnels through here
+    // (the answer command, `control_cancel_request`, the turn-end drain and
+    // `kill_all`), so dropping the attribution here covers all of them at once.
+    remove_workflow_ask(app, session_id, block_id);
     emit(
         app,
         SessionEvent::QuestionResolved {
@@ -180,6 +201,7 @@ pub(crate) fn resolve_permission(
     if let Some(b) = &block {
         append_transcript(app, session_id, b);
     }
+    remove_workflow_ask(app, session_id, block_id); // FR-22/FR-26, as above
     emit(
         app,
         SessionEvent::PermissionResolved {
