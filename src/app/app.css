@@ -165,6 +165,27 @@
   flex-shrink: 0;
 }
 
+/* The cluster's fold chevron — last in the cluster, so it holds the strip's
+   right edge whether the cluster is open or folded and never moves under the
+   cursor. Folded, everything left of it goes back to the scrolling tab strip. */
+.app-meta-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-12-5);
+  line-height: 1;
+  color: var(--text-muted);
+}
+.app-meta-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
 /* design-refresh FR-5: the session meta cluster's context readout — mini fill
    bar + --font-mono figure (numbers are mono, labels are UI type). */
 .app-ctx {
