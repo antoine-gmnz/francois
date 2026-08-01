@@ -77,7 +77,7 @@ reaches the screen.
 - **Chip:** derived from `enabled: Record<NotifyClass, boolean>` only. No counts, no session names.
 - **Palette hints:** `enabled.attention` / `enabled.turnDone` rendered as `on` / `off`.
 - **OS notification** (not styleable — reference only, `notificationBody()`):
-  - Title: `francois` — a stable identity so pings group under the app name.
+  - Title: `Francois` — a stable identity so pings group under the app name.
   - Body, separator U+00B7:
     - `api-refactor · needs approval: Bash`
     - `api-refactor · needs an answer`
