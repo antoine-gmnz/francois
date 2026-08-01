@@ -590,6 +590,23 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
       const s2 = transcriptReducer(s1, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts' });
       expect(s2).toBe(s1);
     });
+
+    it("carries a dispatch's own model onto the subagent block", () => {
+      // A subagent can run on a model other than the session's — the banner
+      // names it. A dispatch that named none carries no key at all.
+      const s = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Agent', summary: 'reviewer', model: 'opus' });
+      const b = s.blocks[0];
+      if (b.kind !== 'subagent') throw new Error('expected subagent block');
+      expect(b.agentModel).toBe('opus');
+
+      const inherited = transcriptReducer(S0, { t: 'toolStart', blockId: 't2', tool: 'Agent', summary: 'reviewer' });
+      expect(inherited.blocks[0]).not.toHaveProperty('agentModel');
+    });
+
+    it('never puts a model on a plain tool block', () => {
+      const s = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts', model: 'opus' });
+      expect(s.blocks[0]).toEqual(classifyToolStart('Read', 'src/a.ts', 't1'));
+    });
   });
 
   describe('toolDone', () => {
@@ -748,7 +765,10 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     applySessionEvent(dispatch, setters, { type: 'assistant.done', sessionId: 'x', blockId: 'b1' });
     expect(dispatch).toHaveBeenLastCalledWith({ t: 'assistantDone', blockId: 'b1' });
     applySessionEvent(dispatch, setters, { type: 'tool.start', sessionId: 'x', blockId: 't1', tool: 'Read', summary: 'a.ts' });
-    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'a.ts' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'a.ts', model: undefined });
+    // the dispatch's model rides the same event when the core sent one
+    applySessionEvent(dispatch, setters, { type: 'tool.start', sessionId: 'x', blockId: 't2', tool: 'Agent', summary: 'reviewer', model: 'haiku' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolStart', blockId: 't2', tool: 'Agent', summary: 'reviewer', model: 'haiku' });
     applySessionEvent(dispatch, setters, { type: 'tool.done', sessionId: 'x', blockId: 't1', meta: '10 lines' });
     expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolDone', blockId: 't1', meta: '10 lines' });
   });

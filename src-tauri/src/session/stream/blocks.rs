@@ -143,25 +143,12 @@ fn mint_subagent(
     tools: &mut HashMap<String, ToolRec>,
 ) {
     let agent_id = uuid();
-    let desc = tools
+    // Provisional: on a streamed dispatch the input is still empty here, so both
+    // fall back to the placeholder. finish_tool_block re-derives them (FR-37).
+    let (name, desc) = tools
         .get(tool_use_id)
-        .map(|rec| {
-            rec.input
-                .get("description")
-                .and_then(|d| d.as_str())
-                .unwrap_or("subagent")
-                .to_string()
-        })
-        .unwrap_or_else(|| "subagent".into());
-    let name = tools
-        .get(tool_use_id)
-        .and_then(|rec| {
-            rec.input
-                .get("subagent_type")
-                .and_then(|d| d.as_str())
-                .map(String::from)
-        })
-        .unwrap_or_else(|| desc.clone());
+        .map(|rec| agent_identity(&rec.input))
+        .unwrap_or_else(|| ("subagent".into(), "subagent".into()));
     let agent = AgentInfo {
         id: agent_id.clone(),
         session_id: session_id.into(),
@@ -352,34 +339,50 @@ fn finish_tool_block(
     // real input; __agentId survives the reparse (Finding 5).
     rec.input = finalize_tool_input(&rec.input);
     let summary = tool_summary(&rec.tool, &rec.input, cwd);
-    // async-agents FR-2: the input JSON is complete now — resolve
-    // the dispatch kind and tell the panel.
-    let background = if rec.is_task {
+    // async-agents FR-2: the input JSON is complete now — resolve the dispatch
+    // kind and its FR-37 name/task (only readable here), and tell the panel.
+    let dispatch = if rec.is_task {
         rec.input
             .get("__agentId")
             .and_then(|val| val.as_str())
             .map(|agent_id| {
+                let (name, task) = agent_identity(&rec.input);
                 (
                     agent_id.to_string(),
                     resolve_background(&rec.input, &rec.tool),
+                    name,
+                    task,
                 )
             })
     } else {
         None
     };
-    let background_emissions = {
+    // The dispatch's own model, which can differ from the session's (None on a
+    // plain tool, or when the dispatch inherits).
+    let model = if rec.is_task {
+        dispatch_model(&rec.input)
+    } else {
+        None
+    };
+    let dispatch_emissions = {
         let engine = app.state::<Engine>();
         let mut map = engine.sessions.lock().unwrap();
         let mut ems = Vec::new();
         if let Some(s) = map.get_mut(session_id) {
-            s.buf_tool(block_id, rec.tool.clone(), summary.clone(), rec.is_task);
-            if let Some((agent_id, is_background)) = &background {
-                ems = apply_background(s, agent_id, *is_background);
+            s.buf_tool(
+                block_id,
+                rec.tool.clone(),
+                summary.clone(),
+                rec.is_task,
+                model.clone(),
+            );
+            if let Some((agent_id, is_background, name, task)) = &dispatch {
+                ems = apply_dispatch_input(s, agent_id, *is_background, name, task);
             }
         }
         ems
     };
-    emit_agent_emissions(app, session_id, background_emissions);
+    emit_agent_emissions(app, session_id, dispatch_emissions);
     // workflow-panel FR-4: the script (and so its `export const meta` block) is
     // only complete now — read the run's real name, description, and phases off it.
     if rec.is_workflow {
@@ -396,6 +399,7 @@ fn finish_tool_block(
             block_id: block_id.to_string(),
             tool: rec.tool.clone(),
             summary,
+            model,
         },
     );
 }

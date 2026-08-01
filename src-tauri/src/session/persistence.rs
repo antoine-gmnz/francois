@@ -641,7 +641,7 @@ mod tests {
         let b = BufBlock {
             block_id: "s1".into(),
             kind: BlockKind::Subagent,
-            text: String::new(),
+            text: "opus".into(), // …and the dispatch's model lives in `text`
             tool: String::new(),
             summary: "explorer".into(), // subagent name lives in `summary`
             meta: Some("done".into()),
@@ -654,6 +654,8 @@ mod tests {
         assert!(matches!(back.kind, BlockKind::Subagent));
         assert_eq!(back.summary, "explorer");
         assert_eq!(back.meta.as_deref(), Some("done"));
+        // a reloaded transcript still shows which model the subagent ran on
+        assert_eq!(classify_block(&back)["agentModel"], "opus");
     }
 
     #[test]

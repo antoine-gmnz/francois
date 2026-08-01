@@ -55,6 +55,13 @@ export interface SubagentConversationBlock extends ConversationBlockBase {
   glyphColor: '#b39ede';
   bodyColor: '#c3c9d4';
   agentName: string;
+  /**
+   * The model the dispatch NAMED (the `Agent`/`Task` tool's `model` param) —
+   * a subagent can run on a different one from the session that spawned it.
+   * Absent when the dispatch named none, i.e. it inherits the session's model;
+   * the banner then says nothing rather than guessing.
+   */
+  agentModel?: string;
   meta?: string;
 }
 
@@ -98,14 +105,19 @@ export function isSubagentTool(tool: string): boolean {
   return (SUBAGENT_TOOLS as readonly string[]).includes(tool);
 }
 
-/** Classify a live `tool.start` (tool + summary) into a tool/subagent block core. */
+/**
+ * Classify a live `tool.start` (tool + summary) into a tool/subagent block core.
+ * `model` is only ever set on a subagent dispatch that named one, and is ignored
+ * for every other tool.
+ */
 export function classifyToolStart(
   tool: string,
   summary: string,
   blockId: BlockId,
+  model?: string,
 ): ToolConversationBlock | SubagentConversationBlock {
   if (isSubagentTool(tool)) {
-    return {
+    const block: SubagentConversationBlock = {
       kind: 'subagent',
       blockId,
       isStreaming: true,
@@ -114,6 +126,9 @@ export function classifyToolStart(
       bodyColor: '#c3c9d4',
       agentName: summary,
     };
+    // Omitted, never undefined — the block shape mirrors the core's JSON, which
+    // leaves the key out when the dispatch inherits the session's model.
+    return model ? { ...block, agentModel: model } : block;
   }
   let glyph: ToolConversationBlock['glyph'] = '●';
   let glyphColor: ToolConversationBlock['glyphColor'] = '#8b93a3';

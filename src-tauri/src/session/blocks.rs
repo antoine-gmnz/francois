@@ -50,6 +50,11 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
                 "glyph": "\u{21C9}", "glyphColor": "#b39ede", "bodyColor": "#c3c9d4",
                 "agentName": b.summary,
             });
+            // The model the dispatch named (BufBlock field reuse). Key omitted
+            // when it inherits the session's — never an empty string.
+            if !b.text.is_empty() {
+                o["agentModel"] = Value::String(b.text.clone());
+            }
             if let Some(m) = &b.meta {
                 o["meta"] = Value::String(m.clone());
             }
@@ -159,7 +164,7 @@ mod tests {
     #[test]
     fn classify_block_tool_body_color_uses_new_palette() {
         let mut s = test_session();
-        s.buf_tool("t1", "Read".into(), "file.rs".into(), false);
+        s.buf_tool("t1", "Read".into(), "file.rs".into(), false, None);
         let block = classify_block(&s.block_buffer[0]);
         assert_eq!(block["bodyColor"], "#8b93a3");
     }
@@ -167,10 +172,43 @@ mod tests {
     #[test]
     fn classify_block_subagent_uses_new_palette() {
         let mut s = test_session();
-        s.buf_tool("s1", "Task".into(), "reviewer".into(), true);
+        s.buf_tool("s1", "Task".into(), "reviewer".into(), true, None);
         let block = classify_block(&s.block_buffer[0]);
         assert_eq!(block["kind"], "subagent");
         assert_eq!(block["glyphColor"], "#b39ede");
         assert_eq!(block["bodyColor"], "#c3c9d4");
+    }
+
+    #[test]
+    fn classify_block_subagent_carries_a_named_model_only() {
+        // The banner names the dispatch's model because it can differ from the
+        // session's — and stays silent when the dispatch named none, rather
+        // than restating what the session already shows.
+        let mut s = test_session();
+        s.buf_tool("s1", "Agent".into(), "reviewer".into(), true, None);
+        assert!(classify_block(&s.block_buffer[0])
+            .get("agentModel")
+            .is_none());
+
+        s.buf_tool(
+            "s2",
+            "Agent".into(),
+            "reviewer".into(),
+            true,
+            Some("haiku".into()),
+        );
+        assert_eq!(classify_block(&s.block_buffer[1])["agentModel"], "haiku");
+
+        // A plain tool never grows the field, whatever it was handed.
+        s.buf_tool(
+            "t1",
+            "Read".into(),
+            "a.rs".into(),
+            false,
+            Some("opus".into()),
+        );
+        let tool = classify_block(&s.block_buffer[2]);
+        assert_eq!(tool["kind"], "tool");
+        assert!(tool.get("agentModel").is_none());
     }
 }

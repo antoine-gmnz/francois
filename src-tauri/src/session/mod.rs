@@ -322,7 +322,8 @@ pub(crate) struct BufBlock {
     kind: BlockKind,
     text: String,
     // Field reuse per kind (precedent: the subagent name lives in `summary`):
-    // `tool` holds the tool name for Tool blocks and the command token for Command blocks.
+    // `tool` holds the tool name for Tool blocks and the command token for Command blocks;
+    // on a Subagent block `text` holds the model the dispatch named (empty ⇒ inherited).
     tool: String,
     summary: String,
     meta: Option<String>,
@@ -587,7 +588,17 @@ impl Session {
         });
     }
 
-    fn buf_tool(&mut self, block_id: &str, tool: String, summary: String, is_task: bool) {
+    /// `model` is the one a subagent dispatch named (None ⇒ inherited, or not a
+    /// dispatch at all); it rides the Subagent block's `text` per the field reuse
+    /// documented on `BufBlock`, which also gets it persisted for free.
+    fn buf_tool(
+        &mut self,
+        block_id: &str,
+        tool: String,
+        summary: String,
+        is_task: bool,
+        model: Option<String>,
+    ) {
         let kind = if is_task {
             BlockKind::Subagent
         } else {
@@ -596,6 +607,11 @@ impl Session {
         self.block_buffer.push(BufBlock {
             tool,
             summary,
+            text: if is_task {
+                model.unwrap_or_default()
+            } else {
+                String::new()
+            },
             streaming: true,
             ..BufBlock::new(block_id, kind)
         });

@@ -69,6 +69,9 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
         </span>
         <div className="block-content block-body" style={{ color: block.bodyColor }}>
           Dispatched subagent <span className="block-subagent__name">{block.agentName}</span>
+          {/* The model the dispatch named — shown only when it differs from the
+              session default, i.e. only when the dispatch named one at all. */}
+          {block.agentModel && <span className="block-subagent__model">{block.agentModel}</span>}
           {block.meta && <span className="block-meta"> · {block.meta}</span>}
         </div>
       </div>
