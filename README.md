@@ -24,7 +24,7 @@ One window: every session, its transcript, its diff, its agents — and a real s
 
 Francois turns that into an actual control room. It spawns and supervises multiple Claude Code sessions across project directories, streams their activity into a structured UI, and puts a **real terminal** next to the AI — so you never leave the window to run something yourself.
 
-It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electron), styled like the TUI it wishes it was: monospace, dark, keyboard-first, full mouse support.
+It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electron), styled like a console you'd actually want to look at: an amber accent on warm greys, IBM Plex Sans for chrome and JetBrains Mono for everything that's code, a path, or a number — dark or light, keyboard-first, full mouse support.
 
 ## What you get
 
@@ -36,21 +36,21 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 
 **❯ A real shell** — PTY-backed terminal per session (xterm.js + `portable-pty`), in the session's working directory. Not a toy console — your actual shell.
 
-**⇉ The right rail** — live subagent progress, MCP server health (tool counts, handshakes, timeouts), installed skills, and running `Workflow` scripts (phases, elapsed, completion), per session. Click an agent card to open its own transcript in a tab.
+**⇉ The right rail** — four stacked cards, per session: live subagent progress `[3]`, MCP server health (tool counts, handshakes, timeouts) `[4]`, installed skills `[5]`, and running `Workflow` scripts — declared phases, live elapsed, completion `[6]`. Click an agent card to open its own transcript in a tab. Fold the agents, MCP or skills card down to its header with `c`; the collapsed set persists.
 
 **⌘K everything** — command palette with fuzzy matching: new session, switch model, run skill, attach MCP server, compact context, kill agent, rename a session, toggle layout…
 
 **⌂ Projects & the OVERVIEW tab** — register your repos once, get per-project session defaults, and a cross-project dashboard: fleet totals, what needs attention, per-project rollup, activity feed.
 
-**⚇ Several accounts at once** — run more than one Anthropic account side by side, each with its own config directory, and pick a default per project. A usage bar under the title bar tracks plan limits and the reset clock.
+**⚇ Several accounts at once** — run more than one Anthropic account side by side, each with its own `CLAUDE_CONFIG_DIR`, logged in from inside the app through a real `claude` TUI. Pick one per session, or a default per project; the titlebar carries that account's plan meters and reset clock, and the status bar says which account the selected session runs on.
 
-**⇱ Approvals, questions and attachments** — permission cards for gated tool calls (with a rules editor over Claude Code's own `settings.json`), `AskUserQuestion` cards, `/` command autocomplete, arrow-up message recall, and file/clipboard attachments in the composer.
+**⇱ Approvals, questions and attachments** — permission cards for gated tool calls (with a rules editor over Claude Code's own `settings.json`), `AskUserQuestion` cards, `/` command autocomplete, arrow-up message recall, and file/clipboard attachments in the composer (drop, paste a screenshot, or pick — Claude reads them off disk through its own tooling).
 
 **⇄ Remote control** — hand a session to Claude Code's native Remote Control and keep the same thread going from your phone or claude.ai.
 
 **⟳ Durable sessions** — quit, reopen, and your fleet is still there: transcripts, status, model, context usage. Sessions are resumable, not disposable. Optionally run one in its own `git worktree`.
 
-**▯ A layout that gets out of the way** — `[` and `]` collapse the side columns; `c` collapses an individual right-rail card. Preferences persist.
+**▯ A layout that gets out of the way** — `[` and `]` collapse the side columns; `c` collapses an individual right-rail card. A segmented tab strip, a measured ~680px reading column in the transcript, and a titlebar that carries the project switcher and your plan meters. Theme and layout preferences persist.
 
 ## Keyboard
 
@@ -61,11 +61,15 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 | `d` / `t` / `o` | Toggle DIFF / SHELL / OVERVIEW tab |
 | `w` | Close the active agent tab |
 | `n` / `a` | New session / new agent |
-| `/` | Filter sessions |
+| `x` | Kill the selected agent (in AGENTS) |
+| `/` | Filter sessions (or skills, in SKILLS) |
 | `[` / `]` | Show/hide left / right column |
 | `c` | Collapse the focused right-rail card |
 | `⌘K` / `Ctrl+K` | Command palette |
+| `↑` `↓` | Recall previously sent messages (in the composer) |
 | `s` / `c` | Stage all / commit (in DIFF) |
+
+Single-key bindings stand down while you're typing in an input or the SHELL terminal has focus; `⌘K` always works.
 
 ## Install
 
@@ -119,7 +123,7 @@ separate data directories — run both at once, sessions never collide.
 ## Under the hood
 
 - **Core**: Rust — session lifecycle, NDJSON event streaming from `claude -p --output-format stream-json`, PTY management, git via the system CLI. Heavy work stays off the UI thread.
-- **Frontend**: React 18 + TypeScript (`strict`), zustand, xterm.js, plain CSS design tokens, JetBrains Mono.
+- **Frontend**: React 18 + TypeScript (`strict`), zustand, xterm.js, plain CSS design tokens (per-feature stylesheets, a shared UI kit, no inline styles), IBM Plex Sans + JetBrains Mono.
 - **Contract-first**: every frontend↔core payload shape lives in [`contract/`](contract/) — the Rust core mirrors it with serde. No stringly-typed IPC.
 - **Spec-driven**: every feature ships from a frozen spec in [`specs/`](specs/), through an agent pipeline described in [`PIPELINE.md`](PIPELINE.md). The design reference lives in [`PROJECT.md`](PROJECT.md).
 - **CI**: typecheck + vitest + cargo test on every PR. Every push to `main` cuts a version — the next semver is derived from the conventional commits since the last tag, built for all three OSes, attached to a GitHub release (installers + installer-free archives), and published to the [`francois` npm package](packaging/npm). No manual step at any point.
@@ -129,7 +133,6 @@ separate data directories — run both at once, sessions never collide.
 - **Desktop notifications** — get pinged when a *background* session finishes, errors, or needs you ([spec](specs/notifications.md))
 - **Session brake** — stop a running turn mid-flight ([spec](specs/session-brake.md))
 - **`francois` CLI** — talk to the running app from any terminal ([spec](specs/cli-companion.md))
-- **Design refresh** — Console chrome + a Focus reading treatment for the transcript ([spec](specs/design-refresh.md))
 
 ## The name
 

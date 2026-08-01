@@ -293,4 +293,4 @@ that owns the feature — never in a new top-level file.
 | `mac-text-selection` | macOS: text selection + copy in the SESSION transcript | conversation-view |
 | `notifications` *(frozen)* | desktop notification when a background session finishes, errors, or needs input | session-engine, app-shell |
 | `session-brake` *(frozen)* | stop a running turn mid-flight | session-engine, conversation-view |
-| `design-refresh` *(frozen)* | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |
+| `design-refresh` | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |

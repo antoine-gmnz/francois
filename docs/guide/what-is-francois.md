@@ -7,7 +7,9 @@ activity into a structured UI, and puts a **real terminal** next to the AI — s
 the window to run something yourself.
 
 It's built as a **native desktop app** (Tauri 2: Rust core, the system webview — no Electron),
-styled like the TUI it wishes it was: monospace, dark, keyboard-first, full mouse support.
+styled like a console you'd actually want to look at: an amber accent on warm greys, IBM Plex
+Sans for chrome and JetBrains Mono for code, paths and numbers, in a dark or light theme —
+keyboard-first, full mouse support.
 
 ## The problem it solves
 
@@ -28,12 +30,15 @@ window: its own transcript, its own diff, its own subagents, its own MCP servers
   app. See [Diff & shell](/guide/diff-and-shell).
 - **SHELL tab** — a real PTY-backed terminal in the session's directory. Also covered in
   [Diff & shell](/guide/diff-and-shell).
-- **AGENTS / MCP SERVERS / SKILLS** (panes `[3]`–`[5]`) — everything running underneath a
-  session, one glance. See [Agents, MCP & skills](/guide/agents-mcp-skills).
+- **AGENTS / MCP SERVERS / SKILLS / WORKFLOWS** (panes `[3]`–`[6]`) — everything running
+  underneath a session, one glance, each card collapsible. See
+  [Agents, MCP & skills](/guide/agents-mcp-skills).
 - **Command palette** (`⌘K`) — every action, fuzzy-matched. See
   [Command palette](/guide/command-palette).
 - **OVERVIEW tab** — a cross-project dashboard when you're managing more than one codebase. See
   [Overview dashboard](/guide/overview-dashboard).
+- **Title bar** — the project switcher and the plan-limit meters for the account the selected
+  session runs on. See [Accounts & usage](/guide/accounts).
 
 ## What Francois is not
 
@@ -47,7 +52,7 @@ window: its own transcript, its own diff, its own subagents, its own MCP servers
 
 ## What's next
 
-A few features have frozen specs but aren't built yet: **desktop notifications** when a
+Three features have frozen specs but aren't built yet: **desktop notifications** when a
 background session finishes or needs you, a **session brake** to stop a running turn mid-flight,
 and a live **`francois` CLI companion** that talks to the already-running app from any terminal
 (distinct from the install/launcher CLI documented in [The francois CLI](/reference/cli), which
