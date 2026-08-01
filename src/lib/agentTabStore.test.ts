@@ -76,6 +76,37 @@ describe('agent tab store slice', () => {
     expect(useStore.getState().mainTab).toBe('diff');
   });
 
+  // workflow-details FR-11..FR-13: a run's tab rides the same list.
+  it('opens and activates a workflow tab under its own id (FR-11)', () => {
+    useStore.getState().openAgentTab({ id: 'w1', name: 'cohorte-cycle', status: 'running', kind: 'workflow' });
+    expect(useStore.getState().mainTab).toBe('workflow:w1');
+    useStore.getState().openAgentTab(A1);
+    expect(useStore.getState().mainTab).toBe('agent:a1');
+    expect(useStore.getState().agentTabs.map((t) => t.id)).toEqual(['w1', 'a1']);
+  });
+
+  it('closes the active workflow tab back to SESSION (FR-12)', () => {
+    useStore.getState().openAgentTab({ id: 'w1', name: 'cohorte-cycle', status: 'running', kind: 'workflow' });
+    useStore.getState().closeAgentTab('w1');
+    expect(useStore.getState().agentTabs).toEqual([]);
+    expect(useStore.getState().mainTab).toBe('session');
+  });
+
+  it('a session switch closes workflow tabs too (FR-13)', () => {
+    useStore.setState({ activeSessionId: 's1' });
+    useStore.getState().openAgentTab({ id: 'w1', name: 'cohorte-cycle', status: 'running', kind: 'workflow' });
+    useStore.getState().setActiveSessionId('s2');
+    expect(useStore.getState().agentTabs).toEqual([]);
+    expect(useStore.getState().mainTab).toBe('session');
+  });
+
+  it('clearAgentTabs hands the pane back when a workflow tab is active (FR-13)', () => {
+    useStore.getState().openAgentTab({ id: 'w1', name: 'cohorte-cycle', status: 'running', kind: 'workflow' });
+    useStore.getState().clearAgentTabs();
+    expect(useStore.getState().agentTabs).toEqual([]);
+    expect(useStore.getState().mainTab).toBe('session');
+  });
+
   it('clearAgentTabs is a no-op when nothing is open', () => {
     const before = useStore.getState().agentTabs;
     useStore.getState().clearAgentTabs();

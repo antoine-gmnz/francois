@@ -20,7 +20,9 @@ import {
   activityText,
   orderedRuns,
   phaseCountLabel,
+  resolveCardClick,
   resolveWorkflowKeyAction,
+  workflowTabRef,
 } from './workflow-run';
 import './workflows.css';
 
@@ -33,9 +35,14 @@ const statusColor: Record<string, string> = {
 export default function WorkflowsPanel({ sessionId }: { sessionId: string | null }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
+  // workflow-details FR-11/FR-12: a run's tab rides the SHARED dynamic-tab list.
+  const openAgentTab = useStore((s) => s.openAgentTab);
+  const syncAgentTab = useStore((s) => s.syncAgentTab);
 
-  const { runs, loading, listError, selectedId, setSelectedId, expandedId, setExpandedId } =
-    useWorkflowsFeed(sessionId);
+  const { runs, loading, listError, selectedId, setSelectedId, expandedId, setExpandedId } = useWorkflowsFeed(
+    sessionId,
+    syncAgentTab,
+  );
 
   const [clockNow, setClockNow] = useState(() => Date.now());
 
@@ -91,8 +98,18 @@ export default function WorkflowsPanel({ sessionId }: { sessionId: string | null
               expanded={run.id === expandedId}
               onClick={(e) => {
                 e.stopPropagation();
-                setFocusedPane('workflows');
                 setSelectedId(run.id);
+                // FR-11: a CLICK on a run whose ack named a transcript dir opens
+                // (or re-activates) its main-pane tab and hands it focus — you
+                // clicked to read it. A run with nothing on disk keeps today's
+                // select-and-expand, and `⏎` (the keyboard path above) never
+                // opens a tab at all.
+                if (resolveCardClick(run).kind === 'open') {
+                  openAgentTab(workflowTabRef(run));
+                  setFocusedPane('main');
+                  return;
+                }
+                setFocusedPane('workflows');
                 setExpandedId((cur) => (cur === run.id ? null : run.id));
               }}
             />

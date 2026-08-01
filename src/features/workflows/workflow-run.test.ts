@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkflowRun } from '../../../contract/common';
 import {
+  WAITING_LABEL,
   activityText,
   applyRunUpdate,
+  isRunOpenable,
   orderedRuns,
   phaseCountLabel,
+  resolveCardClick,
   resolveWorkflowKeyAction,
   seedRuns,
+  workflowTabRef,
 } from './workflow-run';
 
 function run(over: Partial<WorkflowRun> = {}): WorkflowRun {
@@ -59,6 +63,44 @@ describe('activityText', () => {
   it('falls back to dispatched while running, and to the status once finished', () => {
     expect(activityText(run())).toBe('dispatched');
     expect(activityText(run({ status: 'done', lastActivity: '' }))).toBe('done');
+  });
+
+  // workflow-details FR-24: a blocked run makes no progress and produces no
+  // filesystem activity, so the card says so ahead of whatever it last saw.
+  it('says waiting on you while an ask is attributed to the run (FR-24)', () => {
+    expect(activityText(run({ pendingAsks: 1, lastActivity: 'running in the background' }))).toBe(WAITING_LABEL);
+    expect(WAITING_LABEL).toBe('waiting on you');
+    expect(activityText(run({ pendingAsks: 0 }))).toBe('dispatched');
+  });
+});
+
+// ---------- workflow-details FR-11: what a click on a card does ----------
+
+describe('resolveCardClick', () => {
+  it('opens the run tab when the ack named a transcript dir', () => {
+    expect(resolveCardClick(run({ transcriptDir: '/tmp/wf' }))).toEqual({ kind: 'open' });
+    expect(isRunOpenable(run({ transcriptDir: '/tmp/wf' }))).toBe(true);
+  });
+
+  it('only selects/expands a run with no readable transcript dir, as today (FR-11)', () => {
+    expect(resolveCardClick(run())).toEqual({ kind: 'expand' });
+    expect(resolveCardClick(run({ transcriptDir: '' }))).toEqual({ kind: 'expand' });
+    expect(isRunOpenable(run())).toBe(false);
+  });
+});
+
+// ---------- workflow-details FR-12: the run's entry in the dynamic-tab list ----------
+
+describe('workflowTabRef', () => {
+  it('keys the tab by run id and carries the run status the strip dots (FR-12)', () => {
+    expect(workflowTabRef(run({ transcriptDir: '/tmp/wf' }))).toEqual({
+      id: 'w1',
+      name: 'review-changes',
+      status: 'running',
+      kind: 'workflow',
+    });
+    expect(workflowTabRef(run({ status: 'done' })).status).toBe('done');
+    expect(workflowTabRef(run({ status: 'error' })).status).toBe('error');
   });
 });
 

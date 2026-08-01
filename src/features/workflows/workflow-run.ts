@@ -4,6 +4,7 @@
 // (this project has none — see REFACTOR-CONVENTIONS.md).
 
 import type { WorkflowRun } from '../../../contract/common';
+import type { AgentTabRef } from '../agents/agent-tab';
 
 /** Running runs float to the top; within a rank, first-seen order is kept. */
 const rank = (status: string) => (status === 'running' ? 0 : 1);
@@ -26,13 +27,53 @@ export function phaseCountLabel(run: WorkflowRun): string | null {
 }
 
 /**
+ * workflow-details FR-24: a run with an ask attributed to it is blocked ON THE
+ * USER — nothing moves and no filesystem activity will report it — so the card
+ * says that ahead of whatever it last observed.
+ */
+export const WAITING_LABEL = 'waiting on you';
+
+/**
  * The meta line's trailing text. `lastActivity` is the honest one-liner the core
  * derived from the stream (the ack, the completion notice, or the turn-end
  * backstop); a run that has had none yet reads as just dispatched.
  */
 export function activityText(run: WorkflowRun): string {
+  if ((run.pendingAsks ?? 0) > 0) return WAITING_LABEL;
   if (run.lastActivity && run.lastActivity !== '') return run.lastActivity;
   return run.status === 'running' ? 'dispatched' : run.status;
+}
+
+// ---------- workflow-details FR-11: opening a run's tab ----------
+
+/**
+ * FR-11/FR-2: a run is openable only once the ack named a transcript dir the
+ * core could resolve. Without one there is nothing on disk to render, so the
+ * card behaves exactly as it did before this feature.
+ */
+export function isRunOpenable(run: WorkflowRun): boolean {
+  return typeof run.transcriptDir === 'string' && run.transcriptDir !== '';
+}
+
+export type WorkflowCardClick = { kind: 'open' } | { kind: 'expand' };
+
+/**
+ * FR-11: a CLICK opens the run's main-pane tab when there is one to open, and
+ * otherwise keeps today's select-and-expand behaviour. `⏎` never opens a tab —
+ * it stays the in-place expand (`resolveWorkflowKeyAction`).
+ */
+export function resolveCardClick(run: WorkflowRun): WorkflowCardClick {
+  return isRunOpenable(run) ? { kind: 'open' } : { kind: 'expand' };
+}
+
+/**
+ * FR-12: the run's entry in the SHARED dynamic-tab list. `WorkflowStatus`'s
+ * three values are all `AgentStatus` values too, so the strip's status dot
+ * needs no translation table — only the `kind`, which is what keys the tab onto
+ * `workflow:{id}` instead of `agent:{id}`.
+ */
+export function workflowTabRef(run: WorkflowRun): AgentTabRef {
+  return { id: run.id, name: run.name, status: run.status, kind: 'workflow' };
 }
 
 /**

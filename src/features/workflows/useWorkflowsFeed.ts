@@ -8,7 +8,8 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import type { AppError, SessionEvent, WorkflowRun } from '../../../contract/common';
 import { onSessionEvent, workflowsList } from '../../lib/api';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
-import { applyRunUpdate, seedRuns } from './workflow-run';
+import type { AgentTabRef } from '../agents/agent-tab';
+import { applyRunUpdate, seedRuns, workflowTabRef } from './workflow-run';
 
 export interface UseWorkflowsFeed {
   runs: Map<string, WorkflowRun>;
@@ -20,7 +21,15 @@ export interface UseWorkflowsFeed {
   setExpandedId: Dispatch<SetStateAction<string | null>>;
 }
 
-export function useWorkflowsFeed(sessionId: string | null): UseWorkflowsFeed {
+/**
+ * workflow-details FR-12: keep an OPEN workflow tab's label + status dot live.
+ * A no-op for a run with no tab, and this panel is already the ONE
+ * `workflow.update` subscriber for the active session — no second subscription.
+ */
+export function useWorkflowsFeed(
+  sessionId: string | null,
+  syncAgentTab?: (ref: AgentTabRef) => void,
+): UseWorkflowsFeed {
   const [runs, setRuns] = useState<Map<string, WorkflowRun>>(new Map());
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<AppError | null>(null);
@@ -48,7 +57,9 @@ export function useWorkflowsFeed(sessionId: string | null): UseWorkflowsFeed {
       setRuns((prev) => seedRuns(prev, data));
     },
     onEvent: (e) => {
-      if (e.type === 'workflow.update') setRuns((prev) => applyRunUpdate(prev, e.run));
+      if (e.type !== 'workflow.update') return;
+      if (syncAgentTab) syncAgentTab(workflowTabRef(e.run));
+      setRuns((prev) => applyRunUpdate(prev, e.run));
     },
     onError: (message) => {
       setLoading(false);

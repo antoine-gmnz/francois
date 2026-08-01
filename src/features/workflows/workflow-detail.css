@@ -1,0 +1,356 @@
+/* workflow-details §8 / specs/design/workflow-details.md §2 — the `workflow:{id}`
+   tab body: a fixed 312px left rail (run header + agent list) beside the
+   transcript / script / ask column.
+
+   Two rules from the brief govern what is NOT here: the transcript column is the
+   SESSION tab's block rendering unchanged (conversation.css), and the approval /
+   question cards are the existing components unmodified (styles.css's qcard-/
+   pcard-*). This file styles the rail, the agent row, the one genuinely new
+   element — the span bar — and the column's own chrome. Motion: none new. */
+
+.wfd-view {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* -- left rail ------------------------------------------------------------- */
+
+.wfd-rail {
+  width: 312px;
+  flex-shrink: 0;
+  overflow: auto;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+}
+/* §Responsive: the rail narrows once the middle column gets tight (rows
+   ellipsize earlier, bars keep their proportions) but never collapses — a bar
+   with no list beside it says nothing. */
+@media (max-width: 720px) {
+  .wfd-rail {
+    width: 260px;
+  }
+}
+
+/* -- run header (§2a) ------------------------------------------------------ */
+
+.wfd-run {
+  padding: var(--space-10) var(--space-12);
+  border-bottom: 1px solid var(--border);
+}
+.wfd-run__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.wfd-run__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-13);
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.wfd-run__status {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+}
+.wfd-run__description {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wfd-run__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  margin-top: var(--space-6);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.wfd-run__meta-sep {
+  color: var(--text-disabled);
+}
+.wfd-run__spacer {
+  flex: 1;
+}
+.wfd-run__script-chip {
+  flex-shrink: 0;
+  background: var(--bg-raised);
+  font-size: var(--font-size-9);
+  padding: var(--space-2) var(--space-6);
+}
+
+/* The one loud thing in this view (§Notes): a blocked run makes no progress and
+   produces no filesystem activity to notice, so the header says so outright. */
+.wfd-run__waiting {
+  margin-top: var(--space-6);
+  padding: var(--space-4) var(--space-8);
+  font-size: var(--font-size-11);
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-card);
+}
+
+/* declared phases — the plan, deliberately not grouped over the agent list */
+.wfd-phases {
+  margin-top: var(--space-8);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-6);
+}
+.wfd-phases__note {
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+  padding-bottom: var(--space-4);
+}
+.wfd-phase {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-7);
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-10);
+}
+.wfd-phase__index {
+  width: var(--space-10);
+  flex-shrink: 0;
+  text-align: center;
+  color: var(--text-disabled);
+}
+.wfd-phase__title {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.wfd-phase__detail {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-disabled);
+}
+
+/* -- the agent list (§2b) -------------------------------------------------- */
+
+.wfd-agents {
+  padding: var(--space-8);
+}
+.wfd-agents__empty {
+  padding: var(--space-24) var(--space-12);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+  text-align: center;
+}
+.wfd-agents__error {
+  padding: var(--space-12) var(--space-4);
+  font-size: var(--font-size-11);
+  color: var(--error);
+  text-align: center;
+}
+
+/* A row is a focusable button (§Accessibility) wearing pane [3]'s card metrics. */
+.wfd-agent {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border: 0;
+  border-left: 2px solid transparent;
+  padding: var(--space-7) var(--space-9);
+  margin-bottom: var(--space-6);
+  background: var(--bg-hover);
+  border-radius: var(--radius-card);
+  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+  cursor: pointer;
+}
+.wfd-agent:hover {
+  background: var(--bg-raised);
+}
+.wfd-agent--selected {
+  background: var(--bg-raised);
+  border-left-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--border-focus);
+}
+.wfd-agent__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.wfd-agent__type {
+  font-size: var(--font-size-11);
+  color: var(--text-strong);
+  min-width: 0;
+}
+.wfd-agent__model {
+  flex-shrink: 0;
+  font-size: var(--font-size-9);
+  color: var(--text-dim);
+  background: var(--bg-raised);
+  padding: var(--space-1) var(--space-5);
+  border-radius: var(--radius-xl);
+}
+.wfd-agent__spacer {
+  flex: 1;
+}
+.wfd-agent__figure {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+/* Stalled on the user, not working — the row's one amber note. */
+.wfd-agent__figure--waiting {
+  color: var(--warn);
+}
+.wfd-agent__prompt {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+}
+.wfd-agent__result {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+}
+
+/* the span bar — every row measured against ONE run window, so overlapping
+   agents visibly overlap (that shared origin is the entire point). */
+.wfd-span {
+  position: relative;
+  height: 3px;
+  margin-top: var(--space-6);
+  background: var(--bg-raised);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+}
+.wfd-span__fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* -- right column (§2c–2e) ------------------------------------------------- */
+
+.wfd-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Attributed asks sit above everything else and are never scrolled past; a tall
+   stack scrolls inside its own area rather than eating the transcript. */
+.wfd-asks {
+  flex-shrink: 0;
+  max-height: 55%;
+  overflow: auto;
+  padding: var(--space-12) var(--space-18);
+  border-bottom: 1px solid var(--border);
+}
+.wfd-ask + .wfd-ask {
+  margin-top: var(--space-12);
+}
+.wfd-ask__owner {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  padding-bottom: var(--space-4);
+}
+.wfd-ask__inferred {
+  color: var(--text-disabled);
+  margin-left: var(--space-6);
+}
+.wfd-col__head {
+  flex-shrink: 0;
+  padding: var(--space-9) var(--space-14);
+  border-bottom: 1px solid var(--border);
+}
+.wfd-col__head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.wfd-col__type {
+  font-size: var(--font-size-12-5);
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.wfd-col__status {
+  font-size: var(--font-size-10);
+}
+.wfd-col__elapsed {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.wfd-col__prompt {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+}
+.wfd-col__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-16) var(--space-18);
+  user-select: text;
+}
+.wfd-col__empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-12-5);
+  color: var(--text-faint);
+}
+.wfd-col__notice {
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+  padding-bottom: var(--space-8);
+}
+.wfd-col__error {
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+
+/* the value the agent returned to the script — last in the scroller */
+.wfd-returned {
+  margin-top: var(--space-14);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-10);
+}
+.wfd-returned__label {
+  font-size: var(--font-size-10);
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+.wfd-code {
+  margin: var(--space-6) 0 0;
+  padding: var(--space-8);
+  background: var(--bg-raised);
+  border-radius: var(--radius-card);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-2);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* the script source (§2d) — no highlighting, on purpose */
+.wfd-script__path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+  padding-bottom: var(--space-6);
+}
+.wfd-script__source {
+  color: var(--text-muted);
+}
+.wfd-script__truncated {
+  padding-top: var(--space-6);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}

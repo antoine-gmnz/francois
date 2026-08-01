@@ -51,6 +51,7 @@ pub(crate) fn test_session() -> Session {
         workflows: HashMap::new(),
         workflow_order: Vec::new(),
         workflow_by_tool: HashMap::new(),
+        workflow_scripts: HashMap::new(),
         cli_commands: Vec::new(),
     }
 }
@@ -68,6 +69,8 @@ pub(crate) fn test_workflow_run() -> WorkflowRun {
         phases: Vec::new(),
         run_id: None,
         last_activity: None,
+        transcript_dir: None,
+        pending_asks: None,
     }
 }
 
@@ -76,6 +79,9 @@ pub(crate) fn test_engine_with(session: Session) -> Engine {
     map.insert(session.id.clone(), session);
     Engine {
         sessions: Mutex::new(map),
+        // workflow-details §6: the scan/watch and attributed-ask registries start
+        // empty for every test — no shared global state between tests.
+        ..Default::default()
     }
 }
 

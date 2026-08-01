@@ -20,6 +20,23 @@ export function agentIdFromTab(tab: string): string | null {
   return tab.startsWith(TAB_PREFIX) ? tab.slice(TAB_PREFIX.length) : null;
 }
 
+// ---------- workflow-details §6: the SAME open/close/evict/cap machinery,
+// shared with a workflow run's tab. `agentTabs` is deliberately the ONE
+// dynamic-tab list for both kinds (workflow-details FR-12) — see AgentTabRef's
+// `kind` below and agentTabStore.ts. ----------
+
+const WORKFLOW_TAB_PREFIX = 'workflow:';
+
+/** workflow-details FR-11: a workflow run's MainTab value. */
+export function workflowTabId(runId: string): string {
+  return `${WORKFLOW_TAB_PREFIX}${runId}`;
+}
+
+/** The workflow run behind a MainTab value, or null for anything else. */
+export function workflowIdFromTab(tab: string): string | null {
+  return tab.startsWith(WORKFLOW_TAB_PREFIX) ? tab.slice(WORKFLOW_TAB_PREFIX.length) : null;
+}
+
 // ---------- the open tab set (FR-9..FR-14) ----------
 
 /** FR-11: at most this many agent tabs are open at once. */
@@ -28,15 +45,34 @@ export const AGENT_TAB_CAP = 6;
 /** §8: an agent name is truncated to this many chars in the strip. */
 export const AGENT_TAB_NAME_MAX = 14;
 
+/** workflow-details §6: which dynamic-tab machinery a ref belongs to. */
+export type DynamicTabKind = 'agent' | 'workflow';
+
 export interface AgentTabRef {
   id: string;
   name: string;
-  /** Drives the strip's status dot (§8). */
+  /** Drives the strip's status dot (§8). WorkflowStatus is a subset of
+   * AgentStatus's values, so a workflow ref's status widens here for free. */
   status: AgentStatus;
+  /**
+   * workflow-details §6: 'workflow' for a workflow run's tab. Optional and
+   * defaults to 'agent' so every pre-existing agent-tab call site — none of
+   * which ever set this — keeps compiling and behaving unchanged.
+   */
+  kind?: DynamicTabKind;
+}
+
+function tabKind(ref: AgentTabRef): DynamicTabKind {
+  return ref.kind ?? 'agent';
+}
+
+/** workflow-details §6: the tab id a ref opens under, honoring its kind. */
+export function tabIdFor(ref: AgentTabRef): string {
+  return tabKind(ref) === 'workflow' ? workflowTabId(ref.id) : agentTabId(ref.id);
 }
 
 function sameRef(left: AgentTabRef, right: AgentTabRef): boolean {
-  return left.id === right.id && left.name === right.name && left.status === right.status;
+  return left.id === right.id && left.name === right.name && left.status === right.status && tabKind(left) === tabKind(right);
 }
 
 export function agentTabLabel(name: string): string {
@@ -77,13 +113,14 @@ export function closeTab(tabs: AgentTabRef[], agentId: string): AgentTabRef[] {
 
 /**
  * FR-13/FR-14: which tab is active after `closedIds` were closed. Closing the
- * ACTIVE agent tab falls back to SESSION; closing any other leaves the active tab
- * alone. `closedIds === null` means "every agent tab" (the session switch, FR-14).
+ * ACTIVE dynamic tab (agent OR workflow, workflow-details §6) falls back to
+ * SESSION; closing any other leaves the active tab alone. `closedIds === null`
+ * means "every dynamic tab" (the session switch, FR-14).
  */
 export function mainTabAfterClose(current: string, closedIds: string[] | null): string {
-  const agentId = agentIdFromTab(current);
-  if (agentId === null) return current; // a built-in tab is never disturbed
-  if (closedIds === null || closedIds.includes(agentId)) return 'session';
+  const id = agentIdFromTab(current) ?? workflowIdFromTab(current);
+  if (id === null) return current; // a built-in tab is never disturbed
+  if (closedIds === null || closedIds.includes(id)) return 'session';
   return current;
 }
 

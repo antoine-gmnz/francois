@@ -11,11 +11,12 @@
 import type { StateCreator } from 'zustand';
 import {
   agentIdFromTab,
-  agentTabId,
   closeTab,
   mainTabAfterClose,
   openTab,
   syncTab,
+  tabIdFor,
+  workflowIdFromTab,
   type AgentTabRef,
 } from '../features/agents/agent-tab';
 import { INITIAL_ACTIVE_PROJECT } from './projectsStore';
@@ -23,26 +24,31 @@ import type { AppState } from './store';
 
 /**
  * The main pane's active tab. The `agent:${string}` member is agent-tab FR-9's
- * dynamic tab — a template-literal member rather than a discriminated object so
- * every existing `mainTab === 'diff'` comparison keeps working untouched.
+ * dynamic tab and `workflow:${string}` is workflow-details FR-11's — template-
+ * literal members rather than a discriminated object so every existing
+ * `mainTab === 'diff'` comparison keeps working untouched.
  */
-export type MainTab = 'overview' | 'session' | 'diff' | 'shell' | `agent:${string}`;
+export type MainTab = 'overview' | 'session' | 'diff' | 'shell' | `agent:${string}` | `workflow:${string}`;
 
 export interface AgentTabSlice {
   // main-pane active tab (minimal app-shell)
   mainTab: MainTab;
   setMainTab: (t: MainTab) => void;
 
-  // agent-tab §6: the open agent tabs, in the order they were opened. Scoped to
-  // the active session (agent ids are session-scoped) and never persisted.
+  /**
+   * agent-tab §6: the open DYNAMIC tabs, in the order they were opened — agent
+   * tabs and, since workflow-details FR-12, workflow tabs too (`ref.kind`), so
+   * the 6-tab cap and the eviction order cover both kinds at once. Scoped to the
+   * active session (both id kinds are session-scoped) and never persisted.
+   */
   agentTabs: AgentTabRef[];
-  /** FR-10: open (or re-activate) an agent's tab and make it the active tab. */
+  /** FR-10 / workflow-details FR-11: open (or re-activate) a ref's tab and make it active. */
   openAgentTab: (ref: AgentTabRef) => void;
-  /** Refresh an OPEN tab's name/status from an agent.update; never opens one. */
+  /** Refresh an OPEN tab's name/status from an agent.update / workflow.update; never opens one. */
   syncAgentTab: (ref: AgentTabRef) => void;
   /** FR-13: close one tab; falls back to SESSION only if it was the active one. */
   closeAgentTab: (agentId: string) => void;
-  /** FR-14: close every agent tab (session switch). */
+  /** FR-14 / workflow-details FR-13: close every dynamic tab (session switch). */
   clearAgentTabs: () => void;
 }
 
@@ -52,7 +58,7 @@ export const createAgentTabSlice: StateCreator<AppState, [], [], AgentTabSlice> 
 
   agentTabs: [],
   openAgentTab: (ref) =>
-    set((s) => ({ agentTabs: openTab(s.agentTabs, ref), mainTab: agentTabId(ref.id) as MainTab })),
+    set((s) => ({ agentTabs: openTab(s.agentTabs, ref), mainTab: tabIdFor(ref) as MainTab })),
   syncAgentTab: (ref) =>
     set((s) => {
       const agentTabs = syncTab(s.agentTabs, ref);
@@ -65,7 +71,7 @@ export const createAgentTabSlice: StateCreator<AppState, [], [], AgentTabSlice> 
     })),
   clearAgentTabs: () =>
     set((s) =>
-      s.agentTabs.length === 0 && agentIdFromTab(s.mainTab) === null
+      s.agentTabs.length === 0 && agentIdFromTab(s.mainTab) === null && workflowIdFromTab(s.mainTab) === null
         ? {}
         : { agentTabs: [], mainTab: mainTabAfterClose(s.mainTab, null) as MainTab },
     ),

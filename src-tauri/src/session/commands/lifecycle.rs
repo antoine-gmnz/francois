@@ -337,6 +337,9 @@ pub fn session_remove(
                 let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)
             }
             crate::diff::unwatch_session(&session_id); // FR-15: dispose the watcher
+                                                       // workflow-details FR-6: the run directories of a removed session are
+                                                       // no longer watched, and the asks attributed to its runs go with it.
+            unwatch_session_workflows(&engine, &session.workflow_order);
             crate::dispose_session_shell(&app, &session_id); // wsl-filesystem FR-13: dispose the shell
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)

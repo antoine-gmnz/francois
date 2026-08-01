@@ -57,6 +57,10 @@ export type ErrorCode =
   | 'ACCOUNT_DUPLICATE' // multi-account: login identity matches an already-registered account (FR-14)
   | 'ACCOUNT_LOGIN_FAILED' // multi-account: login timed out or the PTY exited without an identity (FR-15)
   | 'ACCOUNT_NOT_AUTHENTICATED' // multi-account: a turn's account has no credentials on disk (FR-22)
+  | 'WORKFLOW_NOT_FOUND' // workflow-details: runId matches no run this session has seen
+  | 'WORKFLOW_NO_TRANSCRIPT' // workflow-details FR-2/FR-7: the run has no usable transcriptDir
+  | 'WORKFLOW_AGENT_NOT_FOUND' // workflow-details FR-8: agentId matches no agent the scan has seen
+  | 'WORKFLOW_NO_SCRIPT' // workflow-details FR-9: the run has no readable scriptPath
   | 'UPDATE_CHECK_FAILED' // self-update: the npm registry was unreachable or unparseable (FR-6)
   | 'UPDATE_APPLY_FAILED' // self-update: npm/temp dir/spawn failed, or method is 'manual' (FR-18)
   | 'UPDATE_BLOCKED' // self-update: sessions are running (detail: { running: number }) (FR-12)
@@ -242,6 +246,10 @@ export interface WorkflowRun {
   runId?: string;
   /** One line of the newest thing observed for this run (the ack, or the completion notice). */
   lastActivity?: string;
+  /** workflow-details FR-1: the ack's `Transcript dir:`, if it resolved to an existing directory. */
+  transcriptDir?: string;
+  /** workflow-details FR-24: count of asks currently attributed to this run; absent/0 when none. */
+  pendingAsks?: number;
 }
 
 // ---------- MCP ----------

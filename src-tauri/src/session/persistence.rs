@@ -568,6 +568,7 @@ pub fn load_persisted(app: &AppHandle) {
                 workflows: HashMap::new(),
                 workflow_order: Vec::new(),
                 workflow_by_tool: HashMap::new(),
+                workflow_scripts: HashMap::new(),
                 cli_commands: Vec::new(),
             },
         );

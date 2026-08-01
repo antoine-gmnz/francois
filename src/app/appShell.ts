@@ -6,7 +6,7 @@
 // REFACTOR-CONVENTIONS.md).
 
 import { displayWslCwd } from '../../contract/wsl-filesystem';
-import { agentIdFromTab } from '../features/agents/agent-tab';
+import { agentIdFromTab, workflowIdFromTab } from '../features/agents/agent-tab';
 import { isRightPane } from '../lib/layoutStore';
 import { abbreviate } from '../lib/path';
 import type { MainTab, Pane, RightPane } from '../lib/store';
@@ -34,16 +34,17 @@ export function shellFooterPath(cwd: string, shellName: string, home: string): s
 // ---------- main pane render branch (Phase 5 dispatch table) ----------
 
 /**
- * Which `MainPaneBody` renderer a `mainTab` value selects. Agent tabs are
- * `agent:<id>` — a template-literal `MainTab` member, not a plain key — so
- * they collapse to the single `'agent'` branch here and `MainPaneBody`
- * handles that branch explicitly rather than forcing it into the
- * `Record<MainTab, renderer>` table.
+ * Which `MainPaneBody` renderer a `mainTab` value selects. The dynamic tabs are
+ * `agent:<id>` and `workflow:<id>` (workflow-details FR-11) — template-literal
+ * `MainTab` members, not plain keys — so they collapse to the `'agent'` /
+ * `'workflow'` branches here and `MainPaneBody` handles those explicitly rather
+ * than forcing them into the `Record<MainTab, renderer>` table.
  */
-export type MainPaneBranch = 'overview' | 'session' | 'diff' | 'shell' | 'agent';
+export type MainPaneBranch = 'overview' | 'session' | 'diff' | 'shell' | 'agent' | 'workflow';
 
 export function mainPaneBranch(mainTab: MainTab): MainPaneBranch {
-  return mainTab === 'overview' || mainTab === 'session' || mainTab === 'diff' || mainTab === 'shell' ? mainTab : 'agent';
+  if (mainTab === 'overview' || mainTab === 'session' || mainTab === 'diff' || mainTab === 'shell') return mainTab;
+  return workflowIdFromTab(mainTab) !== null ? 'workflow' : 'agent';
 }
 
 // ---------- global shortcuts (Phase 5 dispatch table) ----------
@@ -105,11 +106,14 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
     ctx.setFocusedPane('main');
     ctx.setMainTab(ctx.getMainTab() === 'overview' ? 'session' : 'overview');
   };
+  // `w` closes whichever DYNAMIC tab is active — an agent's or, since
+  // workflow-details FR-12, a workflow run's. Both live in the same list.
   const closeActiveAgentTab = () => {
-    const agentId = agentIdFromTab(ctx.getMainTab());
-    if (agentId !== null) {
+    const mainTab = ctx.getMainTab();
+    const id = agentIdFromTab(mainTab) ?? workflowIdFromTab(mainTab);
+    if (id !== null) {
       ctx.preventDefault();
-      ctx.closeAgentTab(agentId);
+      ctx.closeAgentTab(id);
     }
   };
   // FR-10: no-op from sidebar/main — a collapsed card can't own focus, so

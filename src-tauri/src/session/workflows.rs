@@ -29,6 +29,7 @@ use super::*;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde_json::Value;
+use std::path::PathBuf;
 use tauri::{AppHandle, State};
 
 /// The harness's multi-agent orchestration tool. Unlike `is_subagent_tool` there
@@ -377,6 +378,9 @@ pub(crate) fn mint_workflow(
         phases: Vec::new(),
         run_id: None,
         last_activity: None,
+        // workflow-details FR-1: both land with the dispatch ack, never before.
+        transcript_dir: None,
+        pending_asks: None,
     };
     s.insert_workflow(run.clone());
     s.workflow_by_tool
@@ -407,6 +411,11 @@ pub(crate) fn apply_workflow_meta(
 /// the run id and leaves the clock running (the same reading async-agents FR-5
 /// gives a background dispatch). An ERROR result is terminal: the run never
 /// started, so nothing else will ever report on it.
+///
+/// workflow-details FR-1/FR-2: the same ack is where the run's `Transcript dir:`
+/// and `Script file:` come from — each kept only when it resolves on disk. The
+/// transcript dir rides on the run (the tab needs it); the script path is
+/// core-only state on the session.
 pub(crate) fn apply_workflow_dispatch_result(
     s: &mut Session,
     run_uuid: &str,
@@ -414,8 +423,11 @@ pub(crate) fn apply_workflow_dispatch_result(
     is_error: bool,
     at: u64,
 ) -> Option<WorkflowRun> {
-    let run = s.workflows.get_mut(run_uuid)?;
+    if !s.workflows.contains_key(run_uuid) {
+        return None;
+    }
     if is_error {
+        let run = s.workflows.get_mut(run_uuid)?;
         run.status = "error".into();
         run.ended_at = Some(at);
         let label = first_nonblank_line(result_text, 120);
@@ -426,9 +438,24 @@ pub(crate) fn apply_workflow_dispatch_result(
         });
         return Some(run.clone());
     }
+    // FR-2: resolved BEFORE the run is borrowed, so the script path can be
+    // stashed on the session in the same pass.
+    let paths = resolve_ack_paths(result_text);
+    let run = s.workflows.get_mut(run_uuid)?;
     run.run_id = extract_run_id(result_text);
     run.last_activity = Some("running in the background".to_string());
-    Some(run.clone())
+    run.transcript_dir = paths.transcript_dir;
+    let updated = run.clone();
+    match paths.script_path {
+        Some(p) => {
+            s.workflow_scripts
+                .insert(run_uuid.to_string(), PathBuf::from(p));
+        }
+        None => {
+            s.workflow_scripts.remove(run_uuid);
+        }
+    }
+    Some(updated)
 }
 
 /// FR-8 ladder: the run id verbatim → the workflow's name → (only when
@@ -518,9 +545,31 @@ pub(crate) fn finalize_workflows(s: &mut Session, errored: bool, at: u64) -> Vec
 
 // ---------- AppHandle wrappers (lock → mutate → drop → emit) ----------
 
+/// workflow-details FR-6: which of these updates left `running` with a
+/// transcript directory recorded — the runs whose watch, if any, is owed the
+/// final flush that stops it deterministically. A run leaving `running` here
+/// (a task-notification, a dispatch error, or the turn-end backstop) is its
+/// ONLY terminal transition on some paths — no further filesystem write ever
+/// follows for the 300 ms debounce to catch (the "stragglers" §7 names) —
+/// so this is the one place every terminal transition passes through. Pulled
+/// out so the decision is testable without an `AppHandle`.
+pub(crate) fn terminal_watch_run_ids(runs: &[WorkflowRun]) -> Vec<String> {
+    runs.iter()
+        .filter(|r| r.status != "running" && r.transcript_dir.is_some())
+        .map(|r| r.id.clone())
+        .collect()
+}
+
 pub(crate) fn emit_workflow_updates(app: &AppHandle, runs: Vec<WorkflowRun>) {
+    let terminal_ids = terminal_watch_run_ids(&runs);
     for run in runs {
         emit(app, SessionEvent::WorkflowUpdate { run });
+    }
+    for run_id in terminal_ids {
+        // flush_workflow_detail is a no-op flush when no watch is running (it
+        // still emits the frozen detail once and stops the watch if there is
+        // one) — safe to call whether or not a tab was ever opened.
+        flush_workflow_detail(app, &run_id);
     }
 }
 
@@ -800,6 +849,62 @@ phase('Scan')
     }
 
     #[test]
+    fn the_ack_puts_its_transcript_dir_on_the_run_and_its_script_on_the_session() {
+        // workflow-details FR-1/FR-2: each path is the remainder of its line, and
+        // is kept ONLY when it resolves — a directory for the transcript, a file
+        // for the script.
+        let dir = std::env::temp_dir().join(format!("francois-ack-{}", uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("wf.js");
+        std::fs::write(&script, "//").unwrap();
+
+        let mut s = test_session();
+        let id = minted(&mut s);
+        let run = apply_workflow_dispatch_result(
+            &mut s,
+            &id,
+            &format!(
+                "Workflow started: wf_abc123\nTranscript dir: {}\nScript file: {}\n",
+                dir.display(),
+                script.display()
+            ),
+            false,
+            2_000,
+        )
+        .expect("the ack updates the run");
+        assert_eq!(run.run_id.as_deref(), Some("wf_abc123"));
+        assert_eq!(
+            run.transcript_dir.as_deref(),
+            Some(dir.to_string_lossy().as_ref())
+        );
+        assert_eq!(s.workflow_scripts.get(&id), Some(&script));
+
+        // FR-1: an ack carrying neither leaves both absent…
+        let mut plain = test_session();
+        let pid = minted(&mut plain);
+        let bare =
+            apply_workflow_dispatch_result(&mut plain, &pid, "Workflow started: wf_x1", false, 1)
+                .unwrap();
+        assert_eq!(bare.transcript_dir, None);
+        assert!(plain.workflow_scripts.is_empty());
+        // …and FR-2: a path that does not resolve is treated as absent.
+        let mut gone = test_session();
+        let gid = minted(&mut gone);
+        let unresolved = apply_workflow_dispatch_result(
+            &mut gone,
+            &gid,
+            "Transcript dir: /no/such/dir\nScript file: /no/such.js",
+            false,
+            1,
+        )
+        .unwrap();
+        assert_eq!(unresolved.transcript_dir, None);
+        assert!(gone.workflow_scripts.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn an_errored_dispatch_result_ends_the_run() {
         let mut s = test_session();
         let id = minted(&mut s);
@@ -892,6 +997,38 @@ phase('Scan')
         assert_eq!(closed[0].status, "error");
     }
 
+    // ---------- FR-6: which updates owe their watch a final flush ----------
+
+    fn run_with(id: &str, status: &str, transcript_dir: Option<&str>) -> WorkflowRun {
+        let mut run = test_workflow_run();
+        run.id = id.into();
+        run.status = status.into();
+        run.transcript_dir = transcript_dir.map(|d| d.to_string());
+        run
+    }
+
+    #[test]
+    fn terminal_watch_run_ids_picks_only_terminal_runs_with_a_transcript_dir() {
+        // a run leaving `running` here (a notice, a dispatch error, or the
+        // turn-end backstop) may be the ONLY terminal transition it ever gets —
+        // no further filesystem write follows for the debounce to catch — so
+        // every such run with a directory to watch must be picked up.
+        let runs = vec![
+            run_with("still-running", "running", Some("/tmp/wf/a")), // untouched
+            run_with("no-dir", "done", None),                        // never had a watch
+            run_with("done-with-dir", "done", Some("/tmp/wf/b")),
+            run_with("errored-with-dir", "error", Some("/tmp/wf/c")),
+        ];
+        let mut ids = terminal_watch_run_ids(&runs);
+        ids.sort();
+        assert_eq!(ids, vec!["done-with-dir", "errored-with-dir"]);
+    }
+
+    #[test]
+    fn terminal_watch_run_ids_is_empty_for_no_runs() {
+        assert!(terminal_watch_run_ids(&[]).is_empty());
+    }
+
     #[test]
     fn transitions_on_an_unknown_run_are_no_ops() {
         let mut s = test_session();
@@ -927,6 +1064,8 @@ phase('Scan')
             }],
             run_id: Some("wf_abc123".into()),
             last_activity: Some("running in the background".into()),
+            transcript_dir: Some("/tmp/wf/run-1".into()),
+            pending_asks: Some(2),
         };
         let v = serde_json::to_value(&run).unwrap();
         assert_eq!(v["sessionId"], "s1");
@@ -934,8 +1073,15 @@ phase('Scan')
         assert_eq!(v["runId"], "wf_abc123");
         assert_eq!(v["lastActivity"], "running in the background");
         assert_eq!(v["phases"][0]["title"], "Review");
+        // workflow-details FR-1/FR-24
+        assert_eq!(v["transcriptDir"], "/tmp/wf/run-1");
+        assert_eq!(v["pendingAsks"], 2);
         // absent, never null (a `detail?`/`endedAt?` optional in the contract)
         assert!(v.get("endedAt").is_none());
         assert!(v["phases"][0].get("detail").is_none());
+        assert!(serde_json::to_value(test_workflow_run())
+            .unwrap()
+            .get("pendingAsks")
+            .is_none());
     }
 }
