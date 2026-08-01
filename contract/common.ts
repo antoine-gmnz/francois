@@ -262,7 +262,13 @@ export interface WorkflowRun {
  * at `connecting` forever. Only ever reported for a server the session's stream
  * has said nothing about — a live status always wins.
  */
-export type McpStatus = 'connected' | 'connecting' | 'error' | 'pending' | 'rejected';
+export type McpStatus =
+  | 'connected'
+  | 'connecting'
+  | 'error'
+  | 'pending' //  project-scope, no decision on record — Claude Code would ask
+  | 'rejected' // project-scope, explicitly refused
+  | 'approved'; // project-scope, decided yes but not started yet (next turn spawns it)
 
 /** Which Claude Code config declares an MCP server (mirrors `claude mcp list` scopes). */
 export type McpScope =

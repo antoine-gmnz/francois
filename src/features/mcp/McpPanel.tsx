@@ -6,7 +6,7 @@ import { useStore } from '../../lib/store';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { HintBar } from '../../ui/HintBar';
 import { StatusDot } from '../../ui/StatusDot';
-import { approvalSummary, approveAllDecision, detailText, dotColor, hasApprovalWork, isApprovable, scopeColor, scopeText } from './mcp';
+import { approvalSummary, approveAllDecision, canReconnect, detailText, dotColor, hasApprovalWork, isApprovable, scopeColor, scopeText } from './mcp';
 import { useAttachFlow } from './useAttachFlow';
 import { RegistryStep } from './RegistryStep';
 import { ParamsStep } from './ParamsStep';
@@ -421,9 +421,11 @@ function DetailPopover({
                 value={
                   data.status === 'rejected'
                     ? 'refused for this project — Claude Code will not start it'
-                    : 'Claude Code asks before running a server declared by the repo'
+                    : data.status === 'approved'
+                      ? 'approved for this project — starts on the next turn'
+                      : 'Claude Code asks before running a server declared by the repo'
                 }
-                color="var(--warn)"
+                color={data.status === 'approved' ? 'var(--text-dim)' : 'var(--warn)'}
               />
             )}
           </>
@@ -434,12 +436,14 @@ function DetailPopover({
 
       {data && isApprovable(data.status) && (
         <div className="mcp-popover-footer">
-          <span
-            onClick={() => void onDecide({ approve: [name], reject: [], trust: false }).then(onClose)}
-            className="mcp-action-link"
-          >
-            Approve
-          </span>
+          {data.status !== 'approved' && (
+            <span
+              onClick={() => void onDecide({ approve: [name], reject: [], trust: false }).then(onClose)}
+              className="mcp-action-link"
+            >
+              Approve
+            </span>
+          )}
           {data.status !== 'rejected' && (
             <span
               onClick={() => void onDecide({ approve: [], reject: [name], trust: false }).then(onClose)}
@@ -465,10 +469,10 @@ function DetailPopover({
             </>
           ) : (
             <>
-              {/* Reconnect only re-flags `connecting`, which for an undecided server
-                  would paint the very handshake-that-never-completes this feature
-                  exists to remove. The decision above is the only thing that helps. */}
-              {!isApprovable(data.status) && (
+              {/* Reconnect only re-flags `connecting`, which for a server the session
+                  has not started — undecided OR merely approved — would paint the very
+                  handshake-that-never-completes this feature exists to remove. */}
+              {canReconnect(data.status) && (
                 <span onClick={() => void reconnect()} className="mcp-action-link">
                   Reconnect
                 </span>

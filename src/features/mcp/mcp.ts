@@ -39,6 +39,7 @@ export const DOT_COLOR: Record<McpStatus, string> = {
   // approval states, not connection states — a decision is owed, nothing is wrong
   pending: 'var(--warn)',
   rejected: 'var(--text-disabled)',
+  approved: 'var(--text-dim)',
 };
 
 export function dotColor(status: McpStatus): string {
@@ -51,14 +52,26 @@ export function detailText(server: McpServerInfo): { text: string; color: string
   if (server.status === 'connecting') return { text: 'handshake…', color: 'var(--text-dim)' };
   if (server.status === 'pending') return { text: 'needs approval', color: 'var(--warn)' };
   if (server.status === 'rejected') return { text: 'not approved', color: 'var(--text-disabled)' };
+  // Approved, but the CLI only starts `.mcp.json` servers when the next turn
+  // spawns — saying `handshake…` here would promise a connection nobody is making.
+  if (server.status === 'approved') return { text: 'starts next turn', color: 'var(--text-dim)' };
   return { text: server.errorMessage ?? 'error', color: 'var(--error)' };
 }
 
 // ---------- first-run approval ----------
 
-/** Only these two statuses carry an approval decision the panel can offer. */
+/** These statuses are approval verdicts, not connection states — the panel can offer a decision. */
 export function isApprovable(status: McpStatus): boolean {
-  return status === 'pending' || status === 'rejected';
+  return status === 'pending' || status === 'rejected' || status === 'approved';
+}
+
+/**
+ * Reconnect only means something for a server the session has actually started.
+ * Offering it on an approval verdict would re-flag `connecting` for a process
+ * nobody has spawned — a handshake that can never complete.
+ */
+export function canReconnect(status: McpStatus): boolean {
+  return !isApprovable(status);
 }
 
 /** Nothing to ask about — the banner stays hidden. */

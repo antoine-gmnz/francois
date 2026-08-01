@@ -224,6 +224,12 @@ pub(crate) fn approval_status(
         Some("pending")
     } else if approvals.rejected.iter().any(|n| n == name) {
         Some("rejected")
+    } else if approvals.approved.iter().any(|n| n == name) {
+        // Approved but nothing has started it: the CLI only spawns `.mcp.json`
+        // servers when the next turn spawns, so `connecting` here would be a
+        // handshake nobody is performing — the exact stuck row this feature was
+        // meant to remove, just one click later.
+        Some("approved")
     } else {
         None
     }
@@ -495,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn approval_status_maps_the_two_undecided_buckets_and_nothing_else() {
+    fn approval_status_maps_every_bucket_the_stream_has_not_spoken_for() {
         let approvals = McpApprovalState {
             pending: vec!["waiting".into()],
             approved: vec!["ok".into()],
@@ -511,9 +517,14 @@ mod tests {
             approval_status("nope", "project", &approvals),
             Some("rejected")
         );
-        // An approved server has no approval status to report — it is `connecting`
-        // until the stream says otherwise, which is the truthful reading.
-        assert_eq!(approval_status("ok", "project", &approvals), None);
+        // An approved server the stream has not spoken for has NOT started: the CLI
+        // spawns `.mcp.json` servers with the next turn. Reporting `connecting` (the
+        // fallback when this returns None) promised a handshake nobody was
+        // performing, and the row sat on it forever.
+        assert_eq!(
+            approval_status("ok", "project", &approvals),
+            Some("approved")
+        );
         assert_eq!(approval_status("unknown", "project", &approvals), None);
     }
 

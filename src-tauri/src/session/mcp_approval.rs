@@ -1,22 +1,30 @@
 //! MCP first-run approval + workspace trust for a session's project.
 //!
 //! Claude Code gates project-scope `.mcp.json` servers behind a first-run consent
-//! dialog ("New MCP server found in this project"), and a never-before-opened
-//! folder behind a trust dialog. Both answers are stored in the CLI's own user
-//! store — `<claude config>/.claude.json`, under `projects[<cwd>]`:
+//! dialog ("New MCP server found in this project"), and an untrusted folder
+//! behind a trust dialog. Both answers are stored in the CLI's own user store —
+//! `<claude config>/.claude.json`, under `projects[<key>]`:
 //!
 //!   enabledMcpjsonServers  — the names the user said yes to
 //!   disabledMcpjsonServers — the names the user said no to
 //!   hasTrustDialogAccepted — the folder-trust answer
 //!
+//! `<key>` is NOT the cwd: it is `getProjectPathForConfig()`, the git repository
+//! root of the cwd (see `cli_project_key`), and trust additionally resolves
+//! through every ANCESTOR of the cwd (see `trust_accepted`). Both rules are read
+//! out of the shipped CLI, and getting either wrong is not a near miss — a
+//! decision written to a key the CLI never reads simply does nothing, and a
+//! folder wrongly reported untrusted refuses Remote Control outright.
+//!
 //! Why Francois has to own this. The per-turn `claude -p` spawn (turn.rs) SKIPS
 //! both dialogs, so an unapproved server silently never connects and pane [4]
 //! shows a permanent `handshake…` for a server that will never handshake. The
-//! Remote Control host (remote/start.rs) is a real interactive TUI, so it PARKS
-//! on the dialog forever — `blocking_prompt` catches that and kills it, which is
-//! the failure the user actually sees. Both symptoms are the same missing
-//! decision, so this module makes that decision available from the app and writes
-//! exactly the keys the CLI reads.
+//! Remote Control host is worse: `--remote-control` does not prompt at all, it
+//! checks trust up front and, if it fails, prints "Error: Workspace not trusted."
+//! and exits(1) — nothing to answer, nothing on screen, just a host that dies
+//! before it can publish a URL. Both symptoms are the same missing decision, so
+//! this module makes that decision available from the app and writes exactly the
+//! keys the CLI reads.
 //!
 //! Francois still never ANSWERS a dialog on the user's behalf — every write here
 //! is the direct result of a click. What changed is where the click happens.
@@ -91,20 +99,73 @@ pub(crate) fn claude_json_path(
     Some(home.join(".claude.json"))
 }
 
-/// The `projects` key to read and write for a cwd.
+/// The `projects` key Claude Code itself reads and writes for a cwd.
 ///
-/// Prefers a key the CLI already has for this folder, matched with `path_eq` so a
-/// `D:\repo` cwd finds the CLI's `D:/repo` node rather than creating a second one
-/// beside it — two nodes for one folder would mean writing a decision the CLI then
-/// reads from the other node and never sees. Only when there is no node at all do
-/// we mint one, in `norm_path`'s forward-slash dialect: that is what current CLI
-/// versions write on Windows (verified against a live `~/.claude.json`), and a
-/// no-op everywhere else.
-pub(crate) fn project_key(doc: &Value, cwd: &str) -> String {
-    doc.get("projects")
-        .and_then(|p| p.as_object())
-        .and_then(|o| o.keys().find(|k| path_eq(k, cwd)).cloned())
-        .unwrap_or_else(|| norm_path(cwd))
+/// Read out of the shipped CLI rather than guessed — `getProjectPathForConfig` is
+///
+///   memo(() => { const cwd = getCwd(); const root = gitRoot(cwd);
+///                return norm(root ?? resolve(cwd)) })
+///
+/// i.e. **the git repository root of the cwd**, falling back to the cwd itself,
+/// normalized to forward slashes. A session opened in a SUBDIRECTORY of a repo
+/// therefore shares one node with the repo root; keying on the cwd instead would
+/// write the decision somewhere the CLI never looks.
+pub(crate) fn cli_project_key(cwd: &str) -> String {
+    norm_path(&git_root(cwd).unwrap_or_else(|| cwd.to_string()))
+}
+
+/// The nearest ancestor of `cwd` (inclusive) carrying a `.git` entry — the repo
+/// root, resolved without spawning git because this sits on `mcp_list`, which
+/// runs on every session switch. `.git` is a FILE in a linked worktree and a
+/// directory otherwise; both mark a root the CLI resolves.
+fn git_root(cwd: &str) -> Option<String> {
+    let mut dir = std::path::Path::new(cwd);
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir.to_string_lossy().to_string());
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// Whether Claude Code considers this cwd trusted.
+///
+/// Mirrors the shipped CLI's `checkHasTrustDialogAccepted`, which is
+///
+///   projects[getProjectPathForConfig()]?.hasTrustDialogAccepted === true
+///   || ANY ancestor of the cwd (inclusive, up to the filesystem root) carries it
+///
+/// **The ancestor walk is the part this module was missing**, and it is not an
+/// edge case: accepting the dialog once for `D:/` or `~/src` trusts every repo
+/// underneath it forever, so reading only the cwd's own node reports "not
+/// trusted" for folders the CLI is perfectly happy to run in. That false positive
+/// made `blocks_interactive` refuse every Remote Control start and left a
+/// permanent approval banner in pane [4].
+///
+/// The key match stays `path_eq` (case-insensitive on Windows) where the CLI's is
+/// exact. Leaning lenient here can only ever let a start through that the CLI
+/// then refuses outright, which `blocking_prompt` reports — the strict reading
+/// would instead block a folder the user really has trusted.
+pub(crate) fn trust_accepted(doc: &Value, cwd: &str) -> bool {
+    if node_trusted(doc, &cli_project_key(cwd)) {
+        return true;
+    }
+    let mut dir = Some(std::path::Path::new(cwd));
+    while let Some(d) = dir {
+        if node_trusted(doc, &norm_path(&d.to_string_lossy())) {
+            return true;
+        }
+        dir = d.parent();
+    }
+    false
+}
+
+/// `projects[<key>].hasTrustDialogAccepted === true`, for one key.
+fn node_trusted(doc: &Value, key: &str) -> bool {
+    project_node(doc, key)
+        .and_then(|n| n.get("hasTrustDialogAccepted"))
+        .and_then(|t| t.as_bool())
+        .unwrap_or(false)
 }
 
 // ---------- reading the decision (pure) ----------
@@ -137,17 +198,16 @@ pub(crate) struct Approvals {
 }
 
 /// Fold the CLI's project node together with every settings document that can
-/// override it. `settings` is passed in rather than read here so the fold stays
-/// pure and unit-testable.
-pub(crate) fn fold_approvals(node: Option<&Value>, settings: &[Value]) -> Approvals {
+/// override it. `settings` and `trusted` are passed in rather than read here so
+/// the fold stays pure and unit-testable — `trusted` in particular is NOT a
+/// property of this one node (see `trust_accepted`: the CLI walks the cwd's
+/// ancestors), so reading it off the node would reintroduce the false positive.
+pub(crate) fn fold_approvals(node: Option<&Value>, settings: &[Value], trusted: bool) -> Approvals {
     let mut out = Approvals {
         enabled: string_list(node, "enabledMcpjsonServers"),
         disabled: string_list(node, "disabledMcpjsonServers"),
         enable_all: false,
-        trusted: node
-            .and_then(|n| n.get("hasTrustDialogAccepted"))
-            .and_then(|t| t.as_bool())
-            .unwrap_or(false),
+        trusted,
     };
     for doc in settings {
         for name in string_list(Some(doc), "enabledMcpjsonServers") {
@@ -316,7 +376,11 @@ pub(crate) fn approval_state(
     let doc = claude_json_path(config_dir, runtime, cwd)
         .and_then(|p| read_json_object(&p).ok())
         .unwrap_or_else(|| Value::Object(Map::new()));
-    let approvals = fold_approvals(project_node(&doc, cwd), &settings_docs(cwd, runtime));
+    let approvals = fold_approvals(
+        project_node(&doc, &cli_project_key(cwd)),
+        &settings_docs(cwd, runtime),
+        trust_accepted(&doc, cwd),
+    );
     classify(&servers, &approvals)
 }
 
@@ -380,26 +444,19 @@ pub fn mcp_decide(
         Ok(v) => v,
         Err(e) => return err("MCP_ERROR", e),
     };
-    let key = project_key(&doc, &cwd);
+    let key = cli_project_key(&cwd);
     if apply_decision(&mut doc, &key, &approve, &reject, trust) {
         if let Err(e) = write_json_atomic(&path, &doc) {
             return err("MCP_ERROR", e);
         }
     }
 
-    for name in &approve {
-        let info = connecting_info(name);
-        engine.with_session_mut(&session_id, |s| {
-            s.mcp.insert(name.clone(), info.clone());
-        });
-        emit(
-            &app,
-            SessionEvent::McpUpdate {
-                session_id: session_id.clone(),
-                server: info,
-            },
-        );
-    }
+    // An approved server is deliberately NOT flagged `connecting` here. Nothing has
+    // started it — the CLI only does that on the session's next turn — so a
+    // fabricated live entry would outrank the approval status in `mcp_list` and
+    // paint exactly the handshake-that-never-completes this feature exists to
+    // remove. `approval_status` reports it as `approved` instead, and the first
+    // turn's init message replaces that with the truth.
     for name in &reject {
         engine.with_session_mut(&session_id, |s| {
             s.mcp.remove(name);
@@ -435,21 +492,83 @@ mod tests {
         assert_eq!(p.parent(), dirs::home_dir().as_deref());
     }
 
-    // ---- project_key ----
+    // ---- cli_project_key / git_root ----
 
     #[test]
-    fn project_key_reuses_the_clis_existing_node_across_path_dialects() {
-        // The CLI writes forward slashes on Windows; a session's cwd carries
-        // backslashes. Minting a second node would write a decision the CLI reads
-        // from the first one and never sees.
-        let doc = json!({ "projects": { "D:/repo": { "hasTrustDialogAccepted": true } } });
-        assert_eq!(project_key(&doc, "D:\\repo"), "D:/repo");
+    fn cli_project_key_normalizes_a_non_repo_cwd() {
+        // No `.git` anywhere above a temp dir's leaf: the key is the cwd itself,
+        // in the CLI's forward-slash dialect.
+        let dir = std::env::temp_dir().join(format!("francois-key-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        assert_eq!(cli_project_key(&cwd), norm_path(&cwd));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn project_key_mints_a_normalized_key_when_there_is_no_node() {
-        assert_eq!(project_key(&json!({}), "D:\\repo"), "D:/repo");
-        assert_eq!(project_key(&json!({ "projects": {} }), "/a/b/"), "/a/b");
+    fn cli_project_key_is_the_repo_root_for_a_subdirectory() {
+        // getProjectPathForConfig() == norm(gitRoot(cwd) ?? cwd), so a session
+        // opened in a subfolder shares ONE node with the repo root. Keying on the
+        // cwd would write a decision the CLI never reads.
+        let root = std::env::temp_dir().join(format!("francois-repo-{}", uuid::Uuid::new_v4()));
+        let sub = root.join("packages").join("app");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        assert_eq!(
+            cli_project_key(&sub.to_string_lossy()),
+            norm_path(&root.to_string_lossy())
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn git_root_accepts_the_dot_git_file_of_a_linked_worktree() {
+        // A linked worktree's `.git` is a FILE pointing at the main repo, and the
+        // CLI treats the worktree itself as the root.
+        let wt = std::env::temp_dir().join(format!("francois-wt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: /elsewhere/.git/worktrees/wt").unwrap();
+        assert_eq!(
+            cli_project_key(&wt.to_string_lossy()),
+            norm_path(&wt.to_string_lossy())
+        );
+        std::fs::remove_dir_all(&wt).ok();
+    }
+
+    // ---- trust_accepted ----
+
+    #[test]
+    fn trust_accepted_reads_the_cwds_own_node() {
+        let doc = json!({ "projects": { "D:/repo": { "hasTrustDialogAccepted": true } } });
+        assert!(trust_accepted(&doc, "D:\\repo"));
+    }
+
+    #[test]
+    fn trust_accepted_walks_up_to_a_trusted_ancestor() {
+        // THE regression this module shipped with. The CLI's own check walks every
+        // ancestor of the cwd, so accepting the dialog once for `D:/` trusts every
+        // repo underneath it. Reading only the cwd's node reported "not trusted"
+        // for a folder `claude` runs in happily — which refused every Remote
+        // Control start and pinned an approval banner in pane [4].
+        let doc = json!({ "projects": { "D:/": { "hasTrustDialogAccepted": true } } });
+        assert!(trust_accepted(&doc, "D:\\some\\deep\\repo"));
+    }
+
+    #[test]
+    fn trust_accepted_ignores_an_ancestor_that_was_not_trusted() {
+        let doc = json!({
+            "projects": {
+                "D:/": { "hasTrustDialogAccepted": false },
+                "D:/other": { "hasTrustDialogAccepted": true }
+            }
+        });
+        assert!(!trust_accepted(&doc, "D:\\some\\repo"));
+    }
+
+    #[test]
+    fn trust_accepted_is_false_for_a_store_that_has_never_seen_the_tree() {
+        assert!(!trust_accepted(&json!({}), "/a/b/c"));
+        assert!(!trust_accepted(&json!({ "projects": {} }), "/a/b/c"));
     }
 
     // ---- fold_approvals ----
@@ -459,9 +578,8 @@ mod tests {
         let node = json!({
             "enabledMcpjsonServers": ["serena"],
             "disabledMcpjsonServers": ["sketchy"],
-            "hasTrustDialogAccepted": true
         });
-        let a = fold_approvals(Some(&node), &[]);
+        let a = fold_approvals(Some(&node), &[], true);
         assert_eq!(a.enabled, names(&["serena"]));
         assert_eq!(a.disabled, names(&["sketchy"]));
         assert!(a.trusted);
@@ -469,13 +587,18 @@ mod tests {
     }
 
     #[test]
-    fn fold_approvals_treats_a_missing_node_as_untrusted_and_undecided() {
-        let a = fold_approvals(None, &[]);
+    fn fold_approvals_takes_trust_from_the_caller_not_the_node() {
+        // Trust is a property of the whole ancestor chain, not of this one node —
+        // a node carrying `hasTrustDialogAccepted: false` under a trusted parent is
+        // still trusted, so the fold must never re-derive it.
+        let node = json!({ "hasTrustDialogAccepted": false });
+        assert!(fold_approvals(Some(&node), &[], true).trusted);
+    }
+
+    #[test]
+    fn fold_approvals_treats_a_missing_node_as_undecided() {
+        let a = fold_approvals(None, &[], false);
         assert_eq!(a, Approvals::default());
-        assert!(
-            !a.trusted,
-            "a folder the CLI has never seen shows the trust dialog"
-        );
     }
 
     #[test]
@@ -485,7 +608,7 @@ mod tests {
             json!({ "enabledMcpjsonServers": ["b", "a"] }),
             json!({ "disabledMcpjsonServers": ["c"] }),
         ];
-        let a = fold_approvals(Some(&node), &settings);
+        let a = fold_approvals(Some(&node), &settings, true);
         assert_eq!(a.enabled, names(&["a", "b"]), "unioned, no duplicates");
         assert_eq!(a.disabled, names(&["c"]));
     }
@@ -495,6 +618,7 @@ mod tests {
         let a = fold_approvals(
             None,
             &[json!({}), json!({ "enableAllProjectMcpServers": true })],
+            false,
         );
         assert!(a.enable_all);
     }
@@ -502,7 +626,10 @@ mod tests {
     #[test]
     fn fold_approvals_skips_non_string_entries() {
         let node = json!({ "enabledMcpjsonServers": ["a", 7, { "x": 1 }] });
-        assert_eq!(fold_approvals(Some(&node), &[]).enabled, names(&["a"]));
+        assert_eq!(
+            fold_approvals(Some(&node), &[], false).enabled,
+            names(&["a"])
+        );
     }
 
     // ---- classify ----

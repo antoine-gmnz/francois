@@ -77,6 +77,40 @@ backstop for a dialog that appears anyway, reworded to point at pane [4].
 Francois still **never auto-answers** a dialog — every write is the direct result of a click. What
 changed is where the click happens.
 
+## 0c. Amendment — the approval keys, as the CLI actually resolves them (corrects 0b)
+
+> Ratified after 0b shipped and did not fix the report: servers still sat on `handshake…` and Remote
+> Control still refused. 0b modelled the CLI's store from its field *names*; the three rules below
+> were then read out of the shipped `claude` binary's own bundle (`checkHasTrustDialogAccepted`,
+> `getProjectPathForConfig`, the `--remote-control` entry point) and verified against a live
+> `~/.claude.json`.
+
+**FR-A6 — trust resolves through ancestors, not one node.** `checkHasTrustDialogAccepted` is
+`projects[getProjectPathForConfig()].hasTrustDialogAccepted === true` **or any ancestor of the cwd**
+carrying it, walked to the filesystem root. Accepting the dialog once for `D:/` or `~/src` therefore
+trusts every repo underneath it forever — reading only the cwd's own node reported `trustRequired`
+for the overwhelming majority of real folders, which made FR-A5 refuse **every** Remote Control start
+and pinned the FR-A4 banner open. 0b's reading of `trustRequired` is replaced by this walk.
+
+**FR-A7 — the `projects` key is the repo root.** `getProjectPathForConfig()` is
+`norm(gitRoot(cwd) ?? resolve(cwd))`, not the cwd: a session opened in a subdirectory of a repo
+shares one node with the repo root. Both the read and the FR-A2 write use that key, so a decision
+lands where the CLI looks for it. (The key is also matched exactly by the CLI; Francois keeps its
+case-insensitive `path_eq` match for reads, which can only ever be more permissive.)
+
+**FR-A8 — `--remote-control` does not prompt, it refuses.** The host checks trust before anything is
+rendered and, on failure, prints `Error: Workspace not trusted.` and exits(1). There is no dialog to
+park on, so 0b's backstop matched nothing and the user watched the 120s deadline expire with no
+diagnosis. `blocking_prompt` now matches that refusal, plus the current dialog wording
+(`Trust this directory?`) alongside the older phrase.
+
+**FR-A9 — `McpStatus` gains `approved`; FR-A4's re-flag to `connecting` is withdrawn.** Approving a
+server starts nothing: the CLI spawns `.mcp.json` servers with the session's next turn. Painting
+`connecting` (detail `handshake…`) after a decision swapped one permanent stuck handshake for
+another. An approved-but-unstarted project server reads `starts next turn`; the first turn's
+`system.init` replaces it with the truth. **Reconnect** is hidden for every approval verdict — it only
+re-flags `connecting`, i.e. repaints the same lie.
+
 ## 1. Summary
 
 The MCP servers panel is right-column pane **[4]** of the main window. For the currently active session it shows every configured MCP server as a status row (connected / connecting / error, with tool count or error detail), lets the user drill into a row for full detail plus Reconnect / Detach actions, and drives a two-step attach flow — pick from a curated registry (or define a custom server) — that writes into the session's project `.mcp.json` and asks session-engine to connect it. The panel is a thin, event-driven reflection of runtime state owned by session-engine; it never runs an MCP client itself.
