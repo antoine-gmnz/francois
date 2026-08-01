@@ -1,9 +1,18 @@
 # Agents, MCP & skills
 
-The right column of Francois's main window carries three panes that describe what the active
+The right column of Francois's main window carries four panes that describe what the active
 session's Claude Code process is doing and what it can reach: **AGENTS** (pane `[3]`), **MCP
-SERVERS** (pane `[4]`), and **SKILLS** (pane `[5]`). All three are scoped to whichever session is
-currently active — switching sessions in the sidebar clears and re-hydrates all three.
+SERVERS** (pane `[4]`), **SKILLS** (pane `[5]`), and **WORKFLOWS** (pane `[6]`). All four are
+scoped to whichever session is currently active — switching sessions in the sidebar clears and
+re-hydrates all of them.
+
+The AGENTS, MCP and SKILLS cards can each be **collapsed to their header strip**, so a long agent
+trail doesn't have to share the column with panels you aren't reading: click the header, or focus
+the card and press `c`. There's a palette entry per card too ("Toggle agents panel", and so on),
+which also reveals the column if it's hidden. A collapsed card keeps its live count and its `[n]`
+hotkey visible, the still-expanded cards take the freed height in their usual ratios, and the
+collapsed set is remembered across restarts. (WORKFLOWS is not collapsible.) `]` still hides the
+whole column at once.
 
 ## AGENTS (pane [3])
 
@@ -155,11 +164,35 @@ example — the panel shows a single dim, error-colored row with the failure mes
 normal list; pressing `⏎` on it retries. A clean scan that simply finds nothing shows
 `no skills or commands found`, not an error.
 
-## How the three panes relate
+## WORKFLOWS (pane [6])
 
-All three panes are read-only reflections of state the core (session-engine) owns — none of them
-run an agent, an MCP client, or a skill loader themselves. They share a common shape: hydrate once
-via an IPC snapshot when a session becomes active, then stay live off the same session event
-stream, discard everything on session switch, and persist nothing to disk. The AGENTS panel is the
-only one of the three with a second, deeper surface — the agent tab — because a subagent's own
-conversation is worth reading in full, not just summarized as a card.
+Claude Code's harness ships a `Workflow` tool: the assistant hands it a script that orchestrates
+many subagents deterministically — phases, fan-out, pipelines — and the tool returns immediately
+while the run proceeds in the background. Without this pane that dispatch is one anonymous tool
+block in the transcript and then silence. Pane `[6]` gives workflow runs the standing subagents
+already have in pane `[3]`.
+
+Cards list the session's runs in first-seen order with running ones on top, and each shows a
+status dot (pulsing while running), the run's **name** from the script's `meta`, a phase-count
+badge, the status, a **live elapsed clock** anchored to the dispatch, and the last thing observed
+about the run. Selecting with `↑`/`↓` and pressing `⏎` — or clicking the card — expands it to the
+harness run id and the **phases the script declared**.
+
+Two things the panel deliberately does not do:
+
+- **It never implies per-phase progress.** A workflow's own agents don't surface in the parent
+  session's stream, so the panel reports which phases were declared and says so on the expanded
+  card. Watching a run tick phase by phase is still `/workflows` in the CLI.
+- **It never dispatches or stops a run.** A run starts because the assistant called the tool
+  during a turn, so unlike pane `[3]` there is no `+` affordance and no kill action. A session
+  with no runs shows an empty label rather than a card list.
+
+## How the four panes relate
+
+All four panes are read-only reflections of state the core (session-engine) owns — none of them
+run an agent, an MCP client, a skill loader, or a workflow themselves. They share a common shape:
+hydrate once via an IPC snapshot when a session becomes active, then stay live off the same
+session event stream, discard everything on session switch, and persist nothing to disk (the
+collapsed/expanded state is the one exception, and it's a frontend preference, not session
+state). The AGENTS panel is the only one with a second, deeper surface — the agent tab — because
+a subagent's own conversation is worth reading in full, not just summarized as a card.

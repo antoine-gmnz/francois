@@ -3,22 +3,24 @@
 Francois is keyboard-first throughout, with full mouse support alongside every binding below.
 
 ::: info When single-key shortcuts are suspended
-All single-key shortcuts (`1`–`5`, `d`, `t`, `o`, `w`, `n`, `a`, `/`, `⏎`, `[`, `]`) are
-suspended while you're typing in any text input or while the SHELL terminal has focus — so
-typing "not" into the composer never opens tabs. `⌘K`/`Ctrl+K` always works, everywhere.
+All single-key shortcuts (`1`–`6`, `c`, `d`, `t`, `o`, `w`, `n`, `a`, `/`, `⏎`, `[`, `]`) are
+suspended while you're typing in any text input, while the SHELL terminal has focus, or while a
+modal is open — so typing "not" into the composer never opens tabs. `⌘K`/`Ctrl+K` always works,
+everywhere.
 :::
 
 ## Global
 
 | Key | Action |
 | --- | --- |
-| `1`–`5` | Focus sessions sidebar / main pane / agents / MCP servers / skills |
+| `1`–`6` | Focus sessions sidebar / main pane / agents / MCP servers / skills / workflows |
 | `d` | Toggle the DIFF tab (press again to return to SESSION) |
 | `t` | Toggle the SHELL tab (press again to return to SESSION) |
 | `o` | Toggle the OVERVIEW tab (press again to return to SESSION) |
 | `w` | Close the active agent tab (no-op on the built-in tabs) |
 | `n` | New session |
 | `a` | New agent (when a session is active) |
+| `c` | Collapse / expand the focused right-column card — `[3]`, `[4]` or `[5]` (no-op elsewhere) |
 | `[` / `]` | Show / hide the left / right column |
 | `⌘K` / `Ctrl+K` | Toggle the command palette |
 | `esc` | Dismiss the command palette or an open modal |
@@ -38,6 +40,9 @@ typing "not" into the composer never opens tabs. `⌘K`/`Ctrl+K` always works, e
 | --- | --- |
 | `⏎` | Send |
 | `⇧⏎` | Newline without sending |
+| `↑` | Recall the previous sent message (only with no selection and the caret on the first line) |
+| `↓` | Move back toward the newest message; past it, restore the draft you were typing |
+| `⌘V` / `⌃V` | Paste — an image on the clipboard is attached to the turn instead of pasted as text |
 | `⌃C` | Interrupt the running turn (only when nothing in the composer is selected — `⌃C` with a selection still copies it; macOS `⌘C` is untouched either way) |
 | `/` | Open the slash-command menu (at the start of the input) |
 | `↑` `↓` (menu open) | Move the slash-menu selection |
@@ -67,6 +72,13 @@ typing "not" into the composer never opens tabs. `⌘K`/`Ctrl+K` always works, e
 | Key | Action |
 | --- | --- |
 | `/` | Filter the skills list |
+
+## In the workflows panel (pane `[6]` focused)
+
+| Key | Action |
+| --- | --- |
+| `↑` `↓` | Move between workflow-run cards |
+| `⏎` | Expand / collapse the selected run's declared phases |
 
 ## Inside SHELL
 

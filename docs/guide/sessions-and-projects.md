@@ -52,8 +52,22 @@ currently active session is visually highlighted; selecting a different row (by 
 arrow keys + Enter) switches which session drives the rest of the window — the conversation
 tab, the diff tab, the agents panel, and the MCP panel all follow the active session.
 
-The list supports an inline `/` filter over name and path, and a right-click "Remove session"
-action with an inline confirm.
+The list supports an inline `/` filter over name and path, and a right-click menu with "Rename
+session" and "Remove session" (the latter behind an inline confirm).
+
+## Renaming a session
+
+Session names are picked before the work exists, so they go stale — `test`, `tmp`, `wip` — and the
+name is what identifies the session in the sidebar, the tab strip, the status bar, and the
+overview rollup. Rename from the sidebar row's right-click menu or the palette's **Rename
+session**; both open the same modal, and both are allowed in any state, including mid-turn, since
+the name touches no process.
+
+The new name propagates to every surface at once and is persisted. What it deliberately does
+*not* touch: a worktree session's git branch (frozen at creation — it may already be pushed or
+carry an open PR), the underlying Claude session id, the remote-control title, and past
+activity-feed entries, which keep the name they were recorded with. Names don't have to be
+unique — sessions are identified by id.
 
 ## Creating a new session
 
@@ -68,17 +82,20 @@ Its fields, in order:
    the project's root *is* the working directory.
 3. **Name** — defaults to the directory's basename; stays in sync with the directory until the
    user edits it by hand.
-4. **Model** — one of the model catalog entries (Sonnet, Opus, Haiku), defaulting to the first
+4. **Account** — which registered Anthropic account the session runs under, defaulting to the
+   account marked default (or a project's own default). Fixed for the session's whole life — see
+   [Accounts & usage](/guide/accounts).
+5. **Model** — one of the model catalog entries (Sonnet, Opus, Haiku), defaulting to the first
    entry unless a project default overrides it.
-5. **Effort** and **permission mode** — additional per-session settings, also pre-filled from
+6. **Effort** and **permission mode** — additional per-session settings, also pre-filled from
    a project's defaults when one is selected.
-6. **Runtime** — native, or **WSL** (Windows only): a WSL session runs `claude`, git, and its
+7. **Runtime** — native, or **WSL** (Windows only): a WSL session runs `claude`, git, and its
    shell inside your default WSL distro rather than on Windows. See
    [Diff & shell → WSL support](/guide/diff-and-shell#wsl-support) for how paths, git, and the
    shell behave.
-7. **Allow git** — auto-approves direct `git`/`gh` commands without a permission prompt, on top
+8. **Allow git** — auto-approves direct `git`/`gh` commands without a permission prompt, on top
    of whatever permission mode is selected.
-8. **Isolate in worktree** — appears only when the chosen directory is a git repo; gives the
+9. **Isolate in worktree** — appears only when the chosen directory is a git repo; gives the
    session its own checkout on its own branch. See
    [Worktree isolation](/guide/worktree-isolation).
 

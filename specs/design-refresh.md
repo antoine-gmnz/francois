@@ -1,7 +1,7 @@
 ---
 id: design-refresh
 title: Design refresh (Francois Redesign, variant 3a)
-status: frozen
+status: shipped
 created: 2026-07-30
 depends_on: [app-shell, sessions-sidebar, conversation-view, diff-view, shell-terminal, agents-panel, mcp-panel, skills-panel, usage-bar, agent-tab, command-palette, projects]
 design_files: ["https://claude.ai/design/p/a4b15728-147c-4932-b83c-f60a5fc60db7?file=Francois+Redesign.dc.html"]

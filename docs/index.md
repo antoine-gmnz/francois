@@ -33,32 +33,35 @@ features:
     title: A real shell
     details: A PTY-backed terminal per session (xterm.js + portable-pty), in the session's working directory. Not a toy console — your actual shell, right next to the AI.
   - icon: ⇉
-    title: Agents, MCP & skills
-    details: Live subagent progress with real elapsed time, MCP server health (tool counts, handshakes, timeouts), and installed skills — all per session, all one click away.
+    title: Agents, MCP, skills & workflows
+    details: Live subagent progress with real elapsed time, MCP server health (tool counts, handshakes, timeouts), installed skills, and running Workflow scripts — four collapsible cards, all per session.
   - icon: ⌘K
     title: Command palette + durable sessions
     details: Fuzzy-matched commands for everything, and sessions that survive quitting the app — transcripts, status, model, and context usage all come back.
+  - icon: ⚇
+    title: Several accounts at once
+    details: Register more than one Anthropic account, each with its own Claude Code config directory, logged in from inside the app. Bind one per session or per project, with plan-limit meters per account.
 ---
 
 ## The window, in one picture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│  ● ● ●     francois · session orchestrator — <project>   ◉ N agents running │
-├────────────┬──────────────────────────────────┬────────────────┤
-│ SESSIONS   │  SESSION │ DIFF (7) │ SHELL      │ AGENTS         │
-│  [1]       │                                  │  [3]           │
-│            │   (active tab content)           ├────────────────┤
-│            │                                  │ MCP SERVERS    │
-│            │                                  │  [4]           │
-│            │                                  ├────────────────┤
-│ + new [n]  │  › input / prompt                │ SKILLS  [5]    │
-├────────────┴──────────────────────────────────┴────────────────┤
-│ 1-5 switch pane  ⏎ open  / search  ⌘K commands  a  d  t   focus: … │
-└────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ ◈ Francois  ● ~/code/francois ▾          session 42% ▮▮▯ · week 18% ▮▯▯ │
+├────────────┬──────────────────────────────────────┬──────────────────┤
+│ SESSIONS   │ ( SESSION │ DIFF 7 │ SHELL │ ⇉ agent )│ AGENTS       [3] │
+│  [1]       │                                      ├──────────────────┤
+│            │                                      │ MCP SERVERS  [4] │
+│            │       (active tab content)           ├──────────────────┤
+│            │                                      │ SKILLS       [5] │
+│            │                                      ├──────────────────┤
+│ + new [n]  │  › composer                 [ Send ] │ WORKFLOWS    [6] │
+├────────────┴──────────────────────────────────────┴──────────────────┤
+│ ⌘K commands   focus main   2 agents running     ⚇ account  ☾ dark  vX │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-Every pane is focusable — keys `1`–`5` or click. Keyboard-first throughout, full mouse support
+Every pane is focusable — keys `1`–`6` or click. Keyboard-first throughout, full mouse support
 everywhere. See the [Interface tour](/guide/interface-tour) for the full walkthrough.
 
 ## Install in one line
