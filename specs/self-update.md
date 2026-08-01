@@ -113,12 +113,18 @@ always reports back.)
   replaces `node_modules/francois/` wholesale during the install, and a helper executing from inside
   that directory can be deleted under itself, or fail outright on Windows where the file is locked.
 - **FR-14** The helper, in order: polls until the app's PID is gone (giving up after 120 s); runs
-  `npm i -g francois@latest`; on exit 0 re-reads `<npm root -g>/francois/vendor/install.json` for the
-  new `executable`; launches it; removes its own temp directory. On a non-zero npm exit it skips the
-  relaunch and leaves the log in place.
+  `npm i -g francois@latest`, **retrying up to 3 times, 5 s apart** (an `EBUSY` on npm's rename of
+  the package directory is often a race the next attempt wins); on exit 0 re-reads
+  `<npm root -g>/francois/vendor/install.json` for the new `executable`; launches it; removes its own
+  temp directory. When npm fails all 3 times it leaves the log in place and **relaunches the version
+  that is still installed** — a failed install changes nothing on disk, and quitting to update
+  without ever coming back is the worst outcome available.
 - **FR-15** The helper is spawned **detached** — `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` on
   Windows, `setsid` elsewhere — so it outlives the app. Its stdout and stderr go to `update.log` in
-  the temp directory, whose path is returned in the ack so a failed update can be diagnosed.
+  the temp directory, whose path is returned in the ack so a failed update can be diagnosed. Its
+  **working directory is the system temp dir**, never inherited: a cwd is an open handle, the app is
+  launched from its shortcut with a cwd of `<npm root>/francois/vendor`, and a helper inheriting that
+  pins the very directory npm has to rename (see §7).
 - **FR-16** `applyUpdate` resolves its ack **before** the core begins shutdown, then exits after a
   short grace period so the ack reaches the webview. Ordering matters: an app that quits first
   leaves the frontend with a pending promise and no way to report failure.
@@ -219,7 +225,9 @@ chip derives entirely from `update` (FR-8); the running-session count derives fr
 | Not an npm install | `method: 'manual'` — a normal, non-error outcome. Modal shows the command (FR-11). |
 | Sessions running at click time | `UPDATE_BLOCKED`; modal re-renders with the disabled button and the count (FR-12). |
 | `npm` missing from PATH | `UPDATE_APPLY_FAILED`; the app stays open (FR-18). |
-| npm exits non-zero (EACCES on a system-owned prefix, registry down mid-install) | The app has already quit. The helper skips the relaunch and leaves `update.log`; the user relaunches the old version, which still works — the install is atomic from the app's point of view because npm either replaced `vendor/` or did not. |
+| npm exits non-zero (EACCES on a system-owned prefix, registry down mid-install) | Retried 3 times, 5 s apart. If it still fails the helper leaves `update.log` **and relaunches the installed version**, which still works — the install is atomic from the app's point of view because npm either replaced `vendor/` or did not (FR-14). |
+| npm fails `EBUSY: rename '<npm root>\francois\vendor'` | Was **every** update on Windows. The Start Menu shortcut set the app's working directory to `…/francois/vendor`; a cwd is an open handle and is inherited by children, so the helper pinned the directory npm renames. Fixed on both ends: the helper runs in the system temp dir (FR-15), and the shortcut now starts the app in the user's home (`packaging/npm/lib/desktop.js`). |
+| A bare `npm` in the Windows helper | `npm` on Windows is `npm.cmd`, a batch file: invoked from a batch file **without `call`** it never returns — cmd hands over the script context, so the helper ended the moment npm did. `npm root -g` was bare, which silently killed every otherwise-successful update just before the relaunch. Every npm invocation is `call`ed, and a test asserts it. |
 | App does not exit within 120 s | The helper gives up without running npm and removes itself. The install is never attempted against a locked binary (FR-14). |
 | Two `applyUpdate` calls in a row | The second resolves `UPDATE_APPLY_FAILED`; the frontend's `updateBusy` prevents it reaching the core in the first place. |
 | Update lands while the modal is open | Irrelevant — the window is closing. No reconciliation needed. |
