@@ -434,6 +434,8 @@ pub(crate) fn resolve_worktree(
         }
     }
 
+    seed_worktree_consent(&source_repo_root, &worktree_path);
+
     Ok((
         worktree_path.clone(),
         SessionWorktree {
@@ -447,6 +449,29 @@ pub(crate) fn resolve_worktree(
         },
         host_distro(&host),
     ))
+}
+
+/// Carry the source checkout's MCP consent (`.claude/settings.local.json`
+/// consent keys — see mcp_approval's `seed_settings_consent`) into a freshly
+/// created worktree, which starts without the gitignored file and would
+/// otherwise re-ask about every server the user already decided on. Best-effort
+/// end to end: an unreadable source or target, or a failed write, must never
+/// fail the worktree creation it rides on — the worktree is fully usable
+/// without the seed, just noisier.
+fn seed_worktree_consent(source_repo_root: &str, worktree_path: &str) {
+    use crate::permissions::{local_settings_path, read_json_object, write_json_atomic};
+    let Ok(source) = read_json_object(&local_settings_path(source_repo_root)) else {
+        return;
+    };
+    let target_path = local_settings_path(worktree_path);
+    let Ok(mut target) = read_json_object(&target_path) else {
+        return;
+    };
+    if crate::session::mcp_approval::seed_settings_consent(&source, &mut target) {
+        if let Err(e) = write_json_atomic(&target_path, &target) {
+            eprintln!("session-worktree: consent seed failed: {e}");
+        }
+    }
 }
 
 /// FR-11: best-effort reversal of a failed `worktree add` — `git worktree

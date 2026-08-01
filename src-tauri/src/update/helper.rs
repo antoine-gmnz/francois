@@ -464,7 +464,10 @@ mod tests {
     #[test]
     fn the_windows_poll_goes_through_a_file() {
         let s = win_script();
-        assert!(s.contains(r#"tasklist /nh /fi "PID eq %PID%" > "%ALIVE%""#), "{s}");
+        assert!(
+            s.contains(r#"tasklist /nh /fi "PID eq %PID%" > "%ALIVE%""#),
+            "{s}"
+        );
         assert!(s.contains(r#"find /i "%PID%" "%ALIVE%""#), "{s}");
         assert!(s.contains(r#"set "ALIVE=%DIR%\alive.txt""#), "{s}");
     }
