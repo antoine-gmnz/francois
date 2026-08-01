@@ -5,7 +5,7 @@
 //! Everything here funnels into `remote_start`, the module's single command.
 
 use super::*;
-use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::{err, err_detail, ok, IpcResult};
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -355,6 +355,41 @@ pub fn remote_start(
         return err("SESSION_NOT_FOUND", "no such session");
     };
     let account_config_dir = crate::account::config_dir_of(&app, &account_id);
+
+    // The host is a real interactive TUI, so an undecided MCP-consent or
+    // folder-trust dialog PARKS it: `blocking_prompt` catches that downstream and
+    // kills the child, but only after the dialog has been painted, and only if the
+    // wording still matches. Checking the CLI's own store up front turns a
+    // spawn-then-stall into an immediate, actionable refusal — the `detail` is what
+    // lets the badge offer "approve & retry" instead of sending the user to a
+    // terminal. Nothing has been spawned yet, so this returns before the registry
+    // is touched.
+    let approvals = approval_state(&cwd, &runtime, account_config_dir.as_deref());
+    if approvals.blocks_interactive() {
+        let what = if approvals.pending.is_empty() {
+            "this folder has not been trusted yet".to_string()
+        } else {
+            format!(
+                "{} MCP server{} in this project {} approval",
+                approvals.pending.len(),
+                if approvals.pending.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                if approvals.pending.len() == 1 {
+                    "needs"
+                } else {
+                    "need"
+                },
+            )
+        };
+        return err_detail(
+            "MCP_APPROVAL_REQUIRED",
+            format!("Remote Control cannot start: {what}."),
+            serde_json::to_value(&approvals).unwrap_or(serde_json::Value::Null),
+        );
+    }
 
     if let Some(entry) = map.remove(&session_id) {
         // C4: tear the dead host down for real — a bare `remove` used to just drop

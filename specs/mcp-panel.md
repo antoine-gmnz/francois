@@ -28,6 +28,55 @@ with `claude mcp remove`"); the UI hides Detach for non-project rows. Runtime `m
 carry no scope; the client preserves the scope `mcp_list` resolved. The empty-state copy is
 `no MCP servers · attach one with ⌘K`.
 
+## 0b. Amendment — first-run approval & folder trust (extends §4, §5, §7)
+
+> Ratified after the remote-control failure report: starting Remote Control in this very repo
+> refused with *"you haven't approved some MCP"*. Same root cause as a project server stuck on
+> `handshake…` forever.
+
+Claude Code gates a project-scope `.mcp.json` server behind a **first-run consent dialog** and a
+never-before-opened folder behind a **trust dialog**, storing both answers in its own user store —
+`<claude config>/.claude.json` → `projects[<cwd>]`: `enabledMcpjsonServers`,
+`disabledMcpjsonServers`, `hasTrustDialogAccepted`. Francois never read or wrote those keys, which
+produced two symptoms of one missing decision:
+
+- the per-turn `claude -p` spawn **skips** both dialogs, so an unapproved server never starts and
+  never reports — pane [4] showed a permanent `handshake…` for a server that would never handshake;
+- the Remote Control host is a real interactive TUI, so it **parks** on the dialog and the feature
+  fails outright (`blocking_prompt` caught the stall only after ~a screen of output, and told the
+  user to go run `claude` in a terminal).
+
+**FR-A1** — `mcp_approvals` reports `{ pending, approved, rejected, trustRequired,
+enableAllProjectMcpServers }` for the session's cwd: `.mcp.json` names sorted against the store,
+folded with every settings tier that can carry the same keys (project `settings.json`,
+`settings.local.json`, global `settings.json`). A refusal beats an approval; `enableAllProjectMcpServers`
+approves everything.
+
+**FR-A2** — `mcp_decide { approve, reject, trust }` writes those keys **surgically** (read → touch →
+atomic write, permission-guardrails FR-14 discipline): every other key of the user's CLI store is
+preserved, an unparseable store is never overwritten, and an unchanged decision never rewrites the
+file. The store is resolved the same way the spawn resolves its env — the account's
+`CLAUDE_CONFIG_DIR` when it has one, the distro's home for a `wsl` session, `~` otherwise — because a
+decision written to the wrong store is one the session's `claude` never reads.
+
+**FR-A3** — `McpStatus` gains `pending` and `rejected`. These are **approval** states, reported only
+for a **project-scope** server the session's stream has said nothing about; a live status always
+wins, and a name that also resolves to local/user scope is never flagged (the CLI does not ask about
+it either).
+
+**FR-A4** — pane [4] shows an approval banner above the rows whenever something is pending or the
+folder is untrusted, with one *approve all* action; the detail popover carries per-server
+**Approve / Reject**. Approved servers are re-flagged `connecting` and take effect on the session's
+next turn.
+
+**FR-A5** — `remote_start` pre-checks the same state and refuses with `MCP_APPROVAL_REQUIRED`,
+carrying the `McpApprovalState` in `error.detail`, instead of spawning a host that would stall for
+the 120s deadline. The badge popover renders *approve & start*. `blocking_prompt` stays as the
+backstop for a dialog that appears anyway, reworded to point at pane [4].
+
+Francois still **never auto-answers** a dialog — every write is the direct result of a click. What
+changed is where the click happens.
+
 ## 1. Summary
 
 The MCP servers panel is right-column pane **[4]** of the main window. For the currently active session it shows every configured MCP server as a status row (connected / connecting / error, with tool count or error detail), lets the user drill into a row for full detail plus Reconnect / Detach actions, and drives a two-step attach flow — pick from a curated registry (or define a custom server) — that writes into the session's project `.mcp.json` and asks session-engine to connect it. The panel is a thin, event-driven reflection of runtime state owned by session-engine; it never runs an MCP client itself.

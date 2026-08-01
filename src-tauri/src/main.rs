@@ -120,6 +120,8 @@ fn main() {
             session::mcp_reconnect,
             session::mcp_detach,
             session::mcp_attach,
+            session::mcp_approvals,
+            session::mcp_decide,
             session::skills_list,
             session::skills_install,
             session::skills_run,

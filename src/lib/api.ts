@@ -45,7 +45,7 @@ import type {
 } from '../../contract/session-attachments';
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
-import type { McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
+import type { McpApprovalState, McpDecision, McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
 import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
@@ -204,6 +204,9 @@ export const mcpDetach = (sessionId: SessionId, name: string) => ipc<Result<null
 export const mcpRegistry = () => ipc<Result<McpRegistryEntry[]>>('mcp_registry');
 export const mcpAttach = (sessionId: SessionId, entry: McpAttachRequest) =>
   ipc<Result<null>>('mcp_attach', { sessionId, entry });
+export const mcpApprovals = (sessionId: SessionId) => ipc<Result<McpApprovalState>>('mcp_approvals', { sessionId });
+export const mcpDecide = (sessionId: SessionId, decision: McpDecision) =>
+  ipc<Result<McpApprovalState>>('mcp_decide', { sessionId, ...decision });
 
 export const skillsList = (sessionId: SessionId) => ipc<Result<SkillInfo[]>>('skills_list', { sessionId });
 export const skillsInstall = (sessionId: SessionId, name: string) => ipc<Result<null>>('skills_install', { sessionId, name });
