@@ -16,11 +16,23 @@ export interface MainTabStripProps {
   closeAgentTab: (agentId: string) => void;
   active: SessionMeta | null;
   elapsedMs: number;
+  showSessionMeta: boolean;
+  toggleSessionMeta: () => void;
 }
 
 /** The main pane's tab strip (OVERVIEW/SESSION/DIFF/SHELL + dynamic agent
  * tabs) and, when SESSION is active, the right-aligned session meta cluster. */
-export default function MainTabStrip({ mainTab, setMainTab, diffCount, agentTabs, closeAgentTab, active, elapsedMs }: MainTabStripProps) {
+export default function MainTabStrip({
+  mainTab,
+  setMainTab,
+  diffCount,
+  agentTabs,
+  closeAgentTab,
+  active,
+  elapsedMs,
+  showSessionMeta,
+  toggleSessionMeta,
+}: MainTabStripProps) {
   return (
     <div className="app-tabstrip">
       {/* §8: the strip scrolls horizontally past overflow rather than
@@ -66,42 +78,62 @@ export default function MainTabStrip({ mainTab, setMainTab, diffCount, agentTabs
       </div>
       {mainTab === 'session' && active && (
         <div className="app-meta-cluster">
-          <span>{active.model.label}</span>
-          {active.permissionMode !== 'default' && (
-            <span
-              title={`permission mode: ${active.permissionMode}`}
-              className={active.permissionMode === 'bypassPermissions' ? 'app-text-error' : 'app-text-faint'}
-            >
-              {active.permissionMode === 'acceptEdits' ? 'edits-ok' : active.permissionMode === 'bypassPermissions' ? 'bypass' : 'plan'}
-            </span>
-          )}
-          {active.runtime === 'wsl' && <span className="app-text-faint">wsl</span>}
-          {/* session-worktree FR-13: branch glyph + name, focused session only */}
-          {active.worktree && (
-            <span title={active.worktree.branch} className="app-text-accent">
-              ⎇ {truncateBranchLeft(active.worktree.branch, 24)}
-            </span>
-          )}
-          {/* remote-control: host this session on claude.ai/code + mobile */}
-          <RemoteControlBadge key={active.id} sessionId={active.id} />
-          {/* design-refresh FR-5: the mock pairs the context figure with a mini
-              fill bar — same numbers, already in the store, just read at a
-              glance. Hidden when the limit is unknown (no denominator, no bar). */}
-          <span className="app-ctx">
-            {active.contextLimitTokens > 0 && (
-              <span className="app-ctx-track">
+          {showSessionMeta && (
+            <>
+              <span>{active.model.label}</span>
+              {active.permissionMode !== 'default' && (
                 <span
-                  className="app-ctx-fill"
-                  style={{ width: `${Math.min(100, (active.contextUsedTokens / active.contextLimitTokens) * 100)}%` }}
-                />
+                  title={`permission mode: ${active.permissionMode}`}
+                  className={active.permissionMode === 'bypassPermissions' ? 'app-text-error' : 'app-text-faint'}
+                >
+                  {active.permissionMode === 'acceptEdits'
+                    ? 'edits-ok'
+                    : active.permissionMode === 'bypassPermissions'
+                      ? 'bypass'
+                      : 'plan'}
+                </span>
+              )}
+              {active.runtime === 'wsl' && <span className="app-text-faint">wsl</span>}
+              {/* session-worktree FR-13: branch glyph + name, focused session only */}
+              {active.worktree && (
+                <span title={active.worktree.branch} className="app-text-accent">
+                  ⎇ {truncateBranchLeft(active.worktree.branch, 24)}
+                </span>
+              )}
+              {/* remote-control: host this session on claude.ai/code + mobile */}
+              <RemoteControlBadge key={active.id} sessionId={active.id} />
+              {/* design-refresh FR-5: the mock pairs the context figure with a mini
+                  fill bar — same numbers, already in the store, just read at a
+                  glance. Hidden when the limit is unknown (no denominator, no bar). */}
+              <span className="app-ctx">
+                {active.contextLimitTokens > 0 && (
+                  <span className="app-ctx-track">
+                    <span
+                      className="app-ctx-fill"
+                      style={{ width: `${Math.min(100, (active.contextUsedTokens / active.contextLimitTokens) * 100)}%` }}
+                    />
+                  </span>
+                )}
+                <span className="app-ctx-figure">
+                  {formatContextTokens(active.contextUsedTokens)}
+                  <span className="app-text-faint">/{formatContextTokens(active.contextLimitTokens)}</span>
+                </span>
               </span>
-            )}
-            <span className="app-ctx-figure">
-              {formatContextTokens(active.contextUsedTokens)}
-              <span className="app-text-faint">/{formatContextTokens(active.contextLimitTokens)}</span>
-            </span>
+              <span className="app-ctx-figure app-text-faint">{formatElapsed(elapsedMs)}</span>
+            </>
+          )}
+          {/* The cluster is flex-shrink:0 — it wins the strip's width and the
+              tabs scroll under it, so folding the cluster is what actually
+              hands that width back to a long agent-tab run. Last in the row on
+              purpose: the chevron keeps the strip's right edge either way, so
+              the control never moves when it is clicked. */}
+          <span
+            onClick={toggleSessionMeta}
+            title={showSessionMeta ? 'collapse session meta' : 'expand session meta'}
+            className="app-meta-toggle"
+          >
+            {showSessionMeta ? '›' : '‹'}
           </span>
-          <span className="app-ctx-figure app-text-faint">{formatElapsed(elapsedMs)}</span>
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@
 // focus to main; FR-6 focusing a collapsed right pane expands it).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { COLLAPSED_PANES_STORAGE_KEY, parseCollapsedPanes } from './layoutStore';
+import { COLLAPSED_PANES_STORAGE_KEY, parseCollapsedPanes, SESSION_META_KEY } from './layoutStore';
 
 function mockStorage(seed: Record<string, string> = {}): { store: Record<string, string> } {
   const state = { store: { ...seed } };
@@ -154,6 +154,34 @@ describe('collapsedPanes store slice', () => {
     expect(useStore.getState().collapsedPanes.mcp).toBe(true);
     useStore.getState().toggleRightPane(); // show it again
     expect(useStore.getState().collapsedPanes.mcp).toBe(true);
+  });
+
+  it('showSessionMeta defaults to visible, toggles, and persists', async () => {
+    const useStore = await freshStore();
+    expect(useStore.getState().showSessionMeta).toBe(true);
+    useStore.getState().toggleSessionMeta();
+    expect(useStore.getState().showSessionMeta).toBe(false);
+    expect(storage.store[SESSION_META_KEY]).toBe('0');
+    useStore.getState().toggleSessionMeta();
+    expect(useStore.getState().showSessionMeta).toBe(true);
+    expect(storage.store[SESSION_META_KEY]).toBe('1');
+  });
+
+  it('showSessionMeta initializes from a persisted collapse', async () => {
+    storage.store[SESSION_META_KEY] = '0';
+    const useStore = await freshStore();
+    expect(useStore.getState().showSessionMeta).toBe(false);
+  });
+
+  it('toggleSessionMeta touches no other layout state', async () => {
+    const useStore = await freshStore();
+    useStore.getState().setFocusedPane('mcp');
+    useStore.getState().setCollapsedPane('agents', true);
+    useStore.getState().toggleSessionMeta();
+    expect(useStore.getState().focusedPane).toBe('mcp');
+    expect(useStore.getState().collapsedPanes.agents).toBe(true);
+    expect(useStore.getState().showLeftPane).toBe(true);
+    expect(useStore.getState().showRightPane).toBe(true);
   });
 
   it('degrades silently to all-expanded when localStorage throws (FR-3)', async () => {

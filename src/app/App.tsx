@@ -46,6 +46,9 @@ export default function App() {
   const showLeftPane = useStore((s) => s.showLeftPane);
   const showRightPane = useStore((s) => s.showRightPane);
   const collapsedPanes = useStore((s) => s.collapsedPanes);
+  // Tab strip: the session meta cluster folds so a long agent-tab run isn't clipped.
+  const showSessionMeta = useStore((s) => s.showSessionMeta);
+  const toggleSessionMeta = useStore((s) => s.toggleSessionMeta);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
@@ -214,6 +217,8 @@ export default function App() {
             closeAgentTab={closeAgentTab}
             active={active}
             elapsedMs={elapsedMs}
+            showSessionMeta={showSessionMeta}
+            toggleSessionMeta={toggleSessionMeta}
           />
           <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} shell={shell} />
         </section>
