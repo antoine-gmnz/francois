@@ -1,6 +1,6 @@
 import type { SessionMeta } from '../../contract/common';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
-import { agentTabId, agentTabLabel, type AgentTabRef } from '../features/agents/agent-tab';
+import { agentTabLabel, tabIdFor, type AgentTabRef } from '../features/agents/agent-tab';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import { truncateBranchLeft } from '../features/sessions/worktree';
 import type { MainTab } from '../lib/store';
@@ -49,15 +49,17 @@ export default function MainTabStrip({ mainTab, setMainTab, diffCount, agentTabs
           </span>
         </div>
         {agentTabs.length > 0 && <span className="tab-segment-divider" />}
-        {/* agent-tab FR-9/FR-12: one tab per clicked subagent, in open
-            order. Lower-case and un-tracked on purpose — an agent name is
-            content, not a chrome label. */}
+        {/* agent-tab FR-9/FR-12: one tab per clicked subagent — and, since
+            workflow-details FR-12, per clicked workflow run, in the same strip
+            and the same open order (`tabIdFor` keys each ref onto its own tab
+            id). Lower-case and un-tracked on purpose — a name is content, not a
+            chrome label. */}
         {agentTabs.map((t) => (
           <AgentTabChip
-            key={t.id}
+            key={tabIdFor(t)}
             tab={t}
-            active={mainTab === agentTabId(t.id)}
-            onOpen={() => setMainTab(agentTabId(t.id) as MainTab)}
+            active={mainTab === tabIdFor(t)}
+            onOpen={() => setMainTab(tabIdFor(t) as MainTab)}
             onClose={() => closeAgentTab(t.id)}
           />
         ))}

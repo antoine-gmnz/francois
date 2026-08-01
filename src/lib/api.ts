@@ -3,7 +3,13 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AccountId, Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun } from '../../contract/common';
+import type { AccountId, Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type {
+  WorkflowAgentTranscript,
+  WorkflowDetail,
+  WorkflowDetailEvent,
+  WorkflowScript,
+} from '../../contract/workflow-details';
 import type {
   AccountAddPayload,
   AccountAddResponse,
@@ -163,6 +169,23 @@ export const agentsTranscript = (agentId: string) =>
 // there is no create/stop verb to wrap here.
 export const workflowsList = (sessionId: SessionId) =>
   ipc<Result<WorkflowRun[]>>('workflows_list', { sessionId });
+
+// workflow-details §5: what the run's DIRECTORY says — its agents, their spans
+// and tokens, and any ask attributed to the run. `detail` also starts the core's
+// filesystem watch (FR-6), so the live stream below follows from this one call.
+export const workflowsDetail = (runId: WorkflowRunId) =>
+  ipc<Result<WorkflowDetail>>('workflows_detail', { runId });
+/** FR-8: one agent's own transcript, in the agent-tab block vocabulary. */
+export const workflowsAgent = (runId: WorkflowRunId, agentId: string) =>
+  ipc<Result<WorkflowAgentTranscript>>('workflows_agent', { runId, agentId });
+/** FR-9: the script the harness wrote to disk, capped at 200 KB. */
+export const workflowsScript = (runId: WorkflowRunId) =>
+  ipc<Result<WorkflowScript>>('workflows_script', { runId });
+
+/** Subscribe to francois://workflows/event (workflow.detail, FR-6/FR-23). */
+export function onWorkflowEvent(cb: (e: WorkflowDetailEvent) => void): Promise<UnlistenFn> {
+  return listen<WorkflowDetailEvent>('francois://workflows/event', (e) => cb(e.payload));
+}
 
 /** Subscribe to francois://agents/event (agent.block, agent-tab FR-8). */
 export function onAgentEvent(cb: (e: AgentEvent) => void): Promise<UnlistenFn> {

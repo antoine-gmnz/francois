@@ -162,8 +162,13 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
  * §8: engine notices render as a dim `·` row (the trail's notice vocabulary);
  * everything else is a real ConversationBlock and goes through the SESSION tab's
  * renderer untouched.
+ *
+ * Exported for workflow-details, whose transcript column renders the SAME
+ * `AgentBlock` vocabulary (its design brief's rule 1: "the transcript column is
+ * the SESSION tab's block rendering, unchanged") — one renderer, so the two
+ * cannot drift.
  */
-function AgentBlockRow({ block, sessionId }: { block: AgentBlock; sessionId: string }) {
+export function AgentBlockRow({ block, sessionId }: { block: AgentBlock; sessionId: string }) {
   if (block.kind === 'notice') {
     return (
       <div className="agent-block-notice-row">

@@ -36,6 +36,8 @@ mod stream;
 mod tools;
 mod turn;
 mod usage_probe;
+mod workflow_details;
+mod workflow_watch;
 mod workflows;
 mod worktree;
 
@@ -60,6 +62,8 @@ pub(crate) use stream::*;
 pub(crate) use tools::*;
 pub(crate) use turn::*;
 pub(crate) use usage_probe::*;
+pub(crate) use workflow_details::*;
+pub(crate) use workflow_watch::*;
 pub(crate) use workflows::*;
 pub(crate) use worktree::*;
 
@@ -77,6 +81,7 @@ use crate::usage::{parse_meter_line, probe_answer, synthetic_text, UsageMeter};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -88,6 +93,11 @@ const EVENT_CHANNEL: &str = "francois://session/event";
 /// the session stream because AgentBlock builds on conversation-view's block
 /// types while contract/common.ts (which owns SessionEvent) is import-free.
 const AGENT_EVENT_CHANNEL: &str = "francois://agents/event";
+/// workflow-details §5: the `workflows` domain event stream (`workflow.detail`).
+/// Separate from the session stream for the same reason the agents one is —
+/// WorkflowDetail builds on the agent-tab block vocabulary, while
+/// contract/common.ts (which owns SessionEvent) is import-free.
+const WORKFLOW_EVENT_CHANNEL: &str = "francois://workflows/event";
 const QUEUE_CAP: usize = 20;
 const DEFAULT_MODEL: &str = "sonnet";
 /// interactive-commands FR-10: a /usage//cost probe is killed after this long.
@@ -236,6 +246,16 @@ pub struct WorkflowRun {
     run_id: Option<String>,
     #[serde(rename = "lastActivity", skip_serializing_if = "Option::is_none")]
     last_activity: Option<String>,
+    /// workflow-details FR-1/FR-2: the ack's `Transcript dir:`, kept only when it
+    /// resolved to an existing directory. Absent ⇒ the pane [6] card is not
+    /// clickable (FR-11) and this run has no detail to read.
+    #[serde(rename = "transcriptDir", skip_serializing_if = "Option::is_none")]
+    transcript_dir: Option<String>,
+    /// workflow-details FR-24: how many asks are currently attributed to this
+    /// run, so the panel can say `waiting on you` without subscribing to the
+    /// detail stream. ABSENT (never 0) when nothing is blocking.
+    #[serde(rename = "pendingAsks", skip_serializing_if = "Option::is_none")]
+    pending_asks: Option<u32>,
 }
 
 /// contract WorkflowPhaseInfo — one entry of the script's `meta.phases`.
@@ -446,6 +466,11 @@ pub(crate) struct Session {
     /// turn-local) so the ack and the completion notice both reach it after the
     /// tool call closed.
     workflow_by_tool: HashMap<String, String>,
+    /// workflow-details FR-1: run id → the `Script file:` the dispatch ack named,
+    /// kept only when it resolved to an existing file (FR-2). CORE-ONLY state —
+    /// unlike `transcriptDir` it never rides on `WorkflowRun`, because nothing in
+    /// the frontend addresses the script by path.
+    workflow_scripts: HashMap<String, PathBuf>,
     // slash-menu FR-2: the CLI's slash_commands captured from the latest
     // stream-json init (bare names, init order). In-memory only — never
     // persisted; a fresh app relearns it on the next turn (spec §6).
@@ -520,6 +545,7 @@ impl Session {
             workflows: HashMap::new(),
             workflow_order: Vec::new(),
             workflow_by_tool: HashMap::new(),
+            workflow_scripts: HashMap::new(),
             cli_commands: Vec::new(),
         }
     }
@@ -702,6 +728,16 @@ impl Session {
 #[derive(Default)]
 pub struct Engine {
     sessions: Mutex<HashMap<String, Session>>,
+    /// workflow-details §6: run id → the incremental scan state of its run
+    /// directory (per-file byte offsets + running aggregates, FR-5) and the
+    /// `notify` watcher keeping it live (FR-6). Dropping an entry stops the
+    /// watch. None of it is serialized.
+    workflow_scans: Mutex<HashMap<String, ScanEntry>>,
+    /// workflow-details FR-20..FR-26: run id → the asks currently attributed to
+    /// it. ADDITIVE — the ask itself stays in the turn's `pending_questions` /
+    /// `pending_permissions` map, keyed by the same blockId, and is still
+    /// resolved by the existing commands under the existing exactly-once claim.
+    workflow_asks: Mutex<HashMap<String, Vec<WorkflowPendingAsk>>>,
 }
 
 impl Engine {
@@ -874,6 +910,9 @@ pub fn kill_all(app: &AppHandle) {
     for (sid, bid) in orphaned_perms {
         resolve_permission(app, &sid, &bid, "cancelled", None);
     }
+    // workflow-details FR-6: no watch outlives the app. Dropped AFTER the drains
+    // above, so their `workflow.detail` flushes still find their run.
+    stop_all_workflow_watches(&engine);
 }
 
 // ---------- helpers ----------

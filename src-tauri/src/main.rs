@@ -103,6 +103,11 @@ fn main() {
             session::agents_activity,
             session::agents_transcript,
             session::workflows_list,
+            // workflow-details §5: the run's agents, one agent's transcript, and
+            // the script the harness wrote.
+            session::workflows_detail,
+            session::workflows_agent,
+            session::workflows_script,
             session::mcp_registry,
             session::mcp_list,
             session::mcp_detail,

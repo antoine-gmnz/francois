@@ -28,6 +28,9 @@ import {
   receiveAgentTranscript,
   routeAgentEventToTranscript,
   syncTab,
+  tabIdFor,
+  workflowIdFromTab,
+  workflowTabId,
   type AgentTabRef,
 } from './agent-tab';
 
@@ -136,6 +139,48 @@ describe('open tab set', () => {
   it('closes every agent tab on a session switch (FR-14)', () => {
     expect(mainTabAfterClose('agent:a1', null)).toBe('session');
     expect(mainTabAfterClose('overview', null)).toBe('overview');
+  });
+});
+
+// ---------- workflow-details FR-12: one dynamic-tab list for both kinds ----------
+
+describe('workflow tabs share this machinery', () => {
+  const wf = (id: string): AgentTabRef => ({ id, name: `wf-${id}`, status: 'running', kind: 'workflow' });
+
+  it('round-trips a run id through its MainTab value, distinct from an agent tab', () => {
+    expect(workflowTabId('w1')).toBe('workflow:w1');
+    expect(workflowIdFromTab('workflow:w1')).toBe('w1');
+    expect(workflowIdFromTab('agent:a1')).toBeNull();
+    expect(agentIdFromTab('workflow:w1')).toBeNull();
+    for (const t of ['overview', 'session', 'diff', 'shell']) expect(workflowIdFromTab(t)).toBeNull();
+  });
+
+  it('keys a ref onto the tab id its kind implies, defaulting to agent', () => {
+    expect(tabIdFor(wf('w1'))).toBe('workflow:w1');
+    expect(tabIdFor(ref('a1'))).toBe('agent:a1');
+  });
+
+  it('shares ONE 6-tab cap and one eviction order with agent tabs (FR-12)', () => {
+    let tabs: AgentTabRef[] = [];
+    for (let i = 1; i <= AGENT_TAB_CAP - 1; i++) tabs = openTab(tabs, ref(`a${i}`));
+    tabs = openTab(tabs, wf('w1'));
+    expect(tabs).toHaveLength(AGENT_TAB_CAP);
+    const next = openTab(tabs, wf('w2'));
+    expect(next).toHaveLength(AGENT_TAB_CAP);
+    expect(next[0].id).toBe('a2'); // the OLDEST went, agent or not
+    expect(next[next.length - 1].id).toBe('w2');
+  });
+
+  it('closes an active workflow tab back to SESSION, and wipes both kinds on a session switch (FR-13)', () => {
+    expect(mainTabAfterClose('workflow:w1', ['w1'])).toBe('session');
+    expect(mainTabAfterClose('workflow:w1', ['w2'])).toBe('workflow:w1');
+    expect(mainTabAfterClose('workflow:w1', null)).toBe('session');
+  });
+
+  it('re-opening a run refreshes it in place, and a kind change is a real change', () => {
+    const tabs = openTab([], wf('w1'));
+    expect(openTab(tabs, wf('w1'))).toBe(tabs);
+    expect(syncTab(tabs, { id: 'w1', name: 'wf-w1', status: 'done', kind: 'workflow' })[0].status).toBe('done');
   });
 });
 
