@@ -9,6 +9,7 @@ import {
   buildAttachRequest,
   buildCustomAttachRequest,
   buildRegistryAttachRequest,
+  canReconnect,
   canSubmitAttach,
   detailText,
   dotColor,
@@ -92,6 +93,16 @@ describe('detailText', () => {
       color: 'var(--text-disabled)',
     });
   });
+
+  it('approved says it starts next turn rather than faking a handshake', () => {
+    // The first fix left the row at `connecting` right after a decision, so
+    // approving a server swapped one permanent "handshake…" for another. Nothing
+    // is connecting: the CLI spawns `.mcp.json` servers with the next turn.
+    expect(detailText({ name: 's', status: 'approved' })).toEqual({
+      text: 'starts next turn',
+      color: 'var(--text-dim)',
+    });
+  });
 });
 
 describe('approval vocabulary', () => {
@@ -104,12 +115,25 @@ describe('approval vocabulary', () => {
     ...over,
   });
 
-  it('isApprovable covers exactly the two undecided statuses', () => {
+  it('isApprovable covers exactly the approval verdicts', () => {
     expect(isApprovable('pending')).toBe(true);
     expect(isApprovable('rejected')).toBe(true);
+    expect(isApprovable('approved')).toBe(true);
     expect(isApprovable('connected')).toBe(false);
     expect(isApprovable('connecting')).toBe(false);
     expect(isApprovable('error')).toBe(false);
+  });
+
+  it('canReconnect covers only servers the session has actually started', () => {
+    // Reconnect just re-flags `connecting`. On an approval verdict — including a
+    // freshly approved server — that repaints the stuck handshake it was supposed
+    // to remove, because no process exists to reconnect to.
+    expect(canReconnect('connected')).toBe(true);
+    expect(canReconnect('error')).toBe(true);
+    expect(canReconnect('connecting')).toBe(true);
+    expect(canReconnect('approved')).toBe(false);
+    expect(canReconnect('pending')).toBe(false);
+    expect(canReconnect('rejected')).toBe(false);
   });
 
   it('hasApprovalWork is false for a settled project and for no session', () => {
