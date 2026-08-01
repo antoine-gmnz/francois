@@ -1,4 +1,5 @@
 import { AccountChip } from '../features/accounts/AccountChip';
+import { NotifyMutedChip } from '../features/notifications/NotifyMutedChip';
 import { togglePalette } from '../features/palette/palette';
 import { UpdateChip } from '../features/update/UpdateChip';
 import type { Pane, Theme } from '../lib/store';
@@ -52,6 +53,11 @@ export default function StatusBar({ theme, toggleTheme, focusedPane, activeAgent
         </>
       )}
       <span className="app-flex-spacer" />
+      {/* notifications FR-19: the muted chip, before AccountChip per the design
+          brief §1 — the exception (something is silenced) leads the right
+          cluster, the routine (account) follows. Renders nothing when both
+          notification classes are on. */}
+      <NotifyMutedChip />
       {/* multi-account FR-33: which account the selected session runs on —
           first in the right cluster, per the design brief. Renders
           unconditionally, including a single-account install's own Default

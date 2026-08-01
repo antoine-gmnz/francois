@@ -35,6 +35,7 @@ use tauri::Manager;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(shell::Registry::default())
         .manage(session::Engine::default())
         // projects §6: the registry is loaded once at startup (see setup below)

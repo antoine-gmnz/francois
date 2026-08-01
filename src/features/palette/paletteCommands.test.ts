@@ -40,6 +40,7 @@ const ctx: PaletteContext = { activeSessionId: null, runningAgentCount: 0 };
 async function freshModules() {
   vi.resetModules();
   const storeMod = await import('../../lib/store');
+  const notifStoreMod = await import('../../lib/notificationsStore');
   const paletteMod = await import('./palette');
   const commandsMod = await import('./paletteCommands');
   commandsMod.registerBuiltinCommands();
@@ -48,7 +49,7 @@ async function freshModules() {
     if (!cmd) throw new Error(`command '${id}' not registered`);
     return cmd;
   };
-  return { useStore: storeMod.useStore, byId };
+  return { useStore: storeMod.useStore, useNotificationsStore: notifStoreMod.useNotificationsStore, paletteCommands: paletteMod.paletteCommands, byId };
 }
 
 describe('collapse-right-column palette toggles (FR-11)', () => {
@@ -122,5 +123,43 @@ describe('collapse-right-column palette toggles (FR-11)', () => {
     byId('toggle-skills-panel').run(ctx);
     expect(useStore.getState().collapsedPanes.skills).toBe(false);
     expect(useStore.getState().showRightPane).toBe(true);
+  });
+});
+
+describe('notifications palette toggles (FR-18)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('registers the two commands with the design brief names, blocking class first', async () => {
+    const { byId, paletteCommands } = await freshModules();
+    const attention = byId('toggle-notify-attention');
+    const turnDone = byId('toggle-notify-turn-done');
+    expect(attention.name).toBe('Notifications: approvals & questions');
+    expect(turnDone.name).toBe('Notifications: turn finished');
+
+    const ids = paletteCommands().map((c) => c.id);
+    expect(ids.indexOf('toggle-notify-attention')).toBeLessThan(ids.indexOf('toggle-notify-turn-done'));
+  });
+
+  it('hint reads "on"/"off" from the live toggle, defaulting to on', async () => {
+    const { byId } = await freshModules();
+    expect(byId('toggle-notify-attention').hint?.()).toBe('on');
+    expect(byId('toggle-notify-turn-done').hint?.()).toBe('on');
+  });
+
+  it('running a row flips only that class', async () => {
+    const { byId, useNotificationsStore } = await freshModules();
+
+    byId('toggle-notify-turn-done').run(ctx);
+    expect(useNotificationsStore.getState().enabled).toEqual({ attention: true, turnDone: false });
+    expect(byId('toggle-notify-turn-done').hint?.()).toBe('off');
+    expect(byId('toggle-notify-attention').hint?.()).toBe('on');
+
+    byId('toggle-notify-turn-done').run(ctx);
+    expect(useNotificationsStore.getState().enabled.turnDone).toBe(true);
   });
 });

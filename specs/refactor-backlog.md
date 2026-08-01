@@ -104,3 +104,23 @@ and both are in the core surface. Recorded here rather than as `## Remediation` 
   the next reader auditing for deadlock.
   → **Fix:** reword the comment to note `begin_apply` is a lock-free CAS and does not count as
   "touching" `UpdateState`'s mutex, or reorder the two calls to literally match the comment.
+
+## deferred:notifications
+
+Parked at the `/review` SHIP verdict (2026-08-01). Neither is CRITICAL/HIGH or security.
+
+- **[MEDIUM]** `src/features/notifications/notifications.ts:142-149` (`handleNotificationAction`) ·
+  spec-violation · calls `setActiveSessionId(sessionId)` for any non-null `extra.sessionId` /
+  `lastNotifiedSessionId` without checking the session still exists, contradicting spec §7's row
+  "Session removed right after a fire → … window is raised, selection unchanged (FR-13)"; no test
+  covers this row. → **Fix:** before calling `setActiveSessionId`/`setFocusedPane`/`setMainTab`,
+  verify `useStore.getState().sessions.some(s => s.id === sessionId)` and skip selection (still call
+  `focusFrancois()`) when it doesn't; add a unit test seeding a `lastNotifiedSessionId`/
+  `extra.sessionId` absent from `sessions` and asserting `activeSessionId` is unchanged.
+
+- **[LOW]** `src/features/notifications/NotifyMutedChip.tsx:14` · quality · design brief §1 specifies
+  "One `<span>`, inline" for the muted chip but the component renders a `<button>` (harmless — follows
+  the `AccountChip` precedent and is more accessible, but diverges from the frozen design doc's
+  literal element choice). → **Fix:** either update `specs/design/notifications.md` §1 to say
+  `<button>` (matching `AccountChip`'s established status-bar-chip pattern) or note the deliberate
+  deviation in a comment.

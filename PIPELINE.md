@@ -291,6 +291,6 @@ that owns the feature — never in a new top-level file.
 | `wsl-filesystem` | Windows: git follows the filesystem, shell and `claude` follow the WSL runtime — path translation across the boundary | session-engine, shell-terminal, diff-view |
 | `collapse-right-column` | per-card collapse/expand for panes [3]–[6] (click, `c`, palette), persisted | app-shell, agents-panel, mcp-panel, skills-panel |
 | `mac-text-selection` | macOS: text selection + copy in the SESSION transcript | conversation-view |
-| `notifications` *(frozen)* | desktop notification when a background session finishes, errors, or needs input | session-engine, app-shell |
+| `notifications` *(frozen)* | desktop notification when a session is blocked on an approval/question, or its turn finished/errored | session-engine, app-shell, session-questions, permission-guardrails, command-palette |
 | `session-brake` *(frozen)* | stop a running turn mid-flight | session-engine, conversation-view |
 | `design-refresh` | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |
