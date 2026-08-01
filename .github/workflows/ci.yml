@@ -12,10 +12,30 @@ concurrency:
 
 jobs:
   test:
-    runs-on: windows-latest # matches the release target; Tauri compiles with zero extra setup
+    # Both halves of what ships: windows-latest matches the release target, and
+    # ubuntu-22.04 is EXACTLY the runner release.yml's `gate` job uses. Running
+    # only Windows here meant a Linux-only break could not fail a PR — it waited
+    # for the release gate, i.e. it turned a red PR into a red release on main.
+    # (Real instance: a `std::path::Path` ancestor walk, correct on Windows,
+    # returned no components on Linux; PR CI was green.) A green PR should mean a
+    # green gate, so this job is the gate's pre-image.
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # one OS failing must not hide the other's result
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Tauri's crate graph does not build on a bare Linux runner; the release
+      # gate installs the same set.
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Set up Node
         uses: actions/setup-node@v4

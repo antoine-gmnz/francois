@@ -121,11 +121,56 @@ pub(crate) fn cli_project_key(cwd: &str) -> String {
 fn git_root(cwd: &str) -> Option<String> {
     let mut dir = std::path::Path::new(cwd);
     loop {
+        // `Path::parent` bottoms out at "", whose `.git` would resolve against the
+        // PROCESS's cwd — a repo root that has nothing to do with the session.
+        if dir.as_os_str().is_empty() {
+            return None;
+        }
         if dir.join(".git").exists() {
             return Some(dir.to_string_lossy().to_string());
         }
         dir = dir.parent()?;
     }
+}
+
+/// `cwd` and every ancestor above it, normalized — the chain the CLI's trust
+/// check walks.
+///
+/// Split on the normalized STRING rather than with `std::path::Path`, because the
+/// separator here is not necessarily the host's: a `wsl` session carries POSIX
+/// paths on Windows, and a Windows path is perfectly reachable on Linux (CI runs
+/// these very cases). `Path` only splits on the separators of the platform it is
+/// compiled for, so it would silently treat `D:\a\b` as ONE component and report
+/// no ancestors at all. `norm_path` has already collapsed both dialects to `/`.
+fn ancestors(cwd: &str) -> Vec<String> {
+    let normalized = cwd.replace('\\', "/");
+    let mut cur = normalized.trim_end_matches('/').to_string();
+    if cur.is_empty() {
+        // `norm_path` trims the trailing separator, which erases a bare root to "".
+        // A cwd of "/" is one rung with nothing above it; "" is no rung at all.
+        return if normalized.is_empty() {
+            Vec::new()
+        } else {
+            vec!["/".to_string()]
+        };
+    }
+    let mut out = Vec::new();
+    while !cur.is_empty() {
+        out.push(cur.clone());
+        match cur.rfind('/') {
+            // "D:" / "relative" — nothing above it.
+            None => break,
+            // "/a" — the POSIX root is the last rung, and its own parent.
+            Some(0) => {
+                if cur == "/" {
+                    break;
+                }
+                cur = "/".to_string();
+            }
+            Some(i) => cur.truncate(i),
+        }
+    }
+    out
 }
 
 /// Whether Claude Code considers this cwd trusted.
@@ -150,14 +195,7 @@ pub(crate) fn trust_accepted(doc: &Value, cwd: &str) -> bool {
     if node_trusted(doc, &cli_project_key(cwd)) {
         return true;
     }
-    let mut dir = Some(std::path::Path::new(cwd));
-    while let Some(d) = dir {
-        if node_trusted(doc, &norm_path(&d.to_string_lossy())) {
-            return true;
-        }
-        dir = d.parent();
-    }
-    false
+    ancestors(cwd).iter().any(|key| node_trusted(doc, key))
 }
 
 /// `projects[<key>].hasTrustDialogAccepted === true`, for one key.
@@ -533,6 +571,31 @@ mod tests {
             norm_path(&wt.to_string_lossy())
         );
         std::fs::remove_dir_all(&wt).ok();
+    }
+
+    // ---- ancestors ----
+
+    #[test]
+    fn ancestors_walks_both_path_dialects_on_every_host() {
+        // Not a portability nicety: `std::path::Path` splits only on the separators
+        // of the platform it was compiled for, so a Windows path examined on Linux
+        // (CI) or a wsl session's POSIX path examined on Windows would yield ONE
+        // component and no ancestors — silently disabling the whole walk.
+        assert_eq!(
+            ancestors("D:\\some\\deep\\repo"),
+            names(&["D:/some/deep/repo", "D:/some/deep", "D:/some", "D:"])
+        );
+        assert_eq!(
+            ancestors("/home/u/proj/"),
+            names(&["/home/u/proj", "/home/u", "/home", "/"])
+        );
+    }
+
+    #[test]
+    fn ancestors_terminates_on_a_root_or_a_bare_segment() {
+        assert_eq!(ancestors("/"), names(&["/"]));
+        assert_eq!(ancestors("D:/"), names(&["D:"]));
+        assert!(ancestors("").is_empty());
     }
 
     // ---- trust_accepted ----
