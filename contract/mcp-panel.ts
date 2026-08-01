@@ -36,6 +36,35 @@ export interface McpAttachRequest {
   registrySource?: string; // registry entry name; omitted for custom
 }
 
+// ---------- first-run approval ----------
+// Claude Code gates project-scope `.mcp.json` servers behind a consent dialog and
+// a never-opened folder behind a trust dialog, storing both answers in its own
+// user store (`<claude config>/.claude.json` → projects[cwd]). `claude -p` skips
+// those dialogs (the server silently never connects); the interactive
+// remote-control host parks on them. These two calls make the same decision from
+// the app and write the same keys.
+
+export interface McpApprovalState {
+  /** `.mcp.json` servers with no decision on record — what the CLI would ask about. */
+  pending: string[];
+  /** `.mcp.json` servers already approved (or blanket-approved by settings). */
+  approved: string[];
+  /** `.mcp.json` servers explicitly refused; the CLI will not start them. */
+  rejected: string[];
+  /** The folder-trust dialog has not been accepted for this cwd yet. */
+  trustRequired: boolean;
+  /** `enableAllProjectMcpServers` is on in some settings tier — nothing can be pending. */
+  enableAllProjectMcpServers: boolean;
+}
+
+/** One click's worth of decisions. Every field is applied in the same write. */
+export interface McpDecision {
+  approve: string[];
+  reject: string[];
+  /** Accept the folder-trust dialog (`hasTrustDialogAccepted`). */
+  trust: boolean;
+}
+
 // ---------- detail (popover) ----------
 
 export interface McpServerDetail extends McpServerInfo {
@@ -51,9 +80,12 @@ export interface McpServerDetail extends McpServerInfo {
 // invoke('mcp_detach',    { sessionId, name })    → Result<null>
 // invoke('mcp_registry')                          → Result<McpRegistryEntry[]>
 // invoke('mcp_attach',    { sessionId, entry })   → Result<null>
+// invoke('mcp_approvals', { sessionId })          → Result<McpApprovalState>
+// invoke('mcp_decide',    { sessionId, ...McpDecision }) → Result<McpApprovalState>
 
 export type McpListResponse = Result<McpServerInfo[]>;
 export type McpDetailResponse = Result<McpServerDetail>;
 export type McpRegistryResponse = Result<McpRegistryEntry[]>;
+export type McpApprovalsResponse = Result<McpApprovalState>;
 
 export type { SessionId };

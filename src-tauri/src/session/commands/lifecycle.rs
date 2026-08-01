@@ -508,7 +508,10 @@ mod tests {
         // FR-3.
         let engine = test_engine_with(test_session());
         assert!(rename_in_engine(&engine, "nope", "x".into()).is_none());
-        assert_eq!(engine.with_session("s1", |s| s.name.clone()), Some("n".into()));
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("n".into())
+        );
     }
 
     #[test]
@@ -527,7 +530,10 @@ mod tests {
                 engine.with_session("s1", |s| s.claude_session_id.clone()),
                 Some(Some("claude-1".into()))
             );
-            assert_eq!(engine.with_session("s1", |s| s.worktree.is_none()), Some(true));
+            assert_eq!(
+                engine.with_session("s1", |s| s.worktree.is_none()),
+                Some(true)
+            );
         }
     }
 

@@ -31,6 +31,7 @@ export type ErrorCode =
   | 'NOT_A_GIT_REPO'
   | 'PTY_ERROR'
   | 'MCP_ERROR'
+  | 'MCP_APPROVAL_REQUIRED' // mcp-panel: an interactive spawn (remote-control) would park on the consent/trust dialog (detail: McpApprovalState)
   | 'SKILL_ERROR'
   | 'AGENT_NOT_FOUND'
   | 'APP_NOT_RUNNING' // CLI companion: no app instance to talk to
@@ -243,7 +244,14 @@ export interface WorkflowRun {
 
 // ---------- MCP ----------
 
-export type McpStatus = 'connected' | 'connecting' | 'error';
+/**
+ * `pending` / `rejected` are APPROVAL states, not connection states: Claude Code
+ * gates project-scope `.mcp.json` servers behind a first-run consent dialog, and a
+ * server on either side of that decision never starts, so it would otherwise sit
+ * at `connecting` forever. Only ever reported for a server the session's stream
+ * has said nothing about — a live status always wins.
+ */
+export type McpStatus = 'connected' | 'connecting' | 'error' | 'pending' | 'rejected';
 
 /** Which Claude Code config declares an MCP server (mirrors `claude mcp list` scopes). */
 export type McpScope =
