@@ -55,13 +55,27 @@ fn ps_value(p: &Path) -> String {
 
 /// FR-14 (Windows). `tasklist` is the poll — the app is not this process's child
 /// once it is detached, so there is nothing to wait on. `ping` is the sleep:
-/// `timeout` needs a console and this runs with none (FR-15).
+/// `timeout` needs a console this script does not have (FR-15).
+///
+/// NOT ONE PIPE, and not one `for /f 'command'`, anywhere in here. A pipe makes
+/// cmd fork both sides as its own children with inherited handles, and in this
+/// process (spawned with no window, stdio on a file, nothing on stdin) the right
+/// side inherits the pipe's WRITE end too — so `tasklist | find` never sees EOF
+/// and the helper hangs on its first poll forever, leaving the app un-relaunched
+/// and a `find "<pid>"` process behind. Every step below either redirects into a
+/// file or reads one back, which needs no second process and no handle games.
+///
+/// The result is CRLF-terminated, and that is not cosmetic: cmd.exe reads a
+/// batch file by seeking to a byte offset and resuming, with CRLF baked into
+/// where it believes each line begins. Fed LF-only text it drifts a character
+/// per line — `setlocal` runs as `tlocal` — and a script built out of `goto`
+/// like this one cannot survive that.
 fn windows_script(pid: u32, exe: &Path, dir: &Path) -> String {
     let exe = batch_value(exe);
     let dir_value = batch_value(dir);
     let dir_ps = ps_value(dir);
     let wait = EXIT_WAIT_SECS;
-    format!(
+    let script = format!(
         r#"@echo off
 setlocal enableextensions
 rem Francois self-update helper, written by the app at update time (FR-13).
@@ -71,11 +85,18 @@ set "PID={pid}"
 set "EXE={exe}"
 set "DIR={dir_value}"
 set "READER=%DIR%\{READER_NAME}"
+set "ALIVE=%DIR%\alive.txt"
+set "NPMROOT_OUT=%DIR%\npm-root.txt"
+set "EXE_OUT=%DIR%\executable.txt"
 set /a WAITED=0
 
 echo [francois] waiting for pid %PID% to exit
 :wait
-tasklist /fi "PID eq %PID%" /nh 2>nul | find "%PID%" >nul
+rem The poll, pipe-free: tasklist writes a file, find reads that file by NAME so
+rem it never touches stdin. `tasklist ^| find` deadlocks here — see the Rust doc
+rem comment above this script.
+tasklist /nh /fi "PID eq %PID%" > "%ALIVE%" 2>nul
+find /i "%PID%" "%ALIVE%" >nul 2>nul
 if errorlevel 1 goto gone
 if %WAITED% GEQ {wait} goto giveup
 set /a WAITED+=1
@@ -89,18 +110,28 @@ echo [francois] update abandoned: francois is still running after {wait} seconds
 goto cleanup
 
 :gone
+rem The image lock on an exe outlives the process by a moment (and an on-access
+rem scanner can hold it longer), and npm overwrites that exe.
+ping -n 3 127.0.0.1 >nul
 echo [francois] installing with {UPDATE_COMMAND}
 call {UPDATE_COMMAND}
 if errorlevel 1 goto npmfailed
 rem FR-14: the new executable is whatever the postinstall just recorded. FR-17:
 rem without a readable record the pre-update path set above still stands.
-for /f "delims=" %%R in ('npm root -g') do set "NPMROOT=%%R"
+npm root -g > "%NPMROOT_OUT%" 2>nul
+set "NPMROOT="
+for /f "usebackq delims=" %%R in ("%NPMROOT_OUT%") do set "NPMROOT=%%R"
+if not defined NPMROOT goto relaunch
 set "RECORD=%NPMROOT%\{PACKAGE}\vendor\install.json"
-if exist "%RECORD%" for /f "delims=" %%E in ('node "%READER%" "%RECORD%"') do set "EXE=%%E"
+if not exist "%RECORD%" goto relaunch
+node "%READER%" "%RECORD%" > "%EXE_OUT%" 2>nul
+for /f "usebackq delims=" %%E in ("%EXE_OUT%") do set "EXE=%%E"
 
 :relaunch
 echo [francois] relaunching %EXE%
-start "" "%EXE%"
+rem <nul >nul 2>nul: the app must not inherit this helper's stdio, or it would
+rem hold {LOG_NAME} open and the cleanup below could not remove the directory.
+start "" "%EXE%" <nul >nul 2>nul
 goto cleanup
 
 :npmfailed
@@ -113,7 +144,8 @@ rem is handed to a detached powershell that outlives this process by a moment.
 start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Milliseconds 1500; Remove-Item -LiteralPath '{dir_ps}' -Recurse -Force -ErrorAction SilentlyContinue"
 exit /b 0
 "#
-    )
+    );
+    script.replace('\n', "\r\n")
 }
 
 /// FR-14 (macOS/Linux). `kill -0` is the poll; the give-up branch removes the
@@ -251,14 +283,33 @@ pub(crate) fn write_helper(dir: &Path, pid: u32, exe: &Path) -> std::io::Result<
     })
 }
 
-/// FR-15: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` — no console to flash,
-/// and no membership in the group the exiting app belongs to.
+/// FR-15: `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` — an invisible console,
+/// and no membership in the group the exiting app belongs to. The helper still
+/// outlives its parent: on Windows that follows from not being in a job object,
+/// not from being detached.
+///
+/// `CREATE_NO_WINDOW`, NOT `DETACHED_PROCESS`, and the difference is the whole
+/// bug this replaced: a detached process has no console at all, so every console
+/// child it starts (`tasklist`, `find`, `npm`) is given a BRAND NEW console —
+/// i.e. a terminal window per step, popping up over whatever the user is doing.
+/// With `CREATE_NO_WINDOW` the helper owns one windowless console and every
+/// child inherits it, so the whole update runs unseen.
 #[cfg(windows)]
 fn detach(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    cmd.creation_flags(windows_creation_flags());
+}
+
+pub(crate) const DETACHED_PROCESS: u32 = 0x0000_0008;
+pub(crate) const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// The flags `detach` passes on Windows — a free function so the invariant that
+/// matters (`CREATE_NO_WINDOW`, never `DETACHED_PROCESS`) is provable from any
+/// platform, like the script text itself.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn windows_creation_flags() -> u32 {
+    CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
 }
 
 /// FR-15: `setsid()` in the child between fork and exec — the helper leads its
@@ -368,6 +419,98 @@ mod tests {
         assert!(at("npm i -g francois@latest") < at("install.json"));
         assert!(at("install.json") < at("relaunching $EXE"));
         assert!(at("relaunching $EXE") < s.rfind(r#"rm -rf "$DIR""#).unwrap());
+    }
+
+    // REGRESSION: cmd.exe resumes a batch file by seeking to a byte offset it
+    // computed assuming CRLF. An LF-only .cmd drifts a character per line —
+    // `setlocal` runs as `tlocal`, `rem` as `m` — and a `goto`-driven script
+    // cannot survive that. The unix script stays LF for the same reason: `sh`
+    // would read a trailing \r as part of the command.
+    #[test]
+    fn the_windows_helper_is_crlf_and_the_unix_one_is_not() {
+        let win = win_script();
+        assert!(!win.is_empty());
+        assert_eq!(
+            win.matches("\r\n").count(),
+            win.matches('\n').count(),
+            "every newline in the .cmd must be a CRLF pair"
+        );
+        assert!(win.ends_with("exit /b 0\r\n"), "{win}");
+        assert!(!sh_script().contains('\r'), "the .sh must stay LF-only");
+    }
+
+    // REGRESSION: `tasklist /fi "PID eq %PID%" /nh | find "%PID%"` deadlocked on
+    // the first poll — `find` inherited the pipe's write end and never saw EOF,
+    // so the app was never relaunched and a stuck `find "<pid>"` was left behind.
+    // No pipe may reappear anywhere in the Windows helper, in either spelling:
+    // `a | b`, or `for /f ... in ('command')`, which forks the same way.
+    #[test]
+    fn the_windows_helper_contains_no_pipes() {
+        let s = win_script();
+        for line in s.lines() {
+            // `rem` lines discuss the bug; the caret in `^|` is batch's escape.
+            if line.trim_start().starts_with("rem ") {
+                continue;
+            }
+            assert!(!line.contains('|'), "pipe in the Windows helper: {line}");
+            assert!(
+                !line.contains("in ('"),
+                "`for /f` over a command forks like a pipe: {line}"
+            );
+        }
+    }
+
+    // The poll reads a FILE by name, so `find` never opens stdin at all.
+    #[test]
+    fn the_windows_poll_goes_through_a_file() {
+        let s = win_script();
+        assert!(s.contains(r#"tasklist /nh /fi "PID eq %PID%" > "%ALIVE%""#), "{s}");
+        assert!(s.contains(r#"find /i "%PID%" "%ALIVE%""#), "{s}");
+        assert!(s.contains(r#"set "ALIVE=%DIR%\alive.txt""#), "{s}");
+    }
+
+    // The two `for /f` reads that replaced the command form take a quoted file,
+    // which needs `usebackq` to not be read as a literal string.
+    #[test]
+    fn the_windows_helper_reads_its_capture_files_with_usebackq() {
+        let s = win_script();
+        for line in s.lines().filter(|l| l.contains("for /f")) {
+            assert!(line.contains("usebackq"), "{line}");
+            assert!(line.contains("_OUT%\")"), "must read a file: {line}");
+        }
+    }
+
+    // REGRESSION: with DETACHED_PROCESS the helper has NO console, so Windows
+    // gives every console child it starts a new one — a terminal window per
+    // step. CREATE_NO_WINDOW gives the helper one windowless console that its
+    // children inherit instead.
+    #[test]
+    fn the_helper_is_spawned_with_a_hidden_console_not_detached() {
+        let flags = windows_creation_flags();
+        assert_eq!(flags & CREATE_NO_WINDOW, CREATE_NO_WINDOW);
+        assert_eq!(flags & CREATE_NEW_PROCESS_GROUP, CREATE_NEW_PROCESS_GROUP);
+        assert_eq!(
+            flags & DETACHED_PROCESS,
+            0,
+            "DETACHED_PROCESS pops a console window per child"
+        );
+    }
+
+    // The relaunched app must not inherit the helper's log handles, or it holds
+    // update.log open and `cleanup` cannot remove the directory.
+    #[test]
+    fn the_windows_relaunch_hands_the_app_no_stdio() {
+        assert!(win_script().contains(r#"start "" "%EXE%" <nul >nul 2>nul"#));
+    }
+
+    // An exe keeps its image lock for a moment after the process exits, and npm
+    // is about to overwrite exactly that file.
+    #[test]
+    fn the_windows_helper_settles_before_installing() {
+        let s = win_script();
+        let gone = s.find(":gone").unwrap();
+        let npm = s.find("call npm i -g francois@latest").unwrap();
+        assert!(s[gone..npm].contains("ping -n 3"), "{s}");
     }
 
     // FR-14: the wait gives up after 120 s, and does so WITHOUT running npm —
