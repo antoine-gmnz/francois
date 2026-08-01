@@ -1,0 +1,30 @@
+/* notifications: the status-bar "muted" chip (FR-19, design brief §1). Absent
+   in the default (both classes on) state — zero added chrome. A quiet warning,
+   not an alarm: --text-faint, no background change, no red, no animation. */
+
+.notify-muted-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0;
+  background: none;
+  border: 0;
+  font-family: inherit;
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.notify-muted-chip__glyph {
+  color: var(--text-faint);
+  line-height: 1;
+}
+
+.notify-muted-chip__label {
+  color: var(--text-faint);
+}
+
+.notify-muted-chip:hover .notify-muted-chip__label {
+  color: var(--text-hint);
+}

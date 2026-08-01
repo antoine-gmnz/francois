@@ -7,6 +7,7 @@ import type { Result } from '../../../contract/common';
 import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './palette';
 import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
 import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
+import { useNotificationsStore } from '../../lib/notificationsStore';
 import { useStore, type RightPane } from '../../lib/store';
 import { requestUsageRefresh } from '../usage/usage';
 import { requestWorktreePreset } from '../sessions/worktree';
@@ -366,6 +367,31 @@ export function registerBuiltinCommands(): void {
             .catch(() => showToast('Command failed unexpectedly', 'error'));
         },
       };
+    },
+  });
+
+  // 13d/13e — Notifications (notifications FR-18): the blocking class first,
+  // the noisy class second — the design brief's "non-destructive reads first"
+  // ordering. Each hint reads the live toggle; running a row flips it and the
+  // muted chip appears/disappears in the same frame.
+  registerPaletteCommand({
+    id: 'toggle-notify-attention',
+    glyph: '◈',
+    name: 'Notifications: approvals & questions',
+    hint: () => (useNotificationsStore.getState().enabled.attention ? 'on' : 'off'),
+    run: () => {
+      const st = useNotificationsStore.getState();
+      st.setNotifyEnabled('attention', !st.enabled.attention);
+    },
+  });
+  registerPaletteCommand({
+    id: 'toggle-notify-turn-done',
+    glyph: '◈',
+    name: 'Notifications: turn finished',
+    hint: () => (useNotificationsStore.getState().enabled.turnDone ? 'on' : 'off'),
+    run: () => {
+      const st = useNotificationsStore.getState();
+      st.setNotifyEnabled('turnDone', !st.enabled.turnDone);
     },
   });
 

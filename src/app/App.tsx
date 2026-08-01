@@ -4,6 +4,7 @@ import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab } from '../features/agents/agent-tab';
 import McpPanel from '../features/mcp/McpPanel';
+import { initNotifications } from '../features/notifications/notifications';
 import PaletteRoot from '../features/palette/PaletteView';
 import { registerBuiltinCommands } from '../features/palette/paletteCommands';
 import PermissionsModal from '../features/permissions/PermissionsModal';
@@ -71,6 +72,9 @@ export default function App() {
 
   useEffect(() => {
     initShellEvents();
+    // notifications FR-5: one app-wide subscription to francois://session/event
+    // (idempotent — a second mount effect never double-registers).
+    initNotifications();
   }, []);
 
   // multi-account §6: ONE app-wide registry feed — account_list at boot, then

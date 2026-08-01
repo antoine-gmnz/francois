@@ -7,6 +7,10 @@
     "core:default",
     "core:window:allow-set-title",
     "core:path:default",
-    "dialog:default"
+    "dialog:default",
+    "notification:default",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
+    "core:window:allow-is-focused"
   ]
 }
