@@ -20,6 +20,34 @@ pub(crate) fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> 
     project_id.filter(|_| still_linked)
 }
 
+/// session-rename FR-2: the name half of `session_create`'s validation, kept pure
+/// so the fallback branching is testable. `Ok(None)` means "no usable name was
+/// given" — the caller falls back to `basename(cwd)`, which is why a blank name
+/// never fails creation. A non-blank name is cleaned and capped like any rename.
+pub(crate) fn create_name(
+    name: Option<String>,
+) -> Result<Option<String>, (&'static str, &'static str)> {
+    match name.filter(|n| !clean_session_name(n).is_empty()) {
+        Some(raw) => validate_session_name(&raw).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// session-rename FR-3/FR-4: the engine half of `session_rename` — swap the name
+/// under the lock and hand back the updated snapshot. `None` when the id is
+/// unknown, in which case nothing was mutated. Persist + emit stay in the handler
+/// (they need the AppHandle), mirroring `apply_model_switch`.
+pub(crate) fn rename_in_engine(
+    engine: &Engine,
+    session_id: &str,
+    name: String,
+) -> Option<SessionMeta> {
+    engine.with_session_mut(session_id, |s| {
+        s.name = name;
+        s.meta()
+    })
+}
+
 /// FR-7/13's cwd/model/permission_mode/runtime/wsl-gate validation ladder for
 /// `session_create`. Pure aside from the FR-7 filesystem check. Returns the
 /// normalized (model_id, permission_mode, runtime) or an (code, message) error.
@@ -136,6 +164,14 @@ pub fn session_create(
             Ok(v) => v,
             Err((code, msg)) => return err(code, msg),
         };
+    // session-rename FR-2: validate the name here — pure, and BEFORE anything is
+    // spawned or a worktree is created, so an over-cap name orphans no git state.
+    // The basename(cwd) fallback is still applied below, against the post-worktree
+    // cwd, which is why this only decides the "a name was given" case.
+    let name = match create_name(name) {
+        Ok(n) => n,
+        Err((code, msg)) => return err(code, msg),
+    };
 
     // multi-account FR-18: resolve the account BEFORE anything is spawned or
     // created — an unknown id creates no session at all, and the create-time
@@ -351,6 +387,32 @@ pub(crate) fn apply_model_switch(
     Some(meta)
 }
 
+/// session-rename FR-3/FR-4/FR-5: `francois:session:rename`. Validates the raw
+/// input (FR-1), swaps the name, persists with the existing atomic write and emits
+/// `session.meta` — the frontend's single update path. Accepted in EVERY status:
+/// the name touches no process, no PTY, no claude session id and no worktree
+/// branch (§2 non-goals), so there is no `SESSION_NOT_RUNNING` path here.
+#[tauri::command(async)]
+pub fn session_rename(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    name: String,
+) -> IpcResult<Value> {
+    let name = match validate_session_name(&name) {
+        Ok(n) => n,
+        Err((code, msg)) => return err(code, msg),
+    };
+    let Some(meta) = rename_in_engine(&engine, &session_id, name) else {
+        return err("SESSION_NOT_FOUND", "session not found");
+    };
+    // FR-6: renaming to the identical name takes this same path — persisting and
+    // emitting is idempotent, and a divergent no-op branch would only add states.
+    persist(&app, &engine);
+    emit(&app, SessionEvent::Meta { meta: meta.clone() });
+    ok(serde_json::to_value(meta).unwrap())
+}
+
 #[tauri::command(async)]
 pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
     let mut map = engine.sessions.lock().unwrap();
@@ -373,6 +435,7 @@ pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::testutil::{test_engine_with, test_session};
 
     #[test]
     fn create_input_rejects_missing_cwd() {
@@ -399,6 +462,76 @@ mod tests {
 
         assert!(validate_create_input(cwd, None, Some("bogus".into()), None, false).is_err());
         assert!(validate_create_input(cwd, None, None, Some("bogus".into()), false).is_err());
+    }
+
+    // ---------- session-rename ----------
+
+    #[test]
+    fn create_name_falls_back_for_a_blank_or_absent_name() {
+        // FR-2: None, whitespace-only and control-only all mean "use basename(cwd)",
+        // which the caller applies when this returns None. Creation never fails here.
+        assert_eq!(create_name(None).unwrap(), None);
+        assert_eq!(create_name(Some("   ".into())).unwrap(), None);
+        assert_eq!(create_name(Some("\n\t".into())).unwrap(), None);
+    }
+
+    #[test]
+    fn create_name_cleans_and_caps() {
+        assert_eq!(
+            create_name(Some("  api\nrefactor ".into())).unwrap(),
+            // Stripped, not replaced by a space — FR-1 step 1 is a filter.
+            Some("apirefactor".to_string())
+        );
+        let (code, _) = create_name(Some("a".repeat(81))).unwrap_err();
+        assert_eq!(code, "INVALID_INPUT");
+        assert_eq!(
+            create_name(Some("a".repeat(80))).unwrap(),
+            Some("a".repeat(80))
+        );
+    }
+
+    #[test]
+    fn rename_in_engine_mutates_and_returns_the_updated_meta() {
+        // FR-4: the returned SessionMeta is the post-rename snapshot, and it is
+        // exactly what the accompanying session.meta emission carries.
+        let engine = test_engine_with(test_session());
+        let meta = rename_in_engine(&engine, "s1", "shipping lane".into()).unwrap();
+        assert_eq!(meta.name, "shipping lane");
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("shipping lane".to_string())
+        );
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["name"], "shipping lane");
+        assert_eq!(json["id"], "s1");
+    }
+
+    #[test]
+    fn rename_in_engine_is_none_for_an_unknown_id_and_mutates_nothing() {
+        // FR-3.
+        let engine = test_engine_with(test_session());
+        assert!(rename_in_engine(&engine, "nope", "x".into()).is_none());
+        assert_eq!(engine.with_session("s1", |s| s.name.clone()), Some("n".into()));
+    }
+
+    #[test]
+    fn rename_touches_no_process_state_in_any_status() {
+        // FR-5/FR-6: allowed while running, and renaming to the same name is a
+        // normal success. Nothing but `name` changes.
+        for status in ["idle", "running", "error"] {
+            let mut s = test_session();
+            s.status = status.into();
+            s.claude_session_id = Some("claude-1".into());
+            let engine = test_engine_with(s);
+            let meta = rename_in_engine(&engine, "s1", "n".into()).unwrap();
+            assert_eq!(meta.name, "n");
+            assert_eq!(meta.status, status);
+            assert_eq!(
+                engine.with_session("s1", |s| s.claude_session_id.clone()),
+                Some(Some("claude-1".into()))
+            );
+            assert_eq!(engine.with_session("s1", |s| s.worktree.is_none()), Some(true));
+        }
     }
 
     #[test]

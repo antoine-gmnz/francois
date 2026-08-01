@@ -9,6 +9,7 @@ import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPale
 import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
 import { useStore, type RightPane } from '../../lib/store';
 import { requestUsageRefresh } from '../usage/usage';
+import { checkUpdateManually } from '../update/update';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 
@@ -63,6 +64,20 @@ export function registerBuiltinCommands(): void {
     hint: () => 'spin up in cwd',
     run: () => {
       useStore.getState().setNewSessionOpen(true);
+    },
+  });
+
+  // 1b — Rename session (session-rename FR-14): opens the same modal the sidebar
+  // row's context menu opens, for the ACTIVE session. Not a SecondaryStep — it
+  // acts on one session, so it just opens the modal and closes the palette.
+  registerPaletteCommand({
+    id: 'rename-session',
+    glyph: '✎',
+    name: 'Rename session',
+    // design brief §3: this row carries no right-aligned hint.
+    enabled: (ctx) => ctx.activeSessionId !== null,
+    run: (ctx) => {
+      if (ctx.activeSessionId) useStore.getState().setRenameSessionId(ctx.activeSessionId);
     },
   });
 
@@ -352,6 +367,22 @@ export function registerBuiltinCommands(): void {
             .catch(() => showToast('Command failed unexpectedly', 'error'));
         },
       };
+    },
+  });
+
+  // 13e — Check for updates (self-update FR-9): always available, and the ONLY
+  // path that reports back a failed or up-to-date check — the launch check is
+  // silent (FR-7). Runs a fresh check, then opens the modal on the outcome.
+  registerPaletteCommand({
+    id: 'check-for-updates',
+    glyph: '↑',
+    name: 'Check for updates',
+    hint: () => {
+      const check = useStore.getState().update;
+      return check?.updateAvailable ? `${check.latest} available` : 'npm registry';
+    },
+    run: () => {
+      void checkUpdateManually();
     },
   });
 

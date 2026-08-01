@@ -103,6 +103,11 @@ export interface LayoutSlice {
   setNewSessionOpen: (o: boolean) => void;
   newAgentOpen: boolean;
   setNewAgentOpen: (o: boolean) => void;
+  // session-rename FR-12/FR-14: the session whose name is being edited, or null
+  // when the rename modal is closed. Lifted here — like newSessionOpen — because
+  // both the sidebar context menu and the ⌘K palette open the same modal.
+  renameSessionId: string | null;
+  setRenameSessionId: (sessionId: string | null) => void;
   // mcp-panel attach overlay — lifted to the store so the command palette can open it (FR-23)
   mcpAttachOpen: boolean;
   setMcpAttachOpen: (o: boolean) => void;
@@ -166,6 +171,8 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
   setNewSessionOpen: (newSessionOpen) => set({ newSessionOpen }),
   newAgentOpen: false,
   setNewAgentOpen: (newAgentOpen) => set({ newAgentOpen }),
+  renameSessionId: null,
+  setRenameSessionId: (renameSessionId) => set({ renameSessionId }),
   mcpAttachOpen: false,
   setMcpAttachOpen: (mcpAttachOpen) => set({ mcpAttachOpen }),
   permissionsOpen: false,

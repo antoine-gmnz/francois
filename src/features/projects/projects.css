@@ -239,56 +239,72 @@
   flex-shrink: 0;
 }
 
-/* ── ProjectSwitcher (pane [1] strip + dropdown) ────────────────────────── */
-.pjsw-root {
+/* ── title-bar switcher toggle (titlebar-project-switcher FR-1/FR-14) ──────
+   Re-sited from usage.css: this is the app's only project control, mounted
+   inside UsageBar's `.titlebar-brand` cluster (ProjectSwitcher.tsx). Class
+   names kept from design-refresh FR-4 so its earlier references still resolve. */
+.titlebar-path-wrap {
   position: relative;
-  flex-shrink: 0;
+  display: flex;
+  min-width: 0;
 }
-.pjsw-toggle {
-  height: 26px;
-  width: 100%;
+/* A real button, per the mock: 24px tall, --bg-hover fill inside a
+   --border-emphasis outline. */
+.titlebar-path {
   display: flex;
   align-items: center;
   gap: var(--space-7);
-  padding: 0 var(--space-12);
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--border);
+  height: 24px;
+  min-width: 0;
+  max-width: 320px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  padding: 0 var(--space-9);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   font-family: inherit;
-  text-align: left;
 }
-/* --bg-elevated is all but invisible against --bg-panel in the light theme;
-   --bg-hover is what every other interactive row in pane [1] uses (the
-   remove menu, the dropdown rows) and reads in both themes. */
-.pjsw-toggle--hover {
-  background: var(--bg-hover);
+.titlebar-path--hover {
+  background: var(--bg-hover-2);
 }
-.pjsw-glyph {
-  font-size: var(--font-size-8);
-  line-height: 1;
+.titlebar-path-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   flex-shrink: 0;
-  color: var(--text-muted);
 }
-.pjsw-glyph--filtered {
-  color: var(--accent);
+/* FR-5: the only always-visible signal a scoped project's checkout is gone. */
+.titlebar-path-dot--ok {
+  background: var(--success);
 }
-.pjsw-label {
+.titlebar-path-dot--missing {
+  background: var(--error);
+}
+.titlebar-path-dot--none {
+  background: var(--text-muted);
+}
+/* FR-15: it names a project now, not a path — --font-ui, not --font-mono. */
+.titlebar-path-text {
+  font-family: var(--font-ui);
   font-size: var(--font-size-11);
+  color: var(--text-2);
 }
-.pjsw-spacer {
-  flex: 1;
-}
-.pjsw-count {
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
+.titlebar-path-caret {
+  font-size: var(--font-size-9);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
+
+/* ── ProjectMenu (the shared "All projects | <name> | Manage projects…" dropdown) ── */
 .pjsw-dropdown {
   position: absolute;
   top: 100%;
+  /* FR-9: anchored under the toggle and sized to its own content — it no
+     longer stretches `left: 0; right: 0` across a 26px sidebar strip. */
   left: 0;
-  right: 0;
+  min-width: 260px;
+  max-width: 420px;
+  margin-top: var(--space-4);
   z-index: 40;
   background: var(--bg-panel);
   border: 1px solid var(--border-2);
@@ -296,15 +312,6 @@
   box-shadow: var(--shadow-card-sm);
   padding: var(--space-4) 0;
   animation: dropIn 90ms ease-out;
-}
-/* Anchored variant (the titlebar project button): that trigger sizes itself to
-   its label, so stretching the panel to `right: 0` would make it as narrow as a
-   short path. It takes its own width and hangs off the trigger's left edge. */
-.pjsw-dropdown--anchored {
-  right: auto;
-  min-width: 280px;
-  max-width: 440px;
-  margin-top: var(--space-4);
 }
 .pjsw-listbox {
   max-height: 260px;

@@ -14,6 +14,8 @@ import {
   AGENT_TAB_CAP,
   AGENT_TAB_NAME_MAX,
   CLOSED_TRANSCRIPT,
+  agentBannerMeta,
+  agentBannerShowsStop,
   agentIdFromTab,
   agentTabId,
   agentTabLabel,
@@ -253,6 +255,29 @@ describe('transcript state', () => {
     expect(earlierBlocksNotice(0)).toBeNull();
     expect(earlierBlocksNotice(1)).toBe('… 1 earlier block');
     expect(earlierBlocksNotice(50)).toBe('… 50 earlier blocks');
+  });
+});
+
+// ---------- provenance banner (design chore: "you are inside a subagent") ----------
+
+describe('agentBannerMeta', () => {
+  it('carries the parent session name and a pluralized, honest step count — no model, no ctx', () => {
+    expect(agentBannerMeta(1, 'Refactoring')).toEqual({ sessionName: 'Refactoring', stepsLabel: '1 step' });
+    expect(agentBannerMeta(14, 'Refactoring')).toEqual({ sessionName: 'Refactoring', stepsLabel: '14 steps' });
+    expect(agentBannerMeta(0, 'Refactoring')).toEqual({ sessionName: 'Refactoring', stepsLabel: '0 steps' });
+  });
+
+  it('reports no session name rather than inventing one when the parent is not in the store', () => {
+    expect(agentBannerMeta(3, null)).toEqual({ sessionName: null, stepsLabel: '3 steps' });
+  });
+});
+
+describe('agentBannerShowsStop', () => {
+  it('offers Stop only while the agent is actually running — sessionInterrupt has no per-agent kill', () => {
+    expect(agentBannerShowsStop('running')).toBe(true);
+    for (const status of ['idle', 'done', 'error'] as AgentStatus[]) {
+      expect(agentBannerShowsStop(status)).toBe(false);
+    }
   });
 });
 

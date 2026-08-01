@@ -857,11 +857,12 @@ dependencies = [
 
 [[package]]
 name = "francois"
-version = "0.15.8"
+version = "0.17.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
+ "libc",
  "notify",
  "portable-pty",
  "serde",

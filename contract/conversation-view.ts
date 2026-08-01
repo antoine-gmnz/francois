@@ -34,7 +34,7 @@ export interface UserConversationBlock extends ConversationBlockBase {
 export interface AssistantConversationBlock extends ConversationBlockBase {
   kind: 'assistant';
   glyph: '●';
-  glyphColor: '#8b93a3' | '#e0a84e';
+  glyphColor: '#8b93a3' | '#c3f53f';
   bodyColor: '#c3c9d4' | '#e6e9ef';
   text: string;
 }
@@ -85,7 +85,7 @@ export function assistantColors(isStreaming: boolean): {
   bodyColor: AssistantConversationBlock['bodyColor'];
 } {
   return isStreaming
-    ? { glyphColor: '#e0a84e', bodyColor: '#e6e9ef' }
+    ? { glyphColor: '#c3f53f', bodyColor: '#e6e9ef' }
     : { glyphColor: '#8b93a3', bodyColor: '#c3c9d4' };
 }
 

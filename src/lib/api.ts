@@ -35,6 +35,7 @@ import type { PermissionDecision, PermissionRule, PermissionTier } from '../../c
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { SessionCreateInput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
+import type { SessionRenameRequest, SessionRenameResponse } from '../../contract/session-rename';
 import type {
   Attachment,
   ClearAttachmentsResult,
@@ -49,6 +50,7 @@ import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
+import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
 
 // Exported so other invoke sites (e.g. ShellTerminal.tsx, which redefines this
 // byte-identically) can share the one wrapper instead of redeclaring it.
@@ -70,6 +72,9 @@ export const sessionCreate = (
   req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'> & Pick<SessionCreateInput, 'worktree'>,
 ) => ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
+// session-rename §5: mutate a session's display name. The core validates/cleans it
+// (FR-1) and emits session.meta — the frontend's single update path (FR-13).
+export const sessionRename = (req: SessionRenameRequest) => ipc<SessionRenameResponse>('session_rename', req);
 // session-worktree §5: probe a candidate cwd for worktree isolation (FR-1).
 export const sessionWorktreeProbe = (req: WorktreeProbeRequest) =>
   ipc<Result<WorktreeProbeData>>('session_worktree_probe', req);
@@ -230,6 +235,14 @@ export const appGetUsage = (accountId?: AccountId) =>
   ipc<Result<UsageSnapshot>>('app_get_usage', accountId ? { accountId } : undefined);
 export const appRefreshUsage = (accountId?: AccountId) =>
   ipc<Result<UsageRefreshAck>>('app_refresh_usage', accountId ? { accountId } : undefined);
+
+// self-update (§5). No payload either way, and NO event channel — the frontend
+// drives both calls: once at shell mount (FR-7, silent) and on demand from the
+// palette (FR-9). `app_apply_update` acks BEFORE the core starts shutting down
+// (FR-16), so a refusal (UPDATE_BLOCKED / UPDATE_APPLY_FAILED) always reaches
+// the webview.
+export const appCheckUpdate = () => ipc<CheckUpdateResult>('app_check_update');
+export const appApplyUpdate = () => ipc<ApplyUpdateResult>('app_apply_update');
 
 /** Subscribe to francois://app/event (usage.state, extensible tagged union). */
 export function onAppEvent(cb: (e: AppEvent) => void): Promise<UnlistenFn> {

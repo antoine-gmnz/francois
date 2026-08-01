@@ -25,6 +25,7 @@ import {
   filterSessionsByProject,
   type ProjectMeta,
 } from '../../../contract/projects';
+import { displayWslCwd } from '../../../contract/wsl-filesystem';
 
 // ---------- activeProjectId persistence (FR-26) ----------
 
@@ -184,6 +185,24 @@ export function buildSwitcherRows(
       mark: p.id === activeProjectId ? '✦' : '',
     })),
   ];
+}
+
+/** FR-5 (titlebar-project-switcher) — which tone the title-bar dot wears. */
+export type SwitcherDotTone = 'ok' | 'missing' | 'none';
+
+export function switcherDotTone(project: ProjectMeta | null): SwitcherDotTone {
+  if (!project) return 'none';
+  return project.rootExists ? 'ok' : 'missing';
+}
+
+/**
+ * FR-6 (titlebar-project-switcher) — the switcher button's `title`: the scoped
+ * project's root, else the active session's cwd, else `home`. A WSL cwd
+ * renders in its own compact form (`displayWslCwd`) rather than the raw UNC path.
+ */
+export function switcherTooltip(project: ProjectMeta | null, sessionCwd: string | null, home: string): string {
+  const raw = project?.root ?? sessionCwd ?? home;
+  return displayWslCwd(raw) ?? raw;
 }
 
 /** FR-29: the filtered-empty board state names the project. */

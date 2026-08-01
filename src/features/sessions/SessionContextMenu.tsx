@@ -29,6 +29,8 @@ export interface SessionContextMenuProps {
   worktree: SessionWorktree | null;
   containerRef: RefObject<HTMLDivElement>;
   onStartConfirm: () => void;
+  /** session-rename FR-12: closes the menu and opens the rename modal for this row. */
+  onRename: () => void;
   onCancel: () => void;
   onToggleRemoveWorktree: () => void;
   onRemove: (removeWorktree: boolean) => void;
@@ -41,6 +43,7 @@ export function SessionContextMenu({
   worktree,
   containerRef,
   onStartConfirm,
+  onRename,
   onCancel,
   onToggleRemoveWorktree,
   onRemove,
@@ -63,9 +66,17 @@ export function SessionContextMenu({
       {menu.error ? (
         <div className="context-menu__error">{menu.error.message}</div>
       ) : !menu.confirming ? (
-        <div className="context-menu__item" onClick={onStartConfirm}>
-          Remove session
-        </div>
+        // session-rename FR-12: the non-destructive action reads first; the
+        // destructive one stays last. Neither the confirm nor the error state
+        // offers rename — those are the remove flow, unchanged.
+        <>
+          <div className="context-menu__item" onClick={onRename}>
+            Rename session
+          </div>
+          <div className="context-menu__item" onClick={onStartConfirm}>
+            Remove session
+          </div>
+        </>
       ) : (
         <div className="context-menu__body context-menu__body--confirm">
           <div className="context-menu__confirm-text">remove '{sessionName}'?</div>

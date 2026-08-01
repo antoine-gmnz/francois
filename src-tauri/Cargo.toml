@@ -1,6 +1,6 @@
 [package]
 name = "francois"
-version = "0.15.8"
+version = "0.17.0"
 description = "Francois — Claude Code session orchestrator (preview)"
 edition = "2021"
 license = "AGPL-3.0-only"
@@ -33,6 +33,12 @@ notify = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # session-attachments: the clipboard image arrives as base64 over the IPC bridge.
 base64 = "0.22"
+
+# self-update FR-15: the relauncher is spawned DETACHED so it outlives the app.
+# On unix that means `setsid()` in a pre_exec hook — there is no std API for it,
+# and the `setsid(1)` binary does not exist on macOS.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
