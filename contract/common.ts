@@ -397,7 +397,9 @@ export type SessionEvent =
   | { type: 'message.user'; sessionId: SessionId; blockId: BlockId; text: string }
   | { type: 'assistant.delta'; sessionId: SessionId; blockId: BlockId; text: string } // streamed partial
   | { type: 'assistant.done'; sessionId: SessionId; blockId: BlockId }
-  | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string } // e.g. tool 'Read', summary 'src/auth/middleware.ts'
+  // e.g. tool 'Read', summary 'src/auth/middleware.ts'. `model` is set only on a
+  // subagent dispatch that named one — see SubagentConversationBlock.agentModel.
+  | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string }
   | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string } // e.g. '128 lines', '+34 −19'
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)

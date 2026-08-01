@@ -40,7 +40,7 @@ export type TranscriptAction =
   | { t: 'msgUser'; blockId: string; text: string }
   | { t: 'delta'; blockId: string; text: string }
   | { t: 'assistantDone'; blockId: string }
-  | { t: 'toolStart'; blockId: string; tool: string; summary: string }
+  | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string }
   | { t: 'toolDone'; blockId: string; meta: string }
   | { t: 'commandStarted'; blockId: string; command: string } // interactive-commands FR-20
   | { t: 'commandOutput'; blockId: string; card: CommandCard } // interactive-commands FR-20
@@ -154,7 +154,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
     }
     case 'toolStart': {
       if (idx(a.blockId) !== -1) return state;
-      return { blocks: [...state.blocks, classifyToolStart(a.tool, a.summary, a.blockId)] };
+      return { blocks: [...state.blocks, classifyToolStart(a.tool, a.summary, a.blockId, a.model)] };
     }
     case 'toolDone': {
       const i = idx(a.blockId);
@@ -365,7 +365,8 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   },
   'assistant.delta': (dispatch, _setters, e) => dispatch({ t: 'delta', blockId: e.blockId, text: e.text }),
   'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId }),
-  'tool.start': (dispatch, _setters, e) => dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary }),
+  'tool.start': (dispatch, _setters, e) =>
+    dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model }),
   'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta }),
   // interactive-commands FR-20: pending command block (loading card)
   'command.started': (dispatch, _setters, e) => dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command }),
