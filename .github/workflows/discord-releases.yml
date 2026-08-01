@@ -1,0 +1,246 @@
+name: Discord release notification
+
+# Notifie un thread de forum Discord à chaque bump de version poussé sur main.
+#
+# Source de vérité du bump : le champ "version" du package.json.
+# Source du contenu       : la section en tête de CHANGELOG.md (`## X.Y.Z — YYYY-MM-DD`).
+#
+# Le CHANGELOG est OPTIONNEL : absent, vide, ou dont l'en-tête ne correspond pas à la
+# version du package.json, l'embed part quand même — titre seul, sans description.
+# Un changelog douteux ne bloque pas la notif, mais n'est jamais posté tel quel.
+#
+# Secrets attendus (Settings > Secrets and variables > Actions) :
+#   DISCORD_FORUM_WEBHOOK  webhook du salon forum (https://discord.com/api/webhooks/<id>/<token>)
+#   DISCORD_THREAD_ID      id du thread de ce repo dans le forum
+#   DISCORD_THREAD_MAP     (optionnel) JSON {"<dir>": "<thread_id>"} pour un repo multi-packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'CHANGELOG.md'
+      - '**/package.json'
+      - '**/CHANGELOG.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-releases-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    name: Notify Discord forum
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Nécessaire pour `git show <before>:...`.
+          fetch-depth: 0
+
+      - name: Notify Discord
+        # Une panne Discord ne doit jamais faire échouer le workflow.
+        continue-on-error: true
+        env:
+          # Liste des packages à surveiller, un par ligne. "." = package à la racine.
+          # Pour un repo multi-packages : ajouter les chemins (ex. packages/branding).
+          PACKAGES: |
+            .
+          DISCORD_FORUM_WEBHOOK: ${{ secrets.DISCORD_FORUM_WEBHOOK }}
+          DISCORD_THREAD_ID: ${{ secrets.DISCORD_THREAD_ID }}
+          DISCORD_THREAD_MAP: ${{ secrets.DISCORD_THREAD_MAP }}
+          BEFORE: ${{ github.event.before }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+
+          NULL_SHA=0000000000000000000000000000000000000000
+          MAX_LEN=3800
+
+          notified=()
+          skipped=()
+
+          warn() { echo "::warning::$*"; }
+
+          # Thread cible : entrée de DISCORD_THREAD_MAP pour ce dossier, sinon DISCORD_THREAD_ID.
+          resolve_thread() {
+            local dir="$1" id=''
+            if [ -n "${DISCORD_THREAD_MAP:-}" ]; then
+              id=$(printf '%s' "$DISCORD_THREAD_MAP" | jq -r --arg d "$dir" '.[$d] // empty' 2>/dev/null) || id=''
+            fi
+            [ -n "$id" ] || id="${DISCORD_THREAD_ID:-}"
+            printf '%s' "$id"
+          }
+
+          # Traite un package. 0 = notifié, 1 = ignoré (raison déjà enregistrée dans `skipped`).
+          # Aucun `set -e` implicite ici : la fonction est appelée en contexte `|| true`,
+          # donc chaque commande faillible est testée explicitement.
+          process_pkg() {
+            local dir="$1"
+            local prefix label thread curr prev prev_json head_line head_ver section note payload
+            local tmp cfg body err rc
+
+            if [ "$dir" = "." ]; then prefix=''; else prefix="$dir/"; fi
+
+            # --- 1. version actuelle -------------------------------------------------
+            if [ ! -f "${prefix}package.json" ]; then
+              skipped+=("\`$dir\` — ${prefix}package.json introuvable")
+              warn "$dir: ${prefix}package.json introuvable."
+              return 1
+            fi
+            curr=$(jq -r '.version // empty' "${prefix}package.json") || curr=''
+            if [ -z "$curr" ]; then
+              skipped+=("\`$dir\` — champ .version illisible dans ${prefix}package.json")
+              warn "$dir: champ .version illisible dans ${prefix}package.json."
+              return 1
+            fi
+
+            # Nom affiché : nom du repo pour le package racine, nom npm (sans scope) sinon.
+            if [ "$dir" = "." ]; then
+              label="$REPO_NAME"
+            else
+              label=$(jq -r '.name // empty' "${prefix}package.json" | sed 's#^@[^/]*/##')
+              [ -n "$label" ] || label=$(basename "$dir")
+            fi
+
+            # --- 1bis. version d'avant le push --------------------------------------
+            if [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "$NULL_SHA" ]; then
+              skipped+=("\`$label\` — pas de commit précédent (branche neuve)")
+              echo "$dir: pas de commit précédent, rien à notifier."
+              return 1
+            fi
+            if ! prev_json=$(git show "$BEFORE:${prefix}package.json" 2>/dev/null); then
+              skipped+=("\`$label\` — package.json absent du commit précédent")
+              echo "$dir: pas de version précédente à $BEFORE, rien à notifier."
+              return 1
+            fi
+            prev=$(printf '%s' "$prev_json" | jq -r '.version // empty' 2>/dev/null) || prev=''
+            if [ -z "$prev" ]; then
+              skipped+=("\`$label\` — version précédente illisible")
+              echo "$dir: version précédente illisible, rien à notifier."
+              return 1
+            fi
+            if [ "$curr" = "$prev" ]; then
+              skipped+=("\`$label\` — version inchangée ($curr)")
+              echo "$dir: version inchangée ($curr)."
+              return 1
+            fi
+
+            # --- 2/3/4. section de changelog — OPTIONNELLE ---------------------------
+            # `section` vide => l'embed part avec le titre seul. `note` dit pourquoi.
+            section=''
+            note=''
+            if [ ! -f "${prefix}CHANGELOG.md" ]; then
+              note="pas de ${prefix}CHANGELOG.md"
+              echo "$dir: $note — notification nue pour v$curr."
+            else
+              # Cohérence en-tête du changelog <-> package.json.
+              head_line=$(awk '/^## /{ print; exit }' "${prefix}CHANGELOG.md")
+              head_ver=$(printf '%s\n' "$head_line" \
+                | sed -nE 's/^##[[:space:]]*v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?).*/\1/p')
+              if [ -z "$head_line" ]; then
+                note="aucune section '## ' dans ${prefix}CHANGELOG.md"
+                echo "$dir: $note — notification nue pour v$curr."
+              elif [ "$head_ver" != "$curr" ]; then
+                # Jamais le changelog d'une autre version : on dégrade en notif nue.
+                note="changelog incohérent (en-tête « $head_line » ≠ package.json $curr)"
+                warn "$dir: $note — notification envoyée sans changelog."
+              else
+                tmp=$(mktemp)
+                awk '/^## /{ if (n++) exit; next } n' "${prefix}CHANGELOG.md" > "$tmp"
+                if [ ! -s "$tmp" ]; then
+                  note="section de changelog vide pour $curr"
+                  echo "$dir: $note — notification nue."
+                elif [ "$(wc -c < "$tmp")" -gt "$MAX_LEN" ]; then
+                  # Troncature sur une frontière de ligne.
+                  section=$(head -c "$MAX_LEN" "$tmp" | sed '$d')
+                  # Cas limite : les 3800 premiers octets tiennent sur une seule ligne.
+                  [ -n "$section" ] || section=$(head -c "$MAX_LEN" "$tmp")
+                  section="$section"$'\n''…'
+                else
+                  section=$(cat "$tmp")
+                fi
+                rm -f "$tmp"
+              fi
+            fi
+
+            # --- 5. envoi Discord ----------------------------------------------------
+            thread=$(resolve_thread "$dir")
+            if [ -z "${DISCORD_FORUM_WEBHOOK:-}" ]; then
+              skipped+=("\`$label\` — secret DISCORD_FORUM_WEBHOOK absent")
+              warn "$dir: secret DISCORD_FORUM_WEBHOOK absent, notification v$curr non envoyée."
+              return 1
+            fi
+            if [ -z "$thread" ]; then
+              skipped+=("\`$label\` — aucun thread Discord configuré")
+              warn "$dir: aucun thread Discord configuré (DISCORD_THREAD_ID / DISCORD_THREAD_MAP), notification v$curr non envoyée."
+              return 1
+            fi
+
+            # Payload construit par jq : le changelog contient guillemets et retours à la ligne.
+            # Pas de section exploitable => la clé "description" est simplement omise.
+            payload=$(mktemp)
+            jq -n \
+              --arg title "$label v$curr" \
+              --arg description "$section" \
+              --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{embeds: [ {title: $title, color: 3066993, timestamp: $timestamp}
+                          + (if $description == "" then {} else {description: $description} end) ]}' \
+              > "$payload"
+
+            # L'URL passe par un fichier de config (mode 600) : jamais dans argv, jamais dans les logs.
+            cfg=$(mktemp)
+            printf 'url = "%s"\n' "${DISCORD_FORUM_WEBHOOK}?thread_id=${thread}&wait=true" > "$cfg"
+
+            body=$(mktemp); err=$(mktemp); rc=0
+            curl -sS --fail-with-body --config "$cfg" \
+              -X POST -H 'Content-Type: application/json' \
+              --data-binary "@$payload" -o "$body" 2>"$err" || rc=$?
+            rm -f "$cfg" "$payload"
+
+            if [ "$rc" -eq 0 ]; then
+              rm -f "$body" "$err"
+              if [ -n "$section" ]; then
+                notified+=("\`$label\` v$curr")
+              else
+                notified+=("\`$label\` v$curr _(sans changelog — $note)_")
+              fi
+              echo "$dir: notification envoyée pour v$curr."
+              return 0
+            fi
+
+            # Diagnostic sans fuite : toute URL présente dans stderr est masquée.
+            warn "$dir: échec de l'envoi Discord pour v$curr (curl $rc) — $(
+              { head -c 400 "$body"; printf ' '; head -c 200 "$err"; } \
+                | tr '\n\r' '  ' | sed -E 's#https?://[^ ]*#<url masquée>#g'
+            )"
+            rm -f "$body" "$err"
+            skipped+=("\`$label\` — échec de l'appel Discord (v$curr)")
+            return 1
+          }
+
+          # Un package en échec ne doit pas interrompre les autres.
+          while IFS= read -r dir; do
+            [ -n "$dir" ] || continue
+            process_pkg "$dir" || true
+          done <<< "$PACKAGES"
+
+          # --- résumé ---------------------------------------------------------------
+          {
+            echo "### Notifications Discord"
+            if [ "${#notified[@]}" -gt 0 ]; then
+              joined=$(printf ', %s' "${notified[@]}")
+              echo "- **Notifiés** : ${joined:2}"
+            else
+              echo "- **Notifiés** : aucun"
+            fi
+            if [ "${#skipped[@]}" -gt 0 ]; then
+              echo "- **Ignorés** :"
+              printf '  - %s\n' "${skipped[@]}"
+            else
+              echo "- **Ignorés** : aucun"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
