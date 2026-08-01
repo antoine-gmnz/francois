@@ -23,7 +23,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, ChildStdin};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 
@@ -85,6 +85,14 @@ pub(crate) fn run_reader(
     let turn_cmd: Option<String> = parse_command(&text).map(|(c, _)| c);
     let mut saw_synthetic = false;
     let mut result_text: Option<String> = None;
+    // permission-guardrails FR-2, post-result close policy (see session/stdio.rs):
+    // the CLI's running-background-task count and the wall clock of the last line
+    // it sent. Both are read by the closer thread, which decides when the control
+    // channel may finally close — a background subagent's `can_use_tool` raised
+    // after our stdin EOF never reaches Francois at all.
+    let bg_tasks = Arc::new(AtomicUsize::new(0));
+    let last_line_at = Arc::new(AtomicU64::new(now_ms()));
+    let mut closer_armed = false;
 
     let cwd = {
         let engine = app.state::<Engine>();
@@ -96,6 +104,7 @@ pub(crate) fn run_reader(
 
     for line in reader.lines() {
         let Ok(line) = line else { break };
+        last_line_at.store(now_ms(), Ordering::Relaxed); // feeds the post-result quiet window
         let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -132,6 +141,9 @@ pub(crate) fn run_reader(
         let line_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
         match line_type {
             "system" => {
+                if let Some(running) = parse_background_tasks(&v) {
+                    bg_tasks.store(running, Ordering::Relaxed);
+                }
                 if handle_system_line(&app, &session_id, &cwd, &v) {
                     got_init = true;
                 }
@@ -161,12 +173,18 @@ pub(crate) fn run_reader(
             }
             "result" => {
                 got_result = true;
-                handle_result_line(
-                    &v,
-                    &mut ctx_usage,
+                handle_result_line(&v, &mut ctx_usage, &mut result_error, &mut result_text);
+                // The result no longer closes the control channel by itself: a
+                // background subagent dispatched by this turn outlives it, and
+                // the CLI throws away every permission ask raised after our
+                // stdin EOF (session/stdio.rs).
+                close_or_hold_channel(
                     &stdin,
-                    &mut result_error,
-                    &mut result_text,
+                    &pending_questions,
+                    &pending_permissions,
+                    &bg_tasks,
+                    &last_line_at,
+                    &mut closer_armed,
                 );
             }
             "control_request" => {

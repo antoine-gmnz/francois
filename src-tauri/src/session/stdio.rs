@@ -8,8 +8,134 @@ use crate::permissions::PermissionRule;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::ChildStdin;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
+
+// ---------- when the control channel closes (permission-guardrails FR-2) ----------
+//
+// Our stdin is the CLI's control channel AND its EOF signal: `--input-format
+// stream-json` keeps the child alive until stdin closes, so something has to
+// close it. It used to be the `result` line, on the assumption that nothing can
+// be outstanding past a turn's result.
+//
+// That assumption is false for background subagents. A turn that dispatches one
+// (`Agent` with `run_in_background`, the harness default) emits its `result` and
+// keeps going — the subagent's own tool calls land AFTER it. And the CLI treats
+// our EOF as `inputClosed`: every `can_use_tool` it raises from then on is
+// thrown away at the source with `AbortError: Stream closed`, so no
+// `control_request` ever reaches Francois, no approval card is ever shown, and
+// the subagent gets a hard deny it did not ask for. Verified against the CLI:
+// with stdin closed at the result, a background subagent's Bash comes back as
+// `Tool permission request failed: AbortError: Stream closed`.
+//
+// So the result only closes the channel when nothing is outstanding (the common
+// turn — no latency change). Otherwise a closer thread holds it open until the
+// CLI's background tasks have drained, no ask is parked, and the stream has gone
+// quiet — with a hard ceiling so a wedged task can never keep a child alive.
+
+/// Quiet stream time required before the held-open channel closes. Covers the
+/// gap between the last background task draining and the follow-up turn the CLI
+/// runs to report it.
+const POST_RESULT_QUIET_MS: u64 = 2_000;
+
+/// Hard ceiling on how long the channel may outlive the turn's `result`, mirroring
+/// the CLI's own `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` default (10 minutes).
+/// A parked ask does NOT get to ignore it — an unanswered card is not a reason to
+/// keep a child process alive forever; the turn-end drain cancels it as always.
+const POST_RESULT_CEILING_MS: u64 = 600_000;
+
+/// How often the closer thread re-checks. Cheap: three uncontended locks.
+const CLOSER_POLL_MS: u64 = 100;
+
+/// What the closer thread should do on this tick.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ChannelClose {
+    /// Close the stdin writer — the CLI has nothing left that could need it.
+    Now,
+    /// Keep it open; something is still outstanding.
+    Hold,
+}
+
+/// FR-2: may the turn's `result` line close the control channel outright?
+/// Only when the CLI has nothing left in flight — no background task that will
+/// keep making tool calls, no ask already parked on a card.
+pub(crate) fn result_closes_channel(bg_tasks: usize, parked: usize) -> bool {
+    bg_tasks == 0 && parked == 0
+}
+
+/// FR-2: the held-open channel's close decision. Pure; unit-tested.
+pub(crate) fn post_result_close(
+    bg_tasks: usize,
+    parked: usize,
+    quiet_ms: u64,
+    since_result_ms: u64,
+) -> ChannelClose {
+    if since_result_ms >= POST_RESULT_CEILING_MS {
+        return ChannelClose::Now; // backstop — never outlive the turn indefinitely
+    }
+    if bg_tasks > 0 || parked > 0 {
+        return ChannelClose::Hold;
+    }
+    if quiet_ms < POST_RESULT_QUIET_MS {
+        return ChannelClose::Hold; // a late ask may still be on its way
+    }
+    ChannelClose::Now
+}
+
+/// Apply the close policy at the turn's `result` line: close the channel now, or
+/// arm the closer thread that will. `armed` makes the arming once-only — a turn
+/// that emits several `result` lines (the CLI runs a follow-up turn to report a
+/// finished background task) must not spawn a closer per result.
+pub(crate) fn close_or_hold_channel(
+    stdin: &Arc<Mutex<Option<ChildStdin>>>,
+    pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
+    pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
+    bg_tasks: &Arc<AtomicUsize>,
+    last_line_at: &Arc<AtomicU64>,
+    armed: &mut bool,
+) {
+    let parked = parked_count(pending_questions, pending_permissions);
+    if result_closes_channel(bg_tasks.load(Ordering::Relaxed), parked) {
+        *stdin.lock().unwrap() = None;
+        return;
+    }
+    if *armed {
+        return;
+    }
+    *armed = true;
+    let stdin = stdin.clone();
+    let pending_questions = pending_questions.clone();
+    let pending_permissions = pending_permissions.clone();
+    let bg_tasks = bg_tasks.clone();
+    let last_line_at = last_line_at.clone();
+    let resulted_at = now_ms();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(CLOSER_POLL_MS));
+        if stdin.lock().unwrap().is_none() {
+            return; // the reader's own teardown got there first
+        }
+        let decision = post_result_close(
+            bg_tasks.load(Ordering::Relaxed),
+            parked_count(&pending_questions, &pending_permissions),
+            now_ms().saturating_sub(last_line_at.load(Ordering::Relaxed)),
+            now_ms().saturating_sub(resulted_at),
+        );
+        if decision == ChannelClose::Now {
+            *stdin.lock().unwrap() = None;
+            return;
+        }
+    });
+}
+
+/// How many asks are parked on a card right now, across both maps. Never taken
+/// while holding Engine.sessions (the file-wide lock rule).
+fn parked_count(
+    pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
+    pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
+) -> usize {
+    pending_questions.lock().unwrap().len() + pending_permissions.lock().unwrap().len()
+}
 
 /// Serialize + write one NDJSON control line to the turn's stdin. Every stdin
 /// write goes through the handle's own mutex (reader-thread denies vs.
@@ -196,6 +322,54 @@ mod tests {
     use super::*;
     use crate::session::testutil::*;
     use serde_json::json;
+
+    #[test]
+    fn result_closes_the_channel_only_when_nothing_is_outstanding() {
+        // The ordinary turn: nothing in flight, so the result closes stdin
+        // exactly as it always did — no added latency on the common path.
+        assert!(result_closes_channel(0, 0));
+        // THE BUG: a turn that dispatched a background subagent emits its result
+        // while that subagent is still making tool calls. Closing here is what
+        // made the CLI throw `AbortError: Stream closed` at every `can_use_tool`
+        // it raised afterwards — no control_request, no card, a silent deny.
+        assert!(!result_closes_channel(1, 0));
+        // An ask already parked on a card must never have its channel pulled.
+        assert!(!result_closes_channel(0, 1));
+        assert!(!result_closes_channel(2, 3));
+    }
+
+    #[test]
+    fn held_channel_closes_once_background_tasks_drain_and_the_stream_goes_quiet() {
+        let quiet = POST_RESULT_QUIET_MS;
+        // A running background task holds the channel however quiet it has gone —
+        // it may raise a permission ask at any moment.
+        assert_eq!(post_result_close(1, 0, quiet, 0), ChannelClose::Hold);
+        assert_eq!(
+            post_result_close(1, 0, quiet * 10, 60_000),
+            ChannelClose::Hold
+        );
+        // So does a parked card: the user is still deciding.
+        assert_eq!(post_result_close(0, 1, quiet * 10, 0), ChannelClose::Hold);
+        // Drained but not yet quiet — a late ask may still be in flight.
+        assert_eq!(post_result_close(0, 0, quiet - 1, 0), ChannelClose::Hold);
+        // Drained AND quiet: the CLI has nothing left, close so it can exit.
+        assert_eq!(post_result_close(0, 0, quiet, 0), ChannelClose::Now);
+    }
+
+    #[test]
+    fn the_ceiling_closes_the_channel_whatever_is_outstanding() {
+        // A wedged background task (or a card no one ever answers) must never
+        // keep a child process alive forever — the turn-end drain then cancels
+        // the card exactly as it does for any other dead child (FR-10).
+        assert_eq!(
+            post_result_close(1, 1, 0, POST_RESULT_CEILING_MS),
+            ChannelClose::Now
+        );
+        assert_eq!(
+            post_result_close(1, 1, 0, POST_RESULT_CEILING_MS - 1),
+            ChannelClose::Hold
+        );
+    }
 
     #[test]
     fn question_block_lifecycle_pending_answered() {

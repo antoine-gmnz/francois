@@ -106,11 +106,15 @@ fn parse_result_line(v: &Value) -> ResultLine {
 }
 
 /// `type: "result"` lines end the turn. Updates the running context-usage
-/// estimate and drops the stdin writer.
+/// estimate.
+///
+/// It does NOT close the stdin writer any more — `close_or_hold_channel`
+/// owns that decision now, because the CLI keeps working past its own
+/// `result` (see the module doc on the post-result close policy in
+/// `session/stdio.rs`).
 pub(crate) fn handle_result_line(
     v: &Value,
     ctx_usage: &mut ContextTracker,
-    stdin: &Arc<Mutex<Option<ChildStdin>>>,
     result_error: &mut Option<String>,
     result_text: &mut Option<String>,
 ) {
@@ -124,11 +128,24 @@ pub(crate) fn handle_result_line(
     if let Some(usage) = v.get("usage") {
         ctx_usage.observe_result(usage);
     }
-    // session-questions FR-2: the result ends the turn — dropping the
-    // stdin writer is what lets the CLI exit (stream-json input mode
-    // waits for EOF otherwise). No question can be pending past its
-    // result: a parked request blocks it.
-    *stdin.lock().unwrap() = None;
+}
+
+/// The CLI's own census of running background tasks, off a
+/// `system` / `background_tasks_changed` line: `tasks` is the FULL current
+/// list, so its length is the count (an empty array means "all drained").
+///
+/// This is the signal the post-result close policy reads. It is authoritative
+/// and it always precedes the `result` line — a background subagent can only be
+/// dispatched by a tool call the turn already made.
+pub(crate) fn parse_background_tasks(v: &Value) -> Option<usize> {
+    if v.get("subtype").and_then(|subtype| subtype.as_str()) != Some("background_tasks_changed") {
+        return None;
+    }
+    Some(
+        v.get("tasks")
+            .and_then(|tasks| tasks.as_array())
+            .map_or(0, |tasks| tasks.len()),
+    )
 }
 
 /// `type: "control_cancel_request"` lines: the CLI withdrew a parked
@@ -410,6 +427,29 @@ mod tests {
             Some("the turn ended with an error".to_string())
         );
         assert_eq!(parsed.text, None);
+    }
+
+    // ---------- parse_background_tasks (system/background_tasks_changed) ----------
+
+    #[test]
+    fn parse_background_tasks_counts_the_full_task_list() {
+        let line = |tasks: Value| {
+            json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": tasks })
+        };
+        assert_eq!(
+            parse_background_tasks(&line(json!([{ "task_id": "a" }, { "task_id": "b" }]))),
+            Some(2)
+        );
+        // `tasks: []` is the drained signal the close policy waits for — it must
+        // read as Some(0), never as "no information".
+        assert_eq!(parse_background_tasks(&line(json!([]))), Some(0));
+        // Any other system line carries no census at all, so it must not reset
+        // the count to zero behind a still-running background subagent.
+        assert_eq!(
+            parse_background_tasks(&json!({ "type": "system", "subtype": "init" })),
+            None
+        );
+        assert_eq!(parse_background_tasks(&json!({ "type": "result" })), None);
     }
 
     // ---------- take_pending_by_request_id (control_cancel_request) ----------

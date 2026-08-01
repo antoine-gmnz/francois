@@ -160,6 +160,20 @@ trusted: it lists rules across both tiers and can toggle, delete, or re-tier eac
 
 **Deciding (core)**
 
+- **FR-2b** (**the control channel outlives the turn's `result`**, amended Round 2): the turn's stdin
+  is both the control channel and the CLI's EOF signal, and it used to be closed on the `result`
+  line — on the assumption that nothing can be outstanding past a turn's result. That is false for
+  **background subagents**: a turn that dispatches one (`Agent` with `run_in_background`, the
+  harness default) emits its `result` and keeps running, so the subagent's tool calls land *after*
+  it. The CLI reads our EOF as `inputClosed` and from then on throws away every `can_use_tool` it
+  raises at the source (`AbortError: Stream closed`) — **no `control_request` reaches Francois, no
+  card is ever shown, and the subagent takes a deny nobody chose**. So the `result` closes the
+  channel only when nothing is outstanding (no running background task, no parked ask — the common
+  turn, unchanged); otherwise a closer thread holds it open until the CLI's own
+  `system`/`background_tasks_changed` census drains to zero, no ask is parked, and the stream has
+  been quiet for 2s. A hard ceiling of 10 minutes past the result (the CLI's own
+  `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` default) closes it regardless, so a wedged background task
+  or an unanswered card can never keep a child process alive indefinitely.
 - **FR-6**: `francois:permissions:decide` (§5.1) takes `{sessionId, blockId, decision, tier?}`.
   `decision ∈ {allowOnce, denyOnce, allowAlways, denyAlways}`; `tier ∈ {local, global}` defaults to
   `local` and is ignored by the `*Once` decisions.
@@ -467,6 +481,8 @@ simultaneously removed from `settings.local.json`:
 | 14 | The same pattern exists in both tiers | Two rules, two ids, both listed with their tier chip (FR-16/FR-17). |
 | 15 | Effect array in settings contains a non-string | Skipped on read; preserved on write (the write only appends/filters strings). |
 | 16 | Card decided from a stale UI after the turn ended | `PERMISSION_NOT_PENDING`; the card was already `cancelled` by the turn-end drain (FR-10). |
+| 17 | Background subagent asks for permission after the parent turn's `result` | The channel is still open (FR-2b), so the ask parks a card like any other and the subagent waits on the user's decision. Before FR-2b the CLI threw the ask away with `AbortError: Stream closed` and the call was denied with nothing rendered anywhere. |
+| 18 | Background task never finishes / card never answered | The FR-2b ceiling (10 min past the result) closes the channel anyway; the child exits and the turn-end drain cancels the card (FR-10). |
 
 ## 8. Design brief
 
