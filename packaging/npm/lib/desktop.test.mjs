@@ -16,6 +16,7 @@ const {
   desktopIconPath,
   install,
   remove,
+  shortcutWorkingDir,
   startMenuShortcut,
   uninstallRegistryKey,
 } = require('./desktop.js');
@@ -48,6 +49,19 @@ describe('startMenuShortcut', () => {
 
   it('returns null when APPDATA is not set rather than guessing a path', () => {
     expect(startMenuShortcut('Francois', '')).toBeNull();
+  });
+});
+
+describe('shortcutWorkingDir', () => {
+  // REGRESSION: the shortcut used to start the app in `…/francois/vendor`. A cwd
+  // is an open handle, inherited by every child — including the self-update
+  // helper — so npm could never rename the package away and each self-update
+  // died with `EBUSY ... rename '...\francois\vendor'`.
+  it('never starts the app inside the package npm replaces', () => {
+    const home = 'C:\\Users\\x';
+    expect(shortcutWorkingDir(home)).toBe(home);
+    expect(shortcutWorkingDir(home)).not.toContain('node_modules');
+    expect(shortcutWorkingDir()).toBe(os.homedir());
   });
 });
 

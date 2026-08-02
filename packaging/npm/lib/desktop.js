@@ -38,6 +38,20 @@ function startMenuShortcut(productName, appData = process.env.APPDATA) {
   return path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', `${productName}.lnk`);
 }
 
+/**
+ * Where a launched Francois should START, which is anywhere but its own package.
+ *
+ * A process's working directory is an open handle on that directory, and it is
+ * inherited by everything the app spawns. Pointing it at `…/francois/vendor`
+ * meant the self-update helper — a child of the app — held the exact directory
+ * npm has to rename during `npm i -g francois@latest`, so every self-update
+ * failed with `EBUSY: resource busy or locked, rename '...\francois\vendor'`.
+ * The home directory owes nothing to the install and is never replaced.
+ */
+function shortcutWorkingDir(home = os.homedir()) {
+  return home;
+}
+
 function uninstallRegistryKey(channel) {
   return `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${appId(channel)}`;
 }
@@ -117,7 +131,7 @@ function installWindows({ executable, productName, channel, appVersion, notes })
     [
       '$s = (New-Object -ComObject WScript.Shell).CreateShortcut(' + psQuote(shortcut) + ');',
       '$s.TargetPath = ' + psQuote(executable) + ';',
-      '$s.WorkingDirectory = ' + psQuote(path.dirname(executable)) + ';',
+      '$s.WorkingDirectory = ' + psQuote(shortcutWorkingDir()) + ';',
       "$s.Description = 'Mission control for your Claude Code fleet';",
       '$s.Save()',
     ].join(' '),
@@ -275,6 +289,7 @@ module.exports = {
   desktopIconPath,
   install,
   remove,
+  shortcutWorkingDir,
   startMenuShortcut,
   uninstallRegistryKey,
 };
