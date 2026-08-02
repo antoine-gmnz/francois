@@ -2,39 +2,50 @@
 //!
 //! Claude Code gates project-scope `.mcp.json` servers behind a first-run consent
 //! dialog ("New MCP server found in this project"), and an untrusted folder
-//! behind a trust dialog. Both answers are stored in the CLI's own user store —
-//! `<claude config>/.claude.json`, under `projects[<key>]`:
+//! behind a trust dialog. Where the answers live was VERIFIED against the shipped
+//! CLI (2.1.220) by driving `claude -p` runs against controlled stores, because
+//! the store moved between CLI generations and a decision written where the CLI
+//! no longer reads simply does nothing:
 //!
-//!   enabledMcpjsonServers  — the names the user said yes to
-//!   disabledMcpjsonServers — the names the user said no to
-//!   hasTrustDialogAccepted — the folder-trust answer
+//!   - The consent answer lives in the PROJECT's `.claude/settings.local.json`
+//!     (`enabledMcpjsonServers` / `disabledMcpjsonServers`). That is what the
+//!     interactive dialog writes today. The legacy copies of those two arrays on
+//!     the `~/.claude.json` project node are MIGRATED into it (unioned) on the
+//!     next CLI run and stripped from the node.
+//!   - The folder-trust answer still lives on the `~/.claude.json` project node
+//!     (`hasTrustDialogAccepted`), under `getProjectPathForConfig()` — the git
+//!     repository root of the cwd (see `cli_project_key`) — and resolves through
+//!     every ANCESTOR of the cwd (see `trust_accepted`).
 //!
-//! `<key>` is NOT the cwd: it is `getProjectPathForConfig()`, the git repository
-//! root of the cwd (see `cli_project_key`), and trust additionally resolves
-//! through every ANCESTOR of the cwd (see `trust_accepted`). Both rules are read
-//! out of the shipped CLI, and getting either wrong is not a near miss — a
-//! decision written to a key the CLI never reads simply does nothing, and a
-//! folder wrongly reported untrusted refuses Remote Control outright.
+//! What the decisions actually gate (same verification):
 //!
-//! Why Francois has to own this. The per-turn `claude -p` spawn (turn.rs) SKIPS
-//! both dialogs, so an unapproved server silently never connects and pane [4]
-//! shows a permanent `handshake…` for a server that will never handshake. The
-//! Remote Control host is worse: `--remote-control` does not prompt at all, it
-//! checks trust up front and, if it fails, prints "Error: Workspace not trusted."
-//! and exits(1) — nothing to answer, nothing on screen, just a host that dies
-//! before it can publish a URL. Both symptoms are the same missing decision, so
-//! this module makes that decision available from the app and writes exactly the
-//! keys the CLI reads.
+//!   - The per-turn `claude -p` spawn (turn.rs) shows NO dialog and STARTS every
+//!     undecided `.mcp.json` server — trust does not gate it either. The one
+//!     thing it honours is `disabledMcpjsonServers`: a refused name never starts,
+//!     and `disabled` beats `enabled` when a name is in both.
+//!   - The interactive `--remote-control` host is where the dialogs bite: it
+//!     checks trust up front and, if it fails, prints "Error: Workspace not
+//!     trusted." and exits(1) before publishing a URL, and undecided servers park
+//!     it on the consent dialog. That is why this module still tracks `pending`
+//!     and `trust_required` at all.
+//!
+//! The migration is also why a decision MUST be written to settings.local.json
+//! and not only to the legacy node: the union can re-add a name to `disabled`
+//! from a stale node entry, and nothing written to the node can ever CLEAR a
+//! `disabled` entry already sitting in settings.local.json — an approval that
+//! only touches the node looks accepted in the UI and changes nothing in the CLI.
+//! `mcp_decide` therefore writes BOTH stores: settings.local.json (what the CLI
+//! reads) and the node (old CLIs, plus trust, which still lives there).
 //!
 //! Francois still never ANSWERS a dialog on the user's behalf — every write here
 //! is the direct result of a click. What changed is where the click happens.
 //!
-//! Concurrency: `~/.claude.json` has three writers (the CLI, an editor, Francois)
+//! Concurrency: both stores have three writers (the CLI, an editor, Francois)
 //! exactly like settings.json, so writes go through the same surgical
 //! read → touch → `write_json_atomic` path as permission-guardrails FR-14. A
 //! concurrent CLI write can still lose a stat field it had in flight; nothing can
-//! be torn, and the three keys this module owns are never touched by anything
-//! else in Francois.
+//! be torn, and the keys this module owns are never touched by anything else in
+//! Francois.
 
 use super::*;
 
@@ -67,6 +78,8 @@ pub struct McpApprovalState {
 
 impl McpApprovalState {
     /// Anything an interactive `claude` would stop and ask about in this folder.
+    /// Only the INTERACTIVE host (Remote Control) is parked by these — a `-p`
+    /// turn starts undecided servers without asking (see the module doc).
     pub(crate) fn blocks_interactive(&self) -> bool {
         !self.pending.is_empty() || self.trust_required
     }
@@ -344,6 +357,13 @@ fn move_name(node: &mut Map<String, Value>, name: &str, into: &str, outof: &str)
 ///
 /// A name in BOTH lists is approved — `approve` is applied last, so the explicit
 /// yes wins over a stale no.
+///
+/// This is the LEGACY half of a decision (old CLIs, and the migration source) —
+/// the store the current CLI actually reads is settings.local.json, written by
+/// `apply_settings_decision`. Removing the name from the node's opposite list
+/// here also matters for the migration: it unions the node into
+/// settings.local.json, so a stale node entry left behind would resurrect the
+/// old answer there.
 pub(crate) fn apply_decision(
     doc: &mut Value,
     key: &str,
@@ -374,6 +394,75 @@ pub(crate) fn apply_decision(
     if trust && node.get("hasTrustDialogAccepted").and_then(|t| t.as_bool()) != Some(true) {
         node.insert("hasTrustDialogAccepted".into(), Value::Bool(true));
         changed = true;
+    }
+    changed
+}
+
+/// Apply approve/reject to a settings document (the project's
+/// `.claude/settings.local.json`) — the store the shipped CLI reads consent from,
+/// and the ONLY place a stale `disabledMcpjsonServers` entry can be cleared
+/// (`disabled` beats `enabled` in the CLI, so an approval that leaves it behind
+/// changes nothing). The two arrays sit at the DOCUMENT root, next to keys this
+/// module must not touch (`permissions`, `env`, …) — same surgical contract as
+/// `apply_decision`. `None` for a document that is not an object: the caller must
+/// refuse to write rather than replace a file it does not understand.
+///
+/// Trust is deliberately absent — it still lives on the `~/.claude.json` node.
+pub(crate) fn apply_settings_decision(
+    doc: &mut Value,
+    approve: &[String],
+    reject: &[String],
+) -> Option<bool> {
+    let root = doc.as_object_mut()?;
+    let mut changed = false;
+    for name in reject {
+        changed |= move_name(
+            root,
+            name,
+            "disabledMcpjsonServers",
+            "enabledMcpjsonServers",
+        );
+    }
+    for name in approve {
+        changed |= move_name(
+            root,
+            name,
+            "enabledMcpjsonServers",
+            "disabledMcpjsonServers",
+        );
+    }
+    Some(changed)
+}
+
+/// Carry a project's MCP consent into a fresh worktree's settings document.
+///
+/// `.claude/settings.local.json` is gitignored, so a session-worktree checkout
+/// starts with NO consent store at all: every server the user already decided on
+/// in the source checkout re-appears as pending, and a refusal stops applying.
+/// Copying the three consent keys at worktree creation makes a worktree session
+/// behave like the checkout it was cut from — which is the whole promise of the
+/// feature. Only the consent keys travel: `permissions` and everything else in
+/// the file stay per-worktree, and a key the target already has is never
+/// overwritten (an adopted-then-recreated worktree may carry its own answers).
+/// Returns whether the target changed.
+pub(crate) fn seed_settings_consent(source: &Value, target: &mut Value) -> bool {
+    const CONSENT_KEYS: [&str; 3] = [
+        "enabledMcpjsonServers",
+        "disabledMcpjsonServers",
+        "enableAllProjectMcpServers",
+    ];
+    let Some(root) = target.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for key in CONSENT_KEYS {
+        if root.contains_key(key) {
+            continue;
+        }
+        if let Some(v) = source.get(key) {
+            root.insert(key.to_string(), v.clone());
+            changed = true;
+        }
     }
     changed
 }
@@ -476,9 +565,17 @@ pub fn mcp_decide(
             "could not locate the Claude Code config directory for this session",
         );
     };
-    // An unparseable .claude.json is NEVER overwritten — it carries the user's
-    // whole CLI state, not just these three keys.
+    // An unparseable store is NEVER overwritten — .claude.json carries the user's
+    // whole CLI state and settings.local.json their permission rules, not just
+    // the keys this module owns. Both are read up front so a refusal happens
+    // before either file is touched — a half-applied decision (node written,
+    // settings refused) would leave the two stores telling different stories.
     let mut doc = match read_json_object(&path) {
+        Ok(v) => v,
+        Err(e) => return err("MCP_ERROR", e),
+    };
+    let settings_path = local_settings_path(&cwd);
+    let mut settings = match read_json_object(&settings_path) {
         Ok(v) => v,
         Err(e) => return err("MCP_ERROR", e),
     };
@@ -486,6 +583,23 @@ pub fn mcp_decide(
     if apply_decision(&mut doc, &key, &approve, &reject, trust) {
         if let Err(e) = write_json_atomic(&path, &doc) {
             return err("MCP_ERROR", e);
+        }
+    }
+    // The half the current CLI actually reads (see the module doc) — without it
+    // an approval is at the mercy of the CLI's migration and can never clear a
+    // stale refusal.
+    match apply_settings_decision(&mut settings, &approve, &reject) {
+        Some(true) => {
+            if let Err(e) = write_json_atomic(&settings_path, &settings) {
+                return err("MCP_ERROR", e);
+            }
+        }
+        Some(false) => {}
+        None => {
+            return err(
+                "MCP_ERROR",
+                format!("{} is not a JSON object", settings_path.display()),
+            )
         }
     }
 
@@ -897,6 +1011,99 @@ mod tests {
         );
     }
 
+    // ---- apply_settings_decision ----
+
+    #[test]
+    fn apply_settings_decision_creates_both_arrays_at_the_root() {
+        let mut doc = json!({});
+        assert_eq!(
+            apply_settings_decision(&mut doc, &names(&["serena"]), &[]),
+            Some(true)
+        );
+        assert_eq!(doc["enabledMcpjsonServers"], json!(["serena"]));
+    }
+
+    #[test]
+    fn apply_settings_decision_clears_a_stale_refusal() {
+        // THE regression this write path exists for: `disabled` beats `enabled`
+        // in the CLI, and settings.local.json is the only store where a refusal
+        // can be cleared — an approval written to the legacy node alone leaves
+        // the server refused forever while the panel says approved.
+        let mut doc = json!({ "disabledMcpjsonServers": ["serena"] });
+        assert_eq!(
+            apply_settings_decision(&mut doc, &names(&["serena"]), &[]),
+            Some(true)
+        );
+        assert_eq!(doc["enabledMcpjsonServers"], json!(["serena"]));
+        assert_eq!(doc["disabledMcpjsonServers"], json!([]));
+    }
+
+    #[test]
+    fn apply_settings_decision_is_idempotent() {
+        let mut doc = json!({ "enabledMcpjsonServers": ["serena"] });
+        assert_eq!(
+            apply_settings_decision(&mut doc, &names(&["serena"]), &[]),
+            Some(false),
+            "an unchanged document must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn apply_settings_decision_preserves_every_other_key() {
+        // settings.local.json is the permission-guardrails store too — a consent
+        // write must not touch the rules living next to the two arrays.
+        let mut doc = json!({
+            "permissions": { "allow": ["PowerShell"] },
+            "enableAllProjectMcpServers": true
+        });
+        apply_settings_decision(&mut doc, &[], &names(&["sketchy"]));
+        assert_eq!(doc["permissions"]["allow"], json!(["PowerShell"]));
+        assert_eq!(doc["enableAllProjectMcpServers"], json!(true));
+        assert_eq!(doc["disabledMcpjsonServers"], json!(["sketchy"]));
+    }
+
+    #[test]
+    fn apply_settings_decision_refuses_a_non_object_document() {
+        let mut doc = json!([]);
+        assert_eq!(apply_settings_decision(&mut doc, &names(&["x"]), &[]), None);
+        assert_eq!(doc, json!([]));
+    }
+
+    // ---- seed_settings_consent ----
+
+    #[test]
+    fn seed_settings_consent_copies_only_the_consent_keys() {
+        let source = json!({
+            "enabledMcpjsonServers": ["serena"],
+            "enableAllProjectMcpServers": true,
+            "permissions": { "allow": ["PowerShell"] }
+        });
+        let mut target = json!({});
+        assert!(seed_settings_consent(&source, &mut target));
+        assert_eq!(target["enabledMcpjsonServers"], json!(["serena"]));
+        assert_eq!(target["enableAllProjectMcpServers"], json!(true));
+        assert!(
+            target.get("permissions").is_none(),
+            "permission rules stay per-worktree"
+        );
+    }
+
+    #[test]
+    fn seed_settings_consent_never_overwrites_an_existing_answer() {
+        let source = json!({ "enabledMcpjsonServers": ["serena"] });
+        let mut target = json!({ "enabledMcpjsonServers": [] });
+        assert!(!seed_settings_consent(&source, &mut target));
+        assert_eq!(target["enabledMcpjsonServers"], json!([]));
+    }
+
+    #[test]
+    fn seed_settings_consent_is_a_no_op_for_an_undecided_source() {
+        let mut target = json!({});
+        assert!(!seed_settings_consent(&json!({}), &mut target));
+        assert_eq!(target, json!({}));
+        assert!(!seed_settings_consent(&json!({}), &mut json!([])));
+    }
+
     // ---- approval_state: the read path end to end, on a real temp project ----
 
     #[test]
@@ -930,6 +1137,34 @@ mod tests {
         assert_eq!(state.approved, names(&["serena"]));
         assert_eq!(state.pending, names(&["other"]));
         assert!(!state.trust_required);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn approval_state_reads_the_projects_settings_local_json() {
+        // The CLI's consent store is the project's settings.local.json (see the
+        // module doc) — a refusal recorded there must classify as rejected even
+        // when the ~/.claude.json node knows nothing about the server.
+        let dir = std::env::temp_dir().join(format!("francois-approve-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        std::fs::write(
+            dir.join(".mcp.json"),
+            r#"{"mcpServers":{"serena":{"command":"serena"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".claude").join("settings.local.json"),
+            r#"{"disabledMcpjsonServers":["serena"]}"#,
+        )
+        .unwrap();
+        let store = dir.join("config");
+        std::fs::create_dir_all(&store).unwrap();
+
+        let state = approval_state(&cwd, "native", Some(&store.to_string_lossy()));
+        assert_eq!(state.rejected, names(&["serena"]));
+        assert!(state.pending.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }
