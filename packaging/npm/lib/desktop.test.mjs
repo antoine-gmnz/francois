@@ -9,6 +9,8 @@ const {
   ICON_SOURCE,
   appId,
   applicationsDir,
+  aumid,
+  aumidRegistryKey,
   desktopEntry,
   desktopEntryPath,
   desktopIconPath,
@@ -46,6 +48,23 @@ describe('startMenuShortcut', () => {
 
   it('returns null when APPDATA is not set rather than guessing a path', () => {
     expect(startMenuShortcut('Francois', '')).toBeNull();
+  });
+});
+
+describe('aumid', () => {
+  it('matches the tauri identifier of each channel — toasts are sent under it', () => {
+    expect(aumid('stable')).toBe('com.francois.desktop');
+    expect(aumid(undefined)).toBe('com.francois.desktop');
+    expect(aumid('dev')).toBe('com.francois.dev');
+  });
+});
+
+describe('aumidRegistryKey', () => {
+  it('registers per-user under Classes\\AppUserModelId, so no elevation is needed', () => {
+    expect(aumidRegistryKey('stable')).toBe(
+      'HKCU\\Software\\Classes\\AppUserModelId\\com.francois.desktop',
+    );
+    expect(aumidRegistryKey('dev')).toMatch(/\\com\.francois\.dev$/);
   });
 });
 

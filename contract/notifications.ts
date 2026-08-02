@@ -18,7 +18,7 @@ export type NotifyTrigger =
   | { class: 'turnDone'; kind: 'settle'; sessionId: SessionId; status: SettleStatus };
 
 /** Notification title — a stable identity so pings group under the app name. */
-export const NOTIFICATION_TITLE = 'francois';
+export const NOTIFICATION_TITLE = 'Francois';
 
 /** Reason phrase for a settled turn, keyed by status. */
 export const SETTLE_REASON: Record<SettleStatus, string> = {
