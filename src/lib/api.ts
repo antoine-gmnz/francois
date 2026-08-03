@@ -3,6 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { demoInvoke, demoListen } from '../demo/demo';
 import type { AccountId, Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
@@ -46,6 +47,7 @@ import type {
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpApprovalState, McpDecision, McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
+import type { ShellEvent } from '../../contract/shell-terminal';
 import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
@@ -54,8 +56,22 @@ import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-u
 
 // Exported so other invoke sites (e.g. ShellTerminal.tsx, which redefines this
 // byte-identically) can share the one wrapper instead of redeclaring it.
+// __FRANCOIS_DEMO__ is a compile-time literal (vite.config.ts), so the demo
+// branch — and all of src/demo/ — vanishes from a normal build. It must be
+// tested inline like this rather than through an imported const; see demo.ts.
 export function ipc<T>(cmd: string, args?: object): Promise<T> {
+  if (__FRANCOIS_DEMO__) return demoInvoke<T>(cmd, args);
   return invoke<T>(cmd, args as Record<string, unknown> | undefined);
+}
+
+/**
+ * One subscription helper for every core→frontend stream, so the demo backend
+ * has a single seam to intercept. Unwraps Tauri's event envelope; the demo bus
+ * hands the payload over directly.
+ */
+function stream<T>(channel: string, cb: (payload: T) => void): Promise<UnlistenFn> {
+  if (__FRANCOIS_DEMO__) return demoListen<T>(channel, cb);
+  return listen<T>(channel, (e) => cb(e.payload));
 }
 
 // francois:app:setWindowTheme — repaint the native caption bar to match the theme.
@@ -189,12 +205,12 @@ export const workflowsScript = (runId: WorkflowRunId) =>
 
 /** Subscribe to francois://workflows/event (workflow.detail, FR-6/FR-23). */
 export function onWorkflowEvent(cb: (e: WorkflowDetailEvent) => void): Promise<UnlistenFn> {
-  return listen<WorkflowDetailEvent>('francois://workflows/event', (e) => cb(e.payload));
+  return stream<WorkflowDetailEvent>('francois://workflows/event', cb);
 }
 
 /** Subscribe to francois://agents/event (agent.block, agent-tab FR-8). */
 export function onAgentEvent(cb: (e: AgentEvent) => void): Promise<UnlistenFn> {
-  return listen<AgentEvent>('francois://agents/event', (e) => cb(e.payload));
+  return stream<AgentEvent>('francois://agents/event', cb);
 }
 
 export const mcpList = (sessionId: SessionId) => ipc<Result<McpServerInfo[]>>('mcp_list', { sessionId });
@@ -215,7 +231,7 @@ export const skillsRun = (sessionId: SessionId, name: string, args?: string) =>
 
 /** Subscribe to francois://skills/event (skills.changed). */
 export function onSkillsEvent(cb: (e: SkillsEvent) => void): Promise<UnlistenFn> {
-  return listen<SkillsEvent>('francois://skills/event', (e) => cb(e.payload));
+  return stream<SkillsEvent>('francois://skills/event', cb);
 }
 
 export const diffGetSummary = (sessionId: SessionId) => ipc<Result<DiffSummary>>('diff_get_summary', { sessionId });
@@ -227,7 +243,7 @@ export const diffCommit = (sessionId: SessionId, message: string, paths: string[
 
 /** Subscribe to francois://diff/event (diff.changed). */
 export function onDiffEvent(cb: (e: DiffEvent) => void): Promise<UnlistenFn> {
-  return listen<DiffEvent>('francois://diff/event', (e) => cb(e.payload));
+  return stream<DiffEvent>('francois://diff/event', cb);
 }
 
 // usage-bar (app domain, app-scoped plan limits). getUsage NEVER triggers a probe
@@ -249,7 +265,7 @@ export const appApplyUpdate = () => ipc<ApplyUpdateResult>('app_apply_update');
 
 /** Subscribe to francois://app/event (usage.state, extensible tagged union). */
 export function onAppEvent(cb: (e: AppEvent) => void): Promise<UnlistenFn> {
-  return listen<AppEvent>('francois://app/event', (e) => cb(e.payload));
+  return stream<AppEvent>('francois://app/event', cb);
 }
 
 // multi-account (§5). Registry mutations resolve the FRESH re-read list (like
@@ -269,7 +285,7 @@ export const accountRemove = (accountId: AccountId) => ipc<AccountRemoveResponse
 
 /** Subscribe to francois://account/event (account.list + the login sub-stream). */
 export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {
-  return listen<AccountEvent>('francois://account/event', (e) => cb(e.payload));
+  return stream<AccountEvent>('francois://account/event', cb);
 }
 
 // remote-control: Francois HOSTS Claude Code's native Remote Control for a session
@@ -285,10 +301,15 @@ export const remoteGet = (sessionId: SessionId) =>
 
 /** Subscribe to francois://remote/event (remote.status). */
 export function onRemoteEvent(cb: (e: RemoteControlEvent) => void): Promise<UnlistenFn> {
-  return listen<RemoteControlEvent>('francois://remote/event', (e) => cb(e.payload));
+  return stream<RemoteControlEvent>('francois://remote/event', cb);
+}
+
+/** Subscribe to francois://shell/event (shell.data / shell.exit). */
+export function onShellEvent(cb: (e: ShellEvent) => void): Promise<UnlistenFn> {
+  return stream<ShellEvent>('francois://shell/event', cb);
 }
 
 /** Subscribe to the core→frontend session event stream. */
 export function onSessionEvent(cb: (e: SessionEvent) => void): Promise<UnlistenFn> {
-  return listen<SessionEvent>('francois://session/event', (e) => cb(e.payload));
+  return stream<SessionEvent>('francois://session/event', cb);
 }
