@@ -5,8 +5,7 @@
 // into xterm.js is handled per-mount by ShellTerminal, not here.
 
 import { useSyncExternalStore } from 'react';
-import { listen } from '@tauri-apps/api/event';
-import type { ShellEvent } from '../../../contract/shell-terminal';
+import { onShellEvent } from '../../lib/api';
 
 export interface ShellUiState {
   alive: boolean;
@@ -50,8 +49,7 @@ let started = false;
 export function initShellEvents() {
   if (started) return;
   started = true;
-  void listen<ShellEvent>('francois://shell/event', (e) => {
-    const p = e.payload;
+  void onShellEvent((p) => {
     if (p.type === 'shell.exit') {
       setShellState(p.sessionId, { alive: false, exitCode: p.exitCode });
     }

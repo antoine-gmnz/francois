@@ -9,14 +9,14 @@
 One window: every session, its transcript, its diff, its agents — and a real shell.
 
 [![build](https://github.com/antoine-gmnz/francois/actions/workflows/release.yml/badge.svg)](https://github.com/antoine-gmnz/francois/actions/workflows/release.yml)
-[![install](https://img.shields.io/badge/npm_i_--g-francois-c8a15a)](https://www.npmjs.com/package/francois)
+[![install](https://img.shields.io/badge/npm_i_--g-francois-c3f53f)](https://www.npmjs.com/package/francois)
 [![platforms](https://img.shields.io/badge/Windows_·_macOS_·_Linux-16171c)](https://github.com/antoine-gmnz/francois/releases)
 [![stack](https://img.shields.io/badge/Tauri_2-Rust_core_·_React-24262d)](#under-the-hood)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-24262d)](LICENSE)
 
 </div>
 
-![Francois — the whole fleet in one window](screenshots/francois.png)
+![Francois — a session streaming, its diff, a real shell, and the ⌘K palette](screenshots/francois.gif)
 
 ## Why
 
@@ -24,9 +24,11 @@ One window: every session, its transcript, its diff, its agents — and a real s
 
 Francois turns that into an actual control room. It spawns and supervises multiple Claude Code sessions across project directories, streams their activity into a structured UI, and puts a **real terminal** next to the AI — so you never leave the window to run something yourself.
 
-It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electron), styled like a console you'd actually want to look at: an amber accent on warm greys, IBM Plex Sans for chrome and JetBrains Mono for everything that's code, a path, or a number — dark or light, keyboard-first, full mouse support.
+It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electron), styled like a console you'd actually want to look at: one acid accent reserved for the live thing, on cool greys, IBM Plex Sans for chrome and JetBrains Mono for everything that's code, a path, or a number — dark or light, keyboard-first, full mouse support.
 
 ## What you get
+
+![The SESSION tab — a turn streaming, with agents, MCP, skills and workflows on the right rail](screenshots/francois.png)
 
 **⌗ The fleet board** — one status card per session: colour-coded state (pulsing while a turn runs), model, live context usage (`128.4K/1M`), an uncommitted-diff badge, running-agent count, and a last-activity clock. The state of every workstream, one glance.
 
