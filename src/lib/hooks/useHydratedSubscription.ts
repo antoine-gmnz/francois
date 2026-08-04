@@ -86,43 +86,67 @@ export interface UseHydratedSubscriptionOptions<E, D> {
 /**
  * Wires `initHydrationBuffer`/`routeIncoming`/`hydrateBuffer` to a live
  * subscription and a one-shot hydration fetch, guarding both against a stale
- * result after unmount / `deps` change.
+ * result after teardown. Returns the teardown.
+ *
+ * Framework-free (the hook below is the `useEffect` wrapper) so the ORDER this
+ * imposes is unit-testable: the fetch waits for the subscription to be LIVE.
+ * `subscribe` resolves only once the listener is registered with the backend,
+ * and an event emitted before that point reaches nobody — it is not buffered
+ * here, and it is not in a snapshot taken after it either. Firing both
+ * concurrently left exactly that window open, which is how a streaming answer
+ * lost whole chunks. Ordering them costs one round-trip of hydration latency and
+ * closes the window: anything emitted from here on is buffered and drained.
  */
+export function startHydratedSubscription<E, D>(
+  options: Omit<UseHydratedSubscriptionOptions<E, D>, 'enabled' | 'deps'>,
+): () => void {
+  const { subscribe, fetchInitial, isRelevant, shouldBuffer, onHydrated, onEvent, onError } = options;
+  let live = true;
+  let unlisten: UnlistenFn | undefined;
+  let state = initHydrationBuffer<E>();
+
+  void subscribe((e) => {
+    if (!isRelevant(e)) return;
+    const routed = routeIncoming(state, e, shouldBuffer);
+    state = routed.next;
+    if (routed.applyNow) onEvent(e);
+  })
+    .then((u) => {
+      if (!live) {
+        u();
+        return;
+      }
+      unlisten = u;
+      return fetchInitial().then((res) => {
+        if (!live) return;
+        if (res.ok) {
+          onHydrated(res.data);
+          const drained = hydrateBuffer(state);
+          state = drained.next;
+          for (const e of drained.drained) onEvent(e);
+        } else {
+          onError(res.error.message);
+        }
+      });
+    })
+    .catch(() => {
+      // A failed subscribe would otherwise leave the panel silently unhydrated.
+      if (live) onError('could not subscribe to session events');
+    });
+
+  return () => {
+    live = false;
+    unlisten?.();
+  };
+}
+
+/** The `useEffect` wrapper around `startHydratedSubscription`. */
 export function useHydratedSubscription<E, D>(options: UseHydratedSubscriptionOptions<E, D>): void {
-  const { enabled, subscribe, fetchInitial, isRelevant, shouldBuffer, onHydrated, onEvent, onError, deps } = options;
+  const { enabled, deps, ...rest } = options;
 
   useEffect(() => {
     if (!enabled) return;
-    let mounted = true;
-    let unlisten: UnlistenFn | undefined;
-    let state = initHydrationBuffer<E>();
-
-    void subscribe((e) => {
-      if (!isRelevant(e)) return;
-      const routed = routeIncoming(state, e, shouldBuffer);
-      state = routed.next;
-      if (routed.applyNow) onEvent(e);
-    }).then((u) => {
-      if (!mounted) u();
-      else unlisten = u;
-    });
-
-    void fetchInitial().then((res) => {
-      if (!mounted) return;
-      if (res.ok) {
-        onHydrated(res.data);
-        const drained = hydrateBuffer(state);
-        state = drained.next;
-        for (const e of drained.drained) onEvent(e);
-      } else {
-        onError(res.error.message);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      unlisten?.();
-    };
+    return startHydratedSubscription(rest);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 }

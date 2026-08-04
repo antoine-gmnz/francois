@@ -448,8 +448,14 @@ export type SessionEvent =
   | { type: 'session.status'; sessionId: SessionId; status: SessionStatus }
   | { type: 'session.removed'; sessionId: SessionId }
   | { type: 'message.user'; sessionId: SessionId; blockId: BlockId; text: string }
-  | { type: 'assistant.delta'; sessionId: SessionId; blockId: BlockId; text: string } // streamed partial
-  | { type: 'assistant.done'; sessionId: SessionId; blockId: BlockId }
+  // Streamed partial. `offset` is how many UTF-16 code units of this block were
+  // already streamed BEFORE this chunk, so an append is idempotent and a
+  // listener that joined mid-block (hydration seeds the prefix, then drains its
+  // buffered deltas) can tell an overlap from a genuine append.
+  | { type: 'assistant.delta'; sessionId: SessionId; blockId: BlockId; text: string; offset: number }
+  // `text` is the block's COMPLETE text — authoritative, so a block that lost a
+  // chunk in transit is repaired the moment it closes rather than staying truncated.
+  | { type: 'assistant.done'; sessionId: SessionId; blockId: BlockId; text: string }
   // e.g. tool 'Read', summary 'src/auth/middleware.ts'. `model` is set only on a
   // subagent dispatch that named one — see SubagentConversationBlock.agentModel.
   | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string }
