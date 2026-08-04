@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { filterSessionsByProject } from '../../../contract/projects';
-import { sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
+import type { EditorId } from '../../../contract/open-in-vscode';
+import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
 import { prunePaletteSession } from '../palette/paletteData';
 import { showToast } from '../palette/palette';
 import { visibleSessions } from '../projects/projects';
 import { useStore } from '../../lib/store';
+import { getEditorList } from './editors';
 import { FilterInput } from './FilterInput';
 import { SessionContextMenu, type MenuState } from './SessionContextMenu';
 import { SessionListBody } from './SessionListBody';
@@ -146,6 +148,18 @@ export default function Sidebar({ home }: { home: string }) {
     }
   };
 
+  // open-in-vscode FR-11: a spawn, not a mutation (FR-12) — no store update, no
+  // event to wait for. Success closes the menu; failure reuses the existing
+  // error state.
+  const doOpenInEditor = async (sessionId: string, editorId: EditorId) => {
+    const res = await sessionOpenInEditor({ sessionId, editorId });
+    if (res.ok) {
+      setMenu(null);
+    } else {
+      setMenu((m) => (m && m.sessionId === sessionId ? { ...m, error: res.error } : m));
+    }
+  };
+
   const focused = focusedPane === 'sidebar';
 
   return (
@@ -178,7 +192,14 @@ export default function Sidebar({ home }: { home: string }) {
           selectSession(id);
           setFocusedPane('sidebar');
         }}
-        onContext={(sessionId, x, y) => setMenu({ sessionId, x, y, confirming: false, error: null })}
+        onContext={(sessionId, x, y) => {
+          setMenu({ sessionId, x, y, confirming: false, error: null, editors: [] });
+          // open-in-vscode FR-10: fetched on menu open, memoized in editors.ts —
+          // while unresolved the group stays absent (no spinner, no skeleton).
+          void getEditorList().then((editors) => {
+            setMenu((m) => (m && m.sessionId === sessionId ? { ...m, editors } : m));
+          });
+        }}
       />
 
       {/* footer — design-refresh FR-6: a real full-width button, per the mock,
@@ -213,6 +234,7 @@ export default function Sidebar({ home }: { home: string }) {
           onCancel={() => setMenu(null)}
           onToggleRemoveWorktree={() => setMenu((m) => (m ? { ...m, removeWorktree: !m.removeWorktree } : m))}
           onRemove={(removeWorktree) => void doRemove(menu.sessionId, removeWorktree)}
+          onOpenInEditor={(editorId) => void doOpenInEditor(menu.sessionId, editorId)}
         />
       )}
     </section>

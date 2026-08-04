@@ -37,6 +37,7 @@ import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessio
 import type { SessionCreateInput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
 import type { SessionRenameRequest, SessionRenameResponse } from '../../contract/session-rename';
+import type { EditorListData, OpenInEditorRequest } from '../../contract/open-in-vscode';
 import type {
   Attachment,
   ClearAttachmentsResult,
@@ -128,6 +129,13 @@ export const sessionCommitAttachments = (sessionId: SessionId, text: string) =>
 /** FR-18: sweeps a session's or a whole project's attachments dirs. */
 export const sessionClearAttachments = (scope: ClearScope) =>
   ipc<Result<ClearAttachmentsResult>>('session_clear_attachments', { scope });
+
+// open-in-vscode (§5). App-scoped detection (FR-1) + a fire-and-forget launch
+// (FR-8/12: no session mutation, no event, no disk write — observable only as a
+// running process).
+export const sessionEditorList = () => ipc<Result<EditorListData>>('session_editor_list');
+export const sessionOpenInEditor = (req: OpenInEditorRequest) =>
+  ipc<Result<null>>('session_open_in_editor', req);
 
 export const getTranscript = (sessionId: SessionId) =>
   ipc<Result<ConversationBlock[]>>('conversation_get_transcript', { sessionId });
