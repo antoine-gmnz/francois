@@ -40,7 +40,7 @@
 }
 .pj-title {
   font-size: var(--font-size-11);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.14em;
   color: var(--accent);
 }
@@ -119,7 +119,7 @@
 }
 .pj-group-label {
   font-size: var(--font-size-10);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.14em;
   color: var(--text-dim);
 }

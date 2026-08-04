@@ -541,7 +541,7 @@
   word-break: break-word;
 }
 .md-strong {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-bright);
 }
 .md-em {
@@ -566,7 +566,7 @@
 
 .md-heading {
   margin-bottom: var(--space-2);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-bright);
 }
 .md-code-wrap {
@@ -620,7 +620,7 @@
   padding: var(--space-3) var(--space-8);
 }
 .md-cell--header {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-bright);
   background: var(--bg-elevated);
 }
