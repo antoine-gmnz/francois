@@ -4,8 +4,8 @@
 // projects"), the leading dot carries scope state (FR-5), and the `▾` opens
 // ProjectMenu — the shared "All projects | <name> | Manage projects…" panel
 // (also used to, but no longer — see ProjectMenu's own header for the shared
-// history). Selecting a project NEVER touches activeSessionId (FR-28, owned by
-// ProjectMenu).
+// history). Selecting a project lands on its first session, or opens the
+// new-session modal when it has none (FR-39, owned by ProjectMenu).
 
 import { useRef, useState } from 'react';
 import ProjectMenu from './ProjectMenu';

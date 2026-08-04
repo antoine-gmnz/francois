@@ -146,8 +146,9 @@ export default function ProjectSwitcher(props: { home: string; sessionCwd: strin
 - **Core (Rust)**: none. Untouched.
 - **Frontend store (read)**: `projects: ProjectMeta[]`, `activeProjectId: ProjectId | null`, `sessions`,
   `activeSessionId`, `projectsOpen`.
-- **Frontend store (write)**: `setProjects` (after each `projectList`), `setActiveProjectId` (row click,
-  persisted), `setProjectsOpen` (`Manage projects…`).
+- **Frontend store (write)**: `setProjects` (after each `projectList`), `switchProject` (row click —
+  persists the scope AND lands inside it, projects FR-39; it superseded the bare `setActiveProjectId`
+  this row used to call), `setProjectsOpen` (`Manage projects…`).
 - **Local component state**: `open` (dropdown), `hover` (toggle).
 - **Derived**: `active = projects.find(p => p.id === activeProjectId) ?? null`; `rows = buildSwitcherRows(...)`;
   `label = switcherLabel(active)`; `tone = switcherDotTone(active)`; `tooltip = switcherTooltip(...)`.
