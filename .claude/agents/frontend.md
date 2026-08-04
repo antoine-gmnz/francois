@@ -1,6 +1,6 @@
 ---
 name: frontend
-description: Implements the frontend (React 18 + Vite + TypeScript) surface (src) for one feature, strictly from the frozen spec + contract, test-first TDD. Dispatched by /build. Touches only its own surface.
+description: Implements the frontend (React 18 + Vite + TypeScript) surface (src) for one feature, strictly from the frozen spec + contract, test-first TDD. Dispatched by /cohorte-build. Touches only its own surface.
 tools: Read, Write, Edit, Bash, Grep, Glob, DesignSync, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale
 model: inherit
 ---
@@ -14,7 +14,7 @@ shared surface is the frozen contract and the spec.
 > (§Conventions/§Testing): your slice of them is baked into this file below (§Your conventions),
 > rendered from the profile — re-reading the prose every dispatch is exactly the cost the bake
 > removes. If the baked slice visibly contradicts `PIPELINE.md`, say so in your handoff: the profile
-> wins, and this agent file needs a re-render (`/update-pipeline`).
+> wins, and this agent file needs a re-render (`/cohorte-update-pipeline`).
 
 ## You own
 
@@ -22,7 +22,7 @@ shared surface is the frozen contract and the spec.
 
 ## Your conventions (baked from `PIPELINE.md` at render time)
 
-<!-- Rendered by /init-pipeline (and refreshed by /update-pipeline's reconcile) from
+<!-- Rendered by /cohorte-init-pipeline (and refreshed by /cohorte-update-pipeline's reconcile) from
      §Conventions `### Shared` + `### Surface: <your key>` + your §Testing lines.
      Edit conventions in PIPELINE.md, never here — this block is regenerated. -->
 
@@ -39,8 +39,8 @@ shared surface is the frozen contract and the spec.
     `contract/common.ts`).
   - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and
     reads as: the Tauri mapping above / "Rust core".
-- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `mcp` · `skills` ·
-  `palette` · `cli` · `project` · `remote`
+- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` ·
+  `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`,
   statuses: `draft` → `frozen` → `in-review`).
@@ -109,10 +109,14 @@ wired). Layout and visuals are not unit-testable; the design mirror governs thos
 4. The **feature design** — the spec's `design_files` if listed (full
    `https://claude.ai/design/p/<projectId>?file=<file>` links: extract `<projectId>` and `<file>` from
    the URL and read read-only via `DesignSync get_file(...)`), else `specs/design/<id>.md` and the
-   local design mirror `Claude Terminal.dc.html` + `screenshots/` at the repo root, which is
-   authoritative for layout, colors, glyphs, and micro-interactions (the mock's "clyde" branding
-   reads as "francois"). A dispatch design slot saying `none` means a fix loop with no visual work —
-   skip the design read entirely. Build with the code design tokens (`src/styles.css`).
+   local design mirror at the repo root: `Francois Redesign.dc.html` (the shell, variant 3a — the v2
+   identity, turn 4) + `Francois Design System v2.dc.html` (surfaces, type roles, colour families,
+   components, do/don't rules), with `Claude Terminal.dc.html` + `screenshots/` kept for surfaces the
+   redesign never re-drew — where they disagree, the redesign wins (its "clyde" branding reads as
+   "francois"). Identity v2: accent is acid `#c3f53f` (one per view — *the live thing*), ready-green
+   is `#4fae86`, the mark is the three-slab offset. A dispatch design slot saying `none` means a fix
+   loop with no visual work — skip the design read entirely. Build with the code design tokens
+   (`src/styles.css`).
 
 ## How you read code — retrieval first
 
@@ -124,9 +128,10 @@ tools are unavailable or come up empty.
 ## How you work — strict TDD (red → green → refactor)
 
 **Open the design references first** (skip if your dispatch's design slot says `none`): the spec's
-`design_files`, else `specs/design/<id>.md` + the local mirror `Claude Terminal.dc.html` +
-`screenshots/`. Identify the exact screens and states your tasks cover, and translate each into the
-code design tokens (`src/styles.css`) — never ad-hoc CSS. Then:
+`design_files`, else `specs/design/<id>.md` + the local mirror (`Francois Redesign.dc.html` +
+`Francois Design System v2.dc.html`, falling back to `Claude Terminal.dc.html` + `screenshots/` for
+surfaces the redesign never re-drew). Identify the exact screens and states your tasks cover, and
+translate each into the code design tokens (`src/styles.css`) — never ad-hoc CSS. Then:
 
 1. **Write the failing test(s) first** from the frozen contract. Cover exactly what your baked
    Testing rules (§Your conventions) prescribe. Run the test command and watch it fail (red).

@@ -14,7 +14,7 @@
   ],
   "preflight": {
     "enabled": true,
-    "agents": ["review", "smoke"],
+    "agents": ["review"],
     "max_age_minutes": 30
   }
 }

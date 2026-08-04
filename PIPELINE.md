@@ -125,12 +125,13 @@ gate:
     - "git merge"
     - "git rebase"
     - "git reset"
-  # Phase gate: review/smoke dispatches require a fresh `.claude/preflight.ok` stamp,
+  # Phase gate: review dispatches require a fresh `.claude/preflight.ok` stamp,
   # written by pipeline/scripts/preflight.sh when typecheck+tests are green — gate.py
-  # "ask"s the dispatch when the stamp is missing, stale, or HEAD moved.
+  # "ask"s the dispatch when the stamp is missing, stale, or the code changed since.
+  # The stamp is local: keep `.claude/preflight.ok` gitignored, never committed.
   preflight:
     enabled: true
-    agents: [review, smoke]                   # subagent_types the stamp gates
+    agents: [review]                          # subagent_types the stamp gates
     max_age_minutes: 30
 ```
 
