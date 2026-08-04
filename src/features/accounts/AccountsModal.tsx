@@ -1,5 +1,7 @@
-// multi-account FR-34..FR-36 — the Accounts modal. Projects-modal chrome
-// (centred panel, 1px frame, JetBrains Mono; see accounts.css), four states:
+// multi-account FR-34..FR-36 — the Accounts modal, dressed as redesign 4a:
+// a centred panel over the dimmed shell, a titled header with a count pill and
+// the add affordance, a list of account CARDS, and a footer carrying both the
+// isolation note and the keyboard model (see accounts.css). Four states:
 //
 //   list           the registry, one AccountRow each + [+ ADD ACCOUNT]
 //   login          AccountLoginView replaces the body while a login runs
@@ -26,9 +28,14 @@ import { seedAccountUsage } from '../usage/usage';
 import { AccountRow } from './AccountRow';
 import AccountLoginView from './AccountLoginView';
 import { RemoveAccountConfirm } from './RemoveAccountConfirm';
-import { ACCOUNTS_ISOLATION_NOTE, clampCursor, moveCursor } from './accounts';
+import {
+  ACCOUNTS_ISOLATION_NOTE,
+  ACCOUNTS_KEY_HINTS,
+  accountSessionCounts,
+  clampCursor,
+  moveCursor,
+} from './accounts';
 import './accounts.css';
-import '../usage/usage.css'; // the row meters reuse the usage-bar chip verbatim
 
 /** Which login this is: a brand-new account, or FR-17's re-login into a row. */
 type LoginTarget = { accountId?: string } | null;
@@ -67,6 +74,16 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
 
   const selected = accounts[clampCursor(cursor, accounts.length)] ?? null;
   const confirming = confirmId ? (accounts.find((a) => a.id === confirmId) ?? null) : null;
+  const sessionCounts = accountSessionCounts(accounts, sessions);
+
+  // Redesign 4a hangs a reset countdown off every account bar. Same granularity
+  // rule the usage bar follows: one text tick a minute, not motion — the
+  // countdown's finest unit IS the minute, so a faster clock buys nothing.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // FR-34: each row shows its OWN meters, so every listed account needs a seed.
   // Cheap and idempotent — app_get_usage never probes (usage-bar FR-22), and a
@@ -251,7 +268,11 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     >
       <div className="acc-panel" onClick={(e) => e.stopPropagation()}>
         <div className="acc-header">
-          <span className="acc-title">ACCOUNTS</span>
+          <span className="acc-title">Accounts</span>
+          {/* The count pill redesign 4a puts beside every panel title — it also
+              answers "did the new one land?" without counting rows. */}
+          <span className="acc-count">{accounts.length}</span>
+          <span className="acc-header-spacer" />
           <button
             type="button"
             className="acc-add"
@@ -259,7 +280,10 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
             onClick={() => setLogin({})}
             title="Add an Anthropic account by signing in here"
           >
-            + ADD ACCOUNT
+            <span className="acc-add-plus" aria-hidden="true">
+              +
+            </span>
+            Add account
           </button>
         </div>
 
@@ -299,6 +323,8 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
                   key={account.id}
                   account={account}
                   snapshot={usageByAccount[account.id]}
+                  sessionCount={sessionCounts[account.id] ?? 0}
+                  now={now}
                   cursor={i === clampCursor(cursor, accounts.length)}
                   fresh={account.id === freshId}
                   renaming={renamingId === account.id}
@@ -314,8 +340,19 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
                 />
               ))}
             </div>
-            {/* FR-36 — the isolation cost, stated once, in prose */}
-            <div className="acc-footer">{ACCOUNTS_ISOLATION_NOTE}</div>
+            {/* FR-36 — the isolation cost, stated once, in prose — over the
+                keyboard model this modal has always had and never named. */}
+            <div className="acc-footer">
+              <span className="acc-footer-note">{ACCOUNTS_ISOLATION_NOTE}</span>
+              <div className="acc-hints">
+                {ACCOUNTS_KEY_HINTS.map((h) => (
+                  <span key={h.key} className="acc-hint">
+                    <span className="acc-hint-key">{h.key}</span>
+                    {h.label}
+                  </span>
+                ))}
+              </div>
+            </div>
           </>
         )}
       </div>

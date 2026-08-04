@@ -31,8 +31,11 @@ import {
   ACCOUNTS_ISOLATION_NOTE,
   LOGIN_CANCEL_HINT,
   LOGIN_TITLE,
+  accountAvatarHue,
   accountAvatarLetter,
   accountBadgeText,
+  accountMetaLine,
+  accountSessionCounts,
   accountDisplayLabel,
   accountFieldOptions,
   accountMetersView,
@@ -507,6 +510,37 @@ describe('display helpers (FR-32/FR-33, design brief)', () => {
     expect(accountAvatarLetter(account({ id: 'a1', label: 'perso' }))).toBe('P');
     expect(accountAvatarLetter(account({ id: 'a1', label: 'antoine@x.example', email: 'antoine@x.example' }))).toBe('A');
     expect(accountAvatarLetter({ ...BUILT_IN, label: '', email: undefined })).toBe('D');
+  });
+
+  it('keeps an account on one hue, never the accent, and turns it red when it needs re-login (4a)', () => {
+    const a = account({ id: 'a1' });
+    expect(accountAvatarHue(a)).toBe(accountAvatarHue(account({ id: 'a1', label: 'renamed' })));
+    for (const id of ['a1', 'b2', 'c3', 'd4', 'e5', 'f6', 'g7']) {
+      expect(accountAvatarHue(account({ id }))).not.toBe('var(--accent)');
+    }
+    expect(accountAvatarHue({ ...a, authFailedAt: 5 })).toBe('var(--error)');
+  });
+
+  it('counts the sessions each account carries, defaulting the unresolvable ones (4a meta line)', () => {
+    const accounts = [BUILT_IN, account({ id: 'a1' })];
+    const counts = accountSessionCounts(accounts, [
+      session({ id: 's1', accountId: 'a1' }),
+      session({ id: 's2', accountId: 'a1' }),
+      session({ id: 's3', accountId: DEFAULT_ACCOUNT_ID }),
+      session({ id: 's4', accountId: 'ghost' }), // FR-10: resolves to the default
+    ]);
+    expect(counts).toEqual({ [DEFAULT_ACCOUNT_ID]: 2, a1: 2 });
+  });
+
+  it('builds the row meta line from email and session count, dropping either half (4a)', () => {
+    const a1 = account({ id: 'a1', label: 'perso', email: 'p@x.example' });
+    expect(accountMetaLine(a1, 0)).toBe('p@x.example');
+    expect(accountMetaLine(a1, 1)).toBe('p@x.example · 1 session');
+    expect(accountMetaLine(a1, 3)).toBe('p@x.example · 3 sessions');
+    // label IS the email → the email is already the row's title, so only the count
+    const same = account({ id: 'a2', label: 'p@x.example', email: 'p@x.example' });
+    expect(accountMetaLine(same, 2)).toBe('2 sessions');
+    expect(accountMetaLine(same, 0)).toBeNull();
   });
 });
 

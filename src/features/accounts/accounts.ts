@@ -16,7 +16,7 @@ import type { Account } from '../../../contract/multi-account';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 import { accountList, onAccountEvent } from '../../lib/api';
-import { meterChipViews, type MeterChipView } from '../usage/usage';
+import { meterChipViews, sessionResetLabel, type MeterChipView } from '../usage/usage';
 
 // ---------------------------------------------------------------- the feed
 
@@ -200,13 +200,50 @@ export function accountAvatarLetter(account: Account): string {
   return accountDisplayLabel(account).slice(0, 1).toUpperCase();
 }
 
-/** A deterministic hue token per account, so a row's tile never shifts colour. */
-const AVATAR_HUES = ['--hue-blue', '--hue-purple', '--hue-teal', '--accent', '--hue-slate'] as const;
+/**
+ * A deterministic hue token per account, so a row's tile never shifts colour.
+ * `--accent` is deliberately NOT in the ramp: design system v2 gives the acid
+ * to the ONE live thing per view, and three accounts sitting in a list are not
+ * that. An account that needs re-login takes the red family instead of its own
+ * hue — redesign 4a paints the troubled account's tile in the error family, so
+ * the row reads as wrong from the tile alone, not just from the pill.
+ */
+const AVATAR_HUES = ['--hue-blue', '--hue-teal', '--hue-purple', '--hue-slate'] as const;
 
 export function accountAvatarHue(account: Account): string {
+  if (accountNeedsLogin(account)) return 'var(--error)';
   let sum = 0;
   for (let i = 0; i < account.id.length; i++) sum = (sum + account.id.charCodeAt(i)) % 9973;
   return `var(${AVATAR_HUES[sum % AVATAR_HUES.length]})`;
+}
+
+/**
+ * How many sessions each account is currently carrying, keyed by account id.
+ * A session whose `accountId` no longer resolves counts toward the isDefault
+ * account, matching where the core actually runs it (FR-9/FR-10) — so the
+ * numbers on screen add up to the session list.
+ */
+export function accountSessionCounts(accounts: Account[], sessions: SessionMeta[]): Record<AccountId, number> {
+  const counts: Record<AccountId, number> = {};
+  for (const a of accounts) counts[a.id] = 0;
+  for (const s of sessions) {
+    const id = resolveNewSessionAccountId(accounts, s.accountId);
+    if (counts[id] !== undefined) counts[id] += 1;
+  }
+  return counts;
+}
+
+/**
+ * Redesign 4a: the dim second line under an account's name — `email · N
+ * sessions`, either half optional. Null when there is nothing to say, so the
+ * row collapses to one line rather than reserving a blank one.
+ */
+export function accountMetaLine(account: Account, sessionCount: number): string | null {
+  const parts: string[] = [];
+  const email = accountSecondaryEmail(account);
+  if (email) parts.push(email);
+  if (sessionCount > 0) parts.push(`${sessionCount} session${sessionCount === 1 ? '' : 's'}`);
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 export interface AccountBadge {
@@ -270,6 +307,11 @@ export interface AccountMetersView {
   /** 'none' = `—` · 'loading' = the dim `…` idiom · 'error' · 'meters'. */
   kind: 'none' | 'loading' | 'error' | 'meters';
   chips: MeterChipView[];
+  /**
+   * Redesign 4a pairs every account bar with its reset (`resets in 4h 9m`).
+   * Null when no clock was supplied, or when no meter yields a countdown.
+   */
+  reset: string | null;
   /** The failure text, kept alongside stale meters as the row's tooltip. */
   message: string | null;
 }
@@ -278,15 +320,20 @@ export interface AccountMetersView {
  * FR-34 row meters, mapping the per-account snapshot lifecycle onto what the
  * row renders. Stale meters survive a failed probe (usage-bar FR-18), so an
  * error WITH data still renders the chips and carries the message as a title.
+ *
+ * `now` is passed in rather than read from the clock here (same rule the usage
+ * bar's derivations follow) — omit it and the row simply shows no countdown.
  */
-export function accountMetersView(snapshot: UsageSnapshot | undefined): AccountMetersView {
+export function accountMetersView(snapshot: UsageSnapshot | undefined, now?: number): AccountMetersView {
   const chips = meterChipViews(snapshot?.meters ?? []);
   const message = snapshot?.error?.message ?? null;
-  if (chips.length > 0) return { kind: 'meters', chips, message };
-  if (!snapshot) return { kind: 'none', chips, message: null };
-  if (snapshot.status === 'loading') return { kind: 'loading', chips, message: null };
-  if (snapshot.status === 'error') return { kind: 'error', chips, message: message ?? 'usage unavailable' };
-  return { kind: 'none', chips, message: null };
+  const reset = now === undefined || !snapshot ? null : sessionResetLabel(snapshot.meters, now);
+  if (chips.length > 0) return { kind: 'meters', chips, reset, message };
+  if (!snapshot) return { kind: 'none', chips, reset: null, message: null };
+  if (snapshot.status === 'loading') return { kind: 'loading', chips, reset: null, message: null };
+  if (snapshot.status === 'error')
+    return { kind: 'error', chips, reset: null, message: message ?? 'usage unavailable' };
+  return { kind: 'none', chips, reset: null, message: null };
 }
 
 // ------------------------------------------------------------- modal copy
@@ -294,6 +341,21 @@ export function accountMetersView(snapshot: UsageSnapshot | undefined): AccountM
 /** FR-36 — the one line of prose the modal carries, stated exactly once. */
 export const ACCOUNTS_ISOLATION_NOTE =
   'Each added account keeps its own Claude Code configuration: settings, skills, agents and MCP servers are not shared.';
+
+/**
+ * §3's keyboard model, said out loud. The modal has always been fully
+ * keyboard-driven and has never named a single key on screen, so every shortcut
+ * had to be guessed; redesign 4a's footer idiom (quiet actions left, dim hint
+ * right) is where they belong. Key first, verb after — the same order the
+ * shell's own hint bars use.
+ */
+export const ACCOUNTS_KEY_HINTS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: '↑↓', label: 'move' },
+  { key: '⏎', label: 'default' },
+  { key: 'r', label: 'rename' },
+  { key: 'del', label: 'remove' },
+  { key: 'a', label: 'add' },
+];
 
 export const LOGIN_TITLE = 'LOGGING IN — complete the Claude Code sign-in below';
 /** §Notes: Esc is intercepted by the modal, so the hint must be visible. */
