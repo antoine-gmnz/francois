@@ -5,7 +5,9 @@
 //
 // The parent owns `open` and dismissal (it owns the ref that contains both the
 // trigger and this panel); this component owns the registry read, the rows and
-// the selection. Selecting a scope NEVER touches activeSessionId (FR-28).
+// the selection. Selecting a scope LANDS you inside it (FR-39, superseding
+// FR-28) — the store's switchProject owns that, this component only names the
+// scope that was picked.
 
 import { useEffect, useState } from 'react';
 import { buildSwitcherRows, abbreviateRoot, safeCall } from './projects';
@@ -19,7 +21,7 @@ export default function ProjectMenu({ home, onClose }: { home: string; onClose: 
   const projects = useStore((s) => s.projects);
   const setProjects = useStore((s) => s.setProjects);
   const activeProjectId = useStore((s) => s.activeProjectId);
-  const setActiveProjectId = useStore((s) => s.setActiveProjectId);
+  const switchProject = useStore((s) => s.switchProject);
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
   const mounted = useMounted();
 
@@ -48,8 +50,10 @@ export default function ProjectMenu({ home, onClose }: { home: string; onClose: 
             role="option"
             selected={r.selected}
             onClick={() => {
-              setActiveProjectId(r.id);
+              // Close FIRST: an empty project opens the new-session modal, and
+              // the dropdown must not still be layered under it.
               onClose();
+              switchProject(r.id);
             }}
           >
             <span className="pjsw-row-mark">{r.mark}</span>

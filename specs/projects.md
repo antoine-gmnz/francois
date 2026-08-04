@@ -296,10 +296,12 @@ Francois machinery at all.
 - **FR-27**: When `activeProjectId` is non-null the fleet board renders only sessions whose
   `projectId` equals it. This composes with fleet-board's `/` filter by **AND**. The pane
   header count (`app-shell` FR-12) shows the count **after both filters**.
-- **FR-28**: Changing `activeProjectId` resets fleet-board's keyboard cursor to index `0` of
-  the newly visible list but **does not change `activeSessionId`** — the active session stays
-  active (and stays rendered in the main pane) even when filtered out of the board. This
-  preserves fleet-board's sole ownership of `activeSessionId`.
+- **FR-28** *(amended by FR-39)*: Changing `activeProjectId` resets fleet-board's keyboard
+  cursor to index `0` of the newly visible list. It originally left `activeSessionId` alone
+  as well; FR-39 supersedes that half — a switch made **through the switcher** now lands
+  inside the project it selects. Every other writer of `activeProjectId` (the FR-26
+  reconciliation, the FR-39 rollback) still leaves `activeSessionId` untouched, so a session
+  filtered out by anything other than a deliberate switch stays active and stays rendered.
 - **FR-29**: When `activeProjectId` is non-null and the visible list is empty, the board
   shows an empty state reading `no sessions in <project name>` with a `press n to start one`
   hint — distinct from the existing global no-sessions empty state.
@@ -307,6 +309,23 @@ Francois machinery at all.
   that project and applies its defaults (FR-21) — "inside a project, a new session belongs to
   it". A project whose `rootExists` is `false` is **not** pre-selected, or the modal would open
   already blocked by FR-23. With no active project the field starts at `— none —`.
+- **FR-39**: Selecting a scope in the switcher is a **navigation**, not only a filter — it
+  lands the user inside what it selected. `switchProject(id)` is the single entry point
+  (`setActiveProjectId` remains the plain field write for every non-navigating path):
+  - **The project has sessions** → its **first** session (the first one FR-27's filter yields,
+    ignoring the `/` query, which is a transient search) becomes `activeSessionId`. If the main
+    pane was on `OVERVIEW` it moves to `SESSION`, exactly as clicking a card does; any other
+    tab is left alone. Agent tabs close with the session change (`agent-tab` FR-14).
+  - **The project has none** → the new-session modal opens (FR-30 pre-selects the project), and
+    a **rollback** is armed: `projectSwitchRollback: { to: <previous scope> }`. Cancelling the
+    modal restores that scope via `setActiveProjectId` — the plain write, so the rollback
+    neither re-selects a session nor re-opens the modal. Creating a session clears the rollback
+    instead, and the switch stands. A second switch that also lands empty keeps the **oldest**
+    pending target, so one excursion rolls back to where the user actually was.
+  - **`All projects`** → no session is selected (there is no "first session" of All) and any
+    pending rollback is cleared; the main pane returns to `OVERVIEW` as it already did.
+  - Re-selecting the scope already active is a **no-op** — it must not yank the user back to
+    the first session of the project they are already reading.
 
 ### Projects modal
 
@@ -706,8 +725,9 @@ the resolved project for a `cwd` (per FR-21, recomputed on every directory pick)
 | 14 | A persisted session references a project that no longer exists | `projectId` dropped on load, session loads unlinked, pruned value persisted on next write (FR-18). |
 | 15 | Project removed while its sessions are running | Sessions keep running untouched; each gets `projectId` cleared plus one `session.meta` emission (FR-9). Nothing under `root` is modified. |
 | 16 | `activeProjectId` in `localStorage` points at a removed project | Falls back to `null` (All) on launch (FR-26); the same happens live when the active project is removed. |
-| 17 | The active session is filtered out by the switcher | It stays the active session and stays rendered in the main pane; only the board's list and cursor change (FR-28). |
-| 18 | A project is active and its filtered list is empty | Board shows `no sessions in <name>` + `press n to start one` (FR-29). |
+| 17 | The active session is filtered out by the switcher | Superseded by FR-39: a **switch** replaces it with the target project's first session. It survives only when `activeProjectId` changed some other way (the FR-26 reconciliation, the FR-39 rollback), where the board's list and cursor change but the main pane keeps rendering it (FR-28). |
+| 18 | A project is active and its filtered list is empty | Board shows `no sessions in <name>` + `press n to start one` (FR-29) — reachable only after a switch into it was cancelled (FR-39 rolls the scope back) or its last session was removed, since the switch itself opens the modal. |
+| 18b | The auto-opened modal (FR-39) is cancelled while `session_create` is already in flight | Cancel wins, because it is what the user did last: the rollback runs at cancel time, so the scope returns to the previous project. The session is still created and upserted (the modal's existing mid-flight rule) but is not force-selected — it is simply waiting in its project the next time that scope is picked. |
 | 19 | A session is wanted in a SUBDIRECTORY of a project | Not expressible while linked (FR-21 amendment): the project contributes its root verbatim. Use `— none —` and an unlinked session. |
 | 20 | Nested projects (`D:\repo` and `D:\repo\packages\api`) | Both are legal and both appear in the picker; the chosen one supplies its own root. Only exact-root duplicates are rejected (FR-6). |
 | 21 | Case-differing roots on Windows (`D:\Repo` vs `D:\repo`) | Treated as the same root → `PROJECT_DUPLICATE_ROOT` (FR-8). On Linux/macOS they are distinct. |
@@ -885,8 +905,14 @@ existing app-shell tokens from `src/styles.css`; this feature introduces **no ne
       the sessions, and modifies nothing under `root`. (FR-9)
 - [ ] Selecting a project in the switcher filters the board to its sessions, composes with the
       `/` filter, and updates the pane header count. (FR-27)
-- [ ] Filtering does not change `activeSessionId`; the main pane keeps rendering the active
-      session even when it is filtered out of the board. (FR-28)
+- [ ] Filtering that is not a deliberate switch (the FR-26 reconciliation, an FR-39 rollback)
+      does not change `activeSessionId`; the main pane keeps rendering the active session even
+      when it is filtered out of the board. (FR-28)
+- [ ] Picking a project in the switcher selects that project's FIRST session and leaves
+      `OVERVIEW` for `SESSION`; picking the project already active changes nothing. (FR-39)
+- [ ] Picking a project with no sessions opens the new-session modal; cancelling it returns to
+      the previous scope (including `All projects`), and creating a session keeps the new
+      scope. (FR-39)
 - [ ] `activeProjectId` survives a restart via `localStorage`, and falls back to `All` when it
       names a removed project. (FR-26)
 - [ ] ⌘K → `Manage projects` opens the modal; `Escape` and backdrop click close it; while it
