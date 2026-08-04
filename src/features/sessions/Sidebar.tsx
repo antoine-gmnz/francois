@@ -5,6 +5,7 @@ import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorkt
 import { prunePaletteSession } from '../palette/paletteData';
 import { showToast } from '../palette/palette';
 import { visibleSessions } from '../projects/projects';
+import { abbreviate } from '../../lib/path';
 import { useStore } from '../../lib/store';
 import { getEditorList } from './editors';
 import { FilterInput } from './FilterInput';
@@ -160,6 +161,25 @@ export default function Sidebar({ home }: { home: string }) {
     }
   };
 
+  // Copy path: acknowledge in place (the item flips to "✓ Path copied") rather
+  // than with a toast — the menu is still on screen, so the feedback belongs on
+  // the thing that was clicked. A failure DOES toast, since the menu shows the
+  // path truncated and there is nothing to fall back to by hand.
+  const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copyTimeout.current) clearTimeout(copyTimeout.current); }, []);
+  const copyPath = (sessionId: string, path: string) => {
+    void navigator.clipboard
+      ?.writeText(path)
+      .then(() => {
+        setMenu((m) => (m && m.sessionId === sessionId ? { ...m, copied: true } : m));
+        if (copyTimeout.current) clearTimeout(copyTimeout.current);
+        copyTimeout.current = setTimeout(() => {
+          setMenu((m) => (m && m.sessionId === sessionId ? { ...m, copied: false } : m));
+        }, 1200);
+      })
+      .catch(() => showToast('Could not copy the path to the clipboard.', 'error'));
+  };
+
   const focused = focusedPane === 'sidebar';
 
   return (
@@ -216,6 +236,7 @@ export default function Sidebar({ home }: { home: string }) {
         <SessionContextMenu
           menu={menu}
           sessionName={sessions.find((session) => session.id === menu.sessionId)?.name ?? '?'}
+          sessionPath={abbreviate(sessions.find((session) => session.id === menu.sessionId)?.cwd ?? '', home)}
           worktree={sessions.find((session) => session.id === menu.sessionId)?.worktree ?? null}
           containerRef={menuRef}
           onStartConfirm={() => {
@@ -230,6 +251,12 @@ export default function Sidebar({ home }: { home: string }) {
             // shell, since ⌘K opens the same one) takes over.
             setMenu(null);
             useStore.getState().setRenameSessionId(menu.sessionId);
+          }}
+          onCopyPath={() => {
+            // The RAW cwd, not the `~`-abbreviated one the header renders — what
+            // gets pasted has to be a path a shell can actually cd into.
+            const cwd = sessions.find((session) => session.id === menu.sessionId)?.cwd;
+            if (cwd) copyPath(menu.sessionId, cwd);
           }}
           onCancel={() => setMenu(null)}
           onToggleRemoveWorktree={() => setMenu((m) => (m ? { ...m, removeWorktree: !m.removeWorktree } : m))}

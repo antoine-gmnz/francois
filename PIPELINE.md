@@ -212,6 +212,11 @@ that owns the feature — never in a new top-level file.
     `block`, `block__element`, `block--modifier`. Only design **tokens** live in
     `src/styles.css`; `src/app/app.css` styles the shell. Inline `style` is acceptable
     only for a value computed at runtime (e.g. a token chosen by state).
+  - **Icons are `lucide-react`**, imported by name (`import { Pencil } from 'lucide-react'`)
+    so Vite tree-shakes the rest. They inherit `currentColor` — set the tone in the
+    feature's CSS, never with a `color` prop. Unicode glyphs stay only where they are
+    *typography* rather than iconography: keycaps (`⌘K`, `⏎`), disclosure carets
+    (`▸`/`▾`), and the `☑`/`☐` in question options.
   - **`src/ui/`** is the shared UI kit — the primitives every feature composes with
     (`Button`, `Chip`, `ChipGroup`, `ListRow`, `Modal`, `PanelHeader`, `StatusDot`,
     `BadgePill`, `EmptyPane`, `HintBar`, …). **Look here before building a component**;
