@@ -6,9 +6,12 @@ import type { ConversationBlock } from '../../../contract/conversation-view';
 import type { PermissionAsk, PermissionDecision, PermissionRule } from '../../../contract/permission-guardrails';
 import { composerPlaceholder } from '../questions/question-card';
 import {
+  askSignature,
   cardClass,
+  hasDetail,
   hasPendingPermissionBlock,
   PERMISSION_ACTIONS,
+  relativeAge,
   ruleSentence,
   stateNote,
   submitDecision,
@@ -58,19 +61,26 @@ describe('tier vocabulary (FR-20, §8.12)', () => {
 });
 
 describe('actions (§8.7, FR-6)', () => {
-  it('offers exactly the four spec actions in order', () => {
+  it('offers exactly the four spec actions, allows before denials', () => {
     expect(PERMISSION_ACTIONS.map((a) => a.decision)).toEqual([
       'allowOnce',
-      'denyOnce',
       'allowAlways',
+      'denyOnce',
       'denyAlways',
     ]);
+    expect(PERMISSION_ACTIONS.map((a) => a.short)).toEqual(['Allow', 'Always', 'Deny', 'Never']);
+    // The short face is what the button shows; the long label is its title, so
+    // "Never" is never left to guesswork.
     expect(PERMISSION_ACTIONS.map((a) => a.label)).toEqual([
       'allow once',
-      'deny once',
       'always allow',
+      'deny once',
       'always deny',
     ]);
+  });
+
+  it('gives every action a distinct variant, so no two buttons share a style', () => {
+    expect(PERMISSION_ACTIONS.map((a) => a.variant)).toEqual(['allow', 'always', 'deny', 'never']);
   });
 
   it('only the *Always decisions write a rule (tier is inert for the others)', () => {
@@ -99,6 +109,50 @@ describe('actions (§8.7, FR-6)', () => {
   });
 });
 
+describe('call signature (§8.3)', () => {
+  it('reads as the call would be typed', () => {
+    expect(askSignature(ask)).toBe('Bash(npm test)');
+    expect(askSignature({ ...ask, toolName: 'Write', summary: 'src/app.ts' })).toBe('Write(src/app.ts)');
+  });
+
+  it('falls back to the bare tool rather than a dangling Tool()', () => {
+    expect(askSignature({ ...ask, summary: '' })).toBe('Bash');
+    expect(askSignature({ ...ask, toolName: '', summary: '' })).toBe('tool');
+    expect(askSignature({ ...ask, toolName: '' })).toBe('tool(npm test)');
+  });
+});
+
+describe('age (§8.2)', () => {
+  it('steps second → minute → hour → day', () => {
+    expect(relativeAge(0)).toBe('just now');
+    expect(relativeAge(59_000)).toBe('just now');
+    expect(relativeAge(60_000)).toBe('1m ago');
+    expect(relativeAge(4 * 60_000 + 30_000)).toBe('4m ago');
+    expect(relativeAge(59 * 60_000)).toBe('59m ago');
+    expect(relativeAge(60 * 60_000)).toBe('1h ago');
+    expect(relativeAge(23 * 3_600_000)).toBe('23h ago');
+    expect(relativeAge(24 * 3_600_000)).toBe('1d ago');
+    expect(relativeAge(50 * 3_600_000)).toBe('2d ago');
+  });
+
+  it('never reads as negative when the clock ticks backwards', () => {
+    expect(relativeAge(-5_000)).toBe('just now');
+  });
+});
+
+describe('disclosure (§8.4)', () => {
+  it('always has something to reveal while pending (the would-be rule)', () => {
+    expect(hasDetail({ ...ask, inputJson: '', cwd: '' }, true)).toBe(true);
+  });
+
+  it('resolved: only when the ask carried an input dump or a cwd', () => {
+    expect(hasDetail(ask, false)).toBe(true);
+    expect(hasDetail({ ...ask, cwd: '' }, false)).toBe(true);
+    expect(hasDetail({ ...ask, inputJson: '' }, false)).toBe(true);
+    expect(hasDetail({ ...ask, inputJson: '', cwd: '' }, false)).toBe(false);
+  });
+});
+
 describe('rule sentences (FR-20/FR-22)', () => {
   it('shows the rule an "always" would write, tier included, before committing', () => {
     expect(ruleSentence(ask, 'local')).toBe('npm test (any arguments) · this project');
@@ -122,10 +176,10 @@ describe('state chrome (FR-22, §8.1)', () => {
   });
 
   it('classes carry the state, and in-flight only applies while pending', () => {
-    expect(cardClass('pending', false)).toBe('pcard pcard-pending');
-    expect(cardClass('pending', true)).toBe('pcard pcard-pending pcard-inflight');
-    expect(cardClass('allowed', true)).toBe('pcard pcard-allowed');
-    expect(cardClass('cancelled', false)).toBe('pcard pcard-cancelled');
+    expect(cardClass('pending', false)).toBe('pcard pcard--pending');
+    expect(cardClass('pending', true)).toBe('pcard pcard--pending pcard--inflight');
+    expect(cardClass('allowed', true)).toBe('pcard pcard--allowed');
+    expect(cardClass('cancelled', false)).toBe('pcard pcard--cancelled');
   });
 });
 

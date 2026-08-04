@@ -420,29 +420,27 @@ a {
 .qcard-pending {
   border-left: 2px solid var(--accent);
 }
-/* card-cancelled/card-head/card-label are the shared base for both the
-   question-card and permission-card families (previously byte-identical
-   duplicated rules — see the pcard-* declarations below, which read the
-   exact same properties via these grouped selectors). */
+/* card-cancelled/card-head/card-label are the shared base for the question-card
+   family. (The permission card used to share them; it now owns its whole class
+   set in src/features/permissions/permissions.css — its header carries a glyph,
+   an amber label and a right-aligned age, so it no longer reads the same
+   properties.) */
 .card-cancelled,
-.qcard-cancelled,
-.pcard-cancelled {
+.qcard-cancelled {
   opacity: 0.55;
 }
 .qcard-inflight {
   opacity: 0.7;
 }
 .card-head,
-.qcard-head,
-.pcard-head {
+.qcard-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-6);
 }
 .card-label,
-.qcard-label,
-.pcard-label {
+.qcard-label {
   color: var(--text-faint);
   font-size: var(--font-size-9-5);
   letter-spacing: 0.08em;
@@ -544,146 +542,10 @@ a {
   opacity: 0.4;
   cursor: default;
 }
-/* permission-guardrails §8 — approval card + rules editor. Inherits the
-   question-card language (literally: card-head/card-label/card-cancelled are
-   the shared base declared above, grouped with the qcard-* selectors); the
-   left edge is AMBER (--warn) while pending because a permission ask is a
-   stop, not a question, and recolors to the outcome once decided. Motion:
-   none — no @keyframes, no animation, no transition. */
-.pcard {
-  background: var(--bg-deep);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px 12px;
-}
-.pcard-pending {
-  border-left: 2px solid var(--warn);
-}
-.pcard-allowed {
-  border-left: 2px solid var(--success);
-}
-.pcard-denied {
-  border-left: 2px solid var(--error);
-}
-.pcard-inflight {
-  opacity: 0.7;
-}
-.pcard-chip {
-  color: var(--warn);
-  border: 1px solid var(--border-2);
-  border-radius: 3px;
-  padding: 0 6px;
-  font-size: 9.5px;
-}
-.pcard-note {
-  font-size: 9.5px;
-  color: var(--text-faint);
-}
-.pcard-note-allowed {
-  color: var(--success);
-}
-.pcard-note-denied {
-  color: var(--error);
-}
-/* Explicit rather than inherited: the component always emits
-   pcard-note-<state>, and a cancelled card is already dimmed card-wide
-   (§8.2), so its note stays faint on purpose. */
-.pcard-note-cancelled {
-  color: var(--text-faint);
-}
-.pcard-summary {
-  color: var(--text-bright);
-  font-size: 12.5px;
-  line-height: 1.5;
-  margin-top: 8px;
-  overflow-wrap: anywhere;
-}
-.pcard-input {
-  background: var(--bg-app);
-  border: 1px solid var(--border);
-  padding: 8px;
-  white-space: pre;
-  overflow-x: auto;
-  max-height: 180px;
-  overflow-y: auto;
-  font-size: 10.5px;
-  color: var(--text-2);
-  margin-top: 6px;
-}
-.pcard-meta {
-  color: var(--text-faint);
-  font-size: 10.5px;
-  margin-top: 6px;
-  overflow-wrap: anywhere;
-}
-.pcard-rule {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-  font-size: 10.5px;
-}
-.pcard-rule-label {
-  color: var(--text-faint);
-}
-.pcard-rule-text {
-  color: var(--text-bright);
-  overflow-wrap: anywhere;
-}
-.pcard-pattern {
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-.pcard-tiers {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.pcard-tier {
-  color: var(--text-faint);
-  cursor: pointer;
-}
-.pcard-tier-on {
-  color: var(--accent);
-}
-/* §8.6: hovering a *Once action dims the tier control — the tier only applies
-   to "always allow"/"always deny". No transition (§8 motion rule). */
-.pcard-tiers-inert {
-  opacity: 0.35;
-}
-.pcard-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 14px;
-  margin-top: 10px;
-  font-size: 11px;
-}
-.pcard-action {
-  cursor: pointer;
-}
-.pcard-allow {
-  color: var(--success);
-}
-.pcard-allow:hover {
-  color: var(--success-bright);
-}
-.pcard-deny {
-  color: var(--error);
-}
-.pcard-deny:hover {
-  color: var(--error-bright);
-}
-.pcard-inflight .pcard-action,
-.pcard-inflight .pcard-tier {
-  cursor: default;
-}
-.pcard-error {
-  color: var(--error);
-  font-size: 11px;
-  margin-top: 6px;
-}
+/* permission-guardrails §8 — the approval card's own classes moved to
+   src/features/permissions/permissions.css with the §8 redesign (per-feature
+   CSS next to its components). The rules-editor rows below still live here
+   because PermissionsModal shares them with the palette/list vocabulary. */
 /* rules editor rows (§8.12–14) */
 .prules-empty {
   color: var(--text-faint);
