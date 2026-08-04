@@ -1,5 +1,7 @@
 import type { RefObject } from 'react';
 import type { AppError, SessionWorktree } from '../../../contract/common';
+import type { EditorId, EditorInfo } from '../../../contract/open-in-vscode';
+import { editorMenuLabel } from '../../../contract/open-in-vscode';
 import type { WorktreeStatusData } from '../../../contract/session-worktree';
 import { worktreeRemovalBlockReason } from './worktree';
 import './sidebar.css';
@@ -10,6 +12,10 @@ export interface MenuState {
   y: number;
   confirming: boolean;
   error: AppError | null;
+  // open-in-vscode FR-9/10: detected editors for the default state's "Open in
+  // <label>" group. [] until the FR-10 probe resolves — renders as absent, same
+  // as a machine with none installed (no spinner, no skeleton).
+  editors: EditorInfo[];
   // session-worktree FR-17/18: the dirty/unpushed probe for the delete-confirm's
   // removal checkbox. Absent for a session with no worktree.
   worktreeChecking?: boolean;
@@ -34,6 +40,8 @@ export interface SessionContextMenuProps {
   onCancel: () => void;
   onToggleRemoveWorktree: () => void;
   onRemove: (removeWorktree: boolean) => void;
+  /** open-in-vscode FR-11: spawn `editorId` at the session's cwd. */
+  onOpenInEditor: (editorId: EditorId) => void;
 }
 
 /** The sidebar row's right-click menu: "Remove session" → inline confirm, or an error. */
@@ -47,6 +55,7 @@ export function SessionContextMenu({
   onCancel,
   onToggleRemoveWorktree,
   onRemove,
+  onOpenInEditor,
 }: SessionContextMenuProps): JSX.Element {
   // session-worktree FR-18/FR-20: a dirty/unpushed worktree — or a status check
   // that failed outright — disables the removal checkbox without ever blocking
@@ -70,6 +79,15 @@ export function SessionContextMenu({
         // destructive one stays last. Neither the confirm nor the error state
         // offers rename — those are the remove flow, unchanged.
         <>
+          {/* open-in-vscode FR-9: one item per detected editor, above Rename
+              session, same .context-menu__item treatment, no glyph, no divider.
+              [] (undetected or not-yet-resolved) renders nothing — the menu is
+              byte-identical to today's. */}
+          {menu.editors.map((editor) => (
+            <div key={editor.id} className="context-menu__item" title={editor.path} onClick={() => onOpenInEditor(editor.id)}>
+              {editorMenuLabel(editor)}
+            </div>
+          ))}
           <div className="context-menu__item" onClick={onRename}>
             Rename session
           </div>

@@ -65,6 +65,8 @@ export type ErrorCode =
   | 'UPDATE_CHECK_FAILED' // self-update: the npm registry was unreachable or unparseable (FR-6)
   | 'UPDATE_APPLY_FAILED' // self-update: npm/temp dir/spawn failed, or method is 'manual' (FR-18)
   | 'UPDATE_BLOCKED' // self-update: sessions are running (detail: { running: number }) (FR-12)
+  | 'EDITOR_NOT_FOUND' // open-in-vscode: the requested editorId is not installed (detail: { editorId })
+  | 'EDITOR_LAUNCH_FAILED' // open-in-vscode: the launcher could not be spawned (detail: { path })
   | 'INTERNAL';
 
 // ---------- sessions ----------

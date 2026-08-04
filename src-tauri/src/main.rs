@@ -8,6 +8,7 @@
 mod account;
 mod diagnostics;
 mod diff;
+mod editor;
 mod fs_util;
 mod ipc;
 mod permissions;
@@ -133,6 +134,8 @@ fn main() {
             session::session_worktree_probe,
             session::session_worktree_status,
             session::session_worktree_remove,
+            editor::session_editor_list,
+            editor::session_open_in_editor,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,
