@@ -12,7 +12,7 @@
 
 import type { ProjectId, SessionId, SessionMeta, SessionStatus } from './common';
 import type { ProjectMeta } from './projects';
-import type { SessionDerived } from './fleet-board';
+import { isBusyStatus, type SessionDerived } from './fleet-board';
 
 /** Per-session derived figures, keyed by session id — the fleet board's map (FR-4). */
 export type DerivedMap = ReadonlyMap<SessionId, SessionDerived>;
@@ -23,7 +23,15 @@ export type DerivedMap = ReadonlyMap<SessionId, SessionDerived>;
 export type StatusCounts = Record<SessionStatus, number>;
 
 export function emptyStatusCounts(): StatusCounts {
-  return { running: 0, idle: 0, done: 0, error: 0 };
+  return {
+    starting: 0,
+    running: 0,
+    awaiting_approval: 0,
+    awaiting_input: 0,
+    idle: 0,
+    done: 0,
+    error: 0,
+  };
 }
 
 /** Tally a session list by status. Unknown statuses (forward compat) are skipped. */
@@ -165,10 +173,12 @@ export function computeFleetTotals(groups: readonly OverviewGroup[], derived: De
 
 /**
  * Why a session is asking for the user:
+ *   'approval'    — parked on a gated tool call; the turn cannot proceed.
+ *   'question'    — parked on an AskUserQuestion; likewise.
  *   'error'       — it failed; `detail` carries the message.
  *   'uncommitted' — it finished its turn (idle/done) and left uncommitted files.
  */
-export type AttentionReason = 'error' | 'uncommitted';
+export type AttentionReason = 'approval' | 'question' | 'error' | 'uncommitted';
 
 export interface AttentionItem {
   session: SessionMeta;
@@ -177,22 +187,35 @@ export interface AttentionItem {
 }
 
 /**
- * The sessions that want the user, most urgent first: every errored session
- * (ordered most-recent-activity first), then every session that is idle or done
- * with a known non-zero diff count. A running session is NEVER listed — it is
- * still working, so there is nothing to act on yet.
+ * The sessions that want the user, most urgent first:
+ *   1. parked sessions (approval, then question) — a turn is stalled RIGHT NOW
+ *      and one click un-stalls it, which is the most valuable thing on the page;
+ *   2. errored sessions — already dead, so nothing is waiting on the answer;
+ *   3. settled sessions holding a known non-zero diff count.
+ * A session that is merely working (starting/running) is NEVER listed — there is
+ * nothing to act on yet. Each band is ordered most-recent-activity first.
  */
 export function needsAttention(groups: readonly OverviewGroup[], derived: DerivedMap): AttentionItem[] {
+  const approvals: AttentionItem[] = [];
+  const questions: AttentionItem[] = [];
   const errors: AttentionItem[] = [];
   const uncommitted: AttentionItem[] = [];
 
   for (const g of groups) {
     for (const s of g.sessions) {
+      if (s.status === 'awaiting_approval') {
+        approvals.push({ session: s, reason: 'approval', detail: 'waiting on an approval' });
+        continue;
+      }
+      if (s.status === 'awaiting_input') {
+        questions.push({ session: s, reason: 'question', detail: 'waiting on an answer' });
+        continue;
+      }
       if (s.status === 'error') {
         errors.push({ session: s, reason: 'error', detail: s.errorMessage?.trim() || 'session failed' });
         continue;
       }
-      if (s.status === 'running') continue;
+      if (s.status === 'running' || s.status === 'starting') continue;
       const files = derived.get(s.id)?.fileCount ?? null;
       if (files != null && files > 0) {
         uncommitted.push({
@@ -205,7 +228,12 @@ export function needsAttention(groups: readonly OverviewGroup[], derived: Derive
   }
 
   const byRecency = (a: AttentionItem, b: AttentionItem) => b.session.lastActivityAt - a.session.lastActivityAt;
-  return [...errors.sort(byRecency), ...uncommitted.sort(byRecency)];
+  return [
+    ...approvals.sort(byRecency),
+    ...questions.sort(byRecency),
+    ...errors.sort(byRecency),
+    ...uncommitted.sort(byRecency),
+  ];
 }
 
 // ---------- activity feed ----------
@@ -295,15 +323,19 @@ export function activityTone(kind: ActivityKind): ActivityTone {
 
 /**
  * Which SessionStatus transitions mint a feed entry. Returns null when the change
- * is not worth recording — notably `→ running`, which happens on every prompt and
- * would drown the feed, and any no-op transition.
+ * is not worth recording — notably every transition INTO a busy state, which
+ * happens on every prompt (and on every approval the user grants) and would
+ * drown the feed, plus any no-op transition.
  */
 export function statusTransitionKind(from: SessionStatus | undefined, to: SessionStatus): ActivityKind | null {
   if (from === to) return null;
   if (to === 'error') return 'session.error';
   if (to === 'done') return 'session.done';
-  // Only a turn that was actually RUNNING can "finish" — a fresh session settling
-  // into idle at creation is `session.started`, already recorded by session.meta.
-  if (to === 'idle' && from === 'running') return 'turn.finished';
+  // Only a turn that was actually IN FLIGHT can "finish" — a fresh session
+  // settling into idle at creation is `session.started`, already recorded by
+  // session.meta. `from` covers the parked states too: a turn that ends while an
+  // ask is still on screen (interrupt, child death) goes awaiting_* → idle, and
+  // that is a finished turn like any other.
+  if (to === 'idle' && from !== undefined && isBusyStatus(from)) return 'turn.finished';
   return null;
 }

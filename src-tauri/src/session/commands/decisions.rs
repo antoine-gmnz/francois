@@ -51,6 +51,7 @@ pub fn session_answer_question(
         // §5.4: the child died between park and answer — FR-13 cancels the
         // question, and the caller learns it is no longer pending.
         resolve_question(&app, &session_id, &block_id, "cancelled", None);
+        refresh_parked_status(&app, &session_id);
         return err("QUESTION_NOT_PENDING", "that question is no longer pending");
     }
     resolve_question(
@@ -60,6 +61,9 @@ pub fn session_answer_question(
         "answered",
         Some(&answers_value),
     );
+    // The entry was claimed above, so this recomputes off the remaining asks: back
+    // to `running`, or to the OTHER parked state when a second ask is still up.
+    refresh_parked_status(&app, &session_id);
     ok(None)
 }
 
@@ -164,6 +168,7 @@ pub fn permissions_decide(
         // "rule written: …" line must still render, or an "always allow" would
         // take effect on disk with no trace anywhere in the transcript.
         resolve_permission(&app, &session_id, &block_id, "cancelled", rule.as_ref());
+        refresh_parked_status(&app, &session_id);
         return err(
             "PERMISSION_NOT_PENDING",
             "that request is no longer pending",
@@ -171,5 +176,9 @@ pub fn permissions_decide(
     }
     let state = if allow { "allowed" } else { "denied" };
     resolve_permission(&app, &session_id, &block_id, state, rule.as_ref());
+    // The entry was claimed above, so this recomputes off the remaining asks: back
+    // to `running`, or to `awaiting_input` when a question is still parked behind
+    // this approval.
+    refresh_parked_status(&app, &session_id);
     ok(None)
 }

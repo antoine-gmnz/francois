@@ -58,7 +58,14 @@ html[data-hidden='1'] [style*='animation'] {
   --accent-bright: #d6fa7e;
   --accent-soft-bg: #1b240f;
   --accent-soft-edge: #35401f;
+  /* muted acid — a session spawning its turn. Reads as the accent family without
+     claiming the "one live thing per view" slot, which stays with --accent-2. */
+  --accent-dim: #8ea84a;
   --warn: #d4c46f;
+  /* attention — a session parked on the user (awaiting_approval). This is the v1
+     amber, free again since the accent moved to acid, and it is deliberately NOT
+     in the red family: a gate is not a failure. */
+  --attn: #e0a84e;
   /* logo (consumed by src/ui/Logo.tsx) — the dim slab is the idle session,
      not a shadow, so it never takes the accent. */
   --logo-slab: #c3f53f;
@@ -211,7 +218,10 @@ html[data-hidden='1'] [style*='animation'] {
   --accent-bright: #3e5510;
   --accent-soft-bg: #eef4e1;
   --accent-soft-edge: #c9dca3;
+  --accent-dim: #6d8a2a;
   --warn: #8f7f2e;
+  /* attention — darkened for contrast on a light surface, same step as --warn. */
+  --attn: #9a6b12;
   /* logo (consumed by src/ui/Logo.tsx) */
   --logo-slab: #4e6a14;
   --logo-slab-dim: #a8b98a;

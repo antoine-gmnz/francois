@@ -146,6 +146,10 @@ pub(crate) fn run_reader(
                 }
                 if handle_system_line(&app, &session_id, &cwd, &v) {
                     got_init = true;
+                    // The stream is live: `starting` → `running`. Only the init
+                    // line promotes, so the spawn window is a real state rather
+                    // than a claim that work began the instant we forked.
+                    mark_stream_live(&app, &session_id);
                 }
             }
             "stream_event" => {

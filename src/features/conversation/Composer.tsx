@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
-import type { SlashCommandInfo } from '../../../contract/common';
+import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
+import { isBusyStatus } from '../../../contract/fleet-board';
 import type { Attachment } from '../../../contract/session-attachments';
 import SlashMenu from '../commands/SlashMenu';
 import AttachmentChip from './AttachmentChip';
@@ -11,7 +12,7 @@ import { composerErrorBanners } from './attachments';
 // FR-20/23) stays in the parent, which owns the state it reads and writes.
 
 export interface ComposerProps {
-  status: string;
+  status: SessionStatus;
   disabled: boolean;
   input: string;
   inputRef: RefObject<HTMLTextAreaElement>;
@@ -147,7 +148,7 @@ export default function Composer({
           {/* the mock's copy reads "esc interrupt", but the real binding here is
               ⌃C (ConversationView.onInputKey) — the hint names the hotkey that
               actually fires, not the mock's label; see the handoff. */}
-          {status === 'running' && (
+          {isBusyStatus(status) && (
             <span>
               <span className="composer-hint__key">⌃C</span> interrupt
             </span>

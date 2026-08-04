@@ -5,7 +5,7 @@
 // Every rule is a keyed upsert on blockId: replaying an event is a no-op or an
 // identical replace, and out-of-order arrivals insert rather than drop.
 
-import type { CommandCard, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion, SlashCommandInfo } from '../../../contract/common';
+import type { CommandCard, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion, SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import {
   assistantColors,
   classifyToolStart,
@@ -306,7 +306,7 @@ export type TranscriptDispatch = (action: TranscriptAction) => void;
 
 /** The non-reducer component state a SessionEvent can also touch. */
 export interface ConversationEventSetters {
-  setStatus: (status: string) => void;
+  setStatus: (status: SessionStatus) => void;
   setErrorMessage: (message: string | undefined) => void;
   setResumeFailed: (value: boolean) => void;
   setPinned: (value: boolean) => void;

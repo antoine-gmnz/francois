@@ -371,6 +371,81 @@ pub(crate) fn begin_turn(
     });
 }
 
+/// `starting` → `running`: the stream produced its `system/init`, so the turn is
+/// really under way. Idempotent and narrow — it ONLY promotes from `starting`, so
+/// a turn already parked on an approval when a later init arrives is never
+/// dragged back to `running`.
+pub(crate) fn mark_stream_live(app: &AppHandle, session_id: &str) {
+    let promoted = app
+        .state::<Engine>()
+        .with_session_mut(session_id, |s| {
+            if s.status != status::STARTING {
+                return false;
+            }
+            s.status = status::RUNNING.into();
+            true
+        })
+        .unwrap_or(false);
+    if promoted {
+        emit(
+            app,
+            SessionEvent::Status {
+                session_id: session_id.into(),
+                status: status::RUNNING.into(),
+            },
+        );
+    }
+}
+
+/// Recompute the session's parked status from the turn's pending maps and publish
+/// it if it moved.
+///
+/// The `awaiting_*` states are DERIVED, never latched: this is called after every
+/// park and every user decision, and it always reads the maps rather than
+/// tracking a counter, so a cancelled ask, a lost claim race, or two asks parked
+/// at once can never strand a session looking blocked when it is not.
+///
+/// Deliberately NOT called from the turn-end drains — a turn tearing down settles
+/// on idle/error via `finish_turn`, and a refresh there would flash `running`
+/// between the last resolution and the terminal status.
+pub(crate) fn refresh_parked_status(app: &AppHandle, session_id: &str) {
+    let engine = app.state::<Engine>();
+    // Phase 1: snapshot the turn's pending handles and RELEASE the sessions lock.
+    // The pending maps are never locked while `engine.sessions` is held (the same
+    // rule decisions.rs follows), so the stdin writers can never stall a command.
+    let handles = engine.with_session(session_id, |s| {
+        s.current
+            .as_ref()
+            .map(|t| (t.pending_questions.clone(), t.pending_permissions.clone()))
+    });
+    let Some(Some((questions, permissions))) = handles else {
+        return; // no turn in flight ⇒ nothing to be parked on
+    };
+    // Separate statements: never hold both pending guards at once.
+    let n_permissions = permissions.lock().unwrap().len();
+    let n_questions = questions.lock().unwrap().len();
+
+    // Phase 2: `next_parked_status` owns the decision (and both guards) — see
+    // session/status.rs, where it is unit-tested.
+    let applied = engine
+        .with_session_mut(session_id, |s| {
+            let next = status::next_parked_status(&s.status, n_permissions, n_questions)?;
+            s.status = next.into();
+            s.last_activity_at = now_ms();
+            Some(next)
+        })
+        .flatten();
+    if let Some(next) = applied {
+        emit(
+            app,
+            SessionEvent::Status {
+                session_id: session_id.into(),
+                status: next.into(),
+            },
+        );
+    }
+}
+
 /// Route turn completion (FR-20): drain the queue or go idle; or mark error.
 pub(crate) fn finish_turn(
     app: &AppHandle,
@@ -395,7 +470,7 @@ pub(crate) fn finish_turn(
         let agent_ems = finalize_agents(s, errored, at);
         let workflow_runs = finalize_workflows(s, errored, at);
         let next = if errored {
-            s.status = "error".into();
+            s.status = status::ERROR.into();
             s.error_message = error_msg.clone();
             s.queue.clear();
             None

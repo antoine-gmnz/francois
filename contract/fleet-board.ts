@@ -44,28 +44,88 @@ export interface SessionDerived {
 
 // ---------- status presentation (single source; frontend-only) ----------
 /**
- * The board relabels the four backend SessionStatus values. There is deliberately
- * NO "needs input" state: a session that finished its turn is `idle` — i.e.
- * ready/waiting for the user (§1/§2, FR-9).
+ * Every SessionStatus, in lifecycle order. Exhaustive — a `switch` or a test that
+ * iterates this is what catches a new status added to common.ts.
+ */
+export const SESSION_STATUSES: readonly SessionStatus[] = [
+  'starting',
+  'running',
+  'awaiting_approval',
+  'awaiting_input',
+  'idle',
+  'done',
+  'error',
+];
+
+/**
+ * The board relabels the backend SessionStatus values. `idle` stays "ready" — a
+ * session that merely finished its turn is not asking for anything. The two
+ * `awaiting_*` labels are the ones that DO ask, and they name what they want
+ * ("approval" / "question") rather than a generic "blocked", because the action
+ * the user has to take differs.
  */
 export const STATUS_LABEL: Record<SessionStatus, string> = {
+  starting: 'starting',
   running: 'active',
+  awaiting_approval: 'approval',
+  awaiting_input: 'question',
   idle: 'ready',
   done: 'done',
   error: 'error',
 };
 
-/** Dot fill + status-line colour per status (tokens from PROJECT.md's palette). */
+/**
+ * Dot fill + status-line colour per status (tokens from PROJECT.md's palette).
+ * Acid (`#c3f53f`) stays reserved for `running` — the design system's "one live
+ * thing per view" rule — so `starting` takes a muted acid and the two blocked
+ * states take the warm family, which reads as "you" without reading as failure.
+ */
 export const STATUS_COLOR: Record<SessionStatus, string> = {
+  starting: '#8ea84a',
   running: '#c3f53f',
+  awaiting_approval: '#e0a84e',
+  awaiting_input: '#d4c46f',
   idle: '#4fae86',
   done: '#8b93a3',
   error: '#d1685e',
 };
 
-/** True only for `running` — the sole status whose dot pulses (FR-9). */
+/**
+ * The dot pulses while the session is DOING something — spawning or streaming.
+ * A blocked session deliberately does not pulse: it is not working, it is
+ * waiting on the user, and `statusNeedsAttention` is what marks that instead.
+ */
 export function statusPulses(status: SessionStatus): boolean {
-  return status === 'running';
+  return status === 'running' || status === 'starting';
+}
+
+/**
+ * True while the session is parked on the user (approval or question). These are
+ * the sessions a fleet scan must land on first — the turn is stalled until the
+ * user acts, so the card gets the attention treatment rather than a pulse.
+ */
+export function statusNeedsAttention(status: SessionStatus): boolean {
+  return status === 'awaiting_approval' || status === 'awaiting_input';
+}
+
+/**
+ * True whenever a turn is in flight — including the two parked states, whose
+ * claude process is very much alive. Every "is this session busy?" check must go
+ * through this: `status === 'running'` silently treats a session waiting on an
+ * approval as free, which would let a second turn spawn on top of it.
+ */
+export function isBusyStatus(status: SessionStatus): boolean {
+  return (
+    status === 'starting' ||
+    status === 'running' ||
+    status === 'awaiting_approval' ||
+    status === 'awaiting_input'
+  );
+}
+
+/** True for the statuses that end a session for good — it accepts no more turns. */
+export function isTerminalStatus(status: SessionStatus): boolean {
+  return status === 'done' || status === 'error';
 }
 
 // ---------- relative time (pure; FR-13) ----------

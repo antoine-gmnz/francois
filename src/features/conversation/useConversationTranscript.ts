@@ -6,7 +6,7 @@
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type RefObject } from 'react';
 import type { ConversationBlock } from '../../../contract/conversation-view';
-import type { SessionEvent, SlashCommandInfo } from '../../../contract/common';
+import type { SessionEvent, SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { getTranscript, onSessionEvent, sessionListCommands } from '../../lib/api';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
 import { useStore } from '../../lib/store';
@@ -30,7 +30,7 @@ export interface ConversationTranscript {
   dispatch: (action: TranscriptAction) => void;
   hydrated: boolean;
   hydrationError: string | null;
-  status: string;
+  status: SessionStatus;
   errorMessage: string | undefined;
   resumeFailed: boolean;
   dismissResumeFailed: () => void;
@@ -49,7 +49,7 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
   const [hydrationError, setHydrationError] = useState<string | null>(null);
   // Read once at mount (matches the original `useState(meta?.status ?? 'idle')`
   // initializer, which also only ever applied meta's value once).
-  const [status, setStatus] = useState<string>(
+  const [status, setStatus] = useState<SessionStatus>(
     () => useStore.getState().sessions.find((session) => session.id === sessionId)?.status ?? 'idle',
   );
   const [errorMessage, setErrorMessage] = useState<string | undefined>(

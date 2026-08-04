@@ -69,7 +69,31 @@ export type ErrorCode =
 
 // ---------- sessions ----------
 
-export type SessionStatus = 'running' | 'idle' | 'done' | 'error';
+/**
+ * A session's lifecycle state. Three of these mean "a turn is in flight" —
+ * `starting`, `running`, and the two `awaiting_*` states — so a consumer asking
+ * "is this session busy?" must use `isBusyStatus` (contract/fleet-board.ts)
+ * rather than comparing against `'running'`.
+ *
+ *   starting          — the turn's claude process was spawned; no stream line yet.
+ *   running           — the stream is live (system/init seen).
+ *   awaiting_approval — parked on a gated tool call (permission-guardrails FR-2).
+ *   awaiting_input    — parked on an AskUserQuestion (session-questions FR-6).
+ *   idle              — no turn in flight; ready for the next message.
+ *   done / error      — terminal; the session accepts no further turns.
+ *
+ * The two `awaiting_*` states are DERIVED, never latched: the core recomputes
+ * them from the turn's pending maps, so a cancelled ask cannot strand a session
+ * looking blocked. Approval outranks question when both are pending.
+ */
+export type SessionStatus =
+  | 'starting'
+  | 'running'
+  | 'awaiting_approval'
+  | 'awaiting_input'
+  | 'idle'
+  | 'done'
+  | 'error';
 
 /**
  * Permission mode a session's claude turns run with (`claude --permission-mode`).

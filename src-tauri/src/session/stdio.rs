@@ -204,6 +204,11 @@ pub(crate) fn handle_control_request(
                     ask,
                 },
             );
+            // The turn is now parked → `awaiting_approval`, so every surface that
+            // is not the SESSION tab (sidebar card, overview, notifications) can
+            // see that this session is stalled on the user. AFTER the card event,
+            // for the same ordering reason the workflow attribution below is.
+            refresh_parked_status(app, session_id);
             // workflow-details FR-20/FR-21: the ask is parked and its SESSION card
             // is already out — only THEN is it offered to the workflow ladder, so
             // the `workflow.detail` FR-23 emits can never name a blockId whose card
@@ -252,6 +257,8 @@ pub(crate) fn handle_control_request(
                     questions,
                 },
             );
+            // Parked on a question → `awaiting_input` (see the permission branch).
+            refresh_parked_status(app, session_id);
             // workflow-details FR-20: same ladder, same card-first ordering. A
             // question carries no tool name — the row label is the question's own.
             attribute_workflow_ask(app, session_id, v, &question_block_id, "question", None);
