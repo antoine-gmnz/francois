@@ -1,4 +1,5 @@
 import type { RefObject } from 'react';
+import { Check, CircleAlert, Copy, Pencil, Trash2, TriangleAlert } from 'lucide-react';
 import type { AppError, SessionWorktree } from '../../../contract/common';
 import type { WorktreeStatusData } from '../../../contract/session-worktree';
 import { worktreeRemovalBlockReason } from './worktree';
@@ -20,30 +21,47 @@ export interface MenuState {
   // failure must never block removing the session itself.
   worktreeStatusFailed?: boolean;
   removeWorktree?: boolean;
+  /** Flips to the "copied" glyph+label for a beat after Copy path succeeds. */
+  copied?: boolean;
 }
 
 export interface SessionContextMenuProps {
   menu: MenuState;
   sessionName: string;
+  /** The target session's cwd, already home-abbreviated for display. */
+  sessionPath: string;
   /** session-worktree FR-17: the target session's worktree, when it has one. */
   worktree: SessionWorktree | null;
   containerRef: RefObject<HTMLDivElement>;
   onStartConfirm: () => void;
   /** session-rename FR-12: closes the menu and opens the rename modal for this row. */
   onRename: () => void;
+  onCopyPath: () => void;
   onCancel: () => void;
   onToggleRemoveWorktree: () => void;
   onRemove: (removeWorktree: boolean) => void;
 }
 
-/** The sidebar row's right-click menu: "Remove session" → inline confirm, or an error. */
+/**
+ * The sidebar row's right-click menu: a header naming the session it acts on, the
+ * safe actions, then "Remove session" → inline confirm, or an error.
+ *
+ * Icons are lucide-react. They inherit `currentColor`, so the tone lives in
+ * sidebar.css with the rest of the menu and no icon here names a colour.
+ */
+// One size and one weight for every icon in the menu — 14px reads level with the
+// 12px labels, and 1.75 matches the hairline weight of the app's rules and borders.
+const ICON = { size: 14, strokeWidth: 1.75 } as const;
+
 export function SessionContextMenu({
   menu,
   sessionName,
+  sessionPath,
   worktree,
   containerRef,
   onStartConfirm,
   onRename,
+  onCopyPath,
   onCancel,
   onToggleRemoveWorktree,
   onRemove,
@@ -63,23 +81,58 @@ export function SessionContextMenu({
     // closes the menu, since that listener has no way to tell an inside click
     // from an outside one without it.
     <div ref={containerRef} onClick={(e) => e.stopPropagation()} className="context-menu" style={{ left: menu.x, top: menu.y }}>
+      {/* Which session am I about to rename or delete? The row that was
+          right-clicked is not necessarily the selected one, so the menu says so
+          itself rather than leaving it to be inferred from the cursor. */}
+      <div className="context-menu__header">
+        <div className="context-menu__header-name truncate" title={sessionName}>
+          {sessionName}
+        </div>
+        <div className="context-menu__header-path truncate" title={sessionPath}>
+          {sessionPath}
+        </div>
+      </div>
+
       {menu.error ? (
-        <div className="context-menu__error">{menu.error.message}</div>
+        <div className="context-menu__error">
+          <span className="context-menu__glyph context-menu__glyph--error">
+            <CircleAlert {...ICON} />
+          </span>
+          <span>{menu.error.message}</span>
+        </div>
       ) : !menu.confirming ? (
-        // session-rename FR-12: the non-destructive action reads first; the
-        // destructive one stays last. Neither the confirm nor the error state
-        // offers rename — those are the remove flow, unchanged.
-        <>
-          <div className="context-menu__item" onClick={onRename}>
-            Rename session
-          </div>
-          <div className="context-menu__item" onClick={onStartConfirm}>
-            Remove session
-          </div>
-        </>
+        // session-rename FR-12: the non-destructive actions read first; the
+        // destructive one stays last, behind a rule. Neither the confirm nor the
+        // error state offers them — those are the remove flow, unchanged.
+        <div className="context-menu__items">
+          <button type="button" className="context-menu__item" onClick={onRename}>
+            <span className="context-menu__glyph">
+              <Pencil {...ICON} />
+            </span>
+            <span className="context-menu__label">Rename session</span>
+          </button>
+          <button type="button" className="context-menu__item" onClick={onCopyPath}>
+            <span className={menu.copied ? 'context-menu__glyph context-menu__glyph--ok' : 'context-menu__glyph'}>
+              {menu.copied ? <Check {...ICON} /> : <Copy {...ICON} />}
+            </span>
+            <span className="context-menu__label">{menu.copied ? 'Path copied' : 'Copy path'}</span>
+          </button>
+          <div className="context-menu__sep" />
+          <button type="button" className="context-menu__item context-menu__item--danger" onClick={onStartConfirm}>
+            <span className="context-menu__glyph">
+              <Trash2 {...ICON} />
+            </span>
+            <span className="context-menu__label">Remove session</span>
+          </button>
+        </div>
       ) : (
         <div className="context-menu__body context-menu__body--confirm">
-          <div className="context-menu__confirm-text">remove '{sessionName}'?</div>
+          <div className="context-menu__confirm-text">
+            <span className="context-menu__glyph context-menu__glyph--warn">
+              <TriangleAlert {...ICON} />
+            </span>
+            <span>remove '{sessionName}'?</span>
+          </div>
           {/* session-worktree §8 screen 5: the delete-confirm removal step. */}
           {worktree && (
             <div className="context-menu__worktree">
@@ -99,12 +152,12 @@ export function SessionContextMenu({
             </div>
           )}
           <div className="context-menu__actions">
-            <span className="context-menu__action" onClick={onCancel}>
+            <button type="button" className="context-menu__action" onClick={onCancel}>
               Cancel
-            </span>
-            <span className="context-menu__action context-menu__action--danger" onClick={() => onRemove(!blockReason && removeWorktree)}>
+            </button>
+            <button type="button" className="context-menu__action context-menu__action--danger" onClick={() => onRemove(!blockReason && removeWorktree)}>
               Remove
-            </span>
+            </button>
           </div>
         </div>
       )}

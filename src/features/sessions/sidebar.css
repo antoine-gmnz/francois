@@ -269,30 +269,113 @@
   background: var(--bg-panel);
   border: 1px solid var(--border-2);
   border-radius: var(--radius-md);
-  min-width: 160px;
+  min-width: 180px;
+  /* The header carries a full cwd — without a cap it would stretch the menu off
+     the pane instead of letting `truncate` do its job. */
+  max-width: 260px;
   box-shadow: var(--shadow-dropdown);
   z-index: 30;
   overflow: hidden;
 }
+/* The menu names the row it acts on: a right-click does not move the selection,
+   so without this the target is only inferable from where the cursor happens
+   to be. Reads as a caption, never as an action — hence no hover, no pointer. */
+.context-menu__header {
+  padding: var(--space-6) var(--space-10);
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border);
+}
+.context-menu__header-name {
+  font-size: var(--font-size-11);
+  color: var(--text-strong);
+}
+.context-menu__header-path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+}
 .context-menu__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
   padding: var(--space-8) var(--space-10);
   font-size: var(--font-size-11);
   color: var(--error);
 }
+.context-menu__items {
+  padding: var(--space-4) 0;
+}
 .context-menu__item {
-  padding: var(--space-8) var(--space-10);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  width: 100%;
+  padding: var(--space-6) var(--space-10);
+  font-family: inherit;
   font-size: var(--font-size-12);
+  text-align: left;
   color: var(--text);
   cursor: pointer;
   background: transparent;
+  border: 0;
 }
 .context-menu__item:hover {
   background: var(--bg-hover);
+  color: var(--text-bright);
+}
+/* Fixed slot so every label starts on the same column whatever the icon's own
+   aspect. lucide icons inherit `currentColor`, so the tone is set right here. */
+.context-menu__glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+/* Brightens rather than turning acid: the design system reserves the accent for
+   the one live thing in a view, and a hovered menu row is not it. */
+.context-menu__item:hover .context-menu__glyph {
+  color: var(--text-bright);
+}
+/* The copy acknowledgement. Repeated under :hover because the pointer is still
+   on the row you just clicked — the hover tone would otherwise eat the tick. */
+.context-menu__glyph--ok,
+.context-menu__item:hover .context-menu__glyph--ok {
+  color: var(--success);
+}
+.context-menu__glyph--warn {
+  color: var(--warn);
+}
+.context-menu__glyph--error {
+  color: var(--error);
+}
+.context-menu__label {
+  flex: 1;
+}
+/* Destructive action, ruled off from the safe ones above it. Reads in the
+   normal text tone at rest and only turns red on hover, so the menu does not
+   open shouting — the confirm step is where the danger is stated. */
+.context-menu__sep {
+  height: 1px;
+  margin: var(--space-4) 0;
+  background: var(--border);
+}
+.context-menu__item--danger:hover {
+  background: var(--bg-hover);
+  color: var(--error-bright);
+}
+.context-menu__item--danger:hover .context-menu__glyph {
+  color: var(--error-bright);
 }
 .context-menu__body {
   padding: var(--space-8) var(--space-10);
 }
 .context-menu__confirm-text {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
   font-size: var(--font-size-11-5);
   color: var(--text);
   margin-bottom: var(--space-8);
@@ -334,10 +417,23 @@
   justify-content: flex-end;
 }
 .context-menu__action {
+  padding: var(--space-3) var(--space-8);
+  font-family: inherit;
   font-size: var(--font-size-12);
   color: var(--text-dim);
   cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+.context-menu__action:hover {
+  color: var(--text-bright);
+  border-color: var(--border-emphasis);
 }
 .context-menu__action--danger {
   color: var(--error);
+}
+.context-menu__action--danger:hover {
+  color: var(--error-bright);
+  border-color: var(--error-dim);
 }
