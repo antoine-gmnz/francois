@@ -41,6 +41,10 @@ pub(crate) enum SessionEvent {
         #[serde(rename = "blockId")]
         block_id: String,
         text: String,
+        /// UTF-16 code units of this block already streamed BEFORE this chunk
+        /// (UTF-16 because the webview counts `String.length` that way, and the
+        /// two counts must agree for the frontend's overlap check to work).
+        offset: usize,
     },
     #[serde(rename = "assistant.done")]
     AssistantDone {
@@ -48,6 +52,9 @@ pub(crate) enum SessionEvent {
         session_id: String,
         #[serde(rename = "blockId")]
         block_id: String,
+        /// The block's COMPLETE text — authoritative, so a listener that missed
+        /// a delta is repaired here instead of rendering a truncated answer.
+        text: String,
     },
     #[serde(rename = "tool.start")]
     ToolStart {

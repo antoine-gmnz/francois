@@ -363,21 +363,21 @@ function route(cmd: string, a: Args): unknown {
 /**
  * A re-read (session switch, tab remount) has to agree with what the stream
  * already emitted, so every block the timeline appends is recorded here too —
- * but ONLY once it is COMPLETE.
+ * INCLUDING one still streaming, exactly like the core's own block buffer.
  *
  * The app buffers every session event from the moment it subscribes and drains
  * that buffer onto the snapshot once `conversation_get_transcript` resolves
- * (useHydratedSubscription). `assistant.delta` is additive, so a block that is
- * in BOTH the snapshot and the buffer gets its opening chunks applied twice —
- * which surfaces as a garbled word mid-paragraph. Keeping in-flight blocks out
- * of the snapshot means the view rebuilds them from the buffer alone: a remount
- * mid-paragraph shows that paragraph from wherever the buffer starts, which
- * reads exactly like a turn still streaming, and never corrupts a word.
+ * (useHydratedSubscription). A block present in BOTH is reconciled by each
+ * delta's `offset` (contract/common.ts), so the overlap applies once — which is
+ * why an in-flight block belongs in the snapshot: leaving it out is what made a
+ * mid-paragraph remount lose the paragraph's opening.
+ *
+ * Copies go out, since the timeline keeps mutating the block it is streaming.
  */
 const liveBlocks: ConversationBlock[] = [];
 
 function transcriptNow() {
-  return [...TRANSCRIPT, ...liveBlocks];
+  return [...TRANSCRIPT, ...liveBlocks].map((b) => ({ ...b }));
 }
 
 /** An agent's own transcript, rebuilt from its activity trail. */
@@ -460,17 +460,18 @@ async function stream(blockId: string, text: string) {
     bodyColor: '#e6e9ef',
     text: '',
   };
+  liveBlocks.push(block); // in the snapshot from the first chunk on — offsets reconcile the overlap
   for (let i = 0; i < text.length && !stopped; i += 3) {
     const chunk = text.slice(i, i + 3);
+    const offset = block.text.length;
     block.text += chunk;
-    session({ type: 'assistant.delta', sessionId: S_API, blockId, text: chunk });
+    session({ type: 'assistant.delta', sessionId: S_API, blockId, text: chunk, offset });
     await sleep(24);
   }
   block.isStreaming = false;
   block.glyphColor = '#8b93a3';
   block.bodyColor = '#c3c9d4';
-  liveBlocks.push(block); // complete — safe to appear in a snapshot now
-  session({ type: 'assistant.done', sessionId: S_API, blockId });
+  session({ type: 'assistant.done', sessionId: S_API, blockId, text: block.text });
 }
 
 /** A tool call that opens, works for a beat, then resolves with its meta. */
