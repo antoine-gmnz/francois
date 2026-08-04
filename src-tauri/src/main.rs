@@ -21,10 +21,10 @@ mod usage;
 mod window;
 mod wsl;
 
-// session::session_remove disposes a session's shell without depending on the
-// shell module directly — re-exported at the crate root so `crate::dispose_session_shell`
+// session::session_remove disposes a session's shells without depending on the
+// shell module directly — re-exported at the crate root so `crate::dispose_session_shells`
 // keeps resolving exactly as before this domain moved out of main.rs.
-pub(crate) use shell::dispose_session_shell;
+pub(crate) use shell::dispose_session_shells;
 
 use tauri::RunEvent;
 // `get_webview_window` is a `Manager` method; only the windows-only chrome tint
@@ -76,6 +76,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             shell::commands::shell_ensure,
+            shell::commands::shell_create,
+            shell::commands::shell_restart,
+            shell::commands::shell_rename,
             shell::commands::shell_write,
             shell::commands::shell_resize,
             shell::commands::shell_dispose,

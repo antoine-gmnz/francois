@@ -5,7 +5,6 @@ import { workflowIdFromTab } from '../features/agents/agent-tab';
 import ConversationView from '../features/conversation/ConversationView';
 import DiffView from '../features/diff/DiffView';
 import WorkflowView from '../features/workflows/WorkflowView';
-import type { ShellUiState } from '../features/shell/shellStore';
 import OverviewView from '../features/overview/OverviewView';
 import type { MainTab } from '../lib/store';
 import { mainPaneBranch, type MainPaneBranch } from './appShell';
@@ -17,13 +16,12 @@ export interface MainPaneBodyProps {
   activeAgentId: string | null;
   active: SessionMeta | null;
   home: string;
-  shell: ShellUiState;
 }
 
 /** The main pane's body: one renderer per `MainTab` (Phase 5 dispatch table),
  * with the dynamic `agent:<id>` tabs handled explicitly since they are not a
  * plain `MainTab` key the table can be built over. */
-export default function MainPaneBody({ mainTab, activeAgentId, active, home, shell }: MainPaneBodyProps) {
+export default function MainPaneBody({ mainTab, activeAgentId, active, home }: MainPaneBodyProps) {
   const branch = mainPaneBranch(mainTab);
 
   if (branch === 'agent') {
@@ -69,7 +67,7 @@ export default function MainPaneBody({ mainTab, activeAgentId, active, home, she
       ),
     shell: () =>
       active ? (
-        <ShellTabView sessionId={active.id} shell={shell} home={home} />
+        <ShellTabView key={active.id} sessionId={active.id} home={home} />
       ) : (
         <EmptyPaneMessage>select a session to open its shell</EmptyPaneMessage>
       ),

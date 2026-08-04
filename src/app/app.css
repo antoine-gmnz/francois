@@ -237,6 +237,10 @@
   flex-shrink: 0;
 }
 
+/* multiple-shells §8: the SHELL tab's sub-tab strip (.shell-strip/.shell-chip*/
+   .shell-empty*) moved to src/features/shell/shell.css, imported from
+   ShellStrip.tsx — per-feature CSS convention. */
+
 /* design-refresh FR-10: a 30px full-bleed strip under the grid — not a bordered
    card inside it, so it reads as window chrome (like the titlebar) rather than
    a fourth pane. Border on the top edge only, no radius, no side gutters. */

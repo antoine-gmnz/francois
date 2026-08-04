@@ -12,7 +12,7 @@ import ProjectsModal from '../features/projects/ProjectsModal';
 import NewSessionModal from '../features/sessions/NewSessionModal';
 import RenameSessionModal from '../features/sessions/RenameSessionModal';
 import Sidebar from '../features/sessions/Sidebar';
-import { initShellEvents, useShellState } from '../features/shell/shellStore';
+import { initShellEvents } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
 import UpdateModal from '../features/update/UpdateModal';
 import { checkUpdateOnLaunch } from '../features/update/update';
@@ -36,9 +36,6 @@ export default function App() {
   const [clockNow, setClockNow] = useState(() => Date.now());
   const sessions = useStore((s) => s.sessions);
   const activeSessionId = useStore((s) => s.activeSessionId);
-  // Per-session shell state (FR-10/13); '' resolves to the untouched default
-  // ShellUiState until a session is active — never spawns a PTY on its own.
-  const shell = useShellState(activeSessionId ?? '');
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const mainTab = useStore((s) => s.mainTab);
@@ -228,7 +225,7 @@ export default function App() {
             showSessionMeta={showSessionMeta}
             toggleSessionMeta={toggleSessionMeta}
           />
-          <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} shell={shell} />
+          <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} />
         </section>
 
         {/* right column: agents [3] + mcp [4] + skills [5] + workflows [6] —
