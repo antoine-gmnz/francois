@@ -146,3 +146,16 @@ Parked at the `/review` SHIP verdict (2026-08-04). Both are LOW, quality-only, n
   `SESSION_NOT_FOUND` check + a thin `open_in_editor_command_impl(engine: &Engine, ...)` into
   `session/` (where `test_engine_with` is reachable) so it's pinned by a test, or export a minimal
   test-only `Engine` builder the `editor` module can use.
+
+## deferred:webview-hardening
+
+Logged per spec §2/§6 non-goal (explicit — not a review finding). Not fixed here; a 34-file diff
+would swallow the fonts/CSP commit pair this feature exists to ship.
+
+- **[LOW]** 85 inline `style={{}}` occurrences across 34 files in `src/features/**` and `src/app/`
+  · `PIPELINE.md` §Code layout violation ("Styling is per-feature CSS + classNames, never inline
+  `style={{}}`") · this is also the reason `specs/webview-hardening.md`'s CSP (`app.security.csp`)
+  keeps `style-src 'unsafe-inline'` rather than the tighter `style-src-elem`/`style-src-attr` split —
+  see that spec's FR-9. → **Fix:** migrate each inline `style` object to a `<feature>.css` BEM-lite
+  class per `PIPELINE.md` §Code layout, file by file; once none remain, `style-src-attr 'none'`
+  becomes viable and `webview-hardening`'s CSP can be revisited.
