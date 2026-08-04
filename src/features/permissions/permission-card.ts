@@ -24,12 +24,27 @@ export function tierChip(tier: PermissionTier): string {
   return tier === 'global' ? 'global' : 'project';
 }
 
-/** The four card actions, in render order (§8.7). */
-export const PERMISSION_ACTIONS: { decision: PermissionDecision; label: string; allow: boolean }[] = [
-  { decision: 'allowOnce', label: 'allow once', allow: true },
-  { decision: 'denyOnce', label: 'deny once', allow: false },
-  { decision: 'allowAlways', label: 'always allow', allow: true },
-  { decision: 'denyAlways', label: 'always deny', allow: false },
+export interface PermissionAction {
+  decision: PermissionDecision;
+  /** The button face (§8.7) — one word, so all four fit one row next to the tier control. */
+  short: string;
+  /** The full sentence, carried as the button's `title` so the short face is never ambiguous. */
+  label: string;
+  /** Drives `pcard__btn--<variant>`; also the render grouping (allows first, denials after). */
+  variant: 'allow' | 'always' | 'deny' | 'never';
+  allow: boolean;
+}
+
+/**
+ * The four card actions, in render order (§8.7): the two allows first, then the
+ * two denials — the design brief's Allow / Always / Deny grouping, with `Never`
+ * (always deny) completing the pair.
+ */
+export const PERMISSION_ACTIONS: PermissionAction[] = [
+  { decision: 'allowOnce', short: 'Allow', label: 'allow once', variant: 'allow', allow: true },
+  { decision: 'allowAlways', short: 'Always', label: 'always allow', variant: 'always', allow: true },
+  { decision: 'denyOnce', short: 'Deny', label: 'deny once', variant: 'deny', allow: false },
+  { decision: 'denyAlways', short: 'Never', label: 'always deny', variant: 'never', allow: false },
 ];
 
 /**
@@ -47,6 +62,41 @@ export function writesRule(decision: PermissionDecision): boolean {
  */
 export function tierControlDimmed(hovered: PermissionDecision | null): boolean {
   return hovered !== null && !writesRule(hovered);
+}
+
+/**
+ * §8.3: the card's headline — the call as it would be typed, `Bash(rm -rf
+ * node_modules)`. Falls back to the bare tool name when the tool exposes no
+ * one-liner (FR-4), so the line is never a dangling `Tool()`.
+ */
+export function askSignature(ask: PermissionAsk): string {
+  const tool = ask.toolName || 'tool';
+  return ask.summary === '' ? tool : `${tool}(${ask.summary})`;
+}
+
+/**
+ * §8.2: how long the ask has been sitting there, shown at the right of the
+ * header row. Measured from when the card first rendered — the transcript
+ * carries no timestamp, so a card restored from a persisted transcript restarts
+ * its clock rather than lying about a precise wall time.
+ */
+export function relativeAge(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+/**
+ * §8.4: whether the disclosure caret has anything to reveal. A pending card
+ * always does (the writes-rule line lives in the detail); a resolved one only
+ * when the ask carried an input dump or a cwd.
+ */
+export function hasDetail(ask: PermissionAsk, pending: boolean): boolean {
+  return pending || ask.inputJson !== '' || ask.cwd !== '';
 }
 
 /**
@@ -81,13 +131,14 @@ export function stateNote(state: PermissionState): string | null {
 }
 
 /**
- * §8.1: the card's class list. `pending` carries the amber stop edge; the
- * resolved states recolor it (or dim the whole card for `cancelled`), and
- * `in flight` dims to 0.7 while a decision is on the wire (FR-21).
+ * §8.1: the card's class list. `pending` carries the amber stop chrome; the
+ * resolved states recolor the left edge (or dim the whole card for
+ * `cancelled`), and `in flight` dims to 0.7 while a decision is on the wire
+ * (FR-21).
  */
 export function cardClass(state: PermissionState, inFlight: boolean): string {
-  const parts = ['pcard', `pcard-${state}`];
-  if (state === 'pending' && inFlight) parts.push('pcard-inflight');
+  const parts = ['pcard', `pcard--${state}`];
+  if (state === 'pending' && inFlight) parts.push('pcard--inflight');
   return parts.join(' ');
 }
 
