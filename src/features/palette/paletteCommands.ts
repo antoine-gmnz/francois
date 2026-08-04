@@ -13,6 +13,7 @@ import { requestUsageRefresh } from '../usage/usage';
 import { checkUpdateManually } from '../update/update';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
+import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
 
@@ -420,6 +421,58 @@ export function registerBuiltinCommands(): void {
     hint: () => (useStore.getState().theme === 'dark' ? 'switch to light' : 'switch to dark'),
     run: () => {
       useStore.getState().toggleTheme();
+    },
+  });
+
+  // 15/15b/15c/15d — Shell tab (multiple-shells FR-22): new/close/next act on
+  // the active session's SHELL state directly, independent of which main tab
+  // is showing — only "new" also switches to SHELL, mirroring flow 2's own
+  // "the new chip becomes active" behavior.
+  registerPaletteCommand({
+    id: 'shell-new',
+    glyph: '❯',
+    name: 'Shell: new',
+    hint: () => '⌘T',
+    enabled: (ctx) => ctx.activeSessionId !== null,
+    run: (ctx) => {
+      if (!ctx.activeSessionId) return;
+      const st = useStore.getState();
+      st.setFocusedPane('main');
+      st.setMainTab('shell');
+      void newShell(ctx.activeSessionId);
+    },
+  });
+  registerPaletteCommand({
+    id: 'shell-close',
+    glyph: '✕',
+    name: 'Shell: close',
+    hint: () => '⌘W',
+    enabled: (ctx) => ctx.activeSessionId !== null,
+    run: (ctx) => {
+      if (ctx.activeSessionId) closeDisplayedShell(ctx.activeSessionId);
+    },
+  });
+  registerPaletteCommand({
+    id: 'shell-next',
+    glyph: '⇥',
+    name: 'Shell: next',
+    hint: () => '⌃⇥',
+    enabled: (ctx) => ctx.activeSessionId !== null,
+    run: (ctx) => {
+      if (ctx.activeSessionId) cycleShell(ctx.activeSessionId, 1);
+    },
+  });
+  // No free-text SecondaryStep exists (contract/command-palette.ts), so this
+  // flags the session's displayed chip for inline rename instead — see
+  // shellActions.ts's requestActiveShellRename for the assumption this rests on.
+  registerPaletteCommand({
+    id: 'shell-rename',
+    glyph: '✎',
+    name: 'Shell: rename',
+    hint: () => 'double-click a chip',
+    enabled: (ctx) => ctx.activeSessionId !== null,
+    run: (ctx) => {
+      if (ctx.activeSessionId) requestActiveShellRename(ctx.activeSessionId);
     },
   });
 }

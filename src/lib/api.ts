@@ -48,7 +48,20 @@ import type {
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpApprovalState, McpDecision, McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
-import type { ShellEvent } from '../../contract/shell-terminal';
+import type {
+  ShellCreatePayload,
+  ShellDisposePayload,
+  ShellEnsureData,
+  ShellEnsurePayload,
+  ShellEvent,
+  ShellId,
+  ShellInfo,
+  ShellRenamePayload,
+  ShellResizePayload,
+  ShellRestartData,
+  ShellRestartPayload,
+  ShellWritePayload,
+} from '../../contract/shell-terminal';
 import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
@@ -311,6 +324,22 @@ export const remoteGet = (sessionId: SessionId) =>
 export function onRemoteEvent(cb: (e: RemoteControlEvent) => void): Promise<UnlistenFn> {
   return stream<RemoteControlEvent>('francois://remote/event', cb);
 }
+
+// multiple-shells (§5). The domain is keyed by ShellId end to end — every
+// call below addresses a shell directly, never a session's "the" shell.
+export const shellEnsure = (payload: ShellEnsurePayload) => ipc<Result<ShellEnsureData>>('shell_ensure', payload);
+export const shellCreate = (sessionId: SessionId) =>
+  ipc<Result<ShellInfo>>('shell_create', { sessionId } satisfies ShellCreatePayload);
+export const shellRestart = (shellId: ShellId) =>
+  ipc<Result<ShellRestartData>>('shell_restart', { shellId } satisfies ShellRestartPayload);
+export const shellRename = (shellId: ShellId, name: string) =>
+  ipc<Result<ShellInfo>>('shell_rename', { shellId, name } satisfies ShellRenamePayload);
+export const shellDispose = (shellId: ShellId) =>
+  ipc<Result<void>>('shell_dispose', { shellId } satisfies ShellDisposePayload);
+export const shellWrite = (shellId: ShellId, data: string) =>
+  ipc<Result<void>>('shell_write', { shellId, data } satisfies ShellWritePayload);
+export const shellResize = (shellId: ShellId, cols: number, rows: number) =>
+  ipc<Result<void>>('shell_resize', { shellId, cols, rows } satisfies ShellResizePayload);
 
 /** Subscribe to francois://shell/event (shell.data / shell.exit). */
 export function onShellEvent(cb: (e: ShellEvent) => void): Promise<UnlistenFn> {

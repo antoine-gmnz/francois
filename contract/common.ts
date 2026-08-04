@@ -67,6 +67,8 @@ export type ErrorCode =
   | 'UPDATE_BLOCKED' // self-update: sessions are running (detail: { running: number }) (FR-12)
   | 'EDITOR_NOT_FOUND' // open-in-vscode: the requested editorId is not installed (detail: { editorId })
   | 'EDITOR_LAUNCH_FAILED' // open-in-vscode: the launcher could not be spawned (detail: { path })
+  | 'SHELL_NOT_FOUND' // multiple-shells: no entry for that ShellId (unknown, disposed, or another session's)
+  | 'SHELL_LIMIT_REACHED' // multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
   | 'INTERNAL';
 
 // ---------- sessions ----------

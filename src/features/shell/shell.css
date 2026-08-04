@@ -1,0 +1,97 @@
+/* multiple-shells §8: the SHELL tab's sub-tab strip — a row of `.shell-chip`s
+   one level down from the main `.app-tab-chip` strip above it (smaller,
+   quieter, lighter border — see the design brief's "hierarchy is the whole
+   job" note). Hidden entirely at ≤1 shell (ShellStrip.tsx, FR-11); the empty
+   state (0 shells) renders it with only the `+` (ShellTabView.tsx, FR-23). */
+.shell-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-14);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-app);
+  overflow-x: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.shell-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 24px;
+  font-size: var(--font-size-11);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 var(--space-7) 0 var(--space-8);
+  border-radius: var(--radius-card);
+  color: var(--text-hint);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  max-width: 160px;
+  min-width: 72px;
+  flex: 0 0 auto;
+}
+.shell-chip:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-emphasis);
+}
+.shell-chip--active,
+.shell-chip--active:hover {
+  color: var(--text-bright);
+  font-weight: 600;
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-pill);
+}
+.shell-chip-name {
+  min-width: 0;
+}
+/* §8: never animated — a live thing on this app's tokens is the accent, once
+   per view, and pulsing here would compete with that vocabulary. */
+.shell-chip-unread {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  flex-shrink: 0;
+}
+.shell-chip-close {
+  display: flex;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.shell-chip-close:hover {
+  color: var(--text-strong);
+}
+.shell-chip-rename-input {
+  font: inherit;
+  color: var(--text-bright);
+  background: transparent;
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius-xs);
+  padding: 0 var(--space-3);
+  min-width: 72px;
+}
+.shell-chip--plus {
+  color: var(--text-muted);
+  justify-content: center;
+  min-width: 24px;
+  padding: 0 var(--space-7);
+}
+.shell-chip--disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+/* Empty-state SHELL tab (FR-23) — same column layout as .sidebar-empty. */
+.shell-empty {
+  flex-direction: column;
+  font-size: var(--font-size-11-5);
+  text-align: center;
+  padding: var(--space-12);
+}
+.shell-empty__hint {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  margin-top: var(--space-5);
+}

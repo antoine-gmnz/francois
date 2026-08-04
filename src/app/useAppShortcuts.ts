@@ -69,6 +69,11 @@ export function useAppShortcuts(state: AppShortcutState): void {
       const activeEl = document.activeElement as HTMLElement | null;
       const inInput = !!activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
       const inTerminal = !!activeEl && activeEl.closest('.xterm') !== null;
+      // multiple-shells FR-19: a modifier held means this keydown is one of the
+      // SHELL tab's ⌘T/⌘W/⌃⇥/⌃⇧⇥ combos (or any other modified combo), never a
+      // plain single-letter global — without this guard `t`'s toggleShellTab
+      // would also fire on a bare Cmd+T and immediately leave the tab it just opened.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       // permission-guardrails FR-29 / projects FR-37: an open editor suppresses the
       // single-letter globals too, exactly like the other modals.
       if (

@@ -28,7 +28,10 @@ pub(crate) const ERROR: &str = "error";
 /// A turn is in flight — the claude child is alive, whether it is streaming or
 /// parked on the user. The guard for "can this session accept a new turn?".
 pub(crate) fn is_busy(status: &str) -> bool {
-    matches!(status, STARTING | RUNNING | AWAITING_APPROVAL | AWAITING_INPUT)
+    matches!(
+        status,
+        STARTING | RUNNING | AWAITING_APPROVAL | AWAITING_INPUT
+    )
 }
 
 /// The session is over for good and accepts no further turns.
@@ -42,7 +45,10 @@ pub(crate) fn is_terminal(status: &str) -> bool {
 /// Approval outranks question deliberately: a permission ask blocks a concrete
 /// tool call the assistant is mid-way through, while a question can sit behind
 /// it. With both pending the user wants to see the more specific one.
-pub(crate) fn parked_status(pending_permissions: usize, pending_questions: usize) -> Option<&'static str> {
+pub(crate) fn parked_status(
+    pending_permissions: usize,
+    pending_questions: usize,
+) -> Option<&'static str> {
     if pending_permissions > 0 {
         Some(AWAITING_APPROVAL)
     } else if pending_questions > 0 {
@@ -151,9 +157,15 @@ mod tests {
     fn resolving_one_of_two_asks_falls_through_to_the_other() {
         // Answering the approval while a question is still parked must NOT read
         // as "back to work" — the turn is still stalled on the user.
-        assert_eq!(next_parked_status(AWAITING_APPROVAL, 0, 1), Some(AWAITING_INPUT));
+        assert_eq!(
+            next_parked_status(AWAITING_APPROVAL, 0, 1),
+            Some(AWAITING_INPUT)
+        );
         // And a question resolved under a live approval stays on the approval.
-        assert_eq!(next_parked_status(AWAITING_INPUT, 1, 0), Some(AWAITING_APPROVAL));
+        assert_eq!(
+            next_parked_status(AWAITING_INPUT, 1, 0),
+            Some(AWAITING_APPROVAL)
+        );
     }
 
     #[test]

@@ -433,9 +433,7 @@ mod tests {
 
     #[test]
     fn parse_background_tasks_counts_the_full_task_list() {
-        let line = |tasks: Value| {
-            json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": tasks })
-        };
+        let line = |tasks: Value| json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": tasks });
         assert_eq!(
             parse_background_tasks(&line(json!([{ "task_id": "a" }, { "task_id": "b" }]))),
             Some(2)

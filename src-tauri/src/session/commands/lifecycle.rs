@@ -340,7 +340,7 @@ pub fn session_remove(
                                                        // workflow-details FR-6: the run directories of a removed session are
                                                        // no longer watched, and the asks attributed to its runs go with it.
             unwatch_session_workflows(&engine, &session.workflow_order);
-            crate::dispose_session_shell(&app, &session_id); // wsl-filesystem FR-13: dispose the shell
+            crate::dispose_session_shells(&app, &session_id); // wsl-filesystem FR-13/multiple-shells FR-9: dispose every shell
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)
         }

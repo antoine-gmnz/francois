@@ -5,6 +5,7 @@ import { statusTransitionKind, type ActivityKind } from '../../../contract/overv
 import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { prunePaletteSession } from '../palette/paletteData';
+import { useShellStore } from '../shell/shellStore';
 import { handleSessionEvent, type SessionEventContext } from './sessionEventHandler';
 
 export interface SessionFleetSync {
@@ -68,6 +69,9 @@ export function useSessionFleetSync(): SessionFleetSync {
     seededRef.current.delete(id);
     startedRef.current.delete(id);
     dropDerivedFromCache(id);
+    // multiple-shells FR-9: purge the session's shell roster/active-id/unread
+    // bookkeeping too, mirroring the core's own dispose_session_shells.
+    useShellStore.getState().removeSession(id);
   };
 
   // Best-effort one-shot diff seed, deduped by id so it fires exactly once per
