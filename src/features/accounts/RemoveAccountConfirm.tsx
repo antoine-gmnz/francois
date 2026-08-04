@@ -28,21 +28,22 @@ export function RemoveAccountConfirm({
       {view.names.length > 0 && (
         <div className="acc-confirm-names">
           {view.names.map((name, i) => (
-            <span key={`${name}:${i}`}>{name}</span>
+            <span key={`${name}:${i}`} className="acc-confirm-name">
+              {name}
+            </span>
           ))}
-          {view.moreLabel && <span>{view.moreLabel}</span>}
+          {view.moreLabel && <span className="acc-confirm-more">{view.moreLabel}</span>}
         </div>
       )}
+      {/* Filled-danger for the destructive half, ghost for the way out — the
+          redesign's own primary/secondary pairing, recoloured for a removal.
+          The tone lives in accounts.css; nothing here names a colour. */}
       <div className="acc-confirm-actions">
         <Button variant="ghost" onClick={onCancel}>
-          CANCEL
+          Cancel
         </Button>
-        <Button
-          variant="ghost"
-          onClick={onConfirm}
-          style={{ color: 'var(--error)', borderColor: 'var(--error-dim)' }}
-        >
-          REMOVE
+        <Button variant="primary" className="acc-confirm-remove" onClick={onConfirm}>
+          Remove
         </Button>
       </div>
     </div>
