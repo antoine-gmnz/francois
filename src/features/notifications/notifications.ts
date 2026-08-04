@@ -11,6 +11,7 @@ import {
   sendNotification,
 } from '@tauri-apps/plugin-notification';
 import type { BlockId, SessionEvent, SessionId, SessionStatus } from '../../../contract/common';
+import { isBusyStatus } from '../../../contract/fleet-board';
 import type { NotifyClass, NotifyTrigger } from '../../../contract/notifications';
 import { NOTIFICATION_TITLE, isSettleStatus, notificationBody } from '../../../contract/notifications';
 import { onSessionEvent } from '../../lib/api';
@@ -35,7 +36,11 @@ export interface GateContext {
 function settleTrigger(sessionId: SessionId, nextStatus: SessionStatus, state: DeriveState): NotifyTrigger | null {
   const previous = state.lastStatus.get(sessionId);
   state.lastStatus.set(sessionId, nextStatus);
-  if (previous === 'running' && isSettleStatus(nextStatus)) {
+  // isBusyStatus, not `=== 'running'`: a turn can settle out of any in-flight
+  // status. Interrupting an approval card goes awaiting_approval → idle, and a
+  // spawn failure goes starting → error — both are turns the user was waiting
+  // on, and both fired no notification while this only recognised `running`.
+  if (previous !== undefined && isBusyStatus(previous) && isSettleStatus(nextStatus)) {
     return { class: 'turnDone', kind: 'settle', sessionId, status: nextStatus };
   }
   return null;

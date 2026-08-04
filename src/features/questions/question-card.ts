@@ -3,7 +3,7 @@
 // multi-select join, free-text pass-through and the FR-21 failure path are
 // unit-testable without the DOM.
 
-import type { Result, SessionQuestion } from '../../../contract/common';
+import type { Result, SessionQuestion, SessionStatus } from '../../../contract/common';
 import type { ConversationBlock } from '../../../contract/conversation-view';
 
 /** Card-local answer state for one question section (parallel to `questions`). */
@@ -176,7 +176,7 @@ export function hasPendingQuestionBlock(blocks: ConversationBlock[]): boolean {
  * "the turn is parked and typed messages queue", which is the part that matters.
  */
 export function composerPlaceholder(
-  status: string,
+  status: SessionStatus,
   errorMessage: string | undefined,
   pendingQuestion: boolean,
   pendingPermission = false,

@@ -63,7 +63,7 @@ const derivedMap = (entries: Record<string, Partial<SessionDerived>>): Map<strin
 
 describe('countByStatus', () => {
   it('starts every counter at zero', () => {
-    expect(countByStatus([])).toEqual({ running: 0, idle: 0, done: 0, error: 0 });
+    expect(countByStatus([])).toEqual(emptyStatusCounts());
   });
 
   it('tallies each status independently', () => {
@@ -72,8 +72,19 @@ describe('countByStatus', () => {
       session({ id: 'b', status: 'running' }),
       session({ id: 'c', status: 'error' }),
       session({ id: 'd', status: 'done' }),
+      session({ id: 'e', status: 'starting' }),
+      session({ id: 'f', status: 'awaiting_approval' }),
+      session({ id: 'g', status: 'awaiting_input' }),
     ]);
-    expect(counts).toEqual({ running: 2, idle: 0, done: 1, error: 1 });
+    expect(counts).toEqual({
+      ...emptyStatusCounts(),
+      running: 2,
+      error: 1,
+      done: 1,
+      starting: 1,
+      awaiting_approval: 1,
+      awaiting_input: 1,
+    });
   });
 
   it('ignores a status outside the union rather than minting a key', () => {
@@ -186,7 +197,7 @@ describe('computeFleetTotals', () => {
     );
     expect(totals.sessions).toBe(3);
     expect(totals.activeProjects).toBe(3); // p1, p2 and the unlinked bucket
-    expect(totals.counts).toEqual({ running: 1, idle: 1, done: 0, error: 1 });
+    expect(totals.counts).toEqual({ ...emptyStatusCounts(), running: 1, idle: 1, error: 1 });
     expect(totals.changedFiles).toBe(5);
     expect(totals.runningAgents).toBe(3);
   });
@@ -235,12 +246,50 @@ describe('needsAttention', () => {
     expect(items.map((i) => i.detail)).toEqual(['1 uncommitted file', '7 uncommitted files']);
   });
 
-  it('never lists a running session, even with uncommitted files', () => {
+  it('never lists a working session, even with uncommitted files', () => {
     const items = needsAttention(
-      groupsOf([session({ id: 's1', projectId: 'p1', status: 'running' })]),
-      derivedMap({ s1: { fileCount: 9 } }),
+      groupsOf([
+        session({ id: 's1', projectId: 'p1', status: 'running' }),
+        session({ id: 's2', projectId: 'p1', status: 'starting' }),
+      ]),
+      derivedMap({ s1: { fileCount: 9 }, s2: { fileCount: 4 } }),
     );
     expect(items).toEqual([]);
+  });
+
+  it('lists a parked session, naming which kind of answer it wants', () => {
+    const items = needsAttention(
+      groupsOf([
+        session({ id: 's1', projectId: 'p1', status: 'awaiting_input', lastActivityAt: 2 }),
+        session({ id: 's2', projectId: 'p1', status: 'awaiting_approval', lastActivityAt: 1 }),
+      ]),
+      new Map(),
+    );
+    expect(items.map((i) => i.reason)).toEqual(['approval', 'question']);
+    expect(items[0].detail).toBe('waiting on an approval');
+    expect(items[1].detail).toBe('waiting on an answer');
+  });
+
+  it('ranks parked sessions above errored ones — a stalled turn is unblockable now', () => {
+    const items = needsAttention(
+      groupsOf([
+        session({ id: 's1', projectId: 'p1', status: 'error', lastActivityAt: 99 }),
+        session({ id: 's2', projectId: 'p1', status: 'awaiting_input', lastActivityAt: 1 }),
+        session({ id: 's3', projectId: 'p1', status: 'awaiting_approval', lastActivityAt: 2 }),
+      ]),
+      new Map(),
+    );
+    // Band order wins over recency, even though the error is the most recent.
+    expect(items.map((i) => i.session.id)).toEqual(['s3', 's2', 's1']);
+  });
+
+  it('does not fall through to the uncommitted check for a parked session', () => {
+    const items = needsAttention(
+      groupsOf([session({ id: 's1', projectId: 'p1', status: 'awaiting_approval' })]),
+      derivedMap({ s1: { fileCount: 9 } }),
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].reason).toBe('approval');
   });
 
   it('ignores a clean or unknown diff count', () => {
@@ -321,14 +370,26 @@ describe('statusTransitionKind', () => {
     expect(statusTransitionKind('idle', 'done')).toBe('session.done');
   });
 
-  it('records a finished turn only when the session was actually running', () => {
+  it('records a finished turn only when the session had a turn in flight', () => {
     expect(statusTransitionKind('running', 'idle')).toBe('turn.finished');
     expect(statusTransitionKind(undefined, 'idle')).toBeNull();
     expect(statusTransitionKind('done', 'idle')).toBeNull();
   });
 
-  it('never records the start of a turn — it would drown the feed', () => {
+  it('counts a turn interrupted while parked as finished', () => {
+    // ⌃C on an approval card goes awaiting_* → idle without passing through
+    // `running`; that is a finished turn like any other.
+    expect(statusTransitionKind('awaiting_approval', 'idle')).toBe('turn.finished');
+    expect(statusTransitionKind('awaiting_input', 'idle')).toBe('turn.finished');
+    expect(statusTransitionKind('starting', 'idle')).toBe('turn.finished');
+  });
+
+  it('never records the start of a turn, or a park/unpark — they would drown the feed', () => {
     expect(statusTransitionKind('idle', 'running')).toBeNull();
+    expect(statusTransitionKind('idle', 'starting')).toBeNull();
+    expect(statusTransitionKind('starting', 'running')).toBeNull();
+    expect(statusTransitionKind('running', 'awaiting_approval')).toBeNull();
+    expect(statusTransitionKind('awaiting_approval', 'running')).toBeNull();
   });
 
   it('ignores a no-op transition', () => {
@@ -362,7 +423,7 @@ describe('totalsSegments', () => {
     const segs = totalsSegments({
       sessions: 2,
       activeProjects: 1,
-      counts: { running: 2, idle: 0, done: 0, error: 0 },
+      counts: { ...emptyStatusCounts(), running: 2 },
       changedFiles: 0,
       runningAgents: 0,
     });
@@ -370,15 +431,39 @@ describe('totalsSegments', () => {
     expect(segs[0].value).toBe(2);
   });
 
-  it('orders segments active → ready → done → error → files → agents', () => {
+  it('orders segments active → waiting → ready → done → error → files → agents', () => {
     const segs = totalsSegments({
-      sessions: 4,
+      sessions: 5,
       activeProjects: 2,
-      counts: { running: 1, idle: 1, done: 1, error: 1 },
+      counts: { ...emptyStatusCounts(), running: 1, awaiting_approval: 1, idle: 1, done: 1, error: 1 },
       changedFiles: 6,
       runningAgents: 3,
     });
-    expect(segs.map((s) => s.label)).toEqual(['active', 'ready', 'done', 'error', 'files', 'agents']);
+    expect(segs.map((s) => s.label)).toEqual(['active', 'waiting', 'ready', 'done', 'error', 'files', 'agents']);
+  });
+
+  it('folds starting into "active" — a fleet total of "1 starting" is noise', () => {
+    const segs = totalsSegments({
+      sessions: 3,
+      activeProjects: 1,
+      counts: { ...emptyStatusCounts(), running: 1, starting: 2 },
+      changedFiles: 0,
+      runningAgents: 0,
+    });
+    expect(segs.map((s) => s.label)).toEqual(['active']);
+    expect(segs[0].value).toBe(3);
+  });
+
+  it('folds both parked states into one "waiting" segment', () => {
+    const segs = totalsSegments({
+      sessions: 3,
+      activeProjects: 1,
+      counts: { ...emptyStatusCounts(), awaiting_approval: 2, awaiting_input: 1 },
+      changedFiles: 0,
+      runningAgents: 0,
+    });
+    expect(segs.map((s) => s.label)).toEqual(['waiting']);
+    expect(segs[0].value).toBe(3);
   });
 
   it('is empty when nothing at all is happening', () => {
@@ -416,6 +501,29 @@ describe('formatGroupSubtitle', () => {
   it('says just the count when everything is merely ready', () => {
     const [g] = groupSessionsByProject([session({ id: 's1', projectId: 'p1', status: 'idle' })], projects);
     expect(formatGroupSubtitle(g)).toBe('1 session');
+  });
+
+  it('calls out parked sessions before errors, folding both kinds into "waiting"', () => {
+    const [g] = groupSessionsByProject(
+      [
+        session({ id: 's1', projectId: 'p1', status: 'awaiting_approval' }),
+        session({ id: 's2', projectId: 'p1', status: 'awaiting_input' }),
+        session({ id: 's3', projectId: 'p1', status: 'error' }),
+      ],
+      projects,
+    );
+    expect(formatGroupSubtitle(g)).toBe('3 sessions · 2 waiting · 1 error');
+  });
+
+  it('counts a starting session as active', () => {
+    const [g] = groupSessionsByProject(
+      [
+        session({ id: 's1', projectId: 'p1', status: 'starting' }),
+        session({ id: 's2', projectId: 'p1', status: 'running' }),
+      ],
+      projects,
+    );
+    expect(formatGroupSubtitle(g)).toBe('2 sessions · 2 active');
   });
 });
 

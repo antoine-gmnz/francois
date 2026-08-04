@@ -48,7 +48,7 @@ pub(crate) fn do_send(
     let Some(s) = map.get_mut(session_id) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
-    if s.status == "done" || s.status == "error" {
+    if status::is_terminal(&s.status) {
         return err("SESSION_NOT_RUNNING", "session has ended; create a new one");
     }
     // interactive-commands FR-1/2: an intercepted slash command never enqueues, never
@@ -78,28 +78,29 @@ pub(crate) fn do_send(
             queue_position: None,
         }); // FR-3
     }
-    match s.status.as_str() {
-        "running" => {
-            if s.queue.len() >= QUEUE_CAP {
-                return err("INVALID_INPUT", "send queue is full (20 pending)");
-            }
-            s.queue.push_back((block_id, text));
-            let pos = s.queue.len();
-            return ok(SendOutput {
-                queued: true,
-                queue_position: Some(pos),
-            });
+    // A turn is in flight — INCLUDING one parked on an approval or a question,
+    // whose child is alive and will read this message once it is unparked. Enqueue.
+    if status::is_busy(&s.status) {
+        if s.queue.len() >= QUEUE_CAP {
+            return err("INVALID_INPUT", "send queue is full (20 pending)");
         }
-        _ => {} // idle → start a turn
+        s.queue.push_back((block_id, text));
+        let pos = s.queue.len();
+        return ok(SendOutput {
+            queued: true,
+            queue_position: Some(pos),
+        });
     }
-    s.status = "running".into();
+    // idle → start a turn. `starting` until the stream's system/init arrives, so
+    // the card can say "spawning" instead of claiming work that has not begun.
+    s.status = status::STARTING.into();
     s.last_activity_at = now_ms();
     drop(map);
     emit(
         app,
         SessionEvent::Status {
             session_id: session_id.into(),
-            status: "running".into(),
+            status: status::STARTING.into(),
         },
     );
     begin_turn(app, session_id, block_id, text, TurnMode::Normal);
@@ -142,12 +143,16 @@ pub fn session_compact(
         let Some(s) = map.get_mut(&session_id) else {
             return err("SESSION_NOT_FOUND", "no such session");
         };
-        match s.status.as_str() {
-            "done" | "error" => return err("SESSION_NOT_RUNNING", "session has ended"),
-            "running" => return err("SESSION_ALREADY_RUNNING", "a turn is already running"),
-            _ => {}
+        if status::is_terminal(&s.status) {
+            return err("SESSION_NOT_RUNNING", "session has ended");
         }
-        s.status = "running".into();
+        if status::is_busy(&s.status) {
+            return err("SESSION_ALREADY_RUNNING", "a turn is already running");
+        }
+        // /compact is a synchronous side-spawn with its stdin closed immediately
+        // (it can never park on an ask), so it goes straight to `running` — there
+        // is no init to wait on and no `starting` window worth showing.
+        s.status = status::RUNNING.into();
         (
             s.cwd.clone(),
             s.model_id.clone(),
@@ -184,7 +189,7 @@ pub fn session_compact(
         &app,
         SessionEvent::Status {
             session_id: session_id.clone(),
-            status: "running".into(),
+            status: status::RUNNING.into(),
         },
     );
 
@@ -241,7 +246,7 @@ pub fn session_compact(
             if let Some(u) = used {
                 s.context_used_tokens = u;
             }
-            s.status = "idle".into();
+            s.status = status::IDLE.into();
         }
     }
     // usage-bar FR-13: a /compact turn ended too — multi-account FR-29 scopes it
@@ -261,7 +266,7 @@ pub fn session_compact(
         &app,
         SessionEvent::Status {
             session_id,
-            status: "idle".into(),
+            status: status::IDLE.into(),
         },
     );
     ok(None)
@@ -284,7 +289,9 @@ pub(crate) fn apply_clear(map: &mut HashMap<String, Session>, session_id: &str) 
     let Some(s) = map.get_mut(session_id) else {
         return ClearOutcome::NotFound;
     };
-    if s.status == "running" {
+    // Any in-flight turn blocks a reset, parked ones included — the resume anchor
+    // must not move under a live child.
+    if status::is_busy(&s.status) {
         return ClearOutcome::Running;
     }
     s.block_buffer.clear();

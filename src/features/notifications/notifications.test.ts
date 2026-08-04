@@ -136,6 +136,40 @@ describe('deriveTrigger (FR-6/FR-14)', () => {
     expect(deriveTrigger(status('s1', 'idle'), state)).toBeNull();
   });
 
+  it('settles out of a PARKED status — an interrupted approval still notifies', () => {
+    // ⌃C on an approval card goes awaiting_approval → idle without ever passing
+    // through `running`. The user was waiting on that turn just the same.
+    for (const parked of ['awaiting_approval', 'awaiting_input'] as const) {
+      const state = freshState();
+      deriveTrigger(status('s1', 'running'), state);
+      deriveTrigger(status('s1', parked), state);
+      expect(deriveTrigger(status('s1', 'idle'), state)).toEqual({
+        class: 'turnDone',
+        kind: 'settle',
+        sessionId: 's1',
+        status: 'idle',
+      });
+    }
+  });
+
+  it('settles out of `starting` — a spawn failure notifies before any stream line', () => {
+    const state = freshState();
+    deriveTrigger(status('s1', 'starting'), state);
+    expect(deriveTrigger(status('s1', 'error'), state)).toEqual({
+      class: 'turnDone',
+      kind: 'settle',
+      sessionId: 's1',
+      status: 'error',
+    });
+  });
+
+  it('does not settle on a park or an unpark — the turn is still in flight', () => {
+    const state = freshState();
+    deriveTrigger(status('s1', 'running'), state);
+    expect(deriveTrigger(status('s1', 'awaiting_approval'), state)).toBeNull();
+    expect(deriveTrigger(status('s1', 'running'), state)).toBeNull();
+  });
+
   it('session.meta feeds the same settle map, keyed by meta.id/meta.status', () => {
     const state = freshState();
     deriveTrigger(status('s1', 'running'), state);

@@ -124,3 +124,25 @@ Parked at the `/review` SHIP verdict (2026-08-01). Neither is CRITICAL/HIGH or s
   literal element choice). → **Fix:** either update `specs/design/notifications.md` §1 to say
   `<button>` (matching `AccountChip`'s established status-bar-chip pattern) or note the deliberate
   deviation in a comment.
+
+## deferred:open-in-vscode
+
+Parked at the `/review` SHIP verdict (2026-08-04). Both are LOW, quality-only, non-security.
+
+- **[LOW]** `src-tauri/src/editor/mod.rs:364-377` · quality · `cached_or_probe` holds the cache
+  `Mutex` guard for the entire synchronous `probe()` call (a filesystem walk across every `PATH`
+  dir × `PATHEXT` ext × 4 editors), unlike the `wsl.rs` `WSL_UNC_ROOTS`/`WSL_HOMES` pattern it says
+  it mirrors, which releases the lock before the impure probe and only reacquires it to write the
+  result. → **Fix:** drop the guard before calling `probe()`, then reacquire to write
+  `*guard = Some(...)` on success, matching `wsl_unc_root`'s discipline so concurrent probes don't
+  serialize on filesystem I/O.
+
+- **[LOW]** `src-tauri/src/editor/mod.rs:485-496` · quality · `session_open_in_editor`'s
+  `SESSION_NOT_FOUND` branch (when `engine.cwd_of` returns `None`) has no test coverage — the
+  module's own comment explains `editor`'s tests can't build a `Session` because
+  `session::testutil::test_engine_with` is private to the `session` module tree, but sibling modules
+  like `session/worktree/tests.rs` cover the identical branch by splitting an
+  `_impl(engine: &Engine, ...)` inside `session`'s own tree. → **Fix:** either move the
+  `SESSION_NOT_FOUND` check + a thin `open_in_editor_command_impl(engine: &Engine, ...)` into
+  `session/` (where `test_engine_with` is reachable) so it's pinned by a test, or export a minimal
+  test-only `Engine` builder the `editor` module can use.

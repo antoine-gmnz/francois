@@ -26,3 +26,6 @@ specs/reports/
 # VitePress build output + cache (docs deploy via .github/workflows/docs.yml)
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+# capture scratch — frames and encodes for the README assets (scripts/capture)
+.capture/

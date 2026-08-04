@@ -32,6 +32,10 @@ mod remote_discovery;
 mod skills;
 mod slash;
 mod spawn;
+// Deliberately NOT glob-exported below: its names (RUNNING, IDLE, is_busy) are
+// generic, and `status::is_busy(..)` at the call site is what makes the check
+// readable. The glob still brings the module path itself into scope.
+pub(crate) mod status;
 mod stdio;
 mod stream;
 mod tools;
@@ -878,7 +882,10 @@ impl Engine {
             .lock()
             .unwrap()
             .values()
-            .filter(|s| s.status == "running")
+            // Parked sessions count: an update that restarts the app under a turn
+            // waiting on an approval loses that turn just as surely as one that
+            // restarts under a streaming turn.
+            .filter(|s| status::is_busy(&s.status))
             .count()
     }
 

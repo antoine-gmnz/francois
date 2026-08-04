@@ -12,6 +12,7 @@
 // time (FR-12).
 
 import type { AppError, SessionMeta } from '../../../contract/common';
+import { isBusyStatus } from '../../../contract/fleet-board';
 import type { UpdateCheck } from '../../../contract/self-update';
 import { appApplyUpdate, appCheckUpdate } from '../../lib/api';
 import { useStore } from '../../lib/store';
@@ -56,9 +57,14 @@ export type UpdatePrimary =
   | { kind: 'blocked'; label: string; note: string }
   | { kind: 'manual'; command: string; note: string };
 
-/** FR-12: the count the button names. Derived from the existing sessions slice. */
+/**
+ * FR-12: the count the button names. Derived from the existing sessions slice.
+ * isBusyStatus, not `=== 'running'`: quitting under a turn parked on an approval
+ * loses that turn exactly as a streaming one, so it must block the update too.
+ * It mirrors the core's `Engine::running_count`, which gates the same action.
+ */
 export function runningSessionCount(sessions: SessionMeta[]): number {
-  return sessions.filter((s) => s.status === 'running').length;
+  return sessions.filter((s) => isBusyStatus(s.status)).length;
 }
 
 /**

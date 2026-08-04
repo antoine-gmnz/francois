@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { SlashCommandInfo } from '../../../contract/common';
+import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
+import { isBusyStatus, isTerminalStatus } from '../../../contract/fleet-board';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionClear, sessionInterrupt, sessionSend } from '../../lib/api';
 import Block, { ToolGroup } from './Block';
@@ -79,7 +80,7 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const disabled = status === 'done' || status === 'error';
+  const disabled = isTerminalStatus(status);
 
   const autoGrow = (el: HTMLTextAreaElement) => {
     el.style.height = 'auto';
@@ -177,7 +178,9 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     // (macOS copy) is left untouched. No-op path is handled by the core (FR-23).
     if (e.key === 'c' && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
       const el = e.currentTarget;
-      if (status === 'running' && el.selectionStart === el.selectionEnd) {
+      // isBusyStatus: ⌃C must also break out of a turn parked on an approval or
+      // a question — that is precisely when a user wants out without answering.
+      if (isBusyStatus(status) && el.selectionStart === el.selectionEnd) {
         e.preventDefault();
         void sessionInterrupt(sessionId);
         return;

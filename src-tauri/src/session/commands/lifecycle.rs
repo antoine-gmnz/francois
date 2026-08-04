@@ -357,7 +357,7 @@ pub fn session_switch_model(
     if model_id.trim().is_empty() {
         return err("INVALID_INPUT", "model is empty");
     }
-    match engine.with_session(&session_id, |s| s.status != "done" && s.status != "error") {
+    match engine.with_session(&session_id, |s| !status::is_terminal(&s.status)) {
         None => return err("SESSION_NOT_FOUND", "no such session"),
         Some(false) => return err("SESSION_NOT_RUNNING", "session has ended"),
         Some(true) => {}
@@ -419,7 +419,11 @@ pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcRe
     let Some(s) = map.get_mut(&session_id) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
-    if s.status != "running" {
+    // is_busy, not `== running`: interrupting a turn parked on an approval or a
+    // question is exactly when the brake matters most — the user has decided they
+    // want out rather than to answer. The reader-thread teardown cancels the
+    // pending ask (session-questions FR-13).
+    if !status::is_busy(&s.status) {
         return ok(None); // FR-23 no-op
     }
     if let Some(turn) = &s.current {

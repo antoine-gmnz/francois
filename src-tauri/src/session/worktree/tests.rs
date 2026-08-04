@@ -337,6 +337,73 @@ fn creates_a_new_branch_worktree() {
 }
 
 #[test]
+fn a_new_worktree_inherits_the_source_checkouts_mcp_consent() {
+    // .claude/settings.local.json is gitignored, so a fresh worktree has no
+    // consent store — without the seed, every server the user already decided
+    // on in the source checkout re-appears as pending there (and a refusal
+    // stops applying). Only the consent keys travel; permission rules stay
+    // per-worktree.
+    let repo = tmp_dir("consent-seed");
+    init_repo(&repo);
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    std::fs::write(
+        repo.join(".claude").join("settings.local.json"),
+        r#"{
+            "enabledMcpjsonServers": ["serena"],
+            "disabledMcpjsonServers": ["sketchy"],
+            "permissions": { "allow": ["PowerShell"] }
+        }"#,
+    )
+    .unwrap();
+    let cwd = repo.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/consent".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (session_cwd, _, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+
+    let seeded: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::Path::new(&session_cwd)
+                .join(".claude")
+                .join("settings.local.json"),
+        )
+        .expect("the seed wrote the worktree's settings.local.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        seeded["enabledMcpjsonServers"],
+        serde_json::json!(["serena"])
+    );
+    assert_eq!(
+        seeded["disabledMcpjsonServers"],
+        serde_json::json!(["sketchy"])
+    );
+    assert!(seeded.get("permissions").is_none());
+}
+
+#[test]
+fn a_source_checkout_with_no_consent_leaves_the_worktree_unseeded() {
+    let repo = tmp_dir("consent-none");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/noconsent".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (session_cwd, _, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    assert!(
+        !std::path::Path::new(&session_cwd)
+            .join(".claude")
+            .join("settings.local.json")
+            .exists(),
+        "no consent to carry — no file is invented"
+    );
+}
+
+#[test]
 fn adopting_an_existing_worktree_mutates_no_git_state() {
     let repo = tmp_dir("adopt-src");
     init_repo(&repo);

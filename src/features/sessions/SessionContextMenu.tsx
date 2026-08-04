@@ -1,6 +1,8 @@
 import type { RefObject } from 'react';
-import { Check, CircleAlert, Copy, Pencil, Trash2, TriangleAlert } from 'lucide-react';
+import { Check, CircleAlert, Copy, ExternalLink, Pencil, Trash2, TriangleAlert } from 'lucide-react';
 import type { AppError, SessionWorktree } from '../../../contract/common';
+import type { EditorId, EditorInfo } from '../../../contract/open-in-vscode';
+import { editorMenuLabel } from '../../../contract/open-in-vscode';
 import type { WorktreeStatusData } from '../../../contract/session-worktree';
 import { worktreeRemovalBlockReason } from './worktree';
 import './sidebar.css';
@@ -11,6 +13,10 @@ export interface MenuState {
   y: number;
   confirming: boolean;
   error: AppError | null;
+  // open-in-vscode FR-9/10: detected editors for the default state's "Open in
+  // <label>" group. [] until the FR-10 probe resolves — renders as absent, same
+  // as a machine with none installed (no spinner, no skeleton).
+  editors: EditorInfo[];
   // session-worktree FR-17/18: the dirty/unpushed probe for the delete-confirm's
   // removal checkbox. Absent for a session with no worktree.
   worktreeChecking?: boolean;
@@ -40,6 +46,8 @@ export interface SessionContextMenuProps {
   onCancel: () => void;
   onToggleRemoveWorktree: () => void;
   onRemove: (removeWorktree: boolean) => void;
+  /** open-in-vscode FR-11: spawn `editorId` at the session's cwd. */
+  onOpenInEditor: (editorId: EditorId) => void;
 }
 
 /**
@@ -65,6 +73,7 @@ export function SessionContextMenu({
   onCancel,
   onToggleRemoveWorktree,
   onRemove,
+  onOpenInEditor,
 }: SessionContextMenuProps): JSX.Element {
   // session-worktree FR-18/FR-20: a dirty/unpushed worktree — or a status check
   // that failed outright — disables the removal checkbox without ever blocking
@@ -105,6 +114,22 @@ export function SessionContextMenu({
         // destructive one stays last, behind a rule. Neither the confirm nor the
         // error state offers them — those are the remove flow, unchanged.
         <div className="context-menu__items">
+          {/* open-in-vscode FR-9: one item per detected editor, above Rename
+              session, same .context-menu__item treatment, no divider. []
+              (undetected or not-yet-resolved) renders nothing — no spinner, no
+              skeleton. FR-9 says "no glyph", which read correctly when no item
+              in this menu had one; now that every item does, an iconless row
+              would break the label column the fixed slot exists to hold. So
+              they take ExternalLink — the same "same treatment" the FR asks for,
+              applied to what the treatment has become. */}
+          {menu.editors.map((editor) => (
+            <button type="button" key={editor.id} className="context-menu__item" title={editor.path} onClick={() => onOpenInEditor(editor.id)}>
+              <span className="context-menu__glyph">
+                <ExternalLink {...ICON} />
+              </span>
+              <span className="context-menu__label">{editorMenuLabel(editor)}</span>
+            </button>
+          ))}
           <button type="button" className="context-menu__item" onClick={onRename}>
             <span className="context-menu__glyph">
               <Pencil {...ICON} />

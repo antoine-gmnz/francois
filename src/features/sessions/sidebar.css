@@ -161,6 +161,14 @@
 .sidebar-card--cursor {
   outline: 1px solid var(--text-disabled);
 }
+/* A session parked on the user (awaiting_approval / awaiting_input). The colour
+   comes from --card-attn, set inline from the contract's STATUS_COLOR, so the
+   two parked states keep their own hue and this file never re-states the map.
+   Static, not animated: the pulse means "working", and this session is not. */
+.sidebar-card--attention {
+  border-left-color: var(--card-attn, var(--attn));
+  background: color-mix(in srgb, var(--card-attn, var(--attn)) 7%, var(--bg-elevated));
+}
 
 .sidebar-card__row1 {
   display: flex;

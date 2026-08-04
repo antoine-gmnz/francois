@@ -1,8 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import '@xterm/xterm/css/xterm.css';
 import type {
   Result,
@@ -13,18 +11,13 @@ import type {
   ShellWritePayload,
   ShellDisposePayload,
 } from '../../../contract/shell-terminal';
+import { ipc, onShellEvent } from '../../lib/api';
 import { setShellState } from './shellStore';
 import { buildTheme } from './xterm-theme';
 import { useStore } from '../../lib/store';
 
 const FAINT = '\x1b[38;2;107;115;133m'; // #6b7385 — design-refresh FR-13, new --text-muted
 const RESET = '\x1b[0m';
-
-// Tauri's invoke wants Record<string, unknown>; our named payload interfaces
-// carry the same fields (checked via `satisfies` at each call site).
-function ipc<T>(cmd: string, args: object): Promise<T> {
-  return invoke<T>(cmd, args as Record<string, unknown>);
-}
 
 // The theme itself moved to ./xterm-theme so multi-account's embedded login
 // terminal (FR-12) can render the real `claude` TUI with the identical theme
@@ -149,8 +142,7 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
     });
 
     // Per-mount listener: render live output; handle exit (FR-13/FR-15).
-    const unlisten = listen<ShellEvent>('francois://shell/event', (e) => {
-      const p = e.payload;
+    const unlisten = onShellEvent((p) => {
       if (p.sessionId !== sessionId) return;
       if (p.type === 'shell.data') {
         term.write(p.data);

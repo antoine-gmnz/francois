@@ -23,6 +23,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const READER_NAME: &str = "read-record.js";
 /// FR-15: everything the helper prints, so a failed update is diagnosable.
 const LOG_NAME: &str = "update.log";
+/// How many times the helper runs `npm i -g` before giving up. An install can
+/// lose a race it will win a moment later — an on-access virus scanner opening
+/// the freshly-exited binary, a file watcher walking the package — and both
+/// present as `EBUSY` on the very rename npm needs.
+pub(crate) const NPM_TRIES: u32 = 3;
+/// Seconds between those attempts.
+pub(crate) const NPM_RETRY_SECS: u32 = 5;
 
 /// What `write_helper` laid down — the three absolute paths the spawn and the
 /// ack need (FR-15).
@@ -75,6 +82,10 @@ fn windows_script(pid: u32, exe: &Path, dir: &Path) -> String {
     let dir_value = batch_value(dir);
     let dir_ps = ps_value(dir);
     let wait = EXIT_WAIT_SECS;
+    let tries = NPM_TRIES;
+    let retry = NPM_RETRY_SECS;
+    // `ping -n N` sends N packets one second apart, so it sleeps N-1 seconds.
+    let retry_ping = NPM_RETRY_SECS + 1;
     let script = format!(
         r#"@echo off
 setlocal enableextensions
@@ -89,6 +100,7 @@ set "ALIVE=%DIR%\alive.txt"
 set "NPMROOT_OUT=%DIR%\npm-root.txt"
 set "EXE_OUT=%DIR%\executable.txt"
 set /a WAITED=0
+set /a TRIES=0
 
 echo [francois] waiting for pid %PID% to exit
 :wait
@@ -113,12 +125,29 @@ goto cleanup
 rem The image lock on an exe outlives the process by a moment (and an on-access
 rem scanner can hold it longer), and npm overwrites that exe.
 ping -n 3 127.0.0.1 >nul
+
+:install
 echo [francois] installing with {UPDATE_COMMAND}
 call {UPDATE_COMMAND}
-if errorlevel 1 goto npmfailed
+if not errorlevel 1 goto installed
+set /a TRIES+=1
+if %TRIES% GEQ {tries} goto npmfailed
+rem An EBUSY on npm's rename of the package directory is often a race it wins on
+rem the next try: a scanner or an indexer opened something in there right as the
+rem app exited. Cheap to retry, and the alternative is a dead-end update.
+echo [francois] npm failed (attempt %TRIES% of {tries}) - retrying in {retry} seconds
+ping -n {retry_ping} 127.0.0.1 >nul
+goto install
+
+:installed
 rem FR-14: the new executable is whatever the postinstall just recorded. FR-17:
 rem without a readable record the pre-update path set above still stands.
-npm root -g > "%NPMROOT_OUT%" 2>nul
+rem CALL, not a bare `npm`: npm on Windows IS a batch file (npm.cmd), and a batch
+rem file invoked from a batch file WITHOUT `call` never returns — cmd hands over
+rem the whole script context, so when npm.cmd ends THIS SCRIPT ENDS. A bare
+rem `npm root -g` here silently killed every successful update at exactly this
+rem line: installed fine, then no relaunch and no cleanup.
+call npm root -g > "%NPMROOT_OUT%" 2>nul
 set "NPMROOT="
 for /f "usebackq delims=" %%R in ("%NPMROOT_OUT%") do set "NPMROOT=%%R"
 if not defined NPMROOT goto relaunch
@@ -135,7 +164,11 @@ start "" "%EXE%" <nul >nul 2>nul
 goto cleanup
 
 :npmfailed
-echo [francois] npm failed - not relaunching. This log is kept at %DIR%\{LOG_NAME}
+echo [francois] npm failed {tries} times - staying on the current version. This log is kept at %DIR%\{LOG_NAME}
+rem A failed install leaves the installed app exactly as it was, so put it back
+rem on screen. Quitting to update and never coming back is the worst outcome
+rem here: the user asked for an update, not for the app to disappear.
+if exist "%EXE%" start "" "%EXE%" <nul >nul 2>nul
 exit /b 1
 
 :cleanup
@@ -154,6 +187,8 @@ fn unix_script(pid: u32, exe: &Path, dir: &Path) -> String {
     let exe = sh_literal(exe);
     let dir_literal = sh_literal(dir);
     let wait = EXIT_WAIT_SECS;
+    let tries = NPM_TRIES;
+    let retry = NPM_RETRY_SECS;
     format!(
         r#"#!/bin/sh
 # Francois self-update helper, written by the app at update time (FR-13).
@@ -163,6 +198,12 @@ PID={pid}
 EXE={exe}
 DIR={dir_literal}
 READER="$DIR/{READER_NAME}"
+
+# Reads $EXE at call time, so it launches whatever the record said last.
+# Backgrounded in a subshell: the app must not hold this helper's stdio.
+start_app() {{
+  ("$EXE" >/dev/null 2>&1 &)
+}}
 
 echo "[francois] waiting for pid $PID to exit"
 WAITED=0
@@ -177,11 +218,29 @@ while kill -0 "$PID" 2>/dev/null; do
   sleep 1
 done
 
-echo "[francois] installing with {UPDATE_COMMAND}"
-if ! {UPDATE_COMMAND}; then
-  echo "[francois] npm failed - not relaunching. This log is kept at $DIR/{LOG_NAME}"
-  exit 1
-fi
+TRIES=0
+while :; do
+  echo "[francois] installing with {UPDATE_COMMAND}"
+  if {UPDATE_COMMAND}; then
+    break
+  fi
+  TRIES=$((TRIES + 1))
+  if [ "$TRIES" -ge {tries} ]; then
+    echo "[francois] npm failed {tries} times - staying on the current version. This log is kept at $DIR/{LOG_NAME}"
+    # A failed install leaves the installed app exactly as it was, so put it
+    # back on screen. Quitting to update and never coming back is the worst
+    # outcome here: the user asked for an update, not for the app to disappear.
+    if [ -x "$EXE" ]; then
+      echo "[francois] starting the current version again"
+      start_app
+    fi
+    exit 1
+  fi
+  # An install can lose a race it wins on the next try — a scanner or an indexer
+  # holding something in the package directory right as the app exited.
+  echo "[francois] npm failed (attempt $TRIES of {tries}) - retrying in {retry} seconds"
+  sleep {retry}
+done
 
 # FR-14: the new executable is whatever the postinstall just recorded. FR-17:
 # without a readable record the pre-update path set above still stands.
@@ -195,7 +254,7 @@ if [ -n "$NPMROOT" ] && [ -f "$RECORD" ]; then
 fi
 
 echo "[francois] relaunching $EXE"
-("$EXE" >/dev/null 2>&1 &)
+start_app
 
 rm -rf "$DIR"
 exit 0
@@ -327,6 +386,21 @@ fn detach(cmd: &mut Command) {
     }
 }
 
+/// The directory the helper — and therefore npm, node, and the relaunched app —
+/// runs in. It must be somewhere the update will not touch.
+///
+/// REGRESSION: this used to be inherited, and the inherited value was fatal.
+/// The Start Menu shortcut launches francois with its working directory set to
+/// `<npm root>/francois/vendor`, the helper is a child of that process, and a
+/// process's cwd is an OPEN HANDLE on the directory. So `cmd.exe` pinned the
+/// very directory npm renames out of the way, and every single update died on
+/// `EBUSY: resource busy or locked, rename '...\francois\vendor'`. The temp dir
+/// is the safe answer — NOT the helper's own directory, which `cleanup` has to
+/// be able to delete at the end.
+pub(crate) fn helper_working_dir() -> PathBuf {
+    std::env::temp_dir()
+}
+
 /// FR-15: start the relauncher detached, stdout+stderr into `update.log`.
 /// Returns its pid for the ack. The `Err` string is what `UPDATE_APPLY_FAILED`
 /// carries (FR-18).
@@ -360,7 +434,8 @@ pub(crate) fn spawn_helper(files: &HelperFiles) -> Result<u32, String> {
         c.arg(&files.script);
         c
     };
-    cmd.stdin(Stdio::null())
+    cmd.current_dir(helper_working_dir())
+        .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors));
     detach(&mut cmd);
@@ -464,9 +539,35 @@ mod tests {
     #[test]
     fn the_windows_poll_goes_through_a_file() {
         let s = win_script();
-        assert!(s.contains(r#"tasklist /nh /fi "PID eq %PID%" > "%ALIVE%""#), "{s}");
+        assert!(
+            s.contains(r#"tasklist /nh /fi "PID eq %PID%" > "%ALIVE%""#),
+            "{s}"
+        );
         assert!(s.contains(r#"find /i "%PID%" "%ALIVE%""#), "{s}");
         assert!(s.contains(r#"set "ALIVE=%DIR%\alive.txt""#), "{s}");
+    }
+
+    // REGRESSION: `npm` on Windows is npm.cmd, a BATCH FILE. A batch file invoked
+    // from a batch file without `call` never returns — cmd hands the script
+    // context over, so the helper died the moment `npm root -g` finished:
+    // installed, then no relaunch and no cleanup. Every npm invocation is called.
+    #[test]
+    fn every_npm_invocation_in_the_windows_helper_is_called() {
+        let s = win_script();
+        let mut seen = 0;
+        for line in s.lines() {
+            // `rem` and `echo` only TALK about npm; neither runs it.
+            let line = line.trim_start();
+            if line.starts_with("rem ") || line.starts_with("echo ") || !line.contains("npm ") {
+                continue;
+            }
+            seen += 1;
+            assert!(
+                line.starts_with("call npm "),
+                "npm.cmd invoked without `call` — the script would end here: {line}"
+            );
+        }
+        assert_eq!(seen, 2, "expected the install AND `npm root -g`\n{s}");
     }
 
     // The two `for /f` reads that replaced the command form take a quoted file,
@@ -542,8 +643,9 @@ mod tests {
         assert!(s[giveup..npm].contains("exit 1"), "{s}");
     }
 
-    // FR-14: on a non-zero npm exit the helper skips the relaunch and LEAVES the
-    // log in place (no cleanup on that branch).
+    // FR-14: on a non-zero npm exit the helper LEAVES the log in place (no
+    // cleanup on that branch) and exits non-zero — but see the test below: it
+    // does not leave the user without an app.
     #[test]
     fn windows_helper_keeps_the_log_when_npm_fails() {
         let s = win_script();
@@ -551,21 +653,91 @@ mod tests {
         let failed = s.find(":npmfailed").unwrap();
         let tail = &s[failed..];
         let end = tail.find(":cleanup").unwrap_or(tail.len());
-        assert!(!tail[..end].contains("start \"\" \"%EXE%\""), "{s}");
+        assert!(tail[..end].contains("update.log"), "{s}");
         assert!(tail[..end].contains("exit /b 1"), "{s}");
+        assert!(!tail[..end].contains("Remove-Item"), "{s}");
     }
 
     #[test]
     fn unix_helper_keeps_the_log_when_npm_fails() {
         let s = sh_script();
-        assert!(
-            s.contains("if ! npm i -g francois@latest; then"),
-            "npm failure must short-circuit\n{s}"
-        );
-        let fail = s.find("not relaunching").unwrap();
+        let fail = s.find("staying on the current version").unwrap();
         let relaunch = s.find("relaunching $EXE").unwrap();
         assert!(fail < relaunch, "{s}");
         assert!(s[fail..relaunch].contains("exit 1"), "{s}");
+        assert!(!s[fail..relaunch].contains(r#"rm -rf "$DIR""#), "{s}");
+    }
+
+    // REGRESSION: a failed install left the user with NOTHING — the app had
+    // already quit, and the npm-failure branch exited without starting anything.
+    // A failed install changes nothing on disk, so the app that is still
+    // installed goes back on screen.
+    #[test]
+    fn both_helpers_restart_the_app_when_npm_fails() {
+        let win = win_script();
+        let failed = win.find(":npmfailed").unwrap();
+        let tail = &win[failed..];
+        let end = tail.find(":cleanup").unwrap_or(tail.len());
+        assert!(
+            tail[..end].contains(r#"if exist "%EXE%" start "" "%EXE%" <nul >nul 2>nul"#),
+            "the npm-failure branch must put the current version back\n{win}"
+        );
+
+        let sh = sh_script();
+        let fail = sh.find("staying on the current version").unwrap();
+        let exit = sh[fail..].find("exit 1").unwrap() + fail;
+        assert!(sh[fail..exit].contains(r#"[ -x "$EXE" ]"#), "{sh}");
+        assert!(sh[fail..exit].contains("start_app"), "{sh}");
+    }
+
+    // An EBUSY on npm's rename can be a race that the next attempt wins, so the
+    // install is retried before the update is called off.
+    #[test]
+    fn both_helpers_retry_the_install_before_giving_up() {
+        assert!(NPM_TRIES > 1 && NPM_RETRY_SECS > 0);
+
+        let win = win_script();
+        assert!(win.contains(":install"), "{win}");
+        // `if errorlevel 1` is ">= 1", so the success path must be the negation.
+        assert!(win.contains("if not errorlevel 1 goto installed"), "{win}");
+        assert!(
+            win.contains(&format!("if %TRIES% GEQ {NPM_TRIES} goto npmfailed")),
+            "{win}"
+        );
+        assert!(win.contains("goto install\r\n"), "must loop back\n{win}");
+        // ping -n N sleeps N-1 seconds.
+        assert!(
+            win.contains(&format!("ping -n {} 127.0.0.1", NPM_RETRY_SECS + 1)),
+            "{win}"
+        );
+
+        let sh = sh_script();
+        assert!(sh.contains("while :; do"), "{sh}");
+        assert!(
+            sh.contains(&format!(r#"if [ "$TRIES" -ge {NPM_TRIES} ]; then"#)),
+            "{sh}"
+        );
+        assert!(sh.contains(&format!("sleep {NPM_RETRY_SECS}")), "{sh}");
+    }
+
+    // REGRESSION — the bug that made every update fail with
+    // `EBUSY ... rename '<npm root>\francois\vendor'`: the Start Menu shortcut
+    // runs francois with its cwd INSIDE the npm package, the helper inherited
+    // that cwd, and a cwd is an open handle on the directory npm has to rename.
+    // The helper must therefore run somewhere the update never touches — and not
+    // in its own directory either, which `cleanup` deletes at the end.
+    #[test]
+    fn the_helper_does_not_run_inside_the_package_it_is_updating() {
+        let cwd = helper_working_dir();
+        assert_eq!(cwd, std::env::temp_dir());
+        assert!(!cwd.to_string_lossy().contains("node_modules"), "{cwd:?}");
+
+        let dir = fresh_helper_dir().unwrap();
+        assert_ne!(
+            cwd, dir,
+            "the helper must not hold its own directory open — cleanup removes it"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     // FR-17: the pre-update executable is baked in and used when the post-install

@@ -125,12 +125,13 @@ gate:
     - "git merge"
     - "git rebase"
     - "git reset"
-  # Phase gate: review/smoke dispatches require a fresh `.claude/preflight.ok` stamp,
+  # Phase gate: review dispatches require a fresh `.claude/preflight.ok` stamp,
   # written by pipeline/scripts/preflight.sh when typecheck+tests are green — gate.py
-  # "ask"s the dispatch when the stamp is missing, stale, or HEAD moved.
+  # "ask"s the dispatch when the stamp is missing, stale, or the code changed since.
+  # The stamp is local: keep `.claude/preflight.ok` gitignored, never committed.
   preflight:
     enabled: true
-    agents: [review, smoke]                   # subagent_types the stamp gates
+    agents: [review]                          # subagent_types the stamp gates
     max_age_minutes: 30
 ```
 
@@ -249,7 +250,10 @@ that owns the feature — never in a new top-level file.
   with zero dependencies, so a workflow can `node` them straight after `checkout`
   with no build and no install. Split pure-from-I/O the same way everywhere:
   `scripts/release/version.mjs` decides (and is unit-tested), `bump.mjs` touches git
-  and the filesystem (and takes `--dry-run`).
+  and the filesystem (and takes `--dry-run`). The one exception to the ESM rule is
+  `scripts/capture/` — a PowerShell window-grabber that regenerates the README
+  screenshot and GIF from the app running against the `src/demo/` fake fleet
+  (`VITE_FRANCOIS_DEMO=1`). It is a local tool, never run by CI; see its README.
 - **Size**: no source file over ~1000 lines. Past that, split by concern rather than
   growing the file — and move each test with the code it covers.
 

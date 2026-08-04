@@ -38,8 +38,36 @@ function startMenuShortcut(productName, appData = process.env.APPDATA) {
   return path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', `${productName}.lnk`);
 }
 
+/**
+ * Where a launched Francois should START, which is anywhere but its own package.
+ *
+ * A process's working directory is an open handle on that directory, and it is
+ * inherited by everything the app spawns. Pointing it at `…/francois/vendor`
+ * meant the self-update helper — a child of the app — held the exact directory
+ * npm has to rename during `npm i -g francois@latest`, so every self-update
+ * failed with `EBUSY: resource busy or locked, rename '...\francois\vendor'`.
+ * The home directory owes nothing to the install and is never replaced.
+ */
+function shortcutWorkingDir(home = os.homedir()) {
+  return home;
+}
+
 function uninstallRegistryKey(channel) {
   return `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${appId(channel)}`;
+}
+
+/**
+ * The AppUserModelID toast notifications are sent under. Must equal the tauri
+ * `identifier` of the channel's config (tauri.conf.json / tauri.dev.conf.json):
+ * tauri-plugin-notification tags every toast from an installed app with that
+ * identifier, and Windows silently drops toasts whose AUMID it has never seen.
+ */
+function aumid(channel) {
+  return channel === 'dev' ? 'com.francois.dev' : 'com.francois.desktop';
+}
+
+function aumidRegistryKey(channel) {
+  return `HKCU\\Software\\Classes\\AppUserModelId\\${aumid(channel)}`;
 }
 
 function desktopEntryPath(channel, home = os.homedir()) {
@@ -103,7 +131,7 @@ function installWindows({ executable, productName, channel, appVersion, notes })
     [
       '$s = (New-Object -ComObject WScript.Shell).CreateShortcut(' + psQuote(shortcut) + ');',
       '$s.TargetPath = ' + psQuote(executable) + ';',
-      '$s.WorkingDirectory = ' + psQuote(path.dirname(executable)) + ';',
+      '$s.WorkingDirectory = ' + psQuote(shortcutWorkingDir()) + ';',
       "$s.Description = 'Mission control for your Claude Code fleet';",
       '$s.Save()',
     ].join(' '),
@@ -127,12 +155,22 @@ function installWindows({ executable, productName, channel, appVersion, notes })
     attempt('reg', ['add', key, '/v', name, '/t', type, '/d', data, '/f']),
   );
   if (!wrote) notes.push('could not register the uninstall entry.');
+
+  // Registering the AUMID is what lets toast notifications through: a
+  // WScript.Shell .lnk cannot carry System.AppUserModel.ID, so use the registry
+  // route for unpackaged apps (the same one Chrome uses) instead.
+  const toastKey = aumidRegistryKey(channel);
+  const registered =
+    attempt('reg', ['add', toastKey, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', productName, '/f']) &&
+    attempt('reg', ['add', toastKey, '/v', 'IconUri', '/t', 'REG_SZ', '/d', ICON_SOURCE, '/f']);
+  if (!registered) notes.push('could not register the notification identity — toasts may not show.');
 }
 
 function removeWindows({ productName, channel }) {
   const shortcut = startMenuShortcut(productName);
   if (shortcut) fs.rmSync(shortcut, { force: true });
   attempt('reg', ['delete', uninstallRegistryKey(channel), '/f']);
+  attempt('reg', ['delete', aumidRegistryKey(channel), '/f']);
 }
 
 /** Single-quoted PowerShell literal — no expansion, '' escapes a quote. */
@@ -244,11 +282,14 @@ module.exports = {
   ICON_SOURCE,
   appId,
   applicationsDir,
+  aumid,
+  aumidRegistryKey,
   desktopEntry,
   desktopEntryPath,
   desktopIconPath,
   install,
   remove,
+  shortcutWorkingDir,
   startMenuShortcut,
   uninstallRegistryKey,
 };
