@@ -32,18 +32,29 @@ use tauri::{AppHandle, Manager};
 // So the result only closes the channel when nothing is outstanding (the common
 // turn — no latency change). Otherwise a closer thread holds it open until the
 // CLI's background tasks have drained, no ask is parked, and the stream has gone
-// quiet — with a hard ceiling so a wedged task can never keep a child alive.
+// quiet — with a ceiling so a wedged task can never keep a child alive.
+//
+// That ceiling is measured in SILENCE, not wall clock. It used to run from the
+// turn's `result`, which made it fire on healthy work: a `/build` dispatching two
+// implementers emits its result when the first drains, so the second inherited
+// whatever was left of the ten minutes and lost the channel mid-flight — the very
+// silent deny the hold exists to prevent. A subagent still emitting lines is by
+// definition not wedged, however long it has been running; one that has emitted
+// nothing for the ceiling is, whether or not the CLI still counts it as running.
 
 /// Quiet stream time required before the held-open channel closes. Covers the
 /// gap between the last background task draining and the follow-up turn the CLI
 /// runs to report it.
 const POST_RESULT_QUIET_MS: u64 = 2_000;
 
-/// Hard ceiling on how long the channel may outlive the turn's `result`, mirroring
-/// the CLI's own `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` default (10 minutes).
-/// A parked ask does NOT get to ignore it — an unanswered card is not a reason to
-/// keep a child process alive forever; the turn-end drain cancels it as always.
-const POST_RESULT_CEILING_MS: u64 = 600_000;
+/// Ceiling on how long the channel may be held open with NO sign of life on the
+/// stream — the wedge backstop. Ten minutes, mirroring the CLI's own
+/// `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` default. A parked ask does NOT get to
+/// ignore it — an unanswered card is not a reason to keep a child process alive
+/// forever; the turn-end drain cancels it as always. The channel can never
+/// outlive the child either way: the reader's teardown drops stdin when the
+/// process goes, and the closer thread exits with it.
+const POST_RESULT_IDLE_CEILING_MS: u64 = 600_000;
 
 /// How often the closer thread re-checks. Cheap: three uncontended locks.
 const CLOSER_POLL_MS: u64 = 100;
@@ -65,14 +76,9 @@ pub(crate) fn result_closes_channel(bg_tasks: usize, parked: usize) -> bool {
 }
 
 /// FR-2: the held-open channel's close decision. Pure; unit-tested.
-pub(crate) fn post_result_close(
-    bg_tasks: usize,
-    parked: usize,
-    quiet_ms: u64,
-    since_result_ms: u64,
-) -> ChannelClose {
-    if since_result_ms >= POST_RESULT_CEILING_MS {
-        return ChannelClose::Now; // backstop — never outlive the turn indefinitely
+pub(crate) fn post_result_close(bg_tasks: usize, parked: usize, quiet_ms: u64) -> ChannelClose {
+    if quiet_ms >= POST_RESULT_IDLE_CEILING_MS {
+        return ChannelClose::Now; // backstop — nothing has spoken for the ceiling
     }
     if bg_tasks > 0 || parked > 0 {
         return ChannelClose::Hold;
@@ -109,7 +115,6 @@ pub(crate) fn close_or_hold_channel(
     let pending_permissions = pending_permissions.clone();
     let bg_tasks = bg_tasks.clone();
     let last_line_at = last_line_at.clone();
-    let resulted_at = now_ms();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(CLOSER_POLL_MS));
         if stdin.lock().unwrap().is_none() {
@@ -119,7 +124,6 @@ pub(crate) fn close_or_hold_channel(
             bg_tasks.load(Ordering::Relaxed),
             parked_count(&pending_questions, &pending_permissions),
             now_ms().saturating_sub(last_line_at.load(Ordering::Relaxed)),
-            now_ms().saturating_sub(resulted_at),
         );
         if decision == ChannelClose::Now {
             *stdin.lock().unwrap() = None;
@@ -372,30 +376,49 @@ mod tests {
         let quiet = POST_RESULT_QUIET_MS;
         // A running background task holds the channel however quiet it has gone —
         // it may raise a permission ask at any moment.
-        assert_eq!(post_result_close(1, 0, quiet, 0), ChannelClose::Hold);
-        assert_eq!(
-            post_result_close(1, 0, quiet * 10, 60_000),
-            ChannelClose::Hold
-        );
+        assert_eq!(post_result_close(1, 0, quiet), ChannelClose::Hold);
+        assert_eq!(post_result_close(1, 0, quiet * 10), ChannelClose::Hold);
         // So does a parked card: the user is still deciding.
-        assert_eq!(post_result_close(0, 1, quiet * 10, 0), ChannelClose::Hold);
+        assert_eq!(post_result_close(0, 1, quiet * 10), ChannelClose::Hold);
         // Drained but not yet quiet — a late ask may still be in flight.
-        assert_eq!(post_result_close(0, 0, quiet - 1, 0), ChannelClose::Hold);
+        assert_eq!(post_result_close(0, 0, quiet - 1), ChannelClose::Hold);
         // Drained AND quiet: the CLI has nothing left, close so it can exit.
-        assert_eq!(post_result_close(0, 0, quiet, 0), ChannelClose::Now);
+        assert_eq!(post_result_close(0, 0, quiet), ChannelClose::Now);
     }
 
     #[test]
-    fn the_ceiling_closes_the_channel_whatever_is_outstanding() {
+    fn a_working_background_subagent_is_never_closed_on_the_wall_clock() {
+        // Regression, 2026-08-04: a `/build` turn dispatched two implementers and
+        // emitted its result when the first drained, while the second still had
+        // ~12 minutes of work left. The ceiling was an ABSOLUTE clock from the
+        // result, so it fired mid-flight and pulled the channel out from under a
+        // perfectly healthy subagent — every `can_use_tool` it raised afterwards
+        // died at the source with `AbortError: Stream closed`, no card, silent deny.
+        // A stream still emitting lines is the definition of not-wedged, whatever
+        // the wall clock says. 200ms of silence twelve minutes past the result is
+        // a healthy agent between two tool calls.
+        assert_eq!(post_result_close(1, 0, 200), ChannelClose::Hold);
+        assert_eq!(post_result_close(1, 0, 0), ChannelClose::Hold);
+        // Right up to the last millisecond of silence before the backstop.
+        assert_eq!(
+            post_result_close(1, 0, POST_RESULT_IDLE_CEILING_MS - 1),
+            ChannelClose::Hold
+        );
+    }
+
+    #[test]
+    fn the_idle_ceiling_closes_the_channel_whatever_is_outstanding() {
         // A wedged background task (or a card no one ever answers) must never
         // keep a child process alive forever — the turn-end drain then cancels
-        // the card exactly as it does for any other dead child (FR-10).
+        // the card exactly as it does for any other dead child (FR-10). "Wedged"
+        // is now measured as silence on the stream, so this only fires on a task
+        // that has genuinely stopped saying anything.
         assert_eq!(
-            post_result_close(1, 1, 0, POST_RESULT_CEILING_MS),
+            post_result_close(1, 1, POST_RESULT_IDLE_CEILING_MS),
             ChannelClose::Now
         );
         assert_eq!(
-            post_result_close(1, 1, 0, POST_RESULT_CEILING_MS - 1),
+            post_result_close(1, 1, POST_RESULT_IDLE_CEILING_MS - 1),
             ChannelClose::Hold
         );
     }
