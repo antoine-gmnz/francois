@@ -1,7 +1,14 @@
-import { useState } from 'react';
-import type { AppError, ProjectId, SessionMeta } from '../../../contract/common';
+import { useState, type CSSProperties } from 'react';
+import type { AppError, ProjectId, SessionMeta, SessionStatus } from '../../../contract/common';
 import type { ProjectMeta } from '../../../contract/projects';
-import { STATUS_COLOR, STATUS_LABEL, formatRelativeTime, statusPulses, type SessionDerived } from '../../../contract/fleet-board';
+import {
+  STATUS_COLOR,
+  STATUS_LABEL,
+  formatRelativeTime,
+  statusNeedsAttention,
+  statusPulses,
+  type SessionDerived,
+} from '../../../contract/fleet-board';
 import { formatContextTokens } from '../../../contract/conversation-view';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { abbreviate } from '../../lib/path';
@@ -14,6 +21,16 @@ import { filteredEmptyLabel } from '../projects/projects';
 import { truncateBranchLeft } from './worktree';
 import '../accounts/accounts.css';
 import './sidebar.css';
+
+/**
+ * Hover copy for the parked states — the 'approval'/'question' chip says WHICH
+ * kind, this says what to do about it. Partial on purpose: every other status
+ * either needs no explanation or (error) has its own message.
+ */
+const ATTENTION_TITLE: Partial<Record<SessionStatus, string>> = {
+  awaiting_approval: 'waiting on an approval — open the session to allow or deny',
+  awaiting_input: 'waiting on an answer — open the session to reply',
+};
 
 export interface SessionListBodyProps {
   hydrationError: AppError | null;
@@ -135,10 +152,16 @@ function SessionCard({
   const accounts = useStore((s) => s.accounts);
   const accountBadge = sessionAccountBadge(accounts, session);
 
+  // A parked session gets a left edge in its status colour: the dot is 6px and
+  // easy to miss when the sidebar holds a dozen cards, and "which one is waiting
+  // on me?" is the question this pane exists to answer.
+  const attention = statusNeedsAttention(session.status);
+
   const classNames = ['sidebar-card'];
   if (selected) classNames.push('sidebar-card--selected');
   else if (hover) classNames.push('sidebar-card--hovered');
   if (cursor) classNames.push('sidebar-card--cursor');
+  if (attention) classNames.push('sidebar-card--attention');
 
   return (
     <div
@@ -149,8 +172,9 @@ function SessionCard({
         e.preventDefault();
         onContext(e.clientX, e.clientY);
       }}
-      title={session.status === 'error' ? session.errorMessage : undefined}
+      title={session.status === 'error' ? session.errorMessage : (ATTENTION_TITLE[session.status] ?? undefined)}
       className={classNames.join(' ')}
+      style={attention ? ({ '--card-attn': statusColor } as CSSProperties) : undefined}
     >
       {/* Row 1 — name, with the status dot + label right-aligned beside it */}
       <div className="sidebar-card__row1">

@@ -18,6 +18,7 @@ import UpdateModal from '../features/update/UpdateModal';
 import { checkUpdateOnLaunch } from '../features/update/update';
 import UsageBar from '../features/usage/UsageBar';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
+import { isBusyStatus } from '../../contract/fleet-board';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { useStore } from '../lib/store';
 import './app.css';
@@ -127,9 +128,12 @@ export default function App() {
 
   const diffCount = useDiffBadge(activeSessionId);
 
-  // Elapsed clock ticks only while the active session is running (FR-6).
+  // Elapsed clock ticks while the active session's turn is in flight (FR-6) —
+  // isBusyStatus, so it keeps counting while the turn sits on an approval. That
+  // wait is part of the turn's wall clock, and freezing it there would read as
+  // the turn having finished.
   useEffect(() => {
-    if (!(active && active.status === 'running' && mainTab === 'session')) return;
+    if (!(active && isBusyStatus(active.status) && mainTab === 'session')) return;
     const id = setInterval(() => setClockNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [active?.id, active?.status, mainTab]);
@@ -180,7 +184,7 @@ export default function App() {
   const runningAgents = useStore((s) => (activeSessionId ? (s.derived.get(activeSessionId)?.runningAgentCount ?? 0) : 0));
 
   const elapsedMs = active
-    ? active.status === 'running'
+    ? isBusyStatus(active.status)
       ? clockNow - active.startedAt
       : Math.max(0, active.lastActivityAt - active.startedAt)
     : 0;

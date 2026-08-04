@@ -520,7 +520,10 @@ pub fn load_persisted(app: &AppHandle) {
                 name: m.name,
                 cwd: m.cwd,
                 model_id: m.model_id,
-                status: "idle".into(),
+                // Always `idle` on load, whatever the session was when the app
+                // quit: the child process is gone, so a persisted `starting` or
+                // `awaiting_*` would describe a turn that no longer exists.
+                status: status::IDLE.into(),
                 // Clamped: a record written by a build that mistook the turn's
                 // cost aggregate for the context could hold a figure larger than
                 // the window itself. Reloading heals it.

@@ -19,17 +19,24 @@ export function mintActivityId(at: number): string {
 export interface TotalsSegment {
   label: string;
   value: number;
-  tone: 'active' | 'ready' | 'done' | 'error' | 'neutral' | 'accent';
+  tone: 'active' | 'blocked' | 'ready' | 'done' | 'error' | 'neutral' | 'accent';
 }
 
 /**
  * The totals strip, ZERO-VALUED SEGMENTS REMOVED — a dashboard that always reads
  * "0 error" trains the eye to ignore the word, which is exactly the word that must
  * still register at a glance when it is not zero.
+ *
+ * `starting` folds into "active": the distinction matters on a single card, where
+ * you are watching one turn come up, but a fleet total of "1 starting" is noise.
+ * The two parked states fold into ONE "waiting" segment for the same reason —
+ * the totals strip answers "how many want me?", and the needs-attention list
+ * right below it is where the approval/question split is actionable.
  */
 export function totalsSegments(t: FleetTotals): TotalsSegment[] {
   const all: TotalsSegment[] = [
-    { label: 'active', value: t.counts.running, tone: 'active' },
+    { label: 'active', value: t.counts.running + t.counts.starting, tone: 'active' },
+    { label: 'waiting', value: t.counts.awaiting_approval + t.counts.awaiting_input, tone: 'blocked' },
     { label: 'ready', value: t.counts.idle, tone: 'ready' },
     { label: 'done', value: t.counts.done, tone: 'done' },
     { label: 'error', value: t.counts.error, tone: 'error' },
@@ -48,7 +55,12 @@ export function formatGroupSubtitle(g: OverviewGroup): string {
   const n = g.sessions.length;
   if (n === 0) return 'no sessions';
   const parts = [`${n} session${n === 1 ? '' : 's'}`];
-  if (g.counts.running > 0) parts.push(`${g.counts.running} active`);
+  const active = g.counts.running + g.counts.starting;
+  const waiting = g.counts.awaiting_approval + g.counts.awaiting_input;
+  if (active > 0) parts.push(`${active} active`);
+  // Before error: a group with something parked has work you can unblock now,
+  // and the subtitle truncates from the right on a narrow pane.
+  if (waiting > 0) parts.push(`${waiting} waiting`);
   if (g.counts.error > 0) parts.push(`${g.counts.error} error`);
   if (g.counts.done > 0) parts.push(`${g.counts.done} done`);
   return parts.join(' · ');

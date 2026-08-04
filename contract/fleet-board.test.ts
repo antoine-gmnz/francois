@@ -1,8 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { STATUS_COLOR, STATUS_LABEL, countRunning, formatRelativeTime, statusPulses } from './fleet-board';
+import {
+  SESSION_STATUSES,
+  STATUS_COLOR,
+  STATUS_LABEL,
+  countRunning,
+  formatRelativeTime,
+  isBusyStatus,
+  isTerminalStatus,
+  statusNeedsAttention,
+  statusPulses,
+} from './fleet-board';
 import type { SessionStatus } from './common';
 
-const ALL: SessionStatus[] = ['running', 'idle', 'done', 'error'];
+const ALL = SESSION_STATUSES;
 
 describe('formatRelativeTime', () => {
   const base = 1_700_000_000_000;
@@ -44,9 +54,9 @@ describe('countRunning', () => {
 });
 
 describe('status presentation', () => {
-  it('pulses only for running', () => {
-    expect(statusPulses('running')).toBe(true);
-    for (const s of ALL.filter((x) => x !== 'running')) expect(statusPulses(s)).toBe(false);
+  it('pulses for the statuses that are DOING something', () => {
+    const pulsing: SessionStatus[] = ['running', 'starting'];
+    for (const s of ALL) expect(statusPulses(s)).toBe(pulsing.includes(s));
   });
   it('has a non-empty label + valid hex colour for every status', () => {
     for (const s of ALL) {
@@ -54,8 +64,39 @@ describe('status presentation', () => {
       expect(STATUS_COLOR[s]).toMatch(/^#[0-9a-f]{6}$/i);
     }
   });
-  it('relabels running→active and idle→ready (no "needs input")', () => {
+  it('relabels running→active and idle→ready', () => {
     expect(STATUS_LABEL.running).toBe('active');
     expect(STATUS_LABEL.idle).toBe('ready');
+  });
+  it('names what a parked session wants, rather than a generic "blocked"', () => {
+    expect(STATUS_LABEL.awaiting_approval).toBe('approval');
+    expect(STATUS_LABEL.awaiting_input).toBe('question');
+  });
+  it('keeps acid reserved for running — the one live thing', () => {
+    const acid = STATUS_COLOR.running;
+    for (const s of ALL.filter((x) => x !== 'running')) expect(STATUS_COLOR[s]).not.toBe(acid);
+  });
+});
+
+describe('status predicates', () => {
+  it('flags exactly the two parked states as needing attention', () => {
+    const blocked: SessionStatus[] = ['awaiting_approval', 'awaiting_input'];
+    for (const s of ALL) expect(statusNeedsAttention(s)).toBe(blocked.includes(s));
+  });
+  it('counts a parked session as busy — its claude process is still alive', () => {
+    const busy: SessionStatus[] = ['starting', 'running', 'awaiting_approval', 'awaiting_input'];
+    for (const s of ALL) expect(isBusyStatus(s)).toBe(busy.includes(s));
+  });
+  it('treats only done/error as terminal', () => {
+    const terminal: SessionStatus[] = ['done', 'error'];
+    for (const s of ALL) expect(isTerminalStatus(s)).toBe(terminal.includes(s));
+  });
+  it('partitions every status into busy | terminal | idle, with no overlap', () => {
+    for (const s of ALL) {
+      expect(Number(isBusyStatus(s)) + Number(isTerminalStatus(s)) + Number(s === 'idle')).toBe(1);
+    }
+  });
+  it('never pulses and demands attention at the same time', () => {
+    for (const s of ALL) expect(statusPulses(s) && statusNeedsAttention(s)).toBe(false);
   });
 });

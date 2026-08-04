@@ -41,6 +41,7 @@ import './overview.css';
 
 const TONE_COLOR: Record<TotalsSegment['tone'], string> = {
   active: STATUS_COLOR.running,
+  blocked: STATUS_COLOR.awaiting_approval,
   ready: 'var(--text-muted)',
   done: STATUS_COLOR.done,
   error: STATUS_COLOR.error,
@@ -217,9 +218,22 @@ function Muted({ children }: { children: React.ReactNode }) {
 
 // ---------- needs attention ----------
 
+/**
+ * The rail + detail colour per reason. Parked sessions borrow the status colours
+ * so a row here and that session's sidebar card read as the same thing; errors
+ * keep red; a merely-dirty session stays neutral so it cannot shout over the two
+ * bands above it.
+ */
+const ATTENTION_COLOR: Record<AttentionItem['reason'], string> = {
+  approval: STATUS_COLOR.awaiting_approval,
+  question: STATUS_COLOR.awaiting_input,
+  error: 'var(--error)',
+  uncommitted: 'var(--text-disabled)',
+};
+
 function AttentionRow({ item, onClick }: { item: AttentionItem; onClick: () => void }) {
   const [hover, setHover] = useState(false);
-  const isError = item.reason === 'error';
+  const color = ATTENTION_COLOR[item.reason];
   return (
     <ListRow
       hovered={hover}
@@ -228,12 +242,15 @@ function AttentionRow({ item, onClick }: { item: AttentionItem; onClick: () => v
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       title={item.detail}
-      // A red rail on the errors keeps the two reasons distinguishable at a
-      // glance without a second colour for the merely-dirty ones.
-      style={{ borderLeft: `2px solid ${isError ? 'var(--error)' : 'var(--text-disabled)'}` }}
+      // A coloured rail keeps the reasons distinguishable at a glance, in the
+      // same order needsAttention already sorted them.
+      style={{ borderLeft: `2px solid ${color}` }}
     >
       <span className="ov-attention-name truncate">{item.session.name}</span>
-      <span className="ov-attention-detail truncate" style={{ color: isError ? 'var(--error)' : 'var(--text-hint)' }}>
+      <span
+        className="ov-attention-detail truncate"
+        style={{ color: item.reason === 'uncommitted' ? 'var(--text-hint)' : color }}
+      >
         {item.detail}
       </span>
       <span className="ov-attention-time">{formatRelativeTime(item.session.lastActivityAt)}</span>

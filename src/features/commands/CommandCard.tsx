@@ -9,6 +9,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { CommandCard, HelpEntry, SessionMeta, SessionStatus } from '../../../contract/common';
 import { formatContextTokens } from '../../../contract/conversation-view';
+import { isTerminalStatus } from '../../../contract/fleet-board';
 import type { CommandConversationBlock } from '../../../contract/interactive-commands';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionSwitchModel } from '../../lib/api';
@@ -16,8 +17,13 @@ import { CARD_KIND_COMMAND, cardHeaderLabel, liveCurrentModelId, meterFillColor,
 import { useStore } from '../../lib/store';
 import './commands.css';
 
+// The token mirror of contract/fleet-board.ts's STATUS_COLOR — same assignments,
+// as CSS vars so the /status card follows the light theme.
 const STATUS_COLOR: Record<SessionStatus, string> = {
+  starting: 'var(--accent-dim)',
   running: 'var(--accent)',
+  awaiting_approval: 'var(--attn)',
+  awaiting_input: 'var(--warn)',
   idle: 'var(--success)',
   done: 'var(--text-faint)',
   error: 'var(--error)',
@@ -142,7 +148,7 @@ function ContextBody({ card }: { card: Extract<CommandCard, { kind: 'context' }>
 function ModelBody({ card, sessionId }: { card: Extract<CommandCard, { kind: 'model' }>; sessionId: string }) {
   const live = useStore((s) => s.sessions.find((session) => session.id === sessionId));
   const currentId = liveCurrentModelId(live?.model.id, card.currentId); // FR-21: live, never the snapshot
-  const disabled = live?.status === 'done' || live?.status === 'error';
+  const disabled = live !== undefined && isTerminalStatus(live.status);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
