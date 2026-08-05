@@ -10,6 +10,7 @@ import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import { useConversationTranscript } from './useConversationTranscript';
 import { getDraft, setDraft } from './composer-draft';
+import { documentHasSelection, shouldFocusComposer } from './composer-focus';
 import {
   atFirstLine,
   atLastLine,
@@ -121,6 +122,20 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
     if (el && el.value !== '') autoGrow(el);
     // Mount only — every later change is sized by onChange/applyRecall.
   }, []);
+
+  // split-session FR-5/FR-6: selecting a pane hands the caret to its composer,
+  // so one click is enough to start typing — the same thing the SHELL tab
+  // already does for its terminal (ShellTerminal's `canFocus`). The edge, not
+  // the state: see shouldFocusComposer for why re-clicking the focused pane and
+  // a live selection are both left alone.
+  const wasInertRef = useRef(inert);
+  useEffect(() => {
+    const wasInert = wasInertRef.current;
+    wasInertRef.current = inert;
+    if (shouldFocusComposer({ wasInert, inert, hasSelection: documentHasSelection() })) {
+      inputRef.current?.focus();
+    }
+  }, [inert]);
 
   // ---------- session-attachments ----------
   // The staged list + the three gestures (drop / paste / picker). Component-local
