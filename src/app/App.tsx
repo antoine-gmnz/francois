@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AccountsModal from '../features/accounts/AccountsModal';
 import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
@@ -19,14 +19,15 @@ import { checkUpdateOnLaunch } from '../features/update/update';
 import UsageBar from '../features/usage/UsageBar';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { isBusyStatus } from '../../contract/fleet-board';
+import { filterSessionsByProject } from '../../contract/projects';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
-import { focusedSessionId } from '../lib/layoutStore';
+import { focusedSessionId, layoutRegime, paneCount, paneSessionIdAt, paneTabAt } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import './app.css';
-import { clampToPaneTab } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import MainTabStrip from './MainTabStrip';
 import RightRail from './RightRail';
+import SessionRail from './SessionRail';
 import SplitPane from './SplitPane';
 import StatusBar from './StatusBar';
 import { useAppIdentity } from './useAppIdentity';
@@ -79,22 +80,30 @@ export default function App() {
   const agentTabs = useStore((s) => s.agentTabs);
   const closeAgentTab = useStore((s) => s.closeAgentTab);
   const clearAgentTabs = useStore((s) => s.clearAgentTabs);
-  // split-session: the RIGHT pane. `activeSessionId`/`mainTab` are the LEFT
-  // pane's, unchanged — so nothing below this line remounts when focus moves.
-  const splitSessionId = useStore((s) => s.splitSessionId);
-  const splitTab = useStore((s) => s.splitTab);
-  const focusedSide = useStore((s) => s.focusedSide);
-  const setSplitTab = useStore((s) => s.setSplitTab);
-  const setFocusedSide = useStore((s) => s.setFocusedSide);
-  const openInRightPane = useStore((s) => s.openInRightPane);
+  // split-by-4: panes 1..3. `activeSessionId`/`mainTab` are PANE 0's, unchanged —
+  // so nothing below this line remounts when focus moves.
+  const extraPanes = useStore((s) => s.extraPanes);
+  const focusedPaneIndex = useStore((s) => s.focusedPaneIndex);
+  const setPaneTab = useStore((s) => s.setPaneTab);
+  const setFocusedPaneIndex = useStore((s) => s.setFocusedPaneIndex);
+  const assignToFocusedPane = useStore((s) => s.assignToFocusedPane);
   const unsplit = useStore((s) => s.unsplit);
-  const split = splitSessionId !== null;
-  // FR-7: the session every pane-scoped consumer reads. Equals activeSessionId
+  const closePane = useStore((s) => s.closePane);
+  const panes = paneCount({ extraPanes });
+  const regime = layoutRegime(panes);
+  const split = regime !== 'single';
+  // FR-13: the session every pane-scoped consumer reads. Equals activeSessionId
   // whenever not split, so each of them is behaviour-identical outside split.
-  const paneSessionId = focusedSessionId({ activeSessionId, splitSessionId, focusedSide });
+  const paneSessionId = focusedSessionId({ activeSessionId, mainTab, extraPanes, focusedPaneIndex });
 
   const active = sessions.find((session) => session.id === activeSessionId) ?? null;
   const activeAgentId = agentIdFromTab(mainTab);
+  // split-by-4 §8: the status bar's `· <m> sessions open` — the same project
+  // scope the roster and the layout toggle count in.
+  const inScopeCount = useMemo(
+    () => filterSessionsByProject(sessions, activeProjectId).length,
+    [sessions, activeProjectId],
+  );
 
   useEffect(() => {
     initShellEvents();
@@ -232,42 +241,54 @@ export default function App() {
           // roster narrows to 238px and the right column folds to a 46px rail
           // instead of disappearing, so [3]–[6] stay one click away.
           gridTemplateColumns: [
-            showLeftPane ? (split ? '238px' : '276px') : null,
+            showLeftPane ? (split ? '238px' : '276px') : regime === 'grid' ? '46px' : null,
             '1fr',
-            showRightPane ? '296px' : split ? '46px' : null,
+            showRightPane ? '296px' : regime === 'split' ? '46px' : null,
           ]
             .filter(Boolean)
             .join(' '),
         }}
       >
+        {/* split-by-4 FR-6: in the grid the roster folds to a 46px tile rail
+            instead of disappearing. Rendered BEFORE the column so it takes the
+            first track — a `display:none` element generates no grid item. */}
+        {regime === 'grid' && !showLeftPane && (
+          <SessionRail
+            onSelect={(id) => {
+              if (focusedPaneIndex > 0) assignToFocusedPane(id);
+              else setActiveSessionId(id);
+            }}
+          />
+        )}
         <div className="app-col-left" style={{ display: showLeftPane ? undefined : 'none' }}>
           <Sidebar home={home} />
         </div>
 
-        {/* main pane — split-session FR-1: two 1fr sections while split,
-            otherwise exactly what it renders today. */}
+        {/* main pane — split-by-4 FR-1/FR-2: one section per pane, in a 1fr row
+            at two panes and a 2×2 grid above; otherwise exactly what it renders
+            today. */}
         {split ? (
-          <div className="app-split-grid">
-            <SplitPane
-              side="left"
-              sessionId={activeSessionId}
-              tab={clampToPaneTab(mainTab)}
-              focused={focusedSide === 'left'}
-              home={home}
-              onFocus={() => setFocusedSide('left')}
-              onTab={setMainTab}
-              onPromote={() => unsplit('left')}
-            />
-            <SplitPane
-              side="right"
-              sessionId={splitSessionId}
-              tab={splitTab}
-              focused={focusedSide === 'right'}
-              home={home}
-              onFocus={() => setFocusedSide('right')}
-              onTab={setSplitTab}
-              onPromote={() => unsplit('right')}
-            />
+          <div className={regime === 'grid' ? `app-split-grid app-split-grid--${panes}` : 'app-split-grid'}>
+            {Array.from({ length: panes }, (_, i) => (
+              <SplitPane
+                key={i}
+                index={i}
+                sessionId={paneSessionIdAt({ activeSessionId, mainTab, extraPanes }, i)}
+                tab={paneTabAt({ activeSessionId, mainTab, extraPanes }, i)}
+                focused={focusedPaneIndex === i}
+                dense={regime === 'grid'}
+                home={home}
+                onFocus={() => setFocusedPaneIndex(i)}
+                onTab={(t) => setPaneTab(i, t)}
+                // FR-9: a grid pane shows its transcript, so promoting it opens
+                // on SESSION — its remembered DIFF/SHELL tab was never on screen
+                // there, and inheriting it would read as a tab the user never
+                // picked. Review diff is the deliberate way to land on DIFF.
+                onPromote={() => unsplit(i, regime === 'grid' ? 'session' : undefined)}
+                onClose={() => closePane(i)}
+                onReviewDiff={() => unsplit(i, 'diff')}
+              />
+            ))}
           </div>
         ) : (
           <section
@@ -310,10 +331,11 @@ export default function App() {
           </div>
         </div>
 
-        {/* split-session FR-2: the folded right column. Rendered INSTEAD of the
+        {/* split-by-4 FR-4: the folded right column. Rendered INSTEAD of the
             column's 296px track (the column itself stays mounted above, hidden),
-            so [3]–[6] keep their subscriptions and `]` unfolds them again. */}
-        {split && !showRightPane && <RightRail />}
+            so [3]–[6] keep their subscriptions and `]` unfolds them again. Only
+            at TWO panes — the grid has no room for it at all (turn 5d). */}
+        {regime === 'split' && !showRightPane && <RightRail />}
       </div>
 
       {/* design-refresh FR-10: window chrome, not a grid pane — a full-bleed
@@ -324,6 +346,8 @@ export default function App() {
         focusedPane={focusedPane}
         activeAgentName={activeAgentName}
         runningAgents={runningAgents}
+        paneCount={panes}
+        sessionCount={inScopeCount}
         appVersion={appVersion}
       />
 
@@ -346,11 +370,11 @@ export default function App() {
             // still being open.
             clearProjectSwitchRollback();
             if (!useStore.getState().newSessionOpen) return;
-            // split-session FR-8: a new session lands in the FOCUSED pane, like
-            // every other "assign a session" path (roster click/⏎, palette,
-            // Sidebar.selectSession) — creating one from the right pane must
-            // not silently replace the left pane's session.
-            if (split && focusedSide === 'right') openInRightPane(m.id);
+            // split-by-4 FR-19: a new session lands in the FOCUSED pane, like
+            // every other "assign a session" path (roster click/⏎, the rail, the
+            // palette) — creating one from pane 3 must not silently replace
+            // pane 0's session.
+            if (focusedPaneIndex > 0) assignToFocusedPane(m.id);
             else setActiveSessionId(m.id);
           }}
         />

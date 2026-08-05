@@ -11,7 +11,18 @@ import type { StateCreator } from 'zustand';
 import type { SessionId, SessionMeta } from '../../contract/common';
 import { mainTabAfterClose } from '../features/agents/agent-tab';
 import type { MainTab } from './agentTabStore';
-import { clampToPaneTab, persistedRightPane, persistSplitState } from './layoutStore';
+import {
+  clampPaneIndex,
+  clampToPaneTab,
+  paneCount,
+  paneIndexOf,
+  panesWithout,
+  persistedLeftPane,
+  persistedRightPane,
+  persistSplitState,
+  layoutRegime,
+  type PaneSlot,
+} from './layoutStore';
 import type { AppState } from './store';
 
 export interface SessionsSlice {
@@ -35,14 +46,14 @@ export interface SessionsSlice {
   activeSessionId: SessionId | null;
   setActiveSessionId: (id: SessionId | null) => void;
   /**
-   * split-session FR-20: the post-REMOVAL fallback — a plain reassignment that
-   * never swaps panes. `setActiveSessionId` reads "assign the right pane's
-   * session to the left side" as a user pick and SWAPS the two (FR-8), which is
-   * wrong here: the session being replaced has just been removed, so there is
-   * nothing to swap it with, and the swap branch would both skip the agent-tab
-   * reset and transiently put the removed id into `splitSessionId`. The nearest
-   * remaining session is very often the paned one, so this is reachable, not
-   * theoretical.
+   * split-by-4 FR-27: the post-REMOVAL fallback — a plain reassignment that
+   * never swaps panes. `setActiveSessionId` reads "assign another pane's session
+   * to pane 0" as a user pick and SWAPS the two (FR-19), which is wrong here:
+   * the session being replaced has just been removed, so there is nothing to
+   * swap it with, and the swap branch would both skip the agent-tab reset and
+   * transiently put the removed id back into a pane. The nearest remaining
+   * session is very often a paned one, so this is reachable, not theoretical —
+   * that pane is DROPPED instead, and the grid compacts.
    */
   reassignActiveSessionId: (id: SessionId | null) => void;
   sidebarFilter: string | null;
@@ -60,6 +71,24 @@ function switchTo(s: AppState, activeSessionId: SessionId | null): Partial<AppSt
   return s.activeSessionId === activeSessionId
     ? { activeSessionId }
     : { activeSessionId, agentTabs: [], mainTab: mainTabAfterClose(s.mainTab, null) as MainTab };
+}
+
+/**
+ * split-by-4 FR-27: persist a shortened pane list and re-clamp the focused
+ * index. Only the pane LIST changes — pane 0 (`activeSessionId`/`mainTab`) is
+ * the caller's business — but dropping to one pane has to unfold the columns
+ * the split folded (FR-5).
+ */
+function compact(s: AppState, extraPanes: PaneSlot[]): Partial<AppState> {
+  const focusedPaneIndex = clampPaneIndex(s.focusedPaneIndex, extraPanes.length + 1);
+  persistSplitState({ extraPanes, focusedPaneIndex });
+  const regime = layoutRegime(extraPanes.length + 1);
+  return {
+    extraPanes,
+    focusedPaneIndex,
+    showLeftPane: regime === 'grid' ? false : persistedLeftPane(),
+    showRightPane: regime === 'single' ? persistedRightPane() : false,
+  };
 }
 
 export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> = (set) => ({
@@ -90,22 +119,13 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
   removeSession: (id) =>
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id);
-      // split-session FR-20: the right pane's session is gone — split ends and
-      // the left pane goes full width. (The LEFT pane's own removal is handled
-      // by fleet-board's reassignAfterRemoval, which unsplits after reassigning:
-      // the right pane is never silently promoted into the left slot.)
-      if (s.splitSessionId === id) {
-        persistSplitState({ splitSessionId: null, splitTab: 'session', focusedSide: 'left' });
-        return {
-          sessions,
-          splitSessionId: null,
-          splitTab: 'session' as const,
-          focusedSide: 'left' as const,
-          // FR-3: leaving split unfolds the right column again, however it got left.
-          showRightPane: persistedRightPane(),
-        };
-      }
-      return { sessions };
+      // split-by-4 FR-27: the session is gone from every pane it sat in and the
+      // grid compacts. (Pane 0's own removal is handled by fleet-board's
+      // reassignAfterRemoval below, which reassigns first — pane 1 is never
+      // silently promoted into pane 0 by a removal that has a fallback.)
+      const extraPanes = panesWithout(s.extraPanes, id);
+      if (extraPanes.length === s.extraPanes.length) return { sessions };
+      return { sessions, ...compact(s, extraPanes) };
     }),
 
   activeSessionId: null,
@@ -114,17 +134,34 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
   // `reassignActiveSessionId` — it must not take the swap branch below.
   setActiveSessionId: (activeSessionId) =>
     set((s) => {
-      // split-session FR-8: assigning the RIGHT pane's session to the left side
-      // SWAPS the two panes rather than showing it twice. (Agent tabs are always
-      // empty while split — FR-13 — so no tab reset is owed here.)
-      if (s.splitSessionId !== null && activeSessionId !== null && activeSessionId === s.splitSessionId) {
-        const splitTab = clampToPaneTab(s.mainTab);
-        persistSplitState({ splitSessionId: s.activeSessionId, splitTab, focusedSide: s.focusedSide });
-        return { activeSessionId, splitSessionId: s.activeSessionId, splitTab, mainTab: s.splitTab as MainTab };
+      // split-by-4 FR-19: assigning another pane's session to pane 0 SWAPS the
+      // two rather than showing it twice. (Agent tabs are always empty while
+      // split — FR-20 — so no tab reset is owed here.)
+      const j = activeSessionId === null ? null : paneIndexOf(s, activeSessionId);
+      if (j !== null && j > 0) {
+        const extraPanes = s.extraPanes.slice();
+        const displaced = extraPanes[j - 1];
+        if (s.activeSessionId === null) {
+          // Nothing to swap WITH — pane 0 was empty, so the pane just gives up
+          // its session rather than showing it in two places.
+          return { activeSessionId, mainTab: displaced.tab as MainTab, ...compact(s, panesWithout(s.extraPanes, activeSessionId!)) };
+        }
+        extraPanes[j - 1] = { sessionId: s.activeSessionId, tab: clampToPaneTab(s.mainTab) };
+        persistSplitState({ extraPanes, focusedPaneIndex: s.focusedPaneIndex });
+        return { activeSessionId, extraPanes, mainTab: displaced.tab as MainTab };
       }
       return switchTo(s, activeSessionId);
     }),
-  reassignActiveSessionId: (activeSessionId) => set((s) => switchTo(s, activeSessionId)),
+  reassignActiveSessionId: (activeSessionId) =>
+    set((s) => {
+      const patch = switchTo(s, activeSessionId);
+      // FR-27: the fallback may well land on a session another pane is already
+      // showing — drop that pane rather than duplicate it.
+      if (activeSessionId === null || paneCount(s) === 1) return patch;
+      const extraPanes = panesWithout(s.extraPanes, activeSessionId);
+      if (extraPanes.length === s.extraPanes.length) return patch;
+      return { ...patch, ...compact(s, extraPanes) };
+    }),
   sidebarFilter: null,
   setSidebarFilter: (sidebarFilter) => set({ sidebarFilter }),
 });
