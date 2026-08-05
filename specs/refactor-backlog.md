@@ -166,3 +166,10 @@ Parked at the `/cohorte-review` SHIP verdict. All LOW, quality-only, non-securit
 - [ ] LOW · src/features/shell/ShellStrip.tsx:105 · quality · the inline-rename `<input>` has no `maxLength`, so typing past 40 chars is accepted then silently truncated by the core on commit (FR-4), producing a visible shrink after `⏎`; add `maxLength={40}` · deferred:multiple-shells
 - [ ] LOW · src/features/sessions/useSessionFleetSync.ts:74 · test-coverage · the `useShellStore.getState().removeSession(id)` call site (FR-9) is never asserted — only `removeSession` in isolation is; extend a session-removal test to assert the roster/active-id/unread records are empty after `onRemoved` · deferred:multiple-shells
 - [ ] LOW · src/demo/demo.ts:211 · quality · `case 'session_remove': return ok(null)` never drops the session from `sessions[]` nor purges `demoShells[sessionId]`, so the demo fixture does not mirror FR-9's cleanup (pre-existing, README-capture fixture only) · deferred:multiple-shells
+
+## deferred:split-session
+
+Parked at the `/cohorte-review` SHIP verdict (2026-08-05, round 2). Neither is CRITICAL/HIGH or security.
+
+- [ ] MEDIUM · src/features/notifications/notifications.ts:157 · quality · `handleNotificationAction` calls `setActiveSessionId(sessionId)` directly instead of routing through the focused-side pattern every other session-assignment entry point uses, so a notification click while split lands the session in an inert unfocused left pane (or swaps panes without moving `focusedSide`); use `if (splitSessionId !== null && focusedSide === 'right') openInRightPane(sessionId); else { setActiveSessionId(sessionId); setFocusedSide('left') }` and add a split-mode test · deferred:split-session
+- [ ] LOW · src/features/usage/LayoutToggle.tsx:1 · rule · the split-session titlebar entry point (FR-9/FR-10) lives under the unrelated `usage` feature folder, against PIPELINE.md §Code layout; move it to `src/app/` beside `SplitPane.tsx`/`RightRail.tsx` along with the `.layout-toggle`/`.titlebar-divider` rules from `usage.css` · deferred:split-session

@@ -1,14 +1,14 @@
 ---
 id: split-session
 title: Split session
-status: in-review
+status: shipped
 branch: feat/split-session
 created: 2026-08-05
 depends_on: [app-shell, sessions-sidebar, conversation-view, diff-view, shell-terminal, collapse-right-column, agent-tab, workflow-details]
-loop_pass: 1
-loop_phase: fix
-reviewed_base:
-reviewed_digest:
+loop_pass: 0
+loop_phase: done
+reviewed_base: b3a61023e12e08abc93a550ddf4a4e69cbd6d08f
+reviewed_digest: 2780255c1c86c5c1
 design_files: ["https://claude.ai/design/p/a4b15728-147c-4932-b83c-f60a5fc60db7?file=Francois+Redesign.dc.html"]
 ---
 
@@ -288,9 +288,18 @@ Sidebar rows gain `left` / `right` badges.
 - [ ] A shell in either pane keeps receiving output while that pane is on SHELL (FR-18).
 - [ ] Entering split closes agent/workflow tabs and clamps OVERVIEW to SESSION; leaving split makes
       them available again (FR-13).
-- [ ] `npx tsc --noEmit` clean; `npm test` green, including `parseSplitState`, `splitCandidate`,
+- [x] `npx tsc --noEmit` clean; `npm test` green, including `parseSplitState`, `splitCandidate`,
       `clampToPaneTab`, `focusedSessionId`, `openInRightPane`/`unsplit` swap + promote behaviour,
       `isShellVisible` for both panes, and the notification visible-set.
+
+> **DoD status (review round 2, 2026-08-05).** Only the last box above is ticked — it is the one
+> criterion the pipeline mechanically verified (preflight: `npx tsc --noEmit` clean + `npm test`
+> green, and the reviewer confirmed every named test exists). **Every criterion above it stays
+> open**: each describes a runtime interaction (clicking a pane, answering a permission card in the
+> unfocused pane, quitting and reopening, live shell output) and nothing in the pipeline runs the
+> app. The reviewer verified them at code level against the spec and against
+> `Francois Redesign.dc.html` and found no divergence — but that is a code read, not an exercised
+> flow. Tick them by hand once you have driven the app and they held.
 
 ## Remediation
 
