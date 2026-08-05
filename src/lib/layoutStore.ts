@@ -4,6 +4,8 @@
 // composition root.
 
 import type { StateCreator } from 'zustand';
+import type { SessionId, SessionMeta } from '../../contract/common';
+import type { MainTab } from './agentTabStore';
 import type { AppState } from './store';
 
 export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills' | 'workflows';
@@ -92,6 +94,152 @@ function persistCollapsedPanes(panes: CollapsedPanes): void {
   }
 }
 
+// ── split-session (specs/split-session.md §5) ────────────────────────────────
+// Two live sessions side by side. `activeSessionId` + `mainTab` keep their exact
+// current meaning — THE LEFT PANE — so no existing consumer changes semantics;
+// everything new hangs off the three fields below, persisted as one record.
+
+/** The three tabs a split pane can show. A strict subset of MainTab. */
+export type PaneTab = 'session' | 'diff' | 'shell';
+export type SplitSide = 'left' | 'right';
+
+export interface SplitState {
+  /** null ⇒ not split. The RIGHT pane's session. */
+  splitSessionId: SessionId | null;
+  /** The RIGHT pane's tab; default 'session'. */
+  splitTab: PaneTab;
+  /** Which pane owns the keyboard; default 'left'. */
+  focusedSide: SplitSide;
+}
+
+/** FR-16 */
+export const SPLIT_STORAGE_KEY = 'francois.split';
+
+const NOT_SPLIT: SplitState = { splitSessionId: null, splitTab: 'session', focusedSide: 'left' };
+
+/**
+ * FR-13: MainTab → the PaneTab a split pane can show. `overview` and the
+ * dynamic `agent:<id>`/`workflow:<id>` tabs clamp to 'session'.
+ *
+ * Declared by §5 under `src/app/appShell.ts`, which re-exports it — it lives
+ * here beside `PaneTab` because the store slice below needs it inside `set()`,
+ * and importing it the other way would make the two modules cyclic.
+ */
+export function clampToPaneTab(tab: MainTab): PaneTab {
+  return tab === 'diff' || tab === 'shell' ? tab : 'session';
+}
+
+/**
+ * FR-10: which session `▯▯` opens on the right — the most recently active in
+ * scope other than `exclude`, by `lastActivityAt` desc. null ⇒ `▯▯` is
+ * disabled (FR-9). Re-exported by `src/app/appShell.ts` per §5.
+ */
+export function splitCandidate(sessions: readonly SessionMeta[], exclude: SessionId | null): SessionMeta | null {
+  let best: SessionMeta | null = null;
+  for (const s of sessions) {
+    if (s.id === exclude) continue;
+    if (best === null || s.lastActivityAt > best.lastActivityAt) best = s;
+  }
+  return best;
+}
+
+/**
+ * Pure, exported for tests (FR-16): normalizes whatever came out of
+ * localStorage. A malformed, non-object, array or partially-typed value returns
+ * the not-split default rather than throwing — and a record with no usable
+ * `splitSessionId` degrades wholesale, since the other two fields only mean
+ * anything while split.
+ */
+export function parseSplitState(raw: string | null): SplitState {
+  if (raw === null) return { ...NOT_SPLIT };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ...NOT_SPLIT };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ...NOT_SPLIT };
+  const obj = parsed as Record<string, unknown>;
+  const id = obj.splitSessionId;
+  if (typeof id !== 'string' || id.length === 0) return { ...NOT_SPLIT };
+  const tab = obj.splitTab;
+  return {
+    splitSessionId: id,
+    splitTab: tab === 'diff' || tab === 'shell' ? tab : 'session',
+    focusedSide: obj.focusedSide === 'right' ? 'right' : 'left',
+  };
+}
+
+function loadSplitState(): SplitState {
+  try {
+    return parseSplitState(localStorage.getItem(SPLIT_STORAGE_KEY));
+  } catch {
+    return { ...NOT_SPLIT };
+  }
+}
+
+/** FR-16: written on every change. Exported so sessionsStore's FR-20 removal
+ *  path can record leaving split without duplicating the key. */
+export function persistSplitState(state: SplitState): void {
+  try {
+    localStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * FR-3: the user's persisted right-column preference — what LEAVING split
+ * restores, since entering it folded the column to the rail without persisting.
+ * Exported so sessionsStore's FR-20 removal path restores it identically.
+ */
+export function persistedRightPane(): boolean {
+  return loadPane(RIGHT_KEY);
+}
+
+/**
+ * FR-7: the session the user is looking at — what the titlebar quota, the right
+ * column, the status bar, the palette's session-scoped commands and the
+ * single-letter globals read. Derived, never stored. When not split it equals
+ * `activeSessionId`, so every existing consumer is behaviour-identical outside
+ * split.
+ */
+export function focusedSessionId(
+  s: Pick<AppState, 'splitSessionId' | 'focusedSide' | 'activeSessionId'>,
+): SessionId | null {
+  return s.splitSessionId !== null && s.focusedSide === 'right' ? s.splitSessionId : s.activeSessionId;
+}
+
+/** The tab the FOCUSED pane shows — `focusedSessionId`'s sibling, for `d`/`t`/`o`. */
+export function focusedTab(s: Pick<AppState, 'splitSessionId' | 'focusedSide' | 'mainTab' | 'splitTab'>): MainTab {
+  return s.splitSessionId !== null && s.focusedSide === 'right' ? s.splitTab : s.mainTab;
+}
+
+/**
+ * FR-19: every session currently on screen — one when not split, both panes'
+ * otherwise. The notification gate suppresses `turnDone` for all of them, not
+ * just the focused one.
+ */
+export function visibleSessionIds(s: Pick<AppState, 'activeSessionId' | 'splitSessionId'>): SessionId[] {
+  const ids: SessionId[] = [];
+  if (s.activeSessionId !== null) ids.push(s.activeSessionId);
+  if (s.splitSessionId !== null && s.splitSessionId !== s.activeSessionId) ids.push(s.splitSessionId);
+  return ids;
+}
+
+/**
+ * FR-18: is `sessionId`'s SHELL tab on screen? Tests BOTH panes, so a session's
+ * PTY stays "displayed" while either side is on SHELL — the global
+ * `activeSessionId`/`mainTab` pair is no longer the whole answer.
+ */
+export function isShellVisible(
+  s: Pick<AppState, 'activeSessionId' | 'mainTab' | 'splitSessionId' | 'splitTab'>,
+  sessionId: SessionId,
+): boolean {
+  if (s.activeSessionId === sessionId && s.mainTab === 'shell') return true;
+  return s.splitSessionId === sessionId && s.splitTab === 'shell';
+}
+
 export interface LayoutSlice {
   // minimal app-shell state
   focusedPane: Pane;
@@ -128,7 +276,30 @@ export interface LayoutSlice {
   collapsedPanes: CollapsedPanes;
   toggleCollapsedPane: (pane: RightPane) => void;
   setCollapsedPane: (pane: RightPane, collapsed: boolean) => void;
+
+  // split-session §5 — the RIGHT pane. `activeSessionId`/`mainTab` stay the LEFT
+  // pane's, so the left pane never remounts when focus moves.
+  splitSessionId: SessionId | null;
+  splitTab: PaneTab;
+  focusedSide: SplitSide;
+  /**
+   * FR-10/FR-11: open `sessionId` in the right pane (focusedSide → 'right').
+   * Swaps if it is already the left pane's session (FR-8). Also applies FR-3
+   * (fold the right column WITHOUT persisting) and FR-13 (clamp the left pane's
+   * tab, close every dynamic tab).
+   */
+  openInRightPane: (sessionId: SessionId) => void;
+  /**
+   * FR-10/FR-12: leave split, keeping `side`'s session + tab as the single
+   * active pane. Defaults to the focused side. No-op when not split.
+   */
+  unsplit: (side?: SplitSide) => void;
+  setSplitTab: (tab: PaneTab) => void;
+  /** FR-5. Also sets focusedPane = 'main'. */
+  setFocusedSide: (side: SplitSide) => void;
 }
+
+const INITIAL_SPLIT = loadSplitState();
 
 export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (set) => ({
   focusedPane: 'sidebar',
@@ -212,5 +383,90 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       persistCollapsedPanes(collapsedPanes);
       const focusedPane = collapsed && s.focusedPane === pane ? 'main' : s.focusedPane;
       return { collapsedPanes, focusedPane };
+    }),
+
+  // ---------- split-session ----------
+  splitSessionId: INITIAL_SPLIT.splitSessionId,
+  splitTab: INITIAL_SPLIT.splitTab,
+  focusedSide: INITIAL_SPLIT.focusedSide,
+
+  openInRightPane: (sessionId) =>
+    set((s) => {
+      // FR-8: the target is already the LEFT pane's session — swap the two panes
+      // rather than showing the same session twice. Nothing to swap with when
+      // not split, so that is a no-op.
+      if (sessionId === s.activeSessionId) {
+        if (s.splitSessionId === null) return {};
+        const next: SplitState = { splitSessionId: sessionId, splitTab: clampToPaneTab(s.mainTab), focusedSide: 'right' };
+        persistSplitState(next);
+        return {
+          ...next,
+          activeSessionId: s.splitSessionId,
+          mainTab: s.splitTab,
+          focusedPane: 'main',
+        };
+      }
+
+      // Already the RIGHT pane's session (its roster row, its context menu, the
+      // palette): this is a FOCUS, not an assignment — the pane keeps whichever
+      // tab it is on. The left-pane equivalent (setActiveSessionId with the id
+      // already active) is a no-op too, and resetting to 'session' here would
+      // silently discard a Diff/Shell the user is reading (FR-4: each pane's
+      // strip switches independently).
+      if (sessionId === s.splitSessionId) {
+        if (s.focusedSide === 'right') return s.focusedPane === 'main' ? {} : { focusedPane: 'main' };
+        persistSplitState({ splitSessionId: s.splitSessionId, splitTab: s.splitTab, focusedSide: 'right' });
+        return { focusedSide: 'right', focusedPane: 'main' };
+      }
+
+      const wasSplit = s.splitSessionId !== null;
+      // FR-10: a session landing in the right pane opens on SESSION.
+      const next: SplitState = { splitSessionId: sessionId, splitTab: 'session', focusedSide: 'right' };
+      persistSplitState(next);
+      const patch: Partial<AppState> = { ...next, focusedPane: 'main' };
+      if (!wasSplit) {
+        // FR-13: the left pane clamps out of overview / agent: / workflow:, and
+        // every dynamic tab closes (clearAgentTabs' effect, inlined so entering
+        // split is one atomic set).
+        patch.mainTab = clampToPaneTab(s.mainTab);
+        patch.agentTabs = [];
+        // FR-3: fold the right column to the rail WITHOUT persisting, so leaving
+        // split restores whatever the user had before.
+        patch.showRightPane = false;
+      }
+      return patch;
+    }),
+
+  unsplit: (side) =>
+    set((s) => {
+      if (s.splitSessionId === null) return {};
+      const target = side ?? s.focusedSide;
+      persistSplitState({ ...NOT_SPLIT });
+      const patch: Partial<AppState> = {
+        ...NOT_SPLIT,
+        // FR-3: back to whatever the user had before the split folded it.
+        showRightPane: persistedRightPane(),
+      };
+      // FR-12: promoting the right pane makes its session + tab the single one.
+      if (target === 'right') {
+        patch.activeSessionId = s.splitSessionId;
+        patch.mainTab = s.splitTab;
+      }
+      return patch;
+    }),
+
+  setSplitTab: (splitTab) =>
+    set((s) => {
+      persistSplitState({ splitSessionId: s.splitSessionId, splitTab, focusedSide: s.focusedSide });
+      return { splitTab };
+    }),
+
+  setFocusedSide: (focusedSide) =>
+    set((s) => {
+      // Called on EVERY click inside a pane (FR-5), so the no-op path must not
+      // touch localStorage — a transcript click is not a layout change.
+      if (s.focusedSide === focusedSide) return s.focusedPane === 'main' ? {} : { focusedPane: 'main' };
+      persistSplitState({ splitSessionId: s.splitSessionId, splitTab: s.splitTab, focusedSide });
+      return { focusedSide, focusedPane: 'main' };
     }),
 });

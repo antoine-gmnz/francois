@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildShortcutActions, mainPaneBranch, shellFooterPath, tabClassName, type ShortcutActionsContext } from './appShell';
+import {
+  buildShortcutActions,
+  clampToPaneTab,
+  mainPaneBranch,
+  shellFooterPath,
+  splitCandidate,
+  tabClassName,
+  type ShortcutActionsContext,
+} from './appShell';
 
 describe('tabClassName', () => {
   it('adds the --on modifier only when active', () => {
@@ -188,5 +196,15 @@ describe('buildShortcutActions', () => {
     const { ctx: mainCtx, spies: mainSpies } = fakeCtx({ getFocusedPane: () => 'main' });
     buildShortcutActions(mainCtx).c();
     expect(mainSpies.toggleCollapsedPane).not.toHaveBeenCalled();
+  });
+});
+
+// split-session §5 re-exports the two pure helpers under this module; their
+// implementation (and their unit tests) live in src/lib/layoutStore.ts beside
+// the PaneTab type the store slice needs at set() time.
+describe('split-session re-exports (§5)', () => {
+  it('exposes clampToPaneTab and splitCandidate from appShell', () => {
+    expect(clampToPaneTab('overview')).toBe('session');
+    expect(splitCandidate([], null)).toBeNull();
   });
 });

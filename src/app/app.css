@@ -353,3 +353,235 @@
 .app-tab-chip-close:hover {
   color: var(--text-strong);
 }
+
+/* ── split-session (specs/split-session.md §8 / turn 5b) ─────────────────────
+   Two live sessions side by side. The main grid cell becomes a 1fr/1fr pair
+   with the shell's own 12px gutter; each pane is a card in the same family as
+   .app-main-section, differing only in the FOCUS treatment. No motion — the
+   focus swap is an instant state change, like every other card in this app. */
+
+.app-split-grid {
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-12);
+  min-height: 0;
+  min-width: 0;
+}
+
+.split-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  /* UNFOCUSED is the base: dimmer, never greyed out — the transcript keeps
+     streaming and must stay fully legible (design §States). */
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-2);
+}
+/* FR-6: the focused pane is the one accent in the main area — border, halo and
+   the top rule below. Nothing else in a split view may take --accent. */
+.split-pane--focused {
+  background: var(--bg-panel);
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px rgba(195, 245, 63, 0.18);
+}
+
+.split-pane__header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  padding: var(--space-10) var(--space-12);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+/* The 2px accent rule, flush to the card's top edge. Always in the DOM and
+   hidden here when unfocused, so the header never reflows as focus moves. */
+.split-pane__rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: transparent;
+}
+.split-pane--focused .split-pane__rule {
+  background: var(--accent);
+}
+
+.split-pane__name {
+  font-size: var(--font-size-13);
+  font-weight: 500;
+  color: var(--text-2);
+  min-width: 0;
+}
+.split-pane--focused .split-pane__name {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+/* The focus signal in TEXT as well as colour (design §Accessibility). */
+.split-pane__focus-chip {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--bg-app);
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-5);
+  flex-shrink: 0;
+}
+/* Only on the UNFOCUSED pane, in the chip's place: `waiting on you`, `working`… */
+.split-pane__status {
+  font-size: var(--font-size-11);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.split-pane__ctx {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.split-pane__promote {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-base);
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.split-pane__promote:hover {
+  color: var(--text-2);
+  background: var(--bg-hover);
+}
+
+/* A SUB level: it must read as subordinate to the main tab strip it replaces —
+   sentence-case, no uppercase, no letter-spacing, no accent underline. */
+.split-pane__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.split-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-4) var(--space-9);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-11-5);
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.split-pane--focused .split-tab {
+  color: var(--text-hint);
+}
+.split-tab:hover {
+  color: var(--text-2);
+}
+.split-tab--on,
+.split-tab--on:hover {
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-raised);
+}
+.split-pane--focused .split-tab--on,
+.split-pane--focused .split-tab--on:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover-2);
+}
+/* The diff count — the ONE place the unfocused pane may carry colour, and on
+   the focused pane it takes the accent like the main strip's own badge. */
+.split-tab .badge-pill {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  border-radius: var(--radius-xl);
+  padding: 0 var(--space-5);
+  background: var(--bg-hover-2);
+  color: var(--text-hint);
+}
+.split-pane--focused .split-tab .badge-pill {
+  background: var(--accent);
+  color: var(--bg-app);
+}
+
+.split-pane__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── the folded right column (FR-2) ── */
+.app-rail {
+  grid-row: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
+}
+.app-rail__btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-card);
+  color: var(--text-2);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.app-rail__btn:hover {
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+}
+/* One count per rail button — hidden at zero, as drawn. Deliberately NEUTRAL,
+   not acid: all four panes badge at once, and while split the accent belongs to
+   the focused pane alone (design §Notes, "one accent per view"). Same treatment
+   as the unfocused pane's diff badge. */
+.app-rail__badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--bg-hover-2);
+  border: 1px solid var(--border-2);
+  color: var(--text-hint);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-8-5);
+  line-height: 13px;
+  text-align: center;
+}
+/* The mock's one warm badge: the AGENTS pane while subagents are actually
+   running, so a folded column still says "something is working over there".
+   Warm (--attn), never acid — the accent stays on the focused pane. */
+.app-rail__badge--live {
+  background: var(--attn);
+  border-color: var(--attn);
+  color: var(--bg-app);
+}

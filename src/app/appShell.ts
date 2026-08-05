@@ -11,6 +11,15 @@ import { isRightPane } from '../lib/layoutStore';
 import { abbreviate } from '../lib/path';
 import type { MainTab, Pane, RightPane } from '../lib/store';
 
+// ---------- split-session (§5) ----------
+
+// Both helpers are declared by specs/split-session.md §5 under this module.
+// They are IMPLEMENTED in src/lib/layoutStore.ts, beside the `PaneTab` type and
+// the store slice that needs `clampToPaneTab` inside its own `set()` — importing
+// it the other way would make the two modules cyclic. Re-exported here so the
+// spec's import path resolves.
+export { clampToPaneTab, splitCandidate } from '../lib/layoutStore';
+
 // ---------- tab strip ----------
 
 /** Main tab-strip label (OVERVIEW/SESSION/DIFF/SHELL): the `app-tab--on`

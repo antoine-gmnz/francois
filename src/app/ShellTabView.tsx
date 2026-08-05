@@ -13,12 +13,26 @@ import { shellFooterPath } from './appShell';
 export interface ShellTabViewProps {
   sessionId: SessionId;
   home: string;
+  /**
+   * split-session FR-5/FR-6: whether THIS mount is the one the keyboard talks
+   * to — i.e. it lives in the split-focused pane (or there is no split at all,
+   * hence the `true` default).
+   *
+   * It gates two distinct things, both of which would otherwise fire in BOTH
+   * panes at once:
+   *  - the SHELL tab's ⌘T/⌘W/⌃⇥/⌃⇧⇥ combos, a document-level listener that a
+   *    second mount would run a second session's handler off one keypress;
+   *  - each terminal's native focus + input forwarding (`canFocus` below) —
+   *    without it, a pane restored on SHELL grabs the caret at mount and
+   *    keystrokes land in the wrong session's PTY.
+   */
+  paneFocused?: boolean;
 }
 
 /** The SHELL main tab's body: the sub-tab strip (multiple-shells), the PTY
  * terminal(s) — every shell of the session stays mounted while this tab is
  * (FR-13) — and the footer (alive dot, shell name + cwd, interrupt/clear hints). */
-export default function ShellTabView({ sessionId, home }: ShellTabViewProps) {
+export default function ShellTabView({ sessionId, home, paneFocused = true }: ShellTabViewProps) {
   const shells = useShellsFor(sessionId);
   const activeShellId = useActiveShellId(sessionId);
   const [attachError, setAttachError] = useState<string | null>(null);
@@ -34,7 +48,7 @@ export default function ShellTabView({ sessionId, home }: ShellTabViewProps) {
 
   // FR-19/FR-21: ⌘T/⌘W/⌃⇥/⌃⇧⇥ reachable from anywhere in this tab, not just an
   // unfocused terminal (ShellTerminal's own key handler covers that case).
-  useShellShortcuts(sessionId, true);
+  useShellShortcuts(sessionId, paneFocused);
 
   // Flow 1/5/7: learn (or create-if-none attach) the session's shell roster —
   // once per mount (tab open / session change). Each ShellTerminal ensures
@@ -109,6 +123,7 @@ export default function ShellTabView({ sessionId, home }: ShellTabViewProps) {
             sessionId={sessionId}
             shellId={s.id}
             visible={s.id === activeShellId}
+            canFocus={paneFocused}
             initialData={initialAttach?.shellId === s.id ? initialAttach.data : undefined}
           />
         ))}

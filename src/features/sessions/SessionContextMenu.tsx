@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
-import { Check, CircleAlert, Copy, ExternalLink, Pencil, Trash2, TriangleAlert } from 'lucide-react';
-import type { AppError, SessionWorktree } from '../../../contract/common';
+import { Check, CircleAlert, Columns2, Copy, ExternalLink, Pencil, Trash2, TriangleAlert } from 'lucide-react';
+import type { AppError, SessionId, SessionWorktree } from '../../../contract/common';
 import type { EditorId, EditorInfo } from '../../../contract/open-in-vscode';
 import { editorMenuLabel } from '../../../contract/open-in-vscode';
 import type { WorktreeStatusData } from '../../../contract/session-worktree';
@@ -40,6 +40,13 @@ export interface SessionContextMenuProps {
   worktree: SessionWorktree | null;
   containerRef: RefObject<HTMLDivElement>;
   onStartConfirm: () => void;
+  /**
+   * split-session FR-11: puts this row's session in the right pane and focuses
+   * that side. Absent ⇒ the item is hidden — which is how the FR's two
+   * suppressions (the session already in the LEFT pane, and anything that would
+   * disable `▯▯`) are expressed: the Sidebar simply does not pass a handler.
+   */
+  onOpenInRightPane?: (sessionId: SessionId) => void;
   /** session-rename FR-12: closes the menu and opens the rename modal for this row. */
   onRename: () => void;
   onCopyPath: () => void;
@@ -68,6 +75,7 @@ export function SessionContextMenu({
   worktree,
   containerRef,
   onStartConfirm,
+  onOpenInRightPane,
   onRename,
   onCopyPath,
   onCancel,
@@ -130,6 +138,15 @@ export function SessionContextMenu({
               <span className="context-menu__label">{editorMenuLabel(editor)}</span>
             </button>
           ))}
+          {/* split-session FR-11: above Rename, per the design brief. */}
+          {onOpenInRightPane && (
+            <button type="button" className="context-menu__item" onClick={() => onOpenInRightPane(menu.sessionId)}>
+              <span className="context-menu__glyph">
+                <Columns2 {...ICON} />
+              </span>
+              <span className="context-menu__label">Open in right pane</span>
+            </button>
+          )}
           <button type="button" className="context-menu__item" onClick={onRename}>
             <span className="context-menu__glyph">
               <Pencil {...ICON} />

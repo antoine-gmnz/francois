@@ -11,6 +11,7 @@ import {
 } from '../../../contract/fleet-board';
 import { formatContextTokens } from '../../../contract/conversation-view';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
+import type { SplitSide } from '../../lib/layoutStore';
 import { abbreviate } from '../../lib/path';
 import { useStore } from '../../lib/store';
 import { BadgePill } from '../../ui/BadgePill';
@@ -47,6 +48,16 @@ export interface SessionListBodyProps {
   derived: ReadonlyMap<string, SessionDerived>;
   onSelect: (id: string) => void;
   onContext: (sessionId: string, x: number, y: number) => void;
+  /** split-session FR-15: the RIGHT pane's session — drives the left/right badges. */
+  splitSessionId?: string | null;
+  focusedSide?: SplitSide;
+}
+
+/** FR-15: which pane, if any, is showing this row's session. */
+function paneOf(sessionId: string, activeSessionId: string | null, splitSessionId: string | null): SplitSide | null {
+  if (splitSessionId === null) return null; // not split — no badges at all
+  if (sessionId === splitSessionId) return 'right';
+  return sessionId === activeSessionId ? 'left' : null;
 }
 
 /** Pane [1]'s scrollable card list, plus its hydration-error / empty states. */
@@ -65,6 +76,8 @@ export function SessionListBody({
   derived,
   onSelect,
   onContext,
+  splitSessionId = null,
+  focusedSide = 'left',
 }: SessionListBodyProps): JSX.Element {
   return (
     <div className="scz sidebar-list">
@@ -93,18 +106,25 @@ export function SessionListBody({
       ) : visible.length === 0 ? (
         <EmptyPane className="sidebar-empty">no matches · esc to clear</EmptyPane>
       ) : (
-        visible.map((session, i) => (
-          <SessionCard
-            key={session.id}
-            session={session}
-            home={home}
-            selected={session.id === activeSessionId}
-            cursor={focused && i === rowCursor}
-            derived={derived.get(session.id)}
-            onClick={() => onSelect(session.id)}
-            onContext={(x, y) => onContext(session.id, x, y)}
-          />
-        ))
+        visible.map((session, i) => {
+          // FR-15: both paned rows render the selected treatment; only the
+          // FOCUSED side's row carries the accent left rail.
+          const pane = paneOf(session.id, activeSessionId, splitSessionId);
+          return (
+            <SessionCard
+              key={session.id}
+              session={session}
+              home={home}
+              selected={pane !== null || session.id === activeSessionId}
+              cursor={focused && i === rowCursor}
+              derived={derived.get(session.id)}
+              pane={pane}
+              paneFocused={pane !== null && pane === focusedSide}
+              onClick={() => onSelect(session.id)}
+              onContext={(x, y) => onContext(session.id, x, y)}
+            />
+          );
+        })
       )}
     </div>
   );
@@ -131,6 +151,8 @@ function SessionCard({
   selected,
   cursor,
   derived,
+  pane,
+  paneFocused,
   onClick,
   onContext,
 }: {
@@ -139,6 +161,9 @@ function SessionCard({
   selected: boolean;
   cursor: boolean;
   derived: SessionDerived | undefined;
+  /** split-session FR-15: which split pane shows this session, or null. */
+  pane: SplitSide | null;
+  paneFocused: boolean;
   onClick: () => void;
   onContext: (x: number, y: number) => void;
 }) {
@@ -162,6 +187,9 @@ function SessionCard({
   else if (hover) classNames.push('sidebar-card--hovered');
   if (cursor) classNames.push('sidebar-card--cursor');
   if (attention) classNames.push('sidebar-card--attention');
+  // FR-15: the accent left rail marks the FOCUSED side only — one accent per
+  // view, and in split it belongs to whichever pane owns the keyboard.
+  if (paneFocused) classNames.push('sidebar-card--pane-focus');
 
   return (
     <div
@@ -186,6 +214,8 @@ function SessionCard({
             {accountBadge.text}
           </span>
         )}
+        {/* split-session FR-15: which pane is showing this session. */}
+        {pane && <span className={`sidebar-card__pane sidebar-card__pane--${pane}`}>{pane}</span>}
         <span className="sidebar-card__status" style={{ color: statusColor }}>
           <StatusDot color={statusColor} size={6} pulsing={statusPulses(session.status)} />
           {label}

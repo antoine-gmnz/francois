@@ -327,6 +327,13 @@ export interface UseSessionAttachmentsOptions {
   inputRef: RefObject<HTMLTextAreaElement>;
   /** The composer's own auto-grow, so an inserted ref resizes the textarea like typing does. */
   autoGrow?: (el: HTMLTextAreaElement) => void;
+  /**
+   * split-session: whether this composer OWNS the two document/webview-level
+   * gestures (drop, paste). Both listeners are global, so with two SESSION panes
+   * mounted a single paste would stage the image in BOTH sessions — only the
+   * focused pane may claim them. Defaults to true (the single-pane shell).
+   */
+  active?: boolean;
 }
 
 export function useSessionAttachments({
@@ -335,6 +342,7 @@ export function useSessionAttachments({
   setInput,
   inputRef,
   autoGrow,
+  active = true,
 }: UseSessionAttachmentsOptions): SessionAttachments {
   const [staged, setStaged] = useState<Attachment[]>([]);
   const [drag, setDrag] = useState<{ dragging: boolean; paths: string[] }>({ dragging: false, paths: [] });
@@ -400,6 +408,7 @@ export function useSessionAttachments({
   // ConversationView when another tab is active, so a drop elsewhere never
   // reaches this session.
   useEffect(() => {
+    if (!active) return;
     let unlisten: (() => void) | undefined;
     let disposed = false;
     void subscribeDragDrop({
@@ -422,18 +431,20 @@ export function useSessionAttachments({
       disposed = true;
       unlisten?.();
     };
-  }, [sessionId]);
+  }, [sessionId, active]);
 
   // FR-14 — bound to the document, not the textarea, because a disabled textarea
   // fires no paste event (see the note above `isDocumentPasteOurs`). Mounted and
   // unmounted with the SESSION tab, exactly like the drag-drop listener.
   useEffect(
     () =>
-      subscribeDocumentPaste(
-        (e) => fireAndForget(controllerRef.current.onPaste(e)),
-        () => inputRef.current,
-      ),
-    [sessionId],
+      active
+        ? subscribeDocumentPaste(
+            (e) => fireAndForget(controllerRef.current.onPaste(e)),
+            () => inputRef.current,
+          )
+        : undefined,
+    [sessionId, active],
   );
 
   return {
