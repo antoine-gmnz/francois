@@ -105,58 +105,59 @@ export default function UsageBar({ home }: { home: string }) {
         <ProjectSwitcher home={home} sessionCwd={activeSession?.cwd ?? null} />
       </div>
 
-      {/* meter region — the whole strip left of the freshness label is the click target (FR-27) */}
-      <div
-        onClick={refresh}
-        // Keep focus where it was: a bare div steals it to <body> on mousedown, and
-        // App.tsx's global keys only stand down while focus is in an input/terminal —
-        // so without this the next keystroke after a click fires `n`/`d`/`t` (FR-3).
-        onMouseDown={(e) => e.preventDefault()}
-        // loading WITH data: a plain opacity swap, nothing else (FR-25)
-        className={`usage-meters${view.dimmed ? ' usage-meters--dimmed' : ''}`}
-      >
-        {/* split-session §8: while split the quota cluster says WHOSE quota it
-            is showing — the meters silently follow the focused pane otherwise. */}
-        {split && activeSession && (
-          <span className="usage-focused-label truncate">focused · {activeSession.name}</span>
-        )}
-        {fullError ? (
-          // no stale data to protect → the one-line affordance replaces the meters (FR-26)
-          <span title={fullError.message} className="usage-error-full">
-            <span>⚠</span>
-            <span>usage unavailable</span>
-          </span>
-        ) : (
-          <>
-            {/* stale meters survive an error; the glyph shrinks to bare ⚠ beside them (FR-26) */}
-            {view.error && (
-              <span title={view.error.message} className="usage-error-glyph">
-                ⚠
-              </span>
-            )}
-            {view.empty ? (
-              <span className="usage-empty">usage —</span>
-            ) : (
-              view.chips.map((chip, i) => <MeterChip key={`${chip.label}:${i}`} chip={chip} />)
-            )}
-          </>
-        )}
-        <span
-        onClick={refresh}
-        onMouseDown={(e) => e.preventDefault()} // see the meter region above (FR-3)
-        onMouseEnter={() => setFreshHover(true)}
-        onMouseLeave={() => setFreshHover(false)}
-        title={view.resetTitle}
-        className={`usage-fresh${freshHover ? ' usage-fresh--hover' : ''}`}
-      >
-        {view.trailing}
-      </span>
-      </div>
+      <div className='usage-right-bar'>
+        {/* meter region — the whole strip left of the freshness label is the click target (FR-27) */}
+        <div
+          onClick={refresh}
+          // Keep focus where it was: a bare div steals it to <body> on mousedown, and
+          // App.tsx's global keys only stand down while focus is in an input/terminal —
+          // so without this the next keystroke after a click fires `n`/`d`/`t` (FR-3).
+          onMouseDown={(e) => e.preventDefault()}
+          // loading WITH data: a plain opacity swap, nothing else (FR-25)
+          className={`usage-meters${view.dimmed ? ' usage-meters--dimmed' : ''}`}
+        >
+          {/* split-session §8: while split the quota cluster says WHOSE quota it
+              is showing — the meters silently follow the focused pane otherwise. */}
+          {split && activeSession && (
+            <span className="usage-focused-label truncate">focused · {activeSession.name}</span>
+          )}
+          {fullError ? (
+            // no stale data to protect → the one-line affordance replaces the meters (FR-26)
+            <span title={fullError.message} className="usage-error-full">
+              <span>⚠</span>
+              <span>usage unavailable</span>
+            </span>
+          ) : (
+            <>
+              {/* stale meters survive an error; the glyph shrinks to bare ⚠ beside them (FR-26) */}
+              {view.error && (
+                <span title={view.error.message} className="usage-error-glyph">
+                  ⚠
+                </span>
+              )}
+              {view.empty ? (
+                <span className="usage-empty">usage —</span>
+              ) : (
+                view.chips.map((chip, i) => <MeterChip key={`${chip.label}:${i}`} chip={chip} />)
+              )}
+            </>
+          )}
+          <span
+          onClick={refresh}
+          onMouseDown={(e) => e.preventDefault()} // see the meter region above (FR-3)
+          onMouseEnter={() => setFreshHover(true)}
+          onMouseLeave={() => setFreshHover(false)}
+          title={view.resetTitle}
+          className={`usage-fresh${freshHover ? ' usage-fresh--hover' : ''}`}
+        >
+          {view.trailing}
+        </span>
+        </div>
 
-      {/* split-session FR-9: the layout control — the titlebar entry point into
+        {/* split-session FR-9: the layout control — the titlebar entry point into
           and out of split, after the quota cluster behind a hairline divider. */}
-      <LayoutToggle />
-
+        <LayoutToggle />
+      </div>
       {/* freshness + session reset countdown, joined by ' · ' (FR-30); degrades to
           whichever half exists — doubles as the refresh affordance (§8) */}
 
