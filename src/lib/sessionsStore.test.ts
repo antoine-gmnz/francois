@@ -1,11 +1,11 @@
-// sessions slice of the app store. Covers the two selection paths split-session
-// deliberately keeps apart (FR-8 vs FR-20):
-//  - `setActiveSessionId` is the USER pick: assigning the right pane's session
-//    to the left side SWAPS the two panes.
+// sessions slice of the app store. Covers the two selection paths split-by-4
+// deliberately keeps apart (FR-19 vs FR-27):
+//  - `setActiveSessionId` is the USER pick: assigning another pane's session to
+//    pane 0 SWAPS the two panes.
 //  - `reassignActiveSessionId` is the post-REMOVAL fallback: the session it
-//    replaces no longer exists, so there is nothing to swap it with — it must
-//    stay a plain reassignment even when the nearest remaining session happens
-//    to be the one in the right pane.
+//    replaces no longer exists, so there is nothing to swap it with — it stays a
+//    plain reassignment, and DROPS the pane that was already showing the target
+//    rather than duplicating it.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SessionMeta } from '../../contract/common';
@@ -21,34 +21,39 @@ beforeEach(() => {
     activeSessionId: null,
     agentTabs: [],
     mainTab: 'session',
-    splitSessionId: null,
-    splitTab: 'session',
-    focusedSide: 'left',
+    extraPanes: [],
+    focusedPaneIndex: 0,
   });
 });
 
-describe('setActiveSessionId (FR-8)', () => {
-  it('SWAPS the panes when the pick is the right pane’s session', () => {
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff', splitSessionId: 's2', splitTab: 'shell' });
+describe('setActiveSessionId (FR-19)', () => {
+  it('SWAPS the panes when the pick is another pane’s session', () => {
+    useStore.setState({
+      activeSessionId: 's1',
+      mainTab: 'diff',
+      extraPanes: [{ sessionId: 's2', tab: 'shell' }],
+    });
     useStore.getState().setActiveSessionId('s2');
     const s = useStore.getState();
     expect(s.activeSessionId).toBe('s2');
-    expect(s.splitSessionId).toBe('s1');
     expect(s.mainTab).toBe('shell');
-    expect(s.splitTab).toBe('diff');
+    expect(s.extraPanes).toEqual([{ sessionId: 's1', tab: 'diff' }]);
   });
 });
 
-describe('reassignActiveSessionId (FR-20)', () => {
-  it('never swaps, even when the target IS the right pane’s session', () => {
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff', splitSessionId: 's2', splitTab: 'shell' });
+describe('reassignActiveSessionId (FR-27)', () => {
+  it('never swaps — it DROPS the pane that was showing the target', () => {
+    useStore.setState({
+      activeSessionId: 's1',
+      mainTab: 'diff',
+      extraPanes: [{ sessionId: 's2', tab: 'shell' }],
+    });
     useStore.getState().reassignActiveSessionId('s2');
     const s = useStore.getState();
     expect(s.activeSessionId).toBe('s2');
-    // the right pane is untouched — the caller (reassignAfterRemoval) unsplits
-    // right after, and a transient swap would smuggle the REMOVED id into it.
-    expect(s.splitSessionId).toBe('s2');
-    expect(s.splitTab).toBe('shell');
+    // a swap would smuggle the REMOVED id back into a pane; the grid compacts
+    // instead, and the session is never shown twice.
+    expect(s.extraPanes).toEqual([]);
   });
 
   it('closes the agent tabs and leaves a dynamic tab on a real switch', () => {
