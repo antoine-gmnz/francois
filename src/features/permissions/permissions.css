@@ -1,4 +1,277 @@
-/* permission-guardrails — PermissionsModal (spec §8.10-14). Bespoke shell:
+/* permission-guardrails §8 — approval card + rules editor.
+
+   Approval card (§8.1–8.9): a compact stop strip — header, the call signature,
+   the action row — with the raw input / cwd / would-be rule folded behind a
+   disclosure caret. Pending chrome is AMBER (--attn) rather than the accent,
+   because a permission ask is a stop, not a question, and acid is reserved for
+   the one live thing in a view. Motion: none — no @keyframes, no animation, no
+   transition anywhere in this file (state changes are instant swaps). */
+
+.pcard {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-10) var(--space-12);
+}
+
+/* The pending card is the only one that tints: a warm edge over a barely-warm
+   fill, so a parked turn is findable while scrolling without shouting. */
+.pcard--pending {
+  border-color: color-mix(in srgb, var(--attn) 34%, var(--border));
+  background: color-mix(in srgb, var(--attn) 5%, var(--bg-deep));
+}
+
+/* Resolved cards drop the tint and keep a single edge carrying the outcome. */
+.pcard--allowed {
+  border-left: 2px solid var(--success);
+}
+
+.pcard--denied {
+  border-left: 2px solid var(--error);
+}
+
+.pcard--cancelled {
+  opacity: 0.55;
+}
+
+.pcard--inflight {
+  opacity: 0.7;
+}
+
+.pcard__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.pcard__glyph {
+  color: var(--attn);
+  font-size: var(--font-size-9);
+}
+
+.pcard__label {
+  color: var(--attn);
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.08em;
+}
+
+.pcard__note {
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+}
+
+.pcard__note--allowed {
+  color: var(--success);
+}
+
+.pcard__note--denied {
+  color: var(--error);
+}
+
+/* Explicit rather than inherited: the component always emits
+   pcard__note--<state>, and a cancelled card is already dimmed card-wide
+   (§8.1), so its note stays faint on purpose. */
+.pcard__note--cancelled {
+  color: var(--text-faint);
+}
+
+/* §8.2: how long the ask has been parked. Pending only — see relativeAge(). */
+.pcard__age {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: var(--font-size-9-5);
+}
+
+/* §8.3: the headline. A <button> so the disclosure is keyboard-reachable, but
+   it carries none of the button chrome — it reads as the card's own text. */
+.pcard__sig {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  width: 100%;
+  margin-top: var(--space-8);
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--font-size-12-5);
+  line-height: 1.5;
+  color: var(--warn);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Nothing to reveal (a resolved card with no input dump and no cwd): the line
+   stays, the affordance does not. */
+.pcard__sig--static {
+  cursor: default;
+}
+
+.pcard__sig-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pcard__caret {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: var(--font-size-9-5);
+}
+
+.pcard__detail {
+  margin-top: var(--space-4);
+}
+
+.pcard__input {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  padding: var(--space-8);
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: var(--font-size-10-5);
+  color: var(--text-2);
+  margin-top: var(--space-6);
+}
+
+.pcard__meta {
+  color: var(--text-faint);
+  font-size: var(--font-size-10-5);
+  margin-top: var(--space-6);
+  overflow-wrap: anywhere;
+}
+
+.pcard__rule {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-top: var(--space-6);
+  font-size: var(--font-size-10-5);
+}
+
+.pcard__rule-label {
+  color: var(--text-faint);
+}
+
+.pcard__rule-text {
+  color: var(--text-bright);
+  overflow-wrap: anywhere;
+}
+
+.pcard__pattern {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+/* §8.7: tier control at the left, the four decisions right-aligned. Wraps
+   rather than compressing, so a narrow transcript column keeps the buttons at
+   full size. */
+.pcard__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-6);
+  margin-top: var(--space-10);
+}
+
+.pcard__tiers {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  margin-right: auto;
+  font-size: var(--font-size-10-5);
+}
+
+.pcard__tier {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.pcard__tier--on {
+  color: var(--accent);
+}
+
+/* §8.6: hovering a *Once action dims the tier control — the tier only applies
+   to Always/Never. No transition (§8 motion rule). */
+.pcard__tiers--inert {
+  opacity: 0.35;
+}
+
+.pcard__btn {
+  height: 26px;
+  padding: 0 var(--space-12);
+  border: 1px solid transparent;
+  border-radius: var(--radius-base);
+  font-family: inherit;
+  font-size: var(--font-size-11);
+  cursor: pointer;
+}
+
+/* The one filled button in the card — the acid "live thing" for this view. */
+.pcard__btn--allow {
+  background: var(--accent);
+  color: var(--bg-app);
+  font-weight: 600;
+}
+
+.pcard__btn--allow:hover {
+  background: var(--accent-bright);
+}
+
+.pcard__btn--always {
+  background: var(--bg-raised);
+  border-color: var(--border-emphasis);
+  color: var(--text-strong);
+}
+
+.pcard__btn--always:hover {
+  background: var(--bg-hover-2);
+}
+
+.pcard__btn--deny,
+.pcard__btn--never {
+  background: transparent;
+  border-color: var(--border-2);
+}
+
+.pcard__btn--deny {
+  color: var(--text-dim);
+}
+
+.pcard__btn--never {
+  color: var(--text-muted);
+}
+
+.pcard__btn--deny:hover,
+.pcard__btn--never:hover {
+  border-color: var(--error-dim);
+  color: var(--error-bright);
+}
+
+/* In flight, the whole row still renders but stops inviting clicks — the
+   handlers already drop them (FR-21); this is the visible half. */
+.pcard--inflight .pcard__btn,
+.pcard--inflight .pcard__tier {
+  cursor: default;
+}
+
+.pcard__error {
+  color: var(--error);
+  font-size: var(--font-size-11);
+  margin-top: var(--space-6);
+}
+
+/* PermissionsModal (spec §8.10-14). Bespoke shell:
    its border color/radius/backdrop and footer diverge from the shared
    `.modal-*` classes in styles.css (see src/ui/Modal.tsx), and its panel
    width is a CSS `min()` expression, which the shared <Modal> can't take

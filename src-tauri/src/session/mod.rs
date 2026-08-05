@@ -592,6 +592,53 @@ impl Session {
         });
     }
 
+    /// conversation-view FR-10: an assistant block joins the buffer at its FIRST
+    /// delta, not at `content_block_stop`. Before that it was invisible to
+    /// `getTranscript`, so a view hydrating mid-block seeded a transcript with no
+    /// in-flight block and then only saw the deltas that arrived after it — the
+    /// answer rendered with its opening missing. Upsert: later deltas replace the
+    /// text of the same block in place (searched from the end — it is the newest
+    /// block in all but pathological interleavings).
+    fn buf_assistant_streaming(&mut self, block_id: &str, text: &str) {
+        if let Some(b) = self
+            .block_buffer
+            .iter_mut()
+            .rev()
+            .find(|b| b.block_id == block_id)
+        {
+            b.text = text.to_string();
+            return;
+        }
+        self.block_buffer.push(BufBlock {
+            text: text.to_string(),
+            streaming: true,
+            ..BufBlock::new(block_id, BlockKind::Assistant)
+        });
+    }
+
+    /// Close a streaming assistant block: final text, streaming off. Returns the
+    /// finalized block so the caller can persist it (durable-sessions FR-2).
+    /// Falls back to an append when no streaming block exists — a stop with no
+    /// deltas at all, which must still buffer whatever text it carries.
+    fn finish_assistant(&mut self, block_id: &str, text: String) -> Option<BufBlock> {
+        match self
+            .block_buffer
+            .iter_mut()
+            .rev()
+            .find(|b| b.block_id == block_id)
+        {
+            Some(b) => {
+                b.text = text;
+                b.streaming = false;
+                Some(b.clone())
+            }
+            None => {
+                self.buf_assistant(block_id, text);
+                self.block_buffer.last().cloned()
+            }
+        }
+    }
+
     /// `model` is the one a subagent dispatch named (None ⇒ inherited, or not a
     /// dispatch at all); it rides the Subagent block's `text` per the field reuse
     /// documented on `BufBlock`, which also gets it persisted for free.

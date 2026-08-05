@@ -223,10 +223,21 @@ fn handle_text_delta(
         .and_then(|t| t.as_str())
         .unwrap_or("")
         .to_string();
-    text_accum
-        .entry(block_id.clone())
-        .or_default()
-        .push_str(&text);
+    let accum = text_accum.entry(block_id.clone()).or_default();
+    // The prefix already streamed for this block, counted the way the webview
+    // counts a JS string — this is what lets the frontend recognise a chunk it
+    // already has (hydration overlap) instead of appending it twice.
+    let offset = accum.encode_utf16().count();
+    accum.push_str(&text);
+    // Keep the transcript buffer current with the partial text, so a view that
+    // hydrates mid-block seeds the opening it would otherwise never receive.
+    {
+        let engine = app.state::<Engine>();
+        let mut map = engine.sessions.lock().unwrap();
+        if let Some(s) = map.get_mut(session_id) {
+            s.buf_assistant_streaming(&block_id, accum);
+        }
+    }
     *open_block = Some((block_id.clone(), BlockKind::Text));
     emit(
         app,
@@ -234,6 +245,7 @@ fn handle_text_delta(
             session_id: session_id.into(),
             block_id,
             text,
+            offset,
         },
     );
 }
@@ -296,26 +308,33 @@ fn finish_text_block(
     open_block: &mut Option<(String, BlockKind)>,
 ) {
     let text = text_accum.get(block_id).cloned().unwrap_or_default();
+    finalize_text_block(app, session_id, block_id, text);
+    *open_block = None;
+}
+
+/// Settle an assistant text block: final text into the transcript buffer,
+/// persist it (durable-sessions FR-2), and announce it with its COMPLETE text
+/// so a listener that missed a delta stops rendering a truncated answer.
+///
+/// Shared with `close_open_block` (lines.rs), which reaches this same path when
+/// the reader dies with a block still open — an interrupted answer used to
+/// never reach the buffer at all, so it vanished from the transcript on reload.
+pub(crate) fn finalize_text_block(app: &AppHandle, session_id: &str, block_id: &str, text: String) {
     let block = {
         let engine = app.state::<Engine>();
         let mut map = engine.sessions.lock().unwrap();
-        match map.get_mut(session_id) {
-            Some(s) => {
-                s.buf_assistant(block_id, text);
-                s.block_buffer.last().cloned()
-            }
-            None => None,
-        }
+        map.get_mut(session_id)
+            .and_then(|s| s.finish_assistant(block_id, text.clone()))
     };
     if let Some(buf_block) = &block {
         append_transcript(app, session_id, buf_block); // durable-sessions FR-2
     }
-    *open_block = None;
     emit(
         app,
         SessionEvent::AssistantDone {
             session_id: session_id.into(),
             block_id: block_id.to_string(),
+            text,
         },
     );
 }

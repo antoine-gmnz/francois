@@ -243,7 +243,7 @@ pub(crate) fn run_reader(
     }
 
     // Close any block left open (interrupt or crash) — FR-24/FR-34.
-    close_open_block(&app, &session_id, open_block.take());
+    close_open_block(&app, &session_id, open_block.take(), &text_accum);
 
     let had_blocks = !blocks.is_empty();
     finish_reader_turn(

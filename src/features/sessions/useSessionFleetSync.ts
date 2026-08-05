@@ -4,6 +4,7 @@ import { countRunning, type SessionDerived } from '../../../contract/fleet-board
 import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
 import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { clearDraft } from '../conversation/composer-draft';
 import { prunePaletteSession } from '../palette/paletteData';
 import { useShellStore } from '../shell/shellStore';
 import { handleSessionEvent, type SessionEventContext } from './sessionEventHandler';
@@ -95,6 +96,8 @@ export function useSessionFleetSync(): SessionFleetSync {
     // multiple-shells FR-9: purge the session's shell roster/active-id/unread
     // bookkeeping too, mirroring the core's own dispose_session_shells.
     useShellStore.getState().removeSession(id);
+    // …and the unsent composer draft, which outlives the view by design.
+    clearDraft(id);
   };
 
   // Best-effort one-shot diff seed, deduped by id so it fires exactly once per

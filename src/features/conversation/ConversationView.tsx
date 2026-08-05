@@ -9,6 +9,7 @@ import { compactBlocks, groupToolRuns, isClearCommand, TRANSCRIPT_TEXT_SELECT_ST
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import { useConversationTranscript } from './useConversationTranscript';
+import { getDraft, setDraft } from './composer-draft';
 import {
   atFirstLine,
   atLastLine,
@@ -72,7 +73,11 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
     jumpToLatest,
   } = useConversationTranscript(sessionId);
 
-  const [input, setInput] = useState('');
+  // The composer text. Seeded from — and mirrored back into — the per-session
+  // draft map, because this view is keyed by sessionId: switching sessions
+  // unmounts it, and without the map a half-typed prompt would be lost (see
+  // ./composer-draft).
+  const [input, setInput] = useState(() => getDraft(sessionId));
   const [sendError, setSendError] = useState<string | null>(null);
   // session-worktree FR-14: per-session dismissal, persisted in localStorage —
   // once dismissed the banner never returns for this session (component is
@@ -98,6 +103,24 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 130) + 'px';
   };
+
+  // Mirror every composer edit into the draft map. An effect rather than a
+  // wrapper around setInput, so it also covers the writes that come from
+  // elsewhere (attachment refs, history recall, a failed send putting the text
+  // back) — and it runs on commit, so the map is already current when a session
+  // switch unmounts this view.
+  useEffect(() => {
+    setDraft(sessionId, input);
+  }, [sessionId, input]);
+
+  // A restored multi-line draft must come back at the height it had: the
+  // textarea mounts at rows=1 and only grows in onChange, which no longer fires
+  // for text that was typed before the switch.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (el && el.value !== '') autoGrow(el);
+    // Mount only — every later change is sized by onChange/applyRecall.
+  }, []);
 
   // ---------- session-attachments ----------
   // The staged list + the three gestures (drop / paste / picker). Component-local

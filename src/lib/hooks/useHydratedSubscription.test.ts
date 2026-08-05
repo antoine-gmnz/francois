@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { hydrateBuffer, initHydrationBuffer, routeIncoming } from './useHydratedSubscription';
+import { describe, expect, it, vi } from 'vitest';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { Result } from '../../../contract/common';
+import { hydrateBuffer, initHydrationBuffer, routeIncoming, startHydratedSubscription } from './useHydratedSubscription';
 
 // The hook itself is a thin useEffect wrapper (no DOM renderer is wired in this
 // project's vitest setup); this file proves the pure buffer/drain engine that
@@ -102,5 +104,105 @@ describe('hydrateBuffer', () => {
     if (r4.applyNow) apply(4);
     expect(applied).toEqual([1, 2, 3, 4]);
     expect(r4.next.buffer).toEqual([]);
+  });
+});
+
+describe('startHydratedSubscription', () => {
+  // A controllable subscribe/fetch pair: `emit` plays a backend event, and each
+  // promise resolves only when the test says so, so the order the two IPC calls
+  // complete in is the thing under test.
+  function harness() {
+    const applied: string[] = [];
+    const seeded: string[][] = [];
+    const errors: string[] = [];
+    let emit: (e: string) => void = () => {};
+    let resolveSubscribe: () => void = () => {};
+    let resolveFetch: (res: Result<string[]>) => void = () => {};
+    const unlisten = vi.fn();
+    const fetchInitial = vi.fn(
+      () =>
+        new Promise<Result<string[]>>((r) => {
+          resolveFetch = r;
+        }),
+    );
+    const stop = startHydratedSubscription<string, string[]>({
+      subscribe: (cb) =>
+        new Promise<UnlistenFn>((r) => {
+          emit = cb;
+          resolveSubscribe = () => r(unlisten);
+        }),
+      fetchInitial,
+      isRelevant: () => true,
+      onHydrated: (blocks) => seeded.push(blocks),
+      onEvent: (e) => applied.push(e),
+      onError: (m) => errors.push(m),
+    });
+    return {
+      applied,
+      seeded,
+      errors,
+      fetchInitial,
+      unlisten,
+      stop,
+      emit: (e: string) => emit(e),
+      resolveSubscribe: () => resolveSubscribe(),
+      resolveFetch: (data: string[]) => resolveFetch({ ok: true, data }),
+      failFetch: (message: string) => resolveFetch({ ok: false, error: { code: 'INTERNAL', message } }),
+    };
+  }
+
+  it('does not fetch the snapshot until the subscription is live', async () => {
+    // The window this closes: a snapshot taken before the listener exists misses
+    // every event emitted in between, and nothing ever replays them.
+    const h = harness();
+    await Promise.resolve();
+    expect(h.fetchInitial).not.toHaveBeenCalled();
+
+    h.resolveSubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.fetchInitial).toHaveBeenCalledTimes(1);
+  });
+
+  it('drains events that arrived while the snapshot was in flight, after the seed', async () => {
+    const h = harness();
+    h.resolveSubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    h.emit('a'); // buffered — the seed has not landed yet
+    h.emit('b');
+    expect(h.applied).toEqual([]);
+
+    h.resolveFetch(['snapshot']);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.seeded).toEqual([['snapshot']]);
+    expect(h.applied).toEqual(['a', 'b']); // arrival order, after the seed
+
+    h.emit('c'); // hydrated — applies live
+    expect(h.applied).toEqual(['a', 'b', 'c']);
+  });
+
+  it('unlistens a subscription that resolves after teardown, and never fetches', async () => {
+    const h = harness();
+    h.stop();
+    h.resolveSubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.unlisten).toHaveBeenCalledTimes(1);
+    expect(h.fetchInitial).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed snapshot without hydrating', async () => {
+    const h = harness();
+    h.resolveSubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+    h.failFetch('no such session');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.errors).toEqual(['no such session']);
+    expect(h.seeded).toEqual([]);
   });
 });

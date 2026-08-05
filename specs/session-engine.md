@@ -58,7 +58,7 @@ There is no UI to click through here — these flows describe the observable con
 2. Caller invokes `francois:session:send` with `{ sessionId, text }`.
 3. If a turn is already in flight (`status: 'running'`), the text is appended to that session's FIFO queue; the call resolves immediately with `{ queued: true, queuePosition }`.
 4. Otherwise the engine allocates a `BlockId`, emits `message.user`, transitions to `status: 'running'` (emits `session.status`), and submits the text as a new turn.
-5. As the model streams a text content block, the engine allocates a `BlockId` for it and emits a run of `assistant.delta` events (each carrying an incremental text chunk), closed by `assistant.done`.
+5. As the model streams a text content block, the engine allocates a `BlockId` for it, buffers the block from its first chunk on (so `getTranscript` mid-block returns the text so far), and emits a run of `assistant.delta` events — each carrying an incremental chunk plus the `offset` it starts at — closed by an `assistant.done` carrying the block's complete text.
 6. When the model calls a tool, the engine allocates a `BlockId` for that tool_use block; once the tool's full input is known it emits `tool.start` (with a derived `summary`); once the tool's result arrives it emits `tool.done` (with a derived `meta`). If the tool is `Task` (subagent dispatch), the engine additionally mints an `AgentId` and drives an `agent.update` lifecycle (§5.4) alongside the ordinary `tool.start`/`tool.done` pair.
 7. Steps 5–6 repeat for every content block in the turn, in the order the model produced them.
 8. When the turn ends, the engine emits `context.usage`, and — if the queue is non-empty — immediately starts the next queued turn (repeat from step 4, no observable `idle` blip); otherwise it transitions to `status: 'idle'` (emits `session.status`).
@@ -140,7 +140,7 @@ There is no UI to click through here — these flows describe the observable con
 
 - **FR-22**: `interrupt` on an unknown `sessionId` → `SESSION_NOT_FOUND`.
 - **FR-23**: `interrupt` when `status !== 'running'` (`idle`, `done`, or `error`) is a no-op: resolves `ok:true` with `null`, no events emitted.
-- **FR-24**: `interrupt` when `status === 'running'` aborts the current turn (SIGINT then SIGTERM-on-timeout for the per-turn CLI child, or SDK abort for the sidecar escape hatch), closes any block left open (`assistant.done` for an open text block; `tool.done` with `meta: 'interrupted'` for an open tool block), then applies FR-20's completion routing. An interrupted turn is treated as a normal (non-error) completion for queue-draining purposes.
+- **FR-24**: `interrupt` when `status === 'running'` aborts the current turn (SIGINT then SIGTERM-on-timeout for the per-turn CLI child, or SDK abort for the sidecar escape hatch), closes any block left open (`assistant.done` for an open text block; `tool.done` with `meta: 'interrupted'` for an open tool block), then applies FR-20's completion routing. An open text block settles through the same path a normal block stop takes — buffered and finalized with the text streamed so far — so the partial answer survives in the transcript instead of living only in the deltas the view happened to receive. An interrupted turn is treated as a normal (non-error) completion for queue-draining purposes.
 
 ### Switch model
 

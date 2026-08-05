@@ -60,6 +60,10 @@ export default function App() {
   const renameSessionId = useStore((s) => s.renameSessionId);
   const setRenameSessionId = useStore((s) => s.setRenameSessionId);
   const activeProjectId = useStore((s) => s.activeProjectId);
+  // projects FR-39: a switch into an empty project auto-opens the new-session
+  // modal — these two settle what cancelling vs. creating does to the scope.
+  const rollbackProjectSwitch = useStore((s) => s.rollbackProjectSwitch);
+  const clearProjectSwitchRollback = useStore((s) => s.clearProjectSwitchRollback);
   const permissionsOpen = useStore((s) => s.permissionsOpen);
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
   const projectsOpen = useStore((s) => s.projectsOpen);
@@ -323,11 +327,24 @@ export default function App() {
         appVersion={appVersion}
       />
 
+      {/* projects FR-39: this modal is also what a switch into an EMPTY project
+          opens, so cancelling it has to undo that switch. Both handlers are
+          no-ops for every other way the modal is opened (`n`, the palette, the
+          sidebar button) — nothing is pending then. `onCreated` runs BEFORE the
+          modal's own `onClose`, so clearing there is what makes the rollback
+          below stand down once a session actually exists. */}
       {newSessionOpen && (
         <NewSessionModal
-          onClose={() => setNewSessionOpen(false)}
+          onClose={() => {
+            setNewSessionOpen(false);
+            rollbackProjectSwitch();
+          }}
           onCreated={(m) => {
             upsertSession(m);
+            // Unconditional, and BEFORE the guard below: standing the rollback
+            // down is owed to the session having been created, not to the modal
+            // still being open.
+            clearProjectSwitchRollback();
             if (!useStore.getState().newSessionOpen) return;
             // split-session FR-8: a new session lands in the FOCUSED pane, like
             // every other "assign a session" path (roster click/⏎, palette,

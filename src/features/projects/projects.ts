@@ -533,6 +533,25 @@ export function visibleSessions(
   return inProject.filter((s) => s.name.toLowerCase().includes(q) || s.cwd.toLowerCase().includes(q));
 }
 
+// ---------- FR-39: where a scope switch lands ----------
+
+/**
+ * The session a switch into `projectId` should select: the FIRST one the board
+ * would list for it, or null when the project holds none (which is what makes
+ * the switcher open the new-session modal instead).
+ *
+ * Deliberately reads the unfiltered session list rather than `visibleSessions`:
+ * the sidebar's '/' query is a transient search, and landing on the first *match*
+ * of a leftover query — or on nothing at all because it matches none — is not
+ * what "the first session in this project" means.
+ */
+export function firstSessionInProject(
+  sessions: SessionMeta[],
+  projectId: ProjectId,
+): SessionMeta | null {
+  return filterSessionsByProject(sessions, projectId)[0] ?? null;
+}
+
 // ---------- FR-34: the Identity commit guard ----------
 
 /**

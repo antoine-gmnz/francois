@@ -430,7 +430,7 @@ and thereafter read from meta.
 |---|---|
 | `stop` on unknown `sessionId` | `ok:false` `SESSION_NOT_FOUND` (FR-2). |
 | `stop` when `idle`/`done`/`error` | `ok:false` `SESSION_NOT_RUNNING`; nothing killed, no events (FR-3). UI (which only renders Stop while running) ignores it. |
-| `stop` while a turn streams text | Child killed; open text block closed with `assistant.done`; session → `idle` (FR-4/6). The partial assistant text is kept in the live view but, like a crash mid-turn (durable-sessions), was never finalized so it is absent on reload. |
+| `stop` while a turn streams text | Child killed; open text block closed with `assistant.done`; session → `idle` (FR-4/6). The partial assistant text is finalized on teardown, so what the live view shows is what a reload shows (durable-sessions FR-2) — a stop no longer makes visible text vanish. |
 | `stop` while a tool executes | Open tool block closed with `tool.done meta:"interrupted"`; session → `idle` (FR-6). |
 | `stop` with queued follow-ups | Queue cleared first, so no queued turn auto-starts; session → `idle` (FR-5). Queued blocks were never sent → no transcript/event debt. |
 | `stop` during a resume-retry | `was_interrupted` suppresses the resume-fail re-run; session → `idle` (FR-7). |

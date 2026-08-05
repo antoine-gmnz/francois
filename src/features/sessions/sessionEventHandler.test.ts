@@ -94,8 +94,8 @@ describe('handleSessionEvent', () => {
   // Every event type the sidebar does not act on: no ctx callback fires.
   const ignored: SessionEvent[] = [
     { type: 'message.user', sessionId: 's1', blockId: 'b1', text: 'hi' },
-    { type: 'assistant.delta', sessionId: 's1', blockId: 'b1', text: 'hi' },
-    { type: 'assistant.done', sessionId: 's1', blockId: 'b1' },
+    { type: 'assistant.delta', sessionId: 's1', blockId: 'b1', text: 'hi', offset: 0 },
+    { type: 'assistant.done', sessionId: 's1', blockId: 'b1', text: 'hi' },
     { type: 'tool.start', sessionId: 's1', blockId: 'b1', tool: 'Read', summary: 'x' },
     { type: 'tool.done', sessionId: 's1', blockId: 'b1', meta: '1 line' },
     { type: 'command.started', sessionId: 's1', blockId: 'b1', command: '/x' },
