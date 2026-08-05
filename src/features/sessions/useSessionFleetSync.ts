@@ -19,6 +19,22 @@ export interface SessionFleetSync {
 }
 
 /**
+ * §7 / split-session FR-20: which session takes over the left pane once `id` is
+ * removed — the nearest remaining by list position, or null when nothing is
+ * left. Pure and exported for tests; the caller feeds the answer to
+ * `reassignActiveSessionId`, NEVER to `setActiveSessionId`, whose FR-8 swap
+ * branch would fire whenever the answer happens to be the RIGHT pane's session.
+ */
+export function nextActiveAfterRemoval(list: readonly SessionMeta[], id: string): string | null {
+  const idx = list.findIndex((session) => session.id === id);
+  const remaining = list.filter((session) => session.id !== id);
+  if (remaining.length === 0) return null;
+  // Clamped on both ends: an id not in the list (idx === -1) falls back to the
+  // first row rather than indexing off the front.
+  return remaining[Math.max(0, Math.min(idx, remaining.length - 1))].id;
+}
+
+/**
  * Sidebar pane [1]'s ONLY session/diff event subscription (fleet-board
  * FR-2/3/5/6/7): mount hydration via session_list, the live SessionEvent/
  * DiffEvent streams, and the per-session figures NOT on SessionMeta itself —
@@ -34,6 +50,11 @@ export function useSessionFleetSync(): SessionFleetSync {
   const patchUsage = useStore((s) => s.patchUsage);
   const removeSessionFromCache = useStore((s) => s.removeSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
+  // split-session FR-20: the removal fallback takes the RAW reassignment —
+  // `setActiveSessionId` would read "the nearest remaining session happens to be
+  // the right pane's" as a pane SWAP (FR-8) and smuggle the removed id into
+  // `splitSessionId`.
+  const reassignActiveSessionId = useStore((s) => s.reassignActiveSessionId);
   const mergeDerived = useStore((s) => s.mergeDerived);
   const dropDerivedFromCache = useStore((s) => s.dropDerived);
   const recordActivity = useStore((s) => s.recordActivity);
@@ -69,6 +90,8 @@ export function useSessionFleetSync(): SessionFleetSync {
     seededRef.current.delete(id);
     startedRef.current.delete(id);
     dropDerivedFromCache(id);
+    // split-session: the rail badges' per-session counts go with it.
+    useStore.getState().dropPanelCounts(id);
     // multiple-shells FR-9: purge the session's shell roster/active-id/unread
     // bookkeeping too, mirroring the core's own dispose_session_shells.
     useShellStore.getState().removeSession(id);
@@ -86,16 +109,11 @@ export function useSessionFleetSync(): SessionFleetSync {
   };
 
   const reassignAfterRemoval = (id: string) => {
-    const st = useStore.getState();
-    const list = st.sessions;
-    const idx = list.findIndex((session) => session.id === id);
-    const remaining = list.filter((session) => session.id !== id);
-    if (remaining.length === 0) {
-      setActiveSessionId(null);
-    } else {
-      const next = remaining[Math.min(idx, remaining.length - 1)];
-      setActiveSessionId(next.id);
-    }
+    reassignActiveSessionId(nextActiveAfterRemoval(useStore.getState().sessions, id));
+    // split-session FR-20: this only ever runs for the LEFT pane's session, so
+    // its removal ends the split — keeping the (already reassigned) left pane.
+    // The right pane is never silently promoted into the left slot.
+    if (useStore.getState().splitSessionId !== null) useStore.getState().unsplit('left');
   };
 
   const handleRemovedEvent = (id: string) => {
@@ -110,6 +128,12 @@ export function useSessionFleetSync(): SessionFleetSync {
   const applyHydration = (data: SessionMeta[]) => {
     setHydrationError(null);
     setSessions(data);
+    // split-session FR-17: a persisted right-pane session that no longer exists
+    // is dropped — the app opens single-pane and the record is rewritten clean.
+    const persistedSplit = useStore.getState().splitSessionId;
+    if (persistedSplit !== null && !data.some((s) => s.id === persistedSplit)) {
+      useStore.getState().unsplit('left');
+    }
     if (useStore.getState().activeSessionId === null && data[0]) setActiveSessionId(data[0].id);
     for (const session of data) {
       seedDiff(session.id);

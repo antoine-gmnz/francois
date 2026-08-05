@@ -41,7 +41,19 @@ import { useSessionAttachments } from './useSessionAttachments';
 // ./conversation-blocks — pure + unit-tested. Hydration/subscription plumbing
 // lives in ./useConversationTranscript.
 
-export default function ConversationView({ sessionId }: { sessionId: string }) {
+export interface ConversationViewProps {
+  sessionId: string;
+  /**
+   * split-session FR-6: this pane is NOT focused — the composer is replaced by
+   * an inert strip reading `click to focus this pane`, so a keystroke can never
+   * land in the wrong session. The transcript keeps streaming, unchanged.
+   */
+  inert?: boolean;
+  /** What the inert strip does when clicked: move focus to this pane. */
+  onFocusRequest?: () => void;
+}
+
+export default function ConversationView({ sessionId, inert = false, onFocusRequest }: ConversationViewProps) {
   const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId) ?? null);
   const {
     state,
@@ -91,7 +103,10 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
   // The staged list + the three gestures (drop / paste / picker). Component-local
   // by design (spec §6): ConversationView is keyed by sessionId, so a switch drops
   // it, and chips are derived from (input, staged) on every render (FR-12).
-  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow });
+  // split-session FR-6: the inert pane must not claim the document-level paste
+  // or the webview drag-drop channel — both are global, and two mounted SESSION
+  // panes would otherwise stage the same file in both sessions.
+  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow, active: !inert });
 
   // ---------- slash-menu popup (FR-5..FR-9/12) ----------
 
@@ -332,7 +347,12 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         {!isPinned && <JumpToLatestChip onClick={jumpToLatest} />}
       </div>
 
-      {/* input bar */}
+      {/* input bar — split-session FR-6: the unfocused pane gets an inert strip
+          instead. It reads as an invitation, not a disabled input: no ⏎ hint, no
+          caret, and clicking it only moves focus. */}
+      {inert ? (
+        <InertComposer onClick={onFocusRequest} />
+      ) : (
       <Composer
         status={status}
         disabled={disabled}
@@ -362,12 +382,27 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         onRun={runCommand}
         onDismiss={dismissPopup}
       />
+      )}
     </div>
   );
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="conv-centered">{children}</div>;
+}
+
+/** split-session FR-6 / design §Composer: the unfocused pane's composer. */
+function InertComposer({ onClick }: { onClick?: () => void }) {
+  return (
+    <div className="composer-wrap">
+      <div className="composer-col">
+        <div className="composer-bar composer-bar--inert" onClick={onClick}>
+          <span className="composer-arrow composer-arrow--inert">›</span>
+          <span className="composer-inert-label">click to focus this pane</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // The per-block renderer moved to ./Block.tsx — agent-tab renders a subagent's

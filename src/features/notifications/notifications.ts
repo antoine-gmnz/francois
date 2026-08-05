@@ -15,6 +15,7 @@ import { isBusyStatus } from '../../../contract/fleet-board';
 import type { NotifyClass, NotifyTrigger } from '../../../contract/notifications';
 import { NOTIFICATION_TITLE, isSettleStatus, notificationBody } from '../../../contract/notifications';
 import { onSessionEvent } from '../../lib/api';
+import { visibleSessionIds } from '../../lib/layoutStore';
 import { useNotificationsStore } from '../../lib/notificationsStore';
 import { useStore } from '../../lib/store';
 
@@ -28,7 +29,12 @@ export interface DeriveState {
 
 export interface GateContext {
   enabled: Record<NotifyClass, boolean>;
-  activeSessionId: SessionId | null;
+  /**
+   * split-session FR-19: every session currently ON SCREEN — one when not
+   * split, BOTH panes' otherwise. A settle in the unfocused pane is as visible
+   * as one in the focused pane, so it must be suppressed the same way.
+   */
+  visibleSessionIds: readonly SessionId[];
   windowFocused: boolean;
 }
 
@@ -78,7 +84,7 @@ export function deriveTrigger(e: SessionEvent, state: DeriveState): NotifyTrigge
 /** FR-7/FR-8 — the complete gating rule. */
 export function shouldFire(t: NotifyTrigger, ctx: GateContext): boolean {
   if (t.class === 'attention') return ctx.enabled.attention; // FR-7: unconditional beyond the toggle
-  return ctx.enabled.turnDone && (t.sessionId !== ctx.activeSessionId || !ctx.windowFocused); // FR-8
+  return ctx.enabled.turnDone && (!ctx.visibleSessionIds.includes(t.sessionId) || !ctx.windowFocused); // FR-8
 }
 
 // ---------- runtime wiring (FR-5/FR-9..FR-13) ----------
@@ -130,7 +136,7 @@ function handleSessionEvent(e: SessionEvent): void {
   if (!trigger) return;
   const ctx: GateContext = {
     enabled: useNotificationsStore.getState().enabled,
-    activeSessionId: useStore.getState().activeSessionId,
+    visibleSessionIds: visibleSessionIds(useStore.getState()),
     windowFocused,
   };
   if (!shouldFire(trigger, ctx)) return;

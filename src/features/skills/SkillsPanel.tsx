@@ -29,6 +29,12 @@ export default function SkillsPanel({ sessionId, collapsed }: { sessionId: strin
     setInstallModal(null);
   }, [sessionId]);
 
+  // split-session §Right column: publish the header count for the folded icon
+  // rail — it badges each pane, and only this mount knows the number.
+  useEffect(() => {
+    if (sessionId) useStore.getState().setPanelCount(sessionId, 'skills', skills.length);
+  }, [sessionId, skills.length]);
+
   const activate = (row: SkillInfo) => {
     if (row.installed) setRunModal({ name: row.name });
     else setInstallModal({ name: row.name, description: row.description, pluginId: row.pluginId });

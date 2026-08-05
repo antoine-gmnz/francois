@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
+import { focusedSessionId, focusedTab } from '../lib/layoutStore';
 import { useStore, type MainTab, type Pane } from '../lib/store';
 import { buildShortcutActions } from './appShell';
 
@@ -64,6 +65,20 @@ export function useAppShortcuts(state: AppShortcutState): void {
     return () => window.removeEventListener('keydown', onKeyCapture, true);
   }, []);
 
+  // split-session FR-7/FR-13: `d`/`t`/`o` retarget the FOCUSED pane. While
+  // split, only the three PaneTab values are reachable — `o` (overview) becomes
+  // a real no-op rather than being clamped into a surprise tab switch.
+  const setFocusedPaneTab = (tab: MainTab) => {
+    const st = useStore.getState();
+    if (st.splitSessionId === null) {
+      setMainTab(tab);
+      return;
+    }
+    if (tab !== 'session' && tab !== 'diff' && tab !== 'shell') return;
+    if (st.focusedSide === 'right') st.setSplitTab(tab);
+    else setMainTab(tab);
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const activeEl = document.activeElement as HTMLElement | null;
@@ -90,11 +105,13 @@ export function useAppShortcuts(state: AppShortcutState): void {
         return;
       const actions = buildShortcutActions({
         preventDefault: () => e.preventDefault(),
-        getActiveSessionId: () => useStore.getState().activeSessionId,
-        getMainTab: () => useStore.getState().mainTab,
+        // split-session FR-7: n/a/d/t/w/c act on the FOCUSED pane. Both getters
+        // collapse to activeSessionId/mainTab whenever the app is not split.
+        getActiveSessionId: () => focusedSessionId(useStore.getState()),
+        getMainTab: () => focusedTab(useStore.getState()),
         getFocusedPane: () => useStore.getState().focusedPane,
         setFocusedPane,
-        setMainTab,
+        setMainTab: setFocusedPaneTab,
         setNewSessionOpen,
         setNewAgentOpen,
         closeAgentTab: (agentId) => useStore.getState().closeAgentTab(agentId),

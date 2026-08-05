@@ -45,6 +45,12 @@ export default function AgentsPanel({ sessionId, collapsed }: { sessionId: strin
     if (sessionId) setPaletteAgents(sessionId, ordered(agents));
   }, [sessionId, agents]);
 
+  // split-session §Right column: this panel is the only mount that holds its
+  // count, and while split the column folds to the icon rail — which badges it.
+  useEffect(() => {
+    if (sessionId) useStore.getState().setPanelCount(sessionId, 'agents', agents.size);
+  }, [sessionId, agents]);
+
   // Tick the elapsed timer once a second while any agent is running.
   useEffect(() => {
     if (!hasRunning) return;

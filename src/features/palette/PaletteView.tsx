@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import type { PaletteCommand, SecondaryStep, SecondaryStepItem } from '../../../contract/command-palette';
 import { closePalette, filterRank, makeContext, paletteCommands, usePaletteState, useToastState } from './palette';
 import { getPaletteRunningAgents, usePaletteDataRev } from './paletteData';
+import { focusedSessionId } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
 import { ListRow } from '../../ui/ListRow';
 import { HintBar } from '../../ui/HintBar';
@@ -35,13 +36,15 @@ function Palette() {
   const enterSecondary = usePaletteState((s) => s.enterSecondary);
   const popToRoot = usePaletteState((s) => s.popToRoot);
 
-  const activeSessionId = useStore((s) => s.activeSessionId);
+  // split-session FR-7: every session-scoped command targets the FOCUSED pane's
+  // session — which equals activeSessionId whenever the app is not split.
+  const activeSessionId = useStore((s) => focusedSessionId(s));
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Re-render when the palette-data caches (agents/skills/diff/models) or the active
   // session's token count change, so the per-render context/hints stay live (FR-9).
   usePaletteDataRev((s) => s.rev);
-  useStore((s) => s.sessions.find((x) => x.id === s.activeSessionId)?.contextUsedTokens);
+  useStore((s) => s.sessions.find((x) => x.id === focusedSessionId(s))?.contextUsedTokens);
 
   // Fresh context every render pass while open (FR-9).
   const ctx = makeContext(activeSessionId, getPaletteRunningAgents(activeSessionId).length);

@@ -25,6 +25,15 @@ export interface ShellTerminalProps {
    * tab is open; only the displayed one is visible (CSS, never unmount). */
   visible: boolean;
   /**
+   * split-session FR-5/FR-6: may this terminal own the native keyboard? False
+   * for a terminal in the UNFOCUSED split pane, where becoming visible must not
+   * steal the caret (a reload with a persisted split whose unfocused pane is on
+   * SHELL would otherwise land every keystroke in the wrong session's PTY) and
+   * a stray key must not be forwarded to its stdin. Defaults to true — the
+   * single-pane shell, unchanged.
+   */
+  canFocus?: boolean;
+  /**
    * The `ShellEnsureData` ShellTabView's own attach() already fetched for
    * THIS shellId (its create-if-none/re-attach round trip) — read once, at
    * mount, so this mount's `ensure()` skips a second redundant `shell_ensure`
@@ -36,11 +45,17 @@ export interface ShellTerminalProps {
 
 // sessionId/shellId are REQUIRED — multiple-shells re-keys the whole domain
 // onto ShellId; a silent fallback here could attach the wrong shell.
-export default function ShellTerminal({ sessionId, shellId, visible, initialData }: ShellTerminalProps) {
+export default function ShellTerminal({ sessionId, shellId, visible, canFocus = true, initialData }: ShellTerminalProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<() => void>(() => {});
   const sendResizeRef = useRef<() => void>(() => {});
+  // Read from the per-mount xterm callbacks below, which are installed once and
+  // would otherwise close over `canFocus`'s mount-time value forever.
+  const canFocusRef = useRef(canFocus);
+  useEffect(() => {
+    canFocusRef.current = canFocus;
+  }, [canFocus]);
   // Guards the becoming-visible effect below: true once this mount's own
   // shell_ensure has settled (success, refusal, or rejection), so that effect
   // never races a resize ahead of the ensure that establishes the PTY size.
@@ -165,6 +180,11 @@ export default function ShellTerminal({ sessionId, shellId, visible, initialData
     // ⌘K carve-out + the exited-mode lock (FR-16/FR-17).
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
+      // split-session FR-5/FR-6: this terminal is in the UNFOCUSED pane — it
+      // must not consume the key NOR forward it to its PTY. Returning false
+      // without stopPropagation lets it bubble to the app-shell globals, which
+      // are scoped to the focused session.
+      if (!canFocusRef.current) return false;
       // ⌘K / Ctrl+K carve-out: don't forward, don't stopPropagation → bubbles
       // to app-shell's global handler (command palette). shell-terminal FR-20.
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) return false;
@@ -192,6 +212,9 @@ export default function ShellTerminal({ sessionId, shellId, visible, initialData
     // translated bytes (typed keys, paste, IME) exactly as they should hit stdin.
     const dataDisp = term.onData((data) => {
       if (exitedRef.current) return;
+      // The key handler above already refuses keystrokes for an unfocused pane;
+      // this also covers the paths that never go through it (paste, IME).
+      if (!canFocusRef.current) return;
       void shellWrite(shellId, data).catch(() => {});
     });
 
@@ -245,8 +268,16 @@ export default function ShellTerminal({ sessionId, shellId, visible, initialData
     // fit + resize itself once it does — sending one here first would just
     // be immediately superseded.
     if (ensureSettledRef.current) sendResizeRef.current();
-    termRef.current?.focus();
-  }, [visible, shellId]);
+    // split-session FR-5/FR-6: only the split-FOCUSED pane may take the native
+    // keyboard. `visible` alone is not the whole answer any more — both panes
+    // can be on SHELL at once, and a pane restored on SHELL (FR-16's persisted
+    // split) would otherwise grab the caret at mount with no user action.
+    if (canFocus) termRef.current?.focus();
+    // Focus moved to the OTHER pane while this terminal held the caret (a click
+    // on that pane's header, `⇥`): give it up, so the block cursor stops
+    // claiming a keyboard this pane no longer owns.
+    else termRef.current?.blur();
+  }, [visible, shellId, canFocus]);
 
   // Light/dark switch: rebuild the theme from the now-current CSS variables and
   // apply it to the live terminal (canvas can't observe the var change itself).

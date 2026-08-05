@@ -212,44 +212,55 @@ describe('shouldFire (FR-7/FR-8)', () => {
   const approval: NotifyTrigger = { class: 'attention', kind: 'approval', sessionId: 's1', toolName: 'Bash' };
   const settle: NotifyTrigger = { class: 'turnDone', kind: 'settle', sessionId: 's1', status: 'idle' };
 
-  it('FR-7: an attention trigger fires whenever enabled.attention is true, active+focused or not', () => {
-    expect(shouldFire(approval, { enabled: { attention: true, turnDone: true }, activeSessionId: 's1', windowFocused: true })).toBe(
-      true,
-    );
-    expect(shouldFire(approval, { enabled: { attention: true, turnDone: true }, activeSessionId: null, windowFocused: false })).toBe(
+  it('FR-7: an attention trigger fires whenever enabled.attention is true, visible+focused or not', () => {
+    expect(
+      shouldFire(approval, { enabled: { attention: true, turnDone: true }, visibleSessionIds: ['s1'], windowFocused: true }),
+    ).toBe(true);
+    expect(shouldFire(approval, { enabled: { attention: true, turnDone: true }, visibleSessionIds: [], windowFocused: false })).toBe(
       true,
     );
   });
 
   it('FR-7: an attention trigger never fires when enabled.attention is false', () => {
-    expect(shouldFire(approval, { enabled: { attention: false, turnDone: true }, activeSessionId: null, windowFocused: false })).toBe(
+    expect(shouldFire(approval, { enabled: { attention: false, turnDone: true }, visibleSessionIds: [], windowFocused: false })).toBe(
       false,
     );
   });
 
-  it('FR-8: a turnDone trigger on the active+focused session does not fire', () => {
-    expect(shouldFire(settle, { enabled: { attention: true, turnDone: true }, activeSessionId: 's1', windowFocused: true })).toBe(
+  it('FR-8: a turnDone trigger on the visible+focused session does not fire', () => {
+    expect(shouldFire(settle, { enabled: { attention: true, turnDone: true }, visibleSessionIds: ['s1'], windowFocused: true })).toBe(
       false,
     );
   });
 
-  it('FR-8: a turnDone trigger on the active session fires once the window is unfocused', () => {
-    expect(shouldFire(settle, { enabled: { attention: true, turnDone: true }, activeSessionId: 's1', windowFocused: false })).toBe(
+  it('FR-8: a turnDone trigger on the visible session fires once the window is unfocused', () => {
+    expect(shouldFire(settle, { enabled: { attention: true, turnDone: true }, visibleSessionIds: ['s1'], windowFocused: false })).toBe(
       true,
     );
   });
 
-  it('FR-8: a turnDone trigger on a non-active session fires focused or not', () => {
-    expect(shouldFire(settle, { enabled: { attention: true, turnDone: true }, activeSessionId: 's2', windowFocused: true })).toBe(
+  it('FR-8: a turnDone trigger on a non-visible session fires focused or not', () => {
+    expect(shouldFire(settle, { enabled: { attention: true, turnDone: true }, visibleSessionIds: ['s2'], windowFocused: true })).toBe(
       true,
     );
-    expect(shouldFire(settle, { enabled: { attention: true, turnDone: true }, activeSessionId: 's2', windowFocused: false })).toBe(
+    expect(shouldFire(settle, { enabled: { attention: true, turnDone: true }, visibleSessionIds: ['s2'], windowFocused: false })).toBe(
       true,
     );
   });
 
-  it('FR-17: a turnDone trigger never fires when enabled.turnDone is false, regardless of active/focus', () => {
-    expect(shouldFire(settle, { enabled: { attention: true, turnDone: false }, activeSessionId: 's2', windowFocused: false })).toBe(
+  // split-session FR-19: BOTH paned sessions are visible, so a settle in the
+  // unfocused pane is suppressed exactly like one in the focused pane.
+  it('FR-19: a turnDone trigger on the SPLIT pane’s session is suppressed while the window is focused', () => {
+    expect(
+      shouldFire(settle, { enabled: { attention: true, turnDone: true }, visibleSessionIds: ['s9', 's1'], windowFocused: true }),
+    ).toBe(false);
+    expect(
+      shouldFire(settle, { enabled: { attention: true, turnDone: true }, visibleSessionIds: ['s9', 's8'], windowFocused: true }),
+    ).toBe(true);
+  });
+
+  it('FR-17: a turnDone trigger never fires when enabled.turnDone is false, regardless of visibility/focus', () => {
+    expect(shouldFire(settle, { enabled: { attention: true, turnDone: false }, visibleSessionIds: ['s2'], windowFocused: false })).toBe(
       false,
     );
   });

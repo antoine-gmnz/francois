@@ -20,10 +20,14 @@ import UsageBar from '../features/usage/UsageBar';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { isBusyStatus } from '../../contract/fleet-board';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
+import { focusedSessionId } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import './app.css';
+import { clampToPaneTab } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import MainTabStrip from './MainTabStrip';
+import RightRail from './RightRail';
+import SplitPane from './SplitPane';
 import StatusBar from './StatusBar';
 import { useAppIdentity } from './useAppIdentity';
 import { useAppShortcuts } from './useAppShortcuts';
@@ -71,6 +75,19 @@ export default function App() {
   const agentTabs = useStore((s) => s.agentTabs);
   const closeAgentTab = useStore((s) => s.closeAgentTab);
   const clearAgentTabs = useStore((s) => s.clearAgentTabs);
+  // split-session: the RIGHT pane. `activeSessionId`/`mainTab` are the LEFT
+  // pane's, unchanged — so nothing below this line remounts when focus moves.
+  const splitSessionId = useStore((s) => s.splitSessionId);
+  const splitTab = useStore((s) => s.splitTab);
+  const focusedSide = useStore((s) => s.focusedSide);
+  const setSplitTab = useStore((s) => s.setSplitTab);
+  const setFocusedSide = useStore((s) => s.setFocusedSide);
+  const openInRightPane = useStore((s) => s.openInRightPane);
+  const unsplit = useStore((s) => s.unsplit);
+  const split = splitSessionId !== null;
+  // FR-7: the session every pane-scoped consumer reads. Equals activeSessionId
+  // whenever not split, so each of them is behaviour-identical outside split.
+  const paneSessionId = focusedSessionId({ activeSessionId, splitSessionId, focusedSide });
 
   const active = sessions.find((session) => session.id === activeSessionId) ?? null;
   const activeAgentId = agentIdFromTab(mainTab);
@@ -123,17 +140,22 @@ export default function App() {
     };
   }, []);
 
-  const diffCount = useDiffBadge(activeSessionId);
+  // The single-pane strip's DIFF badge — and the palette's view-diff hint, which
+  // this hook also feeds, hence the FOCUSED session (FR-7). Equal to
+  // activeSessionId outside split, where MainTabStrip is the only reader.
+  const diffCount = useDiffBadge(paneSessionId);
 
   // Elapsed clock ticks while the active session's turn is in flight (FR-6) —
   // isBusyStatus, so it keeps counting while the turn sits on an approval. That
   // wait is part of the turn's wall clock, and freezing it there would read as
   // the turn having finished.
   useEffect(() => {
-    if (!(active && isBusyStatus(active.status) && mainTab === 'session')) return;
+    // split-session: the elapsed readout lives in MainTabStrip, which the split
+    // layout does not render — no reason to tick a clock nothing shows.
+    if (split || !(active && isBusyStatus(active.status) && mainTab === 'session')) return;
     const id = setInterval(() => setClockNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [active?.id, active?.status, mainTab]);
+  }, [active?.id, active?.status, mainTab, split]);
 
   useAppShortcuts({
     newSessionOpen,
@@ -161,24 +183,27 @@ export default function App() {
       // their agentIds are scoped to whichever session was active, and none of
       // that is still in view once the board zooms out.
       clearAgentTabs();
-      setMainTab('overview'); // last: wins over clearAgentTabs' own 'session' fallback
+      // split-session FR-14: and it leaves split — OVERVIEW is a single-pane
+      // view, and `▯▯` is disabled at All-projects scope anyway (FR-9).
+      unsplit();
+      setMainTab('overview'); // last: wins over clearAgentTabs'/unsplit's own fallbacks
     }
-  }, [activeProjectId, setMainTab, clearAgentTabs]);
+  }, [activeProjectId, setMainTab, clearAgentTabs, unsplit]);
 
   // permission-guardrails: the rules editor needs a session (the local tier is
   // its cwd). If the last session is removed while it is open the modal unmounts
   // without ever calling onClose, so `permissionsOpen` would stay true and keep
   // suppressing the single-letter globals with nothing on screen.
   useEffect(() => {
-    if (permissionsOpen && !activeSessionId) setPermissionsOpen(false);
-  }, [permissionsOpen, activeSessionId, setPermissionsOpen]);
+    if (permissionsOpen && !paneSessionId) setPermissionsOpen(false);
+  }, [permissionsOpen, paneSessionId, setPermissionsOpen]);
 
   const mainFocused = focusedPane === 'main';
 
   // design-refresh FR-10: what the condensed status bar reads out. Both come
   // from state the shell already holds — no new store slice, no new IPC.
   const activeAgentName = (activeAgentId && agentTabs.find((t) => t.id === activeAgentId)?.name) || null;
-  const runningAgents = useStore((s) => (activeSessionId ? (s.derived.get(activeSessionId)?.runningAgentCount ?? 0) : 0));
+  const runningAgents = useStore((s) => (paneSessionId ? (s.derived.get(paneSessionId)?.runningAgentCount ?? 0) : 0));
 
   const elapsedMs = active
     ? isBusyStatus(active.status)
@@ -199,7 +224,14 @@ export default function App() {
           // columns adapt to the [ / ] toggles; hidden columns keep their panes
           // MOUNTED (display:none) — Sidebar owns the session-cache subscriptions.
           // design-refresh: the mock's `276px | 1fr | 296px` shell columns.
-          gridTemplateColumns: [showLeftPane ? '276px' : null, '1fr', showRightPane ? '296px' : null]
+          // split-session FR-2: split pays ~340px for the second pane — the
+          // roster narrows to 238px and the right column folds to a 46px rail
+          // instead of disappearing, so [3]–[6] stay one click away.
+          gridTemplateColumns: [
+            showLeftPane ? (split ? '238px' : '276px') : null,
+            '1fr',
+            showRightPane ? '296px' : split ? '46px' : null,
+          ]
             .filter(Boolean)
             .join(' '),
         }}
@@ -208,25 +240,51 @@ export default function App() {
           <Sidebar home={home} />
         </div>
 
-        {/* main pane */}
-        <section
-          onClick={() => setFocusedPane('main')}
-          className="app-main-section"
-          style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
-        >
-          <MainTabStrip
-            mainTab={mainTab}
-            setMainTab={setMainTab}
-            diffCount={diffCount}
-            agentTabs={agentTabs}
-            closeAgentTab={closeAgentTab}
-            active={active}
-            elapsedMs={elapsedMs}
-            showSessionMeta={showSessionMeta}
-            toggleSessionMeta={toggleSessionMeta}
-          />
-          <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} />
-        </section>
+        {/* main pane — split-session FR-1: two 1fr sections while split,
+            otherwise exactly what it renders today. */}
+        {split ? (
+          <div className="app-split-grid">
+            <SplitPane
+              side="left"
+              sessionId={activeSessionId}
+              tab={clampToPaneTab(mainTab)}
+              focused={focusedSide === 'left'}
+              home={home}
+              onFocus={() => setFocusedSide('left')}
+              onTab={setMainTab}
+              onPromote={() => unsplit('left')}
+            />
+            <SplitPane
+              side="right"
+              sessionId={splitSessionId}
+              tab={splitTab}
+              focused={focusedSide === 'right'}
+              home={home}
+              onFocus={() => setFocusedSide('right')}
+              onTab={setSplitTab}
+              onPromote={() => unsplit('right')}
+            />
+          </div>
+        ) : (
+          <section
+            onClick={() => setFocusedPane('main')}
+            className="app-main-section"
+            style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
+          >
+            <MainTabStrip
+              mainTab={mainTab}
+              setMainTab={setMainTab}
+              diffCount={diffCount}
+              agentTabs={agentTabs}
+              closeAgentTab={closeAgentTab}
+              active={active}
+              elapsedMs={elapsedMs}
+              showSessionMeta={showSessionMeta}
+              toggleSessionMeta={toggleSessionMeta}
+            />
+            <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} />
+          </section>
+        )}
 
         {/* right column: agents [3] + mcp [4] + skills [5] + workflows [6] —
             collapse-right-column FR-15: a collapsed card's wrapper shrinks to its
@@ -235,18 +293,23 @@ export default function App() {
             collapsible (out of scope for collapse-right-column). */}
         <div className="app-col-right" style={{ display: showRightPane ? undefined : 'none' }}>
           <div className={collapsedPanes.agents ? 'app-panel-agents app-panel-agents--collapsed' : 'app-panel-agents'}>
-            <AgentsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} collapsed={collapsedPanes.agents} />
+            <AgentsPanel key={paneSessionId ?? 'none'} sessionId={paneSessionId} collapsed={collapsedPanes.agents} />
           </div>
           <div className={collapsedPanes.mcp ? 'app-panel-mcp app-panel-mcp--collapsed' : 'app-panel-mcp'}>
-            <McpPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} collapsed={collapsedPanes.mcp} />
+            <McpPanel key={paneSessionId ?? 'none'} sessionId={paneSessionId} collapsed={collapsedPanes.mcp} />
           </div>
           <div className={collapsedPanes.skills ? 'app-panel-skills app-panel-skills--collapsed' : 'app-panel-skills'}>
-            <SkillsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} collapsed={collapsedPanes.skills} />
+            <SkillsPanel key={paneSessionId ?? 'none'} sessionId={paneSessionId} collapsed={collapsedPanes.skills} />
           </div>
           <div className="app-panel-workflows">
-            <WorkflowsPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} />
+            <WorkflowsPanel key={paneSessionId ?? 'none'} sessionId={paneSessionId} />
           </div>
         </div>
+
+        {/* split-session FR-2: the folded right column. Rendered INSTEAD of the
+            column's 296px track (the column itself stays mounted above, hidden),
+            so [3]–[6] keep their subscriptions and `]` unfolds them again. */}
+        {split && !showRightPane && <RightRail />}
       </div>
 
       {/* design-refresh FR-10: window chrome, not a grid pane — a full-bleed
@@ -265,7 +328,13 @@ export default function App() {
           onClose={() => setNewSessionOpen(false)}
           onCreated={(m) => {
             upsertSession(m);
-            if (useStore.getState().newSessionOpen) setActiveSessionId(m.id);
+            if (!useStore.getState().newSessionOpen) return;
+            // split-session FR-8: a new session lands in the FOCUSED pane, like
+            // every other "assign a session" path (roster click/⏎, palette,
+            // Sidebar.selectSession) — creating one from the right pane must
+            // not silently replace the left pane's session.
+            if (split && focusedSide === 'right') openInRightPane(m.id);
+            else setActiveSessionId(m.id);
           }}
         />
       )}
@@ -287,8 +356,8 @@ export default function App() {
 
       {/* permission-guardrails FR-26: the rules editor. Needs a session (the
           local tier is its cwd), so it closes itself if the session goes away. */}
-      {permissionsOpen && activeSessionId && (
-        <PermissionsModal sessionId={activeSessionId} onClose={() => setPermissionsOpen(false)} />
+      {permissionsOpen && paneSessionId && (
+        <PermissionsModal sessionId={paneSessionId} onClose={() => setPermissionsOpen(false)} />
       )}
 
       {/* projects FR-31: the Projects modal. Unlike the permissions editor it

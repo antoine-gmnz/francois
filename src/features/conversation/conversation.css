@@ -624,3 +624,26 @@
   color: var(--text-bright);
   background: var(--bg-elevated);
 }
+
+/* split-session FR-6 / design §Composer: the UNFOCUSED pane's composer. It must
+   not read as a disabled input — it reads as an invitation: elevated surface,
+   quiet border, `cursor: text`, no ⏎ hint and no caret. Clicking it only moves
+   focus (ConversationView's InertComposer). */
+.composer-bar--inert {
+  background: var(--bg-elevated);
+  border-color: var(--border-2);
+  border-radius: var(--radius-card);
+  box-shadow: none;
+  padding: var(--space-9) var(--space-11);
+  gap: var(--space-9);
+  cursor: text;
+}
+.composer-arrow--inert {
+  color: var(--text-disabled);
+  font-size: var(--font-size-12);
+}
+.composer-inert-label {
+  flex: 1;
+  font-size: var(--font-size-12-5);
+  color: var(--text-disabled);
+}

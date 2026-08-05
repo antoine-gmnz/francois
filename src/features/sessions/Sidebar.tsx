@@ -43,6 +43,11 @@ export default function Sidebar({ home }: { home: string }) {
   // dashboard reads the same numbers and a second subscription would double
   // every diff seed.
   const derived = useStore((s) => s.derived);
+  // split-session: the roster shows both paned sessions (FR-15) and assigns a
+  // pick to the FOCUSED side (FR-8).
+  const splitSessionId = useStore((s) => s.splitSessionId);
+  const focusedSide = useStore((s) => s.focusedSide);
+  const openInRightPane = useStore((s) => s.openInRightPane);
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -74,7 +79,11 @@ export default function Sidebar({ home }: { home: string }) {
   // one", so the main pane leaves OVERVIEW. Any OTHER tab is left alone — moving
   // between sessions while reviewing diffs must not kick you out of DIFF.
   const selectSession = (id: string) => {
-    setActiveSessionId(id);
+    // split-session FR-8: a pick lands in the FOCUSED pane. Assigning it to the
+    // side that already holds the other pane's session swaps them — both store
+    // actions handle that themselves, so this only has to route.
+    if (splitSessionId !== null && focusedSide === 'right') openInRightPane(id);
+    else setActiveSessionId(id);
     if (useStore.getState().mainTab === 'overview') setMainTab('session');
   };
 
@@ -183,7 +192,16 @@ export default function Sidebar({ home }: { home: string }) {
   const focused = focusedPane === 'sidebar';
 
   return (
-    <section onClick={() => setFocusedPane('sidebar')} className={focused ? 'sidebar sidebar--focused' : 'sidebar'}>
+    // split-session §8: the roster narrows 276 → 238px in split, so its cards go
+    // one notch denser to keep the same information on a shorter line.
+    <section
+      onClick={() => setFocusedPane('sidebar')}
+      className={
+        [focused ? 'sidebar sidebar--focused' : 'sidebar', splitSessionId !== null ? 'sidebar--dense' : null]
+          .filter(Boolean)
+          .join(' ')
+      }
+    >
       {/* header */}
       <div className="sidebar__header">
         <span className={focused ? 'sidebar__title sidebar__title--focused' : 'sidebar__title'}>SESSIONS</span>
@@ -208,6 +226,8 @@ export default function Sidebar({ home }: { home: string }) {
         focused={focused}
         rowCursor={rowCursor}
         derived={derived}
+        splitSessionId={splitSessionId}
+        focusedSide={focusedSide}
         onSelect={(id) => {
           selectSession(id);
           setFocusedPane('sidebar');
@@ -239,6 +259,17 @@ export default function Sidebar({ home }: { home: string }) {
           sessionPath={abbreviate(sessions.find((session) => session.id === menu.sessionId)?.cwd ?? '', home)}
           worktree={sessions.find((session) => session.id === menu.sessionId)?.worktree ?? null}
           containerRef={menuRef}
+          // split-session FR-11: hidden for the session already in the LEFT
+          // pane, and whenever `▯▯` itself would be disabled (All-projects
+          // scope, or fewer than two sessions in scope).
+          onOpenInRightPane={
+            activeProjectId !== null && menu.sessionId !== activeSessionId && inProject.length >= 2
+              ? (sessionId) => {
+                  setMenu(null);
+                  openInRightPane(sessionId);
+                }
+              : undefined
+          }
           onStartConfirm={() => {
             const target = sessions.find((session) => session.id === menu.sessionId);
             setMenu({ ...menu, confirming: true });

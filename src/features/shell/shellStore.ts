@@ -13,6 +13,7 @@ import { create } from 'zustand';
 import type { SessionId } from '../../../contract/common';
 import type { ShellId, ShellInfo } from '../../../contract/shell-terminal';
 import { onShellEvent } from '../../lib/api';
+import { isShellVisible } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
 
 export interface ShellStoreState {
@@ -151,11 +152,17 @@ export function useShellUnread(shellId: ShellId | null): boolean {
 
 // ---------- global event listener ----------
 
-/** FR-14: a shell is "displayed" only while the SHELL tab is the active main
- * tab, its session is the active one, AND it is the session's active chip. */
+/**
+ * FR-14: a shell is "displayed" only while its session's SHELL tab is on screen
+ * AND it is that session's active chip.
+ *
+ * split-session FR-18: "on screen" is `isShellVisible`, which tests BOTH panes —
+ * a shell in the RIGHT pane is as displayed as one in the left, so its output
+ * must not raise an unread mark. Outside split the predicate is the old
+ * `mainTab === 'shell' && activeSessionId === sessionId` pair exactly.
+ */
 function isDisplayedShell(sessionId: SessionId, shellId: ShellId): boolean {
-  const app = useStore.getState();
-  if (app.mainTab !== 'shell' || app.activeSessionId !== sessionId) return false;
+  if (!isShellVisible(useStore.getState(), sessionId)) return false;
   return useShellStore.getState().activeShellId[sessionId] === shellId;
 }
 
