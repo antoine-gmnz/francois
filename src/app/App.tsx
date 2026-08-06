@@ -24,6 +24,7 @@ import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { focusedSessionId, layoutRegime, paneCount, paneSessionIdAt, paneTabAt } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import './app.css';
+import { shellColumns } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import MainTabStrip from './MainTabStrip';
 import RightRail from './RightRail';
@@ -92,6 +93,8 @@ export default function App() {
   const panes = paneCount({ extraPanes });
   const regime = layoutRegime(panes);
   const split = regime !== 'single';
+  // The three shell tracks + which side is folded to its rail.
+  const columns = shellColumns(regime, showLeftPane, showRightPane);
   // FR-13: the session every pane-scoped consumer reads. Equals activeSessionId
   // whenever not split, so each of them is behaviour-identical outside split.
   const paneSessionId = focusedSessionId({ activeSessionId, mainTab, extraPanes, focusedPaneIndex });
@@ -237,22 +240,17 @@ export default function App() {
           // columns adapt to the [ / ] toggles; hidden columns keep their panes
           // MOUNTED (display:none) — Sidebar owns the session-cache subscriptions.
           // design-refresh: the mock's `276px | 1fr | 296px` shell columns.
-          // split-session FR-2: split pays ~340px for the second pane — the
-          // roster narrows to 238px and the right column folds to a 46px rail
-          // instead of disappearing, so [3]–[6] stay one click away.
-          gridTemplateColumns: [
-            showLeftPane ? (split ? '238px' : '276px') : regime === 'grid' ? '46px' : null,
-            '1fr',
-            showRightPane ? '296px' : regime === 'split' ? '46px' : null,
-          ]
-            .filter(Boolean)
-            .join(' '),
+          // split-session FR-2: split pays ~340px for the second pane by
+          // narrowing the roster to 238px. Neither column ever disappears —
+          // folded is the 46px rail, in every regime (shellColumns).
+          gridTemplateColumns: columns.template,
         }}
       >
-        {/* split-by-4 FR-6: in the grid the roster folds to a 46px tile rail
-            instead of disappearing. Rendered BEFORE the column so it takes the
-            first track — a `display:none` element generates no grid item. */}
-        {regime === 'grid' && !showLeftPane && (
+        {/* The folded roster — split-by-4 FR-6's 46px tile rail, now the fold
+            for EVERY regime rather than the grid alone. Rendered BEFORE the
+            column so it takes the first track: a `display:none` element
+            generates no grid item. */}
+        {columns.leftRail && (
           <SessionRail
             onSelect={(id) => {
               if (focusedPaneIndex > 0) assignToFocusedPane(id);
@@ -331,11 +329,12 @@ export default function App() {
           </div>
         </div>
 
-        {/* split-by-4 FR-4: the folded right column. Rendered INSTEAD of the
+        {/* split-session FR-2: the folded right column. Rendered INSTEAD of the
             column's 296px track (the column itself stays mounted above, hidden),
-            so [3]–[6] keep their subscriptions and `]` unfolds them again. Only
-            at TWO panes — the grid has no room for it at all (turn 5d). */}
-        {regime === 'split' && !showRightPane && <RightRail />}
+            so [3]–[6] keep their subscriptions and `]` unfolds them again. Like
+            the roster rail, this is now the fold in EVERY regime — the grid used
+            to drop the column outright, which left `]` toggling nothing visible. */}
+        {columns.rightRail && <RightRail />}
       </div>
 
       {/* design-refresh FR-10: window chrome, not a grid pane — a full-bleed

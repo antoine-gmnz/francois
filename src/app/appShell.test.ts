@@ -3,11 +3,50 @@ import {
   buildShortcutActions,
   clampToPaneTab,
   mainPaneBranch,
+  shellColumns,
   shellFooterPath,
   splitCandidate,
   tabClassName,
   type ShortcutActionsContext,
 } from './appShell';
+
+describe('shellColumns', () => {
+  it('gives each column its full width when both are shown', () => {
+    expect(shellColumns('single', true, true)).toEqual({
+      template: '276px 1fr 296px',
+      leftRail: false,
+      rightRail: false,
+    });
+  });
+
+  it('narrows the roster while split, and keeps 276px only at one pane', () => {
+    expect(shellColumns('split', true, true).template).toBe('238px 1fr 296px');
+    expect(shellColumns('grid', true, true).template).toBe('238px 1fr 296px');
+  });
+
+  it('folds a hidden column to the 46px rail in EVERY regime — never to nothing', () => {
+    for (const regime of ['single', 'split', 'grid'] as const) {
+      expect(shellColumns(regime, false, false)).toEqual({
+        template: expect.stringMatching(/^46px 1fr 46px$/),
+        leftRail: true,
+        rightRail: true,
+      });
+    }
+  });
+
+  it('folds each side independently', () => {
+    expect(shellColumns('single', false, true)).toEqual({
+      template: '46px 1fr 296px',
+      leftRail: true,
+      rightRail: false,
+    });
+    expect(shellColumns('grid', true, false)).toEqual({
+      template: '238px 1fr 46px',
+      leftRail: false,
+      rightRail: true,
+    });
+  });
+});
 
 describe('tabClassName', () => {
   it('adds the --on modifier only when active', () => {
