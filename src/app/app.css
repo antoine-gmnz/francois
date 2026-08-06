@@ -369,25 +369,24 @@
   min-height: 0;
   min-width: 0;
 }
-/* Two panes: the row is resizable, so a third track carries the drag handle and
-   the columns are overridden inline with the dragged ratio
-   (`<r>fr var(--space-12) <1-r>fr`). That handle IS the 12px gutter — hence no
-   `gap` here, or the two panes would sit 36px apart. The 2×2 regimes keep the
-   plain gap: their panes meet at a cross, which one vertical handle cannot
-   describe. */
-.app-split-grid--2 {
+/* Every split regime is resizable, so a gutter TRACK carries each drag handle
+   and the tracks are overridden inline with the dragged ratios
+   (`<r>fr var(--space-12) <1-r>fr`). A handle IS the 12px gutter — hence no
+   `gap` here, or the panes would sit 36px apart. */
+.app-split-grid--2,
+.app-split-grid--3,
+.app-split-grid--4 {
   grid-template-columns: 1fr var(--space-12) 1fr;
   gap: 0;
 }
 /* FR-2: three and four panes both take the 2×2 grid. At three, the last pane
    spans the bottom row rather than leaving a hole — an empty cell would read as
-   a pane that failed to load. */
+   a pane that failed to load. Both the panes and the handles are placed
+   explicitly (see `paneGridArea`): with gutter tracks in the way, CSS
+   auto-placement would drop a pane into one. */
 .app-split-grid--3,
 .app-split-grid--4 {
-  grid-template-rows: 1fr 1fr;
-}
-.app-split-grid--3 > .split-pane:last-child {
-  grid-column: span 2;
+  grid-template-rows: 1fr var(--space-12) 1fr;
 }
 
 /* The grab handle between the two panes. At rest it is indistinguishable from
@@ -411,6 +410,14 @@
   border-radius: 1px;
   background: transparent;
 }
+/* The row handle: the same object turned through 90°. */
+.app-split-divider--y {
+  cursor: row-resize;
+}
+.app-split-divider--y::before {
+  width: 100%;
+  height: 2px;
+}
 .app-split-divider:hover::before,
 .app-split-divider:focus-visible::before,
 .app-split-divider--dragging::before {
@@ -422,10 +429,19 @@
 
 /* Drag in progress: the pointer is over a transcript, a diff or a terminal —
    every one of which would otherwise show a caret and start selecting text. */
-body.app-resizing,
-body.app-resizing * {
-  cursor: col-resize !important;
+body.app-resizing-x,
+body.app-resizing-x *,
+body.app-resizing-y,
+body.app-resizing-y * {
   user-select: none !important;
+}
+body.app-resizing-x,
+body.app-resizing-x * {
+  cursor: col-resize !important;
+}
+body.app-resizing-y,
+body.app-resizing-y * {
+  cursor: row-resize !important;
 }
 
 .split-pane {

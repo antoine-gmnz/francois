@@ -24,7 +24,7 @@ import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { focusedSessionId, layoutRegime, paneCount, paneSessionIdAt, paneTabAt } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import './app.css';
-import { shellColumns } from './appShell';
+import { dividerGridArea, paneGridArea, shellColumns } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import MainTabStrip from './MainTabStrip';
 import RightRail from './RightRail';
@@ -89,8 +89,10 @@ export default function App() {
   const setPaneTab = useStore((s) => s.setPaneTab);
   const setFocusedPaneIndex = useStore((s) => s.setFocusedPaneIndex);
   const assignToFocusedPane = useStore((s) => s.assignToFocusedPane);
-  // How the two columns share the width, dragged from the divider between them.
+  // How the panes share the cell, dragged from the dividers between them: the
+  // columns everywhere, the rows in the 2×2 regimes.
   const splitRatio = useStore((s) => s.splitRatio);
+  const splitRowRatio = useStore((s) => s.splitRowRatio);
   const unsplit = useStore((s) => s.unsplit);
   const closePane = useStore((s) => s.closePane);
   const panes = paneCount({ extraPanes });
@@ -267,26 +269,31 @@ export default function App() {
 
         {/* main pane — split-by-4 FR-1/FR-2: one section per pane, in a 1fr row
             at two panes and a 2×2 grid above; otherwise exactly what it renders
-            today. At two panes the row is resizable: the pair share the cell in
-            the ratio the divider between them was last dragged to (50/50 by
-            default), and that middle track IS the gutter — hence gap: 0 on the
-            --2 modifier. */}
+            today. Every split regime is resizable: the panes share the cell in
+            the ratios their dividers were last dragged to (50/50 by default),
+            and each gutter track IS a handle — hence gap: 0 on the modifiers.
+            The 2×2 also splits its rows, so it carries a second handle. */}
         {split ? (
           <div
             className={regime === 'grid' ? `app-split-grid app-split-grid--${panes}` : 'app-split-grid app-split-grid--2'}
-            style={
-              regime === 'split'
-                ? { gridTemplateColumns: `${splitRatio}fr var(--space-12) ${1 - splitRatio}fr` }
-                : undefined
-            }
+            style={{
+              gridTemplateColumns: `${splitRatio}fr var(--space-12) ${1 - splitRatio}fr`,
+              ...(regime === 'grid'
+                ? { gridTemplateRows: `${splitRowRatio}fr var(--space-12) ${1 - splitRowRatio}fr` }
+                : null),
+            }}
           >
+            {/* The row handle first, so the column handle — which spans the full
+                height at four panes — wins the cell where the two cross. */}
+            {regime === 'grid' && <SplitDivider axis="y" area={dividerGridArea('y', panes)} />}
             {Array.from({ length: panes }, (_, i) => (
               <Fragment key={i}>
-                {/* The handle sits between the two columns, so it renders in
-                    DOM order right before the pane it pushes against. */}
-                {i === 1 && regime === 'split' && <SplitDivider />}
+                {/* Placed explicitly above two panes; at two, DOM order
+                    (pane, handle, pane) fills the three tracks by itself. */}
+                {i === 1 && <SplitDivider axis="x" area={dividerGridArea('x', panes)} />}
                 <SplitPane
                   index={i}
+                  area={paneGridArea(i, panes)}
                   sessionId={paneSessionIdAt({ activeSessionId, mainTab, extraPanes }, i)}
                   tab={paneTabAt({ activeSessionId, mainTab, extraPanes }, i)}
                   focused={focusedPaneIndex === i}
