@@ -13,6 +13,27 @@ design_files: ["https://claude.ai/design/p/a4b15728-147c-4932-b83c-f60a5fc60db7?
 
 # Split by 4
 
+## 0. Amendment — a folded column is always its rail (supersedes FR-4, widens FR-6)
+
+As shipped, the two sides folded differently and the difference was arbitrary from the user's seat:
+the right column kept a 46px icon rail at two panes but **vanished** in the grid, and the roster kept
+a 46px tile rail in the grid but **vanished** everywhere else. So `]` in the grid and `[` at one pane
+both read as "the column is gone", with nothing left to click your way back with.
+
+The rule is now regime-independent: **folded means the 46px rail, on either side, at any pane
+count.** The regime decides only how wide a *shown* roster is (`276px` at one pane, `238px` once a
+second pane wants the width). Concretely:
+
+- FR-4 becomes: `single`: `(276 | 46 rail) | 1fr | (296 | 46 rail)`. `split`/`grid`: the same with
+  `238` in place of `276`. The column track is never absent.
+- FR-6's session rail is no longer conditioned on `grid` — `showLeftPane === false` renders it in
+  every regime. `RightRail` likewise renders whenever `showRightPane === false`.
+
+FR-5 is unchanged: entering `split` still folds the right column, entering `grid` still folds both,
+neither fold is persisted, and `[`/`]` still toggle. Only what "folded" *looks like* changed. The
+decision lives in one pure helper, `shellColumns(regime, showLeftPane, showRightPane)` in
+`src/app/appShell.ts`.
+
 ## 1. Summary
 
 `split-session` put **two** sessions side by side. This generalizes it to **up to four**, in a 2×2
@@ -364,8 +385,8 @@ segmented control gains `⊞`; the status bar reads `⌘1–<n> focus pane`, `�
       (FR-1, FR-2, FR-15).
 - [ ] A project holding a single session still splits: the second pane reads *pane 2 is empty* and
       offers **New session**, and the session created there lands in it (FR-15, FR-19).
-- [ ] At three or four panes the roster is a 46px tile rail, the right column is gone, and no pane
-      shows a tab strip (FR-4, FR-6, FR-9).
+- [ ] At three or four panes the roster is a 46px tile rail, the right column is folded to its own
+      46px icon rail (§0), and no pane shows a tab strip (FR-4, FR-6, FR-9).
 - [ ] Clicking a pane — or pressing `⌘2`/`⌘3`/`⌘4` — moves the lime rule, the `focus` chip, the live
       composer, the titlebar quota, the right column's counts and the status bar to it (FR-10,
       FR-12, FR-13, FR-14).
