@@ -53,10 +53,10 @@ export default function UsageBar({ home }: { home: string }) {
   const [freshHover, setFreshHover] = useState(false);
 
   const sessions = useStore((s) => s.sessions);
-  // split-session FR-7: the meters follow the FOCUSED session, which equals
+  // split-by-4 FR-13: the meters follow the FOCUSED session, which equals
   // activeSessionId whenever the app is not split.
   const activeSessionId = useStore((s) => focusedSessionId(s));
-  const split = useStore((s) => s.splitSessionId !== null);
+  const split = useStore((s) => s.extraPanes.length > 0);
   // titlebar-project-switcher FR-6: the switcher's tooltip fallback chain needs
   // the active session's cwd; UsageBar reads it here and passes it down rather
   // than letting the switcher reach into `sessions` itself.

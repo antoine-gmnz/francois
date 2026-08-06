@@ -5,6 +5,7 @@ import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorkt
 import { prunePaletteSession } from '../palette/paletteData';
 import { showToast } from '../palette/palette';
 import { visibleSessions } from '../projects/projects';
+import { MAX_PANES, paneCount, paneIndexOf } from '../../lib/layoutStore';
 import { abbreviate } from '../../lib/path';
 import { useStore } from '../../lib/store';
 import { getEditorList } from './editors';
@@ -43,11 +44,13 @@ export default function Sidebar({ home }: { home: string }) {
   // dashboard reads the same numbers and a second subscription would double
   // every diff seed.
   const derived = useStore((s) => s.derived);
-  // split-session: the roster shows both paned sessions (FR-15) and assigns a
-  // pick to the FOCUSED side (FR-8).
-  const splitSessionId = useStore((s) => s.splitSessionId);
-  const focusedSide = useStore((s) => s.focusedSide);
-  const openInRightPane = useStore((s) => s.openInRightPane);
+  // split-by-4: the roster badges every paned session (FR-22) and assigns a pick
+  // to the FOCUSED pane (FR-19).
+  const extraPanes = useStore((s) => s.extraPanes);
+  const focusedPaneIndex = useStore((s) => s.focusedPaneIndex);
+  const assignToFocusedPane = useStore((s) => s.assignToFocusedPane);
+  const openInNewPane = useStore((s) => s.openInNewPane);
+  const panes = paneCount({ extraPanes });
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -79,10 +82,10 @@ export default function Sidebar({ home }: { home: string }) {
   // one", so the main pane leaves OVERVIEW. Any OTHER tab is left alone — moving
   // between sessions while reviewing diffs must not kick you out of DIFF.
   const selectSession = (id: string) => {
-    // split-session FR-8: a pick lands in the FOCUSED pane. Assigning it to the
-    // side that already holds the other pane's session swaps them — both store
-    // actions handle that themselves, so this only has to route.
-    if (splitSessionId !== null && focusedSide === 'right') openInRightPane(id);
+    // split-by-4 FR-19: a pick lands in the FOCUSED pane. Assigning a session
+    // another pane already holds swaps them — both store actions handle that
+    // themselves, so this only has to route.
+    if (focusedPaneIndex > 0) assignToFocusedPane(id);
     else setActiveSessionId(id);
     if (useStore.getState().mainTab === 'overview') setMainTab('session');
   };
@@ -197,7 +200,7 @@ export default function Sidebar({ home }: { home: string }) {
     <section
       onClick={() => setFocusedPane('sidebar')}
       className={
-        [focused ? 'sidebar sidebar--focused' : 'sidebar', splitSessionId !== null ? 'sidebar--dense' : null]
+        [focused ? 'sidebar sidebar--focused' : 'sidebar', panes > 1 ? 'sidebar--dense' : null]
           .filter(Boolean)
           .join(' ')
       }
@@ -226,8 +229,9 @@ export default function Sidebar({ home }: { home: string }) {
         focused={focused}
         rowCursor={rowCursor}
         derived={derived}
-        splitSessionId={splitSessionId}
-        focusedSide={focusedSide}
+        paneIndexOf={(id) => paneIndexOf({ activeSessionId, mainTab: 'session', extraPanes }, id)}
+        paneCount={panes}
+        focusedPaneIndex={focusedPaneIndex}
         onSelect={(id) => {
           selectSession(id);
           setFocusedPane('sidebar');
@@ -259,14 +263,17 @@ export default function Sidebar({ home }: { home: string }) {
           sessionPath={abbreviate(sessions.find((session) => session.id === menu.sessionId)?.cwd ?? '', home)}
           worktree={sessions.find((session) => session.id === menu.sessionId)?.worktree ?? null}
           containerRef={menuRef}
-          // split-session FR-11: hidden for the session already in the LEFT
-          // pane, and whenever `▯▯` itself would be disabled (All-projects
-          // scope, or fewer than two sessions in scope).
-          onOpenInRightPane={
-            activeProjectId !== null && menu.sessionId !== activeSessionId && inProject.length >= 2
+          // split-by-4 FR-18: hidden for a session already in a pane, at
+          // All-projects scope, and once the grid is full. It needs no second
+          // session in scope — the row it is on IS the session it opens.
+          openInNewPaneLabel={panes === 1 ? 'Open in right pane' : 'Open in new pane'}
+          onOpenInNewPane={
+            activeProjectId !== null &&
+            panes < MAX_PANES &&
+            paneIndexOf({ activeSessionId, mainTab: 'session', extraPanes }, menu.sessionId) === null
               ? (sessionId) => {
                   setMenu(null);
-                  openInRightPane(sessionId);
+                  openInNewPane(sessionId);
                 }
               : undefined
           }

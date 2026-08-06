@@ -41,12 +41,14 @@ export interface SessionContextMenuProps {
   containerRef: RefObject<HTMLDivElement>;
   onStartConfirm: () => void;
   /**
-   * split-session FR-11: puts this row's session in the right pane and focuses
-   * that side. Absent ⇒ the item is hidden — which is how the FR's two
-   * suppressions (the session already in the LEFT pane, and anything that would
-   * disable `▯▯`) are expressed: the Sidebar simply does not pass a handler.
+   * split-by-4 FR-18: puts this row's session in a new pane and focuses it.
+   * Absent ⇒ the item is hidden — which is how the FR's suppressions (a session
+   * already in a pane, a full grid, and anything that would disable `▯▯`) are
+   * expressed: the Sidebar simply does not pass a handler.
    */
-  onOpenInRightPane?: (sessionId: SessionId) => void;
+  onOpenInNewPane?: (sessionId: SessionId) => void;
+  /** `Open in right pane` at one pane, `Open in new pane` above — FR-18. */
+  openInNewPaneLabel?: string;
   /** session-rename FR-12: closes the menu and opens the rename modal for this row. */
   onRename: () => void;
   onCopyPath: () => void;
@@ -75,7 +77,8 @@ export function SessionContextMenu({
   worktree,
   containerRef,
   onStartConfirm,
-  onOpenInRightPane,
+  onOpenInNewPane,
+  openInNewPaneLabel = 'Open in new pane',
   onRename,
   onCopyPath,
   onCancel,
@@ -138,13 +141,13 @@ export function SessionContextMenu({
               <span className="context-menu__label">{editorMenuLabel(editor)}</span>
             </button>
           ))}
-          {/* split-session FR-11: above Rename, per the design brief. */}
-          {onOpenInRightPane && (
-            <button type="button" className="context-menu__item" onClick={() => onOpenInRightPane(menu.sessionId)}>
+          {/* split-by-4 FR-18: above Rename, per the design brief. */}
+          {onOpenInNewPane && (
+            <button type="button" className="context-menu__item" onClick={() => onOpenInNewPane(menu.sessionId)}>
               <span className="context-menu__glyph">
                 <Columns2 {...ICON} />
               </span>
-              <span className="context-menu__label">Open in right pane</span>
+              <span className="context-menu__label">{openInNewPaneLabel}</span>
             </button>
           )}
           <button type="button" className="context-menu__item" onClick={onRename}>

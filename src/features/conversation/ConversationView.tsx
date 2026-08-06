@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { isBusyStatus, isTerminalStatus } from '../../../contract/fleet-board';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
@@ -53,9 +53,16 @@ export interface ConversationViewProps {
   inert?: boolean;
   /** What the inert strip does when clicked: move focus to this pane. */
   onFocusRequest?: () => void;
+  /**
+   * split-by-4 FR-11: what an inert pane renders in the composer's place. The
+   * grid chrome's footer is state-driven (`⌘2 to focus and type`, or *Review
+   * diff* · *close pane ✕*), so the pane owns it rather than this view. Absent ⇒
+   * the default `click to focus this pane` strip.
+   */
+  inertFooter?: ReactNode;
 }
 
-export default function ConversationView({ sessionId, inert = false, onFocusRequest }: ConversationViewProps) {
+export default function ConversationView({ sessionId, inert = false, onFocusRequest, inertFooter }: ConversationViewProps) {
   const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId) ?? null);
   const {
     state,
@@ -389,7 +396,7 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
           instead. It reads as an invitation, not a disabled input: no ⏎ hint, no
           caret, and clicking it only moves focus. */}
       {inert ? (
-        <InertComposer onClick={onFocusRequest} />
+        (inertFooter ?? <InertComposer onClick={onFocusRequest} />)
       ) : (
       <Composer
         status={status}

@@ -446,22 +446,21 @@
   border-color: var(--error-dim);
 }
 
-/* ── split-session FR-15 ─────────────────────────────────────────────────────
-   Which pane, if any, is showing this session. Fixed per SIDE (not per focus)
-   so the pair reads as a stable left/right map of the main area; the FOCUS
-   signal is the accent left rail below, and the pane's own header chip. */
+/* ── split-by-4 FR-22 ────────────────────────────────────────────────────────
+   Which pane, if any, is showing this session. Fixed per PANE (not per focus)
+   so the set reads as a stable map of the main area; the FOCUS signal is the
+   accent left rail below, and the pane's own header chip. Pane 0 stays neutral
+   — it is the one the rest of the app already means by "active". */
 .sidebar-card__pane {
   font-family: var(--font-mono);
   font-size: var(--font-size-9-5);
   border-radius: var(--radius-sm);
   padding: 1px var(--space-5);
   flex-shrink: 0;
-}
-.sidebar-card__pane--left {
   color: var(--text-hint);
   background: var(--bg-hover-2);
 }
-.sidebar-card__pane--right {
+.sidebar-card__pane--accent {
   color: var(--accent);
   background: var(--accent-soft-bg);
 }
