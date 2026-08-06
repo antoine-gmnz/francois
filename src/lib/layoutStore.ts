@@ -188,6 +188,69 @@ export function persistSplitState(state: SplitState): void {
   }
 }
 
+// ── split divider ───────────────────────────────────────────────────────────
+// How the two panes share the main cell. Kept in its OWN storage key rather
+// than inside the split record: it is a lasting layout preference, and the
+// record is wiped on every unsplit — the next split would forget the width.
+
+export const SPLIT_RATIO_STORAGE_KEY = 'francois.splitRatio';
+/** The LEFT pane's share of the main cell. */
+export const DEFAULT_SPLIT_RATIO = 0.5;
+export const MIN_SPLIT_RATIO = 0.2;
+export const MAX_SPLIT_RATIO = 0.8;
+/**
+ * A pane narrower than this stops being readable — the composer, the diff
+ * gutter and an 80-column shell all give up at once. On a narrow window the
+ * ratio bounds alone are not enough (20% of 900px is 180px), so the drag also
+ * clamps in pixels.
+ */
+export const MIN_SPLIT_PANE_PX = 260;
+
+/** Pure: any value → a usable ratio. 0.1% granularity ≈ 1px, so a drag that
+ *  moves less than a pixel settles on the same number and re-renders nothing. */
+export function clampSplitRatio(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SPLIT_RATIO;
+  const clamped = Math.min(Math.max(value, MIN_SPLIT_RATIO), MAX_SPLIT_RATIO);
+  return Math.round(clamped * 1000) / 1000;
+}
+
+/** Pure, exported for tests: a malformed/absent persisted value reads as the default. */
+export function parseSplitRatio(raw: string | null): number {
+  // `Number('')` is 0, not NaN — an empty entry is an ABSENT preference, and
+  // clamping it to the minimum would hand the user a 20% pane out of nowhere.
+  if (raw === null || raw.trim() === '') return DEFAULT_SPLIT_RATIO;
+  return clampSplitRatio(Number(raw));
+}
+
+/**
+ * Pure: the pointer's x against the split grid's box → the left pane's share.
+ * Clamped by BOTH the ratio bounds and `MIN_SPLIT_PANE_PX`, so neither pane can
+ * be dragged down to an unreadable sliver. A window too narrow to give both
+ * panes their minimum degrades to an even split rather than fighting itself.
+ */
+export function splitRatioFromDrag(clientX: number, left: number, width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return DEFAULT_SPLIT_RATIO;
+  const pxBound = MIN_SPLIT_PANE_PX / width;
+  const lo = Math.max(MIN_SPLIT_RATIO, Math.min(pxBound, DEFAULT_SPLIT_RATIO));
+  const hi = Math.min(MAX_SPLIT_RATIO, Math.max(1 - pxBound, DEFAULT_SPLIT_RATIO));
+  return clampSplitRatio(Math.min(Math.max((clientX - left) / width, lo), hi));
+}
+
+function loadSplitRatio(): number {
+  try {
+    return parseSplitRatio(localStorage.getItem(SPLIT_RATIO_STORAGE_KEY));
+  } catch {
+    return DEFAULT_SPLIT_RATIO;
+  }
+}
+function persistSplitRatio(ratio: number): void {
+  try {
+    localStorage.setItem(SPLIT_RATIO_STORAGE_KEY, String(ratio));
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
  * FR-3: the user's persisted right-column preference — what LEAVING split
  * restores, since entering it folded the column to the rail without persisting.
@@ -297,6 +360,13 @@ export interface LayoutSlice {
   setSplitTab: (tab: PaneTab) => void;
   /** FR-5. Also sets focusedPane = 'main'. */
   setFocusedSide: (side: SplitSide) => void;
+  /**
+   * The LEFT pane's share of the main cell, dragged from the divider between
+   * the two panes. Clamped + persisted on its own key, so it survives leaving
+   * and re-entering split.
+   */
+  splitRatio: number;
+  setSplitRatio: (ratio: number) => void;
 }
 
 const INITIAL_SPLIT = loadSplitState();
@@ -459,6 +529,17 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
     set((s) => {
       persistSplitState({ splitSessionId: s.splitSessionId, splitTab, focusedSide: s.focusedSide });
       return { splitTab };
+    }),
+
+  splitRatio: loadSplitRatio(),
+
+  setSplitRatio: (ratio) =>
+    set((s) => {
+      const splitRatio = clampSplitRatio(ratio);
+      // Called on every pointermove of a drag — the no-op path must not write.
+      if (splitRatio === s.splitRatio) return {};
+      persistSplitRatio(splitRatio);
+      return { splitRatio };
     }),
 
   setFocusedSide: (focusedSide) =>

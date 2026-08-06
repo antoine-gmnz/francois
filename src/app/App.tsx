@@ -27,6 +27,7 @@ import { clampToPaneTab } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import MainTabStrip from './MainTabStrip';
 import RightRail from './RightRail';
+import SplitDivider from './SplitDivider';
 import SplitPane from './SplitPane';
 import StatusBar from './StatusBar';
 import { useAppIdentity } from './useAppIdentity';
@@ -84,6 +85,7 @@ export default function App() {
   const splitSessionId = useStore((s) => s.splitSessionId);
   const splitTab = useStore((s) => s.splitTab);
   const focusedSide = useStore((s) => s.focusedSide);
+  const splitRatio = useStore((s) => s.splitRatio);
   const setSplitTab = useStore((s) => s.setSplitTab);
   const setFocusedSide = useStore((s) => s.setFocusedSide);
   const openInRightPane = useStore((s) => s.openInRightPane);
@@ -244,10 +246,15 @@ export default function App() {
           <Sidebar home={home} />
         </div>
 
-        {/* main pane — split-session FR-1: two 1fr sections while split,
-            otherwise exactly what it renders today. */}
+        {/* main pane — split-session FR-1: two sections while split, otherwise
+            exactly what it renders today. The pair share the cell in the ratio
+            the divider between them was last dragged to (50/50 by default);
+            that middle track IS the gutter, hence gap: 0 in the CSS. */}
         {split ? (
-          <div className="app-split-grid">
+          <div
+            className="app-split-grid"
+            style={{ gridTemplateColumns: `${splitRatio}fr var(--space-12) ${1 - splitRatio}fr` }}
+          >
             <SplitPane
               side="left"
               sessionId={activeSessionId}
@@ -258,6 +265,7 @@ export default function App() {
               onTab={setMainTab}
               onPromote={() => unsplit('left')}
             />
+            <SplitDivider />
             <SplitPane
               side="right"
               sessionId={splitSessionId}

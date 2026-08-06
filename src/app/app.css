@@ -363,10 +363,51 @@
 .app-split-grid {
   grid-row: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-12);
+  /* Overridden inline with the dragged ratio: `<r>fr var(--space-12) <1-r>fr`.
+     The middle track is the divider, which IS the 12px gutter — so no `gap`
+     here, or the two panes would sit 36px apart. */
+  grid-template-columns: 1fr var(--space-12) 1fr;
+  gap: 0;
   min-height: 0;
   min-width: 0;
+}
+
+/* The grab handle between the two panes. At rest it is indistinguishable from
+   the gutter it replaces — a resize affordance is not a thing to look at until
+   the pointer is on it. Hover/focus/drag light the 2px line in the focus
+   border, never in --accent: while split the accent belongs to the focused
+   pane alone (design §Notes, "one accent per view"). */
+.app-split-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  /* the browser's own pan gesture would otherwise swallow the pointermove */
+  touch-action: none;
+  min-width: 0;
+}
+.app-split-divider::before {
+  content: '';
+  width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background: transparent;
+}
+.app-split-divider:hover::before,
+.app-split-divider:focus-visible::before,
+.app-split-divider--dragging::before {
+  background: var(--border-focus);
+}
+.app-split-divider:focus-visible {
+  outline: none;
+}
+
+/* Drag in progress: the pointer is over a transcript, a diff or a terminal —
+   every one of which would otherwise show a caret and start selecting text. */
+body.app-resizing,
+body.app-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .split-pane {
