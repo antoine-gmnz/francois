@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildShortcutActions,
   clampToPaneTab,
+  dividerGridArea,
   mainPaneBranch,
+  paneGridArea,
   shellColumns,
   shellFooterPath,
   splitCandidate,
@@ -45,6 +47,47 @@ describe('shellColumns', () => {
       leftRail: false,
       rightRail: true,
     });
+  });
+});
+
+describe('paneGridArea', () => {
+  it('leaves the one-row regimes to auto-placement', () => {
+    expect(paneGridArea(0, 1)).toBeUndefined();
+    expect(paneGridArea(0, 2)).toBeUndefined();
+    expect(paneGridArea(1, 2)).toBeUndefined();
+  });
+
+  it('places four panes in the corners, skipping the gutter tracks', () => {
+    expect(paneGridArea(0, 4)).toEqual({ gridColumn: '1', gridRow: '1' });
+    expect(paneGridArea(1, 4)).toEqual({ gridColumn: '3', gridRow: '1' });
+    expect(paneGridArea(2, 4)).toEqual({ gridColumn: '1', gridRow: '3' });
+    expect(paneGridArea(3, 4)).toEqual({ gridColumn: '3', gridRow: '3' });
+  });
+
+  it('spans the third pane across the whole bottom row (FR-2)', () => {
+    expect(paneGridArea(0, 3)).toEqual({ gridColumn: '1', gridRow: '1' });
+    expect(paneGridArea(1, 3)).toEqual({ gridColumn: '3', gridRow: '1' });
+    expect(paneGridArea(2, 3)).toEqual({ gridColumn: '1 / -1', gridRow: '3' });
+  });
+});
+
+describe('dividerGridArea', () => {
+  it('leaves the two-pane handle to auto-placement, and offers no row handle there', () => {
+    expect(dividerGridArea('x', 2)).toBeUndefined();
+    expect(dividerGridArea('y', 2)).toBeUndefined();
+  });
+
+  it('runs the column handle the full height at four panes', () => {
+    expect(dividerGridArea('x', 4)).toEqual({ gridColumn: '2', gridRow: '1 / -1' });
+  });
+
+  it('stops the column handle at the top row when the third pane spans below it', () => {
+    expect(dividerGridArea('x', 3)).toEqual({ gridColumn: '2', gridRow: '1' });
+  });
+
+  it('runs the row handle the full width in both grid regimes', () => {
+    expect(dividerGridArea('y', 3)).toEqual({ gridColumn: '1 / -1', gridRow: '2' });
+    expect(dividerGridArea('y', 4)).toEqual({ gridColumn: '1 / -1', gridRow: '2' });
   });
 });
 

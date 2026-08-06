@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import AccountsModal from '../features/accounts/AccountsModal';
 import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
@@ -24,11 +24,12 @@ import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { focusedSessionId, layoutRegime, paneCount, paneSessionIdAt, paneTabAt } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import './app.css';
-import { shellColumns } from './appShell';
+import { dividerGridArea, paneGridArea, shellColumns } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import MainTabStrip from './MainTabStrip';
 import RightRail from './RightRail';
 import SessionRail from './SessionRail';
+import SplitDivider from './SplitDivider';
 import SplitPane from './SplitPane';
 import StatusBar from './StatusBar';
 import { useAppIdentity } from './useAppIdentity';
@@ -88,6 +89,10 @@ export default function App() {
   const setPaneTab = useStore((s) => s.setPaneTab);
   const setFocusedPaneIndex = useStore((s) => s.setFocusedPaneIndex);
   const assignToFocusedPane = useStore((s) => s.assignToFocusedPane);
+  // How the panes share the cell, dragged from the dividers between them: the
+  // columns everywhere, the rows in the 2×2 regimes.
+  const splitRatio = useStore((s) => s.splitRatio);
+  const splitRowRatio = useStore((s) => s.splitRowRatio);
   const unsplit = useStore((s) => s.unsplit);
   const closePane = useStore((s) => s.closePane);
   const panes = paneCount({ extraPanes });
@@ -264,28 +269,47 @@ export default function App() {
 
         {/* main pane — split-by-4 FR-1/FR-2: one section per pane, in a 1fr row
             at two panes and a 2×2 grid above; otherwise exactly what it renders
-            today. */}
+            today. Every split regime is resizable: the panes share the cell in
+            the ratios their dividers were last dragged to (50/50 by default),
+            and each gutter track IS a handle — hence gap: 0 on the modifiers.
+            The 2×2 also splits its rows, so it carries a second handle. */}
         {split ? (
-          <div className={regime === 'grid' ? `app-split-grid app-split-grid--${panes}` : 'app-split-grid'}>
+          <div
+            className={regime === 'grid' ? `app-split-grid app-split-grid--${panes}` : 'app-split-grid app-split-grid--2'}
+            style={{
+              gridTemplateColumns: `${splitRatio}fr var(--space-12) ${1 - splitRatio}fr`,
+              ...(regime === 'grid'
+                ? { gridTemplateRows: `${splitRowRatio}fr var(--space-12) ${1 - splitRowRatio}fr` }
+                : null),
+            }}
+          >
+            {/* The row handle first, so the column handle — which spans the full
+                height at four panes — wins the cell where the two cross. */}
+            {regime === 'grid' && <SplitDivider axis="y" area={dividerGridArea('y', panes)} />}
             {Array.from({ length: panes }, (_, i) => (
-              <SplitPane
-                key={i}
-                index={i}
-                sessionId={paneSessionIdAt({ activeSessionId, mainTab, extraPanes }, i)}
-                tab={paneTabAt({ activeSessionId, mainTab, extraPanes }, i)}
-                focused={focusedPaneIndex === i}
-                dense={regime === 'grid'}
-                home={home}
-                onFocus={() => setFocusedPaneIndex(i)}
-                onTab={(t) => setPaneTab(i, t)}
-                // FR-9: a grid pane shows its transcript, so promoting it opens
-                // on SESSION — its remembered DIFF/SHELL tab was never on screen
-                // there, and inheriting it would read as a tab the user never
-                // picked. Review diff is the deliberate way to land on DIFF.
-                onPromote={() => unsplit(i, regime === 'grid' ? 'session' : undefined)}
-                onClose={() => closePane(i)}
-                onReviewDiff={() => unsplit(i, 'diff')}
-              />
+              <Fragment key={i}>
+                {/* Placed explicitly above two panes; at two, DOM order
+                    (pane, handle, pane) fills the three tracks by itself. */}
+                {i === 1 && <SplitDivider axis="x" area={dividerGridArea('x', panes)} />}
+                <SplitPane
+                  index={i}
+                  area={paneGridArea(i, panes)}
+                  sessionId={paneSessionIdAt({ activeSessionId, mainTab, extraPanes }, i)}
+                  tab={paneTabAt({ activeSessionId, mainTab, extraPanes }, i)}
+                  focused={focusedPaneIndex === i}
+                  dense={regime === 'grid'}
+                  home={home}
+                  onFocus={() => setFocusedPaneIndex(i)}
+                  onTab={(t) => setPaneTab(i, t)}
+                  // FR-9: a grid pane shows its transcript, so promoting it opens
+                  // on SESSION — its remembered DIFF/SHELL tab was never on screen
+                  // there, and inheriting it would read as a tab the user never
+                  // picked. Review diff is the deliberate way to land on DIFF.
+                  onPromote={() => unsplit(i, regime === 'grid' ? 'session' : undefined)}
+                  onClose={() => closePane(i)}
+                  onReviewDiff={() => unsplit(i, 'diff')}
+                />
+              </Fragment>
             ))}
           </div>
         ) : (

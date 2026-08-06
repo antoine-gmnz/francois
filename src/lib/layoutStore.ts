@@ -377,6 +377,80 @@ export function persistSplitState(state: SplitState): void {
   }
 }
 
+// ── split dividers ──────────────────────────────────────────────────────────
+// How the panes share the main cell: one ratio per axis — columns everywhere,
+// rows only in the 2×2 regimes. Kept in their OWN storage keys rather than
+// inside the split record: they are lasting layout preferences, and the record
+// is wiped on every unsplit — the next split would forget the geometry.
+
+export const SPLIT_RATIO_STORAGE_KEY = 'francois.splitRatio';
+export const SPLIT_ROW_RATIO_STORAGE_KEY = 'francois.splitRowRatio';
+/** The first pane's share of the main cell, on either axis. */
+export const DEFAULT_SPLIT_RATIO = 0.5;
+export const MIN_SPLIT_RATIO = 0.2;
+export const MAX_SPLIT_RATIO = 0.8;
+/**
+ * A pane narrower than this stops being readable — the composer, the diff
+ * gutter and an 80-column shell all give up at once. On a narrow window the
+ * ratio bounds alone are not enough (20% of 900px is 180px), so the drag also
+ * clamps in pixels.
+ */
+export const MIN_SPLIT_PANE_PX = 260;
+/**
+ * The row equivalent. Lower than the column minimum because a pane costs its
+ * height in fixed chrome (header + tab strip ≈ 60px) and everything below that
+ * is transcript — a short pane is cramped where a narrow one is unusable.
+ */
+export const MIN_SPLIT_PANE_ROW_PX = 180;
+
+/** Pure: any value → a usable ratio. 0.1% granularity ≈ 1px, so a drag that
+ *  moves less than a pixel settles on the same number and re-renders nothing. */
+export function clampSplitRatio(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SPLIT_RATIO;
+  const clamped = Math.min(Math.max(value, MIN_SPLIT_RATIO), MAX_SPLIT_RATIO);
+  return Math.round(clamped * 1000) / 1000;
+}
+
+/** Pure, exported for tests: a malformed/absent persisted value reads as the default. */
+export function parseSplitRatio(raw: string | null): number {
+  // `Number('')` is 0, not NaN — an empty entry is an ABSENT preference, and
+  // clamping it to the minimum would hand the user a 20% pane out of nowhere.
+  if (raw === null || raw.trim() === '') return DEFAULT_SPLIT_RATIO;
+  return clampSplitRatio(Number(raw));
+}
+
+/**
+ * Pure: the pointer's position against the split grid's box → the first pane's
+ * share of that axis. Axis-agnostic — `(clientX, left, width)` for the column
+ * handle, `(clientY, top, height)` for the row one.
+ *
+ * Clamped by BOTH the ratio bounds and `minPx`, so neither pane can be dragged
+ * down to an unreadable sliver. A cell too small to give both panes their
+ * minimum degrades to an even split rather than fighting itself.
+ */
+export function splitRatioFromDrag(pos: number, start: number, size: number, minPx = MIN_SPLIT_PANE_PX): number {
+  if (!Number.isFinite(size) || size <= 0) return DEFAULT_SPLIT_RATIO;
+  const pxBound = minPx / size;
+  const lo = Math.max(MIN_SPLIT_RATIO, Math.min(pxBound, DEFAULT_SPLIT_RATIO));
+  const hi = Math.min(MAX_SPLIT_RATIO, Math.max(1 - pxBound, DEFAULT_SPLIT_RATIO));
+  return clampSplitRatio(Math.min(Math.max((pos - start) / size, lo), hi));
+}
+
+function loadRatio(key: string): number {
+  try {
+    return parseSplitRatio(localStorage.getItem(key));
+  } catch {
+    return DEFAULT_SPLIT_RATIO;
+  }
+}
+function persistRatio(key: string, ratio: number): void {
+  try {
+    localStorage.setItem(key, String(ratio));
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
  * FR-5: the user's persisted column preferences — what SHRINKING the pane count
  * restores, since growing it folded the columns without persisting. Exported so
@@ -463,6 +537,16 @@ export interface LayoutSlice {
   setFocusedPaneIndex: (index: number) => void;
   /** FR-14: `⌥⇥` — the next pane parked on an approval or a question. */
   focusNextWaitingPane: () => void;
+  /**
+   * The left column's share of the main cell's WIDTH, and — in the 2×2 regimes
+   * — the top row's share of its HEIGHT. Both are dragged from the divider on
+   * that axis, clamped, and persisted on their own keys, so they survive
+   * leaving and re-entering split.
+   */
+  splitRatio: number;
+  setSplitRatio: (ratio: number) => void;
+  splitRowRatio: number;
+  setSplitRowRatio: (ratio: number) => void;
 }
 
 const INITIAL_SPLIT = loadSplitState();
@@ -691,6 +775,27 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         if (meta && statusNeedsAttention(meta.status)) return focusPanePatch(s, i);
       }
       return {};
+    }),
+
+  splitRatio: loadRatio(SPLIT_RATIO_STORAGE_KEY),
+
+  setSplitRatio: (ratio) =>
+    set((s) => {
+      const splitRatio = clampSplitRatio(ratio);
+      // Called on every pointermove of a drag — the no-op path must not write.
+      if (splitRatio === s.splitRatio) return {};
+      persistRatio(SPLIT_RATIO_STORAGE_KEY, splitRatio);
+      return { splitRatio };
+    }),
+
+  splitRowRatio: loadRatio(SPLIT_ROW_RATIO_STORAGE_KEY),
+
+  setSplitRowRatio: (ratio) =>
+    set((s) => {
+      const splitRowRatio = clampSplitRatio(ratio);
+      if (splitRowRatio === s.splitRowRatio) return {};
+      persistRatio(SPLIT_ROW_RATIO_STORAGE_KEY, splitRowRatio);
+      return { splitRowRatio };
     }),
 });
 

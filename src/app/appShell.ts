@@ -49,6 +49,44 @@ export function shellColumns(regime: LayoutRegime, showLeftPane: boolean, showRi
   return { template: `${left} 1fr ${right}`, leftRail: !showLeftPane, rightRail: !showRightPane };
 }
 
+// ---------- resizable split grid ----------
+
+/**
+ * Where one pane (or one divider) sits in the split grid.
+ *
+ * The grid interleaves GUTTER TRACKS with the pane tracks so a drag handle has
+ * a cell of its own: columns are `pane | gutter | pane` and, in the 2×2
+ * regimes, rows are too. That breaks CSS auto-placement — a pane would land in
+ * a gutter — so every cell above two panes is placed explicitly. `undefined`
+ * means "let the grid place it", which is what the one-row regimes want:
+ * pane, divider, pane in DOM order fills `1 / 2 / 3` correctly by itself.
+ */
+export interface GridArea {
+  gridColumn: string;
+  gridRow: string;
+}
+
+/** Track indices: 1 = first pane, 2 = the gutter/handle, 3 = second pane. */
+export function paneGridArea(index: number, panes: number): GridArea | undefined {
+  if (panes <= 2) return undefined;
+  // FR-2: at three panes the last one spans the whole bottom row rather than
+  // leaving a hole — the same rule upstream draws with `grid-column: span 2`,
+  // restated here because explicit placement overrides it.
+  if (panes === 3 && index === 2) return { gridColumn: '1 / -1', gridRow: '3' };
+  return { gridColumn: index % 2 === 0 ? '1' : '3', gridRow: index < 2 ? '1' : '3' };
+}
+
+/**
+ * The vertical handle splits the two COLUMNS; the horizontal one splits the two
+ * ROWS. At three panes the vertical handle covers the top row only — below it
+ * the single wide pane has no column seam to drag.
+ */
+export function dividerGridArea(axis: 'x' | 'y', panes: number): GridArea | undefined {
+  if (panes <= 2) return undefined;
+  if (axis === 'y') return { gridColumn: '1 / -1', gridRow: '2' };
+  return { gridColumn: '2', gridRow: panes === 3 ? '1' : '1 / -1' };
+}
+
 // ---------- split-by-4 (§5) ----------
 
 // All three helpers are declared by specs/split-by-4.md §5 under this module.

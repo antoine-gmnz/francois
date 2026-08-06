@@ -32,6 +32,12 @@ export interface SplitPaneProps {
   onClose?: () => void;
   /** FR-11: promote this pane onto DIFF. Only offered on a settled pane. */
   onReviewDiff?: () => void;
+  /**
+   * Explicit grid placement. The resizable grid interleaves gutter tracks with
+   * the pane tracks, which defeats auto-placement above two panes — see
+   * `paneGridArea`. Absent ⇒ the grid places this pane itself.
+   */
+  area?: { gridColumn: string; gridRow: string };
 }
 
 const TABS: readonly { id: PaneTab; label: string }[] = [
@@ -63,6 +69,7 @@ export default function SplitPane({
   onPromote,
   onClose,
   onReviewDiff,
+  area,
 }: SplitPaneProps) {
   const session = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
   // The per-session diff file count fleet-board already keeps for EVERY session
@@ -79,6 +86,7 @@ export default function SplitPane({
   return (
     <section
       onClick={onFocus}
+      style={area}
       className={
         [
           'split-pane',
