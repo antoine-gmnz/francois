@@ -162,6 +162,59 @@ mod tests {
     }
 
     #[test]
+    fn streaming_assistant_block_is_in_the_buffer_from_its_first_delta() {
+        // What `getTranscript` returns mid-block. Before this, the block only
+        // joined the buffer at content_block_stop, so a view hydrating mid-answer
+        // seeded a transcript without it and rendered the answer minus its opening.
+        let mut s = test_session();
+        s.buf_assistant_streaming("a1", "Hel");
+        assert_eq!(s.block_buffer.len(), 1);
+        let partial = classify_block(&s.block_buffer[0]);
+        assert_eq!(partial["kind"], "assistant");
+        assert_eq!(partial["text"], "Hel");
+        assert_eq!(partial["isStreaming"], true);
+
+        // Later deltas replace the text in place — one block, never a run of them.
+        s.buf_assistant_streaming("a1", "Hello");
+        assert_eq!(s.block_buffer.len(), 1);
+        assert_eq!(classify_block(&s.block_buffer[0])["text"], "Hello");
+    }
+
+    #[test]
+    fn finish_assistant_settles_the_streaming_block_in_place() {
+        let mut s = test_session();
+        s.buf_assistant_streaming("a1", "Hel");
+        let finished = s.finish_assistant("a1", "Hello".into()).expect("block");
+        assert_eq!(finished.text, "Hello");
+        assert_eq!(s.block_buffer.len(), 1, "settled in place, never appended");
+        let block = classify_block(&s.block_buffer[0]);
+        assert_eq!(block["text"], "Hello");
+        assert_eq!(block["isStreaming"], false);
+    }
+
+    #[test]
+    fn finish_assistant_appends_when_no_delta_ever_opened_the_block() {
+        let mut s = test_session();
+        let finished = s.finish_assistant("a1", "Hello".into()).expect("block");
+        assert_eq!(finished.block_id, "a1");
+        assert_eq!(s.block_buffer.len(), 1);
+        assert_eq!(classify_block(&s.block_buffer[0])["text"], "Hello");
+    }
+
+    #[test]
+    fn finish_assistant_settles_its_own_block_among_others() {
+        // A tool block can land between a text block's deltas and its stop; the
+        // finish must find the right block rather than the newest one.
+        let mut s = test_session();
+        s.buf_assistant_streaming("a1", "Hel");
+        s.buf_tool("t1", "Read".into(), "file.rs".into(), false, None);
+        s.finish_assistant("a1", "Hello".into()).expect("block");
+        assert_eq!(s.block_buffer.len(), 2);
+        assert_eq!(classify_block(&s.block_buffer[0])["text"], "Hello");
+        assert_eq!(classify_block(&s.block_buffer[1])["kind"], "tool");
+    }
+
+    #[test]
     fn classify_block_tool_body_color_uses_new_palette() {
         let mut s = test_session();
         s.buf_tool("t1", "Read".into(), "file.rs".into(), false, None);

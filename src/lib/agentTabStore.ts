@@ -57,8 +57,13 @@ export const createAgentTabSlice: StateCreator<AppState, [], [], AgentTabSlice> 
   setMainTab: (mainTab) => set({ mainTab }),
 
   agentTabs: [],
+  // split-by-4 FR-20: while split there is no room for a dynamic tab — the panes
+  // carry SESSION/DIFF/SHELL at two and the transcript alone above — so clicking
+  // an agent or workflow card is a no-op. Guarded here rather than at each card
+  // so every entry point (AgentsPanel, WorkflowsPanel, the palette) is covered
+  // by one rule.
   openAgentTab: (ref) =>
-    set((s) => ({ agentTabs: openTab(s.agentTabs, ref), mainTab: tabIdFor(ref) as MainTab })),
+    set((s) => (s.extraPanes.length > 0 ? {} : { agentTabs: openTab(s.agentTabs, ref), mainTab: tabIdFor(ref) as MainTab })),
   syncAgentTab: (ref) =>
     set((s) => {
       const agentTabs = syncTab(s.agentTabs, ref);

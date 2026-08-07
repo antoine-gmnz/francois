@@ -128,6 +128,12 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
     setAttachOpen(false);
   }, [sessionId, setAttachOpen]);
 
+  // split-session §Right column: publish the header count for the folded icon
+  // rail — it badges each pane, and only this mount knows the number.
+  useEffect(() => {
+    if (sessionId) useStore.getState().setPanelCount(sessionId, 'mcp', servers.length);
+  }, [sessionId, servers.length]);
+
   const openDetail = (index: number) => {
     const server = servers[index];
     if (!server) return;

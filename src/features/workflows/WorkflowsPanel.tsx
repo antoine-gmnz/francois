@@ -50,6 +50,12 @@ export default function WorkflowsPanel({ sessionId }: { sessionId: string | null
   const list = orderedRuns(runs);
   const hasRunning = list.some((run) => run.status === 'running');
 
+  // split-session §Right column: publish the header count for the folded icon
+  // rail — it badges each pane, and only this mount knows the number.
+  useEffect(() => {
+    if (sessionId) useStore.getState().setPanelCount(sessionId, 'workflows', runs.size);
+  }, [sessionId, runs]);
+
   // Tick the elapsed timer once a second while any run is in flight.
   useEffect(() => {
     if (!hasRunning) return;

@@ -17,6 +17,7 @@ import {
   groupToolRuns,
   isClearCommand,
   liveCurrentModelId,
+  mergeDelta,
   meterFillColor,
   switchModelFromCard,
   transcriptReducer,
@@ -522,9 +523,33 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
     });
   });
 
+  describe('mergeDelta', () => {
+    it('appends a chunk that starts exactly where the text ends', () => {
+      expect(mergeDelta('Hel', 'lo', 3)).toBe('Hello');
+      expect(mergeDelta('', 'Hel', 0)).toBe('Hel');
+    });
+
+    it('applies only the new tail of a chunk the text already covers in part', () => {
+      // Hydration seeded 'Hello'; the buffered delta that produced 'llo world'
+      // starts at offset 2, so only ' world' is new.
+      expect(mergeDelta('Hello', 'llo world', 2)).toBe('Hello world');
+    });
+
+    it('ignores a chunk the text already covers entirely', () => {
+      expect(mergeDelta('Hello world', 'llo', 2)).toBe('Hello world');
+      expect(mergeDelta('Hello', 'Hello', 0)).toBe('Hello');
+    });
+
+    it('keeps the new text when a chunk went missing rather than losing it too', () => {
+      // A gap (offset past the end) cannot be reconstructed here — assistantDone
+      // repairs it. Dropping the chunk would only widen the hole.
+      expect(mergeDelta('Hel', 'world', 20)).toBe('Helworld');
+    });
+  });
+
   describe('delta', () => {
     it('inserts a streaming assistant block when unseen', () => {
-      const s = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hel' });
+      const s = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hel', offset: 0 });
       expect(s.blocks).toEqual([
         {
           kind: 'assistant',
@@ -539,20 +564,41 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
     });
 
     it('appends onto the open block', () => {
-      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hel' });
-      const s2 = transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'lo' });
+      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hel', offset: 0 });
+      const s2 = transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'lo', offset: 3 });
       expect(s2.blocks).toHaveLength(1);
       const b = s2.blocks[0];
       if (b.kind !== 'assistant') throw new Error('expected assistant block');
       expect(b.text).toBe('Hello');
       expect(b.isStreaming).toBe(true);
     });
+
+    it('does not duplicate a delta the hydration seed already carried', () => {
+      // The core buffers in-flight text, so a mid-block hydration seeds a prefix
+      // and then drains the deltas that built it. Offsets make that overlap a
+      // no-op instead of a doubled word.
+      const seeded = transcriptReducer(S0, {
+        t: 'seed',
+        blocks: [{ kind: 'assistant', blockId: 'a1', isStreaming: true, glyph: '●', glyphColor: '#c3f53f', bodyColor: '#e6e9ef', text: 'Hello wor' }],
+      });
+      const drained1 = transcriptReducer(seeded, { t: 'delta', blockId: 'a1', text: 'Hello ', offset: 0 });
+      const drained2 = transcriptReducer(drained1, { t: 'delta', blockId: 'a1', text: 'wor', offset: 6 });
+      const live = transcriptReducer(drained2, { t: 'delta', blockId: 'a1', text: 'ld', offset: 9 });
+      const b = live.blocks[0];
+      if (b.kind !== 'assistant') throw new Error('expected assistant block');
+      expect(b.text).toBe('Hello world');
+    });
+
+    it('returns the same state when the chunk adds nothing (no needless re-render)', () => {
+      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hello', offset: 0 });
+      expect(transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'ell', offset: 1 })).toBe(s1);
+    });
   });
 
   describe('assistantDone', () => {
     it('finalizes the block with the settled colors', () => {
-      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hello' });
-      const s2 = transcriptReducer(s1, { t: 'assistantDone', blockId: 'a1' });
+      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hello', offset: 0 });
+      const s2 = transcriptReducer(s1, { t: 'assistantDone', blockId: 'a1', text: 'Hello' });
       expect(s2.blocks).toEqual([
         {
           kind: 'assistant',
@@ -567,14 +613,40 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
     });
 
     it('is idempotent on replay', () => {
-      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hello' });
-      const s2 = transcriptReducer(s1, { t: 'assistantDone', blockId: 'a1' });
-      const s3 = transcriptReducer(s2, { t: 'assistantDone', blockId: 'a1' });
+      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hello', offset: 0 });
+      const s2 = transcriptReducer(s1, { t: 'assistantDone', blockId: 'a1', text: 'Hello' });
+      const s3 = transcriptReducer(s2, { t: 'assistantDone', blockId: 'a1', text: 'Hello' });
       expect(s3.blocks).toEqual(s2.blocks);
     });
 
-    it('is a no-op for an unknown blockId', () => {
-      expect(transcriptReducer(S0, { t: 'assistantDone', blockId: 'nope' })).toBe(S0);
+    it('repairs a block that lost a chunk mid-stream with the authoritative text', () => {
+      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hello ', offset: 0 });
+      // ' cruel' never arrived — the block is short until the block closes.
+      const s2 = transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'world', offset: 12 });
+      const s3 = transcriptReducer(s2, { t: 'assistantDone', blockId: 'a1', text: 'Hello cruel world' });
+      const b = s3.blocks[0];
+      if (b.kind !== 'assistant') throw new Error('expected assistant block');
+      expect(b.text).toBe('Hello cruel world');
+    });
+
+    it('inserts the finished block when every delta for it was missed', () => {
+      const s = transcriptReducer(S0, { t: 'assistantDone', blockId: 'a1', text: 'Hello' });
+      expect(s.blocks).toEqual([
+        {
+          kind: 'assistant',
+          blockId: 'a1',
+          isStreaming: false,
+          glyph: '●',
+          glyphColor: '#8b93a3',
+          bodyColor: '#c3c9d4',
+          text: 'Hello',
+        },
+      ]);
+    });
+
+    it('is a no-op when the blockId belongs to a non-assistant block', () => {
+      const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts' });
+      expect(transcriptReducer(s1, { t: 'assistantDone', blockId: 't1', text: 'Hello' })).toBe(s1);
     });
   });
 
@@ -760,10 +832,10 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
   it('assistant.delta / assistant.done / tool.start / tool.done forward to the reducer verbatim', () => {
     const dispatch = vi.fn();
     const setters = newSetters();
-    applySessionEvent(dispatch, setters, { type: 'assistant.delta', sessionId: 'x', blockId: 'b1', text: 'He' });
-    expect(dispatch).toHaveBeenLastCalledWith({ t: 'delta', blockId: 'b1', text: 'He' });
-    applySessionEvent(dispatch, setters, { type: 'assistant.done', sessionId: 'x', blockId: 'b1' });
-    expect(dispatch).toHaveBeenLastCalledWith({ t: 'assistantDone', blockId: 'b1' });
+    applySessionEvent(dispatch, setters, { type: 'assistant.delta', sessionId: 'x', blockId: 'b1', text: 'He', offset: 4 });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'delta', blockId: 'b1', text: 'He', offset: 4 });
+    applySessionEvent(dispatch, setters, { type: 'assistant.done', sessionId: 'x', blockId: 'b1', text: 'Hi He' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'assistantDone', blockId: 'b1', text: 'Hi He' });
     applySessionEvent(dispatch, setters, { type: 'tool.start', sessionId: 'x', blockId: 't1', tool: 'Read', summary: 'a.ts' });
     expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'a.ts', model: undefined });
     // the dispatch's model rides the same event when the core sent one
@@ -1001,8 +1073,8 @@ describe('transcriptReducer — a delta on one block never disturbs another (mac
     // object (nor moves) across two delta dispatches targeting a different block.
     const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'earlier message', queued: false };
     const s1: TranscriptState = { blocks: [user] };
-    const s2 = transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'Hel' });
-    const s3 = transcriptReducer(s2, { t: 'delta', blockId: 'a1', text: 'lo' });
+    const s2 = transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'Hel', offset: 0 });
+    const s3 = transcriptReducer(s2, { t: 'delta', blockId: 'a1', text: 'lo', offset: 3 });
     expect(s2.blocks[0]).toBe(user);
     expect(s3.blocks[0]).toBe(user);
     expect(s3.blocks[0]).toBe(s2.blocks[0]);
@@ -1012,8 +1084,10 @@ describe('transcriptReducer — a delta on one block never disturbs another (mac
     const a: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'a', queued: false };
     const b: ConversationBlock = { kind: 'user', blockId: 'u2', isStreaming: false, text: 'b', queued: false };
     let s: TranscriptState = { blocks: [a, b] };
+    let offset = 0;
     for (const chunk of ['Hel', 'lo ', 'wor', 'ld']) {
-      s = transcriptReducer(s, { t: 'delta', blockId: 'a1', text: chunk });
+      s = transcriptReducer(s, { t: 'delta', blockId: 'a1', text: chunk, offset });
+      offset += chunk.length;
     }
     expect(s.blocks[0]).toBe(a);
     expect(s.blocks[1]).toBe(b);

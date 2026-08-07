@@ -238,22 +238,24 @@ pub(crate) fn drain_orphaned_permissions(
 }
 
 /// Close a block left open when the reader loop ends (interrupt or crash) — FR-24/FR-34.
+///
+/// A text block settles through the same path a `content_block_stop` takes, so
+/// the partial answer is buffered and persisted rather than living only in the
+/// deltas the UI happened to receive.
 pub(crate) fn close_open_block(
     app: &AppHandle,
     session_id: &str,
     open_block: Option<(String, BlockKind)>,
+    text_accum: &HashMap<String, String>,
 ) {
     let Some((block_id, kind)) = open_block else {
         return;
     };
     match kind {
-        BlockKind::Text => emit(
-            app,
-            SessionEvent::AssistantDone {
-                session_id: session_id.to_string(),
-                block_id,
-            },
-        ),
+        BlockKind::Text => {
+            let text = text_accum.get(&block_id).cloned().unwrap_or_default();
+            finalize_text_block(app, session_id, &block_id, text);
+        }
         BlockKind::Tool => emit(
             app,
             SessionEvent::ToolDone {
@@ -433,9 +435,7 @@ mod tests {
 
     #[test]
     fn parse_background_tasks_counts_the_full_task_list() {
-        let line = |tasks: Value| {
-            json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": tasks })
-        };
+        let line = |tasks: Value| json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": tasks });
         assert_eq!(
             parse_background_tasks(&line(json!([{ "task_id": "a" }, { "task_id": "b" }]))),
             Some(2)

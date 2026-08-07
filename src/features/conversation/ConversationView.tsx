@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { isBusyStatus, isTerminalStatus } from '../../../contract/fleet-board';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
@@ -9,6 +9,8 @@ import { compactBlocks, groupToolRuns, isClearCommand, TRANSCRIPT_TEXT_SELECT_ST
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import { useConversationTranscript } from './useConversationTranscript';
+import { getDraft, setDraft } from './composer-draft';
+import { documentHasSelection, shouldFocusComposer } from './composer-focus';
 import {
   atFirstLine,
   atLastLine,
@@ -41,7 +43,26 @@ import { useSessionAttachments } from './useSessionAttachments';
 // ./conversation-blocks — pure + unit-tested. Hydration/subscription plumbing
 // lives in ./useConversationTranscript.
 
-export default function ConversationView({ sessionId }: { sessionId: string }) {
+export interface ConversationViewProps {
+  sessionId: string;
+  /**
+   * split-session FR-6: this pane is NOT focused — the composer is replaced by
+   * an inert strip reading `click to focus this pane`, so a keystroke can never
+   * land in the wrong session. The transcript keeps streaming, unchanged.
+   */
+  inert?: boolean;
+  /** What the inert strip does when clicked: move focus to this pane. */
+  onFocusRequest?: () => void;
+  /**
+   * split-by-4 FR-11: what an inert pane renders in the composer's place. The
+   * grid chrome's footer is state-driven (`⌘2 to focus and type`, or *Review
+   * diff* · *close pane ✕*), so the pane owns it rather than this view. Absent ⇒
+   * the default `click to focus this pane` strip.
+   */
+  inertFooter?: ReactNode;
+}
+
+export default function ConversationView({ sessionId, inert = false, onFocusRequest, inertFooter }: ConversationViewProps) {
   const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId) ?? null);
   const {
     state,
@@ -60,7 +81,11 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     jumpToLatest,
   } = useConversationTranscript(sessionId);
 
-  const [input, setInput] = useState('');
+  // The composer text. Seeded from — and mirrored back into — the per-session
+  // draft map, because this view is keyed by sessionId: switching sessions
+  // unmounts it, and without the map a half-typed prompt would be lost (see
+  // ./composer-draft).
+  const [input, setInput] = useState(() => getDraft(sessionId));
   const [sendError, setSendError] = useState<string | null>(null);
   // session-worktree FR-14: per-session dismissal, persisted in localStorage —
   // once dismissed the banner never returns for this session (component is
@@ -87,11 +112,46 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
     el.style.height = Math.min(el.scrollHeight, 130) + 'px';
   };
 
+  // Mirror every composer edit into the draft map. An effect rather than a
+  // wrapper around setInput, so it also covers the writes that come from
+  // elsewhere (attachment refs, history recall, a failed send putting the text
+  // back) — and it runs on commit, so the map is already current when a session
+  // switch unmounts this view.
+  useEffect(() => {
+    setDraft(sessionId, input);
+  }, [sessionId, input]);
+
+  // A restored multi-line draft must come back at the height it had: the
+  // textarea mounts at rows=1 and only grows in onChange, which no longer fires
+  // for text that was typed before the switch.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (el && el.value !== '') autoGrow(el);
+    // Mount only — every later change is sized by onChange/applyRecall.
+  }, []);
+
+  // split-session FR-5/FR-6: selecting a pane hands the caret to its composer,
+  // so one click is enough to start typing — the same thing the SHELL tab
+  // already does for its terminal (ShellTerminal's `canFocus`). The edge, not
+  // the state: see shouldFocusComposer for why re-clicking the focused pane and
+  // a live selection are both left alone.
+  const wasInertRef = useRef(inert);
+  useEffect(() => {
+    const wasInert = wasInertRef.current;
+    wasInertRef.current = inert;
+    if (shouldFocusComposer({ wasInert, inert, hasSelection: documentHasSelection() })) {
+      inputRef.current?.focus();
+    }
+  }, [inert]);
+
   // ---------- session-attachments ----------
   // The staged list + the three gestures (drop / paste / picker). Component-local
   // by design (spec §6): ConversationView is keyed by sessionId, so a switch drops
   // it, and chips are derived from (input, staged) on every render (FR-12).
-  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow });
+  // split-session FR-6: the inert pane must not claim the document-level paste
+  // or the webview drag-drop channel — both are global, and two mounted SESSION
+  // panes would otherwise stage the same file in both sessions.
+  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow, active: !inert });
 
   // ---------- slash-menu popup (FR-5..FR-9/12) ----------
 
@@ -332,7 +392,12 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         {!isPinned && <JumpToLatestChip onClick={jumpToLatest} />}
       </div>
 
-      {/* input bar */}
+      {/* input bar — split-session FR-6: the unfocused pane gets an inert strip
+          instead. It reads as an invitation, not a disabled input: no ⏎ hint, no
+          caret, and clicking it only moves focus. */}
+      {inert ? (
+        (inertFooter ?? <InertComposer onClick={onFocusRequest} />)
+      ) : (
       <Composer
         status={status}
         disabled={disabled}
@@ -362,12 +427,27 @@ export default function ConversationView({ sessionId }: { sessionId: string }) {
         onRun={runCommand}
         onDismiss={dismissPopup}
       />
+      )}
     </div>
   );
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="conv-centered">{children}</div>;
+}
+
+/** split-session FR-6 / design §Composer: the unfocused pane's composer. */
+function InertComposer({ onClick }: { onClick?: () => void }) {
+  return (
+    <div className="composer-wrap">
+      <div className="composer-col">
+        <div className="composer-bar composer-bar--inert" onClick={onClick}>
+          <span className="composer-arrow composer-arrow--inert">›</span>
+          <span className="composer-inert-label">click to focus this pane</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // The per-block renderer moved to ./Block.tsx — agent-tab renders a subagent's

@@ -8,6 +8,7 @@
 // env has none) and the store reads it at module-init, so each test re-imports fresh.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionMeta } from '../../contract/common';
 import type { ProjectMeta } from '../../contract/projects';
 import { ACTIVE_PROJECT_STORAGE_KEY } from '../../contract/projects';
 
@@ -28,6 +29,12 @@ function mockStorage(seed: Record<string, string> = {}): { store: Record<string,
   return state;
 }
 
+// EVERY test here re-imports the store (see freshStore below), and the first one
+// to do so pays the cold transform of the whole store graph — which on a loaded
+// machine overruns the 5s default and fails a test that does nothing but import.
+// The timeout is a machine-speed guard, not a behavioural bound.
+vi.setConfig({ testTimeout: 30_000 });
+
 async function freshStore() {
   vi.resetModules();
   const mod = await import('./store');
@@ -36,6 +43,24 @@ async function freshStore() {
 
 function proj(id: string, name = id): ProjectMeta {
   return { id, name, root: `D:/${name}`, defaults: {}, createdAt: 0, lastUsedAt: 0, rootExists: true };
+}
+
+function sess(id: string, projectId?: string): SessionMeta {
+  return {
+    id,
+    name: id,
+    cwd: 'D:/x',
+    model: { id: 'm', label: 'M' },
+    status: 'idle',
+    contextUsedTokens: 0,
+    contextLimitTokens: 0,
+    startedAt: 0,
+    lastActivityAt: 0,
+    permissionMode: 'default',
+    runtime: 'native',
+    accountId: 'default',
+    ...(projectId ? { projectId } : {}),
+  };
 }
 
 describe('projects store slice (FR-26)', () => {
@@ -120,5 +145,146 @@ describe('projects store slice (FR-26)', () => {
 
     useStore.getState().setProjectsOpen(false);
     expect(useStore.getState().projectsOpen).toBe(false);
+  });
+});
+
+// switchProject is the scope change AS THE USER MAKES IT (FR-39): it lands
+// inside the project it selects, rather than only re-filtering the board. These
+// cover the three landings — a session, the new-session modal, the dashboard —
+// plus the rollback that cancelling that modal performs.
+describe('switchProject (FR-39)', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function seeded() {
+    mockStorage();
+    const useStore = await freshStore();
+    useStore.getState().setProjects([proj('p1'), proj('p2'), proj('empty'), proj('empty2')]);
+    useStore.getState().setSessions([sess('loose'), sess('a1', 'p1'), sess('a2', 'p1'), sess('b1', 'p2')]);
+    return useStore;
+  }
+
+  it('selects the project\'s FIRST session', async () => {
+    const useStore = await seeded();
+
+    useStore.getState().switchProject('p1');
+    expect(useStore.getState().activeProjectId).toBe('p1');
+    expect(useStore.getState().activeSessionId).toBe('a1');
+    expect(useStore.getState().newSessionOpen).toBe(false);
+    expect(useStore.getState().projectSwitchRollback).toBeNull();
+
+    // ...and re-picks the first one of the NEXT project, not the last-used one
+    useStore.getState().switchProject('p2');
+    expect(useStore.getState().activeSessionId).toBe('b1');
+  });
+
+  it('leaves the OVERVIEW dashboard for the session it selected', async () => {
+    const useStore = await seeded();
+    useStore.getState().setMainTab('overview');
+
+    useStore.getState().switchProject('p1');
+    expect(useStore.getState().mainTab).toBe('session');
+  });
+
+  it('does not disturb a non-overview tab', async () => {
+    const useStore = await seeded();
+    useStore.getState().setMainTab('diff');
+
+    useStore.getState().switchProject('p1');
+    expect(useStore.getState().mainTab).toBe('diff');
+  });
+
+  it('opens the new-session modal for a project with no sessions, and arms the rollback', async () => {
+    const useStore = await seeded();
+    useStore.getState().switchProject('p1'); // start somewhere real
+
+    useStore.getState().switchProject('empty');
+    expect(useStore.getState().activeProjectId).toBe('empty');
+    expect(useStore.getState().newSessionOpen).toBe(true);
+    expect(useStore.getState().projectSwitchRollback).toEqual({ to: 'p1' });
+    // the previous session stays active — nothing in the empty project to replace it
+    expect(useStore.getState().activeSessionId).toBe('a1');
+  });
+
+  it('rollbackProjectSwitch restores the previous scope — and persists it', async () => {
+    const storage = mockStorage();
+    const useStore = await freshStore();
+    useStore.getState().setProjects([proj('p1'), proj('empty')]);
+    useStore.getState().setSessions([sess('a1', 'p1')]);
+
+    useStore.getState().switchProject('p1');
+    useStore.getState().switchProject('empty');
+    useStore.getState().rollbackProjectSwitch();
+
+    expect(useStore.getState().activeProjectId).toBe('p1');
+    expect(storage.store[ACTIVE_PROJECT_STORAGE_KEY]).toBe('p1');
+    expect(useStore.getState().projectSwitchRollback).toBeNull();
+    // the rollback must NOT re-run the landing logic and re-open the modal
+    expect(useStore.getState().activeSessionId).toBe('a1');
+  });
+
+  it('rolls back to All projects too — a pending rollback is not the same as none', async () => {
+    const storage = mockStorage();
+    const useStore = await freshStore();
+    useStore.getState().setProjects([proj('empty')]);
+
+    expect(useStore.getState().activeProjectId).toBeNull(); // All
+    useStore.getState().switchProject('empty');
+    expect(useStore.getState().projectSwitchRollback).toEqual({ to: null });
+
+    useStore.getState().rollbackProjectSwitch();
+    expect(useStore.getState().activeProjectId).toBeNull();
+    expect(storage.store[ACTIVE_PROJECT_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it('keeps the OLDEST target when one empty project leads to another', async () => {
+    const useStore = await seeded();
+    useStore.getState().switchProject('p1');
+
+    useStore.getState().switchProject('empty');
+    useStore.getState().switchProject('empty2');
+    expect(useStore.getState().projectSwitchRollback).toEqual({ to: 'p1' });
+
+    useStore.getState().rollbackProjectSwitch();
+    expect(useStore.getState().activeProjectId).toBe('p1');
+  });
+
+  it('rollbackProjectSwitch is a no-op with nothing pending — the modal\'s other entry points', async () => {
+    const useStore = await seeded();
+    useStore.getState().switchProject('p1');
+
+    useStore.getState().rollbackProjectSwitch(); // e.g. cancelling an `n`-opened modal
+    expect(useStore.getState().activeProjectId).toBe('p1');
+  });
+
+  it('clearProjectSwitchRollback stands the rollback down — a session was created', async () => {
+    const useStore = await seeded();
+    useStore.getState().switchProject('empty');
+    expect(useStore.getState().projectSwitchRollback).not.toBeNull();
+
+    useStore.getState().clearProjectSwitchRollback();
+    useStore.getState().rollbackProjectSwitch();
+    expect(useStore.getState().activeProjectId).toBe('empty'); // the switch stands
+  });
+
+  it('switching to All projects picks no session and clears any pending rollback', async () => {
+    const useStore = await seeded();
+    useStore.getState().switchProject('p1');
+
+    useStore.getState().switchProject(null);
+    expect(useStore.getState().activeProjectId).toBeNull();
+    expect(useStore.getState().activeSessionId).toBe('a1'); // untouched
+    expect(useStore.getState().newSessionOpen).toBe(false);
+    expect(useStore.getState().projectSwitchRollback).toBeNull();
+  });
+
+  it('re-picking the project already active does nothing at all', async () => {
+    const useStore = await seeded();
+    useStore.getState().switchProject('p1');
+    useStore.getState().setActiveSessionId('a2'); // the user moved to a later session
+
+    useStore.getState().switchProject('p1');
+    expect(useStore.getState().activeSessionId).toBe('a2'); // not yanked back to a1
   });
 });

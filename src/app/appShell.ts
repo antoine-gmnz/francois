@@ -7,9 +7,94 @@
 
 import { displayWslCwd } from '../../contract/wsl-filesystem';
 import { agentIdFromTab, workflowIdFromTab } from '../features/agents/agent-tab';
-import { isRightPane } from '../lib/layoutStore';
+import { isRightPane, type LayoutRegime } from '../lib/layoutStore';
 import { abbreviate } from '../lib/path';
 import type { MainTab, Pane, RightPane } from '../lib/store';
+
+// ---------- shell columns ----------
+
+/**
+ * The width both side columns fold to. A hidden column is never GONE — it keeps
+ * this rail, so [1] and [3]–[6] stay one click away in every regime.
+ */
+const RAIL = '46px';
+/** The roster at one pane; it narrows once a second pane wants the width. */
+const ROSTER = '276px';
+const ROSTER_SPLIT = '238px';
+const RIGHT_COLUMN = '296px';
+
+export interface ShellColumns {
+  /** `grid-template-columns` for `.app-grid` — always three tracks. */
+  template: string;
+  /** Render `SessionRail` in the first track instead of the roster. */
+  leftRail: boolean;
+  /** Render `RightRail` in the last track instead of the panel column. */
+  rightRail: boolean;
+}
+
+/**
+ * The shell's three tracks, given the pane regime and the two column toggles.
+ *
+ * The rule is regime-independent on purpose: **folded means the 46px rail, not
+ * nothing** — on either side, at any pane count. The regime only decides how
+ * wide the roster is when it IS shown (split pays ~340px for its second pane by
+ * narrowing it). Before this, the grid dropped the right column outright while
+ * two panes folded it to the rail, and the left column disappeared everywhere
+ * except the grid — two sides behaving differently for no reason the user could
+ * see.
+ */
+export function shellColumns(regime: LayoutRegime, showLeftPane: boolean, showRightPane: boolean): ShellColumns {
+  const left = showLeftPane ? (regime === 'single' ? ROSTER : ROSTER_SPLIT) : RAIL;
+  const right = showRightPane ? RIGHT_COLUMN : RAIL;
+  return { template: `${left} 1fr ${right}`, leftRail: !showLeftPane, rightRail: !showRightPane };
+}
+
+// ---------- resizable split grid ----------
+
+/**
+ * Where one pane (or one divider) sits in the split grid.
+ *
+ * The grid interleaves GUTTER TRACKS with the pane tracks so a drag handle has
+ * a cell of its own: columns are `pane | gutter | pane` and, in the 2×2
+ * regimes, rows are too. That breaks CSS auto-placement — a pane would land in
+ * a gutter — so every cell above two panes is placed explicitly. `undefined`
+ * means "let the grid place it", which is what the one-row regimes want:
+ * pane, divider, pane in DOM order fills `1 / 2 / 3` correctly by itself.
+ */
+export interface GridArea {
+  gridColumn: string;
+  gridRow: string;
+}
+
+/** Track indices: 1 = first pane, 2 = the gutter/handle, 3 = second pane. */
+export function paneGridArea(index: number, panes: number): GridArea | undefined {
+  if (panes <= 2) return undefined;
+  // FR-2: at three panes the last one spans the whole bottom row rather than
+  // leaving a hole — the same rule upstream draws with `grid-column: span 2`,
+  // restated here because explicit placement overrides it.
+  if (panes === 3 && index === 2) return { gridColumn: '1 / -1', gridRow: '3' };
+  return { gridColumn: index % 2 === 0 ? '1' : '3', gridRow: index < 2 ? '1' : '3' };
+}
+
+/**
+ * The vertical handle splits the two COLUMNS; the horizontal one splits the two
+ * ROWS. At three panes the vertical handle covers the top row only — below it
+ * the single wide pane has no column seam to drag.
+ */
+export function dividerGridArea(axis: 'x' | 'y', panes: number): GridArea | undefined {
+  if (panes <= 2) return undefined;
+  if (axis === 'y') return { gridColumn: '1 / -1', gridRow: '2' };
+  return { gridColumn: '2', gridRow: panes === 3 ? '1' : '1 / -1' };
+}
+
+// ---------- split-by-4 (§5) ----------
+
+// All three helpers are declared by specs/split-by-4.md §5 under this module.
+// They are IMPLEMENTED in src/lib/layoutStore.ts, beside the `PaneTab` type and
+// the store slice that needs `clampToPaneTab` inside its own `set()` — importing
+// it the other way would make the two modules cyclic. Re-exported here so the
+// spec's import path resolves.
+export { clampToPaneTab, splitCandidate, splitCandidates } from '../lib/layoutStore';
 
 // ---------- tab strip ----------
 

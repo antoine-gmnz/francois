@@ -8,6 +8,7 @@
 // nothing).
 
 import { useEffect, useState } from 'react';
+import { focusedSessionId } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
 import {
   accountDisplayLabel,
@@ -33,7 +34,9 @@ function useWindowWidth(): number {
 export function AccountChip(): JSX.Element | null {
   const accounts = useStore((s) => s.accounts);
   const sessions = useStore((s) => s.sessions);
-  const activeSessionId = useStore((s) => s.activeSessionId);
+  // split-session FR-7: the chip names the FOCUSED session's account — equal to
+  // activeSessionId whenever the app is not split.
+  const activeSessionId = useStore((s) => focusedSessionId(s));
   const setAccountsOpen = useStore((s) => s.setAccountsOpen);
   const windowWidth = useWindowWidth();
 

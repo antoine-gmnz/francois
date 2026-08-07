@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
-import { Check, CircleAlert, Copy, ExternalLink, Pencil, Trash2, TriangleAlert } from 'lucide-react';
-import type { AppError, SessionWorktree } from '../../../contract/common';
+import { Check, CircleAlert, Columns2, Copy, ExternalLink, Pencil, Trash2, TriangleAlert } from 'lucide-react';
+import type { AppError, SessionId, SessionWorktree } from '../../../contract/common';
 import type { EditorId, EditorInfo } from '../../../contract/open-in-vscode';
 import { editorMenuLabel } from '../../../contract/open-in-vscode';
 import type { WorktreeStatusData } from '../../../contract/session-worktree';
@@ -40,6 +40,15 @@ export interface SessionContextMenuProps {
   worktree: SessionWorktree | null;
   containerRef: RefObject<HTMLDivElement>;
   onStartConfirm: () => void;
+  /**
+   * split-by-4 FR-18: puts this row's session in a new pane and focuses it.
+   * Absent ⇒ the item is hidden — which is how the FR's suppressions (a session
+   * already in a pane, a full grid, and anything that would disable `▯▯`) are
+   * expressed: the Sidebar simply does not pass a handler.
+   */
+  onOpenInNewPane?: (sessionId: SessionId) => void;
+  /** `Open in right pane` at one pane, `Open in new pane` above — FR-18. */
+  openInNewPaneLabel?: string;
   /** session-rename FR-12: closes the menu and opens the rename modal for this row. */
   onRename: () => void;
   onCopyPath: () => void;
@@ -68,6 +77,8 @@ export function SessionContextMenu({
   worktree,
   containerRef,
   onStartConfirm,
+  onOpenInNewPane,
+  openInNewPaneLabel = 'Open in new pane',
   onRename,
   onCopyPath,
   onCancel,
@@ -130,6 +141,15 @@ export function SessionContextMenu({
               <span className="context-menu__label">{editorMenuLabel(editor)}</span>
             </button>
           ))}
+          {/* split-by-4 FR-18: above Rename, per the design brief. */}
+          {onOpenInNewPane && (
+            <button type="button" className="context-menu__item" onClick={() => onOpenInNewPane(menu.sessionId)}>
+              <span className="context-menu__glyph">
+                <Columns2 {...ICON} />
+              </span>
+              <span className="context-menu__label">{openInNewPaneLabel}</span>
+            </button>
+          )}
           <button type="button" className="context-menu__item" onClick={onRename}>
             <span className="context-menu__glyph">
               <Pencil {...ICON} />

@@ -289,12 +289,35 @@ export function filterSessionsByProject(
 
 // ---------- shared frontend store fields owned by this feature ----------
 
+/**
+ * FR-39: the scope to return to if the new-session modal that a switch into an
+ * EMPTY project opened is cancelled. `null` in `to` means "All projects" — which
+ * is why this is a wrapper object and not a bare `ProjectId | null` field: the
+ * absence of a pending rollback has to be distinguishable from a rollback to All.
+ */
+export interface ProjectSwitchRollback {
+  to: ProjectId | null;
+}
+
 export interface ProjectsState {
   projects: ProjectMeta[];
   setProjects: (p: ProjectMeta[]) => void;
   /** null = "All projects" (FR-26); persisted to localStorage 'francois.activeProjectId'. */
   activeProjectId: ProjectId | null;
   setActiveProjectId: (id: ProjectId | null) => void;
+  /**
+   * FR-39: the USER-facing scope change — what the switcher calls. Sets
+   * `activeProjectId` and then lands the user somewhere inside that scope: the
+   * project's first session, or the new-session modal when it has none.
+   * `setActiveProjectId` stays the plain field write (rollback, restore, demo).
+   */
+  switchProject: (id: ProjectId | null) => void;
+  /** FR-39: non-null only while the auto-opened new-session modal is up. */
+  projectSwitchRollback: ProjectSwitchRollback | null;
+  /** FR-39: cancelling that modal — restores the previous scope. No-op when nothing is pending. */
+  rollbackProjectSwitch: () => void;
+  /** FR-39: the session WAS created — the switch stands, so drop the rollback. */
+  clearProjectSwitchRollback: () => void;
   /** the Projects modal (FR-31), alongside the existing permissionsOpen. */
   projectsOpen: boolean;
   setProjectsOpen: (o: boolean) => void;

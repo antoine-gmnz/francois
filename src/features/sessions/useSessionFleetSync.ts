@@ -4,7 +4,9 @@ import { countRunning, type SessionDerived } from '../../../contract/fleet-board
 import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
 import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { clearDraft } from '../conversation/composer-draft';
 import { prunePaletteSession } from '../palette/paletteData';
+import { useShellStore } from '../shell/shellStore';
 import { handleSessionEvent, type SessionEventContext } from './sessionEventHandler';
 
 export interface SessionFleetSync {
@@ -15,6 +17,22 @@ export interface SessionFleetSync {
   reassignAfterRemoval: (id: string) => void;
   /** Drops `id`'s per-session derived figures and internal bookkeeping (FR-7). */
   dropDerived: (id: string) => void;
+}
+
+/**
+ * §7 / split-session FR-20: which session takes over the left pane once `id` is
+ * removed — the nearest remaining by list position, or null when nothing is
+ * left. Pure and exported for tests; the caller feeds the answer to
+ * `reassignActiveSessionId`, NEVER to `setActiveSessionId`, whose FR-8 swap
+ * branch would fire whenever the answer happens to be the RIGHT pane's session.
+ */
+export function nextActiveAfterRemoval(list: readonly SessionMeta[], id: string): string | null {
+  const idx = list.findIndex((session) => session.id === id);
+  const remaining = list.filter((session) => session.id !== id);
+  if (remaining.length === 0) return null;
+  // Clamped on both ends: an id not in the list (idx === -1) falls back to the
+  // first row rather than indexing off the front.
+  return remaining[Math.max(0, Math.min(idx, remaining.length - 1))].id;
 }
 
 /**
@@ -33,6 +51,11 @@ export function useSessionFleetSync(): SessionFleetSync {
   const patchUsage = useStore((s) => s.patchUsage);
   const removeSessionFromCache = useStore((s) => s.removeSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
+  // split-by-4 FR-27: the removal fallback takes the RAW reassignment —
+  // `setActiveSessionId` would read "the nearest remaining session happens to be
+  // another pane's" as a pane SWAP (FR-19) and smuggle the removed id back into
+  // the grid.
+  const reassignActiveSessionId = useStore((s) => s.reassignActiveSessionId);
   const mergeDerived = useStore((s) => s.mergeDerived);
   const dropDerivedFromCache = useStore((s) => s.dropDerived);
   const recordActivity = useStore((s) => s.recordActivity);
@@ -68,6 +91,13 @@ export function useSessionFleetSync(): SessionFleetSync {
     seededRef.current.delete(id);
     startedRef.current.delete(id);
     dropDerivedFromCache(id);
+    // split-session: the rail badges' per-session counts go with it.
+    useStore.getState().dropPanelCounts(id);
+    // multiple-shells FR-9: purge the session's shell roster/active-id/unread
+    // bookkeeping too, mirroring the core's own dispose_session_shells.
+    useShellStore.getState().removeSession(id);
+    // …and the unsent composer draft, which outlives the view by design.
+    clearDraft(id);
   };
 
   // Best-effort one-shot diff seed, deduped by id so it fires exactly once per
@@ -81,17 +111,12 @@ export function useSessionFleetSync(): SessionFleetSync {
     });
   };
 
+  // split-by-4 FR-27: this only ever runs for PANE 0's session. The pane keeps
+  // its slot with the reassigned session (the grid is not torn down over one
+  // removal); `reassignActiveSessionId` drops the duplicate pane if the fallback
+  // happened to land on a session another pane was already showing.
   const reassignAfterRemoval = (id: string) => {
-    const st = useStore.getState();
-    const list = st.sessions;
-    const idx = list.findIndex((session) => session.id === id);
-    const remaining = list.filter((session) => session.id !== id);
-    if (remaining.length === 0) {
-      setActiveSessionId(null);
-    } else {
-      const next = remaining[Math.min(idx, remaining.length - 1)];
-      setActiveSessionId(next.id);
-    }
+    reassignActiveSessionId(nextActiveAfterRemoval(useStore.getState().sessions, id));
   };
 
   const handleRemovedEvent = (id: string) => {
@@ -106,6 +131,15 @@ export function useSessionFleetSync(): SessionFleetSync {
   const applyHydration = (data: SessionMeta[]) => {
     setHydrationError(null);
     setSessions(data);
+    // split-by-4 FR-24: a persisted pane whose session no longer exists is
+    // dropped and the record rewritten clean; if that empties the list the app
+    // opens single-pane. An EMPTY pane is not stale — it is a layout the user
+    // chose, and it survives the reload waiting for its session.
+    for (const pane of useStore.getState().extraPanes) {
+      if (pane.sessionId !== null && !data.some((s) => s.id === pane.sessionId)) {
+        useStore.getState().removeSession(pane.sessionId);
+      }
+    }
     if (useStore.getState().activeSessionId === null && data[0]) setActiveSessionId(data[0].id);
     for (const session of data) {
       seedDiff(session.id);

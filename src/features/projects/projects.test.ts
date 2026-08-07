@@ -28,6 +28,7 @@ import {
   dropRule,
   effortOptions,
   filteredEmptyLabel,
+  firstSessionInProject,
   loadActiveProjectId,
   moveRule,
   newSessionProjectOptions,
@@ -567,6 +568,26 @@ describe('visibleSessions (FR-27)', () => {
 
   it('a scope with no sessions yields empty rather than falling back to all', () => {
     expect(visibleSessions(list, 'p-none', null)).toEqual([]);
+  });
+});
+
+// ---------- FR-39: where a scope switch lands ----------
+
+describe('firstSessionInProject (FR-39)', () => {
+  const list = [sess('loose'), sess('alpha', 'p1'), sess('beta', 'p1'), sess('gamma', 'p2')];
+
+  it('is the first session the board would list for that project', () => {
+    expect(firstSessionInProject(list, 'p1')?.id).toBe('alpha');
+    expect(firstSessionInProject(list, 'p2')?.id).toBe('gamma');
+  });
+
+  it('is null for a project holding no sessions — what opens the new-session modal', () => {
+    expect(firstSessionInProject(list, 'p-empty')).toBeNull();
+    expect(firstSessionInProject([], 'p1')).toBeNull();
+  });
+
+  it('never claims an unlinked session, even when it is first in the list', () => {
+    expect(firstSessionInProject([sess('loose')], 'p1')).toBeNull();
   });
 });
 

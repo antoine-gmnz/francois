@@ -38,8 +38,8 @@ export type TranscriptAction =
   | { t: 'seed'; blocks: ConversationBlock[] }
   | { t: 'optimisticUser'; blockId: string; text: string }
   | { t: 'msgUser'; blockId: string; text: string }
-  | { t: 'delta'; blockId: string; text: string }
-  | { t: 'assistantDone'; blockId: string }
+  | { t: 'delta'; blockId: string; text: string; offset: number }
+  | { t: 'assistantDone'; blockId: string; text: string }
   | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string }
   | { t: 'toolDone'; blockId: string; meta: string }
   | { t: 'commandStarted'; blockId: string; command: string } // interactive-commands FR-20
@@ -104,6 +104,26 @@ const EMPTY_ASK: PermissionAsk = {
   patternLabel: '',
 };
 
+/**
+ * Merge one streamed chunk into the text a block already holds, using the
+ * chunk's `offset` (how much of the block preceded it — see `assistant.delta`
+ * in contract/common.ts).
+ *
+ * A plain `have + chunk` is only right when the two are exactly adjacent. The
+ * cases that broke it:
+ *  - `offset < have.length` — the block was seeded by hydration and this chunk
+ *    is (partly) inside that seed. Appending it verbatim duplicated text; only
+ *    the part past the seed is new, and a fully-covered chunk changes nothing.
+ *  - `offset > have.length` — a chunk went missing. Nothing can reconstruct it
+ *    here, so keep the new text (losing more helps no one); `assistant.done`
+ *    carries the complete text and repairs the gap when the block closes.
+ */
+export function mergeDelta(have: string, chunk: string, offset: number): string {
+  if (offset >= have.length) return have + chunk;
+  const fresh = chunk.slice(have.length - offset);
+  return fresh === '' ? have : have + fresh;
+}
+
 export function transcriptReducer(state: TranscriptState, a: TranscriptAction): TranscriptState {
   const idx = (id: string) => state.blocks.findIndex((b) => b.blockId === id);
   const replace = (i: number, b: ConversationBlock) => {
@@ -134,7 +154,8 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       if (i !== -1) {
         const b = state.blocks[i];
         if (b.kind !== 'assistant') return state;
-        return replace(i, { ...b, text: b.text + a.text });
+        const text = mergeDelta(b.text, a.text, a.offset);
+        return text === b.text ? state : replace(i, { ...b, text });
       }
       const { glyphColor, bodyColor } = assistantColors(true);
       return {
@@ -146,11 +167,22 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
     }
     case 'assistantDone': {
       const i = idx(a.blockId);
-      if (i === -1) return state;
+      const { glyphColor, bodyColor } = assistantColors(false);
+      // The event carries the block's complete text, so a `done` for a block we
+      // never saw open (every delta lost, or a block that finished before this
+      // view subscribed) still renders in full rather than being dropped.
+      if (i === -1) {
+        return {
+          blocks: [
+            ...state.blocks,
+            { kind: 'assistant', blockId: a.blockId, isStreaming: false, glyph: '●', glyphColor, bodyColor, text: a.text },
+          ],
+        };
+      }
       const b = state.blocks[i];
       if (b.kind !== 'assistant') return state;
-      const { glyphColor, bodyColor } = assistantColors(false);
-      return replace(i, { ...b, isStreaming: false, glyphColor, bodyColor });
+      // Authoritative repair: whatever the stream lost, the final text wins.
+      return replace(i, { ...b, isStreaming: false, glyphColor, bodyColor, text: a.text });
     }
     case 'toolStart': {
       if (idx(a.blockId) !== -1) return state;
@@ -363,8 +395,8 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
     setters.setResumeFailed(false);
     setters.setPinned(true);
   },
-  'assistant.delta': (dispatch, _setters, e) => dispatch({ t: 'delta', blockId: e.blockId, text: e.text }),
-  'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId }),
+  'assistant.delta': (dispatch, _setters, e) => dispatch({ t: 'delta', blockId: e.blockId, text: e.text, offset: e.offset }),
+  'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId, text: e.text }),
   'tool.start': (dispatch, _setters, e) =>
     dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model }),
   'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta }),

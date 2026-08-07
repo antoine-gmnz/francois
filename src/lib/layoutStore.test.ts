@@ -3,8 +3,26 @@
 // (FR-1/2/3), and the focus invariants (FR-5 collapsing the focused pane hands
 // focus to main; FR-6 focusing a collapsed right pane expands it).
 
+// The pane list (split-by-4) has its own file: src/lib/split-by-4.test.ts.
+// The split DIVIDER's ratio slice is covered at the bottom of this file — it is
+// a layout preference of its own, not part of the pane list.
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { COLLAPSED_PANES_STORAGE_KEY, parseCollapsedPanes, SESSION_META_KEY } from './layoutStore';
+import {
+  clampSplitRatio,
+  COLLAPSED_PANES_STORAGE_KEY,
+  DEFAULT_SPLIT_RATIO,
+  MAX_SPLIT_RATIO,
+  MIN_SPLIT_PANE_PX,
+  MIN_SPLIT_PANE_ROW_PX,
+  MIN_SPLIT_RATIO,
+  parseCollapsedPanes,
+  parseSplitRatio,
+  SESSION_META_KEY,
+  SPLIT_RATIO_STORAGE_KEY,
+  SPLIT_ROW_RATIO_STORAGE_KEY,
+  splitRatioFromDrag,
+} from './layoutStore';
 
 function mockStorage(seed: Record<string, string> = {}): { store: Record<string, string> } {
   const state = { store: { ...seed } };
@@ -198,5 +216,153 @@ describe('collapsedPanes store slice', () => {
     // toggles still work for the session even though persistence is impossible
     expect(() => useStore.getState().toggleCollapsedPane('agents')).not.toThrow();
     expect(useStore.getState().collapsedPanes.agents).toBe(true);
+  });
+});
+
+// ── split divider ───────────────────────────────────────────────────────────
+
+describe('clampSplitRatio', () => {
+  it('keeps a ratio inside the bounds, rounded to 0.1%', () => {
+    expect(clampSplitRatio(0.5)).toBe(0.5);
+    expect(clampSplitRatio(0.33333)).toBe(0.333);
+  });
+
+  it('clamps past either bound', () => {
+    expect(clampSplitRatio(0)).toBe(MIN_SPLIT_RATIO);
+    expect(clampSplitRatio(1)).toBe(MAX_SPLIT_RATIO);
+    expect(clampSplitRatio(-4)).toBe(MIN_SPLIT_RATIO);
+  });
+
+  it('falls back to the default for anything that is not a finite number', () => {
+    expect(clampSplitRatio(NaN)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(clampSplitRatio(Infinity)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(clampSplitRatio('0.7')).toBe(DEFAULT_SPLIT_RATIO);
+    expect(clampSplitRatio(null)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(clampSplitRatio(undefined)).toBe(DEFAULT_SPLIT_RATIO);
+  });
+});
+
+describe('parseSplitRatio', () => {
+  it('defaults for an absent or malformed persisted value', () => {
+    expect(parseSplitRatio(null)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(parseSplitRatio('wide')).toBe(DEFAULT_SPLIT_RATIO);
+    expect(parseSplitRatio('')).toBe(DEFAULT_SPLIT_RATIO);
+  });
+
+  it('reads back a persisted ratio, clamped', () => {
+    expect(parseSplitRatio('0.62')).toBe(0.62);
+    expect(parseSplitRatio('0.95')).toBe(MAX_SPLIT_RATIO);
+  });
+});
+
+describe('splitRatioFromDrag', () => {
+  it('maps the pointer to the left pane’s share of the grid', () => {
+    expect(splitRatioFromDrag(1000, 300, 1000)).toBe(0.7);
+    expect(splitRatioFromDrag(700, 300, 1000)).toBe(0.4);
+  });
+
+  it('clamps to the ratio bounds on a grid wide enough for them to bite', () => {
+    // 2000px wide → the px floor is 13%, so the 20%/80% ratio bounds win.
+    expect(splitRatioFromDrag(0, 0, 2000)).toBe(MIN_SPLIT_RATIO);
+    expect(splitRatioFromDrag(2000, 0, 2000)).toBe(MAX_SPLIT_RATIO);
+  });
+
+  it('never leaves either pane narrower than MIN_SPLIT_PANE_PX', () => {
+    // 1000px wide → the px floor (26%) is tighter than the 20% ratio bound.
+    const width = 1000;
+    const floor = MIN_SPLIT_PANE_PX / width;
+    expect(splitRatioFromDrag(0, 0, width)).toBeCloseTo(floor, 3);
+    expect(splitRatioFromDrag(width, 0, width)).toBeCloseTo(1 - floor, 3);
+  });
+
+  it('degrades to an even split when the grid is too narrow for two minimums', () => {
+    expect(splitRatioFromDrag(0, 0, 400)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(splitRatioFromDrag(400, 0, 400)).toBe(DEFAULT_SPLIT_RATIO);
+  });
+
+  it('defaults on an unmeasurable grid rather than dividing by zero', () => {
+    expect(splitRatioFromDrag(500, 0, 0)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(splitRatioFromDrag(500, 0, NaN)).toBe(DEFAULT_SPLIT_RATIO);
+  });
+
+  it('takes the row minimum on the y axis — the same math, a shorter floor', () => {
+    // 600px tall: the row floor is 30%, where the column floor would be 43%.
+    const rowFloor = MIN_SPLIT_PANE_ROW_PX / 600;
+    expect(splitRatioFromDrag(0, 0, 600, MIN_SPLIT_PANE_ROW_PX)).toBeCloseTo(rowFloor, 3);
+    expect(splitRatioFromDrag(0, 0, 600)).toBeCloseTo(MIN_SPLIT_PANE_PX / 600, 3);
+  });
+});
+
+describe('splitRatio store slice', () => {
+  let storage: { store: Record<string, string> };
+
+  beforeEach(() => {
+    storage = mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('defaults to an even split with an empty storage', async () => {
+    const useStore = await freshStore();
+    expect(useStore.getState().splitRatio).toBe(DEFAULT_SPLIT_RATIO);
+  });
+
+  it('hydrates from its own key and persists on change', async () => {
+    storage.store[SPLIT_RATIO_STORAGE_KEY] = '0.64';
+    const useStore = await freshStore();
+    expect(useStore.getState().splitRatio).toBe(0.64);
+    useStore.getState().setSplitRatio(0.38);
+    expect(useStore.getState().splitRatio).toBe(0.38);
+    expect(storage.store[SPLIT_RATIO_STORAGE_KEY]).toBe('0.38');
+  });
+
+  it('clamps whatever it is handed', async () => {
+    const useStore = await freshStore();
+    useStore.getState().setSplitRatio(0.99);
+    expect(useStore.getState().splitRatio).toBe(MAX_SPLIT_RATIO);
+  });
+
+  it('survives leaving and re-entering split', async () => {
+    const useStore = await freshStore();
+    useStore.setState({ activeSessionId: 's1' });
+    useStore.getState().setSplitRatio(0.62);
+    useStore.getState().openInNewPane('s2');
+    useStore.getState().unsplit();
+    expect(useStore.getState().splitRatio).toBe(0.62);
+  });
+
+  it('keeps the row ratio on its own key, independent of the column ratio', async () => {
+    storage.store[SPLIT_RATIO_STORAGE_KEY] = '0.7';
+    storage.store[SPLIT_ROW_RATIO_STORAGE_KEY] = '0.35';
+    const useStore = await freshStore();
+    expect(useStore.getState().splitRatio).toBe(0.7);
+    expect(useStore.getState().splitRowRatio).toBe(0.35);
+    useStore.getState().setSplitRowRatio(0.55);
+    expect(useStore.getState().splitRowRatio).toBe(0.55);
+    expect(useStore.getState().splitRatio).toBe(0.7); // untouched
+    expect(storage.store[SPLIT_ROW_RATIO_STORAGE_KEY]).toBe('0.55');
+    expect(storage.store[SPLIT_RATIO_STORAGE_KEY]).toBe('0.7');
+  });
+
+  it('clamps the row ratio too', async () => {
+    const useStore = await freshStore();
+    useStore.getState().setSplitRowRatio(-1);
+    expect(useStore.getState().splitRowRatio).toBe(MIN_SPLIT_RATIO);
+  });
+
+  it('degrades to the default when localStorage throws', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('denied');
+      },
+      setItem: () => {
+        throw new Error('denied');
+      },
+    });
+    const useStore = await freshStore();
+    expect(useStore.getState().splitRatio).toBe(DEFAULT_SPLIT_RATIO);
+    expect(() => useStore.getState().setSplitRatio(0.7)).not.toThrow();
+    expect(useStore.getState().splitRatio).toBe(0.7);
   });
 });

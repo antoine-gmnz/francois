@@ -445,3 +445,35 @@
   color: var(--error-bright);
   border-color: var(--error-dim);
 }
+
+/* ── split-by-4 FR-22 ────────────────────────────────────────────────────────
+   Which pane, if any, is showing this session. Fixed per PANE (not per focus)
+   so the set reads as a stable map of the main area; the FOCUS signal is the
+   accent left rail below, and the pane's own header chip. Pane 0 stays neutral
+   — it is the one the rest of the app already means by "active". */
+.sidebar-card__pane {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-5);
+  flex-shrink: 0;
+  color: var(--text-hint);
+  background: var(--bg-hover-2);
+}
+.sidebar-card__pane--accent {
+  color: var(--accent);
+  background: var(--accent-soft-bg);
+}
+/* Only the FOCUSED side's row gets the rail — one accent per view. It reuses the
+   card's existing 2px left border (transparent by default, coloured by
+   --attention), so an attention rail on the other paned row still shows. */
+.sidebar-card--pane-focus {
+  border-left-color: var(--accent);
+}
+/* §8: the roster narrows 276 → 238px in split, so the cards tighten by a notch
+   (the mock's `10px 11px 10px 14px`, minus the 2px left border this card uses
+   for its rail where the mock uses an absolutely positioned span). */
+.sidebar--dense .sidebar-card {
+  padding: var(--space-10) var(--space-11) var(--space-10) var(--space-12);
+  gap: var(--space-6);
+}

@@ -7,7 +7,13 @@
    The modal shell mirrors ProjectsModal's chrome (design brief: "identical to
    the Projects modal; reuse it verbatim") rather than src/ui/Modal, because the
    panel needs the same responsive `min(px, vw)` width + `min(px, vh)` max-height
-   Modal has no slot for. The two differ only in the size caps the brief pins. */
+   Modal has no slot for. The two differ only in the size caps the brief pins.
+
+   The row/tile/quota vocabulary is `Francois Redesign.dc.html` turn 4a
+   (MULTI-ACCOUNT) — account cards on a padded list, a tinted initial tile per
+   account, and each account's quota bars hung UNDER its name with the reset
+   countdown beside them. Values are mapped onto this app's tokens rather than
+   copied as hex, so the light theme follows for free. */
 
 /* ── shell ──────────────────────────────────────────────────────────────── */
 .acc-backdrop {
@@ -21,111 +27,191 @@
 }
 .acc-panel {
   /* §Responsive: capped at min(720px, 92vw) × min(560px, 80vh); the row list
-     scrolls internally while header and footer stay pinned. */
+     scrolls internally while header and footer stay pinned.
+
+     The panel sits on --bg-panel and the cursor row on --bg-raised, the way
+     redesign 4a layers its overlays (panel #171b22, selected row #1c212a). The
+     two were previously inverted — the panel was the LIGHTER surface — which
+     left the selection with nowhere to go and no figure/ground to work with. */
   width: min(720px, 92vw);
   max-height: min(560px, 80vh);
   display: flex;
   flex-direction: column;
-  background: var(--bg-raised);
+  background: var(--bg-panel);
   border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 .acc-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-12);
-  padding: var(--space-12) var(--space-16);
+  gap: var(--space-9);
+  padding: var(--space-12) var(--space-14);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
+/* The mock's panel-title role: 11.5px/600 at .09em, uppercased in CSS so the
+   markup carries a readable word (and screen readers do not spell it out). */
 .acc-title {
-  font-size: var(--font-size-11);
+  font-size: var(--font-size-11-5);
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-hint);
+}
+.acc-count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
   color: var(--text-dim);
+  background: var(--border);
+  border-radius: var(--radius-2xl);
+  padding: var(--space-1) var(--space-7);
+}
+.acc-header-spacer {
+  flex: 1;
 }
 .acc-add {
   display: flex;
   align-items: center;
-  gap: var(--space-6);
-  height: 24px;
-  padding: 0 var(--space-10);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-base);
-  color: var(--accent);
-  font-family: inherit;
-  font-size: var(--font-size-10);
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  gap: var(--space-7);
+  height: 28px;
+  padding: 0 var(--space-11);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg);
+  color: var(--text-strong);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12-5);
+  font-weight: 500;
   cursor: pointer;
 }
 .acc-add:hover:not(:disabled) {
-  background: var(--accent-soft-bg);
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
 }
 .acc-add:disabled {
   color: var(--text-disabled);
   border-color: var(--border-2);
   cursor: default;
 }
+/* Acid on the `+` alone — the one live mark on a quiet button (design system
+   v2 §Colour: one accent per view, and this modal's is the add affordance). */
+.acc-add-plus {
+  font-size: var(--font-size-14);
+  line-height: 1;
+  color: var(--accent);
+}
+.acc-add:disabled .acc-add-plus {
+  color: var(--text-disabled);
+}
 .acc-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: var(--space-6) 0;
+  /* 8px gutter, 4px between cards — the mock's list metrics. */
+  padding: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 .acc-footer {
   flex-shrink: 0;
-  padding: var(--space-9) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-11) var(--space-14);
   border-top: 1px solid var(--border);
   font-family: var(--font-ui);
+}
+.acc-footer-note {
   font-size: var(--font-size-11);
+  line-height: 1.5;
   color: var(--text-faint);
 }
+.acc-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.acc-hint {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+}
+.acc-hint-key {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
 .acc-error {
-  margin: var(--space-6) var(--space-16);
+  margin: var(--space-8) var(--space-8) 0;
   font-size: var(--font-size-10-5);
   color: var(--error);
 }
 
 /* ── one account row ────────────────────────────────────────────────────── */
+/* A card, not a table line (redesign 4a): identity on top, quota underneath.
+   The card is what lets the quota bars be wide enough to read — squeezed into
+   the identity line they had ~64px each and read as decoration. */
 .acc-row {
   display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  padding: var(--space-10) var(--space-16);
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-10) var(--space-11);
+  border-radius: var(--radius-card);
   cursor: pointer;
 }
-.acc-row--cursor {
-  background: var(--bg-hover);
-  box-shadow: inset 2px 0 0 var(--accent);
+/* A row asking to be re-logged-in is findable at a glance in a long list. It is
+   deliberately NOT dimmed the way 4a dims its rate-limited account: that row is
+   waiting out a clock, this one is waiting on the user. Declared before the
+   hover/cursor rules so both still win on the row you are pointing at. */
+.acc-row--alert {
+  background: color-mix(in srgb, var(--error) 7%, transparent);
 }
-/* success flash on the row a login just minted (design brief: login → success) */
+.acc-row:hover {
+  background: var(--bg-hover);
+}
+/* The mock's selection: a raised surface ringed on all four sides, rather than
+   a left rail. A rail reads as "this row is running"; nothing here is. */
+.acc-row--cursor {
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--border-focus);
+}
+/* flash on the row a login just minted (design brief: login → success) */
 .acc-row--fresh {
-  box-shadow: inset 2px 0 0 var(--success);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.acc-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
 }
 
-/* colored initial tile — the one structural cue borrowed from the redesign
-   exploration (turn 4a); everything around it stays this feature's own chrome. */
+/* Tinted initial tile (redesign 4a): a soft fill, a 1px edge and a light glyph,
+   all derived from the ONE hue the row hands in as --acc-hue. The previous
+   solid-fill tile was the loudest thing in the modal; the mock's is a quiet
+   identity cue you read, not a swatch that shouts. Mixing against --bg-app
+   rather than naming pairs keeps it correct in the light theme too. */
 .acc-avatar {
   flex-shrink: 0;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--font-size-11);
+  font-size: var(--font-size-10-5);
   font-weight: 600;
-  color: var(--bg-app);
+  background: color-mix(in srgb, var(--acc-hue) 16%, var(--bg-app));
+  border: 1px solid color-mix(in srgb, var(--acc-hue) 38%, var(--bg-app));
+  color: color-mix(in srgb, var(--acc-hue) 78%, var(--text-bright));
 }
 
 .acc-identity {
   flex: 1 1 auto;
-  /* label + email never truncate below ~10 chars (§Responsive) */
+  /* label + meta never truncate below ~10 chars (§Responsive) */
   min-width: 92px;
   display: flex;
   flex-direction: column;
@@ -138,11 +224,12 @@
   min-width: 0;
 }
 .acc-label {
-  font-size: var(--font-size-12);
+  font-size: var(--font-size-13);
   color: var(--text-bright);
   min-width: 0;
 }
-.acc-email {
+/* `email · N sessions` — the mock's dim second line. */
+.acc-meta {
   font-size: var(--font-size-11);
   color: var(--text-muted);
 }
@@ -151,61 +238,38 @@
   width: 100%;
   background: var(--bg-app);
   border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-base);
+  padding: var(--space-2) var(--space-6);
   font-family: inherit;
-  font-size: var(--font-size-12);
+  font-size: var(--font-size-13);
   color: var(--text-bright);
   outline: none;
 }
 
 .acc-pill {
   flex-shrink: 0;
-  font-size: var(--font-size-10);
+  font-size: var(--font-size-9-5);
   font-weight: 600;
   letter-spacing: 0.08em;
   padding: var(--space-1) var(--space-6);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--accent);
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--accent-soft-edge);
   background: var(--accent-soft-bg);
   color: var(--accent);
 }
 /* NEEDS LOGIN is conveyed by TEXT as well as colour (§Accessibility). */
 .acc-pill--alert {
   border-color: var(--error-dim);
-  background: var(--bg-elevated);
-  color: var(--error);
-}
-
-/* meters — the first thing dropped when the row runs out of room (§Responsive) */
-.acc-meters {
-  flex: 0 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  overflow: hidden;
-}
-.acc-meters-placeholder {
-  font-size: var(--font-size-11);
-  color: var(--text-faint);
-}
-.acc-meters-error {
-  font-size: var(--font-size-10-5);
-  color: var(--error);
-}
-@media (max-width: 620px) {
-  .acc-meters {
-    display: none;
-  }
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error-bright);
 }
 
 .acc-actions {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-10);
-  /* revealed on row hover/focus; the NEEDS LOGIN row keeps RE-LOGIN visible */
+  gap: var(--space-2);
+  /* revealed on row hover/focus; the NEEDS LOGIN row keeps them visible */
   opacity: 0;
   transition: opacity 80ms ease-out;
 }
@@ -215,17 +279,21 @@
   opacity: 1;
 }
 .acc-action {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: 0;
+  border-radius: var(--radius-lg);
   padding: 0;
-  font-family: inherit;
-  font-size: var(--font-size-10);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
+  color: var(--text-faint);
   cursor: pointer;
 }
 .acc-action:hover {
+  background: var(--bg-hover-2);
   color: var(--text-bright);
 }
 .acc-action--danger:hover {
@@ -233,57 +301,139 @@
 }
 .acc-action:focus-visible {
   outline: 1px solid var(--border-focus);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
-.acc-action-icon {
-  display: none;
+
+/* ── the quota line ─────────────────────────────────────────────────────── */
+/* Indented to sit under the identity, not the tile (22px tile + 10px gap). */
+.acc-quota {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  margin-left: 32px;
+  min-width: 0;
 }
-/* §Responsive: row actions collapse to icon-only below ~560px of panel width —
-   narrower than the meters' own 620px cutoff above, since meters are dropped
-   first as the row runs out of room. The `title` attribute on each button
-   (set above) is what carries the label once the text is gone. */
-@media (max-width: 560px) {
-  .acc-action-label {
+.acc-meter {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.acc-meter-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+}
+.acc-meter-track {
+  flex: 1 1 auto;
+  min-width: 24px;
+  height: var(--space-3);
+  border-radius: var(--radius-xs);
+  background: var(--border-2);
+  overflow: hidden;
+}
+.acc-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-xs);
+}
+/* The FILL carries the severity colour; the figure stays neutral — the same
+   rule the usage bar follows, so the two never double-encode. */
+.acc-meter-percent {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+}
+/* `resets in 4h 9m` — 4a pairs it with the bars rather than hiding it in a
+   tooltip, so the row answers "when do I get it back?" without a hover. */
+.acc-reset {
+  flex-shrink: 0;
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.acc-quota-stale {
+  flex-shrink: 0;
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+.acc-quota-placeholder {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.acc-quota-error {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+/* §Responsive: the quota line is what the row drops first — identity and the
+   actions always survive. */
+@media (max-width: 620px) {
+  .acc-quota {
     display: none;
-  }
-  .acc-action-icon {
-    display: inline;
-    font-size: var(--font-size-11);
   }
 }
 
 /* ── remove confirmation (design brief) ─────────────────────────────────── */
+/* Dressed as redesign 4a's inline alert banner — a red-tinted surface with a
+   red edge, sitting INSIDE the modal rather than stacking a second one. */
 .acc-confirm {
-  margin: var(--space-8) var(--space-16);
-  padding: var(--space-12);
-  background: var(--bg-elevated);
+  margin: var(--space-8) var(--space-8) 0;
+  padding: var(--space-12) var(--space-14);
+  background: color-mix(in srgb, var(--error) 9%, var(--bg-elevated));
   border: 1px solid var(--error-dim);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-card);
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
 }
 .acc-confirm-title {
-  font-size: var(--font-size-12);
+  font-size: var(--font-size-13);
+  font-weight: 600;
   color: var(--text-bright);
 }
 .acc-confirm-line {
   font-family: var(--font-ui);
-  font-size: var(--font-size-11);
-  color: var(--text-dim);
+  font-size: var(--font-size-12);
+  line-height: 1.5;
+  color: var(--text-2);
 }
 .acc-confirm-names {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-8);
+  gap: var(--space-6);
+}
+/* The sessions about to be repointed, as chips — a wrapped run of bare words
+   read as prose and hid how many there were. */
+.acc-confirm-name,
+.acc-confirm-more {
   font-size: var(--font-size-11);
-  color: var(--text-muted);
+  padding: var(--space-2) var(--space-7);
+  border-radius: var(--radius-base);
+  background: var(--bg-hover-2);
+  color: var(--text-hint);
+}
+.acc-confirm-more {
+  background: transparent;
+  color: var(--text-faint);
 }
 .acc-confirm-actions {
   display: flex;
   justify-content: flex-end;
-  gap: var(--space-12);
+  align-items: center;
+  gap: var(--space-8);
   padding-top: var(--space-4);
+}
+/* The destructive half takes the filled treatment the mock gives a primary
+   action, recoloured to the error family: this is the button that acts. */
+.acc-confirm-remove.btn--primary {
+  background: var(--error);
+}
+.acc-confirm-remove.btn--primary:hover {
+  background: var(--error-bright);
 }
 
 /* ── login view (FR-11..FR-16) ──────────────────────────────────────────── */
@@ -297,10 +447,10 @@
 }
 .acc-login-title {
   flex-shrink: 0;
-  font-size: var(--font-size-11);
+  font-size: var(--font-size-11-5);
   font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
+  letter-spacing: 0.09em;
+  color: var(--text-hint);
 }
 .acc-login-frame {
   flex: 1;
@@ -308,7 +458,7 @@
   position: relative;
   background: var(--bg-deep);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-card);
   overflow: hidden;
 }
 .acc-login-connecting {

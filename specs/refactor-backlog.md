@@ -147,12 +147,39 @@ Parked at the `/review` SHIP verdict (2026-08-04). Both are LOW, quality-only, n
   `session/` (where `test_engine_with` is reachable) so it's pinned by a test, or export a minimal
   test-only `Engine` builder the `editor` module can use.
 
+## deferred:multiple-shells
+
+Parked at the `/review` REVISE verdict (round 1, 2026-08-04). None are CRITICAL/HIGH or security.
+
+- [ ] LOW · src-tauri/src/shell/mod.rs:275-277 · quality · `at_cap` check-then-act with no lock held across spawn+insert lets two racing `shell_create` calls momentarily exceed the FR-2 6-shell cap; hold the registry lock across the check and the insert · deferred:multiple-shells
+- [ ] LOW · src-tauri/src/shell/mod.rs:492 · quality · doc comment claims a wsl-filesystem runtime-switch call site exists for `dispose_session_shells`, but only `session::session_remove` calls it; correct the comment or add the missing call site · deferred:multiple-shells
+- [ ] LOW · src-tauri/src/shell/mod.rs:146 · quality · `PtyHandles` fields marked `pub(crate)` though only accessed from `shell::commands` and `shell` itself; drop `pub(crate)`, rely on child-module access like `Shared` does · deferred:multiple-shells
+- [ ] LOW · src/features/shell/shellStore.ts:15-30 · quality · `shells`/`activeShellId`/`unread` records have no cleanup on session removal, leaking entries for the app's lifetime (pre-existing leak in the state this replaced); clear the three records for a `sessionId` on session removal · deferred:multiple-shells
+
+### SHIP-round leftovers (review round 3, 2026-08-04)
+
+Parked at the `/cohorte-review` SHIP verdict. All LOW, quality-only, non-security — never open
+`## Remediation` items.
+
+- [ ] LOW · src-tauri/src/shell/commands.rs:258-311 · quality · `shell_ensure`'s three branches each rebuild an identical `ShellEnsureData` block; extract a private `build_ensure_data(reg, session_id, shell_id)` helper and call it from all three sites · deferred:multiple-shells
+- [ ] LOW · src-tauri/src/shell/mod.rs:1012 · rule · file is 1012 lines, past the ~1000-line ceiling in PIPELINE.md §Code layout; move the `Registry` impl block and its tests into a child module `shell/registry.rs`, leaving `mod.rs` the shared data model + `dispose_session_shells`/`kill_all_shells` · deferred:multiple-shells
+- [ ] LOW · src/features/shell/ShellStrip.tsx:105 · quality · the inline-rename `<input>` has no `maxLength`, so typing past 40 chars is accepted then silently truncated by the core on commit (FR-4), producing a visible shrink after `⏎`; add `maxLength={40}` · deferred:multiple-shells
+- [ ] LOW · src/features/sessions/useSessionFleetSync.ts:74 · test-coverage · the `useShellStore.getState().removeSession(id)` call site (FR-9) is never asserted — only `removeSession` in isolation is; extend a session-removal test to assert the roster/active-id/unread records are empty after `onRemoved` · deferred:multiple-shells
+- [ ] LOW · src/demo/demo.ts:211 · quality · `case 'session_remove': return ok(null)` never drops the session from `sessions[]` nor purges `demoShells[sessionId]`, so the demo fixture does not mirror FR-9's cleanup (pre-existing, README-capture fixture only) · deferred:multiple-shells
+
+## deferred:split-session
+
+Parked at the `/cohorte-review` SHIP verdict (2026-08-05, round 2). Neither is CRITICAL/HIGH or security.
+
+- [ ] MEDIUM · src/features/notifications/notifications.ts:157 · quality · `handleNotificationAction` calls `setActiveSessionId(sessionId)` directly instead of routing through the focused-side pattern every other session-assignment entry point uses, so a notification click while split lands the session in an inert unfocused left pane (or swaps panes without moving `focusedSide`); use `if (splitSessionId !== null && focusedSide === 'right') openInRightPane(sessionId); else { setActiveSessionId(sessionId); setFocusedSide('left') }` and add a split-mode test · deferred:split-session
+- [ ] LOW · src/features/usage/LayoutToggle.tsx:1 · rule · the split-session titlebar entry point (FR-9/FR-10) lives under the unrelated `usage` feature folder, against PIPELINE.md §Code layout; move it to `src/app/` beside `SplitPane.tsx`/`RightRail.tsx` along with the `.layout-toggle`/`.titlebar-divider` rules from `usage.css` · deferred:split-session
+
 ## deferred:webview-hardening
 
 Logged per spec §2/§6 non-goal (explicit — not a review finding). Not fixed here; a 34-file diff
 would swallow the fonts/CSP commit pair this feature exists to ship.
 
-- **[LOW]** 85 inline `style={{}}` occurrences across 34 files in `src/features/**` and `src/app/`
+- **[LOW]** 84 inline `style={{}}` occurrences across 34 files in `src/features/**` and `src/app/`
   · `PIPELINE.md` §Code layout violation ("Styling is per-feature CSS + classNames, never inline
   `style={{}}`") · this is also the reason `specs/webview-hardening.md`'s CSP (`app.security.csp`)
   keeps `style-src 'unsafe-inline'` rather than the tighter `style-src-elem`/`style-src-attr` split —

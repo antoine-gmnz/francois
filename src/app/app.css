@@ -237,6 +237,10 @@
   flex-shrink: 0;
 }
 
+/* multiple-shells §8: the SHELL tab's sub-tab strip (.shell-strip/.shell-chip
+   .shell-empty moved to src/features/shell/shell.css, imported from
+   ShellStrip.tsx — per-feature CSS convention. */
+
 /* design-refresh FR-10: a 30px full-bleed strip under the grid — not a bordered
    card inside it, so it reads as window chrome (like the titlebar) rather than
    a fourth pane. Border on the top edge only, no radius, no side gutters. */
@@ -348,4 +352,527 @@
 }
 .app-tab-chip-close:hover {
   color: var(--text-strong);
+}
+
+/* ── split-by-4 (specs/split-by-4.md §8 / turns 5b + 5d) ─────────────────────
+   Up to four live sessions at once. The main grid cell becomes a 1fr row at two
+   panes and a 2×2 grid above, with the shell's own 12px gutter; each pane is a
+   card in the same family as .app-main-section, differing only in the FOCUS
+   treatment. No motion — the focus swap is an instant state change, like every
+   other card in this app. */
+
+.app-split-grid {
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-12);
+  min-height: 0;
+  min-width: 0;
+}
+/* Every split regime is resizable, so a gutter TRACK carries each drag handle
+   and the tracks are overridden inline with the dragged ratios
+   (`<r>fr var(--space-12) <1-r>fr`). A handle IS the 12px gutter — hence no
+   `gap` here, or the panes would sit 36px apart. */
+.app-split-grid--2,
+.app-split-grid--3,
+.app-split-grid--4 {
+  grid-template-columns: 1fr var(--space-12) 1fr;
+  gap: 0;
+}
+/* FR-2: three and four panes both take the 2×2 grid. At three, the last pane
+   spans the bottom row rather than leaving a hole — an empty cell would read as
+   a pane that failed to load. Both the panes and the handles are placed
+   explicitly (see `paneGridArea`): with gutter tracks in the way, CSS
+   auto-placement would drop a pane into one. */
+.app-split-grid--3,
+.app-split-grid--4 {
+  grid-template-rows: 1fr var(--space-12) 1fr;
+}
+
+/* The grab handle between the two panes. At rest it is indistinguishable from
+   the gutter it replaces — a resize affordance is not a thing to look at until
+   the pointer is on it. Hover/focus/drag light the 2px line in the focus
+   border, never in --accent: while split the accent belongs to the focused
+   pane alone (design §Notes, "one accent per view"). */
+.app-split-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  /* the browser's own pan gesture would otherwise swallow the pointermove */
+  touch-action: none;
+  min-width: 0;
+}
+.app-split-divider::before {
+  content: '';
+  width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background: transparent;
+}
+/* The row handle: the same object turned through 90°. */
+.app-split-divider--y {
+  cursor: row-resize;
+}
+.app-split-divider--y::before {
+  width: 100%;
+  height: 2px;
+}
+.app-split-divider:hover::before,
+.app-split-divider:focus-visible::before,
+.app-split-divider--dragging::before {
+  background: var(--border-focus);
+}
+.app-split-divider:focus-visible {
+  outline: none;
+}
+
+/* Drag in progress: the pointer is over a transcript, a diff or a terminal —
+   every one of which would otherwise show a caret and start selecting text. */
+body.app-resizing-x,
+body.app-resizing-x *,
+body.app-resizing-y,
+body.app-resizing-y * {
+  user-select: none !important;
+}
+body.app-resizing-x,
+body.app-resizing-x * {
+  cursor: col-resize !important;
+}
+body.app-resizing-y,
+body.app-resizing-y * {
+  cursor: row-resize !important;
+}
+
+.split-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  /* UNFOCUSED is the base: dimmer, never greyed out — the transcript keeps
+     streaming and must stay fully legible (design §States). */
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-2);
+}
+/* FR-6: the focused pane is the one accent in the main area — border, halo and
+   the top rule below. Nothing else in a split view may take --accent. */
+.split-pane--focused {
+  background: var(--bg-panel);
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px rgba(195, 245, 63, 0.18);
+}
+
+.split-pane__header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  padding: var(--space-10) var(--space-12);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+/* The 2px accent rule, flush to the card's top edge. Always in the DOM and
+   hidden here when unfocused, so the header never reflows as focus moves. */
+.split-pane__rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: transparent;
+}
+.split-pane--focused .split-pane__rule {
+  background: var(--accent);
+}
+
+/* FR-7: the pane number — what `⌘<n>` in the footer and the status bar point
+   at. Quiet by design: it is a label, not a status. */
+.split-pane__index {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.split-pane__name {
+  font-size: var(--font-size-13);
+  font-weight: 500;
+  color: var(--text-2);
+  min-width: 0;
+}
+.split-pane--focused .split-pane__name {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+/* The focus signal in TEXT as well as colour (design §Accessibility). */
+.split-pane__focus-chip {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--bg-app);
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-5);
+  flex-shrink: 0;
+}
+/* Only on the UNFOCUSED pane, in the chip's place: `waiting on you`, `working`… */
+.split-pane__status {
+  font-size: var(--font-size-11);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.split-pane__ctx {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.split-pane__promote {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-base);
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.split-pane__promote:hover {
+  color: var(--text-2);
+  background: var(--bg-hover);
+}
+
+/* A SUB level: it must read as subordinate to the main tab strip it replaces —
+   sentence-case, no uppercase, no letter-spacing, no accent underline. */
+.split-pane__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.split-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-4) var(--space-9);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-11-5);
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.split-pane--focused .split-tab {
+  color: var(--text-hint);
+}
+.split-tab:hover {
+  color: var(--text-2);
+}
+.split-tab--on,
+.split-tab--on:hover {
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-raised);
+}
+.split-pane--focused .split-tab--on,
+.split-pane--focused .split-tab--on:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover-2);
+}
+/* The diff count — the ONE place the unfocused pane may carry colour, and on
+   the focused pane it takes the accent like the main strip's own badge. */
+.split-tab .badge-pill {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  border-radius: var(--radius-xl);
+  padding: 0 var(--space-5);
+  background: var(--bg-hover-2);
+  color: var(--text-hint);
+}
+.split-pane--focused .split-tab .badge-pill {
+  background: var(--accent);
+  color: var(--bg-app);
+}
+
+.split-pane__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* FR-15: a pane with no session yet — what splitting a one-session project
+   gives you. It has to read as an invitation, not as a pane that failed. */
+.split-pane__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--space-12);
+}
+.split-pane__empty-hint {
+  margin-top: var(--space-6);
+  font-size: var(--font-size-11-5);
+  color: var(--text-faint);
+}
+.split-pane__empty-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  margin-top: var(--space-9);
+  height: 26px;
+  padding: 0 var(--space-11);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  font-size: var(--font-size-11-5);
+  cursor: pointer;
+}
+.split-pane__empty-new:hover {
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+}
+
+/* ── the grid chrome (FR-9/FR-11 / turn 5d) ──────────────────────────────────
+   At four panes a pane is ~590×350: no room for a tab row, and no room for a
+   second composer. The header tightens and the footer carries the state. */
+.split-pane--dense .split-pane__header {
+  padding: var(--space-9) var(--space-11);
+}
+.split-pane--dense .split-pane__name {
+  font-size: var(--font-size-12-5);
+}
+
+/* The footer of an UNFOCUSED pane in the grid. Sits where the composer does, on
+   the recessed surface, so "one composer on screen" is legible at a glance. */
+.pane-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-9) var(--space-11);
+  border-top: 1px solid var(--border);
+  background: var(--bg-app);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.pane-footer__arrow {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-disabled);
+}
+.pane-footer__hint {
+  font-size: var(--font-size-11-5);
+  color: var(--text-disabled);
+  white-space: nowrap;
+}
+.pane-footer__hint .app-key {
+  color: var(--text-muted);
+}
+/* A settled pane's one offer. Green family, never acid — the accent belongs to
+   the focused pane (design §Notes, "one accent per view"). */
+.pane-footer__diff {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 24px;
+  padding: 0 var(--space-10);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  color: var(--success-bright);
+  font-size: var(--font-size-11);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pane-footer__diff:hover {
+  background: var(--bg-hover-2);
+}
+.pane-footer__close {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--font-size-11);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pane-footer__close:hover {
+  color: var(--text-2);
+}
+
+/* ── the folded roster (FR-6 / turn 5d) ─────────────────────────────────────
+   Same 46px geometry and the same 30px buttons as the right column's rail, so
+   the two folded edges of the shell read as one system. */
+.session-rail {
+  grid-row: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-7);
+  padding: var(--space-8) 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.session-rail::-webkit-scrollbar {
+  display: none;
+}
+.session-rail__tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-card);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.session-rail__tile:hover {
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+/* Raised while a pane is showing it — the rail's job is "where is everything". */
+.session-rail__tile--paned {
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+  color: var(--text-2);
+}
+/* One accent per view: the FOCUSED pane's session, and nothing else. */
+.session-rail__tile--focused {
+  color: var(--text-bright);
+}
+.session-rail__tile--focused::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.session-rail__dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bg-panel);
+}
+.session-rail__dot--live {
+  animation: pulse 1.6s steps(6, end) infinite;
+}
+.session-rail__new,
+.session-rail__expand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: var(--radius-card);
+  cursor: pointer;
+}
+.session-rail__new {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  color: var(--accent);
+}
+.session-rail__new:hover {
+  background: var(--bg-hover-2);
+}
+.session-rail__expand {
+  background: transparent;
+  border: 0;
+  color: var(--text-faint);
+}
+.session-rail__expand:hover {
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+
+/* ── the folded right column (FR-2) ── */
+.app-rail {
+  grid-row: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
+}
+.app-rail__btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-card);
+  color: var(--text-2);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.app-rail__btn:hover {
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+}
+/* One count per rail button — hidden at zero, as drawn. Deliberately NEUTRAL,
+   not acid: all four panes badge at once, and while split the accent belongs to
+   the focused pane alone (design §Notes, "one accent per view"). Same treatment
+   as the unfocused pane's diff badge. */
+.app-rail__badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--bg-hover-2);
+  border: 1px solid var(--border-2);
+  color: var(--text-hint);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-8-5);
+  line-height: 13px;
+  text-align: center;
+}
+/* The mock's one warm badge: the AGENTS pane while subagents are actually
+   running, so a folded column still says "something is working over there".
+   Warm (--attn), never acid — the accent stays on the focused pane. */
+.app-rail__badge--live {
+  background: var(--attn);
+  border-color: var(--attn);
+  color: var(--bg-app);
 }

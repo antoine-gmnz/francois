@@ -18,6 +18,7 @@ import { createAccountsSlice, type AccountsSlice } from './accountsStore';
 import { createAgentTabSlice, type AgentTabSlice, type MainTab } from './agentTabStore';
 import { createLayoutSlice, type LayoutSlice, type Pane, type RightPane } from './layoutStore';
 import { createOverviewSlice, type OverviewSlice } from './overviewStore';
+import { createPanelCountsSlice, type PanelCountsSlice } from './panelCountsStore';
 import { createProjectsSlice } from './projectsStore';
 import { createRemoteSlice, type RemoteSlice } from './remoteStore';
 import { createSessionsSlice, type SessionsSlice } from './sessionsStore';
@@ -32,6 +33,7 @@ export type { Pane, RightPane, MainTab, Theme };
 export type AppState = SessionsSlice &
   RemoteSlice &
   OverviewSlice &
+  PanelCountsSlice &
   AgentTabSlice &
   ThemeSlice &
   LayoutSlice &
@@ -44,6 +46,7 @@ export const useStore = create<AppState>((set, get, api) => ({
   ...createSessionsSlice(set, get, api),
   ...createRemoteSlice(set, get, api),
   ...createOverviewSlice(set, get, api),
+  ...createPanelCountsSlice(set, get, api),
   ...createAgentTabSlice(set, get, api),
   ...createThemeSlice(set, get, api),
   ...createLayoutSlice(set, get, api),

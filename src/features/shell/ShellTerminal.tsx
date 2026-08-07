@@ -2,17 +2,12 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type {
-  Result,
-  ShellEnsureData,
-  ShellEnsurePayload,
-  ShellEvent,
-  ShellResizePayload,
-  ShellWritePayload,
-  ShellDisposePayload,
-} from '../../../contract/shell-terminal';
-import { ipc, onShellEvent } from '../../lib/api';
-import { setShellState } from './shellStore';
+import type { SessionId } from '../../../contract/common';
+import type { ShellEnsureData, ShellId } from '../../../contract/shell-terminal';
+import { onShellEvent, shellEnsure, shellResize, shellRestart, shellWrite } from '../../lib/api';
+import { controlCharFor, shellShortcutFor } from './shell';
+import { dispatchShellShortcut } from './shellActions';
+import { useShellStore } from './shellStore';
 import { buildTheme } from './xterm-theme';
 import { useStore } from '../../lib/store';
 
@@ -23,11 +18,48 @@ const RESET = '\x1b[0m';
 // terminal (FR-12) can render the real `claude` TUI with the identical theme
 // object — behavior here is unchanged.
 
-// sessionId is REQUIRED — the pre-wsl-filesystem global default-session shell is
-// gone; a silent fallback here could resurrect it from a future call site.
-export default function ShellTerminal({ sessionId }: { sessionId: string }) {
+export interface ShellTerminalProps {
+  sessionId: SessionId;
+  shellId: ShellId;
+  /** FR-13: every shell of the active session stays mounted while the SHELL
+   * tab is open; only the displayed one is visible (CSS, never unmount). */
+  visible: boolean;
+  /**
+   * split-session FR-5/FR-6: may this terminal own the native keyboard? False
+   * for a terminal in the UNFOCUSED split pane, where becoming visible must not
+   * steal the caret (a reload with a persisted split whose unfocused pane is on
+   * SHELL would otherwise land every keystroke in the wrong session's PTY) and
+   * a stray key must not be forwarded to its stdin. Defaults to true — the
+   * single-pane shell, unchanged.
+   */
+  canFocus?: boolean;
+  /**
+   * The `ShellEnsureData` ShellTabView's own attach() already fetched for
+   * THIS shellId (its create-if-none/re-attach round trip) — read once, at
+   * mount, so this mount's `ensure()` skips a second redundant `shell_ensure`
+   * call. `undefined` for every shell ShellTabView didn't just attach to
+   * (newly created shells, or any shell besides the one just resolved).
+   */
+  initialData?: ShellEnsureData;
+}
+
+// sessionId/shellId are REQUIRED — multiple-shells re-keys the whole domain
+// onto ShellId; a silent fallback here could attach the wrong shell.
+export default function ShellTerminal({ sessionId, shellId, visible, canFocus = true, initialData }: ShellTerminalProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<() => void>(() => {});
+  const sendResizeRef = useRef<() => void>(() => {});
+  // Read from the per-mount xterm callbacks below, which are installed once and
+  // would otherwise close over `canFocus`'s mount-time value forever.
+  const canFocusRef = useRef(canFocus);
+  useEffect(() => {
+    canFocusRef.current = canFocus;
+  }, [canFocus]);
+  // Guards the becoming-visible effect below: true once this mount's own
+  // shell_ensure has settled (success, refusal, or rejection), so that effect
+  // never races a resize ahead of the ensure that establishes the PTY size.
+  const ensureSettledRef = useRef(false);
   // Re-theme the live terminal when the app theme flips (store-owned by the
   // theme slice). We only need the value to trigger the effect — buildTheme()
   // reads the freshly-applied CSS variables from the DOM.
@@ -58,16 +90,20 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
         /* container not measurable yet */
       }
     };
+    fitRef.current = fit;
 
     const exitedRef = { current: false };
     let lastCols = -1;
     let lastRows = -1;
     let resizeTimer: number | undefined;
 
+    // Store status updates (alive/exitCode) happen HERE — driven by this
+    // component's own RPC responses — and in the single global shell-event
+    // listener (shellStore.ts) for a live shell.exit. This function only
+    // renders the dim line into THIS mounted terminal.
     const enterExited = (line: string) => {
       exitedRef.current = true;
       term.write(`\r\n${FAINT}${line}${RESET}\r\n`);
-      setShellState(sessionId, { alive: false });
     };
 
     const sendResize = () => {
@@ -75,30 +111,28 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
       if (term.cols === lastCols && term.rows === lastRows) return;
       lastCols = term.cols;
       lastRows = term.rows;
-      void ipc('shell_resize', { sessionId, cols: term.cols, rows: term.rows } satisfies ShellResizePayload).catch(() => {});
+      void shellResize(shellId, term.cols, term.rows).catch(() => {});
     };
+    sendResizeRef.current = sendResize;
 
-    const ensure = async (restart = false) => {
+    const ensure = async () => {
       fit();
       try {
-        const res = await ipc<Result<ShellEnsureData>>('shell_ensure', { sessionId } satisfies ShellEnsurePayload);
+        // Skip the round trip entirely when ShellTabView already resolved
+        // this exact shellId's attach (its own `shell_ensure`) before this
+        // mount — `initialData` is read once, from this effect's closure, so
+        // a later prop update (this component staying mounted) never re-reads it.
+        const res = initialData ? ({ ok: true, data: initialData } as const) : await shellEnsure({ sessionId, shellId });
         if (!res.ok) {
-          // Spawn failure (PTY_ERROR / SESSION_NOT_FOUND) — FR-18 parity.
-          setShellState(sessionId, { alive: false, shellName: '', cwd: '' });
+          useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
           enterExited(`${res.error.message} — press ⏎ to retry`);
           return;
         }
         const d = res.data;
         exitedRef.current = false;
-        if (restart) term.reset();
-        setShellState(sessionId, {
-          alive: d.exitCode === undefined,
-          exitCode: d.exitCode,
-          shellName: d.shellName,
-          cwd: d.cwd,
-        });
+        // §6: every ensure refreshes the WHOLE roster, not just this shell.
+        useShellStore.getState().setShells(sessionId, d.shells);
         if (d.scrollbackReplay) term.write(d.scrollbackReplay);
-        // Fit to the container and push the real size to the PTY (flow 1/7).
         lastCols = -1;
         lastRows = -1;
         fit();
@@ -106,23 +140,70 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
         if (d.exitCode !== undefined) {
           enterExited(`process exited (code ${d.exitCode}) — press ⏎ to restart`);
         }
-        term.focus();
+        // FR-13's own focus (become-visible effect below) covers the rest —
+        // reading the `visible` prop here would close over its MOUNT-time
+        // value forever, since this effect never reruns while mounted.
+      } catch (e) {
+        useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
+        enterExited(`failed to reach shell backend: ${String(e)} — press ⏎ to retry`);
+      } finally {
+        ensureSettledRef.current = true;
+      }
+    };
+
+    // FR-7/FR-17: ⏎ while exited always calls shell_restart — same id, name
+    // and strip position, fresh PTY, empty ring — never the old dispose+ensure
+    // dance, and it doubles as the retry path for an attach failure above.
+    const restart = async () => {
+      try {
+        const res = await shellRestart(shellId);
+        if (!res.ok) {
+          enterExited(`${res.error.message} — press ⏎ to retry`);
+          useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
+          return;
+        }
+        exitedRef.current = false;
+        term.reset();
+        useShellStore.getState().setShellStatus(sessionId, shellId, true, undefined);
+        lastCols = -1;
+        lastRows = -1;
+        fit();
+        sendResize();
+        // Focus was never lost — restart only fires from a keydown the
+        // terminal's own textarea was already focused for.
       } catch (e) {
         enterExited(`failed to reach shell backend: ${String(e)} — press ⏎ to retry`);
       }
     };
 
-    const restart = async () => {
-      await ipc('shell_dispose', { sessionId } satisfies ShellDisposePayload).catch(() => {}); // FR-17: best-effort
-      await ensure(true);
-    };
-
-    // Keyboard capture — FR-19/20/21 + exited-mode lock FR-16.
+    // Keyboard capture — FR-19/20/21 (shell carve-outs) + shell-terminal's own
+    // ⌘K carve-out + the exited-mode lock (FR-16/FR-17).
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
+      // split-session FR-5/FR-6: this terminal is in the UNFOCUSED pane — it
+      // must not consume the key NOR forward it to its PTY. Returning false
+      // without stopPropagation lets it bubble to the app-shell globals, which
+      // are scoped to the focused session.
+      if (!canFocusRef.current) return false;
       // ⌘K / Ctrl+K carve-out: don't forward, don't stopPropagation → bubbles
-      // to app-shell's global handler (command palette). FR-20.
+      // to app-shell's global handler (command palette). shell-terminal FR-20.
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) return false;
+      const combo = shellShortcutFor(e.key, e.metaKey, e.ctrlKey, e.shiftKey);
+      if (combo) {
+        e.preventDefault();
+        // FR-20/21: handled directly here — stop the bubble so the
+        // document-level listener (useShellShortcuts) never double-fires it.
+        e.stopPropagation();
+        dispatchShellShortcut(combo, sessionId);
+        return false;
+      }
+      // AltGr, alone, is never terminal input — but xterm 5.5 arms its private
+      // `_unprocessedDeadKey` on the `AltGraph` keydown and then never clears
+      // it (the AltGr'd character itself returns early as a third-level shift),
+      // leaving the flag to swallow some later keypress. This handler runs
+      // BEFORE that assignment, so refusing the key here keeps the flag from
+      // being armed by AltGr at all. See controlCharFor for the whole story.
+      if (e.key === 'AltGraph') return false;
       if (exitedRef.current) {
         if (e.key === 'Enter') {
           e.preventDefault();
@@ -130,20 +211,38 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
         }
         return false; // swallow everything else while exited (FR-16)
       }
+      // `⌃C` and every other plain Ctrl combo is forwarded by US, never by
+      // xterm's keydown path — a `Dead` keydown (`^`/`¨`) can still leave that
+      // path's dead-key flag armed, and the key it eats is exactly the one the
+      // footer advertises as `⌃C interrupt`. `term.input` is xterm's public
+      // "as if typed" entry point, so this still scrolls to the bottom and
+      // still flows through the single onData → shellWrite path below.
+      const ctrlChar = controlCharFor(e.keyCode, e.ctrlKey, e.shiftKey, e.altKey, e.metaKey);
+      if (ctrlChar !== null) {
+        e.preventDefault();
+        e.stopPropagation(); // FR-21, same as any other forwarded key
+        term.input(ctrlChar);
+        return false;
+      }
       e.stopPropagation(); // every forwarded key is stopPropagation'd (FR-21)
       return true;
     });
 
-    // Forwarded input → PTY (FR-10/FR-19). onData carries translated bytes
-    // (typed keys, paste, IME) exactly as they should hit stdin.
+    // Forwarded input → PTY (shell-terminal FR-10/FR-19). onData carries
+    // translated bytes (typed keys, paste, IME) exactly as they should hit stdin.
     const dataDisp = term.onData((data) => {
       if (exitedRef.current) return;
-      void ipc('shell_write', { sessionId, data } satisfies ShellWritePayload).catch(() => {});
+      // The key handler above already refuses keystrokes for an unfocused pane;
+      // this also covers the paths that never go through it (paste, IME).
+      if (!canFocusRef.current) return;
+      void shellWrite(shellId, data).catch(() => {});
     });
 
-    // Per-mount listener: render live output; handle exit (FR-13/FR-15).
+    // Per-mount listener: render live output; handle exit (FR-13/FR-15). Only
+    // this shell's own events — the roster-wide status update happens in the
+    // single global listener (shellStore.ts's initShellEvents).
     const unlisten = onShellEvent((p) => {
-      if (p.sessionId !== sessionId) return;
+      if (p.sessionId !== sessionId || p.shellId !== shellId) return;
       if (p.type === 'shell.data') {
         term.write(p.data);
       } else {
@@ -151,7 +250,7 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
       }
     });
 
-    // Resize propagation — FR-27: fit on every change, debounced core resize.
+    // Resize propagation — shell-terminal FR-27: fit on every change, debounced core resize.
     const ro = new ResizeObserver(() => {
       if (!hostRef.current || hostRef.current.offsetParent === null) return;
       fit();
@@ -160,6 +259,7 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
     });
     ro.observe(hostRef.current!);
 
+    ensureSettledRef.current = false;
     void ensure();
 
     return () => {
@@ -170,7 +270,34 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
       term.dispose();
       termRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, shellId]);
+
+  // FR-13: a shell whose xterm has just become visible runs one immediate
+  // fit + resize + focus — no new ensure call, so no new ring replay. FR-14:
+  // becoming the displayed shell always clears its unread mark, whatever
+  // caused the switch (an explicit chip click, a keyboard cycle, or simply
+  // being the auto-selected active chip when this tab/session comes back
+  // into view) — the store methods above already handle the explicit paths;
+  // this covers every other way `visible` can flip to true.
+  useEffect(() => {
+    if (!visible) return;
+    useShellStore.getState().clearUnread(shellId);
+    fitRef.current();
+    // Skip the resize on this mount's very first becoming-visible pass: the
+    // per-mount `ensure()` above hasn't necessarily landed yet, and it will
+    // fit + resize itself once it does — sending one here first would just
+    // be immediately superseded.
+    if (ensureSettledRef.current) sendResizeRef.current();
+    // split-session FR-5/FR-6: only the split-FOCUSED pane may take the native
+    // keyboard. `visible` alone is not the whole answer any more — both panes
+    // can be on SHELL at once, and a pane restored on SHELL (FR-16's persisted
+    // split) would otherwise grab the caret at mount with no user action.
+    if (canFocus) termRef.current?.focus();
+    // Focus moved to the OTHER pane while this terminal held the caret (a click
+    // on that pane's header, `⇥`): give it up, so the block cursor stops
+    // claiming a keyboard this pane no longer owns.
+    else termRef.current?.blur();
+  }, [visible, shellId, canFocus]);
 
   // Light/dark switch: rebuild the theme from the now-current CSS variables and
   // apply it to the live terminal (canvas can't observe the var change itself).
@@ -179,5 +306,5 @@ export default function ShellTerminal({ sessionId }: { sessionId: string }) {
     if (term) term.options.theme = buildTheme();
   }, [theme]);
 
-  return <div ref={hostRef} style={{ position: 'absolute', inset: '14px 16px' }} />;
+  return <div ref={hostRef} style={{ position: 'absolute', inset: '14px 16px', display: visible ? undefined : 'none' }} />;
 }

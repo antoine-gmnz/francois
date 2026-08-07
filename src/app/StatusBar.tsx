@@ -12,6 +12,10 @@ export interface StatusBarProps {
   activeAgentName: string | null;
   /** Subagents currently running for the active session (fleet-board FR-5). */
   runningAgents: number;
+  /** split-by-4 §8: how many main panes are open (1 ⇒ the readout is hidden). */
+  paneCount: number;
+  /** Sessions in the current project scope — the `· <m> sessions open` half. */
+  sessionCount: number;
   appVersion: string;
 }
 
@@ -22,12 +26,37 @@ export interface StatusBarProps {
  * hotkey it used to name still works; `1`–`5`, `[`/`]`, `o`/`d`/`t` and `n`
  * are bound in useAppShortcuts, not here.
  */
-export default function StatusBar({ theme, toggleTheme, focusedPane, activeAgentName, runningAgents, appVersion }: StatusBarProps) {
+export default function StatusBar({
+  theme,
+  toggleTheme,
+  focusedPane,
+  activeAgentName,
+  runningAgents,
+  paneCount,
+  sessionCount,
+  appVersion,
+}: StatusBarProps) {
   return (
     <div className="app-status-bar">
       <span onClick={() => togglePalette()} className="app-clickable app-text-dim">
         <span className="app-key app-key--accent">⌘K</span> commands
       </span>
+      {/* split-by-4 §8 / turn 5d: while split the bar names the two keys that
+          move between panes, and reads out how many are open. Hidden at one
+          pane, where neither key does anything. */}
+      {paneCount > 1 && (
+        <>
+          <span>
+            <span className="app-key">⌘1–{paneCount}</span> focus pane
+          </span>
+          <span>
+            <span className="app-key">⌥⇥</span> next waiting
+          </span>
+          <span>
+            {paneCount} panes · {sessionCount} {sessionCount === 1 ? 'session' : 'sessions'} open
+          </span>
+        </>
+      )}
       {activeAgentName ? (
         <>
           <span>

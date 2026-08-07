@@ -14,7 +14,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { AgentInfo, AgentStep, Result, SessionEvent, SessionMeta } from '../../contract/common';
 import type { AgentBlock, AgentEvent } from '../../contract/agent-tab';
 import type { ConversationBlock } from '../../contract/conversation-view';
-import type { ShellEvent } from '../../contract/shell-terminal';
+import type { ShellEvent, ShellInfo } from '../../contract/shell-terminal';
 import {
   ACCOUNTS,
   AGENTS,
@@ -108,8 +108,44 @@ const shell = (e: ShellEvent) => emit('francois://shell/event', e);
 let sessions: SessionMeta[] = [];
 let liveAgents: AgentInfo[] = [];
 let liveSteps: Record<string, AgentStep[]> = {};
+// multiple-shells: a session's shells, built lazily the same way the real
+// core does (§FR-5's create-if-none path) — never seeded, only ever grown by
+// shell_ensure/shell_create so the capture always exercises the real flow.
+let demoShells: Record<string, ShellInfo[]> = {};
+let demoShellSeq = 0;
 
 const find = (id: string) => sessions.find((s) => s.id === id);
+
+function demoShellOrdinal(list: ShellInfo[]): number {
+  const used = new Set(list.map((s) => Number(s.name.replace(/^zsh /, '')) || 0));
+  let n = 1;
+  while (used.has(n)) n++;
+  return n;
+}
+
+function newDemoShell(sessionId: string): ShellInfo {
+  demoShellSeq += 1;
+  const list = demoShells[sessionId] ?? [];
+  const info: ShellInfo = {
+    id: `demo-shell-${demoShellSeq}`,
+    sessionId,
+    name: `zsh ${demoShellOrdinal(list)}`,
+    shellName: 'zsh',
+    cwd: find(sessionId)?.cwd ?? '~',
+    alive: true,
+  };
+  demoShells[sessionId] = [...list, info];
+  return info;
+}
+
+function findDemoShell(shellId: string): { sessionId: string; list: ShellInfo[]; index: number } | null {
+  for (const sessionId of Object.keys(demoShells)) {
+    const list = demoShells[sessionId];
+    const index = list.findIndex((s) => s.id === shellId);
+    if (index >= 0) return { sessionId, list, index };
+  }
+  return null;
+}
 
 // ---------- command router ----------
 
@@ -256,16 +292,64 @@ function route(cmd: string, a: Args): unknown {
     case 'remote_stop':
       return ok({ sessionId: sid(a), state: { phase: 'off' } });
 
-    // ---- shell ----
-    case 'shell_ensure':
-      return ok({ cols: 120, rows: 30, scrollbackReplay: SHELL_BANNER, shellName: 'zsh', cwd: find(sid(a))?.cwd ?? '~' });
+    // ---- shell (multiple-shells: ShellId-keyed, up to 6 per session) ----
+    case 'shell_ensure': {
+      const sessionId = sid(a);
+      const requestedId = a?.shellId as string | undefined;
+      let list = demoShells[sessionId] ?? [];
+      let target = requestedId ? list.find((s) => s.id === requestedId) : list[0];
+      if (!target) {
+        if (requestedId) return { ok: false, error: { code: 'SHELL_NOT_FOUND', message: 'shell not found' } };
+        target = newDemoShell(sessionId); // FR-5 create-if-none
+        list = demoShells[sessionId];
+      }
+      return ok({
+        shellId: target.id,
+        shells: list,
+        cols: 120,
+        rows: 30,
+        scrollbackReplay: list.length === 1 && target.alive ? `${SHELL_BANNER}\r\n` : '',
+        exitCode: target.alive ? undefined : target.exitCode,
+      });
+    }
+    case 'shell_create': {
+      const sessionId = sid(a);
+      const list = demoShells[sessionId] ?? [];
+      if (list.length >= 6) return { ok: false, error: { code: 'SHELL_LIMIT_REACHED', message: '6 shells maximum' } };
+      return ok(newDemoShell(sessionId));
+    }
+    case 'shell_restart': {
+      const found = findDemoShell(String(a?.shellId ?? ''));
+      if (!found) return { ok: false, error: { code: 'SHELL_NOT_FOUND', message: 'shell not found' } };
+      const { sessionId, list, index } = found;
+      demoShells[sessionId] = list.map((s, i) => (i === index ? { ...s, alive: true, exitCode: undefined } : s));
+      return ok({ cols: 120, rows: 30 });
+    }
+    case 'shell_rename': {
+      const found = findDemoShell(String(a?.shellId ?? ''));
+      if (!found) return { ok: false, error: { code: 'SHELL_NOT_FOUND', message: 'shell not found' } };
+      const { sessionId, list, index } = found;
+      const trimmed = String(a?.name ?? '').trim().slice(0, 40);
+      const others = list.filter((_, i) => i !== index);
+      const name = trimmed || `zsh ${demoShellOrdinal(others)}`;
+      const next = list.map((s, i) => (i === index ? { ...s, name } : s));
+      demoShells[sessionId] = next;
+      return ok(next[index]);
+    }
+    case 'shell_dispose': {
+      const shellId = String(a?.shellId ?? '');
+      const found = findDemoShell(shellId);
+      if (found) demoShells[found.sessionId] = found.list.filter((s) => s.id !== shellId);
+      return ok(null);
+    }
     case 'shell_write': {
+      const shellId = String(a?.shellId ?? '');
+      const found = findDemoShell(shellId);
       const data = String(a?.data ?? '');
-      shell({ type: 'shell.data', sessionId: sid(a), data: data === '\r' ? '\r\n❯ ' : data });
+      shell({ type: 'shell.data', shellId, sessionId: found?.sessionId ?? '', data: data === '\r' ? '\r\n❯ ' : data });
       return ok(null);
     }
     case 'shell_resize':
-    case 'shell_dispose':
       return ok(null);
 
     default:
@@ -279,21 +363,21 @@ function route(cmd: string, a: Args): unknown {
 /**
  * A re-read (session switch, tab remount) has to agree with what the stream
  * already emitted, so every block the timeline appends is recorded here too —
- * but ONLY once it is COMPLETE.
+ * INCLUDING one still streaming, exactly like the core's own block buffer.
  *
  * The app buffers every session event from the moment it subscribes and drains
  * that buffer onto the snapshot once `conversation_get_transcript` resolves
- * (useHydratedSubscription). `assistant.delta` is additive, so a block that is
- * in BOTH the snapshot and the buffer gets its opening chunks applied twice —
- * which surfaces as a garbled word mid-paragraph. Keeping in-flight blocks out
- * of the snapshot means the view rebuilds them from the buffer alone: a remount
- * mid-paragraph shows that paragraph from wherever the buffer starts, which
- * reads exactly like a turn still streaming, and never corrupts a word.
+ * (useHydratedSubscription). A block present in BOTH is reconciled by each
+ * delta's `offset` (contract/common.ts), so the overlap applies once — which is
+ * why an in-flight block belongs in the snapshot: leaving it out is what made a
+ * mid-paragraph remount lose the paragraph's opening.
+ *
+ * Copies go out, since the timeline keeps mutating the block it is streaming.
  */
 const liveBlocks: ConversationBlock[] = [];
 
 function transcriptNow() {
-  return [...TRANSCRIPT, ...liveBlocks];
+  return [...TRANSCRIPT, ...liveBlocks].map((b) => ({ ...b }));
 }
 
 /** An agent's own transcript, rebuilt from its activity trail. */
@@ -356,6 +440,8 @@ function start() {
   sessions = SESSIONS.map((s) => ({ ...s }));
   liveAgents = AGENTS.map((a) => ({ ...a }));
   liveSteps = Object.fromEntries(Object.entries(AGENT_STEPS).map(([k, v]) => [k, v.map((s) => ({ ...s }))]));
+  demoShells = {};
+  demoShellSeq = 0;
 
   void openingView();
 
@@ -374,17 +460,18 @@ async function stream(blockId: string, text: string) {
     bodyColor: '#e6e9ef',
     text: '',
   };
+  liveBlocks.push(block); // in the snapshot from the first chunk on — offsets reconcile the overlap
   for (let i = 0; i < text.length && !stopped; i += 3) {
     const chunk = text.slice(i, i + 3);
+    const offset = block.text.length;
     block.text += chunk;
-    session({ type: 'assistant.delta', sessionId: S_API, blockId, text: chunk });
+    session({ type: 'assistant.delta', sessionId: S_API, blockId, text: chunk, offset });
     await sleep(24);
   }
   block.isStreaming = false;
   block.glyphColor = '#8b93a3';
   block.bodyColor = '#c3c9d4';
-  liveBlocks.push(block); // complete — safe to appear in a snapshot now
-  session({ type: 'assistant.done', sessionId: S_API, blockId });
+  session({ type: 'assistant.done', sessionId: S_API, blockId, text: block.text });
 }
 
 /** A tool call that opens, works for a beat, then resolves with its meta. */

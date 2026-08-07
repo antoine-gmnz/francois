@@ -486,37 +486,66 @@ simultaneously removed from `settings.local.json`:
 
 ## 8. Design brief
 
-No permission treatment exists in the mock (`Claude Terminal.dc.html`); the card inherits the
-question-card visual language (`specs/session-questions.md` §8) and the app tokens
-(`src/styles.css`). JetBrains Mono throughout. **Motion: none** anywhere in this feature.
+No permission treatment exists in the shell mocks; the card follows its own reference (the compact
+stop strip: header · call signature · button row) and the app tokens (`src/styles.css`). The card's
+classes live in `src/features/permissions/permissions.css`, BEM-lite (`pcard`, `pcard__x`,
+`pcard--x`). JetBrains Mono throughout. **Motion: none** anywhere in this feature.
+
+The card is **compact by default**: it shows what was asked and what can be done about it, and folds
+the evidence (raw input, cwd, the rule an "always" would write) behind a disclosure caret. A parked
+turn is a stop, so it must be readable in one glance from anywhere in the transcript — a card that
+runs six lines tall buries the buttons.
 
 ### Approval card (transcript block, full width)
 
 1. **Container** — `.pcard`: `background:var(--bg-deep); border:1px solid var(--border);
-   border-radius:4px; padding:10px 12px;`. Pending adds `border-left:2px solid var(--warn)` (amber,
-   distinct from the question card's accent edge — a permission ask is a stop, not a question).
-   `denied` uses `border-left-color:var(--error)`; `allowed` `var(--success)`; `cancelled` sets the whole
-   card `opacity:0.55`. In-flight `opacity:0.7`.
-2. **Header row** — `PERMISSION` label (`color:var(--text-faint); font-size:9.5px;
-   letter-spacing:.08em;`), a tool chip (`color:var(--warn); border:1px solid var(--border-2);
-   border-radius:3px; padding:0 6px; font-size:9.5px;`), then the resolved note
-   (`— allowed` / `— denied` / `— cancelled`, `font-size:9.5px`, colored by state).
-3. **Summary line** — the FR-4 one-liner: `color:var(--text-bright); font-size:12.5px;
-   margin:8px 0 0; overflow-wrap:anywhere;`. Omitted when empty.
-4. **Input box** — `.pcard-input`, same treatment as the question card's preview box:
-   `background:var(--bg-app); border:1px solid var(--border); padding:8px; white-space:pre;
-   overflow-x:auto; max-height:180px; overflow-y:auto; font-size:10.5px; color:var(--text-2);
-   margin-top:6px;` (scrolls inside its box, never the transcript).
-5. **Meta line** — `cwd <path>` in `color:var(--text-faint); font-size:10.5px; margin-top:6px;`.
-6. **Rule line** (pending only) — `writes rule:` in `--text-faint`, the human label in
-   `--text-bright`, the raw pattern in `--text-dim` monospace, then the tier control: two inline
-   text toggles `this project` / `all projects`, the active one `color:var(--accent)`, the other
-   `color:var(--text-faint); cursor:pointer`.
-7. **Action row** (pending only) — right-aligned, `gap:14px`, `font-size:11px`, `cursor:pointer`:
-   `allow once` (`--success`), `deny once` (`--error`), `always allow` (`--success`), `always deny`
-   (`--error`). Hover raises to the bright variant; while in flight the row is inert.
+   border-radius:var(--radius-lg); padding:10px 12px;`. Pending (`.pcard--pending`) is the only
+   tinted state: `border-color: color-mix(in srgb, var(--attn) 34%, var(--border))` over
+   `background: color-mix(in srgb, var(--attn) 5%, var(--bg-deep))` — amber, not the acid accent,
+   because a permission ask is a stop, not a question, and acid is reserved for the one live thing
+   in a view. Resolved states drop the tint and carry a single left edge: `allowed`
+   `border-left:2px solid var(--success)`, `denied` `var(--error)`; `cancelled` sets the whole card
+   `opacity:0.55`. In-flight `opacity:0.7`.
+2. **Header row** — the `◈` glyph and the `PERMISSION` label, both `color:var(--attn)`
+   (`font-size:9.5px; letter-spacing:.08em;`), then the resolved note (`— allowed` / `— denied` /
+   `— cancelled`, `font-size:9.5px`, colored by state), then — pending only — the age
+   (`just now` / `4m ago` / `2h ago` / `3d ago`) pushed right with `margin-left:auto` in
+   `--text-faint`. The transcript carries no timestamp, so the age is measured from the card's
+   first render: a card restored from a persisted transcript restarts its clock rather than
+   asserting a wall time it does not have.
+3. **Signature line** — the headline, `Bash(rm -rf node_modules)`: `toolName(summary)` from the FR-4
+   one-liner, falling back to the bare tool name when the tool exposes none. `color:var(--warn);
+   font-size:12.5px; line-height:1.5; overflow-wrap:anywhere; margin-top:8px;`. Rendered as a
+   `<button>` stripped of button chrome so the disclosure is keyboard-reachable, with the caret
+   (`▸` collapsed / `▾` expanded, `--text-faint`) pushed right.
+4. **Disclosure** — the caret appears only when there is something to reveal: always while pending
+   (the would-be rule lives in there), and on a resolved card only when the ask carried an input
+   dump or a cwd.
+5. **Detail** (expanded only) — the input box `.pcard__input`, same treatment as the question card's
+   preview box: `background:var(--bg-app); border:1px solid var(--border); padding:8px;
+   white-space:pre; overflow-x:auto; max-height:180px; overflow-y:auto; font-size:10.5px;
+   color:var(--text-2);` (scrolls inside its box, never the transcript); then `cwd <path>` in
+   `color:var(--text-faint); font-size:10.5px;`; then — pending only — the rule line: `writes rule:`
+   in `--text-faint`, the human label in `--text-bright`, the raw pattern in `--text-dim`.
+6. **Tier control** (pending only) — two text toggles `this project` / `all projects` at the LEFT of
+   the action row, the active one `color:var(--accent)`, the other `--text-faint`. It stays in the
+   action row rather than in the detail, because it scopes what `Always`/`Never` write and must be
+   visible before the user commits — not behind a caret. Hovering a `*Once` action drops it to
+   `opacity:0.35` (§8.6): the tier applies only to `Always`/`Never`.
+7. **Action row** (pending only) — right-aligned buttons, `gap:6px`, `flex-wrap:wrap`,
+   `height:26px; padding:0 12px; border-radius:var(--radius-base); font-size:11px`. In render
+   order, allows before denials: **Allow** (`allowOnce`) is the one filled button — `background:
+   var(--accent); color:var(--bg-app); font-weight:600`, the acid live thing for the card;
+   **Always** (`allowAlways`) is solid but quiet — `background:var(--bg-raised); border:1px solid
+   var(--border-emphasis); color:var(--text-strong)`; **Deny** (`denyOnce`) and **Never**
+   (`denyAlways`) are ghosts — `background:transparent; border:1px solid var(--border-2)`, in
+   `--text-dim` and `--text-muted` respectively, both hovering to
+   `border-color:var(--error-dim); color:var(--error-bright)`. Each button carries its full
+   sentence (`allow once`, `always allow`, `deny once`, `always deny`) as its `title`, so the
+   one-word face is never a guess. While in flight the row is inert.
 8. **Rule-written line** (resolved, when a rule was written) — `rule written:` + label + tier chip,
-   `font-size:10.5px; color:var(--text-dim); margin-top:6px;`.
+   `font-size:10.5px; color:var(--text-faint); margin-top:6px;`. Deliberately NOT inside the
+   disclosure: a rule landing on disk is the one thing worth seeing without asking for it.
 9. **Inline error** (FR-21) — `color:var(--error); font-size:11px; margin-top:6px;`, auto-clears
    after 4 s.
 
