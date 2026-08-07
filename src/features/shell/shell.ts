@@ -65,3 +65,39 @@ export function shellShortcutFor(key: string, meta: boolean, ctrl: boolean, shif
   if (key === 'Tab' && ctrl && !meta) return shift ? 'prev' : 'next';
   return null;
 }
+
+/**
+ * The byte a plain `Ctrl+<key>` puts on the PTY's stdin — `⌃C` → `ETX`, `⌃L` →
+ * `FF`, and the rest. A verbatim mirror of xterm.js's own table
+ * (`evaluateKeyboardEvent`'s `default:` branch, `common/input/Keyboard.ts`),
+ * keyed on the same legacy `keyCode` so a non-US layout maps identically.
+ *
+ * Why we re-derive it rather than let xterm send it (the `⌃C interrupt` bug):
+ * xterm 5.5 arms a private `_unprocessedDeadKey` flag on EVERY `Dead` or
+ * `AltGraph` keydown, and only clears it on a later keydown that reaches the
+ * end of `_keyDown`. Two paths return before that — a third-level shift (on
+ * Windows, `ctrl+alt`, i.e. every AltGr character: `@ [ ] { } \ | ~ #` on an
+ * AZERTY layout) and a bare capital letter — so the flag survives the very
+ * keypress that was supposed to consume it and then stays armed through
+ * ordinary typing, since an unmodified letter exits earlier still (`!result.key`).
+ * The next key that DOES reach the check is swallowed. Plain characters and `⏎`
+ * survive that regardless (the browser's `keypress` still delivers them), but a
+ * Ctrl combo cannot: xterm's `_keyPress` refuses anything carrying `ctrlKey`.
+ * Net effect: type one AltGr character, and the next `⌃C` does nothing — only
+ * the second press interrupts. Forwarding the combo ourselves takes the
+ * interrupt out of that state machine entirely.
+ *
+ * Modified combos are NOT ours: `⌃⇧…` and `⌃⌥…` return null and fall through to
+ * xterm unchanged, as do the carve-outs the caller checks first (`⌃K`, `⌃⇥`).
+ */
+export function controlCharFor(keyCode: number, ctrl: boolean, shift: boolean, alt: boolean, meta: boolean): string | null {
+  if (!ctrl || shift || alt || meta) return null;
+  if (keyCode >= 65 && keyCode <= 90) return String.fromCharCode(keyCode - 64); // ⌃A–⌃Z
+  if (keyCode === 32) return '\x00'; // ⌃Space → NUL
+  if (keyCode >= 51 && keyCode <= 55) return String.fromCharCode(keyCode - 51 + 27); // ⌃3–⌃7 → ESC, FS, GS, RS, US
+  if (keyCode === 56) return '\x7f'; // ⌃8 → DEL
+  if (keyCode === 219) return '\x1b'; // ⌃[ → ESC
+  if (keyCode === 220) return '\x1c'; // ⌃\ → FS
+  if (keyCode === 221) return '\x1d'; // ⌃] → GS
+  return null;
+}
