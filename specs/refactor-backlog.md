@@ -173,3 +173,16 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-05, round 2). Neither is C
 
 - [ ] MEDIUM · src/features/notifications/notifications.ts:157 · quality · `handleNotificationAction` calls `setActiveSessionId(sessionId)` directly instead of routing through the focused-side pattern every other session-assignment entry point uses, so a notification click while split lands the session in an inert unfocused left pane (or swaps panes without moving `focusedSide`); use `if (splitSessionId !== null && focusedSide === 'right') openInRightPane(sessionId); else { setActiveSessionId(sessionId); setFocusedSide('left') }` and add a split-mode test · deferred:split-session
 - [ ] LOW · src/features/usage/LayoutToggle.tsx:1 · rule · the split-session titlebar entry point (FR-9/FR-10) lives under the unrelated `usage` feature folder, against PIPELINE.md §Code layout; move it to `src/app/` beside `SplitPane.tsx`/`RightRail.tsx` along with the `.layout-toggle`/`.titlebar-divider` rules from `usage.css` · deferred:split-session
+
+## deferred:webview-hardening
+
+Logged per spec §2/§6 non-goal (explicit — not a review finding). Not fixed here; a 34-file diff
+would swallow the fonts/CSP commit pair this feature exists to ship.
+
+- **[LOW]** 84 inline `style={{}}` occurrences across 34 files in `src/features/**` and `src/app/`
+  · `PIPELINE.md` §Code layout violation ("Styling is per-feature CSS + classNames, never inline
+  `style={{}}`") · this is also the reason `specs/webview-hardening.md`'s CSP (`app.security.csp`)
+  keeps `style-src 'unsafe-inline'` rather than the tighter `style-src-elem`/`style-src-attr` split —
+  see that spec's FR-9. → **Fix:** migrate each inline `style` object to a `<feature>.css` BEM-lite
+  class per `PIPELINE.md` §Code layout, file by file; once none remain, `style-src-attr 'none'`
+  becomes viable and `webview-hardening`'s CSP can be revisited.
