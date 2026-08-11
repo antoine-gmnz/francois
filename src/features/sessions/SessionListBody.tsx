@@ -14,6 +14,7 @@ import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import type { SplitSide } from '../../lib/layoutStore';
 import { abbreviate } from '../../lib/path';
 import { useStore } from '../../lib/store';
+import { toneVar } from '../../lib/tone';
 import { BadgePill } from '../../ui/BadgePill';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { StatusDot } from '../../ui/StatusDot';
@@ -168,7 +169,9 @@ function SessionCard({
   onContext: (x: number, y: number) => void;
 }) {
   const [hover, setHover] = useState(false);
-  const statusColor = STATUS_COLOR[session.status] ?? 'var(--text-dim)';
+  // toneVar: the contract's STATUS_COLOR is the DARK palette (lib/tone.ts) — the
+  // card's dot, tag and attention rail all hang off this one value.
+  const statusColor = toneVar(STATUS_COLOR[session.status] ?? 'var(--text-dim)');
   const label = STATUS_LABEL[session.status] ?? session.status;
   const fileCount = derived?.fileCount ?? null;
   const agents = derived?.runningAgentCount ?? 0;

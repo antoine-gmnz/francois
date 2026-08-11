@@ -6,6 +6,7 @@ import ConversationView from '../features/conversation/ConversationView';
 import DiffView from '../features/diff/DiffView';
 import type { PaneTab, SplitSide } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
+import { toneVar } from '../lib/tone';
 import { BadgePill } from '../ui/BadgePill';
 import { StatusDot } from '../ui/StatusDot';
 import EmptyPaneMessage from './EmptyPaneMessage';
@@ -46,7 +47,9 @@ export default function SplitPane({ side, sessionId, tab, focused, home, onFocus
   // no second subscription per pane.
   const diffCount = useStore((s) => (sessionId ? (s.derived.get(sessionId)?.fileCount ?? 0) : 0));
 
-  const statusColor = session ? (STATUS_COLOR[session.status] ?? 'var(--text-dim)') : 'var(--text-dim)';
+  // toneVar: STATUS_COLOR is the contract's DARK hex map — the `active` tag would
+  // otherwise stay acid lime on the light theme's white header (lib/tone.ts).
+  const statusColor = toneVar(session ? (STATUS_COLOR[session.status] ?? 'var(--text-dim)') : 'var(--text-dim)');
 
   return (
     <section

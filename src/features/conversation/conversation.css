@@ -534,11 +534,22 @@
 }
 
 /* ── MarkdownView.tsx (design-refresh FR-7: 15px/1.65 --font-ui reading body) ── */
+/* The body tone lives here, not on an inline style: the assistant reply is
+   mostly unclassed text nodes, so this root color is what the whole reply
+   inherits, and it has to follow the theme. `--text-2` IS the dark palette's
+   #c3c9d4 (the value the contract still carries for the core's mirror), so dark
+   is unchanged; light resolves it to #33373f instead of gray-on-white. */
 .md-root {
   font-family: var(--font-ui);
   font-size: var(--font-size-15);
   line-height: 1.65;
   word-break: break-word;
+  color: var(--text-2);
+}
+/* A reply still streaming reads one step brighter than a settled one — the
+   design-refresh distinction, kept, just theme-aware. */
+.md-root--streaming {
+  color: var(--text-strong);
 }
 .md-strong {
   font-weight: 700;
