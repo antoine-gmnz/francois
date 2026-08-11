@@ -1,14 +1,14 @@
 ---
 id: cloud-sessions
 title: Cloud Sessions (adopt a Claude Code on the web session)
-status: in-review
+status: shipped
 branch: feat/cloud-sessions
 created: 2026-08-11
 depends_on: [session-engine, durable-sessions, session-worktree, projects, multi-account, sessions-sidebar, command-palette]
-loop_pass: 1
-loop_phase: fix
-reviewed_base:
-reviewed_digest:
+loop_pass: 0
+loop_phase: done
+reviewed_base: 8c6f1c27386e840e2b861d961f56e885a54319ae
+reviewed_digest: 8839174f70958dcc
 design_files:
   - https://claude.ai/design/p/a4b15728-147c-4932-b83c-f60a5fc60db7?file=Francois%20Design%20System%20v2.dc.html
   - https://claude.ai/design/p/a4b15728-147c-4932-b83c-f60a5fc60db7?file=Francois%20Redesign.dc.html
@@ -282,33 +282,54 @@ the chip reuses the status-dot family and the modal reuses `Modal`/`ListRow`/`Ch
       adopts the session: it appears in pane [1] with the cloud transcript and a `cloud` chip. (FR-3, FR-5, FR-10)
 - [ ] The adopted session takes a normal turn afterwards over `claude --resume` with no
       cloud-specific path, and survives quit/reopen with its provenance. (FR-10)
-- [ ] Landing defaults to a fresh worktree; the branch is the cloud session's when known. (FR-4, FR-14)
-- [ ] `destination: 'checkout'` without `confirmed: true` is refused with `INVALID_INPUT`. (FR-12)
-- [ ] A revoked/expired token surfaces `CLOUD_AUTH_EXPIRED` with actionable text in seconds — not after the deadline. (FR-1)
-- [ ] A non-200 or unparseable list response yields `ok:true, degraded:true, sessions:[]`, and the paste field still works. (FR-2, FR-17)
-- [ ] A repo-mismatch dialog fails the adoption within seconds naming both repos, and leaves no PTY and no worktree behind. (FR-8, FR-11)
-- [ ] `cargo test` + `npm test` green; `npx tsc --noEmit` clean. Live check:
+- [x] Landing defaults to a fresh worktree; the branch is the cloud session's when known. (FR-4, FR-14)
+- [x] `destination: 'checkout'` without `confirmed: true` is refused with `INVALID_INPUT`. (FR-12)
+- [x] A revoked/expired token surfaces `CLOUD_AUTH_EXPIRED` with actionable text in seconds — not after the deadline. (FR-1)
+- [x] A non-200 or unparseable list response yields `ok:true, degraded:true, sessions:[]`, and the paste field still works. (FR-2, FR-17)
+- [x] A repo-mismatch dialog fails the adoption within seconds naming both repos, and leaves no PTY and no worktree behind. (FR-8, FR-11)
+- [x] `cargo test` + `npm test` green; `npx tsc --noEmit` clean. Live check:
       `cargo test -- --ignored live_teleport_adopts_a_cloud_session` (needs auth, network and a real cloud session).
+
+> **Ticked by `/cohorte-review` round 2 (2026-08-11)** on the evidence the pipeline actually has:
+> a green preflight (`cargo test` + `npm test` + `npx tsc --noEmit`) plus the round-2 review's
+> spec-conformance pass. The test backing each ticked criterion:
+> `landing.rs::the_worktree_branch_is_the_cloud_sessions_when_known` +
+> `a_worktree_landing_checks_out_the_cloud_sessions_branch_before_teleport_spawns` ·
+> `adopt.rs::INVALID_INPUT` confirm cases · `auth.rs` + `api.rs` `CLOUD_AUTH_EXPIRED` cases ·
+> `api.rs::list_result(CloudFetch::{NotFound,Degraded})` + `cloud-sessions.test.ts` degraded cases ·
+> `detect.rs::a_repo_mismatch_dialog_fails_with_both_repos` +
+> `landing.rs::a_failed_adoption_removes_the_worktree_it_created_and_keeps_one_it_did_not`.
+>
+> **Left open on purpose — nothing in the pipeline runs the app:** the first two criteria (an
+> end-to-end adopt showing transcript + `cloud` chip in pane [1]; the adopted session taking a real
+> turn over `claude --resume`). The quit/reopen provenance half of criterion 2 *is* covered by
+> `persistence.rs::cloud_provenance_round_trips_through_a_persisted_record`, but the turn itself is
+> not. The `--ignored` live check named in the last criterion was **not run** (needs auth, network
+> and a real cloud session) — the checkbox reflects the three mechanical gates only.
 
 ## Remediation
 
 ### 2026-08-11 · round 1 (REVIEW REPORT — REVISE · 8 findings, 2 blocking)
 
-- [ ] CRITICAL · `src-tauri/src/session/cloud/api.rs:505` · spec-violation · `cloud_resolve` returns `err(code, message)` for any `CloudFetch::Actionable` result from the `GET /v1/code/sessions/<id>` lookup (403 `untrusted_device`/`policy`, 401 body), contradicting FR-3 ("a non-200 here resolves the ref with null metadata rather than failing — adoption may still succeed, teleport does its own validation") and leaking `CLOUD_DEVICE_UNTRUSTED`/`CLOUD_POLICY_DENIED`, which are not in `cloud_resolve`'s documented error union (`contract/cloud-sessions.ts:106-107`). **Fix:** make that branch fall through to a null-metadata `CloudSession` exactly like the `CloudFetch::Degraded` arm; keep `return err(...)` only for the FR-1 token precheck (`cloud_token_for`) a few lines above.
+> **All 8 closed.** Round 2 (`/cohorte-review`, SHIP) re-read each item against the code and
+> confirmed the prescribed fix landed and is test-covered — see the per-item evidence in
+> `specs/reports/cloud-sessions.md` §Round-2 verification. No item was closed on assertion alone.
 
-- [ ] CRITICAL · `src-tauri/src/session/cloud/adopt.rs:429` + `src-tauri/src/session/cloud/api.rs:400-409` + `src-tauri/src/session/cloud/detect.rs:67` · spec-violation · `cloud_adopt` can never produce `CLOUD_DEVICE_UNTRUSTED`/`CLOUD_POLICY_DENIED` even though the contract lists both as valid adopt errors (`contract/cloud-sessions.ts:149`) and §2 Goal demands "a named, actionable failure for every documented precondition": `lookup_cloud_session` discards `CloudFetch::Actionable` into `None`, and `teleport_block` has no matcher for device/policy dialog text — so an untrusted device or policy-denied org fails only as a generic `CLOUD_ADOPT_STALLED`/`CLOUD_ADOPT_FAILED` after the full wait instead of "within seconds". **Fix:** surface the `CloudFetch::Actionable` result from the pre-spawn session lookup (or a dedicated pre-check) as an immediate `AdoptError`, and/or add PTY dialog matchers for the device/policy wording in `teleport_block`.
+- [x] CRITICAL · `src-tauri/src/session/cloud/api.rs:505` · spec-violation · `cloud_resolve` returns `err(code, message)` for any `CloudFetch::Actionable` result from the `GET /v1/code/sessions/<id>` lookup (403 `untrusted_device`/`policy`, 401 body), contradicting FR-3 ("a non-200 here resolves the ref with null metadata rather than failing — adoption may still succeed, teleport does its own validation") and leaking `CLOUD_DEVICE_UNTRUSTED`/`CLOUD_POLICY_DENIED`, which are not in `cloud_resolve`'s documented error union (`contract/cloud-sessions.ts:106-107`). **Fix:** make that branch fall through to a null-metadata `CloudSession` exactly like the `CloudFetch::Degraded` arm; keep `return err(...)` only for the FR-1 token precheck (`cloud_token_for`) a few lines above.
+
+- [x] CRITICAL · `src-tauri/src/session/cloud/adopt.rs:429` + `src-tauri/src/session/cloud/api.rs:400-409` + `src-tauri/src/session/cloud/detect.rs:67` · spec-violation · `cloud_adopt` can never produce `CLOUD_DEVICE_UNTRUSTED`/`CLOUD_POLICY_DENIED` even though the contract lists both as valid adopt errors (`contract/cloud-sessions.ts:149`) and §2 Goal demands "a named, actionable failure for every documented precondition": `lookup_cloud_session` discards `CloudFetch::Actionable` into `None`, and `teleport_block` has no matcher for device/policy dialog text — so an untrusted device or policy-denied org fails only as a generic `CLOUD_ADOPT_STALLED`/`CLOUD_ADOPT_FAILED` after the full wait instead of "within seconds". **Fix:** surface the `CloudFetch::Actionable` result from the pre-spawn session lookup (or a dedicated pre-check) as an immediate `AdoptError`, and/or add PTY dialog matchers for the device/policy wording in `teleport_block`.
 
 - [x] HIGH · `src/features/cloud-sessions/AdoptCloudSessionModal.tsx:154-158,345-347` · spec-violation · `specs/design/cloud-sessions.md` §Screens ("Cancel becomes Abort") and §Notes ("Esc cancels (and aborts an in-flight adoption)") require Escape/Cancel to abort a running adoption, but `close()` only unsubscribes from the event stream and the button reads "Run in background" — code and frozen design brief disagree. **Fix:** the contract exposes no cancel channel (no `cloud_cancel`/abort verb in `contract/cloud-sessions.ts`), and adding one is a contract change that would ripple into surfaces with no findings; the code is the honest side. Amend the design brief to match. — fixed: lead · `specs/design/cloud-sessions.md` §Screens in-flight state + §Notes Keyboard now specify "Run in background" and state there is deliberately no Abort. No code change; no contract change.
 
-- [ ] MEDIUM · `contract/cloud-sessions.ts:107,150` / `src-tauri/src/session/cloud/api.rs:324` · spec-violation · `CLOUD_SESSION_NOT_FOUND` is documented as a possible error for both `cloud_resolve` and `cloud_adopt`, but no code path ever returns it — `classify_api_error` never maps a 404 to it, so it is unreachable contract code. **Fix:** map a definitive 404 on the single-session lookup to `CLOUD_SESSION_NOT_FOUND` (lead decision: keep the contract as frozen and make the code reach it — do NOT remove it from the unions, and do not edit `contract/cloud-sessions.ts`). Note this interacts with finding 1: `cloud_resolve` still resolves null-metadata rather than erroring for the *Actionable* 403/401 case; only a definitive 404 becomes `CLOUD_SESSION_NOT_FOUND`.
+- [x] MEDIUM · `contract/cloud-sessions.ts:107,150` / `src-tauri/src/session/cloud/api.rs:324` · spec-violation · `CLOUD_SESSION_NOT_FOUND` is documented as a possible error for both `cloud_resolve` and `cloud_adopt`, but no code path ever returns it — `classify_api_error` never maps a 404 to it, so it is unreachable contract code. **Fix:** map a definitive 404 on the single-session lookup to `CLOUD_SESSION_NOT_FOUND` (lead decision: keep the contract as frozen and make the code reach it — do NOT remove it from the unions, and do not edit `contract/cloud-sessions.ts`). Note this interacts with finding 1: `cloud_resolve` still resolves null-metadata rather than erroring for the *Actionable* 403/401 case; only a definitive 404 becomes `CLOUD_SESSION_NOT_FOUND`.
 
-- [ ] MEDIUM · `src-tauri/src/session/cloud/detect.rs:97,106,118` · spec-violation · the stash/MCP/trust `CloudBlock`s set `detail: None`, but the contract documents `CLOUD_ADOPT_STALLED`'s `detail` as `{ phase }` (`contract/common.ts`) — only the FR-9 timeout path (`adopt.rs:858-865`) includes it, so a dialog-triggered stall loses the phase a frontend renderer expects. **Fix:** thread the current phase into these `CloudBlock`s too (e.g. have `cloud_feed`/`teleport_block` take the current phase and set `detail: Some(json!({"phase": phase}))`).
+- [x] MEDIUM · `src-tauri/src/session/cloud/detect.rs:97,106,118` · spec-violation · the stash/MCP/trust `CloudBlock`s set `detail: None`, but the contract documents `CLOUD_ADOPT_STALLED`'s `detail` as `{ phase }` (`contract/common.ts`) — only the FR-9 timeout path (`adopt.rs:858-865`) includes it, so a dialog-triggered stall loses the phase a frontend renderer expects. **Fix:** thread the current phase into these `CloudBlock`s too (e.g. have `cloud_feed`/`teleport_block` take the current phase and set `detail: Some(json!({"phase": phase}))`).
 
-- [ ] MEDIUM · `src-tauri/src/project/registry.rs:421,438` · quality · `session_seed` and `project_roots` — new cross-domain lookups that gate `cloud_adopt`'s `PROJECT_NOT_FOUND` and every default applied to the created session — have zero unit tests; the existing `mod tests` at line 463 covers neither. **Fix:** add tests for a known id (field mapping), an unknown id (`None`), and `project_roots` on an empty and a non-empty registry.
+- [x] MEDIUM · `src-tauri/src/project/registry.rs:421,438` · quality · `session_seed` and `project_roots` — new cross-domain lookups that gate `cloud_adopt`'s `PROJECT_NOT_FOUND` and every default applied to the created session — have zero unit tests; the existing `mod tests` at line 463 covers neither. **Fix:** add tests for a known id (field mapping), an unknown id (`None`), and `project_roots` on an empty and a non-empty registry.
 
-- [ ] LOW · `src/features/cloud-sessions/AdoptCloudSessionModal.tsx:167,192` (+ `src/app/App.tsx`) · quality · `App.tsx` passes a fresh inline `onClose={() => setAdoptCloudOpen(false)}` on every render, and `onClose` is a dependency of the "ready session" `useEffect([readySessionId, onClose])`; an App re-render during the async `sessionList()` round-trip re-runs the effect and can re-issue the fetch or re-call `setActiveSessionId`/`setMainTab`/`onClose` more than once. **Fix:** wrap `onClose` in `useCallback` where `App.tsx` renders `AdoptCloudSessionModal`, or read it through a ref inside the effect instead of listing it as a dependency.
+- [x] LOW · `src/features/cloud-sessions/AdoptCloudSessionModal.tsx:167,192` (+ `src/app/App.tsx`) · quality · `App.tsx` passes a fresh inline `onClose={() => setAdoptCloudOpen(false)}` on every render, and `onClose` is a dependency of the "ready session" `useEffect([readySessionId, onClose])`; an App re-render during the async `sessionList()` round-trip re-runs the effect and can re-issue the fetch or re-call `setActiveSessionId`/`setMainTab`/`onClose` more than once. **Fix:** wrap `onClose` in `useCallback` where `App.tsx` renders `AdoptCloudSessionModal`, or read it through a ref inside the effect instead of listing it as a dependency.
 
-- [ ] LOW · `src/features/cloud-sessions/AdoptCloudSessionModal.tsx:197-225` · quality · the Esc/Enter/Arrow keydown `useEffect` has no dependency array, so it detaches and re-attaches a capture-phase `window` listener on every render. **Fix:** give the effect an explicit dependency array (`enabled`, `inFlight`, `cursor`, `list.sessions`, `submit`, `close`, `pick`) so it only re-subscribes when one of those changes.
+- [x] LOW · `src/features/cloud-sessions/AdoptCloudSessionModal.tsx:197-225` · quality · the Esc/Enter/Arrow keydown `useEffect` has no dependency array, so it detaches and re-attaches a capture-phase `window` listener on every render. **Fix:** give the effect an explicit dependency array (`enabled`, `inFlight`, `cursor`, `list.sessions`, `submit`, `close`, `pick`) so it only re-subscribes when one of those changes.
 
 **Deferred (not dispatched)** — reviewer-classified out of scope:
 
