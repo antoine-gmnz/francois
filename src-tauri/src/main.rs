@@ -107,6 +107,7 @@ fn main() {
             project::project_remove,
             project::project_get_standards,
             project::project_set_standards,
+            project::project_repo_brief,
             session::conversation_get_transcript,
             session::agents_list,
             session::agents_dispatch,

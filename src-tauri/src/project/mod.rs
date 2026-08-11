@@ -23,10 +23,12 @@
 
 mod commands;
 mod registry;
+mod repo_brief;
 mod standards;
 
 pub(crate) use commands::*;
 pub(crate) use registry::*;
+pub(crate) use repo_brief::*;
 pub(crate) use standards::*;
 
 #[cfg(test)]

@@ -25,11 +25,14 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
     return <PermissionCard b={block} sessionId={sessionId} />;
   }
   if (block.kind === 'user') {
+    // design 7a: the prompt is an accent `›` line in the terminal's own type,
+    // not a bordered card. The glyph carries the who — a "YOU" label above a
+    // card was the sans-era way of saying the same thing twice.
     return (
-      <div className="block-user">
-        <div className="block-user__header">
-          <span className="block-user__label">YOU</span>
-          <span className="block-user__spacer" />
+      <div className="block-row block-user">
+        <span className="block-glyph block-user__arrow">›</span>
+        <div className="block-content">
+          <div className="block-user__body">{block.text}</div>
           {block.queued && (
             <span className="block-user__queued">
               <StatusDot color="var(--warn)" size={5} pulsing />
@@ -37,7 +40,6 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
             </span>
           )}
         </div>
-        <div className="block-user__body">{block.text}</div>
       </div>
     );
   }

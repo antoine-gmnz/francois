@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import AccountsModal from '../features/accounts/AccountsModal';
 import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
@@ -16,28 +16,33 @@ import { initShellEvents } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
 import UpdateModal from '../features/update/UpdateModal';
 import { checkUpdateOnLaunch } from '../features/update/update';
-import UsageBar from '../features/usage/UsageBar';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { isBusyStatus } from '../../contract/fleet-board';
-import { filterSessionsByProject } from '../../contract/projects';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { focusedSessionId, layoutRegime, paneCount, paneSessionIdAt, paneTabAt } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import './app.css';
-import { dividerGridArea, paneGridArea, shellColumns } from './appShell';
+import AppRow from './AppRow';
+import { dividerGridArea, isPanelTab, PANEL_TABS, paneGridArea, shellColumns } from './appShell';
 import MainPaneBody from './MainPaneBody';
-import MainTabStrip from './MainTabStrip';
-import RightRail from './RightRail';
 import SessionRail from './SessionRail';
+import SessionRow from './SessionRow';
 import SplitDivider from './SplitDivider';
 import SplitPane from './SplitPane';
-import StatusBar from './StatusBar';
 import { useAppIdentity } from './useAppIdentity';
 import { useAppShortcuts } from './useAppShortcuts';
 import { useDiffBadge } from './useDiffBadge';
 
 // Register the built-in palette commands once, before first paint (FR-6).
 registerBuiltinCommands();
+
+/** design 7a: the four dissolved right-column panes, in roster-row order. */
+const PANELS = {
+  agents: AgentsPanel,
+  mcp: McpPanel,
+  skills: SkillsPanel,
+  workflows: WorkflowsPanel,
+} as const;
 
 export default function App() {
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -48,13 +53,7 @@ export default function App() {
   const mainTab = useStore((s) => s.mainTab);
   const setMainTab = useStore((s) => s.setMainTab);
   const theme = useStore((s) => s.theme);
-  const toggleTheme = useStore((s) => s.toggleTheme);
   const showLeftPane = useStore((s) => s.showLeftPane);
-  const showRightPane = useStore((s) => s.showRightPane);
-  const collapsedPanes = useStore((s) => s.collapsedPanes);
-  // Tab strip: the session meta cluster folds so a long agent-tab run isn't clipped.
-  const showSessionMeta = useStore((s) => s.showSessionMeta);
-  const toggleSessionMeta = useStore((s) => s.toggleSessionMeta);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
@@ -78,7 +77,7 @@ export default function App() {
   const setAccounts = useStore((s) => s.setAccounts);
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
-  // agent-tab FR-9: the dynamic per-subagent tabs, after SHELL in the strip.
+  // agent-tab FR-9: the dynamic per-subagent tabs, after the view segment.
   const agentTabs = useStore((s) => s.agentTabs);
   const closeAgentTab = useStore((s) => s.closeAgentTab);
   const clearAgentTabs = useStore((s) => s.clearAgentTabs);
@@ -98,20 +97,18 @@ export default function App() {
   const panes = paneCount({ extraPanes });
   const regime = layoutRegime(panes);
   const split = regime !== 'single';
-  // The three shell tracks + which side is folded to its rail.
-  const columns = shellColumns(regime, showLeftPane, showRightPane);
+  // The two shell tracks + whether the roster is folded to its rail.
+  const columns = shellColumns(regime, showLeftPane);
   // FR-13: the session every pane-scoped consumer reads. Equals activeSessionId
   // whenever not split, so each of them is behaviour-identical outside split.
   const paneSessionId = focusedSessionId({ activeSessionId, mainTab, extraPanes, focusedPaneIndex });
 
-  const active = sessions.find((session) => session.id === activeSessionId) ?? null;
+  // design 7a: the session row describes what you are LOOKING at, so it follows
+  // the focused pane rather than the left one.
+  const active = sessions.find((session) => session.id === paneSessionId) ?? null;
   const activeAgentId = agentIdFromTab(mainTab);
-  // split-by-4 §8: the status bar's `· <m> sessions open` — the same project
-  // scope the roster and the layout toggle count in.
-  const inScopeCount = useMemo(
-    () => filterSessionsByProject(sessions, activeProjectId).length,
-    [sessions, activeProjectId],
-  );
+  // Which of the four dissolved panes is on screen, if any.
+  const panelTab = isPanelTab(mainTab);
 
   useEffect(() => {
     initShellEvents();
@@ -122,8 +119,8 @@ export default function App() {
 
   // multi-account §6: ONE app-wide registry feed — account_list at boot, then
   // francois://account/event. Everything that shows an account (the ACCOUNT
-  // field, the sidebar badge, the status-bar chip, the Accounts modal) reads
-  // the store this writes, so no surface ever fetches the registry itself.
+  // field, the sidebar badge, the app-row chip, the Accounts modal) reads the
+  // store this writes, so no surface ever fetches the registry itself.
   useEffect(() => startAccountFeed(setAccounts), [setAccounts]);
 
   // self-update FR-7: ONE check when the shell mounts, and it is SILENT on
@@ -161,22 +158,20 @@ export default function App() {
     };
   }, []);
 
-  // The single-pane strip's DIFF badge — and the palette's view-diff hint, which
-  // this hook also feeds, hence the FOCUSED session (FR-7). Equal to
-  // activeSessionId outside split, where MainTabStrip is the only reader.
+  // The session row's DIFF badge — and the palette's view-diff hint, which this
+  // hook also feeds, hence the FOCUSED session (FR-7).
   const diffCount = useDiffBadge(paneSessionId);
 
-  // Elapsed clock ticks while the active session's turn is in flight (FR-6) —
+  // Elapsed clock ticks while the focused session's turn is in flight (FR-6) —
   // isBusyStatus, so it keeps counting while the turn sits on an approval. That
   // wait is part of the turn's wall clock, and freezing it there would read as
-  // the turn having finished.
+  // the turn having finished. Unlike before 7a this runs while split too: the
+  // session row is always mounted and always shows the readout.
   useEffect(() => {
-    // split-session: the elapsed readout lives in MainTabStrip, which the split
-    // layout does not render — no reason to tick a clock nothing shows.
-    if (split || !(active && isBusyStatus(active.status) && mainTab === 'session')) return;
+    if (!(active && isBusyStatus(active.status))) return;
     const id = setInterval(() => setClockNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [active?.id, active?.status, mainTab, split]);
+  }, [active?.id, active?.status]);
 
   useAppShortcuts({
     newSessionOpen,
@@ -221,11 +216,6 @@ export default function App() {
 
   const mainFocused = focusedPane === 'main';
 
-  // design-refresh FR-10: what the condensed status bar reads out. Both come
-  // from state the shell already holds — no new store slice, no new IPC.
-  const activeAgentName = (activeAgentId && agentTabs.find((t) => t.id === activeAgentId)?.name) || null;
-  const runningAgents = useStore((s) => (paneSessionId ? (s.derived.get(paneSessionId)?.runningAgentCount ?? 0) : 0));
-
   const elapsedMs = active
     ? isBusyStatus(active.status)
       ? clockNow - active.startedAt
@@ -234,26 +224,27 @@ export default function App() {
 
   return (
     <div className="app-root">
-      {/* usage bar / titlebar: app-scoped plan limits + brand cluster, always
-          mounted, fixed height, directly under the (same-colored) native
-          caption — usage-bar FR-1/FR-2/§8, design-refresh FR-4 */}
-      <UsageBar home={home} />
-      {/* grid: sidebar + main + agents (native OS title bar provides window chrome) */}
-      <div
-        className="app-grid"
-        style={{
-          // columns adapt to the [ / ] toggles; hidden columns keep their panes
-          // MOUNTED (display:none) — Sidebar owns the session-cache subscriptions.
-          // design-refresh: the mock's `276px | 1fr | 296px` shell columns.
-          // split-session FR-2: split pays ~340px for the second pane by
-          // narrowing the roster to 238px. Neither column ever disappears —
-          // folded is the 46px rail, in every regime (shellColumns).
-          gridTemplateColumns: columns.template,
-        }}
-      >
-        {/* The folded roster — split-by-4 FR-6's 46px tile rail, now the fold
-            for EVERY regime rather than the grid alone. Rendered BEFORE the
-            column so it takes the first track: a `display:none` element
+      {/* design 7a: two tiers of chrome, both full-bleed under the native OS
+          caption. The outer row is app-scoped, the inner one session-scoped. */}
+      <AppRow appVersion={appVersion} />
+      <SessionRow
+        active={active}
+        mainTab={mainTab}
+        setMainTab={setMainTab}
+        diffCount={diffCount}
+        agentTabs={agentTabs}
+        closeAgentTab={closeAgentTab}
+        elapsedMs={elapsedMs}
+        home={home}
+      />
+
+      {/* body: roster + one main cell. No right column — 7a folds [3]–[6] into
+          the roster's own rows, which is what gives the terminal the width.
+          split-by-4 FR-2: split pays ~340px for its second pane by narrowing
+          the roster; folded, the roster is still the 46px rail (shellColumns). */}
+      <div className="app-grid" style={{ gridTemplateColumns: columns.template }}>
+        {/* The folded roster — split-by-4 FR-6's 46px tile rail. Rendered BEFORE
+            the column so it takes the first track: a `display:none` element
             generates no grid item. */}
         {columns.leftRail && (
           <SessionRail
@@ -263,121 +254,96 @@ export default function App() {
             }}
           />
         )}
+        {/* Hidden, never unmounted: the roster owns the session-cache subscriptions. */}
         <div className="app-col-left" style={{ display: showLeftPane ? undefined : 'none' }}>
           <Sidebar home={home} />
         </div>
 
-        {/* main pane — split-by-4 FR-1/FR-2: one section per pane, in a 1fr row
-            at two panes and a 2×2 grid above; otherwise exactly what it renders
-            today. Every split regime is resizable: the panes share the cell in
-            the ratios their dividers were last dragged to (50/50 by default),
-            and each gutter track IS a handle — hence gap: 0 on the modifiers.
-            The 2×2 also splits its rows, so it carries a second handle. */}
-        {split ? (
-          <div
-            className={regime === 'grid' ? `app-split-grid app-split-grid--${panes}` : 'app-split-grid app-split-grid--2'}
-            style={{
-              gridTemplateColumns: `${splitRatio}fr var(--space-12) ${1 - splitRatio}fr`,
-              ...(regime === 'grid'
-                ? { gridTemplateRows: `${splitRowRatio}fr var(--space-12) ${1 - splitRowRatio}fr` }
-                : null),
-            }}
-          >
-            {/* The row handle first, so the column handle — which spans the full
-                height at four panes — wins the cell where the two cross. */}
-            {regime === 'grid' && <SplitDivider axis="y" area={dividerGridArea('y', panes)} />}
-            {Array.from({ length: panes }, (_, i) => (
-              <Fragment key={i}>
-                {/* Placed explicitly above two panes; at two, DOM order
-                    (pane, handle, pane) fills the three tracks by itself. */}
-                {i === 1 && <SplitDivider axis="x" area={dividerGridArea('x', panes)} />}
-                <SplitPane
-                  index={i}
-                  area={paneGridArea(i, panes)}
-                  sessionId={paneSessionIdAt({ activeSessionId, mainTab, extraPanes }, i)}
-                  tab={paneTabAt({ activeSessionId, mainTab, extraPanes }, i)}
-                  focused={focusedPaneIndex === i}
-                  dense={regime === 'grid'}
-                  home={home}
-                  onFocus={() => setFocusedPaneIndex(i)}
-                  onTab={(t) => setPaneTab(i, t)}
-                  // FR-9: a grid pane shows its transcript, so promoting it opens
-                  // on SESSION — its remembered DIFF/SHELL tab was never on screen
-                  // there, and inheriting it would read as a tab the user never
-                  // picked. Review diff is the deliberate way to land on DIFF.
-                  onPromote={() => unsplit(i, regime === 'grid' ? 'session' : undefined)}
-                  onClose={() => closePane(i)}
-                  onReviewDiff={() => unsplit(i, 'diff')}
-                />
-              </Fragment>
-            ))}
-          </div>
-        ) : (
+        <div className="app-main-cell">
+          {/* The four dissolved panes. ALWAYS mounted — their feeds publish the
+              counts the roster rows read, and re-subscribing on every tab switch
+              would both flicker the counts and double the IPC. */}
           <section
+            className="app-main-section app-panel-host"
+            style={{ display: panelTab ? undefined : 'none', borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
             onClick={() => setFocusedPane('main')}
-            className="app-main-section"
-            style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
           >
-            <MainTabStrip
-              mainTab={mainTab}
-              setMainTab={setMainTab}
-              diffCount={diffCount}
-              agentTabs={agentTabs}
-              closeAgentTab={closeAgentTab}
-              active={active}
-              elapsedMs={elapsedMs}
-              showSessionMeta={showSessionMeta}
-              toggleSessionMeta={toggleSessionMeta}
-            />
-            <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} />
+            {PANEL_TABS.map((pane) => {
+              const Panel = PANELS[pane];
+              return (
+                <div key={pane} className="app-panel-slot" style={{ display: mainTab === pane ? undefined : 'none' }}>
+                  <Panel key={paneSessionId ?? 'none'} sessionId={paneSessionId} />
+                </div>
+              );
+            })}
           </section>
-        )}
 
-        {/* right column: agents [3] + mcp [4] + skills [5] + workflows [6] —
-            collapse-right-column FR-15: a collapsed card's wrapper shrinks to its
-            natural header height (flex: 0 0 auto); expanded cards keep their
-            1.3/0.95/1.05 ratios and share the freed space. Workflows isn't
-            collapsible (out of scope for collapse-right-column). */}
-        <div className="app-col-right" style={{ display: showRightPane ? undefined : 'none' }}>
-          <div className={collapsedPanes.agents ? 'app-panel-agents app-panel-agents--collapsed' : 'app-panel-agents'}>
-            <AgentsPanel key={paneSessionId ?? 'none'} sessionId={paneSessionId} collapsed={collapsedPanes.agents} />
-          </div>
-          <div className={collapsedPanes.mcp ? 'app-panel-mcp app-panel-mcp--collapsed' : 'app-panel-mcp'}>
-            <McpPanel key={paneSessionId ?? 'none'} sessionId={paneSessionId} collapsed={collapsedPanes.mcp} />
-          </div>
-          <div className={collapsedPanes.skills ? 'app-panel-skills app-panel-skills--collapsed' : 'app-panel-skills'}>
-            <SkillsPanel key={paneSessionId ?? 'none'} sessionId={paneSessionId} collapsed={collapsedPanes.skills} />
-          </div>
-          <div className="app-panel-workflows">
-            <WorkflowsPanel key={paneSessionId ?? 'none'} sessionId={paneSessionId} />
+          <div className="app-main-view" style={{ display: panelTab ? 'none' : undefined }}>
+            {/* split-by-4 FR-1/FR-2: one section per pane, in a 1fr row at two
+                panes and a 2×2 grid above; otherwise the single pane. Each split
+                pane keeps its own header + tab strip — the session row's view
+                segment steps aside (SessionRow). Every split regime is
+                resizable: the panes share the cell in the ratios their dividers
+                were last dragged to (50/50 by default), and each gutter track IS
+                a handle — hence gap: 0 on the modifiers. The 2×2 also splits its
+                rows, so it carries a second handle. */}
+            {split ? (
+              <div
+                className={regime === 'grid' ? `app-split-grid app-split-grid--${panes}` : 'app-split-grid app-split-grid--2'}
+                style={{
+                  gridTemplateColumns: `${splitRatio}fr var(--space-12) ${1 - splitRatio}fr`,
+                  ...(regime === 'grid'
+                    ? { gridTemplateRows: `${splitRowRatio}fr var(--space-12) ${1 - splitRowRatio}fr` }
+                    : null),
+                }}
+              >
+                {/* The row handle first, so the column handle — which spans the
+                    full height at four panes — wins the cell where the two cross. */}
+                {regime === 'grid' && <SplitDivider axis="y" area={dividerGridArea('y', panes)} />}
+                {Array.from({ length: panes }, (_, i) => (
+                  <Fragment key={i}>
+                    {/* Placed explicitly above two panes; at two, DOM order
+                        (pane, handle, pane) fills the three tracks by itself. */}
+                    {i === 1 && <SplitDivider axis="x" area={dividerGridArea('x', panes)} />}
+                    <SplitPane
+                      index={i}
+                      area={paneGridArea(i, panes)}
+                      sessionId={paneSessionIdAt({ activeSessionId, mainTab, extraPanes }, i)}
+                      tab={paneTabAt({ activeSessionId, mainTab, extraPanes }, i)}
+                      focused={focusedPaneIndex === i}
+                      dense={regime === 'grid'}
+                      home={home}
+                      onFocus={() => setFocusedPaneIndex(i)}
+                      onTab={(t) => setPaneTab(i, t)}
+                      // FR-9: a grid pane shows its transcript, so promoting it
+                      // opens on SESSION — its remembered DIFF/SHELL tab was never
+                      // on screen there, and inheriting it would read as a tab the
+                      // user never picked. Review diff is the deliberate way to
+                      // land on DIFF.
+                      onPromote={() => unsplit(i, regime === 'grid' ? 'session' : undefined)}
+                      onClose={() => closePane(i)}
+                      onReviewDiff={() => unsplit(i, 'diff')}
+                    />
+                  </Fragment>
+                ))}
+              </div>
+            ) : (
+              <section
+                onClick={() => setFocusedPane('main')}
+                className="app-main-section"
+                style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
+              >
+                <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} />
+              </section>
+            )}
           </div>
         </div>
-
-        {/* split-session FR-2: the folded right column. Rendered INSTEAD of the
-            column's 296px track (the column itself stays mounted above, hidden),
-            so [3]–[6] keep their subscriptions and `]` unfolds them again. Like
-            the roster rail, this is now the fold in EVERY regime — the grid used
-            to drop the column outright, which left `]` toggling nothing visible. */}
-        {columns.rightRail && <RightRail />}
       </div>
-
-      {/* design-refresh FR-10: window chrome, not a grid pane — a full-bleed
-          30px strip flush against the window edges, like the titlebar above. */}
-      <StatusBar
-        theme={theme}
-        toggleTheme={toggleTheme}
-        focusedPane={focusedPane}
-        activeAgentName={activeAgentName}
-        runningAgents={runningAgents}
-        paneCount={panes}
-        sessionCount={inScopeCount}
-        appVersion={appVersion}
-      />
 
       {/* projects FR-39: this modal is also what a switch into an EMPTY project
           opens, so cancelling it has to undo that switch. Both handlers are
           no-ops for every other way the modal is opened (`n`, the palette, the
-          sidebar button) — nothing is pending then. `onCreated` runs BEFORE the
+          roster button) — nothing is pending then. `onCreated` runs BEFORE the
           modal's own `onClose`, so clearing there is what makes the rollback
           below stand down once a session actually exists. */}
       {newSessionOpen && (
@@ -405,7 +371,8 @@ export default function App() {
 
       {/* session-rename FR-8: the rename modal, keyed to the session so a second
           open always restarts from that session's current name. Rendered here
-          because both entry points (row context menu, ⌘K) open the same one. */}
+          because all three entry points (row context menu, the session row's
+          breadcrumb, ⌘K) open the same one. */}
       {/* Gated on the id alone, never on the session still existing: a session
           removed while the modal is up must stay renameable-looking until the
           commit answers SESSION_NOT_FOUND (§7), not vanish under the cursor. */}
@@ -433,8 +400,8 @@ export default function App() {
           session — an account is registered whether or not anything is running. */}
       {accountsOpen && <AccountsModal onClose={() => setAccountsOpen(false)} />}
 
-      {/* self-update FR-10: opened by the status-bar chip and by the palette's
-          `Check for updates`. Needs no session — it is about the app itself. */}
+      {/* self-update FR-10: opened by the app row's version chip and by the
+          palette's `Check for updates`. Needs no session. */}
       {updateModalOpen && <UpdateModal onClose={() => setUpdateModalOpen(false)} />}
 
       <PaletteRoot />

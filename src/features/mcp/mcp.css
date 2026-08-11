@@ -25,17 +25,6 @@
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-/* collapse-right-column FR-16: McpPanel's hand-rolled header mirrors
-   .panel-header's clickable/collapsed treatment (styles.css). */
-.mcp-header--clickable {
-  cursor: pointer;
-}
-.mcp-header--clickable:hover {
-  background: var(--bg-hover);
-}
-.mcp-header--collapsed {
-  border-bottom: none;
-}
 /* design-refresh: matches .panel-header in styles.css (AGENTS/SKILLS use that
    shared class; this panel predates it and keeps its own selector). */
 .mcp-header-title {

@@ -16,65 +16,163 @@
   border-color: var(--border-focus);
 }
 
-/* No bottom rule, unlike the right-rail panel headers: the filter field sits
-   directly beneath and the mock groups the two as one block. */
+/* No bottom rule, unlike the old right-rail panel headers: the filter field
+   sits directly beneath and the mock groups the two as one block.
+   design 7a: sentence-case, not the uppercase pane label — there is no longer a
+   numbered pane grid for it to key into. */
 .sidebar__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--space-11) var(--space-12) var(--space-10);
+  gap: var(--space-9);
+  padding: var(--space-11) var(--space-12) var(--space-9);
   flex-shrink: 0;
 }
 .sidebar__title {
-  font-size: var(--font-size-11-5);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-hint);
+  font-size: var(--font-size-12-5);
   font-weight: 600;
+  color: var(--text-hint);
 }
 .sidebar__title--focused {
   color: var(--accent);
 }
+/* A pill, per the mock — the bare figure read as part of the title. */
 .sidebar__count {
   font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
   color: var(--text-dim);
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  padding: 1px var(--space-7);
 }
-
-.sidebar__footer {
-  padding: var(--space-10);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.sidebar__new {
-  width: 100%;
-  height: 32px;
+.sidebar__act {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-8);
-  background: var(--bg-hover);
-  border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-lg);
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: var(--radius-base);
+  color: var(--text-faint);
   cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: var(--font-size-12-5);
-  font-weight: 500;
-  color: var(--text-strong);
 }
-.sidebar__new:hover {
+.sidebar__act:hover {
+  color: var(--text-2);
+  background: var(--bg-hover);
+}
+.sidebar__act--on {
+  color: var(--text-2);
   background: var(--bg-hover-2);
-  border-color: var(--border-focus);
 }
-.sidebar__new-plus {
+/* The roster's own accent: starting a session is the live action in this pane. */
+.sidebar__act--accent {
   color: var(--accent);
-  font-size: var(--font-size-14);
+  font-size: var(--font-size-15);
   line-height: 1;
 }
-.sidebar__footer-hint {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
+.sidebar__act--accent:hover {
+  color: var(--accent-bright);
+}
+
+/* ── design 7a: repo groups ─────────────────────────────────────────────────
+   A heading per repo, its caret, its session count and a `+` that starts a
+   session in it. The heading is quiet on purpose — it is a divider that happens
+   to be clickable, not a row competing with the cards under it. */
+.roster-group + .roster-group {
+  margin-top: var(--space-8);
+}
+.roster-group__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  padding: var(--space-6) var(--space-6) var(--space-5);
+  cursor: pointer;
+  user-select: none;
+}
+.roster-group__caret {
+  font-size: var(--font-size-8);
   color: var(--text-faint);
+  flex-shrink: 0;
+}
+.roster-group__label {
+  font-size: var(--font-size-10-5);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  min-width: 0;
+}
+.roster-group__head:hover .roster-group__label {
+  color: var(--text-hint);
+}
+.roster-group__count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.roster-group__new {
+  font-size: var(--font-size-13);
+  line-height: 1;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.roster-group__new:hover {
+  color: var(--accent);
+}
+
+/* ── design 7a: the dissolved right column ──────────────────────────────────
+   Agents / MCP / Skills / Workflows, ruled off under the cards. Deliberately
+   NOT card-shaped: they are an index at the foot of a list, and giving them the
+   session card's surface would make the roster read as eight sessions. */
+.sidebar__footer {
+  padding: var(--space-6) var(--space-8) var(--space-8);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.roster-pane {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  padding: var(--space-7) var(--space-10);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+.roster-pane:hover {
+  background: var(--bg-hover);
+}
+.roster-pane--on,
+.roster-pane--on:hover {
+  background: var(--bg-raised);
+}
+.roster-pane__glyph {
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.roster-pane--on .roster-pane__glyph {
+  color: var(--text-2);
+}
+.roster-pane__label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-12);
+  color: var(--text-hint);
+}
+.roster-pane--on .roster-pane__label {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+.roster-pane__count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+/* Warm, never acid: subagents running is a "something is happening over there"
+   signal, and the accent belongs to the pane you are actually looking at. */
+.roster-pane__count--live {
+  color: var(--attn);
 }
 
 /* filter row (FR-20) — design-refresh: a recessed 30px field on the panel, no
