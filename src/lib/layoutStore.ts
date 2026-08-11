@@ -493,6 +493,11 @@ export interface LayoutSlice {
   // both the sidebar context menu and the ⌘K palette open the same modal.
   renameSessionId: string | null;
   setRenameSessionId: (sessionId: string | null) => void;
+  // cloud-sessions FR-14: the "Adopt cloud session" modal. Lifted here — like
+  // newSessionOpen — because both the pane [1] action beside "New session" and
+  // the ⌘K command open the same one. Never persisted: a modal is not layout.
+  adoptCloudOpen: boolean;
+  setAdoptCloudOpen: (o: boolean) => void;
   // mcp-panel attach overlay — lifted to the store so the command palette can open it (FR-23)
   mcpAttachOpen: boolean;
   setMcpAttachOpen: (o: boolean) => void;
@@ -611,6 +616,8 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
   setNewAgentOpen: (newAgentOpen) => set({ newAgentOpen }),
   renameSessionId: null,
   setRenameSessionId: (renameSessionId) => set({ renameSessionId }),
+  adoptCloudOpen: false,
+  setAdoptCloudOpen: (adoptCloudOpen) => set({ adoptCloudOpen }),
   mcpAttachOpen: false,
   setMcpAttachOpen: (mcpAttachOpen) => set({ mcpAttachOpen }),
   permissionsOpen: false,

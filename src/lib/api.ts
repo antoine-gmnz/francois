@@ -67,6 +67,14 @@ import type { SkillsEvent } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
+import type {
+  CloudAdoptData,
+  CloudAdoptRequest,
+  CloudEvent,
+  CloudListData,
+  CloudResolveData,
+  CloudResolveRequest,
+} from '../../contract/cloud-sessions';
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
 
 // Exported so other invoke sites (e.g. ShellTerminal.tsx, which redefines this
@@ -328,6 +336,22 @@ export const remoteGet = (sessionId: SessionId) =>
 /** Subscribe to francois://remote/event (remote.status). */
 export function onRemoteEvent(cb: (e: RemoteControlEvent) => void): Promise<UnlistenFn> {
   return stream<RemoteControlEvent>('francois://remote/event', cb);
+}
+
+// cloud-sessions (§5). Francois ADOPTS a Claude Code on the web session — a
+// one-way pull that ends as an ordinary local session. `cloud_list` is a
+// convenience that degrades to `{ sessions: [], degraded: true }` rather than
+// failing (FR-2), so only the auth refusals ever resolve ok:false; `cloud_adopt`
+// resolves once the adoption finished — its progress arrives on the event
+// channel below (FR-7), which is what the modal renders instead of a spinner.
+export const cloudList = (accountId?: AccountId) =>
+  ipc<Result<CloudListData>>('cloud_list', accountId ? { accountId } : undefined);
+export const cloudResolve = (req: CloudResolveRequest) => ipc<Result<CloudResolveData>>('cloud_resolve', req);
+export const cloudAdopt = (req: CloudAdoptRequest) => ipc<Result<CloudAdoptData>>('cloud_adopt', req);
+
+/** Subscribe to francois://cloud/event (cloud.adopt). */
+export function onCloudEvent(cb: (e: CloudEvent) => void): Promise<UnlistenFn> {
+  return stream<CloudEvent>('francois://cloud/event', cb);
 }
 
 // multiple-shells (§5). The domain is keyed by ShellId end to end — every

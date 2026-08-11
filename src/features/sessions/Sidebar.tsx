@@ -3,6 +3,7 @@ import { Bot, Plug, Search, Sparkles, Workflow } from 'lucide-react';
 import { filterSessionsByProject } from '../../../contract/projects';
 import type { EditorId } from '../../../contract/open-in-vscode';
 import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
+import { AdoptCloudButton } from '../cloud-sessions/AdoptCloudButton';
 import { prunePaletteSession } from '../palette/paletteData';
 import { showToast } from '../palette/palette';
 import { visibleSessions } from '../projects/projects';
@@ -55,6 +56,8 @@ export default function Sidebar({ home }: { home: string }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
+  // cloud-sessions FR-14: the adopt modal owns ↑/↓ while it is up.
+  const adoptCloudOpen = useStore((s) => s.adoptCloudOpen);
   // session-rename FR-8: the rename modal owns the keyboard while it is up.
   const renameOpen = useStore((s) => s.renameSessionId !== null);
   // projects FR-27: the board's project scope (null = All projects).
@@ -151,6 +154,7 @@ export default function Sidebar({ home }: { home: string }) {
     setSidebarFilter,
     filterRef,
     newSessionOpen,
+    adoptCloudOpen,
     projectsOpen,
     menuOpen: !!menu,
     renameOpen,
@@ -256,8 +260,8 @@ export default function Sidebar({ home }: { home: string }) {
           .join(' ')
       }
     >
-      {/* header — design 7a: title, a count pill, then the two affordances the
-          mock puts on the right (search, new). Sentence-case title, not the
+      {/* header — design 7a: title, a count pill, then the affordances the mock
+          puts on the right (search, adopt, new). Sentence-case title, not the
           uppercase pane label: there is no longer a numbered pane grid to key
           it into. */}
       <div className="sidebar__header">
@@ -275,6 +279,9 @@ export default function Sidebar({ home }: { home: string }) {
         >
           <Search {...ICON} />
         </span>
+        {/* cloud-sessions FR-14: the adopt action, beside "new session". Quiet
+            next to the accent `+` — adopting is the rarer of the two starts. */}
+        <AdoptCloudButton />
         <span
           className="sidebar__act sidebar__act--accent"
           title="new session · n"

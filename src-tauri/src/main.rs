@@ -43,6 +43,10 @@ fn main() {
         // and is memory-authoritative thereafter — Francois is its only writer.
         .manage(project::ProjectRegistry::default())
         .manage(session::RemoteRegistry::default())
+        // cloud-sessions §6: `ref → { killer, phase, … }` for the at-most-one
+        // adoption per cloud session (§7 #9). Process-lifetime only — nothing
+        // about a cloud session is ever persisted.
+        .manage(session::CloudAdoptRegistry::default())
         // usage-bar §6: the app-scoped usage cache lives in its OWN mutex, never
         // inside session::Engine — a leaf lock the probe path can take freely.
         .manage(usage::UsageState::default())
@@ -135,6 +139,10 @@ fn main() {
             session::remote_start,
             session::remote_stop,
             session::remote_get,
+            // cloud-sessions: adopt a Claude Code on the web session.
+            session::cloud_list,
+            session::cloud_resolve,
+            session::cloud_adopt,
             session::session_worktree_probe,
             session::session_worktree_status,
             session::session_worktree_remove,
@@ -172,6 +180,10 @@ fn main() {
                 // processes — leaking them leaves remote sessions live on the
                 // user's claude.ai account after Francois is gone.
                 session::kill_all_remote(app);
+                // cloud-sessions FR-11: an adoption PTY is an interactive
+                // `claude` mid-teleport — leaking one leaves a half-adopted
+                // session with nobody draining its master.
+                session::kill_all_cloud_adoptions(app);
                 usage::kill_probe(app); // usage-bar §7 #9 — no orphan `claude`
                                         // multi-account FR-16: an in-flight login is a real `claude` on
                                         // a PTY plus a half-written config dir — both go on exit.

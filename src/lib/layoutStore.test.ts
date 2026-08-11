@@ -366,3 +366,29 @@ describe('splitRatio store slice', () => {
     expect(useStore.getState().splitRatio).toBe(0.7);
   });
 });
+
+// cloud-sessions FR-14: the "Adopt cloud session" modal is opened from BOTH a
+// pane [1] action and a ⌘K command, so its open flag lives in the store like
+// every other shared modal's — not inside the sidebar.
+describe('adoptCloudOpen (cloud-sessions FR-14)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('starts closed and is not persisted — a modal is never restored across launches', async () => {
+    const useStore = await freshStore();
+    expect(useStore.getState().adoptCloudOpen).toBe(false);
+  });
+
+  it('opens and closes independently of the new-session modal', async () => {
+    const useStore = await freshStore();
+    useStore.getState().setAdoptCloudOpen(true);
+    expect(useStore.getState().adoptCloudOpen).toBe(true);
+    expect(useStore.getState().newSessionOpen).toBe(false);
+    useStore.getState().setAdoptCloudOpen(false);
+    expect(useStore.getState().adoptCloudOpen).toBe(false);
+  });
+});

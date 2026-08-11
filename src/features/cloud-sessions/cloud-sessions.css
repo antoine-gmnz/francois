@@ -1,0 +1,327 @@
+/* cloud-sessions (specs/cloud-sessions.md §8 · specs/design/cloud-sessions.md)
+   — the adopt modal, its session list, the phase list and the `cloud`
+   provenance chip.
+
+   No new colors, tokens or glyphs: everything below is a var() from
+   src/styles.css. Acid (--accent) appears exactly ONCE in this feature — the
+   in-flight phase row, which is the live thing — so the modal's title mark and
+   its hints stay neutral, and the only other acid surface (the primary Adopt
+   button, from the shared kit) is disabled, and therefore not acid, for as long
+   as an adoption is running.
+
+   Motion: none beyond the shared status-dot pulse. The list's loading state is
+   a set of static bars rather than a shimmer — a skeleton that moves reads as
+   activity, and the thing that is actually happening is the phase list. */
+
+/* ---------- modal ---------- */
+
+.cloud-modal__title {
+  font-size: var(--font-size-14);
+  color: var(--text-strong);
+}
+
+/* Deliberately NOT accent — see the acid note above. */
+.cloud-modal__title-mark {
+  color: var(--text-faint);
+}
+
+.cloud-modal__label {
+  font-size: var(--font-size-10);
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  margin-bottom: var(--space-5);
+  display: block;
+}
+
+.cloud-modal__field {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  height: 32px;
+  color: var(--text);
+  font-size: var(--font-size-12-5);
+  font-family: inherit;
+  padding: 0 var(--space-10);
+  width: 100%;
+  outline: none;
+}
+
+.cloud-modal__field:focus {
+  border-color: var(--border-focus);
+}
+
+/* A link or an id is something you would paste into a terminal — mono. */
+input.cloud-modal__field {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11-5);
+}
+
+.cloud-modal__field::placeholder {
+  color: var(--text-faint);
+}
+
+/* The platform's own dropdown button reads nothing like the rest of this form;
+   suppress it and draw the caret ourselves, same as the new-session form. */
+.cloud-modal__select {
+  position: relative;
+}
+
+.cloud-modal__field--select {
+  appearance: none;
+  padding-right: var(--space-24);
+  cursor: pointer;
+  line-height: normal;
+}
+
+.cloud-modal__field--select option {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+/* FR-14: promoted from quiet to required when the repo matched no project. */
+.cloud-modal__field--required {
+  border-color: var(--warn);
+}
+
+.cloud-modal__select-caret {
+  position: absolute;
+  right: var(--space-10);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.cloud-modal__hint {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  margin-top: var(--space-4);
+}
+
+.cloud-modal__hint--below-chips {
+  margin-top: var(--space-5);
+}
+
+.cloud-modal__chip-row {
+  display: flex;
+  gap: var(--space-6);
+}
+
+/* The destructive landing's inline confirmation. Amber, like every other
+   "this will touch your working tree" notice in the app — not red: nothing has
+   gone wrong, the user is being told what will happen. */
+.cloud-modal__warning {
+  margin-top: var(--space-8);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-11);
+  color: var(--warn);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.cloud-modal__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.cloud-modal__check input {
+  accent-color: var(--warn);
+  cursor: pointer;
+  margin: 0;
+}
+
+.cloud-modal__actions {
+  display: flex;
+  gap: var(--space-10);
+  margin-left: auto;
+}
+
+/* ---------- session list (FR-2/FR-17) ---------- */
+
+/* §Responsive: the list is the only region that shrinks — the paste field, the
+   landing toggle and the actions stay visible at any viewport height. Past ~6
+   rows it scrolls inside itself rather than growing the dialog. */
+.cloud-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* ~6 rows, and the FIRST region to give way on a short window: the paste
+     field, the landing toggle and the actions are the authoritative path and
+     must not scroll out of view to make room for a convenience. */
+  max-height: min(192px, 30vh);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.cloud-list--skeleton {
+  gap: var(--space-6);
+}
+
+.cloud-list__skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-8);
+}
+
+.cloud-list__skeleton-bar {
+  height: 7px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-raised);
+}
+
+.cloud-list__skeleton-bar--title {
+  width: 45%;
+}
+
+.cloud-list__skeleton-bar--meta {
+  width: 70%;
+  background: var(--bg-hover);
+}
+
+/* FR-17: the calm state, and the COMMON one for anyone offline. One line, no
+   icon, no error tone — it must not read as a failure, because the paste field
+   right above it is the authoritative path and still works. */
+.cloud-list__degraded {
+  font-size: var(--font-size-11);
+  color: var(--text-disabled);
+  padding: var(--space-4) var(--space-2);
+}
+
+/* The ONE list failure worth a tone: the FR-1 auth refusals, which the user can
+   actually act on. It sits where the list would be — next to the thing it is
+   about — and never hides the paste field above it. */
+.cloud-list__error {
+  font-size: var(--font-size-11);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+}
+
+.cloud-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-8);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.cloud-row__title {
+  font-size: var(--font-size-12);
+  color: var(--text-2);
+  max-width: 100%;
+}
+
+.cloud-row__meta {
+  display: flex;
+  gap: var(--space-6);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  max-width: 100%;
+}
+
+.cloud-row__meta-part + .cloud-row__meta-part::before {
+  content: '·';
+  margin-right: var(--space-6);
+  color: var(--text-disabled);
+}
+
+/* ---------- phase list (FR-7/FR-15) ---------- */
+
+.adopt-phases {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+.adopt-phases__steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.adopt-phases__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-11-5);
+}
+
+/* Never colour alone: the label carries the state too. */
+.adopt-phases__row--pending .adopt-phases__label {
+  color: var(--text-disabled);
+}
+.adopt-phases__row--done .adopt-phases__label {
+  color: var(--text-dim);
+}
+.adopt-phases__row--current .adopt-phases__label {
+  color: var(--text-bright);
+}
+.adopt-phases__row--failed .adopt-phases__label {
+  color: var(--error);
+}
+
+.adopt-phases__error {
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+  color: var(--error);
+  font-size: var(--font-size-11);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+}
+
+/* ---------- provenance chip (FR-16) ---------- */
+
+/* Same height, radius and dot family as the `rc` chip, but neutral: provenance
+   is a fact, not a live state. The face carries no id and no timestamp — the
+   tooltip (cloudChipTitle) carries both, after the one-way rule. */
+.cloud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* Pane [1]'s row is a `gap`-spaced flex line whose name takes the slack — the
+   chip must never be what pushes the status readout off the card. */
+.cloud-chip--sm {
+  gap: var(--space-4);
+  flex-shrink: 0;
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+}
+
+/* ---------- pane [1] action ---------- */
+
+/* Beside the roster header's `+`, not instead of it: adoption is the rarer of
+   the two starts, so it stays QUIET where new-session is accent. Geometry
+   matches design 7a's act cluster (20px, --radius-base) so the three header
+   actions read as one row — see .sidebar__act in sessions/sidebar.css. */
+.cloud-adopt-button {
+  height: 20px;
+  width: 20px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  color: var(--text-faint);
+}
+
+.cloud-adopt-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-2);
+}

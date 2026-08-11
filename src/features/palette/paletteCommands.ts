@@ -71,6 +71,19 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // 1a — Adopt cloud session (cloud-sessions FR-14): the second way into the
+  // adopt modal, beside pane [1]'s own action. Needs NO session — adoption
+  // brings one INTO the fleet, so it is reachable from an empty app.
+  registerPaletteCommand({
+    id: 'adopt-cloud-session',
+    glyph: '☁',
+    name: 'Adopt cloud session',
+    hint: () => 'paste a claude.ai/code link',
+    run: () => {
+      useStore.getState().setAdoptCloudOpen(true);
+    },
+  });
+
   // 1b — Rename session (session-rename FR-14): opens the same modal the sidebar
   // row's context menu opens, for the ACTIVE session. Not a SecondaryStep — it
   // acts on one session, so it just opens the modal and closes the palette.

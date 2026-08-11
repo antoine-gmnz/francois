@@ -279,6 +279,12 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
             if !s.attachments.is_empty() {
                 rec["attachments"] = serde_json::to_value(&s.attachments).unwrap_or(Value::Null);
             }
+            // cloud-sessions FR-10/§6: the ONLY thing this feature persists.
+            // Same omit-not-null convention — a session that was never adopted
+            // writes no key at all.
+            if let Some(c) = &s.cloud {
+                rec["cloud"] = serde_json::to_value(c).unwrap_or(Value::Null);
+            }
             rec
         })
         .collect();
@@ -328,6 +334,11 @@ pub(crate) struct PersistedMeta {
     /// per-element and best-effort — one malformed entry is skipped rather than
     /// costing the session its whole record.
     attachments: Vec<Attachment>,
+    /// cloud-sessions FR-10: None on every pre-feature record, and on every
+    /// session that was not adopted. A malformed value loads as "not adopted"
+    /// rather than costing the session its whole record — the chip is the only
+    /// thing that depends on it.
+    cloud: Option<CloudProvenance>,
 }
 
 pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
@@ -420,6 +431,10 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
                     .collect()
             })
             .unwrap_or_default(),
+        cloud: rec
+            .get("cloud")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
     })
 }
 
@@ -546,6 +561,9 @@ pub fn load_persisted(app: &AppHandle) {
                 // entry — and every pre-feature record, which has none — loads
                 // as `default`; the pruned value is written by the next persist.
                 account_id: resolve_account(m.account_id, &known_accounts),
+                // cloud-sessions FR-10: provenance survives quit/reopen — that
+                // is the whole point of persisting it (§9).
+                cloud: m.cloud,
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
@@ -1109,6 +1127,58 @@ mod project_link_tests {
             let mut r = old.clone();
             r["accountId"] = blank;
             assert_eq!(parse_session_record(&r, 0).unwrap().account_id, None);
+        }
+    }
+
+    // ---------- cloud-sessions FR-10: provenance ----------
+
+    #[test]
+    fn session_meta_omits_cloud_entirely_unless_the_session_was_adopted() {
+        // FR-16: presence is the WHOLE signal behind the `cloud` chip, so an
+        // ordinary session must carry no key at all — a `null` would read as
+        // "adopted, details unknown".
+        let mut s = test_session();
+        assert!(
+            serde_json::to_value(s.meta())
+                .unwrap()
+                .get("cloud")
+                .is_none(),
+            "a session that was never adopted must not mention cloud"
+        );
+        s.cloud = Some(CloudProvenance {
+            cloud_session_id: "session_01AB".into(),
+            adopted_at: 1_784_573_689_516,
+        });
+        let meta = serde_json::to_value(s.meta()).unwrap();
+        assert_eq!(meta["cloud"]["cloudSessionId"], "session_01AB");
+        assert_eq!(meta["cloud"]["adoptedAt"], 1_784_573_689_516u64);
+    }
+
+    #[test]
+    fn cloud_provenance_round_trips_through_a_persisted_record() {
+        // §9: "survives quit/reopen with its provenance". Nothing ELSE about the
+        // cloud session is stored — no cached list, no token (§6).
+        let rec = json!({
+            "id": "s1", "name": "n", "cwd": "/x",
+            "cloud": { "cloudSessionId": "session_01AB", "adoptedAt": 1_784_573_689_516u64 }
+        });
+        let parsed = parse_session_record(&rec, 0).unwrap().cloud.unwrap();
+        assert_eq!(parsed.cloud_session_id, "session_01AB");
+        assert_eq!(parsed.adopted_at, 1_784_573_689_516);
+
+        // Every pre-feature record, and every non-adopted session, has no key.
+        let old = json!({ "id": "s1", "name": "n", "cwd": "/x" });
+        assert!(parse_session_record(&old, 0).unwrap().cloud.is_none());
+        // A malformed value loads as "not adopted" rather than costing the
+        // session its whole record — only the chip depends on it.
+        for bad in [
+            json!(null),
+            json!("session_01AB"),
+            json!({ "adoptedAt": 1 }),
+        ] {
+            let mut r = old.clone();
+            r["cloud"] = bad;
+            assert!(parse_session_record(&r, 0).unwrap().cloud.is_none());
         }
     }
 

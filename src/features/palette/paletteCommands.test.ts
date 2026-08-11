@@ -112,6 +112,36 @@ describe('panel-tab palette commands (design 7a)', () => {
   });
 });
 
+describe('adopt cloud session (cloud-sessions FR-14)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('registers the command next to New session, and never says "Remote Control"', async () => {
+    const { byId, paletteCommands } = await freshModules();
+    const cmd = byId('adopt-cloud-session');
+    expect(cmd.name).toBe('Adopt cloud session');
+    // §7 #4: the CLI's auth errors say "Remote Control"; this feature's UI never does.
+    expect(`${cmd.name} ${cmd.hint?.() ?? ''}`).not.toMatch(/remote control/i);
+    const ids = paletteCommands().map((c) => c.id);
+    expect(ids.indexOf('adopt-cloud-session')).toBe(ids.indexOf('new-session') + 1);
+  });
+
+  it('needs no session — a cloud session is adopted INTO the fleet, from empty', async () => {
+    const { byId } = await freshModules();
+    expect(byId('adopt-cloud-session').enabled?.(ctx) ?? true).toBe(true);
+  });
+
+  it('running it opens the modal the pane [1] action opens', async () => {
+    const { useStore, byId } = await freshModules();
+    byId('adopt-cloud-session').run(ctx);
+    expect(useStore.getState().adoptCloudOpen).toBe(true);
+  });
+});
+
 describe('notifications palette toggles (FR-18)', () => {
   beforeEach(() => {
     mockStorage();

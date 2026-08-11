@@ -14,6 +14,7 @@ import { formatContextTokens, formatElapsed } from '../../contract/conversation-
 import { isBusyStatus, STATUS_COLOR, STATUS_LABEL, statusPulses } from '../../contract/fleet-board';
 import { displayWslCwd } from '../../contract/wsl-filesystem';
 import { agentTabLabel, tabIdFor, type AgentTabRef } from '../features/agents/agent-tab';
+import { CloudChip } from '../features/cloud-sessions/CloudChip';
 import ProjectSwitcher from '../features/projects/ProjectSwitcher';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import { truncateBranchLeft } from '../features/sessions/worktree';
@@ -199,6 +200,10 @@ export default function SessionRow({
           ⎇ {truncateBranchLeft(active.worktree.branch, 18)}
         </span>
       )}
+      {/* cloud-sessions FR-16: adopted from a Claude Code on the web session.
+          The tooltip carries the one-way rule. Sits beside the `rc` chip whose
+          shape it reuses. */}
+      {active?.cloud && <CloudChip cloud={active.cloud} />}
       {/* remote-control: host this session on claude.ai/code + mobile */}
       {active && <RemoteControlBadge key={active.id} sessionId={active.id} />}
 

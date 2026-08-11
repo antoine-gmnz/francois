@@ -31,6 +31,7 @@ pub(crate) fn test_session() -> Session {
         worktree: None,
         worktree_distro: None,
         account_id: "default".into(),
+        cloud: None,
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,

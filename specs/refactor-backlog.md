@@ -186,3 +186,11 @@ would swallow the fonts/CSP commit pair this feature exists to ship.
   see that spec's FR-9. → **Fix:** migrate each inline `style` object to a `<feature>.css` BEM-lite
   class per `PIPELINE.md` §Code layout, file by file; once none remain, `style-src-attr 'none'`
   becomes viable and `webview-hardening`'s CSP can be revisited.
+
+## deferred:cloud-sessions
+
+Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, quality-only, non-security.
+
+- [ ] LOW · src-tauri/src/session/cloud/auth.rs:81 · quality · resolve Bedrock/Vertex/base-URL env through the account-scoped mechanism `account_env` uses, once accounts carry provider config · deferred:cloud-sessions
+- [ ] LOW · src-tauri/src/session/cloud/api.rs:1-1028 · rule · file is 1028 lines, over the ~1000-line cap in PIPELINE.md §Code layout; split the ref-normalizer/repo-matching pure helpers (normalize_cloud_ref, remote_slug, repo_matches, timestamp parsing) plus their tests into a sibling module (cloud/refs.rs), leaving api.rs the HTTP calls and response mapping · deferred:cloud-sessions
+- [ ] LOW · src/features/cloud-sessions/AdoptCloudSessionModal.tsx:146-149 · quality · pick() sets ref/resolved but never updates cursor, so ArrowDown/ArrowUp right after a mouse pick restarts navigation from index 0/-1 instead of the clicked row; thread the row index into onPick (or list.sessions.findIndex) and setCursor to it inside pick · deferred:cloud-sessions

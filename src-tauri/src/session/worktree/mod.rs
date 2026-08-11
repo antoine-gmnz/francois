@@ -478,7 +478,17 @@ fn seed_worktree_consent(source_repo_root: &str, worktree_path: &str) {
 /// remove --force` on the path it tried to create, and (only when THIS call
 /// would have created the branch) `git branch -D` on it. Failures are logged,
 /// never surfaced (a reversal failure must not shadow the original error).
-fn reverse_create(host: &GitHost, repo_root: &str, path: &str, branch: &str, created_branch: bool) {
+///
+/// `pub(crate)` so cloud-sessions FR-11 (a failed adoption removes the worktree
+/// it created in this run, never one that already existed) reuses this exact
+/// rule rather than growing a second copy of it.
+pub(crate) fn reverse_create(
+    host: &GitHost,
+    repo_root: &str,
+    path: &str,
+    branch: &str,
+    created_branch: bool,
+) {
     if let Err(e) = git_routed(host, repo_root, &["worktree", "remove", "--force", path]) {
         eprintln!("session-worktree: reversal `worktree remove --force` failed: {e}");
     }

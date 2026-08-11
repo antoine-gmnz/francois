@@ -17,6 +17,7 @@ import { BadgePill } from '../../ui/BadgePill';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { StatusDot } from '../../ui/StatusDot';
 import { sessionAccountBadge } from '../accounts/accounts';
+import { CloudChip } from '../cloud-sessions/CloudChip';
 import { filteredEmptyLabel } from '../projects/projects';
 import type { RosterGroup } from './roster-groups';
 import { truncateBranchLeft } from './worktree';
@@ -268,6 +269,9 @@ function SessionCard({
             {accountBadge.text}
           </span>
         )}
+        {/* cloud-sessions FR-16: where this session came FROM. Neutral, never
+            accent — provenance is a fact, not a live state. */}
+        {session.cloud && <CloudChip cloud={session.cloud} size="sm" />}
         {/* split-by-4 FR-22: which pane is showing this session. */}
         {paneLabel && (
           <span className={paneAccent ? 'sidebar-card__pane sidebar-card__pane--accent' : 'sidebar-card__pane'}>

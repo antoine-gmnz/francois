@@ -191,7 +191,7 @@ gate:
   - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`). Commands never reject for domain failures — every fallible call resolves to `Result`.
   - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in `contract/common.ts`).
   - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and reads as: the Tauri mapping above / "Rust core".
-- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account`
+- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account` · `cloud`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
