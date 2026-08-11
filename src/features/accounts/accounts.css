@@ -531,7 +531,7 @@
 /* NEEDS LOGIN cue that survives colour-blindness / grayscale (§Accessibility) —
    the alert state is never colour alone. */
 .acc-chip-alert {
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
 }
 @media (max-width: 900px) {
@@ -547,7 +547,7 @@
 .acc-badge {
   flex-shrink: 0;
   font-size: var(--font-size-9);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.06em;
   padding: var(--space-1) var(--space-5);
   border-radius: var(--radius-xl);

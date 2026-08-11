@@ -1,8 +1,8 @@
-// collapse-right-column FR-11: the three per-card palette toggles
-// (toggle-agents-panel/mcp/skills) and their shared toggleRightPanelCommand
-// helper — hint reflects collapsedPanes, and expanding a collapsed card also
-// reveals the right column when it was hidden (running the toggle should
-// never leave the user staring at "nothing happened").
+// design 7a: the four palette commands that open the dissolved right-column
+// panes (open-agents/mcp/skills/workflows-panel) and their shared
+// openPanelTabCommand helper — each opens that pane as a MAIN TAB, with the same
+// toggle grammar every other view command here uses, so a second run returns to
+// SESSION rather than leaving the row as a one-way door.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaletteContext } from '../../../contract/command-palette';
@@ -52,7 +52,7 @@ async function freshModules() {
   return { useStore: storeMod.useStore, useNotificationsStore: notifStoreMod.useNotificationsStore, paletteCommands: paletteMod.paletteCommands, byId };
 }
 
-describe('collapse-right-column palette toggles (FR-11)', () => {
+describe('panel-tab palette commands (design 7a)', () => {
   beforeEach(() => {
     mockStorage();
   });
@@ -60,69 +60,85 @@ describe('collapse-right-column palette toggles (FR-11)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('registers one toggle command per right pane, keyed to its pane hotkey', async () => {
+  it('registers one command per dissolved pane, named after the pane itself', async () => {
     const { byId } = await freshModules();
-    expect(byId('toggle-agents-panel').name).toBe('Toggle agents panel');
-    expect(byId('toggle-mcp-panel').name).toBe('Toggle MCP panel');
-    expect(byId('toggle-skills-panel').name).toBe('Toggle skills panel');
+    expect(byId('open-agents-panel').name).toBe('Agents');
+    expect(byId('open-mcp-panel').name).toBe('MCP servers');
+    expect(byId('open-skills-panel').name).toBe('Skills');
+    expect(byId('open-workflows-panel').name).toBe('Workflows');
   });
 
-  it('hint reads "collapse · [n]" while expanded and "expand · [n]" once collapsed', async () => {
-    const { useStore, byId } = await freshModules();
-    const agents = byId('toggle-agents-panel');
-    const mcp = byId('toggle-mcp-panel');
-    const skills = byId('toggle-skills-panel');
-
-    expect(agents.hint?.()).toBe('collapse · [3]');
-    expect(mcp.hint?.()).toBe('collapse · [4]');
-    expect(skills.hint?.()).toBe('collapse · [5]');
-
-    useStore.getState().setCollapsedPane('agents', true);
-    useStore.getState().setCollapsedPane('mcp', true);
-    useStore.getState().setCollapsedPane('skills', true);
-
-    expect(agents.hint?.()).toBe('expand · [3]');
-    expect(mcp.hint?.()).toBe('expand · [4]');
-    expect(skills.hint?.()).toBe('expand · [5]');
+  it('no longer registers the right-column toggles it replaced', async () => {
+    const { paletteCommands } = await freshModules();
+    const ids = paletteCommands().map((c) => c.id);
+    expect(ids).not.toContain('toggle-side-panels');
+    expect(ids).not.toContain('toggle-agents-panel');
+    expect(ids).not.toContain('toggle-mcp-panel');
+    expect(ids).not.toContain('toggle-skills-panel');
   });
 
-  it('running the command flips collapsedPanes for that pane only', async () => {
+  it('hint names the pane hotkey, and flips once that tab is the one on screen', async () => {
     const { useStore, byId } = await freshModules();
-    byId('toggle-mcp-panel').run(ctx);
-    expect(useStore.getState().collapsedPanes).toEqual({ agents: false, mcp: true, skills: false });
-    byId('toggle-mcp-panel').run(ctx);
-    expect(useStore.getState().collapsedPanes.mcp).toBe(false);
+    expect(byId('open-agents-panel').hint?.()).toBe('open panel · 3');
+    expect(byId('open-mcp-panel').hint?.()).toBe('open panel · 4');
+    expect(byId('open-skills-panel').hint?.()).toBe('open panel · 5');
+    expect(byId('open-workflows-panel').hint?.()).toBe('open panel · 6');
+
+    useStore.getState().setMainTab('skills');
+    expect(byId('open-skills-panel').hint?.()).toBe('back to session · 5');
+    expect(byId('open-agents-panel').hint?.()).toBe('open panel · 3');
   });
 
-  it('expanding a collapsed card also reveals the right column when it was hidden', async () => {
+  it('running the command opens that pane as the main tab and focuses the pane', async () => {
     const { useStore, byId } = await freshModules();
-    useStore.getState().setCollapsedPane('agents', true);
-    useStore.getState().toggleRightPane(); // hide the whole column
-    expect(useStore.getState().showRightPane).toBe(false);
-
-    byId('toggle-agents-panel').run(ctx); // expand: was collapsed, column hidden → reveal too
-    expect(useStore.getState().collapsedPanes.agents).toBe(false);
-    expect(useStore.getState().showRightPane).toBe(true);
+    byId('open-mcp-panel').run(ctx);
+    expect(useStore.getState().mainTab).toBe('mcp');
+    expect(useStore.getState().focusedPane).toBe('main');
   });
 
-  it('collapsing a card never reveals a hidden column (independent toggles, FR-7)', async () => {
+  it('running it again returns to SESSION rather than re-opening the same tab', async () => {
     const { useStore, byId } = await freshModules();
-    useStore.getState().toggleRightPane(); // hide the column while every card is expanded
-    expect(useStore.getState().showRightPane).toBe(false);
-
-    byId('toggle-skills-panel').run(ctx); // collapse: wasCollapsed=false → no reveal
-    expect(useStore.getState().collapsedPanes.skills).toBe(true);
-    expect(useStore.getState().showRightPane).toBe(false);
+    byId('open-workflows-panel').run(ctx);
+    expect(useStore.getState().mainTab).toBe('workflows');
+    byId('open-workflows-panel').run(ctx);
+    expect(useStore.getState().mainTab).toBe('session');
   });
 
-  it('expanding a collapsed card leaves an already-visible column untouched', async () => {
+  it('switching between two panel commands never lands on SESSION', async () => {
     const { useStore, byId } = await freshModules();
-    useStore.getState().setCollapsedPane('skills', true);
-    expect(useStore.getState().showRightPane).toBe(true);
+    byId('open-agents-panel').run(ctx);
+    byId('open-skills-panel').run(ctx);
+    expect(useStore.getState().mainTab).toBe('skills');
+  });
+});
 
-    byId('toggle-skills-panel').run(ctx);
-    expect(useStore.getState().collapsedPanes.skills).toBe(false);
-    expect(useStore.getState().showRightPane).toBe(true);
+describe('adopt cloud session (cloud-sessions FR-14)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('registers the command next to New session, and never says "Remote Control"', async () => {
+    const { byId, paletteCommands } = await freshModules();
+    const cmd = byId('adopt-cloud-session');
+    expect(cmd.name).toBe('Adopt cloud session');
+    // §7 #4: the CLI's auth errors say "Remote Control"; this feature's UI never does.
+    expect(`${cmd.name} ${cmd.hint?.() ?? ''}`).not.toMatch(/remote control/i);
+    const ids = paletteCommands().map((c) => c.id);
+    expect(ids.indexOf('adopt-cloud-session')).toBe(ids.indexOf('new-session') + 1);
+  });
+
+  it('needs no session — a cloud session is adopted INTO the fleet, from empty', async () => {
+    const { byId } = await freshModules();
+    expect(byId('adopt-cloud-session').enabled?.(ctx) ?? true).toBe(true);
+  });
+
+  it('running it opens the modal the pane [1] action opens', async () => {
+    const { useStore, byId } = await freshModules();
+    byId('adopt-cloud-session').run(ctx);
+    expect(useStore.getState().adoptCloudOpen).toBe(true);
   });
 });
 

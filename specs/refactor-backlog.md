@@ -173,3 +173,24 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-05, round 2). Neither is C
 
 - [ ] MEDIUM · src/features/notifications/notifications.ts:157 · quality · `handleNotificationAction` calls `setActiveSessionId(sessionId)` directly instead of routing through the focused-side pattern every other session-assignment entry point uses, so a notification click while split lands the session in an inert unfocused left pane (or swaps panes without moving `focusedSide`); use `if (splitSessionId !== null && focusedSide === 'right') openInRightPane(sessionId); else { setActiveSessionId(sessionId); setFocusedSide('left') }` and add a split-mode test · deferred:split-session
 - [ ] LOW · src/features/usage/LayoutToggle.tsx:1 · rule · the split-session titlebar entry point (FR-9/FR-10) lives under the unrelated `usage` feature folder, against PIPELINE.md §Code layout; move it to `src/app/` beside `SplitPane.tsx`/`RightRail.tsx` along with the `.layout-toggle`/`.titlebar-divider` rules from `usage.css` · deferred:split-session
+
+## deferred:webview-hardening
+
+Logged per spec §2/§6 non-goal (explicit — not a review finding). Not fixed here; a 34-file diff
+would swallow the fonts/CSP commit pair this feature exists to ship.
+
+- **[LOW]** 84 inline `style={{}}` occurrences across 34 files in `src/features/**` and `src/app/`
+  · `PIPELINE.md` §Code layout violation ("Styling is per-feature CSS + classNames, never inline
+  `style={{}}`") · this is also the reason `specs/webview-hardening.md`'s CSP (`app.security.csp`)
+  keeps `style-src 'unsafe-inline'` rather than the tighter `style-src-elem`/`style-src-attr` split —
+  see that spec's FR-9. → **Fix:** migrate each inline `style` object to a `<feature>.css` BEM-lite
+  class per `PIPELINE.md` §Code layout, file by file; once none remain, `style-src-attr 'none'`
+  becomes viable and `webview-hardening`'s CSP can be revisited.
+
+## deferred:cloud-sessions
+
+Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, quality-only, non-security.
+
+- [ ] LOW · src-tauri/src/session/cloud/auth.rs:81 · quality · resolve Bedrock/Vertex/base-URL env through the account-scoped mechanism `account_env` uses, once accounts carry provider config · deferred:cloud-sessions
+- [ ] LOW · src-tauri/src/session/cloud/api.rs:1-1028 · rule · file is 1028 lines, over the ~1000-line cap in PIPELINE.md §Code layout; split the ref-normalizer/repo-matching pure helpers (normalize_cloud_ref, remote_slug, repo_matches, timestamp parsing) plus their tests into a sibling module (cloud/refs.rs), leaving api.rs the HTTP calls and response mapping · deferred:cloud-sessions
+- [ ] LOW · src/features/cloud-sessions/AdoptCloudSessionModal.tsx:146-149 · quality · pick() sets ref/resolved but never updates cursor, so ArrowDown/ArrowUp right after a mouse pick restarts navigation from index 0/-1 instead of the clicked row; thread the row index into onPick (or list.sessions.findIndex) and setCursor to it inside pick · deferred:cloud-sessions

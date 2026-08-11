@@ -1,8 +1,8 @@
-import { getName, getVersion } from '@tauri-apps/api/app';
+import { getName } from '@tauri-apps/api/app';
 import { homeDir } from '@tauri-apps/api/path';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useState } from 'react';
-import { DEMO_VERSION } from '../demo/demo';
+import { useAppVersion } from '../lib/hooks/useAppVersion';
 
 export interface AppIdentity {
   home: string;
@@ -26,24 +26,18 @@ export function useAppIdentity(activeSessionName: string | undefined): AppIdenti
       .catch(() => {});
   }, []);
 
+  const appVersion = useAppVersion();
   const [appName, setAppName] = useState('Francois');
-  // Empty until it resolves, so no stale number ever flashes.
-  const [appVersion, setAppVersion] = useState('');
   useEffect(() => {
     // The demo build runs off tauri.dev.conf.json, whose bundle name is
     // "Francois Dev" — which would end up in the window caption of every
-    // README capture. Keep the real name there. Compile-time flag: this
-    // branch is not in a normal build.
+    // README capture. Keep the real name there.
     if (__FRANCOIS_DEMO__) {
       setAppName('Francois');
-      setAppVersion(DEMO_VERSION);
       return;
     }
     void getName()
       .then(setAppName)
-      .catch(() => {});
-    void getVersion()
-      .then(setAppVersion)
       .catch(() => {});
   }, []);
 

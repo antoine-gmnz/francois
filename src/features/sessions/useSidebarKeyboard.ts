@@ -11,6 +11,8 @@ export interface UseSidebarKeyboardOptions {
   setSidebarFilter: (f: string | null) => void;
   filterRef: RefObject<HTMLInputElement>;
   newSessionOpen: boolean;
+  /** cloud-sessions FR-14: the adopt modal owns ↑/↓ (its list) while it is up. */
+  adoptCloudOpen: boolean;
   projectsOpen: boolean;
   /** True while the row context menu is open. */
   menuOpen: boolean;
@@ -31,6 +33,7 @@ export function useSidebarKeyboard(options: UseSidebarKeyboardOptions): void {
     setSidebarFilter,
     filterRef,
     newSessionOpen,
+    adoptCloudOpen,
     projectsOpen,
     menuOpen,
     renameOpen,
@@ -40,7 +43,7 @@ export function useSidebarKeyboard(options: UseSidebarKeyboardOptions): void {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (newSessionOpen || projectsOpen || menuOpen || renameOpen) return;
+      if (newSessionOpen || adoptCloudOpen || projectsOpen || menuOpen || renameOpen) return;
       const activeEl = document.activeElement as HTMLElement | null;
       const inFilter = activeEl === filterRef.current;
       const inOtherInput = !!activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && !inFilter;
@@ -87,6 +90,7 @@ export function useSidebarKeyboard(options: UseSidebarKeyboardOptions): void {
     rowCursor,
     sidebarFilter,
     newSessionOpen,
+    adoptCloudOpen,
     projectsOpen,
     menuOpen,
     renameOpen,

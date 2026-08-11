@@ -69,6 +69,14 @@ export type ErrorCode =
   | 'EDITOR_LAUNCH_FAILED' // open-in-vscode: the launcher could not be spawned (detail: { path })
   | 'SHELL_NOT_FOUND' // multiple-shells: no entry for that ShellId (unknown, disposed, or another session's)
   | 'SHELL_LIMIT_REACHED' // multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
+  | 'CLOUD_AUTH_REQUIRED' // cloud-sessions FR-1: no claude.ai token; API-key auth is not sufficient (`no_access_token`)
+  | 'CLOUD_AUTH_EXPIRED' // cloud-sessions FR-1: token past `expiresAt`, or the API said so; run a turn or `/login`
+  | 'CLOUD_DEVICE_UNTRUSTED' // cloud-sessions: `untrusted_device`; enrol the device with `/login`
+  | 'CLOUD_POLICY_DENIED' // cloud-sessions: the org's `allow_remote_sessions` policy is off
+  | 'CLOUD_SESSION_NOT_FOUND' // cloud-sessions: unknown/invalid cloud session id
+  | 'CLOUD_REPO_MISMATCH' // cloud-sessions FR-8: teleport's mismatch/not_in_repo/host_unverified (detail: { sessionRepo, currentRepo })
+  | 'CLOUD_ADOPT_STALLED' // cloud-sessions FR-8/FR-9: a blocking dialog or the deadline (detail: { phase })
+  | 'CLOUD_ADOPT_FAILED' // cloud-sessions FR-6: the PTY exited without a usable local session
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -155,6 +163,29 @@ export interface SessionMeta {
    * back to 'default'. Required: persisted sessions without it load as 'default'.
    */
   accountId: AccountId;
+  /**
+   * Present ⇔ this session was ADOPTED from a Claude Code on the web session
+   * (cloud-sessions FR-10). Presence is the whole signal — it drives the `cloud`
+   * provenance chip (FR-16). Set at adoption ONLY, never re-derived, and persisted
+   * with the rest of the durable-sessions state.
+   *
+   * Adoption is a ONE-WAY pull: after it, the cloud copy no longer receives the
+   * user's work. Nothing here implies a live link back to claude.ai.
+   */
+  cloud?: CloudProvenance;
+}
+
+/** The id of a Claude Code on the web session — `'session_…'` or `'cse_…'`. */
+export type CloudSessionId = string;
+
+/**
+ * Cloud provenance for an adopted session (cloud-sessions FR-10).
+ * Deliberately minimal: nothing about the cloud session itself is cached, because
+ * after adoption the local session is the only live copy of the thread.
+ */
+export interface CloudProvenance {
+  cloudSessionId: CloudSessionId;
+  adoptedAt: number; // epoch ms
 }
 
 /** Worktree provenance for a session created with isolation (session-worktree FR-12). */

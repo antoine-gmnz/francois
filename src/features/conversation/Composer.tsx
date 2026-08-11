@@ -43,6 +43,11 @@ export interface ComposerProps {
    * one shared slot hid whichever landed second (see composerErrorBanners).
    */
   attachError: string | null;
+  /**
+   * design 7a: context used, 0–100, closing the hint row. null when the session
+   * reports no limit — there is no denominator, so there is no percentage.
+   */
+  contextPercent: number | null;
   // Paste-to-attach (FR-14) is NOT a prop: the textarea below carries the native
   // `disabled` attribute, and a disabled control fires no paste event, so a
   // handler here would die with the session while drop and `+` keep staging.
@@ -69,6 +74,7 @@ export default function Composer({
   onAttachClick,
   onRemoveAttachment,
   attachError,
+  contextPercent,
 }: ComposerProps) {
   const banners = composerErrorBanners(sendError, attachError);
   return (
@@ -144,6 +150,10 @@ export default function Composer({
             ))}
           </div>
         )}
+        {/* design 7a: the hint row is now the app's bottom edge (the status bar
+            is gone), so it names the gestures that actually exist HERE — every
+            key below is really bound: ⌃C in onInputKey, `@`/`/` by the
+            attachment + slash-menu tokens, ⌘K by the global capture listener. */}
         <span className="composer-hint">
           {/* the mock's copy reads "esc interrupt", but the real binding here is
               ⌃C (ConversationView.onInputKey) — the hint names the hotkey that
@@ -154,11 +164,18 @@ export default function Composer({
             </span>
           )}
           <span>
+            <span className="composer-hint__key">@</span> for files
+          </span>
+          <span>
+            <span className="composer-hint__key">/</span> for commands
+          </span>
+          <span>
             <span className="composer-hint__key">⌘K</span> commands
           </span>
           <span>
             <span className="composer-hint__key">⇧⏎</span> newline
           </span>
+          {contextPercent !== null && <span className="composer-hint__ctx">{contextPercent}% context</span>}
         </span>
       </div>
     </div>

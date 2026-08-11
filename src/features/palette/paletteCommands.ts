@@ -8,7 +8,8 @@ import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './pa
 import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
 import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
 import { useNotificationsStore } from '../../lib/notificationsStore';
-import { useStore, type RightPane } from '../../lib/store';
+import { useStore } from '../../lib/store';
+import type { PanelTab } from '../../app/appShell';
 import { requestUsageRefresh } from '../usage/usage';
 import { checkUpdateManually } from '../update/update';
 import { requestWorktreePreset } from '../sessions/worktree';
@@ -17,15 +18,16 @@ import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } f
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
 
-// collapse-right-column FR-11: toggling a collapsed card to expanded also
-// reveals the right column if it was hidden — the palette command list
-// otherwise offers no way to notice the toggle "did nothing".
-function toggleRightPanelCommand(pane: RightPane): () => void {
+// design 7a: the right column is gone — Agents/MCP/Skills/Workflows are main-pane
+// tabs opened from the roster's quiet rows. The palette opens the same tabs, with
+// the toggle grammar every other view command here uses (a second run returns to
+// SESSION) so the row never becomes a one-way door.
+function openPanelTabCommand(pane: PanelTab): () => void {
   return () => {
     const st = useStore.getState();
-    const wasCollapsed = st.collapsedPanes[pane];
-    st.toggleCollapsedPane(pane);
-    if (wasCollapsed && !st.showRightPane) st.toggleRightPane();
+    st.setFocusedPane('main');
+    st.setMainTab(st.mainTab === pane ? 'session' : pane);
+    requestBodyFocusOnClose(); // FR-16 exception: don't restore into a now-hidden pane
   };
 }
 
@@ -66,6 +68,19 @@ export function registerBuiltinCommands(): void {
     hint: () => 'spin up in cwd',
     run: () => {
       useStore.getState().setNewSessionOpen(true);
+    },
+  });
+
+  // 1a — Adopt cloud session (cloud-sessions FR-14): the second way into the
+  // adopt modal, beside pane [1]'s own action. Needs NO session — adoption
+  // brings one INTO the fleet, so it is reachable from an empty app.
+  registerPaletteCommand({
+    id: 'adopt-cloud-session',
+    glyph: '☁',
+    name: 'Adopt cloud session',
+    hint: () => 'paste a claude.ai/code link',
+    run: () => {
+      useStore.getState().setAdoptCloudOpen(true);
     },
   });
 
@@ -111,7 +126,8 @@ export function registerBuiltinCommands(): void {
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: () => {
       const st = useStore.getState();
-      st.setFocusedPane('mcp'); // reveals the right column if hidden (the overlay lives in McpPanel)
+      st.setFocusedPane('main');
+      st.setMainTab('mcp'); // the attach overlay lives inside McpPanel — open its tab first
       st.setMcpAttachOpen(true);
     },
   });
@@ -211,7 +227,8 @@ export function registerBuiltinCommands(): void {
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: () => {
       const st = useStore.getState();
-      st.setFocusedPane('agents');
+      st.setFocusedPane('main');
+      st.setMainTab('agents'); // the new-agent modal lives inside AgentsPanel
       st.setNewAgentOpen(true);
     },
   });
@@ -226,38 +243,36 @@ export function registerBuiltinCommands(): void {
       useStore.getState().toggleLeftPane();
     },
   });
-  registerPaletteCommand({
-    id: 'toggle-side-panels',
-    glyph: '◨',
-    name: 'Toggle side panels',
-    hint: () => (useStore.getState().showRightPane ? 'hide right · ]' : 'show right · ]'),
-    run: () => {
-      useStore.getState().toggleRightPane();
-    },
-  });
 
-  // 10b/c/d — collapse-right-column FR-11: per-card collapse, one command
-  // each. Expanding from the palette also reveals the column if hidden.
+  // 10b/c/d/e — design 7a: one command per dissolved right-column pane, opening
+  // it as a main tab. The hint names the same hotkey the roster row does.
   registerPaletteCommand({
-    id: 'toggle-agents-panel',
-    glyph: '▾',
-    name: 'Toggle agents panel',
-    hint: () => (useStore.getState().collapsedPanes.agents ? 'expand · [3]' : 'collapse · [3]'),
-    run: toggleRightPanelCommand('agents'),
+    id: 'open-agents-panel',
+    glyph: '⇉',
+    name: 'Agents',
+    hint: () => (useStore.getState().mainTab === 'agents' ? 'back to session · 3' : 'open panel · 3'),
+    run: openPanelTabCommand('agents'),
   });
   registerPaletteCommand({
-    id: 'toggle-mcp-panel',
-    glyph: '▾',
-    name: 'Toggle MCP panel',
-    hint: () => (useStore.getState().collapsedPanes.mcp ? 'expand · [4]' : 'collapse · [4]'),
-    run: toggleRightPanelCommand('mcp'),
+    id: 'open-mcp-panel',
+    glyph: '⌗',
+    name: 'MCP servers',
+    hint: () => (useStore.getState().mainTab === 'mcp' ? 'back to session · 4' : 'open panel · 4'),
+    run: openPanelTabCommand('mcp'),
   });
   registerPaletteCommand({
-    id: 'toggle-skills-panel',
-    glyph: '▾',
-    name: 'Toggle skills panel',
-    hint: () => (useStore.getState().collapsedPanes.skills ? 'expand · [5]' : 'collapse · [5]'),
-    run: toggleRightPanelCommand('skills'),
+    id: 'open-skills-panel',
+    glyph: '✦',
+    name: 'Skills',
+    hint: () => (useStore.getState().mainTab === 'skills' ? 'back to session · 5' : 'open panel · 5'),
+    run: openPanelTabCommand('skills'),
+  });
+  registerPaletteCommand({
+    id: 'open-workflows-panel',
+    glyph: '▤',
+    name: 'Workflows',
+    hint: () => (useStore.getState().mainTab === 'workflows' ? 'back to session · 6' : 'open panel · 6'),
+    run: openPanelTabCommand('workflows'),
   });
 
   // 11 — Refresh usage limits (usage-bar FR-28): the mouse-free route to the same

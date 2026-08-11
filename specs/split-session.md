@@ -1,7 +1,8 @@
 ---
 id: split-session
 title: Split session
-status: shipped
+status: superseded
+superseded_by: split-by-4
 branch: feat/split-session
 created: 2026-08-05
 depends_on: [app-shell, sessions-sidebar, conversation-view, diff-view, shell-terminal, collapse-right-column, agent-tab, workflow-details]
@@ -13,6 +14,14 @@ design_files: ["https://claude.ai/design/p/a4b15728-147c-4932-b83c-f60a5fc60db7?
 ---
 
 # Split session
+
+> **Superseded by `specs/split-by-4.md`** (2026-08-05, turn 5d — Quad). The
+> left/right pair below is now the two-pane case of a 1–4 pane list:
+> `splitSessionId`/`splitTab`/`focusedSide` became `extraPanes`/
+> `focusedPaneIndex`, and `openInRightPane`/`setSplitTab`/`setFocusedSide`
+> became `openInNewPane`/`setPaneTab`/`setFocusedPaneIndex`. Every behaviour
+> described here still holds at two panes; read split-by-4 for the current
+> contract.
 
 ## 1. Summary
 

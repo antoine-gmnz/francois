@@ -10,10 +10,10 @@
   background: var(--bg-app);
 }
 
-/* design-refresh: 12px gutter + 12px window padding, per the mock's
-   `grid-template-columns:276px 1fr 296px; gap:12px; padding:12px`. The status
-   bar is NOT a grid row — it is a full-bleed 30px strip below the grid (see
-   .app-status-bar), so the gutter never draws a margin around it. */
+/* design 7a: the body is `282px | 1fr` with a 12px gutter and 12px window
+   padding, per the mock's `grid-template-columns:282px 1fr; gap:12px;
+   padding:12px`. There is no third column and no status-bar row — [3]–[6] live
+   in the roster's footer and the chrome lives in the two rows above. */
 .app-grid {
   flex: 1;
   min-height: 0;
@@ -28,189 +28,415 @@
   min-height: 0;
 }
 
-.app-col-right {
+/* The single content cell. Two stacked children — the persistent panel host and
+   the main view — of which exactly one is displayed at a time. */
+.app-main-cell {
   grid-row: 1;
-  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-12);
+  min-height: 0;
+  min-width: 0;
+}
+.app-main-view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.app-panel-agents {
-  flex: 1.3;
-  min-height: 0;
-}
-.app-panel-mcp {
-  flex: 0.95;
-  min-height: 0;
-}
-.app-panel-skills {
-  flex: 1.05;
-  min-height: 0;
-}
-/* workflow-panel: the fourth right-column pane. Smallest share of the column —
-   a session usually has zero or one runs, where the three panes above it are
-   list-shaped, so the same flex weight would leave it mostly empty. */
-.app-panel-workflows {
-  flex: 0.8;
-  min-height: 0;
-}
-
-/* collapse-right-column FR-15: a collapsed card's wrapper shrinks to its
-   natural header height instead of sharing the column's flex ratios — the
-   freed space goes to whichever cards stay expanded. With all three
-   collapsed the column shows three header strips top-aligned. */
-.app-panel-agents--collapsed,
-.app-panel-mcp--collapsed,
-.app-panel-skills--collapsed {
-  flex: 0 0 auto;
-}
-
-/* design-refresh: every pane is a --bg-panel card on a --bg-app window, with
-   the OUTER border (--border-2) and the 8px panel radius; --border/--radius-md
-   are the INNER divider/chip scale and read as a hairline seam out here. */
+/* design-refresh: every pane is a card on the window, with the OUTER border
+   (--border-2) and the 8px panel radius; --border/--radius-md are the INNER
+   divider/chip scale and read as a hairline seam out here.
+   7a: the surface is --bg-app, not --bg-panel — the main pane is the TERMINAL,
+   the one recessed thing in a shell whose chrome is raised. */
 .app-main-section {
-  grid-row: 1;
+  flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
+  background: var(--bg-app);
   border: 1px solid var(--border-2);
   border-radius: var(--radius-xl);
   overflow: hidden;
   min-height: 0;
-}
-
-.app-tabstrip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-14);
-  padding: var(--space-10) var(--space-14);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.app-tabstrip-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-16);
-  overflow-x: auto;
-  flex-shrink: 1;
   min-width: 0;
 }
 
-/* design-refresh FR-5: the segmented pill control — a recessed track holding
-   the built-in tabs (Overview/Session/Diff/Shell), sentence-case. */
-.tab-segment {
+/* design 7a: the host for the four dissolved right-column panes. Each slot
+   fills the card; only one is displayed, and all four stay MOUNTED so their
+   feeds keep publishing the counts the roster rows read. */
+.app-panel-host {
+  background: var(--bg-panel);
+}
+.app-panel-slot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app-panel-slot > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── design 7a: the two chrome tiers ────────────────────────────────────────
+   Both are full-bleed strips under the native caption, fixed height in every
+   state so nothing below them ever reflows. Sans throughout: the mock's font
+   boundary is drawn at the panel edge — chrome is sans and clickable, the
+   terminal body below is mono and historical. NO MOTION anywhere in either row
+   (usage-bar FR-25): permanent chrome that animates repaints forever on a
+   software-composited webview. */
+
+/* app row (42px) — what the whole app is doing. */
+.app-row {
+  height: 42px;
+  flex: 0 0 42px;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  background: var(--bg-app);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  padding: var(--space-3);
-  flex-shrink: 0;
+  gap: var(--space-10);
+  padding: 0 var(--space-14);
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-2);
+  font-size: var(--font-size-11);
 }
-.tab-segment-divider {
-  width: 1px;
-  height: 20px;
-  align-self: center;
-  background: var(--border-2);
-  flex-shrink: 0;
-}
-/* Tab strip label (Overview/Session/Diff/Shell). --on recolors + fills the
-   pill when it is the active main tab. */
-.app-tab {
+.app-row__wordmark {
+  font-family: var(--font-ui);
+  font-weight: 600;
   font-size: var(--font-size-12-5);
-  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+  flex-shrink: 0;
+  margin-right: var(--space-6);
+}
+.app-row__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-shrink: 0;
+}
+.app-row__nav-item {
+  padding: var(--space-5) var(--space-11);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-12-5);
+  color: var(--text-hint);
   cursor: pointer;
-  padding: var(--space-5) var(--space-12);
-  border-radius: var(--radius-md);
-  color: var(--text-faint);
   white-space: nowrap;
 }
-.app-tab:hover {
-  color: var(--text-hint);
-}
-.app-tab--on,
-.app-tab--on:hover {
-  color: var(--text-bright);
-  font-weight: 600;
-  background: var(--bg-hover-2);
-  box-shadow: var(--shadow-pill);
-}
-.app-tab--diff {
-  display: flex;
-  align-items: center;
-  gap: var(--space-7);
-}
-/* design-refresh FR-5: the Diff count is an accent-on-dark pill in the mock,
-   not the neutral grey `.badge-pill` the shared utility paints. Scoped to the
-   tab so the sidebar's file-count badges keep the neutral look. */
-.app-tab--diff .badge-pill {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
-  background: var(--accent);
-  color: var(--bg-app);
-  border-radius: 9px;
-  padding: 3px 5px;
-}
-
-.app-meta-cluster {
-  display: flex;
-  gap: var(--space-12);
-  font-size: var(--font-size-11-5);
-  color: var(--text-hint);
-  align-items: center;
-  flex-shrink: 0;
-}
-
-/* The cluster's fold chevron — last in the cluster, so it holds the strip's
-   right edge whether the cluster is open or folded and never moves under the
-   cursor. Folded, everything left of it goes back to the scrolling tab strip. */
-.app-meta-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 20px;
-  flex-shrink: 0;
-  cursor: pointer;
-  border-radius: var(--radius-xs);
-  font-size: var(--font-size-12-5);
-  line-height: 1;
-  color: var(--text-muted);
-}
-.app-meta-toggle:hover {
+.app-row__nav-item:hover {
   background: var(--bg-hover);
   color: var(--text-strong);
 }
+.app-row__nav-item--on,
+.app-row__nav-item--on:hover {
+  background: var(--bg-hover-2);
+  font-weight: 600;
+  color: var(--text-bright);
+}
+/* The one filled accent in the row: starting a session is THE live action here. */
+.app-row__new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg-app);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-15);
+  line-height: 1;
+  cursor: pointer;
+}
+.app-row__new:hover {
+  background: var(--accent-bright);
+}
+/* Warm, never acid: a parked session is a stop, not the live thing (--attn is
+   the same family the roster card and the permission block use). */
+.app-row__waiting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-shrink: 0;
+  color: var(--attn);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.app-row__waiting-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--attn);
+  flex-shrink: 0;
+}
+.app-row__divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-2);
+  flex-shrink: 0;
+}
+.app-row__key {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-base);
+  padding: var(--space-2) var(--space-6);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.app-row__key:hover {
+  color: var(--text-2);
+  border-color: var(--border-focus);
+}
+.app-row__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-13);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.app-row__icon:hover {
+  color: var(--text-2);
+  background: var(--bg-hover);
+}
 
-/* design-refresh FR-5: the session meta cluster's context readout — mini fill
-   bar + --font-mono figure (numbers are mono, labels are UI type). */
-.app-ctx {
+/* session row (36px) — what ONE session is doing. Recessed a step below the app
+   row so the two read as an outer and an inner tier rather than one 78px band. */
+.session-row {
+  height: 36px;
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  padding: 0 var(--space-12);
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border-2);
+  font-size: var(--font-size-11);
+  overflow: hidden;
+}
+.session-row__fold {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-base);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.session-row__fold:hover {
+  color: var(--text-2);
+  background: var(--bg-hover);
+}
+.session-row__fold--on {
+  color: var(--text-dim);
+}
+.session-row__crumbs {
   display: flex;
   align-items: center;
   gap: var(--space-7);
+  min-width: 0;
+  flex-shrink: 1;
 }
-.app-ctx-track {
-  width: 52px;
-  height: var(--space-4);
-  border-radius: var(--radius-xs);
-  background: var(--border-2);
-  overflow: hidden;
-  flex: 0 0 auto;
+.session-row__slash {
+  color: var(--text-disabled);
+  flex-shrink: 0;
 }
-.app-ctx-fill {
-  display: block;
-  height: 100%;
-  background: var(--hue-blue);
+.session-row__name {
+  font-size: var(--font-size-12-5);
+  font-weight: 600;
+  color: var(--text-bright);
+  cursor: pointer;
+  max-width: 220px;
 }
-.app-ctx-figure {
+.session-row__name:hover {
+  color: var(--accent);
+}
+.session-row__path {
   font-family: var(--font-mono);
-  font-size: var(--font-size-11);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  max-width: 240px;
+}
+/* The state pill. Its hue is set inline from the contract's STATUS_COLOR, so
+   this file never re-states that map. */
+.session-row__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-shrink: 0;
+  height: 20px;
+  padding: 0 var(--space-8);
+  border: 1px solid;
+  border-radius: 11px;
+  font-size: var(--font-size-10-5);
+  white-space: nowrap;
+}
+.session-row__status-age {
+  font-family: var(--font-mono);
+  opacity: 0.75;
+}
+.session-row__chip,
+.session-row__mode {
+  flex-shrink: 0;
+  height: 21px;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-8);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-10-5);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.session-row__mode {
+  background: transparent;
+  color: var(--text-muted);
+}
+.session-row__mode--danger {
+  color: var(--error);
+  border-color: var(--error-dim);
+}
+.session-row__figure {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.session-row__figure-faint {
+  color: var(--text-faint);
+}
+/* The view segment — a recessed track, icon-only at this height. */
+.session-row__views {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  padding: var(--space-2);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+}
+.session-row__view {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 19px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.session-row__view:hover {
+  color: var(--text-2);
+}
+.session-row__view--on,
+.session-row__view--on:hover {
+  background: var(--bg-hover-2);
+  color: var(--text-bright);
+}
+/* The diff count. Accent, and the only accent this row carries — the session
+   row's job is to say what changed while you were reading. */
+.session-row__view-badge {
+  position: absolute;
+  top: -5px;
+  right: -3px;
+  min-width: 13px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xl);
+  background: var(--accent);
+  color: var(--bg-app);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-8-5);
+  line-height: 12px;
+  text-align: center;
+}
+/* agent-tab FR-12: one chip per opened subagent/workflow run, outside the
+   segment — they are content, not chrome, so they are not upper-cased or
+   tracked and they carry their own close affordance. */
+.session-row__agent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex: 0 1 auto;
+  min-width: 70px;
+  max-width: 140px;
+  height: 21px;
+  padding: 0 var(--space-6) 0 var(--space-8);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-11);
+  color: var(--text-hint);
+  cursor: pointer;
+}
+.session-row__agent:hover {
+  border-color: var(--border-emphasis);
+  color: var(--text-2);
+}
+.session-row__agent--on,
+.session-row__agent--on:hover {
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+  color: var(--text-bright);
+  font-weight: 600;
+}
+.session-row__agent-close {
+  font-size: var(--font-size-10);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.session-row__agent-close:hover {
+  color: var(--text-bright);
+}
+.session-row__branch {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--accent);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.session-row__divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border-2);
+  flex-shrink: 0;
+}
+/* The one destructive control in the chrome. Red-family at rest but unfilled —
+   stopping a turn is ordinary, and a filled red button in permanent chrome
+   would read as an error state the app is permanently in. */
+.session-row__stop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-shrink: 0;
+  height: 23px;
+  padding: 0 var(--space-9);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  border: 1px solid var(--error-dim);
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-11);
+  color: var(--error-bright);
+  cursor: pointer;
+}
+.session-row__stop:hover {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
 }
 
 .app-shell-view {
@@ -241,132 +467,124 @@
    .shell-empty moved to src/features/shell/shell.css, imported from
    ShellStrip.tsx — per-feature CSS convention. */
 
-/* design-refresh FR-10: a 30px full-bleed strip under the grid — not a bordered
-   card inside it, so it reads as window chrome (like the titlebar) rather than
-   a fourth pane. Border on the top edge only, no radius, no side gutters. */
-.app-status-bar {
-  height: 30px;
-  flex: 0 0 30px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-16);
-  padding: 0 var(--space-14);
-  background: var(--bg-deep);
-  border-top: 1px solid var(--border-2);
-  font-size: var(--font-size-11);
-  color: var(--text-faint);
-}
-.app-status-bar > span {
-  white-space: nowrap;
-}
+/* design 7a: the bottom status bar is GONE. Its readouts moved to where the
+   thing they describe already lives — ⌘K/theme/version/account to the app row,
+   focus and the running-agent count to the roster's own rows, the keyboard
+   hints to the composer's hint line, which is where you are looking when you
+   need them. */
 
 .app-flex-spacer {
   flex: 1;
-}
-.app-clickable {
-  cursor: pointer;
 }
 .app-inline-key {
   color: var(--accent);
   margin: 0 var(--space-4);
 }
 /* design-refresh FR-2: hotkey glyphs and version strings are --font-mono; the
-   surrounding label copy stays in --font-ui. */
+   surrounding label copy stays in --font-ui. Now down to the update chip's
+   version readout — design 7a took the rest of the status bar with it. */
 .app-key {
   font-family: var(--font-mono);
   color: var(--text-dim);
 }
-.app-key--accent {
-  color: var(--accent);
-}
 
-/* Text-color utilities for the many single-property color spans in the tab
-   strip / shell footer / status bar — what the deleted `const C` token-alias
-   object used to serve. */
-.app-text-dim {
-  color: var(--text-dim);
-}
+/* Text-color utilities for the single-property color spans left in the shell
+   footer. The rest went with the tab strip and the status bar (design 7a). */
 .app-text-faint {
   color: var(--text-faint);
-}
-.app-text-accent {
-  color: var(--accent);
-}
-.app-text-bright {
-  color: var(--text-bright);
 }
 .app-text-hint {
   color: var(--text-hint);
 }
-.app-text-error {
-  color: var(--error);
-}
 
-/* Pane-toggle labels ("sessions" / "panels") dim when their column is hidden. */
-.app-pane-label {
-  opacity: 1;
-}
-.app-pane-label--off {
-  opacity: 0.5;
-}
-
-/* agent-tab FR-12 chip in the tab strip — design-refresh FR-5: a small pill,
-   not an underlined label; the active one fills + rings like a segment tab. */
-.app-tab-chip {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  height: 28px;
-  font-size: var(--font-size-12-5);
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0 var(--space-8) 0 var(--space-10);
-  border-radius: var(--radius-card);
-  color: var(--text-hint);
-  background: var(--bg-app);
-  border: 1px solid var(--border);
-  max-width: 170px;
-  min-width: 92px;
-  flex: 0 1 auto;
-}
-.app-tab-chip:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-emphasis);
-}
-.app-tab-chip--active,
-.app-tab-chip--active:hover {
-  color: var(--text-bright);
-  font-weight: 600;
-  background: var(--bg-hover-2);
-  border-color: var(--border-focus);
-  box-shadow: var(--shadow-pill);
-}
-.app-tab-chip-glyph {
-  color: var(--accent-2);
-  flex-shrink: 0;
-}
-.app-tab-chip-close {
-  font-size: var(--font-size-11);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.app-tab-chip-close:hover {
-  color: var(--text-strong);
-}
-
-/* ── split-session (specs/split-session.md §8 / turn 5b) ─────────────────────
-   Two live sessions side by side. The main grid cell becomes a 1fr/1fr pair
-   with the shell's own 12px gutter; each pane is a card in the same family as
-   .app-main-section, differing only in the FOCUS treatment. No motion — the
-   focus swap is an instant state change, like every other card in this app. */
+/* ── split-by-4 (specs/split-by-4.md §8 / turns 5b + 5d) ─────────────────────
+   Up to four live sessions at once. The main grid cell becomes a 1fr row at two
+   panes and a 2×2 grid above, with the shell's own 12px gutter; each pane is a
+   card in the same family as .app-main-section, differing only in the FOCUS
+   treatment. No motion — the focus swap is an instant state change, like every
+   other card in this app. */
 
 .app-split-grid {
-  grid-row: 1;
+  flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-12);
   min-height: 0;
   min-width: 0;
+}
+/* Every split regime is resizable, so a gutter TRACK carries each drag handle
+   and the tracks are overridden inline with the dragged ratios
+   (`<r>fr var(--space-12) <1-r>fr`). A handle IS the 12px gutter — hence no
+   `gap` here, or the panes would sit 36px apart. */
+.app-split-grid--2,
+.app-split-grid--3,
+.app-split-grid--4 {
+  grid-template-columns: 1fr var(--space-12) 1fr;
+  gap: 0;
+}
+/* FR-2: three and four panes both take the 2×2 grid. At three, the last pane
+   spans the bottom row rather than leaving a hole — an empty cell would read as
+   a pane that failed to load. Both the panes and the handles are placed
+   explicitly (see `paneGridArea`): with gutter tracks in the way, CSS
+   auto-placement would drop a pane into one. */
+.app-split-grid--3,
+.app-split-grid--4 {
+  grid-template-rows: 1fr var(--space-12) 1fr;
+}
+
+/* The grab handle between the two panes. At rest it is indistinguishable from
+   the gutter it replaces — a resize affordance is not a thing to look at until
+   the pointer is on it. Hover/focus/drag light the 2px line in the focus
+   border, never in --accent: while split the accent belongs to the focused
+   pane alone (design §Notes, "one accent per view"). */
+.app-split-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  /* the browser's own pan gesture would otherwise swallow the pointermove */
+  touch-action: none;
+  min-width: 0;
+}
+.app-split-divider::before {
+  content: '';
+  width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background: transparent;
+}
+/* The row handle: the same object turned through 90°. */
+.app-split-divider--y {
+  cursor: row-resize;
+}
+.app-split-divider--y::before {
+  width: 100%;
+  height: 2px;
+}
+.app-split-divider:hover::before,
+.app-split-divider:focus-visible::before,
+.app-split-divider--dragging::before {
+  background: var(--border-focus);
+}
+.app-split-divider:focus-visible {
+  outline: none;
+}
+
+/* Drag in progress: the pointer is over a transcript, a diff or a terminal —
+   every one of which would otherwise show a caret and start selecting text. */
+body.app-resizing-x,
+body.app-resizing-x *,
+body.app-resizing-y,
+body.app-resizing-y * {
+  user-select: none !important;
+}
+body.app-resizing-x,
+body.app-resizing-x * {
+  cursor: col-resize !important;
+}
+body.app-resizing-y,
+body.app-resizing-y * {
+  cursor: row-resize !important;
 }
 
 .split-pane {
@@ -410,6 +628,15 @@
 }
 .split-pane--focused .split-pane__rule {
   background: var(--accent);
+}
+
+/* FR-7: the pane number — what `⌘<n>` in the footer and the status bar point
+   at. Quiet by design: it is a label, not a status. */
+.split-pane__index {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  flex-shrink: 0;
 }
 
 .split-pane__name {
@@ -526,62 +753,210 @@
   flex-direction: column;
 }
 
-/* ── the folded right column (FR-2) ── */
-.app-rail {
+/* FR-15: a pane with no session yet — what splitting a one-session project
+   gives you. It has to read as an invitation, not as a pane that failed. */
+.split-pane__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--space-12);
+}
+.split-pane__empty-hint {
+  margin-top: var(--space-6);
+  font-size: var(--font-size-11-5);
+  color: var(--text-faint);
+}
+.split-pane__empty-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  margin-top: var(--space-9);
+  height: 26px;
+  padding: 0 var(--space-11);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  font-size: var(--font-size-11-5);
+  cursor: pointer;
+}
+.split-pane__empty-new:hover {
+  background: var(--bg-hover-2);
+  border-color: var(--border-focus);
+}
+
+/* ── the grid chrome (FR-9/FR-11 / turn 5d) ──────────────────────────────────
+   At four panes a pane is ~590×350: no room for a tab row, and no room for a
+   second composer. The header tightens and the footer carries the state. */
+.split-pane--dense .split-pane__header {
+  padding: var(--space-9) var(--space-11);
+}
+.split-pane--dense .split-pane__name {
+  font-size: var(--font-size-12-5);
+}
+
+/* The footer of an UNFOCUSED pane in the grid. Sits where the composer does, on
+   the recessed surface, so "one composer on screen" is legible at a glance. */
+.pane-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-9) var(--space-11);
+  border-top: 1px solid var(--border);
+  background: var(--bg-app);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.pane-footer__arrow {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-disabled);
+}
+.pane-footer__hint {
+  font-size: var(--font-size-11-5);
+  color: var(--text-disabled);
+  white-space: nowrap;
+}
+.pane-footer__hint .app-key {
+  color: var(--text-muted);
+}
+/* A settled pane's one offer. Green family, never acid — the accent belongs to
+   the focused pane (design §Notes, "one accent per view"). */
+.pane-footer__diff {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 24px;
+  padding: 0 var(--space-10);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  color: var(--success-bright);
+  font-size: var(--font-size-11);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pane-footer__diff:hover {
+  background: var(--bg-hover-2);
+}
+.pane-footer__close {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--font-size-11);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pane-footer__close:hover {
+  color: var(--text-2);
+}
+
+/* ── the folded roster (FR-6 / turn 5d) ─────────────────────────────────────
+   Same 46px geometry and the same 30px buttons as the right column's rail, so
+   the two folded edges of the shell read as one system. */
+.session-rail {
   grid-row: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-8);
+  gap: var(--space-7);
   padding: var(--space-8) 0;
   background: var(--bg-panel);
   border: 1px solid var(--border-2);
   border-radius: var(--radius-xl);
+  overflow-y: auto;
+  scrollbar-width: none;
 }
-.app-rail__btn {
+.session-rail::-webkit-scrollbar {
+  display: none;
+}
+.session-rail__tile {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 30px;
   height: 30px;
+  flex-shrink: 0;
   padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-card);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.session-rail__tile:hover {
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+/* Raised while a pane is showing it — the rail's job is "where is everything". */
+.session-rail__tile--paned {
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+  color: var(--text-2);
+}
+/* One accent per view: the FOCUSED pane's session, and nothing else. */
+.session-rail__tile--focused {
+  color: var(--text-bright);
+}
+.session-rail__tile--focused::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.session-rail__dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bg-panel);
+}
+.session-rail__dot--live {
+  animation: pulse 1.6s steps(6, end) infinite;
+}
+.session-rail__new,
+.session-rail__expand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: var(--radius-card);
+  cursor: pointer;
+}
+.session-rail__new {
   background: var(--bg-hover);
   border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-card);
+  color: var(--accent);
+}
+.session-rail__new:hover {
+  background: var(--bg-hover-2);
+}
+.session-rail__expand {
+  background: transparent;
+  border: 0;
+  color: var(--text-faint);
+}
+.session-rail__expand:hover {
+  background: var(--bg-hover);
   color: var(--text-2);
-  cursor: pointer;
-  flex-shrink: 0;
 }
-.app-rail__btn:hover {
-  background: var(--bg-hover-2);
-  border-color: var(--border-focus);
-}
-/* One count per rail button — hidden at zero, as drawn. Deliberately NEUTRAL,
-   not acid: all four panes badge at once, and while split the accent belongs to
-   the focused pane alone (design §Notes, "one accent per view"). Same treatment
-   as the unfocused pane's diff badge. */
-.app-rail__badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 14px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-xl);
-  background: var(--bg-hover-2);
-  border: 1px solid var(--border-2);
-  color: var(--text-hint);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-8-5);
-  line-height: 13px;
-  text-align: center;
-}
-/* The mock's one warm badge: the AGENTS pane while subagents are actually
-   running, so a folded column still says "something is working over there".
-   Warm (--attn), never acid — the accent stays on the focused pane. */
-.app-rail__badge--live {
-  background: var(--attn);
-  border-color: var(--attn);
-  color: var(--bg-app);
-}
+
