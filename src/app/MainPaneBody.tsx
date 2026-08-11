@@ -4,6 +4,9 @@ import AgentView from '../features/agents/AgentView';
 import { workflowIdFromTab } from '../features/agents/agent-tab';
 import ConversationView from '../features/conversation/ConversationView';
 import DiffView from '../features/diff/DiffView';
+import type { ExtensionId } from '../../contract/extensions';
+import ExtensionView from '../features/extensions/ExtensionView';
+import { extIdFromTab } from '../features/extensions/extensions';
 import WorkflowView from '../features/workflows/WorkflowView';
 import OverviewView from '../features/overview/OverviewView';
 import type { MainTab } from '../lib/store';
@@ -18,13 +21,35 @@ export interface MainPaneBodyProps {
   home: string;
   /** fix-agent-view FR-17: what an agent tab's "Back to session" returns to. */
   setMainTab: (tab: MainTab) => void;
+  /** extensions FR-13: the project name the `not available in <x>` copy names. */
+  projectName: string | null;
 }
 
 /** The main pane's body: one renderer per `MainTab` (Phase 5 dispatch table),
  * with the dynamic `agent:<id>` tabs handled explicitly since they are not a
  * plain `MainTab` key the table can be built over. */
-export default function MainPaneBody({ mainTab, activeAgentId, active, home, setMainTab }: MainPaneBodyProps) {
+export default function MainPaneBody({ mainTab, activeAgentId, active, home, setMainTab, projectName }: MainPaneBodyProps) {
   const branch = mainPaneBranch(mainTab);
+
+  if (branch === 'ext') {
+    // extensions FR-15: keyed by extension id, so switching extension tabs
+    // remounts rather than leaking the previous one's sections. Unlike the two
+    // dynamic tabs below it, this one does NOT need a session (FR-14: fleet
+    // panels still load, project panels read `select a session`).
+    // extIdFromTab cannot return null here: mainPaneBranch(mainTab) === 'ext'
+    // and extIdFromTab share the same prefix test, so a non-null extensionId
+    // is guaranteed.
+    const extensionId = extIdFromTab(mainTab) as ExtensionId;
+    return (
+      <ExtensionView
+        key={extensionId}
+        extensionId={extensionId}
+        root={active?.cwd ?? null}
+        sessionId={active?.id ?? null}
+        projectName={projectName}
+      />
+    );
+  }
 
   if (branch === 'agent') {
     // agent-tab: one subagent's own conversation. Keyed by agent so
@@ -51,7 +76,7 @@ export default function MainPaneBody({ mainTab, activeAgentId, active, home, set
     );
   }
 
-  const renderers: Record<Exclude<MainPaneBranch, 'agent' | 'workflow'>, () => ReactNode> = {
+  const renderers: Record<Exclude<MainPaneBranch, 'agent' | 'workflow' | 'ext'>, () => ReactNode> = {
     // design 7a: the four dissolved panes are rendered by App.tsx's persistent
     // host, not here — they must not unmount on a tab switch (their feeds
     // publish the counts the roster rows read).

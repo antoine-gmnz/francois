@@ -16,6 +16,7 @@ import { create } from 'zustand';
 import type { ProjectsState } from '../../contract/projects';
 import { createAccountsSlice, type AccountsSlice } from './accountsStore';
 import { createAgentTabSlice, type AgentTabSlice, type MainTab } from './agentTabStore';
+import { createExtensionsSlice, type ExtensionsSlice } from './extensionsStore';
 import { createLayoutSlice, type LayoutSlice, type Pane, type RightPane } from './layoutStore';
 import { createOverviewSlice, type OverviewSlice } from './overviewStore';
 import { createPanelCountsSlice, type PanelCountsSlice } from './panelCountsStore';
@@ -35,6 +36,7 @@ export type AppState = SessionsSlice &
   OverviewSlice &
   PanelCountsSlice &
   AgentTabSlice &
+  ExtensionsSlice &
   ThemeSlice &
   LayoutSlice &
   UsageSlice &
@@ -48,6 +50,7 @@ export const useStore = create<AppState>((set, get, api) => ({
   ...createOverviewSlice(set, get, api),
   ...createPanelCountsSlice(set, get, api),
   ...createAgentTabSlice(set, get, api),
+  ...createExtensionsSlice(set, get, api),
   ...createThemeSlice(set, get, api),
   ...createLayoutSlice(set, get, api),
   ...createUsageSlice(set, get, api),

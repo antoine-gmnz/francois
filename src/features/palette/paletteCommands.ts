@@ -342,6 +342,23 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // 13h — Extensions (extensions FR-56): the ⌘K route to the toggle modal, the
+  // twin of the titlebar entry. Needs NO session — every registry entry is
+  // listed either way, undetected ones included.
+  registerPaletteCommand({
+    id: 'manage-extensions',
+    glyph: '▤',
+    name: 'Extensions',
+    hint: () => {
+      const list = useStore.getState().extensions;
+      const on = list.filter((e) => e.enabled && e.detected).length;
+      return `${on} available here`;
+    },
+    run: () => {
+      useStore.getState().setExtensionsOpen(true);
+    },
+  });
+
   // 13b — New session in worktree (session-worktree FR-16): opens the same modal
   // pre-checked. Listed unconditionally — a non-repo cwd simply hides the
   // checkbox once picked (FR-1).

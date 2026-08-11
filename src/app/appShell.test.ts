@@ -97,6 +97,12 @@ describe('mainPaneBranch', () => {
     expect(mainPaneBranch('agent:abc-123')).toBe('agent');
   });
 
+  // extensions FR-9: the third dynamic tab kind — one per available extension.
+  it('routes an ext:<id> tab to the ext branch', () => {
+    expect(mainPaneBranch('ext:cohorte')).toBe('ext');
+    expect(mainPaneBranch('ext:git')).toBe('ext');
+  });
+
   // workflow-details FR-11: the second dynamic tab kind gets its own branch.
   it('routes a workflow:<id> tab to the workflow branch', () => {
     expect(mainPaneBranch('workflow:run-1')).toBe('workflow');

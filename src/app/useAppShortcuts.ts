@@ -17,6 +17,8 @@ export interface AppShortcutState {
   renameOpen: boolean;
   /** self-update FR-10: the update modal suppresses the globals like every other modal. */
   updateModalOpen: boolean;
+  /** extensions FR-56: the Extensions modal suppresses the globals like every other modal. */
+  extensionsOpen: boolean;
   setNewSessionOpen: (open: boolean) => void;
   setNewAgentOpen: (open: boolean) => void;
   setFocusedPane: (pane: Pane) => void;
@@ -46,6 +48,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
     accountsOpen,
     renameOpen,
     updateModalOpen,
+    extensionsOpen,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,
@@ -131,6 +134,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
         permissionsOpen ||
         projectsOpen ||
         accountsOpen ||
+        extensionsOpen ||
         renameOpen ||
         updateModalOpen ||
         inInput ||
@@ -165,6 +169,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
     accountsOpen,
     renameOpen,
     updateModalOpen,
+    extensionsOpen,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,

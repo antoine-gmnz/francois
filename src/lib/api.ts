@@ -76,6 +76,24 @@ import type {
   CloudResolveRequest,
 } from '../../contract/cloud-sessions';
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
+import type {
+  CloseStreamRequest,
+  CloseStreamResponse,
+  DetectExtensionsRequest,
+  DetectExtensionsResponse,
+  ExtensionEvent,
+  LaunchRequest,
+  LaunchResponse,
+  ListExtensionsRequest,
+  ListExtensionsResponse,
+  OpenStreamRequest,
+  OpenStreamResponse,
+  PanelRequest,
+  PanelResponse,
+  ProbeResponse,
+  SetExtensionEnabledRequest,
+  SetExtensionEnabledResponse,
+} from '../../contract/extensions';
 
 // Exported so other invoke sites (e.g. ShellTerminal.tsx, which redefines this
 // byte-identically) can share the one wrapper instead of redeclaring it.
@@ -369,6 +387,30 @@ export const shellWrite = (shellId: ShellId, data: string) =>
   ipc<Result<void>>('shell_write', { shellId, data } satisfies ShellWritePayload);
 export const shellResize = (shellId: ShellId, cols: number, rows: number) =>
   ipc<Result<void>>('shell_resize', { shellId, cols, rows } satisfies ShellResizePayload);
+
+// extensions (§5). Eight commands + one event channel. `setEnabled` and
+// `detect` resolve the FULL refreshed list rather than an ack (FR-8/FR-57), so
+// the frontend never re-queries to learn what changed. `launch` is idempotent
+// and the core owns the whole probe→spawn→re-probe→open sequence — the same
+// call backs both the `Open dashboard` and `Launch dashboard` states.
+export const extensionsList = (req: ListExtensionsRequest) =>
+  ipc<ListExtensionsResponse>('extensions_list', req);
+export const extensionsSetEnabled = (req: SetExtensionEnabledRequest) =>
+  ipc<SetExtensionEnabledResponse>('extensions_set_enabled', req);
+export const extensionsDetect = (req: DetectExtensionsRequest) =>
+  ipc<DetectExtensionsResponse>('extensions_detect', req);
+export const extensionsPanel = (req: PanelRequest) => ipc<PanelResponse>('extensions_panel', req);
+export const extensionsOpenStream = (req: OpenStreamRequest) =>
+  ipc<OpenStreamResponse>('extensions_open_stream', req);
+export const extensionsCloseStream = (req: CloseStreamRequest) =>
+  ipc<CloseStreamResponse>('extensions_close_stream', req);
+export const extensionsProbe = () => ipc<ProbeResponse>('extensions_probe');
+export const extensionsLaunch = (req: LaunchRequest) => ipc<LaunchResponse>('extensions_launch', req);
+
+/** Subscribe to francois://extensions/event (the log-tail stream, FR-44). */
+export function onExtensionEvent(cb: (e: ExtensionEvent) => void): Promise<UnlistenFn> {
+  return stream<ExtensionEvent>('francois://extensions/event', cb);
+}
 
 /** Subscribe to francois://shell/event (shell.data / shell.exit). */
 export function onShellEvent(cb: (e: ShellEvent) => void): Promise<UnlistenFn> {

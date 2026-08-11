@@ -5,12 +5,18 @@
 //
 // Cross-slice coupling: `setActiveSessionId` moves agentTabStore's `mainTab`
 // off a dynamic tab on a session SWITCH, and `removeSession` drops the removed
-// session's tabs (fix-agent-view FR-8/FR-9).
+// session's tabs (fix-agent-view FR-8/FR-9). The same switch also closes every
+// project-scoped extensions log-tail stream (extensions FR-12) — two sessions
+// can share a root, so a stream is scoped to the SESSION, not the root, and a
+// real change discards it immediately rather than leaving it to FR-43's 10 s
+// grace timer (that grace is for the tab going inactive, not the session
+// moving on).
 
 import type { StateCreator } from 'zustand';
 import type { SessionId, SessionMeta } from '../../contract/common';
 import { dropSessionTabs, mainTabAfterClose } from '../features/agents/agent-tab';
 import type { MainTab } from './agentTabStore';
+import { closeStreamsForRemovedPanels } from './extensionsStore';
 import {
   clampPaneIndex,
   clampToPaneTab,
@@ -74,7 +80,18 @@ export interface SessionsSlice {
 function switchTo(s: AppState, activeSessionId: SessionId | null): Partial<AppState> {
   return s.activeSessionId === activeSessionId
     ? { activeSessionId }
-    : { activeSessionId, mainTab: mainTabAfterClose(s.mainTab, null) as MainTab };
+    : { activeSessionId, mainTab: mainTabAfterClose(s.mainTab, null) as MainTab, extStreams: closedProjectStreams(s) };
+}
+
+/**
+ * extensions FR-12: every PROJECT-scoped log-tail stream dies on a session
+ * change — a project-scoped stream's `sessionId` is never null (see
+ * `extensionsStore.freshStream`), a fleet panel's always is, so a fleet stream
+ * is left running here. Matches ExtensionView's own "fleet takes no session"
+ * rule.
+ */
+function closedProjectStreams(s: AppState): AppState['extStreams'] {
+  return closeStreamsForRemovedPanels(s.extStreams, (panelId) => s.extStreams[panelId]?.sessionId !== null);
 }
 
 /**
@@ -153,11 +170,17 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
         if (s.activeSessionId === null) {
           // Nothing to swap WITH — pane 0 was empty, so the pane just gives up
           // its session rather than showing it in two places.
-          return { activeSessionId, mainTab: displaced.tab as MainTab, ...compact(s, panesWithout(s.extraPanes, activeSessionId!)) };
+          return {
+            activeSessionId,
+            mainTab: displaced.tab as MainTab,
+            extStreams: closedProjectStreams(s),
+            ...compact(s, panesWithout(s.extraPanes, activeSessionId!)),
+          };
         }
         extraPanes[j - 1] = { sessionId: s.activeSessionId, tab: clampToPaneTab(s.mainTab) };
         persistSplitState({ extraPanes, focusedPaneIndex: s.focusedPaneIndex });
-        return { activeSessionId, extraPanes, mainTab: displaced.tab as MainTab };
+        // FR-12 applies to the swap too — pane 0's session really does change.
+        return { activeSessionId, extraPanes, mainTab: displaced.tab as MainTab, extStreams: closedProjectStreams(s) };
       }
       return switchTo(s, activeSessionId);
     }),

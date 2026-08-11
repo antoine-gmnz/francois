@@ -8,16 +8,19 @@
 // surface. Sans throughout — the mock's font boundary is drawn at the panel
 // edge, so chrome is sans and clickable, the body is mono and historical.
 
-import { FileDiff, MessageSquare, PanelLeft, SquareTerminal } from 'lucide-react';
+import { Blocks, FileDiff, MessageSquare, PanelLeft, Puzzle, SquareTerminal } from 'lucide-react';
 import type { SessionMeta } from '../../contract/common';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
 import { isBusyStatus, STATUS_COLOR, STATUS_LABEL, statusPulses } from '../../contract/fleet-board';
 import { displayWslCwd } from '../../contract/wsl-filesystem';
+import type { ExtensionId, ExtensionInfo } from '../../contract/extensions';
 import { agentTabLabel, tabIdFor, type AgentTabRef } from '../features/agents/agent-tab';
 import { CloudChip } from '../features/cloud-sessions/CloudChip';
 import ProjectSwitcher from '../features/projects/ProjectSwitcher';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import { truncateBranchLeft, worktreeChipLabel } from '../features/sessions/worktree';
+import { extTabId } from '../features/extensions/extensions';
+import '../features/extensions/extensions.css';
 import LayoutToggle from '../features/usage/LayoutToggle';
 import { sessionInterrupt } from '../lib/api';
 import { abbreviate } from '../lib/path';
@@ -42,6 +45,10 @@ export interface SessionRowProps {
   diffCount: number;
   agentTabs: AgentTabRef[];
   closeAgentTab: (agentId: string) => void;
+  /** extensions FR-10: the available extensions, in registry order. */
+  extTabs: ExtensionInfo[];
+  openExtTab: (extensionId: ExtensionId) => void;
+  closeExtTab: (extensionId: ExtensionId) => void;
   elapsedMs: number;
   home: string;
 }
@@ -53,6 +60,9 @@ export default function SessionRow({
   diffCount,
   agentTabs,
   closeAgentTab,
+  extTabs,
+  openExtTab,
+  closeExtTab,
   elapsedMs,
   home,
 }: SessionRowProps) {
@@ -89,6 +99,16 @@ export default function SessionRow({
           titlebar, where the mock puts `acme-api / api-refactor`. */}
       <div className="session-row__crumbs">
         <ProjectSwitcher home={home} sessionCwd={active?.cwd ?? null} />
+        {/* extensions FR-56: the chrome entry to the Extensions modal, beside the
+            project control it is scoped by. ⌘K → `Extensions` is the twin. */}
+        <span
+          className="ext-titlebar-btn"
+          title="Extensions"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => useStore.getState().setExtensionsOpen(true)}
+        >
+          <Blocks {...ICON} />
+        </span>
         {active && (
           <>
             <span className="session-row__slash">/</span>
@@ -159,6 +179,31 @@ export default function SessionRow({
               </span>
             ))}
           </div>
+          {/* extensions FR-10: extension tabs sit AFTER the view segment and
+              BEFORE any agent/workflow tab, in registry order. They are not
+              subject to AGENT_TAB_CAP and never evict a dynamic tab. No status
+              dot — an extension has no lifecycle the chrome should report. */}
+          {extTabs.map((e) => (
+            <span
+              key={e.id}
+              title={`${e.label} extension`}
+              onClick={() => openExtTab(e.id)}
+              className={mainTab === extTabId(e.id) ? 'session-row__agent session-row__agent--on' : 'session-row__agent'}
+            >
+              <Puzzle size={11} strokeWidth={1.75} />
+              <span className="truncate">{e.label}</span>
+              <span
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  closeExtTab(e.id);
+                }}
+                title="close tab"
+                className="session-row__agent-close"
+              >
+                ✕
+              </span>
+            </span>
+          ))}
           {agentTabs.map((t) => (
             <span
               key={tabIdFor(t)}

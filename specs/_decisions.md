@@ -49,6 +49,9 @@
 - 2026-08-13 · ui · Block only irreversible choices; risky-but-recoverable ones are annotated, not blocked — because a blocked legitimate case has no escape hatch · attach-to-worktree
 - 2026-08-13 · scope · Worktree UI stays inside New Session, scoped to the probed repo — no cross-project inventory/manager — because git already owns that state · attach-to-worktree
 - 2026-08-13 · design · `design_files: []` stays empty; §8 brief + `specs/design/attach-to-worktree.md` is the design source — because a two-chip/picker addition inside existing modal chrome doesn't warrant fresh Claude Design mockups, matching collapse-right-column/multiple-shells/workflow-details · attach-to-worktree
+- 2026-08-04 · surfaces · Extension definitions are a compiled-in array — never a manifest read from disk at any scope — because an id allowlist stops unknown extensions but never a repo impersonating a known one · extensions
+- 2026-08-04 · security · Sanitize subprocess output in the core before it crosses IPC, never at display time — because the webview holds IPC authority and a display-time strip is one forgotten renderer from an XSS · extensions
+- 2026-08-04 · ui · A main-pane tab family about the SESSION closes on session change; one about the PROJECT re-scopes and stays — because agent:/workflow: set the closing precedent and ext: would silently inherit the wrong one · extensions
 
 ## Superseded
 
