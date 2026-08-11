@@ -292,6 +292,7 @@ that owns the feature — never in a new top-level file.
 | `fleet-board` | per-session status cards (state, model, context usage, diff badge, agent count, last activity), keyboard-navigable | session-engine, sessions-sidebar, app-shell |
 | `interactive-commands` | SESSION tab: slash commands that need a round-trip (`/model`, `/compact`, …) driven through the stdio control channel | session-engine, conversation-view |
 | `message-history` | SESSION composer: recall previously sent messages with `↑`/`↓`, per session | conversation-view |
+| `session-welcome` | SESSION tab: the framed welcome header an empty transcript shows — identity column + repo column (CLAUDE.md, branch/ahead via `francois:project:repoBrief`, sessions that finished here) | conversation-view, session-engine, projects, multi-account, app-shell |
 | `multi-account` | several Anthropic accounts side by side — per-account config dir (mirrored from the global `~/.claude`), account picker, per-project default account | session-engine, projects, app-shell, usage-bar |
 | `session-attachments` | SESSION composer: attach files from disk or the clipboard (images included) to a turn | conversation-view, session-engine |
 | `session-worktree` | open a session in a dedicated `git worktree` so its edits never touch the main checkout | session-engine, sessions-sidebar, diff-view |

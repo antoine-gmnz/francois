@@ -303,24 +303,25 @@ input.cloud-modal__field {
 
 /* ---------- pane [1] action ---------- */
 
-/* Beside "New session", not instead of it: adoption is the rarer of the two, so
-   it takes the compact half of the row and the primary keeps its width. */
+/* Beside the roster header's `+`, not instead of it: adoption is the rarer of
+   the two starts, so it stays QUIET where new-session is accent. Geometry
+   matches design 7a's act cluster (20px, --radius-base) so the three header
+   actions read as one row — see .sidebar__act in sessions/sidebar.css. */
 .cloud-adopt-button {
-  height: 32px;
-  width: 32px;
+  height: 20px;
+  width: 20px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-hover);
-  border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-lg);
+  background: none;
+  border: none;
+  border-radius: var(--radius-base);
   cursor: pointer;
-  color: var(--text-dim);
+  color: var(--text-faint);
 }
 
 .cloud-adopt-button:hover {
-  background: var(--bg-hover-2);
-  border-color: var(--border-focus);
-  color: var(--text-strong);
+  background: var(--bg-hover);
+  color: var(--text-2);
 }

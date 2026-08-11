@@ -27,8 +27,22 @@ import type { AppState } from './store';
  * dynamic tab and `workflow:${string}` is workflow-details FR-11's — template-
  * literal members rather than a discriminated object so every existing
  * `mainTab === 'diff'` comparison keeps working untouched.
+ *
+ * design 7a: `agents`/`mcp`/`skills`/`workflows` joined the union when the right
+ * column was dissolved — those four panes are now main-pane tabs opened from the
+ * roster's quiet rows (and still from `3`–`6` / the palette), not a second column.
  */
-export type MainTab = 'overview' | 'session' | 'diff' | 'shell' | `agent:${string}` | `workflow:${string}`;
+export type MainTab =
+  | 'overview'
+  | 'session'
+  | 'diff'
+  | 'shell'
+  | 'agents'
+  | 'mcp'
+  | 'skills'
+  | 'workflows'
+  | `agent:${string}`
+  | `workflow:${string}`;
 
 export interface AgentTabSlice {
   // main-pane active tab (minimal app-shell)
@@ -57,12 +71,13 @@ export const createAgentTabSlice: StateCreator<AppState, [], [], AgentTabSlice> 
   setMainTab: (mainTab) => set({ mainTab }),
 
   agentTabs: [],
-  // split-session FR-13: while split there is no room for a dynamic tab — the
-  // panes only carry SESSION/DIFF/SHELL — so clicking an agent or workflow card
-  // is a no-op. Guarded here rather than at each card so every entry point
-  // (AgentsPanel, WorkflowsPanel, the palette) is covered by one rule.
+  // split-by-4 FR-20: while split there is no room for a dynamic tab — the panes
+  // carry SESSION/DIFF/SHELL at two and the transcript alone above — so clicking
+  // an agent or workflow card is a no-op. Guarded here rather than at each card
+  // so every entry point (AgentsPanel, WorkflowsPanel, the palette) is covered
+  // by one rule.
   openAgentTab: (ref) =>
-    set((s) => (s.splitSessionId !== null ? {} : { agentTabs: openTab(s.agentTabs, ref), mainTab: tabIdFor(ref) as MainTab })),
+    set((s) => (s.extraPanes.length > 0 ? {} : { agentTabs: openTab(s.agentTabs, ref), mainTab: tabIdFor(ref) as MainTab })),
   syncAgentTab: (ref) =>
     set((s) => {
       const agentTabs = syncTab(s.agentTabs, ref);

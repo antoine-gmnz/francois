@@ -5,7 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 import type { SessionId } from '../../../contract/common';
 import type { ShellEnsureData, ShellId } from '../../../contract/shell-terminal';
 import { onShellEvent, shellEnsure, shellResize, shellRestart, shellWrite } from '../../lib/api';
-import { shellShortcutFor } from './shell';
+import { controlCharFor, shellShortcutFor } from './shell';
 import { dispatchShellShortcut } from './shellActions';
 import { useShellStore } from './shellStore';
 import { buildTheme } from './xterm-theme';
@@ -197,12 +197,32 @@ export default function ShellTerminal({ sessionId, shellId, visible, canFocus = 
         dispatchShellShortcut(combo, sessionId);
         return false;
       }
+      // AltGr, alone, is never terminal input — but xterm 5.5 arms its private
+      // `_unprocessedDeadKey` on the `AltGraph` keydown and then never clears
+      // it (the AltGr'd character itself returns early as a third-level shift),
+      // leaving the flag to swallow some later keypress. This handler runs
+      // BEFORE that assignment, so refusing the key here keeps the flag from
+      // being armed by AltGr at all. See controlCharFor for the whole story.
+      if (e.key === 'AltGraph') return false;
       if (exitedRef.current) {
         if (e.key === 'Enter') {
           e.preventDefault();
           void restart();
         }
         return false; // swallow everything else while exited (FR-16)
+      }
+      // `⌃C` and every other plain Ctrl combo is forwarded by US, never by
+      // xterm's keydown path — a `Dead` keydown (`^`/`¨`) can still leave that
+      // path's dead-key flag armed, and the key it eats is exactly the one the
+      // footer advertises as `⌃C interrupt`. `term.input` is xterm's public
+      // "as if typed" entry point, so this still scrolls to the bottom and
+      // still flows through the single onData → shellWrite path below.
+      const ctrlChar = controlCharFor(e.keyCode, e.ctrlKey, e.shiftKey, e.altKey, e.metaKey);
+      if (ctrlChar !== null) {
+        e.preventDefault();
+        e.stopPropagation(); // FR-21, same as any other forwarded key
+        term.input(ctrlChar);
+        return false;
       }
       e.stopPropagation(); // every forwarded key is stopPropagation'd (FR-21)
       return true;

@@ -2,17 +2,72 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildShortcutActions,
   clampToPaneTab,
+  dividerGridArea,
   mainPaneBranch,
+  paneGridArea,
+  shellColumns,
   shellFooterPath,
   splitCandidate,
-  tabClassName,
   type ShortcutActionsContext,
 } from './appShell';
 
-describe('tabClassName', () => {
-  it('adds the --on modifier only when active', () => {
-    expect(tabClassName(true)).toBe('app-tab app-tab--on');
-    expect(tabClassName(false)).toBe('app-tab');
+describe('shellColumns', () => {
+  // design 7a: two tracks, not three — [3]-[6] are roster rows now, so the
+  // roster is the only column left to size.
+  it('gives the roster its full width at one pane', () => {
+    expect(shellColumns('single', true)).toEqual({ template: '282px 1fr', leftRail: false });
+  });
+
+  it('narrows the roster while split, and keeps 282px only at one pane', () => {
+    expect(shellColumns('split', true).template).toBe('238px 1fr');
+    expect(shellColumns('grid', true).template).toBe('238px 1fr');
+  });
+
+  it('folds the roster to the 46px rail in EVERY regime — never to nothing', () => {
+    for (const regime of ['single', 'split', 'grid'] as const) {
+      expect(shellColumns(regime, false)).toEqual({ template: '46px 1fr', leftRail: true });
+    }
+  });
+});
+
+describe('paneGridArea', () => {
+  it('leaves the one-row regimes to auto-placement', () => {
+    expect(paneGridArea(0, 1)).toBeUndefined();
+    expect(paneGridArea(0, 2)).toBeUndefined();
+    expect(paneGridArea(1, 2)).toBeUndefined();
+  });
+
+  it('places four panes in the corners, skipping the gutter tracks', () => {
+    expect(paneGridArea(0, 4)).toEqual({ gridColumn: '1', gridRow: '1' });
+    expect(paneGridArea(1, 4)).toEqual({ gridColumn: '3', gridRow: '1' });
+    expect(paneGridArea(2, 4)).toEqual({ gridColumn: '1', gridRow: '3' });
+    expect(paneGridArea(3, 4)).toEqual({ gridColumn: '3', gridRow: '3' });
+  });
+
+  it('spans the third pane across the whole bottom row (FR-2)', () => {
+    expect(paneGridArea(0, 3)).toEqual({ gridColumn: '1', gridRow: '1' });
+    expect(paneGridArea(1, 3)).toEqual({ gridColumn: '3', gridRow: '1' });
+    expect(paneGridArea(2, 3)).toEqual({ gridColumn: '1 / -1', gridRow: '3' });
+  });
+});
+
+describe('dividerGridArea', () => {
+  it('leaves the two-pane handle to auto-placement, and offers no row handle there', () => {
+    expect(dividerGridArea('x', 2)).toBeUndefined();
+    expect(dividerGridArea('y', 2)).toBeUndefined();
+  });
+
+  it('runs the column handle the full height at four panes', () => {
+    expect(dividerGridArea('x', 4)).toEqual({ gridColumn: '2', gridRow: '1 / -1' });
+  });
+
+  it('stops the column handle at the top row when the third pane spans below it', () => {
+    expect(dividerGridArea('x', 3)).toEqual({ gridColumn: '2', gridRow: '1' });
+  });
+
+  it('runs the row handle the full width in both grid regimes', () => {
+    expect(dividerGridArea('y', 3)).toEqual({ gridColumn: '1 / -1', gridRow: '2' });
+    expect(dividerGridArea('y', 4)).toEqual({ gridColumn: '1 / -1', gridRow: '2' });
   });
 });
 
@@ -58,8 +113,6 @@ describe('buildShortcutActions', () => {
       setNewAgentOpen: vi.fn(),
       closeAgentTab: vi.fn(),
       toggleLeftPane: vi.fn(),
-      toggleRightPane: vi.fn(),
-      toggleCollapsedPane: vi.fn(),
     };
     const ctx: ShortcutActionsContext = {
       preventDefault: spies.preventDefault,
@@ -72,18 +125,18 @@ describe('buildShortcutActions', () => {
       setNewAgentOpen: spies.setNewAgentOpen,
       closeAgentTab: spies.closeAgentTab,
       toggleLeftPane: spies.toggleLeftPane,
-      toggleRightPane: spies.toggleRightPane,
-      toggleCollapsedPane: spies.toggleCollapsedPane,
       ...overrides,
     };
     return { ctx, spies };
   }
 
-  it('covers every key the original if/else chain handled, both cases', () => {
+  // design 7a: `]` and `c` are gone with the right column they acted on; every
+  // other key the original if/else chain handled is still here.
+  it('covers every key the shortcut chain handles, both cases', () => {
     const { ctx } = fakeCtx();
     const actions = buildShortcutActions(ctx);
     expect(Object.keys(actions).sort()).toEqual(
-      ['1', '2', '3', '4', '5', '6', '[', ']', 'A', 'C', 'D', 'N', 'O', 'T', 'W', 'a', 'c', 'd', 'n', 'o', 't', 'w'].sort(),
+      ['1', '2', '3', '4', '5', '6', '[', 'A', 'D', 'N', 'O', 'T', 'W', 'a', 'd', 'n', 'o', 't', 'w'].sort(),
     );
   });
 
@@ -104,15 +157,20 @@ describe('buildShortcutActions', () => {
     expect(spies.setNewAgentOpen).not.toHaveBeenCalled();
   });
 
-  it('a/A focuses the agents pane and opens the new-agent modal when a session is active', () => {
+  // design 7a: the modal lives inside AgentsPanel, which is a main tab now, so
+  // `a` opens that tab rather than focusing a right-column pane.
+  it('a/A opens the agents tab and the new-agent modal when a session is active', () => {
     const { ctx, spies } = fakeCtx({ getActiveSessionId: () => 'sess-1' });
     buildShortcutActions(ctx).a();
     expect(spies.preventDefault).toHaveBeenCalledTimes(1);
-    expect(spies.setFocusedPane).toHaveBeenCalledWith('agents');
+    expect(spies.setFocusedPane).toHaveBeenCalledWith('main');
+    expect(spies.setMainTab).toHaveBeenCalledWith('agents');
     expect(spies.setNewAgentOpen).toHaveBeenCalledWith(true);
   });
 
-  it('1-6 focus their pane without preventing default', () => {
+  // design 7a: 1/2 still move focus between the roster and the pane; 3-6 open
+  // the four dissolved panes as MAIN TABS, since there is no column to focus.
+  it('1-2 focus their pane and 3-6 open their panel tab, without preventing default', () => {
     const { ctx, spies } = fakeCtx();
     const actions = buildShortcutActions(ctx);
     actions['1']();
@@ -121,15 +179,15 @@ describe('buildShortcutActions', () => {
     actions['4']();
     actions['5']();
     actions['6']();
-    expect(spies.setFocusedPane.mock.calls.map((c) => c[0])).toEqual([
-      'sidebar',
-      'main',
-      'agents',
-      'mcp',
-      'skills',
-      'workflows',
-    ]);
+    expect(spies.setFocusedPane.mock.calls.map((c) => c[0])).toEqual(['sidebar', 'main', 'main', 'main', 'main', 'main']);
+    expect(spies.setMainTab.mock.calls.map((c) => c[0])).toEqual(['agents', 'mcp', 'skills', 'workflows']);
     expect(spies.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('a panel key pressed twice returns to SESSION rather than being a one-way door', () => {
+    const { ctx, spies } = fakeCtx({ getMainTab: () => 'skills' });
+    buildShortcutActions(ctx)['5']();
+    expect(spies.setMainTab).toHaveBeenCalledWith('session');
   });
 
   it('d toggles diff <-> session off the live mainTab, not a stale one', () => {
@@ -171,31 +229,15 @@ describe('buildShortcutActions', () => {
     expect(spies.closeAgentTab).toHaveBeenCalledWith('run-1');
   });
 
-  it('[ and ] toggle the side columns', () => {
+  it('[ folds the roster (design 7a: the only column left to fold)', () => {
     const { ctx, spies } = fakeCtx();
     const actions = buildShortcutActions(ctx);
     actions['[']();
-    actions[']']();
     expect(spies.toggleLeftPane).toHaveBeenCalledTimes(1);
-    expect(spies.toggleRightPane).toHaveBeenCalledTimes(1);
-  });
-
-  it('c/C collapses the focused right pane (FR-10)', () => {
-    const { ctx, spies } = fakeCtx({ getFocusedPane: () => 'mcp' });
-    buildShortcutActions(ctx).c();
-    expect(spies.toggleCollapsedPane).toHaveBeenCalledWith('mcp');
-    buildShortcutActions(ctx).C();
-    expect(spies.toggleCollapsedPane).toHaveBeenCalledTimes(2);
-  });
-
-  it('c is a no-op when focusedPane is sidebar or main (FR-10)', () => {
-    const { ctx: sidebarCtx, spies: sidebarSpies } = fakeCtx({ getFocusedPane: () => 'sidebar' });
-    buildShortcutActions(sidebarCtx).c();
-    expect(sidebarSpies.toggleCollapsedPane).not.toHaveBeenCalled();
-
-    const { ctx: mainCtx, spies: mainSpies } = fakeCtx({ getFocusedPane: () => 'main' });
-    buildShortcutActions(mainCtx).c();
-    expect(mainSpies.toggleCollapsedPane).not.toHaveBeenCalled();
+    // design 7a: `]` and `c` acted on a right column that no longer exists.
+    expect(actions[']']).toBeUndefined();
+    expect(actions.c).toBeUndefined();
+    expect(actions.C).toBeUndefined();
   });
 });
 

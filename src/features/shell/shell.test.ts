@@ -3,6 +3,7 @@ import type { ShellInfo } from '../../../contract/shell-terminal';
 import {
   SHELL_CAP,
   atShellCap,
+  controlCharFor,
   cycleShellId,
   neighborAfterClose,
   shellShortcutFor,
@@ -100,5 +101,48 @@ describe('shellShortcutFor', () => {
   it('is null for anything else', () => {
     expect(shellShortcutFor('a', true, false, false)).toBe(null);
     expect(shellShortcutFor('k', true, false, false)).toBe(null);
+  });
+});
+
+describe('controlCharFor', () => {
+  // The reason this function exists: `⌃C` must reach the PTY off the FIRST
+  // press, whatever state xterm's dead-key flag is in (see the doc comment).
+  it('maps ⌃C to ETX — the interrupt the footer advertises', () => {
+    expect(controlCharFor(67, true, false, false, false)).toBe('\x03');
+  });
+
+  it('maps the rest of ⌃A–⌃Z to their control bytes', () => {
+    expect(controlCharFor(65, true, false, false, false)).toBe('\x01'); // ⌃A
+    expect(controlCharFor(68, true, false, false, false)).toBe('\x04'); // ⌃D
+    expect(controlCharFor(76, true, false, false, false)).toBe('\x0c'); // ⌃L — the other footer hint
+    expect(controlCharFor(90, true, false, false, false)).toBe('\x1a'); // ⌃Z
+  });
+
+  it('maps the non-letter combos xterm maps', () => {
+    expect(controlCharFor(32, true, false, false, false)).toBe('\x00'); // ⌃Space
+    expect(controlCharFor(51, true, false, false, false)).toBe('\x1b'); // ⌃3
+    expect(controlCharFor(55, true, false, false, false)).toBe('\x1f'); // ⌃7
+    expect(controlCharFor(56, true, false, false, false)).toBe('\x7f'); // ⌃8
+    expect(controlCharFor(219, true, false, false, false)).toBe('\x1b'); // ⌃[
+    expect(controlCharFor(220, true, false, false, false)).toBe('\x1c'); // ⌃\
+    expect(controlCharFor(221, true, false, false, false)).toBe('\x1d'); // ⌃]
+  });
+
+  it('claims nothing without ctrl', () => {
+    expect(controlCharFor(67, false, false, false, false)).toBe(null);
+  });
+
+  it('leaves every MODIFIED ctrl combo to xterm', () => {
+    // ⌃⇧T / ⌃⇧W are the strip's own combos (shellShortcutFor, checked first),
+    // and AltGr on Windows arrives as ctrl+alt — neither may become a byte.
+    expect(controlCharFor(84, true, true, false, false)).toBe(null);
+    expect(controlCharFor(50, true, false, true, false)).toBe(null); // AltGr+2 → `~` on AZERTY
+    expect(controlCharFor(67, true, false, false, true)).toBe(null);
+  });
+
+  it('is null for keys with no control mapping', () => {
+    expect(controlCharFor(9, true, false, false, false)).toBe(null); // ⌃⇥ — the cycle combo
+    expect(controlCharFor(13, true, false, false, false)).toBe(null);
+    expect(controlCharFor(48, true, false, false, false)).toBe(null); // ⌃0
   });
 });

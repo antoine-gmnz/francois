@@ -11,7 +11,6 @@ import {
 } from '../../../contract/fleet-board';
 import { formatContextTokens } from '../../../contract/conversation-view';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
-import type { SplitSide } from '../../lib/layoutStore';
 import { abbreviate } from '../../lib/path';
 import { useStore } from '../../lib/store';
 import { BadgePill } from '../../ui/BadgePill';
@@ -20,6 +19,7 @@ import { StatusDot } from '../../ui/StatusDot';
 import { sessionAccountBadge } from '../accounts/accounts';
 import { CloudChip } from '../cloud-sessions/CloudChip';
 import { filteredEmptyLabel } from '../projects/projects';
+import type { RosterGroup } from './roster-groups';
 import { truncateBranchLeft } from './worktree';
 import '../accounts/accounts.css';
 import './sidebar.css';
@@ -41,7 +41,16 @@ export interface SessionListBodyProps {
   activeProjectId: ProjectId | null;
   inProjectCount: number;
   activeProject: ProjectMeta | null;
-  visible: SessionMeta[];
+  /**
+   * design 7a: the roster's rows, grouped by repo. `rowCursor` indexes the same
+   * sessions FLATTENED in painted order (see flattenGroups) — the walk below
+   * reproduces that order with a running counter.
+   */
+  groups: RosterGroup[];
+  collapsedGroups: ReadonlySet<string>;
+  onToggleGroup: (key: string) => void;
+  /** A group heading's `+` — scopes a new session to that repo. */
+  onNewInGroup: (group: RosterGroup) => void;
   home: string;
   activeSessionId: string | null;
   focused: boolean;
@@ -49,16 +58,22 @@ export interface SessionListBodyProps {
   derived: ReadonlyMap<string, SessionDerived>;
   onSelect: (id: string) => void;
   onContext: (sessionId: string, x: number, y: number) => void;
-  /** split-session FR-15: the RIGHT pane's session — drives the left/right badges. */
-  splitSessionId?: string | null;
-  focusedSide?: SplitSide;
+  /** split-by-4 FR-22: which pane shows a session, or null — drives the badges. */
+  paneIndexOf?: (sessionId: string) => number | null;
+  /** 1 ⇒ not split, so no badges at all. */
+  paneCount?: number;
+  focusedPaneIndex?: number;
 }
 
-/** FR-15: which pane, if any, is showing this row's session. */
-function paneOf(sessionId: string, activeSessionId: string | null, splitSessionId: string | null): SplitSide | null {
-  if (splitSessionId === null) return null; // not split — no badges at all
-  if (sessionId === splitSessionId) return 'right';
-  return sessionId === activeSessionId ? 'left' : null;
+/**
+ * FR-22: what a paned row's badge reads. At two panes the positions are the
+ * names the user already has for them (turn 5b's `left` / `right`); above that
+ * the badge is the pane NUMBER, which is also what `⌘<n>` and the pane header
+ * say.
+ */
+export function paneBadgeLabel(paneIndex: number, paneCount: number): string {
+  if (paneCount === 2) return paneIndex === 0 ? 'left' : 'right';
+  return String(paneIndex + 1);
 }
 
 /** Pane [1]'s scrollable card list, plus its hydration-error / empty states. */
@@ -69,7 +84,10 @@ export function SessionListBody({
   activeProjectId,
   inProjectCount,
   activeProject,
-  visible,
+  groups,
+  collapsedGroups,
+  onToggleGroup,
+  onNewInGroup,
   home,
   activeSessionId,
   focused,
@@ -77,9 +95,14 @@ export function SessionListBody({
   derived,
   onSelect,
   onContext,
-  splitSessionId = null,
-  focusedSide = 'left',
+  paneIndexOf,
+  paneCount = 1,
+  focusedPaneIndex = 0,
 }: SessionListBodyProps): JSX.Element {
+  // `rowCursor` indexes the FLAT painted order, so each card needs to know where
+  // it sits in that walk. Tracked as a running counter rather than an indexOf per
+  // card — the roster re-renders on every session event.
+  let flatIndex = -1;
   return (
     <div className="scz sidebar-list">
       {hydrationError ? (
@@ -104,26 +127,54 @@ export function SessionListBody({
           {filteredEmptyLabel(activeProject)}
           <div className="sidebar-empty__hint">press n to start one</div>
         </EmptyPane>
-      ) : visible.length === 0 ? (
+      ) : groups.length === 0 ? (
         <EmptyPane className="sidebar-empty">no matches · esc to clear</EmptyPane>
       ) : (
-        visible.map((session, i) => {
-          // FR-15: both paned rows render the selected treatment; only the
-          // FOCUSED side's row carries the accent left rail.
-          const pane = paneOf(session.id, activeSessionId, splitSessionId);
+        // design 7a: grouped by repo. A group with a single session still gets a
+        // heading — the roster's shape must not change as sessions come and go.
+        groups.map((group) => {
+          const collapsed = collapsedGroups.has(group.key);
           return (
-            <SessionCard
-              key={session.id}
-              session={session}
-              home={home}
-              selected={pane !== null || session.id === activeSessionId}
-              cursor={focused && i === rowCursor}
-              derived={derived.get(session.id)}
-              pane={pane}
-              paneFocused={pane !== null && pane === focusedSide}
-              onClick={() => onSelect(session.id)}
-              onContext={(x, y) => onContext(session.id, x, y)}
-            />
+            <div key={group.key} className="roster-group">
+              <div className="roster-group__head" onClick={() => onToggleGroup(group.key)}>
+                <span className="roster-group__caret">{collapsed ? '▸' : '▾'}</span>
+                <span className="roster-group__label truncate">{group.label}</span>
+                <span className="roster-group__count">{group.sessions.length}</span>
+                <span className="app-flex-spacer" />
+                <span
+                  className="roster-group__new"
+                  title={`new session in ${group.label} · n`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNewInGroup(group);
+                  }}
+                >
+                  +
+                </span>
+              </div>
+              {!collapsed &&
+                group.sessions.map((session) => {
+                  flatIndex += 1;
+                  // FR-22: every paned row renders the selected treatment; only
+                  // the FOCUSED pane's row carries the accent left rail.
+                  const pane = paneCount > 1 && paneIndexOf ? paneIndexOf(session.id) : null;
+                  return (
+                    <SessionCard
+                      key={session.id}
+                      session={session}
+                      home={home}
+                      selected={pane !== null || session.id === activeSessionId}
+                      cursor={focused && flatIndex === rowCursor}
+                      derived={derived.get(session.id)}
+                      paneLabel={pane === null ? null : paneBadgeLabel(pane, paneCount)}
+                      paneAccent={pane !== null && pane > 0}
+                      paneFocused={pane !== null && pane === focusedPaneIndex}
+                      onClick={() => onSelect(session.id)}
+                      onContext={(x, y) => onContext(session.id, x, y)}
+                    />
+                  );
+                })}
+            </div>
           );
         })
       )}
@@ -152,7 +203,8 @@ function SessionCard({
   selected,
   cursor,
   derived,
-  pane,
+  paneLabel,
+  paneAccent,
   paneFocused,
   onClick,
   onContext,
@@ -162,8 +214,10 @@ function SessionCard({
   selected: boolean;
   cursor: boolean;
   derived: SessionDerived | undefined;
-  /** split-session FR-15: which split pane shows this session, or null. */
-  pane: SplitSide | null;
+  /** split-by-4 FR-22: the badge text (`left`/`right`/`1`…`4`), or null. */
+  paneLabel: string | null;
+  /** Accent treatment — every pane past pane 0, whose badge stays neutral. */
+  paneAccent: boolean;
   paneFocused: boolean;
   onClick: () => void;
   onContext: (x: number, y: number) => void;
@@ -188,7 +242,7 @@ function SessionCard({
   else if (hover) classNames.push('sidebar-card--hovered');
   if (cursor) classNames.push('sidebar-card--cursor');
   if (attention) classNames.push('sidebar-card--attention');
-  // FR-15: the accent left rail marks the FOCUSED side only — one accent per
+  // FR-22: the accent left rail marks the FOCUSED pane only — one accent per
   // view, and in split it belongs to whichever pane owns the keyboard.
   if (paneFocused) classNames.push('sidebar-card--pane-focus');
 
@@ -218,8 +272,12 @@ function SessionCard({
         {/* cloud-sessions FR-16: where this session came FROM. Neutral, never
             accent — provenance is a fact, not a live state. */}
         {session.cloud && <CloudChip cloud={session.cloud} size="sm" />}
-        {/* split-session FR-15: which pane is showing this session. */}
-        {pane && <span className={`sidebar-card__pane sidebar-card__pane--${pane}`}>{pane}</span>}
+        {/* split-by-4 FR-22: which pane is showing this session. */}
+        {paneLabel && (
+          <span className={paneAccent ? 'sidebar-card__pane sidebar-card__pane--accent' : 'sidebar-card__pane'}>
+            {paneLabel}
+          </span>
+        )}
         <span className="sidebar-card__status" style={{ color: statusColor }}>
           <StatusDot color={statusColor} size={6} pulsing={statusPulses(session.status)} />
           {label}

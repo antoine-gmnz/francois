@@ -74,17 +74,20 @@
   min-height: 0;
 }
 
+/* design 7a: the transcript is a TERMINAL — recessed onto --bg-app, denser
+   rhythm, a wider column than the sans reading measure it replaced. What the
+   session did is history, and history is mono. */
 .conv-scroll {
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: var(--space-24) 26px;
+  padding: var(--space-18) var(--space-24) var(--space-10);
   display: flex;
   flex-direction: column;
-  /* design-refresh FR-7: the reading column is centered and capped — every
-     row is wrapped in .conv-item below, which carries the actual width cap. */
+  /* The column is centered and capped — every row is wrapped in .conv-item
+     below, which carries the actual width cap. */
   align-items: center;
-  gap: 22px;
+  gap: var(--space-14);
   /* The app root disables selection (styles.css body rule) for chrome; the
      transcript is CONTENT — copying out of it must work. */
   user-select: text;
@@ -92,35 +95,160 @@
 }
 .conv-item {
   width: 100%;
-  max-width: 680px;
+  max-width: 820px;
 }
 
 .conv-error-text {
   color: var(--error);
 }
 
+/* The hydration-failure notice — the one thing that still stands alone in the
+   middle of an empty transcript. The welcome header below is a panel, not a
+   centred line, so it no longer shares this. */
 .conv-centered {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: var(--space-14);
   text-align: center;
-  min-height: 200px;
+  padding: var(--space-24) var(--space-18) var(--space-18);
 }
-.conv-empty__cwd {
-  font-size: var(--font-size-12);
-  color: var(--text-dim);
+
+/* design 7a / "Francois Redesign.dc.html": the framed welcome block — a
+   legend-framed panel with the version tucked into its top rule, exactly like
+   the permission block. Two columns split by a hairline: who you are and what
+   this session runs on, then what the repo looks like. */
+.welcome {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  gap: var(--space-22);
+  padding: var(--space-20) var(--space-22);
+  border: 1px solid var(--accent-soft-edge);
+  border-radius: var(--radius-lg);
 }
-.conv-empty__model {
+/* The legend sits ON the top rule — a --bg-app pad is what cuts the border,
+   so it has to match the panel surface exactly. */
+.welcome__legend {
+  position: absolute;
+  top: -7px;
+  left: var(--space-14);
+  padding: 0 var(--space-7);
+  background: var(--bg-app);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--accent);
+}
+
+/* left column */
+.welcome__identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Centred, so the mark stays opposite the middle of the repo column however
+     many rows that column ends up with. */
+  justify-content: center;
+  gap: var(--space-14);
+  padding: var(--space-6) 0;
+  min-width: 0;
+}
+.welcome__greeting {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-14);
+  color: var(--text-bright);
+}
+.welcome__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: 100%;
+  font-family: var(--font-mono);
   font-size: var(--font-size-11);
-  color: var(--text-faint);
-  margin-top: var(--space-2);
+  color: var(--text-muted);
+  text-align: center;
 }
-.conv-empty__hint {
-  font-size: var(--font-size-12-5);
+.welcome__cwd {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome__rule {
+  background: var(--border-2);
+}
+
+/* right column */
+.welcome__repo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  min-width: 0;
+}
+.welcome__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.welcome__heading {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  font-weight: 400;
+  color: var(--accent);
+}
+.welcome__line {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  line-height: 1.6;
+  color: var(--text-hint);
+  text-wrap: pretty;
+}
+.welcome__strong {
+  color: var(--text);
+}
+.welcome__hr {
+  height: 1px;
+  background: var(--border-2);
+}
+.welcome__recent {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-hint);
+}
+/* Ready-green, never the accent: a finished session is not the live thing. */
+.welcome__mark {
+  color: var(--success);
+}
+.welcome__mark--error {
+  color: var(--error);
+}
+.welcome__recent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome__age {
   color: var(--text-faint);
-  margin-top: var(--space-10);
+}
+
+/* Below the two-column threshold the hairline would leave two unreadable
+   gutters — the columns stack and it becomes a horizontal rule. */
+@media (max-width: 560px) {
+  .welcome {
+    grid-template-columns: 1fr;
+    gap: var(--space-16);
+  }
+  .welcome__rule {
+    height: 1px;
+  }
 }
 
 .jump-latest {
@@ -140,15 +268,15 @@
   background: var(--bg-hover);
 }
 
-/* ── composer (design-refresh FR-8: card style + a visible Send button) ──
-   The footer is its own --bg-deep band with a top rule, and its contents are
-   capped + centered on the SAME 680px reading column as the transcript above
-   (the bar used to span the full pane, so it fell out of alignment with every
-   block it answers). */
+/* ── composer (design 7a) ──
+   The footer straddles the font boundary: a MONO input (you are typing into the
+   terminal) under a sans-scale hint row (it annotates the field, it is not part
+   of it). Its own --bg-deep band with a top rule, capped + centered on the same
+   column as the transcript above. */
 .composer-wrap {
   position: relative;
   flex-shrink: 0;
-  padding: var(--space-14) 26px var(--space-16);
+  padding: var(--space-12) var(--space-14) var(--space-10);
   border-top: 1px solid var(--border);
   background: var(--bg-deep);
 }
@@ -160,7 +288,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  max-width: 680px;
+  max-width: 820px;
   margin: 0 auto;
 }
 
@@ -194,19 +322,19 @@
   order: 2;
   background: var(--bg-hover);
   border: 1px solid var(--border-emphasis);
-  border-radius: 11px;
-  box-shadow: var(--shadow-card);
-  padding: var(--space-10) 15px;
+  border-radius: var(--radius-card);
+  padding: var(--space-10) var(--space-13);
   display: flex;
   align-items: center;
-  gap: var(--space-12);
+  gap: var(--space-9);
 }
 .composer-arrow {
   font-family: var(--font-mono);
   color: var(--accent);
-  font-size: var(--font-size-14);
+  font-size: var(--font-size-13);
   line-height: 1.5;
 }
+/* MONO: this is the terminal's own input line, not a chat box (design 7a). */
 .composer-input {
   flex: 1;
   resize: none;
@@ -214,8 +342,8 @@
   outline: none;
   background: transparent;
   color: var(--text-strong);
-  font-size: 14.5px;
-  font-family: inherit;
+  font-size: var(--font-size-12-5);
+  font-family: var(--font-mono);
   line-height: 1.5;
   max-height: 130px;
   padding: 0;
@@ -247,20 +375,29 @@
   color: var(--text-muted);
 }
 /* Beneath the card, not inside it (the mock's hint row sits outside the input
-   surface — it annotates the composer, it is not part of the field). */
+   surface — it annotates the composer, it is not part of the field). design 7a
+   also gives it the app's bottom edge: the status bar is gone, and these are the
+   hints you actually want where your hands are. */
 .composer-hint {
   order: 3;
   display: flex;
   align-items: center;
-  gap: var(--space-16);
-  margin-top: var(--space-10);
-  font-size: var(--font-size-11-5);
+  gap: var(--space-14);
+  margin-top: var(--space-7);
+  padding: 0 var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
   color: var(--text-faint);
   flex-shrink: 0;
 }
 .composer-hint__key {
-  font-family: var(--font-mono);
   color: var(--text-dim);
+}
+/* The context readout closes the row, right-aligned — the one figure worth
+   carrying at the bottom edge, since it is what decides when to /compact. */
+.composer-hint__ctx {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── session-attachments (specs/design/session-attachments.md) ──────────────
@@ -403,25 +540,28 @@
   color: var(--error-bright);
 }
 
-/* ── Block.tsx (design-refresh FR-7: 15px/1.65 --font-ui reading body) ── */
+/* ── Block.tsx (design 7a: 12.5px/1.65 --font-mono terminal body) ──
+   The font boundary is the panel edge: chrome above is sans, everything in here
+   is mono, because it is a record of what already happened. */
 .block-row {
   display: flex;
   gap: var(--space-10);
 }
 .block-glyph {
-  width: 16px;
+  width: 14px;
   flex-shrink: 0;
   text-align: center;
+  font-family: var(--font-mono);
   font-size: var(--font-size-12);
-  margin-top: 1px;
+  line-height: 1.65;
 }
 .block-content {
   min-width: 0;
   flex: 1;
 }
 .block-body {
-  font-family: var(--font-ui);
-  font-size: var(--font-size-15);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12-5);
   line-height: 1.65;
   white-space: pre-wrap;
 }
@@ -430,29 +570,30 @@
   color: var(--text-faint);
 }
 
-/* consecutive tool calls share one hairline-divided card (FR-7). The rows sit
-   on --bg-app so the block reads as recessed into the panel, as in the mock —
-   on --bg-panel it was the same value as its surroundings and the border was
-   doing all the work. */
+/* design 7a: a run of consecutive tool calls is an INDENTED LIST under the
+   paragraph that ordered it, not a card. The mock hangs it off the assistant
+   line's own gutter (`padding-left:22px`), which is what makes a turn read as
+   one thing rather than as prose plus an attachment. */
 .tool-group {
-  background: var(--bg-app);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-card);
-  overflow: hidden;
+  padding-left: var(--space-24);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 .tool-group-row {
   display: flex;
-  gap: var(--space-12);
-  padding: var(--space-10) var(--space-14);
-}
-.tool-group-row + .tool-group-row {
-  border-top: 1px solid var(--border-2);
+  gap: var(--space-8);
 }
 .tool-group .block-body {
   font-family: var(--font-mono);
-  font-size: var(--font-size-12);
-  line-height: 1.5;
+  font-size: var(--font-size-11-5);
+  line-height: 1.6;
   color: var(--text-dim);
+}
+.tool-group .block-glyph {
+  width: 12px;
+  font-size: var(--font-size-11);
+  line-height: 1.6;
 }
 
 /* subagent dispatch banner (FR-7). */
@@ -489,59 +630,39 @@
   animation: blink 1s step-end infinite;
 }
 
-/* design-refresh FR-7: the user prompt is a fully bordered card. It used to be
-   a half-card — an accent rail on the left with no border on the other three
-   sides — which read as a quoted aside rather than the mock's prompt card; the
-   "You" label carries the who, so the rail is redundant. */
-.block-user {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-2);
-  border-radius: 10px;
-  padding: var(--space-14) var(--space-16);
-}
-.block-user__header {
-  display: flex;
-  align-items: center;
-  margin-bottom: var(--space-8);
-}
-.block-user__label {
-  font-family: var(--font-ui);
-  font-weight: 600;
-  font-size: var(--font-size-11);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-dim);
-}
-.block-user__spacer {
-  flex: 1;
+/* design 7a: the prompt is an accent `›` line, not a card — see Block.tsx. */
+.block-user__arrow {
+  color: var(--accent);
 }
 .block-user__queued {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-4);
+  margin-top: var(--space-4);
 }
 .block-user__queued-label {
+  font-family: var(--font-mono);
   font-size: var(--font-size-9-5);
   letter-spacing: 0.04em;
   color: var(--warn);
 }
 .block-user__body {
-  font-family: var(--font-ui);
-  font-size: var(--font-size-15);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12-5);
   color: var(--text-strong);
   line-height: 1.65;
   white-space: pre-wrap;
 }
 
-/* ── MarkdownView.tsx (design-refresh FR-7: 15px/1.65 --font-ui reading body) ── */
+/* ── MarkdownView.tsx (design 7a: 12.5px/1.65 --font-mono terminal body) ── */
 .md-root {
-  font-family: var(--font-ui);
-  font-size: var(--font-size-15);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12-5);
   line-height: 1.65;
   word-break: break-word;
 }
 .md-strong {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-bright);
 }
 .md-em {
@@ -566,7 +687,7 @@
 
 .md-heading {
   margin-bottom: var(--space-2);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-bright);
 }
 .md-code-wrap {
@@ -620,7 +741,7 @@
   padding: var(--space-3) var(--space-8);
 }
 .md-cell--header {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-bright);
   background: var(--bg-elevated);
 }

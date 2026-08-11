@@ -51,10 +51,10 @@ export function useSessionFleetSync(): SessionFleetSync {
   const patchUsage = useStore((s) => s.patchUsage);
   const removeSessionFromCache = useStore((s) => s.removeSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
-  // split-session FR-20: the removal fallback takes the RAW reassignment —
+  // split-by-4 FR-27: the removal fallback takes the RAW reassignment —
   // `setActiveSessionId` would read "the nearest remaining session happens to be
-  // the right pane's" as a pane SWAP (FR-8) and smuggle the removed id into
-  // `splitSessionId`.
+  // another pane's" as a pane SWAP (FR-19) and smuggle the removed id back into
+  // the grid.
   const reassignActiveSessionId = useStore((s) => s.reassignActiveSessionId);
   const mergeDerived = useStore((s) => s.mergeDerived);
   const dropDerivedFromCache = useStore((s) => s.dropDerived);
@@ -111,12 +111,12 @@ export function useSessionFleetSync(): SessionFleetSync {
     });
   };
 
+  // split-by-4 FR-27: this only ever runs for PANE 0's session. The pane keeps
+  // its slot with the reassigned session (the grid is not torn down over one
+  // removal); `reassignActiveSessionId` drops the duplicate pane if the fallback
+  // happened to land on a session another pane was already showing.
   const reassignAfterRemoval = (id: string) => {
     reassignActiveSessionId(nextActiveAfterRemoval(useStore.getState().sessions, id));
-    // split-session FR-20: this only ever runs for the LEFT pane's session, so
-    // its removal ends the split — keeping the (already reassigned) left pane.
-    // The right pane is never silently promoted into the left slot.
-    if (useStore.getState().splitSessionId !== null) useStore.getState().unsplit('left');
   };
 
   const handleRemovedEvent = (id: string) => {
@@ -131,11 +131,14 @@ export function useSessionFleetSync(): SessionFleetSync {
   const applyHydration = (data: SessionMeta[]) => {
     setHydrationError(null);
     setSessions(data);
-    // split-session FR-17: a persisted right-pane session that no longer exists
-    // is dropped — the app opens single-pane and the record is rewritten clean.
-    const persistedSplit = useStore.getState().splitSessionId;
-    if (persistedSplit !== null && !data.some((s) => s.id === persistedSplit)) {
-      useStore.getState().unsplit('left');
+    // split-by-4 FR-24: a persisted pane whose session no longer exists is
+    // dropped and the record rewritten clean; if that empties the list the app
+    // opens single-pane. An EMPTY pane is not stale — it is a layout the user
+    // chose, and it survives the reload waiting for its session.
+    for (const pane of useStore.getState().extraPanes) {
+      if (pane.sessionId !== null && !data.some((s) => s.id === pane.sessionId)) {
+        useStore.getState().removeSession(pane.sessionId);
+      }
     }
     if (useStore.getState().activeSessionId === null && data[0]) setActiveSessionId(data[0].id);
     for (const session of data) {

@@ -192,9 +192,10 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
       .finally(() => {
         if (!live) return;
         const st = useStore.getState();
-        // split-session FR-8: a new session lands in the FOCUSED pane, like every
-        // other "assign a session" path.
-        if (st.splitSessionId !== null && st.focusedSide === 'right') st.openInRightPane(readySessionId);
+        // split-by-4 FR-19: the adopted session lands in the FOCUSED pane, like
+        // every other "assign a session" path — adopting from pane 3 must not
+        // silently replace pane 0's session.
+        if (st.focusedPaneIndex > 0) st.assignToFocusedPane(readySessionId);
         else st.setActiveSessionId(readySessionId);
         st.setMainTab('session');
         onCloseRef.current();

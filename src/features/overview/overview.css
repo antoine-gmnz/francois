@@ -30,7 +30,7 @@
 .ov-totals-label {
   font-size: var(--font-size-11);
   letter-spacing: 0.14em;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent);
   margin-right: var(--space-4);
 }
@@ -78,7 +78,7 @@
 .ov-section-title {
   font-size: var(--font-size-10);
   letter-spacing: 0.14em;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-dim);
 }
 

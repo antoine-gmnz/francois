@@ -1,8 +1,8 @@
-// cloud-sessions FR-14 — pane [1]'s adopt action, beside "New session".
+// cloud-sessions FR-14 — pane [1]'s adopt action, beside "new session".
 //
-// Compact on purpose: adopting is the rarer of the two starts, so it takes the
-// narrow half of the footer row and the primary keeps its width (the roster
-// narrows to 238px in split — a second full-width button would crowd it).
+// Icon-only and quiet on purpose: adopting is the rarer of the two starts, so
+// it sits in design 7a's roster-header act cluster next to the accent `+`,
+// matching .sidebar__act's geometry while the accent stays with new-session.
 
 import { CloudDownload } from 'lucide-react';
 import { useStore } from '../../lib/store';
@@ -19,7 +19,7 @@ export function AdoptCloudButton(): JSX.Element {
       onClick={() => setAdoptCloudOpen(true)}
     >
       {/* Tone comes from the class — the icon inherits currentColor. */}
-      <CloudDownload size={14} />
+      <CloudDownload size={13} strokeWidth={1.75} />
     </button>
   );
 }

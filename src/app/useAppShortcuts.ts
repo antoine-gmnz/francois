@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
-import { focusedSessionId, focusedTab } from '../lib/layoutStore';
+import { clampPaneIndex, focusedSessionId, focusedTab, layoutRegime, paneCount } from '../lib/layoutStore';
 import { useStore, type MainTab, type Pane } from '../lib/store';
 import { buildShortcutActions } from './appShell';
 
@@ -52,6 +52,16 @@ export function useAppShortcuts(state: AppShortcutState): void {
     setMainTab,
   } = state;
 
+  // split-by-4 FR-14: ⌘1–⌘4 and ⌥⇥ must reach the shell from ANY focus — the
+  // footer of an unfocused pane literally reads `⌘2 to focus and type`, and the
+  // caret is very often inside the focused pane's composer or its terminal. So
+  // they live on the capture listener beside ⌘K rather than on the bubble one,
+  // which returns early on every modifier.
+  const modalOpen =
+    newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || accountsOpen || renameOpen || updateModalOpen;
+  const modalOpenRef = useRef(modalOpen);
+  modalOpenRef.current = modalOpen;
+
   useEffect(() => {
     const onKeyCapture = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
@@ -62,24 +72,44 @@ export function useAppShortcuts(state: AppShortcutState): void {
         e.preventDefault();
         e.stopPropagation();
         dismissPalette();
+      } else if (modalOpenRef.current || isPaletteOpen()) {
+        // FR-14: a modal owns the keyboard — nothing below fires under one.
+      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
+        const st = useStore.getState();
+        const index = Number(e.key) - 1;
+        // A pane that does not exist is a no-op, NOT a swallowed key.
+        if (index < paneCount(st) && paneCount(st) > 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          st.setFocusedPaneIndex(index);
+        }
+      } else if (e.altKey && !e.metaKey && !e.ctrlKey && e.key === 'Tab') {
+        const st = useStore.getState();
+        if (paneCount(st) > 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          st.focusNextWaitingPane();
+        }
       }
     };
     window.addEventListener('keydown', onKeyCapture, true);
     return () => window.removeEventListener('keydown', onKeyCapture, true);
   }, []);
 
-  // split-session FR-7/FR-13: `d`/`t`/`o` retarget the FOCUSED pane. While
-  // split, only the three PaneTab values are reachable — `o` (overview) becomes
-  // a real no-op rather than being clamped into a surprise tab switch.
+  // split-by-4 FR-13/FR-20: `d`/`t`/`o` retarget the FOCUSED pane. While split,
+  // only the three PaneTab values are reachable — `o` (overview) becomes a real
+  // no-op rather than being clamped into a surprise tab switch — and in the grid
+  // chrome (FR-9) a pane has no tabs at all, so all three are no-ops there.
   const setFocusedPaneTab = (tab: MainTab) => {
     const st = useStore.getState();
-    if (st.splitSessionId === null) {
+    const count = paneCount(st);
+    if (count === 1) {
       setMainTab(tab);
       return;
     }
     if (tab !== 'session' && tab !== 'diff' && tab !== 'shell') return;
-    if (st.focusedSide === 'right') st.setSplitTab(tab);
-    else setMainTab(tab);
+    if (layoutRegime(count) === 'grid') return;
+    st.setPaneTab(clampPaneIndex(st.focusedPaneIndex, count), tab);
   };
 
   useEffect(() => {
@@ -120,8 +150,6 @@ export function useAppShortcuts(state: AppShortcutState): void {
         setNewAgentOpen,
         closeAgentTab: (agentId) => useStore.getState().closeAgentTab(agentId),
         toggleLeftPane: () => useStore.getState().toggleLeftPane(),
-        toggleRightPane: () => useStore.getState().toggleRightPane(),
-        toggleCollapsedPane: (pane) => useStore.getState().toggleCollapsedPane(pane),
       });
       const action = actions[e.key];
       if (action) action();

@@ -32,6 +32,7 @@ import type {
   ProjectUpdateRequest,
   StandardsRead,
 } from '../../contract/projects';
+import type { RepoBrief } from '../../contract/session-welcome';
 import type { PermissionDecision, PermissionRule, PermissionTier } from '../../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { SessionCreateInput } from '../../contract/session-engine';
@@ -192,6 +193,10 @@ export const projectGetStandards = (projectId: ProjectId) =>
   ipc<Result<StandardsRead>>('project_get_standards', { projectId });
 export const projectSetStandards = (projectId: ProjectId, standards: ProjectStandards) =>
   ipc<Result<StandardsRead>>('project_set_standards', { projectId, standards });
+// session-welcome: the SESSION header's repo facts. Read-only, keyed by session
+// because the core owns the cwd (and the git routing that follows from it).
+export const projectRepoBrief = (sessionId: SessionId) =>
+  ipc<Result<RepoBrief>>('project_repo_brief', { sessionId });
 
 // slash-menu FR-1/4: merged per-session command registry (francois:session:listCommands)
 export const sessionListCommands = (sessionId: SessionId) =>
