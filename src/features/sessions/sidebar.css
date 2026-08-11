@@ -46,8 +46,14 @@
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
+/* cloud-sessions FR-14: "New session" and the adopt action share the footer. */
+.sidebar__footer-row {
+  display: flex;
+  gap: var(--space-8);
+}
 .sidebar__new {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 32px;
   display: flex;
   align-items: center;

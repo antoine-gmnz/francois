@@ -1,6 +1,7 @@
 import type { SessionMeta } from '../../contract/common';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
 import { agentTabLabel, tabIdFor, type AgentTabRef } from '../features/agents/agent-tab';
+import { CloudChip } from '../features/cloud-sessions/CloudChip';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import { truncateBranchLeft } from '../features/sessions/worktree';
 import type { MainTab } from '../lib/store';
@@ -94,6 +95,9 @@ export default function MainTabStrip({
                 </span>
               )}
               {active.runtime === 'wsl' && <span className="app-text-faint">wsl</span>}
+              {/* cloud-sessions FR-16: adopted from a Claude Code on the web
+                  session. The tooltip carries the one-way rule. */}
+              {active.cloud && <CloudChip cloud={active.cloud} />}
               {/* session-worktree FR-13: branch glyph + name, focused session only */}
               {active.worktree && (
                 <span title={active.worktree.branch} className="app-text-accent">

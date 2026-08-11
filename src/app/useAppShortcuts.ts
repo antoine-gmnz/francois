@@ -6,6 +6,8 @@ import { buildShortcutActions } from './appShell';
 
 export interface AppShortcutState {
   newSessionOpen: boolean;
+  /** cloud-sessions FR-14: the adopt modal owns the keyboard while it is up. */
+  adoptCloudOpen: boolean;
   newAgentOpen: boolean;
   permissionsOpen: boolean;
   projectsOpen: boolean;
@@ -37,6 +39,7 @@ export interface AppShortcutState {
 export function useAppShortcuts(state: AppShortcutState): void {
   const {
     newSessionOpen,
+    adoptCloudOpen,
     newAgentOpen,
     permissionsOpen,
     projectsOpen,
@@ -93,6 +96,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
       // single-letter globals too, exactly like the other modals.
       if (
         newSessionOpen ||
+        adoptCloudOpen ||
         newAgentOpen ||
         permissionsOpen ||
         projectsOpen ||
@@ -126,6 +130,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
     return () => window.removeEventListener('keydown', onKey);
   }, [
     newSessionOpen,
+    adoptCloudOpen,
     newAgentOpen,
     permissionsOpen,
     projectsOpen,

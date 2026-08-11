@@ -40,8 +40,10 @@
 - 2026-08-04 · api · Re-keying an existing IPC domain rewrites that domain's contract file in place; never a second file for the same domain — because two files defining the same payload types is how a contract silently forks · multiple-shells
 - 2026-08-04 · ui · Bare letters stay GLOBAL shortcuts; a context-local action takes a modified key (⌘X / Ctrl+Shift+X) and must be a documented PTY carve-out — because the shell forwards every unmodified key verbatim · multiple-shells
 - 2026-08-05 · ui · `activeSessionId` means the LEFT/only main pane; anything meaning "the session the user is looking at" reads the derived `focusedSessionId` selector — because storing focus in `activeSessionId` would remount the transcript on every focus change · split-session
+- 2026-08-11 · api · `remote-control` "Francois cannot be a client" is scoped to Remote Control sessions only; cloud sessions have documented CLI verbs and ARE reachable — because collapsing the two objects kills a feasible feature · cloud-sessions
+- 2026-08-11 · auth · Francois READS Anthropic credentials (`<configDir>/.credentials.json` → `claudeAiOauth`) but never mints, refreshes or writes them — because two writers on one token file is how a login silently breaks · cloud-sessions
+- 2026-08-11 · api · A hidden CLI surface (`.hideHelp()` flag, undocumented endpoint) may only power a degrade-to-empty convenience path, never the authoritative one, and needs a canary test — because it can move without deprecation · cloud-sessions
 
 ## Superseded
 
 <!-- moved here when a line above supersedes them; never deleted -->
-

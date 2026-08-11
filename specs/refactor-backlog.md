@@ -173,3 +173,6 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-05, round 2). Neither is C
 
 - [ ] MEDIUM · src/features/notifications/notifications.ts:157 · quality · `handleNotificationAction` calls `setActiveSessionId(sessionId)` directly instead of routing through the focused-side pattern every other session-assignment entry point uses, so a notification click while split lands the session in an inert unfocused left pane (or swaps panes without moving `focusedSide`); use `if (splitSessionId !== null && focusedSide === 'right') openInRightPane(sessionId); else { setActiveSessionId(sessionId); setFocusedSide('left') }` and add a split-mode test · deferred:split-session
 - [ ] LOW · src/features/usage/LayoutToggle.tsx:1 · rule · the split-session titlebar entry point (FR-9/FR-10) lives under the unrelated `usage` feature folder, against PIPELINE.md §Code layout; move it to `src/app/` beside `SplitPane.tsx`/`RightRail.tsx` along with the `.layout-toggle`/`.titlebar-divider` rules from `usage.css` · deferred:split-session
+
+## core
+- [ ] LOW · src-tauri/src/session/cloud/auth.rs:81 · quality · resolve Bedrock/Vertex/base-URL env through the account-scoped mechanism `account_env` uses, once accounts carry provider config · deferred:cloud-sessions

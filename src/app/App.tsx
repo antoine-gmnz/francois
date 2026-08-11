@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import AccountsModal from '../features/accounts/AccountsModal';
 import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab } from '../features/agents/agent-tab';
+import AdoptCloudSessionModal from '../features/cloud-sessions/AdoptCloudSessionModal';
 import McpPanel from '../features/mcp/McpPanel';
 import { initNotifications } from '../features/notifications/notifications';
 import PaletteRoot from '../features/palette/PaletteView';
@@ -56,6 +57,13 @@ export default function App() {
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
+  // cloud-sessions FR-14: opened from the pane [1] action AND ⌘K, so the modal
+  // is rendered here like every other shared one.
+  const adoptCloudOpen = useStore((s) => s.adoptCloudOpen);
+  const setAdoptCloudOpen = useStore((s) => s.setAdoptCloudOpen);
+  // Stable identity: the modal keys effects (its landing hand-off, its keydown
+  // subscription) off this callback, and App re-renders on every store tick.
+  const closeAdoptCloud = useCallback(() => setAdoptCloudOpen(false), [setAdoptCloudOpen]);
   // session-rename FR-12/FR-14: opened from the sidebar context menu AND the palette.
   const renameSessionId = useStore((s) => s.renameSessionId);
   const setRenameSessionId = useStore((s) => s.setRenameSessionId);
@@ -163,6 +171,7 @@ export default function App() {
 
   useAppShortcuts({
     newSessionOpen,
+    adoptCloudOpen,
     newAgentOpen,
     permissionsOpen,
     projectsOpen,
@@ -355,6 +364,10 @@ export default function App() {
           }}
         />
       )}
+
+      {/* cloud-sessions FR-14: the adopt modal. Needs NO session — adoption is
+          what brings one into the fleet — so it is gated on the flag alone. */}
+      {adoptCloudOpen && <AdoptCloudSessionModal onClose={closeAdoptCloud} />}
 
       {/* session-rename FR-8: the rename modal, keyed to the session so a second
           open always restarts from that session's current name. Rendered here
