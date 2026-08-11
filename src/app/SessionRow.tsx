@@ -22,6 +22,7 @@ import LayoutToggle from '../features/usage/LayoutToggle';
 import { sessionInterrupt } from '../lib/api';
 import { abbreviate } from '../lib/path';
 import { useStore, type MainTab } from '../lib/store';
+import { toneVar } from '../lib/tone';
 import { StatusDot } from '../ui/StatusDot';
 
 const ICON = { size: 13, strokeWidth: 1.75 } as const;
@@ -68,7 +69,9 @@ export default function SessionRow({
     setMainTab(tab);
   };
 
-  const statusColor = active ? (STATUS_COLOR[active.status] ?? 'var(--text-dim)') : 'var(--text-dim)';
+  // toneVar: STATUS_COLOR is the contract's DARK hex map — without it the pill
+  // reads acid lime on the light theme's white row (lib/tone.ts).
+  const statusColor = toneVar(active ? (STATUS_COLOR[active.status] ?? 'var(--text-dim)') : 'var(--text-dim)');
 
   return (
     <div className="session-row">
