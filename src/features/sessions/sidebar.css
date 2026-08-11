@@ -245,8 +245,6 @@
   cursor: pointer;
   margin-bottom: var(--space-6);
   background: var(--bg-elevated);
-  box-shadow: inset 0 0 0 1px var(--border);
-  border-left: 2px solid transparent;
   outline: none;
   outline-offset: -1px;
 }

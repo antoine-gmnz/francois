@@ -602,12 +602,14 @@ body.app-resizing-y * {
   background: var(--bg-elevated);
   border: 1px solid var(--border-2);
 }
-/* FR-6: the focused pane is the one accent in the main area — border, halo and
-   the top rule below. Nothing else in a split view may take --accent. */
+/* FR-6: focus is carried by the lifted surface and the border alone — plus the
+   `focus` chip in the header, which states it in text. The 2px accent top rule
+   and the acid halo this used to stack on top of that are both gone: the pane is
+   already bordered, and a rule flush to that border only read as a thicker edge
+   on one side. */
 .split-pane--focused {
   background: var(--bg-panel);
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 1px rgba(195, 245, 63, 0.18);
 }
 
 .split-pane__header {
@@ -619,20 +621,6 @@ body.app-resizing-y * {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-/* The 2px accent rule, flush to the card's top edge. Always in the DOM and
-   hidden here when unfocused, so the header never reflows as focus moves. */
-.split-pane__rule {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 2px;
-  background: transparent;
-}
-.split-pane--focused .split-pane__rule {
-  background: var(--accent);
-}
-
 /* FR-7: the pane number — what `⌘<n>` in the footer and the status bar point
    at. Quiet by design: it is a label, not a status. */
 .split-pane__index {

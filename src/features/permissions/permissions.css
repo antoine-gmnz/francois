@@ -26,7 +26,14 @@
   background: color-mix(in srgb, var(--attn) 5%, transparent);
 }
 
-/* Resolved cards drop the tint and keep a single edge carrying the outcome. */
+/* Resolved cards drop the tint and keep a single edge carrying the outcome.
+   Square, unlike the pending frame: that outcome edge is 2px, and on a --radius-lg
+   corner it curves away at both ends rather than reading as a straight rail. */
+.pcard--allowed,
+.pcard--denied {
+  border-radius: 0;
+}
+
 .pcard--allowed {
   border-left: 2px solid var(--success);
 }
