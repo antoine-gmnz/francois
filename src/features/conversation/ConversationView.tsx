@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { isBusyStatus, isTerminalStatus } from '../../../contract/fleet-board';
-import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionClear, sessionInterrupt, sessionSend } from '../../lib/api';
 import Block, { ToolGroup } from './Block';
 import Composer from './Composer';
@@ -37,6 +36,7 @@ import './conversation.css';
 import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
 import WorktreeNotice from './WorktreeNotice';
 import DropOverlay from './DropOverlay';
+import WelcomeBlock from './WelcomeBlock';
 import { useSessionAttachments } from './useSessionAttachments';
 
 // Block apply rules (reducer) and the SessionEvent dispatch table live in
@@ -375,15 +375,11 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
               <span className="conv-error-text">{hydrationError}</span>
             </Centered>
           ) : hydrated && state.blocks.length === 0 ? (
-            // design 7a: the framed welcome block, its legend tucked into the
-            // top rule. What it states is what the mock states — where this
-            // session runs and on what — plus the one line that says the
-            // terminal is idle and listening.
-            <Centered legend={`Francois · ${meta?.name ?? 'session'}`}>
-              <div className="conv-empty__cwd">{meta && (displayWslCwd(meta.cwd) ?? meta.cwd)}</div>
-              <div className="conv-empty__model">{meta?.model.label}</div>
-              <div className="conv-empty__hint">waiting for your first prompt</div>
-            </Centered>
+            // design 7a: the framed welcome block stands in for the transcript
+            // until the first turn — see WelcomeBlock for what it states.
+            <div className="conv-item">
+              <WelcomeBlock sessionId={sessionId} />
+            </div>
           ) : (
             groupToolRuns(compactBlocks(state.blocks)).map((item) => (
               <div key={item.kind === 'tool-group' ? item.blockId : item.block.blockId} className="conv-item">
@@ -443,13 +439,9 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
   );
 }
 
-function Centered({ children, legend }: { children: React.ReactNode; legend?: string }) {
-  return (
-    <div className="conv-item conv-centered">
-      {legend !== undefined && <span className="conv-legend">{legend}</span>}
-      {children}
-    </div>
-  );
+/** The hydration-failure notice — the only thing left that stands alone. */
+function Centered({ children }: { children: React.ReactNode }) {
+  return <div className="conv-item conv-centered">{children}</div>;
 }
 
 /** split-session FR-6 / design §Composer: the unfocused pane's composer. */

@@ -102,23 +102,34 @@
   color: var(--error);
 }
 
-/* design 7a: the welcome block — a legend-framed panel with the version tucked
-   into its top rule, exactly like the permission block below. Two columns: who
-   you are and what this session runs on, then what the repo looks like. */
+/* The hydration-failure notice — the one thing that still stands alone in the
+   middle of an empty transcript. The welcome header below is a panel, not a
+   centred line, so it no longer shares this. */
 .conv-centered {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-14);
   text-align: center;
   padding: var(--space-24) var(--space-18) var(--space-18);
+}
+
+/* design 7a / "Francois Redesign.dc.html": the framed welcome block — a
+   legend-framed panel with the version tucked into its top rule, exactly like
+   the permission block. Two columns split by a hairline: who you are and what
+   this session runs on, then what the repo looks like. */
+.welcome {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  gap: var(--space-22);
+  padding: var(--space-20) var(--space-22);
   border: 1px solid var(--accent-soft-edge);
   border-radius: var(--radius-lg);
 }
 /* The legend sits ON the top rule — a --bg-app pad is what cuts the border,
    so it has to match the panel surface exactly. */
-.conv-legend {
+.welcome__legend {
   position: absolute;
   top: -7px;
   left: var(--space-14);
@@ -128,22 +139,116 @@
   font-size: var(--font-size-10-5);
   color: var(--accent);
 }
-.conv-empty__cwd {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-12);
-  color: var(--text-dim);
+
+/* left column */
+.welcome__identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Centred, so the mark stays opposite the middle of the repo column however
+     many rows that column ends up with. */
+  justify-content: center;
+  gap: var(--space-14);
+  padding: var(--space-6) 0;
+  min-width: 0;
 }
-.conv-empty__model {
+.welcome__greeting {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-14);
+  color: var(--text-bright);
+}
+.welcome__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: 100%;
   font-family: var(--font-mono);
   font-size: var(--font-size-11);
-  color: var(--text-faint);
-  margin-top: var(--space-2);
+  color: var(--text-muted);
+  text-align: center;
 }
-.conv-empty__hint {
+.welcome__cwd {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome__rule {
+  background: var(--border-2);
+}
+
+/* right column */
+.welcome__repo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  min-width: 0;
+}
+.welcome__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.welcome__heading {
+  margin: 0;
   font-family: var(--font-mono);
-  font-size: var(--font-size-12-5);
+  font-size: var(--font-size-11);
+  font-weight: 400;
+  color: var(--accent);
+}
+.welcome__line {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  line-height: 1.6;
+  color: var(--text-hint);
+  text-wrap: pretty;
+}
+.welcome__strong {
+  color: var(--text);
+}
+.welcome__hr {
+  height: 1px;
+  background: var(--border-2);
+}
+.welcome__recent {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-hint);
+}
+/* Ready-green, never the accent: a finished session is not the live thing. */
+.welcome__mark {
+  color: var(--success);
+}
+.welcome__mark--error {
+  color: var(--error);
+}
+.welcome__recent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome__age {
   color: var(--text-faint);
-  margin-top: var(--space-10);
+}
+
+/* Below the two-column threshold the hairline would leave two unreadable
+   gutters — the columns stack and it becomes a horizontal rule. */
+@media (max-width: 560px) {
+  .welcome {
+    grid-template-columns: 1fr;
+    gap: var(--space-16);
+  }
+  .welcome__rule {
+    height: 1px;
+  }
 }
 
 .jump-latest {

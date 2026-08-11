@@ -255,6 +255,9 @@ html[data-hidden='1'] [style*='animation'] {
   --space-14: 14px;
   --space-16: 16px;
   --space-18: 18px;
+  /* the welcome header's panel padding + column gap (Francois Redesign.dc.html) */
+  --space-20: 20px;
+  --space-22: 22px;
   --space-24: 24px;
 
   --font-size-8: 8px;

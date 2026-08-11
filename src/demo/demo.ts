@@ -188,6 +188,14 @@ function route(cmd: string, a: Args): unknown {
       return ok(ACCOUNTS);
     case 'project_list':
       return ok(PROJECTS);
+    // The SESSION welcome header's repo facts — a plausible repo, so the capture
+    // shows the header populated rather than half-empty.
+    case 'project_repo_brief':
+      return ok({
+        root: '/francois',
+        claudeMd: { lines: 41, modifiedAt: T0 - 6 * 86_400_000 },
+        git: { branch: 'router-adapter', detached: false, base: 'main', ahead: 4 },
+      });
 
     // ---- sessions ----
     case 'session_list':
