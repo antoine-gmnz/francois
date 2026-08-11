@@ -50,6 +50,10 @@ export default function MainPaneBody({ mainTab, activeAgentId, active, home }: M
   }
 
   const renderers: Record<Exclude<MainPaneBranch, 'agent' | 'workflow'>, () => ReactNode> = {
+    // design 7a: the four dissolved panes are rendered by App.tsx's persistent
+    // host, not here — they must not unmount on a tab switch (their feeds
+    // publish the counts the roster rows read).
+    panel: () => null,
     overview: () => <OverviewView home={home} />,
     session: () =>
       active ? (

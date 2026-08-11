@@ -375,7 +375,11 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
               <span className="conv-error-text">{hydrationError}</span>
             </Centered>
           ) : hydrated && state.blocks.length === 0 ? (
-            <Centered>
+            // design 7a: the framed welcome block, its legend tucked into the
+            // top rule. What it states is what the mock states — where this
+            // session runs and on what — plus the one line that says the
+            // terminal is idle and listening.
+            <Centered legend={`Francois · ${meta?.name ?? 'session'}`}>
               <div className="conv-empty__cwd">{meta && (displayWslCwd(meta.cwd) ?? meta.cwd)}</div>
               <div className="conv-empty__model">{meta?.model.label}</div>
               <div className="conv-empty__hint">waiting for your first prompt</div>
@@ -409,6 +413,13 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
         // at the same time and each has its own timer.
         attachError={attachments.attachError}
         attachments={attachments.chips}
+        // design 7a: the hint row closes with the context readout — the figure
+        // that decides when to /compact belongs where your hands are.
+        contextPercent={
+          meta && meta.contextLimitTokens > 0
+            ? Math.min(100, Math.round((meta.contextUsedTokens / meta.contextLimitTokens) * 100))
+            : null
+        }
         onAttachClick={attachments.onAttachClick}
         onRemoveAttachment={attachments.onRemoveAttachment}
         onInputChange={(e) => {
@@ -432,8 +443,13 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
   );
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="conv-centered">{children}</div>;
+function Centered({ children, legend }: { children: React.ReactNode; legend?: string }) {
+  return (
+    <div className="conv-item conv-centered">
+      {legend !== undefined && <span className="conv-legend">{legend}</span>}
+      {children}
+    </div>
+  );
 }
 
 /** split-session FR-6 / design §Composer: the unfocused pane's composer. */

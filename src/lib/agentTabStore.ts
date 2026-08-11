@@ -27,8 +27,22 @@ import type { AppState } from './store';
  * dynamic tab and `workflow:${string}` is workflow-details FR-11's — template-
  * literal members rather than a discriminated object so every existing
  * `mainTab === 'diff'` comparison keeps working untouched.
+ *
+ * design 7a: `agents`/`mcp`/`skills`/`workflows` joined the union when the right
+ * column was dissolved — those four panes are now main-pane tabs opened from the
+ * roster's quiet rows (and still from `3`–`6` / the palette), not a second column.
  */
-export type MainTab = 'overview' | 'session' | 'diff' | 'shell' | `agent:${string}` | `workflow:${string}`;
+export type MainTab =
+  | 'overview'
+  | 'session'
+  | 'diff'
+  | 'shell'
+  | 'agents'
+  | 'mcp'
+  | 'skills'
+  | 'workflows'
+  | `agent:${string}`
+  | `workflow:${string}`;
 
 export interface AgentTabSlice {
   // main-pane active tab (minimal app-shell)

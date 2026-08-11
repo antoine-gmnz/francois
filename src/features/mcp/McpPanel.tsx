@@ -105,10 +105,10 @@ function useApprovals(sessionId: string | null, onDecided: () => void) {
   return { approvals, decide, deciding, decideError };
 }
 
-export default function McpPanel({ sessionId, collapsed }: { sessionId: string | null; collapsed: boolean }) {
+// design 7a: a MAIN TAB, never a collapsible right-column card.
+export default function McpPanel({ sessionId }: { sessionId: string | null }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
-  const toggleCollapsedPane = useStore((s) => s.toggleCollapsedPane);
   // attach overlay lives in the store so the command palette can open it too (FR-23)
   const attachOpen = useStore((s) => s.mcpAttachOpen);
   const setAttachOpen = useStore((s) => s.setMcpAttachOpen);
@@ -179,18 +179,8 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
 
   return (
     <section onClick={() => setFocusedPane('mcp')} className={focused ? 'mcp-panel mcp-panel--focused' : 'mcp-panel'}>
-      <div
-        className={`mcp-header mcp-header--clickable${collapsed ? ' mcp-header--collapsed' : ''}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleCollapsedPane('mcp');
-        }}
-        title={collapsed ? 'expand' : 'collapse'}
-      >
-        <span className={focused ? 'mcp-header-title mcp-header-title--focused' : 'mcp-header-title'}>
-          <span className="panel-header-chevron">{collapsed ? '▸' : '▾'}</span>
-          MCP SERVERS
-        </span>
+      <div className="mcp-header">
+        <span className={focused ? 'mcp-header-title mcp-header-title--focused' : 'mcp-header-title'}>MCP SERVERS</span>
         <div className="mcp-header-right">
           <span className="mcp-header-count">{servers.length} · [4]</span>
           <span
@@ -206,7 +196,7 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
         </div>
       </div>
 
-      {!collapsed && hasApprovalWork(approvals) && approvals && (
+      {hasApprovalWork(approvals) && approvals && (
         <ApprovalBanner
           state={approvals}
           busy={deciding}
@@ -215,8 +205,7 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
         />
       )}
 
-      {!collapsed && (
-        <div ref={rowsRef} className="scz mcp-rows">
+      <div ref={rowsRef} className="scz mcp-rows">
           {listError ? (
             <div className="mcp-list-error">session unavailable</div>
           ) : servers.length === 0 ? (
@@ -234,8 +223,7 @@ export default function McpPanel({ sessionId, collapsed }: { sessionId: string |
               />
             ))
           )}
-        </div>
-      )}
+      </div>
 
       {popover && sessionId && (
         <DetailPopover

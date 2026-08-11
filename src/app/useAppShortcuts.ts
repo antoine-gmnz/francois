@@ -146,8 +146,6 @@ export function useAppShortcuts(state: AppShortcutState): void {
         setNewAgentOpen,
         closeAgentTab: (agentId) => useStore.getState().closeAgentTab(agentId),
         toggleLeftPane: () => useStore.getState().toggleLeftPane(),
-        toggleRightPane: () => useStore.getState().toggleRightPane(),
-        toggleCollapsedPane: (pane) => useStore.getState().toggleCollapsedPane(pane),
       });
       const action = actions[e.key];
       if (action) action();

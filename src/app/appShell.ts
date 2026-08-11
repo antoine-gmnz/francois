@@ -7,9 +7,9 @@
 
 import { displayWslCwd } from '../../contract/wsl-filesystem';
 import { agentIdFromTab, workflowIdFromTab } from '../features/agents/agent-tab';
-import { isRightPane, type LayoutRegime } from '../lib/layoutStore';
+import type { LayoutRegime } from '../lib/layoutStore';
 import { abbreviate } from '../lib/path';
-import type { MainTab, Pane, RightPane } from '../lib/store';
+import type { MainTab, Pane } from '../lib/store';
 
 // ---------- shell columns ----------
 
@@ -19,34 +19,29 @@ import type { MainTab, Pane, RightPane } from '../lib/store';
  */
 const RAIL = '46px';
 /** The roster at one pane; it narrows once a second pane wants the width. */
-const ROSTER = '276px';
+const ROSTER = '282px';
 const ROSTER_SPLIT = '238px';
-const RIGHT_COLUMN = '296px';
 
 export interface ShellColumns {
-  /** `grid-template-columns` for `.app-grid` — always three tracks. */
+  /** `grid-template-columns` for `.app-grid` — always two tracks. */
   template: string;
   /** Render `SessionRail` in the first track instead of the roster. */
   leftRail: boolean;
-  /** Render `RightRail` in the last track instead of the panel column. */
-  rightRail: boolean;
 }
 
 /**
- * The shell's three tracks, given the pane regime and the two column toggles.
+ * The shell's two tracks, given the pane regime and the roster toggle.
  *
- * The rule is regime-independent on purpose: **folded means the 46px rail, not
- * nothing** — on either side, at any pane count. The regime only decides how
- * wide the roster is when it IS shown (split pays ~340px for its second pane by
- * narrowing it). Before this, the grid dropped the right column outright while
- * two panes folded it to the rail, and the left column disappeared everywhere
- * except the grid — two sides behaving differently for no reason the user could
- * see.
+ * design 7a dissolved the right column into the roster's own rows, so the only
+ * column left to size is the roster. Its rule survives 7a unchanged: **folded
+ * means the 46px rail, not nothing**, at any pane count — the grid used to drop
+ * it outright, which left `[` toggling something that looked like a crash — and
+ * the regime only decides how wide it is when shown, since split pays ~340px
+ * for its second pane by narrowing it.
  */
-export function shellColumns(regime: LayoutRegime, showLeftPane: boolean, showRightPane: boolean): ShellColumns {
+export function shellColumns(regime: LayoutRegime, showLeftPane: boolean): ShellColumns {
   const left = showLeftPane ? (regime === 'single' ? ROSTER : ROSTER_SPLIT) : RAIL;
-  const right = showRightPane ? RIGHT_COLUMN : RAIL;
-  return { template: `${left} 1fr ${right}`, leftRail: !showLeftPane, rightRail: !showRightPane };
+  return { template: `${left} 1fr`, leftRail: !showLeftPane };
 }
 
 // ---------- resizable split grid ----------
@@ -96,14 +91,6 @@ export function dividerGridArea(axis: 'x' | 'y', panes: number): GridArea | unde
 // spec's import path resolves.
 export { clampToPaneTab, splitCandidate, splitCandidates } from '../lib/layoutStore';
 
-// ---------- tab strip ----------
-
-/** Main tab-strip label (OVERVIEW/SESSION/DIFF/SHELL): the `app-tab--on`
- * modifier recolors to the accent when it is the active main tab. */
-export function tabClassName(active: boolean): string {
-  return active ? 'app-tab app-tab--on' : 'app-tab';
-}
-
 // ---------- shell tab footer ----------
 
 // Shell footer path (spec §8): WSL cwds render as '<distro>:/path'; when the
@@ -125,11 +112,37 @@ export function shellFooterPath(cwd: string, shellName: string, home: string): s
  * `'workflow'` branches here and `MainPaneBody` handles those explicitly rather
  * than forcing them into the `Record<MainTab, renderer>` table.
  */
-export type MainPaneBranch = 'overview' | 'session' | 'diff' | 'shell' | 'agent' | 'workflow';
+export type MainPaneBranch = 'overview' | 'session' | 'diff' | 'shell' | 'panel' | 'agent' | 'workflow';
 
 export function mainPaneBranch(mainTab: MainTab): MainPaneBranch {
   if (mainTab === 'overview' || mainTab === 'session' || mainTab === 'diff' || mainTab === 'shell') return mainTab;
+  if (isPanelTab(mainTab)) return 'panel';
   return workflowIdFromTab(mainTab) !== null ? 'workflow' : 'agent';
+}
+
+// ---------- panel tabs (design 7a) ----------
+
+/**
+ * The four panes that used to be the right column. 7a dissolves that column into
+ * the roster's quiet rows, so each one is now a main-pane tab. They are rendered
+ * by a persistent host in App.tsx rather than by MainPaneBody: the panels own
+ * their own feeds, and unmounting them on every tab switch would re-subscribe
+ * (and lose the counts the roster rows read).
+ */
+export const PANEL_TABS = ['agents', 'mcp', 'skills', 'workflows'] as const;
+export type PanelTab = (typeof PANEL_TABS)[number];
+
+export function isPanelTab(tab: MainTab): tab is PanelTab {
+  return (PANEL_TABS as readonly string[]).includes(tab);
+}
+
+/**
+ * The tabs that describe ONE session's work — what the session row's segmented
+ * control offers, and what makes its `Sessions` nav pill read as active. The
+ * panel tabs and `overview` are session-independent, so they are not here.
+ */
+export function isSessionScopedTab(tab: MainTab): boolean {
+  return tab !== 'overview' && !isPanelTab(tab);
 }
 
 // ---------- global shortcuts (Phase 5 dispatch table) ----------
@@ -146,7 +159,6 @@ export interface ShortcutActionsContext {
   preventDefault: () => void;
   getActiveSessionId: () => string | null;
   getMainTab: () => MainTab;
-  /** collapse-right-column FR-10: which pane `c` acts on. */
   getFocusedPane: () => Pane;
   setFocusedPane: (pane: Pane) => void;
   setMainTab: (tab: MainTab) => void;
@@ -154,18 +166,27 @@ export interface ShortcutActionsContext {
   setNewAgentOpen: (open: boolean) => void;
   closeAgentTab: (agentId: string) => void;
   toggleLeftPane: () => void;
-  toggleRightPane: () => void;
-  /** collapse-right-column FR-10: `c` collapses the focused right pane. */
-  toggleCollapsedPane: (pane: RightPane) => void;
 }
 
 /**
- * app-shell's minimal global keys: n (new session), a (new agent), 1-6 (pane
- * focus), d/t/o (toggle diff/shell/overview ↔ session), w (close the active
- * agent tab), [ / ] (toggle the side columns), c (collapse-right-column FR-10:
- * collapse the focused right pane). Built fresh per keydown by the caller
- * (which also builds `ctx` fresh per keydown), so every branch always reads
- * current state rather than a stale render-time closure.
+ * design 7a: `3`–`6` used to focus a right-column pane. The column is gone, so
+ * they open that pane's main tab instead — and, like `d`/`t`/`o`, a second press
+ * returns to SESSION so the key is a toggle rather than a one-way door.
+ */
+function togglePanelTab(ctx: ShortcutActionsContext, pane: PanelTab): () => void {
+  return () => {
+    ctx.setFocusedPane('main');
+    ctx.setMainTab(ctx.getMainTab() === pane ? 'session' : pane);
+  };
+}
+
+/**
+ * app-shell's minimal global keys: n (new session), a (new agent), 1/2 (focus
+ * the roster / the pane), 3-6 (open a dissolved pane's main tab), d/t/o (toggle
+ * diff/shell/overview ↔ session), w (close the active dynamic tab), [ (fold the
+ * roster). Built fresh per keydown by the caller (which also builds `ctx` fresh
+ * per keydown), so every branch always reads current state rather than a stale
+ * render-time closure.
  */
 export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string, () => void> {
   const openNewSession = () => {
@@ -175,7 +196,9 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
   const openNewAgent = () => {
     if (ctx.getActiveSessionId()) {
       ctx.preventDefault();
-      ctx.setFocusedPane('agents');
+      // design 7a: the modal lives inside AgentsPanel, which is a main tab now.
+      ctx.setFocusedPane('main');
+      ctx.setMainTab('agents');
       ctx.setNewAgentOpen(true);
     }
   };
@@ -201,12 +224,6 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
       ctx.closeAgentTab(id);
     }
   };
-  // FR-10: no-op from sidebar/main — a collapsed card can't own focus, so
-  // there is nothing to collapse from those two panes.
-  const collapseFocusedPane = () => {
-    const pane = ctx.getFocusedPane();
-    if (isRightPane(pane)) ctx.toggleCollapsedPane(pane);
-  };
   return {
     n: openNewSession,
     N: openNewSession,
@@ -214,10 +231,10 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
     A: openNewAgent,
     '1': () => ctx.setFocusedPane('sidebar'),
     '2': () => ctx.setFocusedPane('main'),
-    '3': () => ctx.setFocusedPane('agents'),
-    '4': () => ctx.setFocusedPane('mcp'),
-    '5': () => ctx.setFocusedPane('skills'),
-    '6': () => ctx.setFocusedPane('workflows'),
+    '3': togglePanelTab(ctx, 'agents'),
+    '4': togglePanelTab(ctx, 'mcp'),
+    '5': togglePanelTab(ctx, 'skills'),
+    '6': togglePanelTab(ctx, 'workflows'),
     d: toggleDiffTab,
     D: toggleDiffTab,
     t: toggleShellTab,
@@ -226,9 +243,9 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
     O: toggleOverviewTab,
     w: closeActiveAgentTab,
     W: closeActiveAgentTab,
-    c: collapseFocusedPane,
-    C: collapseFocusedPane,
+    // design 7a: `]` and `c` went with the right column they acted on — there
+    // is no second column to hide and no card left to collapse. `[` still folds
+    // the roster; the session row's chevron is the same control.
     '[': ctx.toggleLeftPane,
-    ']': ctx.toggleRightPane,
   };
 }

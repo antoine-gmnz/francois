@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, Plug, Search, Sparkles, Workflow } from 'lucide-react';
 import { filterSessionsByProject } from '../../../contract/projects';
 import type { EditorId } from '../../../contract/open-in-vscode';
 import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
@@ -7,15 +8,38 @@ import { showToast } from '../palette/palette';
 import { visibleSessions } from '../projects/projects';
 import { MAX_PANES, paneCount, paneIndexOf } from '../../lib/layoutStore';
 import { abbreviate } from '../../lib/path';
+import { focusedSessionId } from '../../lib/layoutStore';
+import { EMPTY_PANEL_COUNTS, type CountedPane } from '../../lib/panelCountsStore';
 import { useStore } from '../../lib/store';
 import { getEditorList } from './editors';
 import { FilterInput } from './FilterInput';
+import {
+  flattenGroups,
+  groupSessionsByRepo,
+  loadCollapsedGroups,
+  persistCollapsedGroups,
+  type RosterGroup,
+} from './roster-groups';
 import { SessionContextMenu, type MenuState } from './SessionContextMenu';
 import { SessionListBody } from './SessionListBody';
 import { useRowCursorClamp } from './useRowCursorClamp';
 import { useSessionFleetSync } from './useSessionFleetSync';
 import { useSidebarKeyboard } from './useSidebarKeyboard';
 import './sidebar.css';
+
+const ICON = { size: 13, strokeWidth: 1.75 } as const;
+
+/**
+ * design 7a: the right column is dissolved into four quiet rows under the
+ * roster. They are NOT session cards — no status, no card surface — so the
+ * roster still reads as a list of sessions with a small index beneath it.
+ */
+const PANE_ROWS: readonly { pane: CountedPane; label: string; key: number; glyph: JSX.Element }[] = [
+  { pane: 'agents', label: 'Agents', key: 3, glyph: <Bot {...ICON} /> },
+  { pane: 'mcp', label: 'MCP', key: 4, glyph: <Plug {...ICON} /> },
+  { pane: 'skills', label: 'Skills', key: 5, glyph: <Sparkles {...ICON} /> },
+  { pane: 'workflows', label: 'Workflows', key: 6, glyph: <Workflow {...ICON} /> },
+];
 
 // pane [1] — the fleet board (Mission Control). Evolves the sessions-sidebar row
 // list into rich per-session status cards, aggregated from existing channels
@@ -64,10 +88,37 @@ export default function Sidebar({ home }: { home: string }) {
     [sessions, activeProjectId],
   );
 
-  const visible = useMemo(
+  const inScope = useMemo(
     () => visibleSessions(sessions, activeProjectId, sidebarFilter),
     [sessions, activeProjectId, sidebarFilter],
   );
+
+  // design 7a: the roster is grouped by repo. `groups` is what paints; `visible`
+  // is the same sessions flattened in PAINTED order, which is what the keyboard
+  // cursor indexes — a collapsed group's rows drop out of both.
+  const groups = useMemo(() => groupSessionsByRepo(inScope, projects), [inScope, projects]);
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(loadCollapsedGroups);
+  const visible = useMemo(() => flattenGroups(groups, collapsedGroups), [groups, collapsedGroups]);
+
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      persistCollapsedGroups(next);
+      return next;
+    });
+  };
+
+  // A group heading's `+`. For a project-backed group it also scopes the board
+  // to that project first, so the modal's project field lands on the repo whose
+  // heading was clicked rather than on whatever was selected before.
+  const newInGroup = (group: RosterGroup) => {
+    if (group.projectId !== null && group.projectId !== activeProjectId) {
+      useStore.getState().setActiveProjectId(group.projectId);
+    }
+    useStore.getState().setNewSessionOpen(true);
+  };
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
 
@@ -205,11 +256,32 @@ export default function Sidebar({ home }: { home: string }) {
           .join(' ')
       }
     >
-      {/* header */}
+      {/* header — design 7a: title, a count pill, then the two affordances the
+          mock puts on the right (search, new). Sentence-case title, not the
+          uppercase pane label: there is no longer a numbered pane grid to key
+          it into. */}
       <div className="sidebar__header">
-        <span className={focused ? 'sidebar__title sidebar__title--focused' : 'sidebar__title'}>SESSIONS</span>
+        <span className={focused ? 'sidebar__title sidebar__title--focused' : 'sidebar__title'}>Sessions</span>
         {/* projects FR-27: the count is post-filter — project scope AND '/' query. */}
-        <span className="sidebar__count">{visible.length} · [1]</span>
+        <span className="sidebar__count">{inScope.length}</span>
+        <span className="app-flex-spacer" />
+        <span
+          className={sidebarFilter !== null ? 'sidebar__act sidebar__act--on' : 'sidebar__act'}
+          title="filter sessions · /"
+          onClick={() => {
+            setSidebarFilter(sidebarFilter === null ? '' : null);
+            setFocusedPane('sidebar');
+          }}
+        >
+          <Search {...ICON} />
+        </span>
+        <span
+          className="sidebar__act sidebar__act--accent"
+          title="new session · n"
+          onClick={() => useStore.getState().setNewSessionOpen(true)}
+        >
+          +
+        </span>
       </div>
 
       {/* filter */}
@@ -223,7 +295,10 @@ export default function Sidebar({ home }: { home: string }) {
         activeProjectId={activeProjectId}
         inProjectCount={inProject.length}
         activeProject={activeProject}
-        visible={visible}
+        groups={groups}
+        collapsedGroups={collapsedGroups}
+        onToggleGroup={toggleGroup}
+        onNewInGroup={newInGroup}
         home={home}
         activeSessionId={activeSessionId}
         focused={focused}
@@ -246,13 +321,12 @@ export default function Sidebar({ home }: { home: string }) {
         }}
       />
 
-      {/* footer — design-refresh FR-6: a real full-width button, per the mock,
-          instead of the bare clickable line it used to be. */}
+      {/* footer — design 7a: the dissolved right column. Four quiet rows, ruled
+          off from the cards above, each opening that pane as a main tab. Keeping
+          them here (rather than in a column of their own) is what gives the
+          terminal the full remaining width. */}
       <div className="sidebar__footer">
-        <button type="button" onClick={() => useStore.getState().setNewSessionOpen(true)} className="sidebar__new">
-          <span className="sidebar__new-plus">+</span>New session
-          <span className="sidebar__footer-hint">n</span>
-        </button>
+        <PaneRows />
       </div>
 
       {/* context menu */}
@@ -303,5 +377,47 @@ export default function Sidebar({ home }: { home: string }) {
         />
       )}
     </section>
+  );
+}
+
+/**
+ * design 7a: Agents / MCP / Skills / Workflows as roster rows. Each carries its
+ * own count, published by the panel itself (panelCountsStore) and scoped to the
+ * FOCUSED session — the panels stay mounted behind the main pane, so the counts
+ * stay live whichever tab is open. Agents additionally goes warm while subagents
+ * are actually running: the count is the roster size, so the colour is what
+ * carries liveness.
+ */
+function PaneRows() {
+  const mainTab = useStore((s) => s.mainTab);
+  const setMainTab = useStore((s) => s.setMainTab);
+  const setFocusedPane = useStore((s) => s.setFocusedPane);
+  const sessionId = useStore((s) => focusedSessionId(s));
+  const counts = useStore((s) => (sessionId ? (s.panelCounts.get(sessionId) ?? EMPTY_PANEL_COUNTS) : EMPTY_PANEL_COUNTS));
+  const runningAgents = useStore((s) => (sessionId ? (s.derived.get(sessionId)?.runningAgentCount ?? 0) : 0));
+
+  return (
+    <>
+      {PANE_ROWS.map((row) => {
+        const live = row.pane === 'agents' && runningAgents > 0;
+        return (
+          <div
+            key={row.pane}
+            className={mainTab === row.pane ? 'roster-pane roster-pane--on' : 'roster-pane'}
+            title={`${row.label} · ${row.key}`}
+            onClick={() => {
+              setFocusedPane('main');
+              setMainTab(mainTab === row.pane ? 'session' : row.pane);
+            }}
+          >
+            <span className="roster-pane__glyph">{row.glyph}</span>
+            <span className="roster-pane__label">{row.label}</span>
+            <span className={live ? 'roster-pane__count roster-pane__count--live' : 'roster-pane__count'}>
+              {live ? `${runningAgents} running` : counts[row.pane] > 0 ? counts[row.pane] : '—'}
+            </span>
+          </div>
+        );
+      })}
+    </>
   );
 }

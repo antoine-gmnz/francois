@@ -15,6 +15,7 @@ import type { AgentInfo, AgentStep, Result, SessionEvent, SessionMeta } from '..
 import type { AgentBlock, AgentEvent } from '../../contract/agent-tab';
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { ShellEvent, ShellInfo } from '../../contract/shell-terminal';
+import { COLLAPSED_GROUPS_KEY } from '../features/sessions/roster-groups';
 import {
   ACCOUNTS,
   AGENTS,
@@ -51,7 +52,7 @@ const ok = <T>(data: T): Result<T> => ({ ok: true, data });
 // ---------- deterministic opening view ----------
 //
 // Layout and project scope persist in localStorage, so without this a capture
-// inherits whatever the last run left behind — a collapsed right-rail card
+// inherits whatever the last run left behind — a collapsed roster group
 // silently amputates the shot. Driven through the store rather than by writing
 // the keys before it is created, because that would need a module-scope side
 // effect here, and Rollup keeps those: it would anchor this module (and the
@@ -66,9 +67,13 @@ async function openingView() {
   s.setMainTab('session');
   if (s.theme !== 'dark') s.setTheme('dark');
   if (!s.showLeftPane) s.toggleLeftPane();
-  if (!s.showRightPane) s.toggleRightPane();
-  for (const pane of ['agents', 'mcp', 'skills'] as const) {
-    if (s.collapsedPanes[pane]) s.toggleCollapsedPane(pane);
+  // design 7a: no right column and no per-card collapse left to reset — but the
+  // roster's repo groups are collapsible and persisted, so they are what a stale
+  // localStorage can now amputate.
+  try {
+    localStorage.removeItem(COLLAPSED_GROUPS_KEY);
+  } catch {
+    /* ignore */
   }
 }
 

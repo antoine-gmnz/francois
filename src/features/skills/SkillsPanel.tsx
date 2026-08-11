@@ -10,10 +10,10 @@ import { useSkillsFeed } from './useSkillsFeed';
 import { useSkillsKeyboard } from './useSkillsKeyboard';
 import './skills.css';
 
-export default function SkillsPanel({ sessionId, collapsed }: { sessionId: string | null; collapsed: boolean }) {
+// design 7a: a MAIN TAB, never a collapsible right-column card.
+export default function SkillsPanel({ sessionId }: { sessionId: string | null }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
-  const toggleCollapsedPane = useStore((s) => s.toggleCollapsedPane);
   const focused = focusedPane === 'skills';
 
   const { skills, status, listError, refetch } = useSkillsFeed(sessionId);
@@ -52,17 +52,9 @@ export default function SkillsPanel({ sessionId, collapsed }: { sessionId: strin
 
   return (
     <section onClick={() => setFocusedPane('skills')} className={focused ? 'skills-panel skills-panel--focused' : 'skills-panel'}>
-      <PanelHeader
-        title="SKILLS"
-        count={skills.length}
-        paneKey={5}
-        focused={focused}
-        collapsed={collapsed}
-        onToggleCollapse={() => toggleCollapsedPane('skills')}
-      />
+      <PanelHeader title="SKILLS" count={skills.length} paneKey={5} focused={focused} />
 
-      {!collapsed && (
-        <SkillsListBody
+      <SkillsListBody
           filterOpen={filterOpen}
           query={query}
           filterRef={filterRef}
@@ -80,8 +72,7 @@ export default function SkillsPanel({ sessionId, collapsed }: { sessionId: strin
             setSelected(i);
             activate(skill);
           }}
-        />
-      )}
+      />
 
       {runModal && sessionId && (
         <RunModal sessionId={sessionId} name={runModal.name} onClose={() => setRunModal(null)} />

@@ -18,6 +18,7 @@ import { EmptyPane } from '../../ui/EmptyPane';
 import { StatusDot } from '../../ui/StatusDot';
 import { sessionAccountBadge } from '../accounts/accounts';
 import { filteredEmptyLabel } from '../projects/projects';
+import type { RosterGroup } from './roster-groups';
 import { truncateBranchLeft } from './worktree';
 import '../accounts/accounts.css';
 import './sidebar.css';
@@ -39,7 +40,16 @@ export interface SessionListBodyProps {
   activeProjectId: ProjectId | null;
   inProjectCount: number;
   activeProject: ProjectMeta | null;
-  visible: SessionMeta[];
+  /**
+   * design 7a: the roster's rows, grouped by repo. `rowCursor` indexes the same
+   * sessions FLATTENED in painted order (see flattenGroups) — the walk below
+   * reproduces that order with a running counter.
+   */
+  groups: RosterGroup[];
+  collapsedGroups: ReadonlySet<string>;
+  onToggleGroup: (key: string) => void;
+  /** A group heading's `+` — scopes a new session to that repo. */
+  onNewInGroup: (group: RosterGroup) => void;
   home: string;
   activeSessionId: string | null;
   focused: boolean;
@@ -73,7 +83,10 @@ export function SessionListBody({
   activeProjectId,
   inProjectCount,
   activeProject,
-  visible,
+  groups,
+  collapsedGroups,
+  onToggleGroup,
+  onNewInGroup,
   home,
   activeSessionId,
   focused,
@@ -85,6 +98,10 @@ export function SessionListBody({
   paneCount = 1,
   focusedPaneIndex = 0,
 }: SessionListBodyProps): JSX.Element {
+  // `rowCursor` indexes the FLAT painted order, so each card needs to know where
+  // it sits in that walk. Tracked as a running counter rather than an indexOf per
+  // card — the roster re-renders on every session event.
+  let flatIndex = -1;
   return (
     <div className="scz sidebar-list">
       {hydrationError ? (
@@ -109,27 +126,54 @@ export function SessionListBody({
           {filteredEmptyLabel(activeProject)}
           <div className="sidebar-empty__hint">press n to start one</div>
         </EmptyPane>
-      ) : visible.length === 0 ? (
+      ) : groups.length === 0 ? (
         <EmptyPane className="sidebar-empty">no matches · esc to clear</EmptyPane>
       ) : (
-        visible.map((session, i) => {
-          // FR-22: every paned row renders the selected treatment; only the
-          // FOCUSED pane's row carries the accent left rail.
-          const pane = paneCount > 1 && paneIndexOf ? paneIndexOf(session.id) : null;
+        // design 7a: grouped by repo. A group with a single session still gets a
+        // heading — the roster's shape must not change as sessions come and go.
+        groups.map((group) => {
+          const collapsed = collapsedGroups.has(group.key);
           return (
-            <SessionCard
-              key={session.id}
-              session={session}
-              home={home}
-              selected={pane !== null || session.id === activeSessionId}
-              cursor={focused && i === rowCursor}
-              derived={derived.get(session.id)}
-              paneLabel={pane === null ? null : paneBadgeLabel(pane, paneCount)}
-              paneAccent={pane !== null && pane > 0}
-              paneFocused={pane !== null && pane === focusedPaneIndex}
-              onClick={() => onSelect(session.id)}
-              onContext={(x, y) => onContext(session.id, x, y)}
-            />
+            <div key={group.key} className="roster-group">
+              <div className="roster-group__head" onClick={() => onToggleGroup(group.key)}>
+                <span className="roster-group__caret">{collapsed ? '▸' : '▾'}</span>
+                <span className="roster-group__label truncate">{group.label}</span>
+                <span className="roster-group__count">{group.sessions.length}</span>
+                <span className="app-flex-spacer" />
+                <span
+                  className="roster-group__new"
+                  title={`new session in ${group.label} · n`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNewInGroup(group);
+                  }}
+                >
+                  +
+                </span>
+              </div>
+              {!collapsed &&
+                group.sessions.map((session) => {
+                  flatIndex += 1;
+                  // FR-22: every paned row renders the selected treatment; only
+                  // the FOCUSED pane's row carries the accent left rail.
+                  const pane = paneCount > 1 && paneIndexOf ? paneIndexOf(session.id) : null;
+                  return (
+                    <SessionCard
+                      key={session.id}
+                      session={session}
+                      home={home}
+                      selected={pane !== null || session.id === activeSessionId}
+                      cursor={focused && flatIndex === rowCursor}
+                      derived={derived.get(session.id)}
+                      paneLabel={pane === null ? null : paneBadgeLabel(pane, paneCount)}
+                      paneAccent={pane !== null && pane > 0}
+                      paneFocused={pane !== null && pane === focusedPaneIndex}
+                      onClick={() => onSelect(session.id)}
+                      onContext={(x, y) => onContext(session.id, x, y)}
+                    />
+                  );
+                })}
+            </div>
           );
         })
       )}
