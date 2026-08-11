@@ -34,17 +34,20 @@ import {
 } from '../../../contract/overview';
 import { useStore } from '../../lib/store';
 import { abbreviate } from '../../lib/path';
+import { toneVar } from '../../lib/tone';
 import { ListRow } from '../../ui/ListRow';
 import { StatusDot } from '../../ui/StatusDot';
 import { formatGroupSubtitle, totalsSegments, type TotalsSegment } from './overview';
 import './overview.css';
 
+// toneVar on every STATUS_COLOR read: the contract map is the DARK palette, and
+// these tones sit beside literal tokens in the same record (lib/tone.ts).
 const TONE_COLOR: Record<TotalsSegment['tone'], string> = {
-  active: STATUS_COLOR.running,
-  blocked: STATUS_COLOR.awaiting_approval,
+  active: toneVar(STATUS_COLOR.running),
+  blocked: toneVar(STATUS_COLOR.awaiting_approval),
   ready: 'var(--text-muted)',
-  done: STATUS_COLOR.done,
-  error: STATUS_COLOR.error,
+  done: toneVar(STATUS_COLOR.done),
+  error: toneVar(STATUS_COLOR.error),
   neutral: 'var(--text-hint)',
   accent: 'var(--accent)',
 };
@@ -225,8 +228,8 @@ function Muted({ children }: { children: React.ReactNode }) {
  * bands above it.
  */
 const ATTENTION_COLOR: Record<AttentionItem['reason'], string> = {
-  approval: STATUS_COLOR.awaiting_approval,
-  question: STATUS_COLOR.awaiting_input,
+  approval: toneVar(STATUS_COLOR.awaiting_approval),
+  question: toneVar(STATUS_COLOR.awaiting_input),
   error: 'var(--error)',
   uncommitted: 'var(--text-disabled)',
 };
@@ -317,7 +320,7 @@ function SessionRow({
   const [hover, setHover] = useState(false);
   const files = d?.fileCount ?? null;
   const agents = d?.runningAgentCount ?? 0;
-  const sc = STATUS_COLOR[s.status] ?? 'var(--text-dim)';
+  const sc = toneVar(STATUS_COLOR[s.status] ?? 'var(--text-dim)');
 
   return (
     <ListRow

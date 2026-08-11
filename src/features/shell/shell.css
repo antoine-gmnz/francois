@@ -35,13 +35,15 @@
   background: var(--bg-hover);
   border-color: var(--border-emphasis);
 }
+/* No lift: the strip only exists at 2+ shells, so these chips sit in a row of
+   their own kind — the fill and the border already say which one is on, and a
+   drop shadow under every active sub-tab reads as a smudge rather than depth. */
 .shell-chip--active,
 .shell-chip--active:hover {
   color: var(--text-bright);
   font-weight: 600;
   background: var(--bg-hover-2);
   border-color: var(--border-focus);
-  box-shadow: var(--shadow-pill);
 }
 .shell-chip-name {
   min-width: 0;

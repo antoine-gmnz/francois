@@ -5,6 +5,7 @@
 
 import { toolBody, type ConversationBlock, type ToolConversationBlock } from '../../../contract/conversation-view';
 import CommandBlock from '../commands/CommandCard';
+import { toneVar } from '../../lib/tone';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
@@ -46,15 +47,17 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
 
   // Assistant replies arrive as Markdown source — render it formatted (own
   // container, so the shared pre-wrap wrapper below never touches it). The
-  // streaming caret trails the rendered content.
+  // streaming caret trails the rendered content. The body tone rides a class,
+  // not a color: the contract's literal is a dark-palette hex, and an inline
+  // color would beat every light-theme rule (see lib/tone.ts).
   if (block.kind === 'assistant') {
     return (
       <div className="block-row">
-        <span className="block-glyph" style={{ color: block.glyphColor }}>
+        <span className="block-glyph" style={{ color: toneVar(block.glyphColor) }}>
           {block.glyph}
         </span>
         <div className="block-content">
-          <Markdown text={block.text} color={block.bodyColor} />
+          <Markdown text={block.text} streaming={block.isStreaming} />
           {block.isStreaming && <span className="block-caret" />}
         </div>
       </div>
@@ -66,10 +69,10 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
     // bare glyph row — bold agent name, soft bg/border from --hue-purple.
     return (
       <div className="block-subagent">
-        <span className="block-glyph" style={{ color: block.glyphColor }}>
+        <span className="block-glyph" style={{ color: toneVar(block.glyphColor) }}>
           {block.glyph}
         </span>
-        <div className="block-content block-body" style={{ color: block.bodyColor }}>
+        <div className="block-content block-body" style={{ color: toneVar(block.bodyColor) }}>
           Dispatched subagent <span className="block-subagent__name">{block.agentName}</span>
           {/* The model the dispatch named — shown only when it differs from the
               session default, i.e. only when the dispatch named one at all. */}
@@ -82,10 +85,10 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
 
   return (
     <div className="block-row">
-      <span className="block-glyph" style={{ color: block.glyphColor }}>
+      <span className="block-glyph" style={{ color: toneVar(block.glyphColor) }}>
         {block.glyph}
       </span>
-      <div className="block-content block-body" style={{ color: block.bodyColor }}>
+      <div className="block-content block-body" style={{ color: toneVar(block.bodyColor) }}>
         {toolBody(block.tool, block.summary)}
         {block.meta && <span className="block-meta"> · {block.meta}</span>}
       </div>
@@ -105,10 +108,10 @@ export function ToolGroup({ blocks }: { blocks: ToolConversationBlock[] }) {
     <div className="tool-group">
       {blocks.map((block) => (
         <div key={block.blockId} className="tool-group-row">
-          <span className="block-glyph" style={{ color: block.glyphColor }}>
+          <span className="block-glyph" style={{ color: toneVar(block.glyphColor) }}>
             {block.glyph}
           </span>
-          <div className="block-content block-body" style={{ color: block.bodyColor }}>
+          <div className="block-content block-body" style={{ color: toneVar(block.bodyColor) }}>
             {toolBody(block.tool, block.summary)}
             {block.meta && <span className="block-meta"> · {block.meta}</span>}
           </div>

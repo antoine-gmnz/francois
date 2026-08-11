@@ -5,6 +5,7 @@ import { STATUS_COLOR, statusPulses } from '../../contract/fleet-board';
 import { filterSessionsByProject } from '../../contract/projects';
 import { focusedSessionId, paneIndexOf } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
+import { toneVar } from '../lib/tone';
 
 export interface SessionRailProps {
   /** FR-6: a tile assigns its session to the focused pane. */
@@ -40,7 +41,7 @@ export default function SessionRail({ onSelect }: SessionRailProps) {
     <aside className="session-rail">
       {inScope.map((session) => {
         const pane = paneOf(session.id);
-        const color = STATUS_COLOR[session.status] ?? 'var(--text-dim)';
+        const color = toneVar(STATUS_COLOR[session.status] ?? 'var(--text-dim)');
         return (
           <button
             key={session.id}

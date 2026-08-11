@@ -220,7 +220,10 @@
   background: var(--bg-app);
   border-bottom: 1px solid var(--border-2);
   font-size: var(--font-size-11);
-  overflow: hidden;
+  /* NO overflow clip: the project switcher's dropdown is absolutely positioned
+     inside the crumbs and drops BELOW this 36px strip — a clip here cuts it off
+     at the row's edge, which no z-index can escape. Nothing needs the clip: every
+     child either truncates itself (`.truncate` + a max-width) or shrinks. */
 }
 .session-row__fold {
   display: flex;
