@@ -395,6 +395,27 @@ describe('cloudErrorMessage', () => {
     expect(cloudErrorMessage({ code: 'CLOUD_ADOPT_STALLED', message: 'stalled' })).not.toContain('undefined');
   });
 
+  it('points at the log a post-spawn failure wrote', () => {
+    // A stall used to render as "the adoption stopped" and nothing else — the
+    // PTY is the only witness to WHY, so the file holding it has to be named.
+    const stalled = cloudErrorMessage({
+      code: 'CLOUD_ADOPT_STALLED',
+      message: 'stalled',
+      detail: { phase: 'teleporting', logPath: '/Users/a/Library/francois/cloud-adopt.log' },
+    });
+    expect(stalled).toContain('cloud-adopt.log');
+    expect(stalled.toLowerCase()).toContain('teleporting');
+    const exited = cloudErrorMessage({
+      code: 'CLOUD_ADOPT_FAILED',
+      message: 'exited',
+      detail: { logPath: '/Users/a/Library/francois/cloud-adopt.log' },
+    });
+    expect(exited).toContain('cloud-adopt.log');
+    // An older core sends no logPath, and the message must not grow a stub.
+    expect(cloudErrorMessage({ code: 'CLOUD_ADOPT_STALLED', message: 'stalled', detail: { phase: 'teleporting' } })).not.toContain('undefined');
+    expect(cloudErrorMessage({ code: 'CLOUD_ADOPT_FAILED', message: 'exited' })).not.toMatch(/is in\s*$/);
+  });
+
   it('passes a non-cloud code’s own message through, scrubbed', () => {
     expect(cloudErrorMessage({ code: 'NOT_A_GIT_REPO', message: 'not a git repository' })).toBe('not a git repository');
     expect(cloudErrorMessage({ code: 'GIT_ERROR', message: 'Remote Control is unavailable' })).not.toMatch(/remote control/i);

@@ -75,8 +75,8 @@ export type ErrorCode =
   | 'CLOUD_POLICY_DENIED' // cloud-sessions: the org's `allow_remote_sessions` policy is off
   | 'CLOUD_SESSION_NOT_FOUND' // cloud-sessions: unknown/invalid cloud session id
   | 'CLOUD_REPO_MISMATCH' // cloud-sessions FR-8: teleport's mismatch/not_in_repo/host_unverified (detail: { sessionRepo, currentRepo })
-  | 'CLOUD_ADOPT_STALLED' // cloud-sessions FR-8/FR-9: a blocking dialog or the deadline (detail: { phase })
-  | 'CLOUD_ADOPT_FAILED' // cloud-sessions FR-6: the PTY exited without a usable local session
+  | 'CLOUD_ADOPT_STALLED' // cloud-sessions FR-8/FR-9: a blocking dialog or the deadline (detail: { phase, logPath? })
+  | 'CLOUD_ADOPT_FAILED' // cloud-sessions FR-6: the PTY exited without a usable local session (detail: { logPath? })
   | 'INTERNAL';
 
 // ---------- sessions ----------

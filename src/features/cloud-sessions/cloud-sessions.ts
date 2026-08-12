@@ -325,6 +325,17 @@ function stalledLine(detail: unknown): string {
   return `Adoption stopped${where}: Claude Code is waiting on a decision Francois will not make for you. Finish it in a terminal, then try again.`;
 }
 
+/**
+ * A post-spawn failure writes what Claude Code actually printed to a log and
+ * names the file in `detail.logPath`. Pointing at it is the difference between
+ * "the adoption stopped" and something the user can read, act on, or paste into
+ * an issue — the PTY is the only witness to a stall.
+ */
+function logHint(detail: unknown): string {
+  const path = (detail as { logPath?: unknown } | null | undefined)?.logPath;
+  return typeof path === 'string' && path.trim() !== '' ? ` What Claude Code printed is in ${path}.` : '';
+}
+
 const CLOUD_MESSAGES: Partial<Record<ErrorCode, string>> = {
   CLOUD_AUTH_REQUIRED: 'Cloud sessions need a claude.ai login — API key auth is not sufficient.',
   CLOUD_AUTH_EXPIRED: 'Your claude.ai login has expired. Run a turn, or sign in again with /login, and retry.',
@@ -345,9 +356,11 @@ const CLOUD_MESSAGES: Partial<Record<ErrorCode, string>> = {
  */
 export function cloudErrorMessage(error: AppError): string {
   if (error.code === 'CLOUD_REPO_MISMATCH') return repoMismatchLine(error.detail);
-  if (error.code === 'CLOUD_ADOPT_STALLED') return stalledLine(error.detail);
+  // The two failures that mean "teleport was alive and doing something we could
+  // not read" — the only ones a log can explain, and the only ones that carry it.
+  if (error.code === 'CLOUD_ADOPT_STALLED') return stalledLine(error.detail) + logHint(error.detail);
   const mapped = CLOUD_MESSAGES[error.code];
-  if (mapped) return mapped;
+  if (mapped) return error.code === 'CLOUD_ADOPT_FAILED' ? mapped + logHint(error.detail) : mapped;
   const own = scrub(error.message ?? '').trim();
   return own === '' ? 'Adoption failed for an unknown reason.' : own;
 }

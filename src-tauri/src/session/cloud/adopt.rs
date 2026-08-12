@@ -26,6 +26,13 @@ use tauri::State;
 /// beat after the process is done with it.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
 
+/// Where a failed adoption writes what teleport printed, under the app data dir.
+const ADOPT_LOG: &str = "cloud-adopt.log";
+/// How much of the PTY window a failure carries into that log. Enough for a full
+/// dialog and the lines around it; not the whole 16K window, which is mostly the
+/// REPL's boot banner redrawn.
+const PTY_EXCERPT_CHARS: usize = 2_000;
+
 const CONFIRM_MSG: &str =
     "Landing in the project's own checkout stashes its uncommitted changes. Confirm the \
      destination before adopting, or land the session in a fresh worktree instead.";
@@ -125,6 +132,18 @@ pub(crate) fn adopt_name(title: Option<&str>, cwd: &str) -> String {
         .unwrap_or_else(|| basename(cwd))
 }
 
+/// The last `n` characters of `text`. The END of a PTY window is the part that
+/// explains a stall — the dialog currently on screen — and the start is boot
+/// noise. Counted in CHARACTERS, not bytes: a TUI window is full of box-drawing
+/// glyphs and a byte cut would land inside one.
+pub(crate) fn last_chars(text: &str, n: usize) -> String {
+    let count = text.chars().count();
+    if count <= n {
+        return text.to_string();
+    }
+    text.chars().skip(count - n).collect()
+}
+
 /// Reaps a freshly spawned child on every early return before it is handed to
 /// the reader thread. `portable_pty::Child` does not kill on drop, and a child
 /// that never reaches the registry can never be found by
@@ -152,6 +171,12 @@ struct AdoptPty {
     blocked: Arc<Mutex<Option<CloudBlock>>>,
     checked_out: Arc<AtomicBool>,
     exited: Arc<AtomicBool>,
+    /// The reader's rolling window of RAW PTY text. Teleport's own output is the
+    /// only witness to a stall — an FR-8 miss (a dialog reworded by a CLI
+    /// release) is indistinguishable from a hang once it has been discarded,
+    /// which is exactly the "stuck on Teleporting, nothing happens" report.
+    /// Kept raw and normalized only when a failure has to explain itself.
+    tail: Arc<Mutex<String>>,
 }
 
 /// Opens the PTY, builds argv/env exactly like a normal turn
@@ -220,6 +245,7 @@ fn spawn_teleport(
     let blocked: Arc<Mutex<Option<CloudBlock>>> = Arc::new(Mutex::new(None));
     let checked_out = Arc::new(AtomicBool::new(false));
     let exited = Arc::new(AtomicBool::new(false));
+    let tail = Arc::new(Mutex::new(String::new()));
     let child = guard.disarm();
     reg.attach(key, killer, pair.master);
     spawn_reader_thread(
@@ -228,6 +254,7 @@ fn spawn_teleport(
         blocked.clone(),
         checked_out.clone(),
         exited.clone(),
+        tail.clone(),
         current_repo,
         phase,
     );
@@ -235,6 +262,7 @@ fn spawn_teleport(
         blocked,
         checked_out,
         exited,
+        tail,
     })
 }
 
@@ -249,6 +277,7 @@ fn spawn_reader_thread(
     blocked: Arc<Mutex<Option<CloudBlock>>>,
     checked_out: Arc<AtomicBool>,
     exited: Arc<AtomicBool>,
+    tail: Arc<Mutex<String>>,
     current_repo: Option<String>,
     phase: Arc<Mutex<CloudAdoptPhase>>,
 ) {
@@ -275,12 +304,51 @@ fn spawn_reader_thread(
                         }
                         None => {}
                     }
+                    // `carry` IS the FR-8 window — the same frame-scoped, size-capped
+                    // text the matcher just ran against, so publishing it costs no
+                    // second buffer and a stall's log shows exactly what was matched.
+                    *tail.lock().unwrap() = carry.clone();
                 }
             }
         }
         let _ = child.wait();
         exited.store(true, Ordering::SeqCst);
     });
+}
+
+/// Writes what teleport actually printed to `<app_data>/cloud-adopt.log`, and
+/// names that file in the failure's `detail.logPath`.
+///
+/// EVERY post-spawn failure goes through here. A `CLOUD_ADOPT_STALLED` carrying
+/// only `{ phase }` says the adoption stopped and nothing about why — and the
+/// why is always on the PTY: a dialog a CLI release reworded past the FR-8
+/// matcher, a checkout that never happened, an error teleport printed and then
+/// sat on. Discarding that output is what turns a fixable stall into "it stays
+/// on Teleporting and nothing happens".
+///
+/// `detail` is only ever ADDED to: `phase`, `sessionRepo`/`currentRepo` are what
+/// the contract documents and what the UI renders, and they keep their meaning.
+fn explain(app: &AppHandle, mut e: AdoptError, pty: &AdoptPty, cloud_id: &str) -> AdoptError {
+    let raw = pty.tail.lock().unwrap().clone();
+    let seen = normalize_pty(&raw);
+    let logged = crate::diagnostics::append_log(
+        app,
+        ADOPT_LOG,
+        &format!(
+            "adopt failed cloudId={cloud_id} code={} message={}\n  pty: {}",
+            e.code,
+            e.message,
+            last_chars(&seen, PTY_EXCERPT_CHARS)
+        ),
+    );
+    if let Some(path) = logged {
+        let mut detail = e.detail.take().unwrap_or_else(|| serde_json::json!({}));
+        if let Some(map) = detail.as_object_mut() {
+            map.insert("logPath".to_string(), Value::String(path));
+        }
+        e.detail = Some(detail);
+    }
+    e
 }
 
 // ---------- FR-10: the session the adoption produces ----------
@@ -493,6 +561,22 @@ fn run_adoption(
     )?;
 
     let dir = transcript_dir(config_dir.as_deref(), &runtime, &landing.dir);
+    // Written BEFORE the wait, not after it: this line is what distinguishes
+    // "teleport never hydrated" from "it hydrated somewhere FR-6 was not
+    // looking", and it has to survive an adoption the user gives up on.
+    crate::diagnostics::append_log(
+        app,
+        ADOPT_LOG,
+        &format!(
+            "adopt spawn cloudId={} runtime={runtime} landing={} exe={exe} argv={argv:?} \
+             sessionId={claude_id} transcriptDir={}",
+            input.cloud_id,
+            landing.dir,
+            dir.as_ref()
+                .map(|d| d.to_string_lossy().to_string())
+                .unwrap_or_else(|| "<unresolved>".to_string()),
+        ),
+    );
     let deadline = Instant::now() + ADOPT_DEADLINE;
     let mut exit_seen: Option<Instant> = None;
     let hydrated = loop {
@@ -500,7 +584,7 @@ fn run_adoption(
         // teardown reaps the child, which would otherwise wait forever for a
         // keypress nobody will send.
         if let Some(block) = pty.blocked.lock().unwrap().clone() {
-            return Err(block.into());
+            return Err(explain(app, block.into(), &pty, input.cloud_id));
         }
         if pty.checked_out.load(Ordering::SeqCst)
             && matches!(progress.current(), CloudAdoptPhase::Teleporting)
@@ -516,18 +600,28 @@ fn run_adoption(
         if pty.exited.load(Ordering::SeqCst) {
             let since = exit_seen.get_or_insert_with(Instant::now);
             if since.elapsed() >= EXIT_GRACE {
-                return Err(AdoptError::new("CLOUD_ADOPT_FAILED", EXITED_MSG));
+                return Err(explain(
+                    app,
+                    AdoptError::new("CLOUD_ADOPT_FAILED", EXITED_MSG),
+                    &pty,
+                    input.cloud_id,
+                ));
             }
         }
         if Instant::now() >= deadline {
             let phase = phase_name(&progress.current());
-            return Err(AdoptError::detailed(
-                "CLOUD_ADOPT_STALLED",
-                format!(
-                    "Adoption did not finish within {}s (it stopped at: {phase}).",
-                    ADOPT_DEADLINE.as_secs()
+            return Err(explain(
+                app,
+                AdoptError::detailed(
+                    "CLOUD_ADOPT_STALLED",
+                    format!(
+                        "Adoption did not finish within {}s (it stopped at: {phase}).",
+                        ADOPT_DEADLINE.as_secs()
+                    ),
+                    serde_json::json!({ "phase": phase }),
                 ),
-                serde_json::json!({ "phase": phase }),
+                &pty,
+                input.cloud_id,
             ));
         }
         std::thread::sleep(ADOPT_POLL);
@@ -544,6 +638,16 @@ fn run_adoption(
         entry.kill();
     }
     guard.keep = true; // FR-11: the worktree is the session's now.
+                       // Closes the pair: a log with a `spawn` and no `hydrated` for the same cloud
+                       // id is an adoption the user abandoned or the app outlived.
+    crate::diagnostics::append_log(
+        app,
+        ADOPT_LOG,
+        &format!(
+            "adopt hydrated cloudId={} claudeSessionId={hydrated} (minted={claude_id})",
+            input.cloud_id
+        ),
+    );
     Ok(create_adopted_session(
         app,
         engine,
@@ -583,6 +687,27 @@ mod tests {
         // it would "succeed" while doing nothing, exactly as Remote Control does.
         let args = teleport_args("session_01AB", "uuid");
         assert!(!args.iter().any(|a| a == "-p" || a == "--print"));
+    }
+
+    // ---- the PTY excerpt a failure explains itself with ----
+
+    #[test]
+    fn the_excerpt_keeps_the_end_of_the_window_where_the_dialog_is() {
+        // The tail of a PTY window is the screen as it stands — the dialog
+        // teleport is parked on. The head is the REPL banner, redrawn.
+        assert_eq!(last_chars("abcdef", 3), "def");
+        assert_eq!(last_chars("abc", 10), "abc");
+        assert_eq!(last_chars("", 10), "");
+    }
+
+    #[test]
+    fn the_excerpt_never_cuts_a_box_drawing_glyph_in_half() {
+        // A TUI window is mostly multi-byte glyphs; a byte-wise slice would
+        // panic in the very code path a failure runs through.
+        let text: String = "─".repeat(50);
+        let cut = last_chars(&text, 10);
+        assert_eq!(cut.chars().count(), 10);
+        assert_eq!(cut, "─".repeat(10));
     }
 
     // ---- FR-5: the runtime ----
