@@ -28,6 +28,7 @@ const IGNORED_SETTERS: ConversationEventSetters = {
   setStatus: () => {},
   setErrorMessage: () => {},
   setResumeFailed: () => {},
+  setLimitNotice: () => {},
   setPinned: () => {},
   setCommands: () => {},
   patchUsage: () => {},

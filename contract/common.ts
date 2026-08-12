@@ -69,6 +69,12 @@ export type ErrorCode =
   | 'EDITOR_LAUNCH_FAILED' // open-in-vscode: the launcher could not be spawned (detail: { path })
   | 'SHELL_NOT_FOUND' // multiple-shells: no entry for that ShellId (unknown, disposed, or another session's)
   | 'SHELL_LIMIT_REACHED' // multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
+  // session-engine: the turn died on the plan's usage limit (or an API rate
+  // limit). Carried by `session.error` and NOT terminal — the core sends the
+  // session back to `idle` because the window resets on its own clock and emits
+  // nothing when it does. Consumers must surface it as a transient notice, never
+  // as a dead session.
+  | 'USAGE_LIMIT'
   | 'CLOUD_AUTH_REQUIRED' // cloud-sessions FR-1: no claude.ai token; API-key auth is not sufficient (`no_access_token`)
   | 'CLOUD_AUTH_EXPIRED' // cloud-sessions FR-1: token past `expiresAt`, or the API said so; run a turn or `/login`
   | 'CLOUD_DEVICE_UNTRUSTED' // cloud-sessions: `untrusted_device`; enrol the device with `/login`

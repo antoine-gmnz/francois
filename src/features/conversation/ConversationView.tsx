@@ -7,6 +7,7 @@ import Composer from './Composer';
 import { compactBlocks, groupToolRuns, isClearCommand, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
+import UsageLimitBanner from './UsageLimitBanner';
 import { useConversationTranscript } from './useConversationTranscript';
 import { getDraft, setDraft } from './composer-draft';
 import { documentHasSelection, shouldFocusComposer } from './composer-focus';
@@ -73,6 +74,8 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
     errorMessage,
     resumeFailed,
     dismissResumeFailed,
+    limitNotice,
+    dismissLimitNotice,
     commands,
     isPinned,
     setPinned,
@@ -358,6 +361,9 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
 
       {/* resume-fail banner (durable-sessions FR-14) */}
       {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
+
+      {/* plan usage-limit notice — the session stays live behind it */}
+      {limitNotice !== null && <UsageLimitBanner message={limitNotice} onDismiss={dismissLimitNotice} />}
 
       {/* transcript */}
       <div className="conv-transcript-wrap">

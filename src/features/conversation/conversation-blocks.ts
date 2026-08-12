@@ -341,6 +341,8 @@ export interface ConversationEventSetters {
   setStatus: (status: SessionStatus) => void;
   setErrorMessage: (message: string | undefined) => void;
   setResumeFailed: (value: boolean) => void;
+  /** The raw `USAGE_LIMIT` message, or null to clear the notice. */
+  setLimitNotice: (message: string | null) => void;
   setPinned: (value: boolean) => void;
   setCommands: (commands: SlashCommandInfo[]) => void;
   patchUsage: (usedTokens: number, limitTokens: number) => void;
@@ -379,6 +381,15 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
     setters.setErrorMessage(e.meta.errorMessage);
   },
   'session.error': (_dispatch, setters, e) => {
+    // USAGE_LIMIT is NOT terminal (contract/common.ts): the core keeps the
+    // session alive and a `session.status` idle follows. Flipping the view to
+    // `error` here would disable the composer, and nothing is emitted when the
+    // plan window resets to enable it again — the bug this branch exists for.
+    // It surfaces as a dismissible banner instead, cleared by the next turn.
+    if (e.error.code === 'USAGE_LIMIT') {
+      setters.setLimitNotice(e.error.message);
+      return;
+    }
     setters.setErrorMessage(e.error.message);
     setters.setStatus('error');
   },
@@ -386,6 +397,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'message.user': (dispatch, setters, e) => {
     dispatch({ t: 'msgUser', blockId: e.blockId, text: e.text });
     setters.setResumeFailed(false); // a new user turn clears the resume-fail notice (FR-14)
+    setters.setLimitNotice(null); // …and the usage-limit notice: the user is retrying
   },
   // the --resume was rejected; core continued fresh (FR-9/14)
   'session.resumeFailed': (_dispatch, setters) => setters.setResumeFailed(true),

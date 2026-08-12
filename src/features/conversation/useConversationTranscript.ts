@@ -34,6 +34,9 @@ export interface ConversationTranscript {
   errorMessage: string | undefined;
   resumeFailed: boolean;
   dismissResumeFailed: () => void;
+  /** The raw `USAGE_LIMIT` message behind the plan-limit banner, or null. */
+  limitNotice: string | null;
+  dismissLimitNotice: () => void;
   commands: SlashCommandInfo[];
   setCommands: (commands: SlashCommandInfo[]) => void;
   isPinned: boolean;
@@ -57,6 +60,10 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
   );
   const [isPinned, setPinned] = useState(true);
   const [resumeFailed, setResumeFailed] = useState(false); // durable-sessions FR-14 banner
+  // The plan-limit banner. Session-scoped like the one above (the keyed remount
+  // clears it), and cleared by the next user turn — the limit either lifted, in
+  // which case the turn runs, or it did not and a fresh notice replaces this one.
+  const [limitNotice, setLimitNotice] = useState<string | null>(null);
 
   // slash-menu popup state (spec §6): registry mirror for THIS session
   // (cache-seeded, FR-10). Component-local — a session switch remounts (keyed
@@ -71,6 +78,7 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
     setStatus,
     setErrorMessage,
     setResumeFailed,
+    setLimitNotice,
     setPinned,
     setCommands,
     patchUsage: (usedTokens, limitTokens) => useStore.getState().patchUsage(sessionId, usedTokens, limitTokens),
@@ -146,6 +154,8 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
     errorMessage,
     resumeFailed,
     dismissResumeFailed: () => setResumeFailed(false),
+    limitNotice,
+    dismissLimitNotice: () => setLimitNotice(null),
     commands,
     setCommands,
     isPinned,

@@ -446,7 +446,9 @@ pub(crate) fn refresh_parked_status(app: &AppHandle, session_id: &str) {
     }
 }
 
-/// Route turn completion (FR-20): drain the queue or go idle; or mark error.
+/// Route turn completion (FR-20): drain the queue or go idle; or mark error —
+/// except for a transient (usage-limit) failure, which fails the turn but leaves
+/// the session idle and usable (see `end_status` below).
 pub(crate) fn finish_turn(
     app: &AppHandle,
     session_id: &str,
@@ -454,6 +456,21 @@ pub(crate) fn finish_turn(
     error_msg: Option<String>,
 ) {
     let engine = app.state::<Engine>();
+    // A usage/rate-limit failure is TRANSIENT (status::is_transient_failure): the
+    // plan window rolls over on its own and NOTHING is emitted at that moment, so
+    // a session left on the terminal `error` status would stay dead — composer
+    // disabled, placeholder still quoting the limit — long after the limit
+    // cleared. The turn fails, the session goes back to `idle`, and the next
+    // message just works.
+    let transient = errored
+        && error_msg
+            .as_deref()
+            .is_some_and(status::is_transient_failure);
+    let end_status = if transient {
+        status::IDLE
+    } else {
+        status::ERROR
+    };
     // async-agents FR-16: every agent of this session still `running` is finalized
     // at turn end — 'error' when the turn errored (session-engine FR-40), else
     // 'done' — with endedAt and an `ended with the turn` notice step. This is the
@@ -470,8 +487,12 @@ pub(crate) fn finish_turn(
         let agent_ems = finalize_agents(s, errored, at);
         let workflow_runs = finalize_workflows(s, errored, at);
         let next = if errored {
-            s.status = status::ERROR.into();
-            s.error_message = error_msg.clone();
+            s.status = end_status.into();
+            // Only a session that actually died carries the message: a transient
+            // failure leaves an idle, healthy session, and a stored message would
+            // outlive the limit it describes (every reader gates on
+            // `status == error`, so it would also be unreachable).
+            s.error_message = if transient { None } else { error_msg.clone() };
             s.queue.clear();
             None
         } else if let Some(entry) = s.queue.pop_front() {
@@ -515,12 +536,14 @@ pub(crate) fn finish_turn(
         }
         // (The agent.update for every agent just errored was emitted above by the
         // FR-16 finalization — one update per agent, carrying its notice step.)
+        // The code is how the frontend tells the two apart: `USAGE_LIMIT` is a
+        // dismissible notice over a live session, `INTERNAL` a dead one.
         emit(
             app,
             SessionEvent::Error {
                 session_id: session_id.into(),
                 error: AppError {
-                    code: "INTERNAL".into(),
+                    code: if transient { "USAGE_LIMIT" } else { "INTERNAL" }.into(),
                     message: msg,
                     detail: None,
                 },
@@ -530,7 +553,7 @@ pub(crate) fn finish_turn(
             app,
             SessionEvent::Status {
                 session_id: session_id.into(),
-                status: "error".into(),
+                status: end_status.into(),
             },
         );
         return;
