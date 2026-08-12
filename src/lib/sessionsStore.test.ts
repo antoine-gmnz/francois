@@ -19,7 +19,7 @@ beforeEach(() => {
   useStore.setState({
     sessions: [],
     activeSessionId: null,
-    agentTabs: [],
+    agentTabs: new Map(),
     mainTab: 'session',
     extraPanes: [],
     focusedPaneIndex: 0,
@@ -56,25 +56,27 @@ describe('reassignActiveSessionId (FR-27)', () => {
     expect(s.extraPanes).toEqual([]);
   });
 
-  it('closes the agent tabs and leaves a dynamic tab on a real switch', () => {
+  it('leaves a dynamic tab on a real switch but KEEPS the outgoing session’s tabs (fix-agent-view FR-8)', () => {
     useStore.setState({
       activeSessionId: 's1',
       mainTab: 'agent:a1',
-      agentTabs: [{ kind: 'agent', id: 'a1', name: 'a', status: 'running' }],
+      agentTabs: new Map([['s1', [{ kind: 'agent', id: 'a1', name: 'a', status: 'running' } as const]]]),
     });
     useStore.getState().reassignActiveSessionId('s2');
-    expect(useStore.getState().agentTabs).toEqual([]);
+    // the PANE moves off a tab it no longer holds the session for…
     expect(useStore.getState().mainTab).toBe('session');
+    // …but s1's tabs are still there, waiting for you to come back
+    expect(useStore.getState().agentTabs.get('s1')).toHaveLength(1);
   });
 
   it('keeps the tabs when the id is unchanged', () => {
     useStore.setState({
       activeSessionId: 's1',
       mainTab: 'agent:a1',
-      agentTabs: [{ kind: 'agent', id: 'a1', name: 'a', status: 'running' }],
+      agentTabs: new Map([['s1', [{ kind: 'agent', id: 'a1', name: 'a', status: 'running' } as const]]]),
     });
     useStore.getState().reassignActiveSessionId('s1');
-    expect(useStore.getState().agentTabs).toHaveLength(1);
+    expect(useStore.getState().agentTabs.get('s1')).toHaveLength(1);
     expect(useStore.getState().mainTab).toBe('agent:a1');
   });
 

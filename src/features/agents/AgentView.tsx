@@ -29,13 +29,25 @@ import './agents.css';
     composer's send-error toast (useSessionAttachments.ts). */
 const STOP_ERROR_MS = 4000;
 
-export default function AgentView({ agentId, sessionId }: { agentId: string; sessionId: string }) {
+export interface AgentViewProps {
+  agentId: string;
+  sessionId: string;
+  /**
+   * fix-agent-view FR-17: what "Back to session" does. Passed in rather than
+   * calling `setMainTab('session')` here, because this view now renders in
+   * either split pane — and the right pane's tab is `splitTab`, so a hardcoded
+   * `setMainTab` would fling the LEFT pane back to SESSION and leave this one
+   * sitting on the agent tab it was asked to leave.
+   */
+  onBack: () => void;
+}
+
+export default function AgentView({ agentId, sessionId, onBack }: AgentViewProps) {
   const [agent, setAgent] = useState<AgentInfo | null>(null);
   const [state, setState] = useState<TranscriptState>(CLOSED_TRANSCRIPT);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [stopping, setStopping] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
-  const setMainTab = useStore((s) => s.setMainTab);
   const sessionName = useStore((s) => s.sessions.find((x) => x.id === sessionId)?.name ?? null);
   const { error: stopError, setError: setStopError, schedule: scheduleStopError } = useTimedError();
 
@@ -154,7 +166,7 @@ export default function AgentView({ agentId, sessionId }: { agentId: string; ses
         </div>
         <span className="agent-banner__spacer" />
         <div className="agent-banner__actions">
-          <button type="button" className="agent-banner__btn" onClick={() => setMainTab('session')}>
+          <button type="button" className="agent-banner__btn" onClick={onBack}>
             Back to session
           </button>
           {showStop && (

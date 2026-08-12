@@ -33,6 +33,14 @@ import {
   tabIdFor,
   workflowIdFromTab,
   workflowTabId,
+  // fix-agent-view: the per-session map layer
+  closeTabIn,
+  dropSessionTabs,
+  openTabIn,
+  sessionOwningTab,
+  syncTabIn,
+  tabsForSession,
+  type AgentTabMap,
   type AgentTabRef,
 } from './agent-tab';
 
@@ -114,6 +122,25 @@ describe('open tab set', () => {
     expect(next).toHaveLength(AGENT_TAB_CAP);
     expect(next[0].id).toBe('a2'); // a1 dropped
     expect(next[next.length - 1].id).toBe('new'); // the opened one survives
+  });
+
+  it('evicts the oldest UNDISPLAYED tab, sparing one a pane is showing (FR-21)', () => {
+    let tabs: AgentTabRef[] = [];
+    for (let i = 1; i <= AGENT_TAB_CAP; i++) tabs = openTab(tabs, ref(`a${i}`));
+    // a1 is the oldest AND the one on screen — a2 goes instead
+    const next = openTab(tabs, ref('new'), new Set(['a1']));
+    expect(next.map((t) => t.id)).toEqual(['a1', 'a3', 'a4', 'a5', 'a6', 'new']);
+  });
+
+  it('lets the cap yield rather than evict a displayed tab (FR-21)', () => {
+    let tabs: AgentTabRef[] = [];
+    for (let i = 1; i <= AGENT_TAB_CAP; i++) tabs = openTab(tabs, ref(`a${i}`));
+    const keep = new Set(tabs.map((t) => t.id));
+    const next = openTab(tabs, ref('new'), keep);
+    expect(next).toHaveLength(AGENT_TAB_CAP + 1);
+    // …and the overflow is paid back as soon as those tabs are off screen again
+    const later = openTab(next, ref('newer'), new Set(['a1']));
+    expect(later.map((t) => t.id)).toEqual(['a1', 'a4', 'a5', 'a6', 'new', 'newer']);
   });
 
   it('syncs an open tab and ignores an agent with no tab', () => {
@@ -278,6 +305,76 @@ describe('agentBannerShowsStop', () => {
     for (const status of ['idle', 'done', 'error'] as AgentStatus[]) {
       expect(agentBannerShowsStop(status)).toBe(false);
     }
+  });
+});
+
+// ---------- fix-agent-view: the per-session tab map (FR-1..FR-9) ----------
+
+describe('the per-session tab map', () => {
+  it('tabsForSession returns a STABLE empty array for an unknown or null session', () => {
+    const tabs: AgentTabMap = new Map([['s1', [ref('a1')]]]);
+    expect(tabsForSession(tabs, 's1')).toEqual([ref('a1')]);
+    // referentially stable, so a zustand selector on a tab-less pane never
+    // reports a change and never re-renders that pane (FR-12)
+    expect(tabsForSession(tabs, 's9')).toBe(tabsForSession(tabs, 's8'));
+    expect(tabsForSession(tabs, null)).toBe(tabsForSession(tabs, 's9'));
+  });
+
+  it('sessionOwningTab finds the session holding an id, or null (FR-6)', () => {
+    const tabs: AgentTabMap = new Map([
+      ['s1', [ref('a1'), ref('a2')]],
+      ['s2', [ref('b1')]],
+    ]);
+    expect(sessionOwningTab(tabs, 'a2')).toBe('s1');
+    expect(sessionOwningTab(tabs, 'b1')).toBe('s2');
+    expect(sessionOwningTab(tabs, 'nope')).toBeNull();
+    expect(sessionOwningTab(new Map(), 'a1')).toBeNull();
+  });
+
+  it('openTabIn scopes the cap to ONE session (FR-2)', () => {
+    let tabs: AgentTabMap = new Map();
+    for (let i = 1; i <= AGENT_TAB_CAP + 1; i++) tabs = openTabIn(tabs, 's1', ref(`a${i}`));
+    tabs = openTabIn(tabs, 's2', ref('b1'));
+    expect(tabsForSession(tabs, 's1')).toHaveLength(AGENT_TAB_CAP);
+    // the OLDEST went, never the one being opened
+    expect(tabsForSession(tabs, 's1').map((t) => t.id)).toEqual(['a2', 'a3', 'a4', 'a5', 'a6', 'a7']);
+    // s2 is untouched by its neighbour's eviction
+    expect(tabsForSession(tabs, 's2').map((t) => t.id)).toEqual(['b1']);
+  });
+
+  it('openTabIn re-opens in place, keeping position and the SAME map when nothing changed', () => {
+    const first = openTabIn(openTabIn(new Map(), 's1', ref('a1')), 's1', ref('a2'));
+    const again = openTabIn(first, 's1', ref('a1'));
+    expect(again).toBe(first); // identical ref → identical map, no re-render
+    expect(tabsForSession(again, 's1').map((t) => t.id)).toEqual(['a1', 'a2']);
+  });
+
+  it('syncTabIn refreshes in place wherever the id lives, and never opens a tab (FR-6)', () => {
+    const tabs = openTabIn(openTabIn(new Map(), 's1', ref('a1')), 's2', ref('b1'));
+    const done = syncTabIn(tabs, ref('a1', 'done'));
+    expect(tabsForSession(done, 's1')[0].status).toBe('done');
+    expect(tabsForSession(done, 's2')).toBe(tabsForSession(tabs, 's2')); // other sessions untouched
+    // an unknown id, and a no-op update, both return the SAME map — this runs on
+    // every agent.update, several times a second per running agent
+    expect(syncTabIn(tabs, ref('nope'))).toBe(tabs);
+    expect(syncTabIn(done, ref('a1', 'done'))).toBe(done);
+  });
+
+  it('closeTabIn drops the id and removes an emptied session entirely (FR-6)', () => {
+    const tabs = openTabIn(openTabIn(new Map(), 's1', ref('a1')), 's1', ref('a2'));
+    const one = closeTabIn(tabs, 'a1');
+    expect(tabsForSession(one, 's1').map((t) => t.id)).toEqual(['a2']);
+    const none = closeTabIn(one, 'a2');
+    expect(none.has('s1')).toBe(false); // no empty entry left behind
+    expect(closeTabIn(tabs, 'nope')).toBe(tabs);
+  });
+
+  it('dropSessionTabs takes a removed session’s tabs with it (FR-9)', () => {
+    const tabs = openTabIn(openTabIn(new Map(), 's1', ref('a1')), 's2', ref('b1'));
+    const gone = dropSessionTabs(tabs, 's1');
+    expect(gone.has('s1')).toBe(false);
+    expect(tabsForSession(gone, 's2').map((t) => t.id)).toEqual(['b1']);
+    expect(dropSessionTabs(tabs, 's9')).toBe(tabs);
   });
 });
 

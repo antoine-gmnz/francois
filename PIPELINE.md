@@ -304,3 +304,4 @@ that owns the feature — never in a new top-level file.
 | `notifications` *(frozen)* | desktop notification when a session is blocked on an approval/question, or its turn finished/errored | session-engine, app-shell, session-questions, permission-guardrails, command-palette |
 | `session-brake` *(frozen)* | stop a running turn mid-flight | session-engine, conversation-view |
 | `design-refresh` | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |
+| `fix-agent-view` | dynamic tabs keyed by session instead of one global list — the single pane and both panes of a two-pane split render their own session's agent/workflow tabs after SHELL (the grid stays flat), and a spawned subagent adds its own chip on its first `agent.update`; supersedes agent-tab FR-14 + split-by-4 FR-20 | agent-tab, workflow-details, split-by-4, design-refresh, async-agents, agents-panel, workflow-panel, app-shell |

@@ -180,9 +180,15 @@ One model replaces `split-session`'s left/right pair: an ordered list of **1–4
 - **FR-19** Selecting a session anywhere (roster click, `⏎`, the rail, the palette, a freshly
   created session) assigns it to the **focused** pane. Assigning a session that already sits in
   another pane **swaps** the two panes rather than showing it twice.
-- **FR-20** Entering any split clamps `mainTab` out of `overview` / `agent:<id>` / `workflow:<id>` to
+- **FR-20** ~~Entering any split clamps `mainTab` out of `overview` / `agent:<id>` / `workflow:<id>` to
   `session` and closes every agent and workflow tab (`clearAgentTabs`). While split those tabs
-  cannot be opened; clicking an agent or workflow card is a no-op.
+  cannot be opened; clicking an agent or workflow card is a no-op.~~
+  **Superseded by `fix-agent-view` FR-10** (2026-08-12). Dynamic tabs are keyed by session and every
+  pane renders its own, so entering split closes nothing and a card clicked at **two** panes opens
+  its tab in the owning pane. What survives: `overview` still clamps (and so do the four dissolved
+  panel tabs), and the **grid** regime still shows no dynamic tab — a dense pane has no strip to
+  carry the chip, so `paneTabAt` flattens it (`denseTab`) and `openAgentTab` refuses to open one
+  there.
 - **FR-21** Widening the scope to **All projects** (`activeProjectId === null`) leaves split,
   alongside the existing clear-agent-tabs + OVERVIEW behaviour.
 
@@ -359,7 +365,9 @@ No error codes — nothing here crosses IPC. Every case is a UI state.
 8. **Window too narrow for four panes** — the grid renders anyway; the panes just get cramped. No
    automatic collapse, no min-width guard.
 9. **`⤢` / `✕` on an unfocused pane** → acts on *that* pane; focus follows (FR-16, FR-17).
-10. **Agent or workflow card clicked while split** → no-op (FR-20).
+10. ~~**Agent or workflow card clicked while split** → no-op (FR-20).~~ **Amended with FR-20**: at two
+    panes the card opens its tab in the pane holding its session (`fix-agent-view` FR-4/FR-12); in the
+    **grid** it stays a no-op, since a dense pane has no tab strip.
 11. **`⌥⇥` on Windows** — the OS owns Alt+Tab, so the shortcut is reachable on macOS only. `⌘1`–`⌘4`
     (Ctrl on Windows) work everywhere.
 12. **`⌘5`+** → no-op; there is no fifth pane.

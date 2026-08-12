@@ -85,12 +85,32 @@ export function agentTabLabel(name: string): string {
  * duplicated — its entry is updated in place, keeping its position, so clicking a
  * card twice does not reshuffle the strip. Past the cap the OLDEST tab is
  * dropped, never the one being opened.
+ *
+ * FR-21: `keep` holds the tab ids a pane is currently DISPLAYING. Auto-tracking
+ * makes eviction fire without the user doing anything, so the oldest tab is no
+ * longer safe to drop unconditionally — yanking the chip out from under the
+ * transcript you are reading is exactly the kind of surprise the cap must not
+ * cause. The oldest *undisplayed* tab goes instead; when every candidate is on
+ * screen the cap yields rather than evicting one, and the next spawn trims the
+ * list once you navigate away.
  */
-export function openTab(tabs: AgentTabRef[], ref: AgentTabRef): AgentTabRef[] {
+export function openTab(tabs: AgentTabRef[], ref: AgentTabRef, keep?: ReadonlySet<string>): AgentTabRef[] {
   const i = tabs.findIndex((t) => t.id === ref.id);
   if (i >= 0) return syncTab(tabs, ref);
   const next = [...tabs, ref];
-  return next.length > AGENT_TAB_CAP ? next.slice(next.length - AGENT_TAB_CAP) : next;
+  return next.length > AGENT_TAB_CAP ? evictOldest(next, keep) : next;
+}
+
+/** Drop the oldest evictable tabs until the list is back at the cap. */
+function evictOldest(list: AgentTabRef[], keep?: ReadonlySet<string>): AgentTabRef[] {
+  const out = list.slice();
+  while (out.length > AGENT_TAB_CAP) {
+    // `length - 1` is the ref just opened — never a candidate, cap or no cap.
+    const i = out.findIndex((t, idx) => idx < out.length - 1 && !keep?.has(t.id));
+    if (i < 0) break;
+    out.splice(i, 1);
+  }
+  return out;
 }
 
 /**
@@ -122,6 +142,82 @@ export function mainTabAfterClose(current: string, closedIds: string[] | null): 
   if (id === null) return current; // a built-in tab is never disturbed
   if (closedIds === null || closedIds.includes(id)) return 'session';
   return current;
+}
+
+// ---------- fix-agent-view: the per-session tab map (FR-1..FR-9) ----------
+//
+// The list helpers above stay exactly as they are — they operate on ONE
+// session's tabs, which is now one value of this map. Everything here is the
+// keying layer: which session owns a tab, and how a change to one session's
+// list produces a new map without disturbing the others.
+//
+// Every function returns the SAME map instance when nothing changed. That is
+// load-bearing, not a micro-optimisation: `syncTabIn` runs on every
+// `agent.update` — several times a second per running agent — and a fresh Map
+// each time would re-render both tab strips continuously.
+
+export type AgentTabMap = ReadonlyMap<string, AgentTabRef[]>;
+
+/** Shared empty list so a tab-less pane gets a stable reference, not a new []. */
+const NO_TABS: AgentTabRef[] = [];
+
+/** FR-11/FR-12: a pane's tabs — never undefined, so callers don't branch. */
+export function tabsForSession(tabs: AgentTabMap, sessionId: string | null): AgentTabRef[] {
+  return sessionId === null ? NO_TABS : (tabs.get(sessionId) ?? NO_TABS);
+}
+
+/** FR-6: the session whose list holds `id`, or null. Ids are uuid-v4, so at most one. */
+export function sessionOwningTab(tabs: AgentTabMap, id: string): string | null {
+  for (const [sessionId, list] of tabs) {
+    if (list.some((t) => t.id === id)) return sessionId;
+  }
+  return null;
+}
+
+/** FR-1/FR-2: open-or-refresh `ref` under `sessionId`. The cap applies PER session. */
+export function openTabIn(
+  tabs: AgentTabMap,
+  sessionId: string,
+  ref: AgentTabRef,
+  keep?: ReadonlySet<string>,
+): AgentTabMap {
+  const list = tabsForSession(tabs, sessionId);
+  const next = openTab(list, ref, keep);
+  if (next === list) return tabs;
+  const out = new Map(tabs);
+  out.set(sessionId, next);
+  return out;
+}
+
+/** FR-6: refresh in place wherever `ref.id` lives. Never opens a tab, never reorders one. */
+export function syncTabIn(tabs: AgentTabMap, ref: AgentTabRef): AgentTabMap {
+  const sessionId = sessionOwningTab(tabs, ref.id);
+  if (sessionId === null) return tabs;
+  const list = tabsForSession(tabs, sessionId);
+  const next = syncTab(list, ref);
+  if (next === list) return tabs;
+  const out = new Map(tabs);
+  out.set(sessionId, next);
+  return out;
+}
+
+/** FR-6: drop `id` from whichever session holds it. An emptied session leaves the map entirely. */
+export function closeTabIn(tabs: AgentTabMap, id: string): AgentTabMap {
+  const sessionId = sessionOwningTab(tabs, id);
+  if (sessionId === null) return tabs;
+  const next = closeTab(tabsForSession(tabs, sessionId), id);
+  const out = new Map(tabs);
+  if (next.length === 0) out.delete(sessionId);
+  else out.set(sessionId, next);
+  return out;
+}
+
+/** FR-9: a removed session takes its tabs with it. */
+export function dropSessionTabs(tabs: AgentTabMap, sessionId: string): AgentTabMap {
+  if (!tabs.has(sessionId)) return tabs;
+  const out = new Map(tabs);
+  out.delete(sessionId);
+  return out;
 }
 
 // ---------- transcript state (FR-16..FR-21) ----------

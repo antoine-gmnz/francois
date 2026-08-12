@@ -146,7 +146,23 @@ describe('paneCount / paneSessionIdAt / paneTabAt / paneIndexOf (FR-1)', () => {
 
   it('clamps pane 0 out of a tab a pane cannot show', () => {
     expect(paneTabAt(panes('s1', 'overview', []), 0)).toBe('session');
-    expect(paneTabAt(panes('s1', 'agent:a1', []), 0)).toBe('session');
+    // design 7a: the four dissolved panels overlay the whole cell, so they are
+    // not a pane's view either.
+    expect(paneTabAt(panes('s1', 'agents', []), 0)).toBe('session');
+  });
+
+  it('KEEPS a dynamic tab below the grid, and flattens it inside it (fix-agent-view FR-3/FR-13)', () => {
+    // single + split: `agent:<id>` is a PaneTab now, so the pane really shows it
+    expect(paneTabAt(panes('s1', 'agent:a1', []), 0)).toBe('agent:a1');
+    expect(paneTabAt(panes('s1', 'agent:a1', [{ sessionId: 's2', tab: 'diff' }]), 0)).toBe('agent:a1');
+    // grid: a dense pane has no strip to hang the chip on, so it reads as session
+    const grid = panes('s1', 'agent:a1', [
+      { sessionId: 's2', tab: 'workflow:w1' },
+      { sessionId: 's3', tab: 'diff' },
+    ]);
+    expect(paneTabAt(grid, 0)).toBe('session');
+    expect(paneTabAt(grid, 1)).toBe('session');
+    expect(paneTabAt(grid, 2)).toBe('diff'); // built-ins are untouched
   });
 
   it('answers null for an out-of-range pane', () => {
@@ -253,10 +269,16 @@ describe('clampToPaneTab (FR-20)', () => {
     expect(clampToPaneTab('shell')).toBe('shell');
   });
 
-  it('clamps overview and the dynamic tabs to session', () => {
+  it('clamps overview and the dissolved panel tabs to session', () => {
     expect(clampToPaneTab('overview')).toBe('session');
-    expect(clampToPaneTab('agent:a1')).toBe('session');
-    expect(clampToPaneTab('workflow:run-1')).toBe('session');
+    for (const panel of ['agents', 'mcp', 'skills', 'workflows'] as const) {
+      expect(clampToPaneTab(panel)).toBe('session');
+    }
+  });
+
+  it('passes the dynamic tabs through — they are PaneTab members (fix-agent-view FR-3)', () => {
+    expect(clampToPaneTab('agent:a1')).toBe('agent:a1');
+    expect(clampToPaneTab('workflow:run-1')).toBe('workflow:run-1');
   });
 });
 
@@ -386,12 +408,25 @@ describe('pane store slice', () => {
     expect(readSplit()).toEqual({ extraPanes: [{ sessionId: 's2', tab: 'session' }], focusedPaneIndex: 1 });
   });
 
-  it('openInNewPane clamps pane 0 out of overview and closes dynamic tabs (FR-20)', async () => {
+  it('openInNewPane clamps pane 0 out of overview (FR-20)', async () => {
     const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'overview', agentTabs: [{ id: 'a1', name: 'x' }] as never });
+    useStore.setState({ activeSessionId: 's1', mainTab: 'overview' });
     useStore.getState().openInNewPane('s2');
     expect(useStore.getState().mainTab).toBe('session');
-    expect(useStore.getState().agentTabs).toEqual([]);
+  });
+
+  it('openInNewPane KEEPS pane 0’s dynamic tab and its tabs (fix-agent-view FR-10)', async () => {
+    const useStore = await freshStore();
+    useStore.setState({
+      activeSessionId: 's1',
+      mainTab: 'agent:a1',
+      agentTabs: new Map([['s1', [{ id: 'a1', name: 'x', status: 'running' } as const]]]),
+    });
+    useStore.getState().openInNewPane('s2');
+    // the tab belongs to s1, which is still pane 0's session — entering split
+    // has no reason to close it (supersedes split-by-4 FR-20's second half).
+    expect(useStore.getState().mainTab).toBe('agent:a1');
+    expect(useStore.getState().agentTabs.get('s1')).toHaveLength(1);
   });
 
   it('openInNewPane FOCUSES a session already on screen rather than duplicating it (FR-19)', async () => {
