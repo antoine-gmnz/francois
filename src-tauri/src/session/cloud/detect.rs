@@ -436,11 +436,7 @@ mod tests {
         ] {
             let block = teleport_block(&normalize_pty(raw), None, "teleporting").expect("detected");
             assert_eq!(block.code, "CLOUD_POLICY_DENIED", "on {raw}");
-            assert!(
-                block.message.contains("administrator"),
-                "{}",
-                block.message
-            );
+            assert!(block.message.contains("administrator"), "{}", block.message);
         }
     }
 
@@ -486,11 +482,19 @@ mod tests {
         // a false CLOUD_POLICY_DENIED would send the user to an administrator
         // over nothing.
         assert_eq!(
-            teleport_block("Reading your permission policy for this directory", None, "x"),
+            teleport_block(
+                "Reading your permission policy for this directory",
+                None,
+                "x"
+            ),
             None
         );
         assert_eq!(
-            teleport_block("Trusted devices are listed in your settings page", None, "x"),
+            teleport_block(
+                "Trusted devices are listed in your settings page",
+                None,
+                "x"
+            ),
             None
         );
     }
