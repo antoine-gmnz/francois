@@ -19,6 +19,10 @@ mod agent_transcript;
 mod agents;
 mod attachments;
 mod blocks;
+/// cloud-sessions: adopting a Claude Code on the web session. A CHILD of this
+/// module on purpose — it constructs a `Session` (FR-10), and Rust lets a child
+/// read its ancestor's private fields, so nothing here needs widened visibility.
+mod cloud;
 mod commands;
 mod control;
 mod events;
@@ -50,6 +54,11 @@ pub(crate) use agent_transcript::*;
 pub(crate) use agents::*;
 pub(crate) use attachments::*;
 pub(crate) use blocks::*;
+// A glob like every other domain here: `generate_handler!` needs several hidden
+// items per command, so naming the three commands explicitly is not enough.
+// Every name this module exports is `cloud_`/`Cloud`-prefixed or otherwise
+// domain-specific for that reason — see cloud/mod.rs.
+pub(crate) use cloud::*;
 pub(crate) use commands::*;
 pub(crate) use control::*;
 pub(crate) use events::*;
@@ -146,6 +155,12 @@ pub(crate) struct SessionMeta {
     /// `default` (FR-10).
     #[serde(rename = "accountId")]
     account_id: String,
+    /// cloud-sessions FR-10/FR-16: present ⇔ this session was ADOPTED from a
+    /// Claude Code on the web session. Presence is the whole signal (it drives
+    /// the `cloud` chip); same omit-not-null convention as `projectId`, so a
+    /// pre-feature frontend reads an ordinary session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cloud: Option<CloudProvenance>,
 }
 
 #[derive(Serialize, Clone)]
@@ -428,6 +443,10 @@ pub(crate) struct Session {
     /// it: the account being removed (FR-9) and a persisted value that no longer
     /// resolves (FR-10) — both fall back to `default`.
     account_id: String,
+    /// cloud-sessions FR-10: set at adoption ONLY, never re-derived. Not a
+    /// `Session::new` parameter on purpose — `cloud/adopt.rs` is the single
+    /// writer, so no other creation path can accidentally claim provenance.
+    cloud: Option<CloudProvenance>,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
@@ -532,6 +551,7 @@ impl Session {
             worktree,
             worktree_distro,
             account_id,
+            cloud: None,
             queue: VecDeque::new(),
             claude_session_id,
             current: None,
@@ -575,6 +595,7 @@ impl Session {
             project_id: self.project_id.clone(),
             worktree: self.worktree.clone(),
             account_id: self.account_id.clone(),
+            cloud: self.cloud.clone(),
         }
     }
 

@@ -166,10 +166,15 @@ function Blocks({ blocks, tight }: { blocks: MdBlock[]; tight?: boolean }) {
   );
 }
 
-export default function Markdown({ text, color }: { text: string; color: string }) {
+// The reading body is styled entirely by `.md-root` (and `--streaming`, the
+// brighter tone a live reply carries) — never by an inline color. Assistant text
+// is mostly bare `text` nodes with no class of their own, so whatever color sits
+// on the root is what the whole reply inherits; an inline one would outrank every
+// theme rule and leave the light theme reading dark-palette gray on white.
+export default function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
   const blocks = useMemo(() => parseMarkdown(text), [text]);
   return (
-    <div className="md-root" style={{ color }}>
+    <div className={streaming ? 'md-root md-root--streaming' : 'md-root'}>
       <Blocks blocks={blocks} />
     </div>
   );

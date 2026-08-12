@@ -140,7 +140,7 @@
   flex: 0 0 auto;
 }
 
-/* FR-9: a 2px-padded recessed pill holding `▯` single and `▯▯` split. */
+/* FR-15: a 2px-padded recessed pill holding `▯` single, `▯▯` split and `⊞` quad. */
 .layout-toggle {
   display: flex;
   align-items: center;

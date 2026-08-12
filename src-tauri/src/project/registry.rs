@@ -398,6 +398,64 @@ pub fn touch_last_used(app: &AppHandle, project_id: &str) {
     }
 }
 
+// ---------- cross-domain lookups (cloud-sessions) ----------
+
+/// Everything a session created OUTSIDE the new-session modal needs from a
+/// project: its root, plus the defaults the modal would otherwise have
+/// pre-filled. cloud-sessions FR-5/FR-10 is the only such path — an adoption has
+/// no modal to read them from, so the core applies the project's own snapshot
+/// rather than inventing a configuration the user never chose.
+pub struct SessionSeed {
+    pub root: String,
+    pub model_id: Option<String>,
+    pub effort: Option<String>,
+    pub permission_mode: Option<String>,
+    pub runtime: Option<String>,
+    pub allow_git: Option<bool>,
+    pub account_id: Option<String>,
+}
+
+/// `None` ⇔ the id is not in the registry (`PROJECT_NOT_FOUND` at the call
+/// site). A root that no longer exists is NOT filtered here: the caller's own
+/// git-repo check reports that, and with a message that names the real problem.
+///
+/// Pure half, per this file's rule (see FR-6/FR-7 above): the decision is
+/// unit-tested without a Tauri AppHandle, the wrapper below is lock-and-delegate.
+pub(crate) fn seed_of(projects: &[Project], project_id: &str) -> Option<SessionSeed> {
+    let p = projects.iter().find(|p| p.id == project_id)?;
+    Some(SessionSeed {
+        root: p.root.clone(),
+        model_id: p.defaults.model_id.clone(),
+        effort: p.defaults.effort.clone(),
+        permission_mode: p.defaults.permission_mode.clone(),
+        runtime: p.defaults.runtime.clone(),
+        allow_git: p.defaults.allow_git,
+        account_id: p.defaults.account_id.clone(),
+    })
+}
+
+pub fn session_seed(app: &AppHandle, project_id: &str) -> Option<SessionSeed> {
+    let state = app.try_state::<ProjectRegistry>()?;
+    let projects = state.projects.lock().ok()?;
+    seed_of(&projects, project_id)
+}
+
+/// `(id, root)` for every registered project, in registry order.
+pub(crate) fn roots_of(projects: &[Project]) -> Vec<(String, String)> {
+    projects
+        .iter()
+        .map(|p| (p.id.clone(), p.root.clone()))
+        .collect()
+}
+
+/// `(id, root)` for every registered project — cloud-sessions FR-3 walks these
+/// to find the checkout of the repository a cloud session names.
+pub fn project_roots(app: &AppHandle) -> Vec<(String, String)> {
+    app.try_state::<ProjectRegistry>()
+        .map(|s| roots_of(&s.projects.lock().unwrap()))
+        .unwrap_or_default()
+}
+
 /// FR-19: validate a `session_create` link against the live registry.
 pub fn check_session_link(
     app: &AppHandle,
@@ -703,6 +761,84 @@ mod tests {
             Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- cross-domain lookups (cloud-sessions FR-3/FR-5/FR-10) ----
+
+    #[test]
+    fn the_session_seed_carries_the_projects_root_and_every_default() {
+        // cloud-sessions has no new-session modal to read these from, so an
+        // adoption applies THIS snapshot — a field dropped here is a default the
+        // user configured and the adopted session silently ignores.
+        let mut p = project_fixture(
+            "p1",
+            "api",
+            if cfg!(windows) { "D:\\api" } else { "/api" },
+            7,
+        );
+        p.defaults = ProjectDefaults {
+            model_id: Some("claude-opus-4".into()),
+            effort: Some("high".into()),
+            permission_mode: Some("plan".into()),
+            runtime: Some("wsl".into()),
+            allow_git: Some(true),
+            account_id: Some("acct-2".into()),
+        };
+        let root = p.root.clone();
+        let projects = vec![p];
+
+        let seed = seed_of(&projects, "p1").expect("a known id seeds");
+        assert_eq!(seed.root, root);
+        assert_eq!(seed.model_id.as_deref(), Some("claude-opus-4"));
+        assert_eq!(seed.effort.as_deref(), Some("high"));
+        assert_eq!(seed.permission_mode.as_deref(), Some("plan"));
+        assert_eq!(seed.runtime.as_deref(), Some("wsl"));
+        assert_eq!(seed.allow_git, Some(true));
+        assert_eq!(seed.account_id.as_deref(), Some("acct-2"));
+
+        // An all-inherit project seeds every default as absent rather than as a
+        // value the core invented.
+        let bare = vec![project_fixture("p2", "web", &root, 1)];
+        let seed = seed_of(&bare, "p2").expect("seeds");
+        assert_eq!(seed.model_id, None);
+        assert_eq!(seed.effort, None);
+        assert_eq!(seed.permission_mode, None);
+        assert_eq!(seed.runtime, None);
+        assert_eq!(seed.allow_git, None);
+        assert_eq!(seed.account_id, None);
+    }
+
+    #[test]
+    fn an_unknown_id_seeds_nothing_so_the_caller_reports_project_not_found() {
+        let projects = vec![project_fixture(
+            "p1",
+            "api",
+            if cfg!(windows) { "D:\\api" } else { "/api" },
+            1,
+        )];
+        assert!(seed_of(&projects, "nope").is_none());
+        assert!(seed_of(&[], "p1").is_none());
+    }
+
+    #[test]
+    fn project_roots_lists_every_registered_pair_and_an_empty_registry_lists_none() {
+        let (a, b) = if cfg!(windows) {
+            ("D:\\api", "D:\\web")
+        } else {
+            ("/api", "/web")
+        };
+        assert_eq!(roots_of(&[]), Vec::new());
+        let projects = vec![
+            project_fixture("p1", "api", a, 2),
+            project_fixture("p2", "web", b, 1),
+        ];
+        assert_eq!(
+            roots_of(&projects),
+            vec![
+                ("p1".to_string(), normalize_root(a)),
+                ("p2".to_string(), normalize_root(b)),
+            ]
+        );
     }
 }
 

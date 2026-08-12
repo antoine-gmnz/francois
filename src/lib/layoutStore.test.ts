@@ -3,20 +3,25 @@
 // (FR-1/2/3), and the focus invariants (FR-5 collapsing the focused pane hands
 // focus to main; FR-6 focusing a collapsed right pane expands it).
 
+// The pane list (split-by-4) has its own file: src/lib/split-by-4.test.ts.
+// The split DIVIDER's ratio slice is covered at the bottom of this file — it is
+// a layout preference of its own, not part of the pane list.
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionMeta } from '../../contract/common';
 import {
-  clampToPaneTab,
+  clampSplitRatio,
   COLLAPSED_PANES_STORAGE_KEY,
-  focusedSessionId,
-  focusedTab,
-  isShellVisible,
+  DEFAULT_SPLIT_RATIO,
+  MAX_SPLIT_RATIO,
+  MIN_SPLIT_PANE_PX,
+  MIN_SPLIT_PANE_ROW_PX,
+  MIN_SPLIT_RATIO,
   parseCollapsedPanes,
-  parseSplitState,
+  parseSplitRatio,
   SESSION_META_KEY,
-  splitCandidate,
-  SPLIT_STORAGE_KEY,
-  visibleSessionIds,
+  SPLIT_RATIO_STORAGE_KEY,
+  SPLIT_ROW_RATIO_STORAGE_KEY,
+  splitRatioFromDrag,
 } from './layoutStore';
 
 function mockStorage(seed: Record<string, string> = {}): { store: Record<string, string> } {
@@ -214,143 +219,81 @@ describe('collapsedPanes store slice', () => {
   });
 });
 
-// ── split-session ───────────────────────────────────────────────────────────
+// ── split divider ───────────────────────────────────────────────────────────
 
-describe('parseSplitState (FR-16)', () => {
-  const NOT_SPLIT = { splitSessionId: null, splitTab: 'session', focusedSide: 'left' };
-
-  it('defaults to not-split for null input', () => {
-    expect(parseSplitState(null)).toEqual(NOT_SPLIT);
+describe('clampSplitRatio', () => {
+  it('keeps a ratio inside the bounds, rounded to 0.1%', () => {
+    expect(clampSplitRatio(0.5)).toBe(0.5);
+    expect(clampSplitRatio(0.33333)).toBe(0.333);
   });
 
-  it('defaults to not-split for malformed JSON', () => {
-    expect(parseSplitState('{oops')).toEqual(NOT_SPLIT);
+  it('clamps past either bound', () => {
+    expect(clampSplitRatio(0)).toBe(MIN_SPLIT_RATIO);
+    expect(clampSplitRatio(1)).toBe(MAX_SPLIT_RATIO);
+    expect(clampSplitRatio(-4)).toBe(MIN_SPLIT_RATIO);
   });
 
-  it('defaults to not-split for a non-object value (array, number, string, null)', () => {
-    expect(parseSplitState('[1,2]')).toEqual(NOT_SPLIT);
-    expect(parseSplitState('42')).toEqual(NOT_SPLIT);
-    expect(parseSplitState('"hi"')).toEqual(NOT_SPLIT);
-    expect(parseSplitState('null')).toEqual(NOT_SPLIT);
-  });
-
-  it('degrades a record with no usable splitSessionId to not-split', () => {
-    expect(parseSplitState(JSON.stringify({ splitTab: 'diff', focusedSide: 'right' }))).toEqual(NOT_SPLIT);
-    expect(parseSplitState(JSON.stringify({ splitSessionId: 7, focusedSide: 'right' }))).toEqual(NOT_SPLIT);
-    expect(parseSplitState(JSON.stringify({ splitSessionId: '' }))).toEqual(NOT_SPLIT);
-  });
-
-  it('defaults an unknown splitTab / focusedSide rather than trusting it', () => {
-    expect(parseSplitState(JSON.stringify({ splitSessionId: 's2', splitTab: 'overview', focusedSide: 'up' }))).toEqual({
-      splitSessionId: 's2',
-      splitTab: 'session',
-      focusedSide: 'left',
-    });
-  });
-
-  it('round-trips a fully valid record', () => {
-    expect(parseSplitState(JSON.stringify({ splitSessionId: 's2', splitTab: 'shell', focusedSide: 'right' }))).toEqual({
-      splitSessionId: 's2',
-      splitTab: 'shell',
-      focusedSide: 'right',
-    });
+  it('falls back to the default for anything that is not a finite number', () => {
+    expect(clampSplitRatio(NaN)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(clampSplitRatio(Infinity)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(clampSplitRatio('0.7')).toBe(DEFAULT_SPLIT_RATIO);
+    expect(clampSplitRatio(null)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(clampSplitRatio(undefined)).toBe(DEFAULT_SPLIT_RATIO);
   });
 });
 
-describe('clampToPaneTab (FR-13)', () => {
-  it('keeps the three tabs a split pane can show', () => {
-    expect(clampToPaneTab('session')).toBe('session');
-    expect(clampToPaneTab('diff')).toBe('diff');
-    expect(clampToPaneTab('shell')).toBe('shell');
+describe('parseSplitRatio', () => {
+  it('defaults for an absent or malformed persisted value', () => {
+    expect(parseSplitRatio(null)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(parseSplitRatio('wide')).toBe(DEFAULT_SPLIT_RATIO);
+    expect(parseSplitRatio('')).toBe(DEFAULT_SPLIT_RATIO);
   });
 
-  it('clamps overview and the dynamic tabs to session', () => {
-    expect(clampToPaneTab('overview')).toBe('session');
-    expect(clampToPaneTab('agent:abc')).toBe('session');
-    expect(clampToPaneTab('workflow:run-1')).toBe('session');
-  });
-});
-
-function meta(id: string, lastActivityAt: number): SessionMeta {
-  return { id, lastActivityAt } as unknown as SessionMeta;
-}
-
-describe('splitCandidate (FR-9/FR-10)', () => {
-  it('picks the most recently active session other than the excluded one', () => {
-    const list = [meta('a', 10), meta('b', 50), meta('c', 30)];
-    expect(splitCandidate(list, 'b')?.id).toBe('c');
-    expect(splitCandidate(list, 'a')?.id).toBe('b');
-  });
-
-  it('returns null when the excluded session is the only one', () => {
-    expect(splitCandidate([meta('a', 1)], 'a')).toBeNull();
-  });
-
-  it('returns null for an empty list, and ignores a null exclude', () => {
-    expect(splitCandidate([], null)).toBeNull();
-    expect(splitCandidate([meta('a', 1), meta('b', 2)], null)?.id).toBe('b');
+  it('reads back a persisted ratio, clamped', () => {
+    expect(parseSplitRatio('0.62')).toBe(0.62);
+    expect(parseSplitRatio('0.95')).toBe(MAX_SPLIT_RATIO);
   });
 });
 
-describe('focusedSessionId (FR-7)', () => {
-  it('is activeSessionId on the left side', () => {
-    expect(focusedSessionId({ activeSessionId: 's1', splitSessionId: 's2', focusedSide: 'left' })).toBe('s1');
+describe('splitRatioFromDrag', () => {
+  it('maps the pointer to the left pane’s share of the grid', () => {
+    expect(splitRatioFromDrag(1000, 300, 1000)).toBe(0.7);
+    expect(splitRatioFromDrag(700, 300, 1000)).toBe(0.4);
   });
 
-  it('is splitSessionId on the right side', () => {
-    expect(focusedSessionId({ activeSessionId: 's1', splitSessionId: 's2', focusedSide: 'right' })).toBe('s2');
+  it('clamps to the ratio bounds on a grid wide enough for them to bite', () => {
+    // 2000px wide → the px floor is 13%, so the 20%/80% ratio bounds win.
+    expect(splitRatioFromDrag(0, 0, 2000)).toBe(MIN_SPLIT_RATIO);
+    expect(splitRatioFromDrag(2000, 0, 2000)).toBe(MAX_SPLIT_RATIO);
   });
 
-  it('is activeSessionId whenever not split, whatever focusedSide says', () => {
-    expect(focusedSessionId({ activeSessionId: 's1', splitSessionId: null, focusedSide: 'right' })).toBe('s1');
-    expect(focusedSessionId({ activeSessionId: null, splitSessionId: null, focusedSide: 'left' })).toBeNull();
-  });
-});
-
-describe('focusedTab', () => {
-  it('follows the focused side while split and mainTab otherwise', () => {
-    expect(focusedTab({ mainTab: 'diff', splitTab: 'shell', splitSessionId: 's2', focusedSide: 'right' })).toBe('shell');
-    expect(focusedTab({ mainTab: 'diff', splitTab: 'shell', splitSessionId: 's2', focusedSide: 'left' })).toBe('diff');
-    expect(focusedTab({ mainTab: 'overview', splitTab: 'shell', splitSessionId: null, focusedSide: 'right' })).toBe('overview');
-  });
-});
-
-describe('visibleSessionIds (FR-19)', () => {
-  it('is the single active session when not split', () => {
-    expect(visibleSessionIds({ activeSessionId: 's1', splitSessionId: null })).toEqual(['s1']);
-    expect(visibleSessionIds({ activeSessionId: null, splitSessionId: null })).toEqual([]);
+  it('never leaves either pane narrower than MIN_SPLIT_PANE_PX', () => {
+    // 1000px wide → the px floor (26%) is tighter than the 20% ratio bound.
+    const width = 1000;
+    const floor = MIN_SPLIT_PANE_PX / width;
+    expect(splitRatioFromDrag(0, 0, width)).toBeCloseTo(floor, 3);
+    expect(splitRatioFromDrag(width, 0, width)).toBeCloseTo(1 - floor, 3);
   });
 
-  it('is both paned sessions while split, deduped', () => {
-    expect(visibleSessionIds({ activeSessionId: 's1', splitSessionId: 's2' })).toEqual(['s1', 's2']);
-    expect(visibleSessionIds({ activeSessionId: 's1', splitSessionId: 's1' })).toEqual(['s1']);
-    expect(visibleSessionIds({ activeSessionId: null, splitSessionId: 's2' })).toEqual(['s2']);
-  });
-});
-
-describe('isShellVisible (FR-18)', () => {
-  it('tests the left pane', () => {
-    const s = { activeSessionId: 's1', mainTab: 'shell' as const, splitSessionId: null, splitTab: 'session' as const };
-    expect(isShellVisible(s, 's1')).toBe(true);
-    expect(isShellVisible(s, 's2')).toBe(false);
-    expect(isShellVisible({ ...s, mainTab: 'diff' as const }, 's1')).toBe(false);
+  it('degrades to an even split when the grid is too narrow for two minimums', () => {
+    expect(splitRatioFromDrag(0, 0, 400)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(splitRatioFromDrag(400, 0, 400)).toBe(DEFAULT_SPLIT_RATIO);
   });
 
-  it('tests the RIGHT pane too — a shell stays visible whichever side is on SHELL', () => {
-    const s = { activeSessionId: 's1', mainTab: 'session' as const, splitSessionId: 's2', splitTab: 'shell' as const };
-    expect(isShellVisible(s, 's2')).toBe(true);
-    expect(isShellVisible(s, 's1')).toBe(false);
-    expect(isShellVisible({ ...s, splitTab: 'diff' as const }, 's2')).toBe(false);
+  it('defaults on an unmeasurable grid rather than dividing by zero', () => {
+    expect(splitRatioFromDrag(500, 0, 0)).toBe(DEFAULT_SPLIT_RATIO);
+    expect(splitRatioFromDrag(500, 0, NaN)).toBe(DEFAULT_SPLIT_RATIO);
   });
 
-  it('is true for both sessions when both panes are on SHELL', () => {
-    const s = { activeSessionId: 's1', mainTab: 'shell' as const, splitSessionId: 's2', splitTab: 'shell' as const };
-    expect(isShellVisible(s, 's1')).toBe(true);
-    expect(isShellVisible(s, 's2')).toBe(true);
+  it('takes the row minimum on the y axis — the same math, a shorter floor', () => {
+    // 600px tall: the row floor is 30%, where the column floor would be 43%.
+    const rowFloor = MIN_SPLIT_PANE_ROW_PX / 600;
+    expect(splitRatioFromDrag(0, 0, 600, MIN_SPLIT_PANE_ROW_PX)).toBeCloseTo(rowFloor, 3);
+    expect(splitRatioFromDrag(0, 0, 600)).toBeCloseTo(MIN_SPLIT_PANE_PX / 600, 3);
   });
 });
 
-describe('split store slice', () => {
+describe('splitRatio store slice', () => {
   let storage: { store: Record<string, string> };
 
   beforeEach(() => {
@@ -360,212 +303,55 @@ describe('split store slice', () => {
     vi.unstubAllGlobals();
   });
 
-  const readSplit = () => JSON.parse(storage.store[SPLIT_STORAGE_KEY]);
-
-  it('defaults to not-split with an empty storage', async () => {
+  it('defaults to an even split with an empty storage', async () => {
     const useStore = await freshStore();
-    const s = useStore.getState();
-    expect(s.splitSessionId).toBeNull();
-    expect(s.splitTab).toBe('session');
-    expect(s.focusedSide).toBe('left');
+    expect(useStore.getState().splitRatio).toBe(DEFAULT_SPLIT_RATIO);
   });
 
-  it('hydrates from a persisted record (FR-16)', async () => {
-    storage.store[SPLIT_STORAGE_KEY] = JSON.stringify({ splitSessionId: 's2', splitTab: 'diff', focusedSide: 'right' });
+  it('hydrates from its own key and persists on change', async () => {
+    storage.store[SPLIT_RATIO_STORAGE_KEY] = '0.64';
     const useStore = await freshStore();
-    expect(useStore.getState().splitSessionId).toBe('s2');
-    expect(useStore.getState().splitTab).toBe('diff');
-    expect(useStore.getState().focusedSide).toBe('right');
+    expect(useStore.getState().splitRatio).toBe(0.64);
+    useStore.getState().setSplitRatio(0.38);
+    expect(useStore.getState().splitRatio).toBe(0.38);
+    expect(storage.store[SPLIT_RATIO_STORAGE_KEY]).toBe('0.38');
   });
 
-  it('openInRightPane splits, focuses right, folds the right column without persisting it (FR-3/FR-5)', async () => {
+  it('clamps whatever it is handed', async () => {
     const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff', focusedPane: 'sidebar' });
-    useStore.getState().openInRightPane('s2');
-    const s = useStore.getState();
-    expect(s.splitSessionId).toBe('s2');
-    expect(s.splitTab).toBe('session');
-    expect(s.focusedSide).toBe('right');
-    expect(s.focusedPane).toBe('main');
-    expect(s.activeSessionId).toBe('s1');
-    expect(s.mainTab).toBe('diff'); // the left pane keeps its tab
-    expect(s.showRightPane).toBe(false);
-    expect(storage.store['francois.showRightPane']).toBeUndefined(); // FR-3: not persisted
-    expect(readSplit()).toEqual({ splitSessionId: 's2', splitTab: 'session', focusedSide: 'right' });
+    useStore.getState().setSplitRatio(0.99);
+    expect(useStore.getState().splitRatio).toBe(MAX_SPLIT_RATIO);
   });
 
-  it('openInRightPane clamps the left pane out of overview and closes dynamic tabs (FR-13)', async () => {
-    const useStore = await freshStore();
-    useStore.setState({
-      activeSessionId: 's1',
-      mainTab: 'overview',
-      agentTabs: [{ kind: 'agent', id: 'a1', name: 'a', status: 'running' }],
-    });
-    useStore.getState().openInRightPane('s2');
-    expect(useStore.getState().mainTab).toBe('session');
-    expect(useStore.getState().agentTabs).toEqual([]);
-  });
-
-  it('openInRightPane on the LEFT pane’s session swaps the two panes (FR-8)', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().setSplitTab('shell');
-    useStore.getState().openInRightPane('s1'); // s1 is the left pane's session
-    const s = useStore.getState();
-    expect(s.activeSessionId).toBe('s2');
-    expect(s.splitSessionId).toBe('s1');
-    expect(s.mainTab).toBe('shell'); // the right pane's tab moved left
-    expect(s.splitTab).toBe('diff'); // and the left pane's tab moved right
-  });
-
-  it('openInRightPane is a no-op when not split and the target is already the left pane', async () => {
+  it('survives leaving and re-entering split', async () => {
     const useStore = await freshStore();
     useStore.setState({ activeSessionId: 's1' });
-    useStore.getState().openInRightPane('s1');
-    expect(useStore.getState().splitSessionId).toBeNull();
-  });
-
-  it('openInRightPane on the session ALREADY in the right pane keeps that pane’s tab (FR-4)', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().setSplitTab('shell');
-    useStore.getState().setFocusedSide('left');
-    // The roster row of the session the right pane already shows: a focus, not
-    // a re-assignment — the left-pane equivalent (setActiveSessionId with the
-    // id already active) is a no-op too.
-    useStore.getState().openInRightPane('s2');
-    const s = useStore.getState();
-    expect(s.splitSessionId).toBe('s2');
-    expect(s.splitTab).toBe('shell'); // NOT reset to 'session'
-    expect(s.activeSessionId).toBe('s1');
-    expect(s.mainTab).toBe('diff');
-    expect(s.focusedSide).toBe('right'); // it still takes focus (FR-11)
-    expect(s.focusedPane).toBe('main');
-    expect(readSplit()).toEqual({ splitSessionId: 's2', splitTab: 'shell', focusedSide: 'right' });
-  });
-
-  it('openInRightPane on the already-focused right pane changes nothing but the pane focus', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().setSplitTab('diff');
-    useStore.getState().toggleRightPane(); // `]` — unfold the column while split
-    expect(useStore.getState().showRightPane).toBe(true);
-    useStore.getState().setFocusedPane('agents');
-    useStore.getState().openInRightPane('s2');
-    const s = useStore.getState();
-    expect(s.splitTab).toBe('diff');
-    expect(s.focusedSide).toBe('right');
-    expect(s.focusedPane).toBe('main');
-    expect(s.showRightPane).toBe(true); // FR-3: never re-folds a column the user unfolded
-  });
-
-  it('setActiveSessionId on the RIGHT pane’s session swaps the panes (FR-8)', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().setActiveSessionId('s2');
-    const s = useStore.getState();
-    expect(s.activeSessionId).toBe('s2');
-    expect(s.splitSessionId).toBe('s1');
-    expect(s.mainTab).toBe('session'); // the right pane's tab
-    expect(s.splitTab).toBe('diff'); // the left pane's tab
-  });
-
-  it('unsplit() promotes the FOCUSED pane by default (FR-10/FR-12)', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().setSplitTab('shell');
-    useStore.getState().unsplit(); // focusedSide === 'right'
-    const s = useStore.getState();
-    expect(s.splitSessionId).toBeNull();
-    expect(s.activeSessionId).toBe('s2');
-    expect(s.mainTab).toBe('shell');
-    expect(s.focusedSide).toBe('left');
-    expect(readSplit()).toEqual({ splitSessionId: null, splitTab: 'session', focusedSide: 'left' });
-  });
-
-  it('unsplit("left") keeps the left pane and its tab (FR-12)', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().unsplit('left');
-    expect(useStore.getState().activeSessionId).toBe('s1');
-    expect(useStore.getState().mainTab).toBe('diff');
-    expect(useStore.getState().splitSessionId).toBeNull();
-  });
-
-  it('unsplit restores the right column to the persisted preference (FR-3)', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1' });
-    expect(useStore.getState().showRightPane).toBe(true);
-    useStore.getState().openInRightPane('s2');
-    expect(useStore.getState().showRightPane).toBe(false);
+    useStore.getState().setSplitRatio(0.62);
+    useStore.getState().openInNewPane('s2');
     useStore.getState().unsplit();
-    expect(useStore.getState().showRightPane).toBe(true);
+    expect(useStore.getState().splitRatio).toBe(0.62);
   });
 
-  it('unsplit is a no-op when not split', async () => {
+  it('keeps the row ratio on its own key, independent of the column ratio', async () => {
+    storage.store[SPLIT_RATIO_STORAGE_KEY] = '0.7';
+    storage.store[SPLIT_ROW_RATIO_STORAGE_KEY] = '0.35';
     const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff' });
-    useStore.getState().unsplit('right');
-    expect(useStore.getState().activeSessionId).toBe('s1');
-    expect(useStore.getState().mainTab).toBe('diff');
+    expect(useStore.getState().splitRatio).toBe(0.7);
+    expect(useStore.getState().splitRowRatio).toBe(0.35);
+    useStore.getState().setSplitRowRatio(0.55);
+    expect(useStore.getState().splitRowRatio).toBe(0.55);
+    expect(useStore.getState().splitRatio).toBe(0.7); // untouched
+    expect(storage.store[SPLIT_ROW_RATIO_STORAGE_KEY]).toBe('0.55');
+    expect(storage.store[SPLIT_RATIO_STORAGE_KEY]).toBe('0.7');
   });
 
-  it('setFocusedSide moves the keyboard and focuses the main pane (FR-5)', async () => {
+  it('clamps the row ratio too', async () => {
     const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', focusedPane: 'agents' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().setFocusedSide('left');
-    expect(useStore.getState().focusedSide).toBe('left');
-    expect(useStore.getState().focusedPane).toBe('main');
-    expect(readSplit().focusedSide).toBe('left');
+    useStore.getState().setSplitRowRatio(-1);
+    expect(useStore.getState().splitRowRatio).toBe(MIN_SPLIT_RATIO);
   });
 
-  it('setSplitTab persists and never touches the left pane (FR-4)', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', mainTab: 'diff' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().setSplitTab('shell');
-    expect(useStore.getState().splitTab).toBe('shell');
-    expect(useStore.getState().mainTab).toBe('diff');
-    expect(readSplit().splitTab).toBe('shell');
-  });
-
-  it('FR-13: openAgentTab is a no-op while split', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1' });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().openAgentTab({ kind: 'agent', id: 'a1', name: 'agent', status: 'running' });
-    expect(useStore.getState().agentTabs).toEqual([]);
-    expect(useStore.getState().mainTab).toBe('session');
-  });
-
-  it('FR-20: removing the right pane’s session leaves split', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', sessions: [meta('s1', 1), meta('s2', 2)] });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().removeSession('s2');
-    expect(useStore.getState().splitSessionId).toBeNull();
-    expect(useStore.getState().activeSessionId).toBe('s1');
-    expect(readSplit().splitSessionId).toBeNull();
-    // FR-3: and the right column unfolds again, exactly as unsplit() would
-    expect(useStore.getState().showRightPane).toBe(true);
-  });
-
-  it('FR-20: removing a session in neither pane leaves split alone', async () => {
-    const useStore = await freshStore();
-    useStore.setState({ activeSessionId: 's1', sessions: [meta('s1', 1), meta('s2', 2), meta('s3', 3)] });
-    useStore.getState().openInRightPane('s2');
-    useStore.getState().removeSession('s3');
-    expect(useStore.getState().splitSessionId).toBe('s2');
-  });
-
-  it('degrades to not-split when localStorage throws (FR-16)', async () => {
+  it('degrades to the default when localStorage throws', async () => {
     vi.stubGlobal('localStorage', {
       getItem: () => {
         throw new Error('denied');
@@ -575,9 +361,34 @@ describe('split store slice', () => {
       },
     });
     const useStore = await freshStore();
-    expect(useStore.getState().splitSessionId).toBeNull();
-    useStore.setState({ activeSessionId: 's1' });
-    expect(() => useStore.getState().openInRightPane('s2')).not.toThrow();
-    expect(useStore.getState().splitSessionId).toBe('s2');
+    expect(useStore.getState().splitRatio).toBe(DEFAULT_SPLIT_RATIO);
+    expect(() => useStore.getState().setSplitRatio(0.7)).not.toThrow();
+    expect(useStore.getState().splitRatio).toBe(0.7);
+  });
+});
+
+// cloud-sessions FR-14: the "Adopt cloud session" modal is opened from BOTH a
+// pane [1] action and a ⌘K command, so its open flag lives in the store like
+// every other shared modal's — not inside the sidebar.
+describe('adoptCloudOpen (cloud-sessions FR-14)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('starts closed and is not persisted — a modal is never restored across launches', async () => {
+    const useStore = await freshStore();
+    expect(useStore.getState().adoptCloudOpen).toBe(false);
+  });
+
+  it('opens and closes independently of the new-session modal', async () => {
+    const useStore = await freshStore();
+    useStore.getState().setAdoptCloudOpen(true);
+    expect(useStore.getState().adoptCloudOpen).toBe(true);
+    expect(useStore.getState().newSessionOpen).toBe(false);
+    useStore.getState().setAdoptCloudOpen(false);
+    expect(useStore.getState().adoptCloudOpen).toBe(false);
   });
 });

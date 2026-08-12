@@ -1,7 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { isBusyStatus, isTerminalStatus } from '../../../contract/fleet-board';
-import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionClear, sessionInterrupt, sessionSend } from '../../lib/api';
 import Block, { ToolGroup } from './Block';
 import Composer from './Composer';
@@ -38,6 +37,7 @@ import './conversation.css';
 import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
 import WorktreeNotice from './WorktreeNotice';
 import DropOverlay from './DropOverlay';
+import WelcomeBlock from './WelcomeBlock';
 import { useSessionAttachments } from './useSessionAttachments';
 
 // Block apply rules (reducer) and the SessionEvent dispatch table live in
@@ -54,9 +54,16 @@ export interface ConversationViewProps {
   inert?: boolean;
   /** What the inert strip does when clicked: move focus to this pane. */
   onFocusRequest?: () => void;
+  /**
+   * split-by-4 FR-11: what an inert pane renders in the composer's place. The
+   * grid chrome's footer is state-driven (`⌘2 to focus and type`, or *Review
+   * diff* · *close pane ✕*), so the pane owns it rather than this view. Absent ⇒
+   * the default `click to focus this pane` strip.
+   */
+  inertFooter?: ReactNode;
 }
 
-export default function ConversationView({ sessionId, inert = false, onFocusRequest }: ConversationViewProps) {
+export default function ConversationView({ sessionId, inert = false, onFocusRequest, inertFooter }: ConversationViewProps) {
   const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId) ?? null);
   const {
     state,
@@ -374,11 +381,11 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
               <span className="conv-error-text">{hydrationError}</span>
             </Centered>
           ) : hydrated && state.blocks.length === 0 ? (
-            <Centered>
-              <div className="conv-empty__cwd">{meta && (displayWslCwd(meta.cwd) ?? meta.cwd)}</div>
-              <div className="conv-empty__model">{meta?.model.label}</div>
-              <div className="conv-empty__hint">waiting for your first prompt</div>
-            </Centered>
+            // design 7a: the framed welcome block stands in for the transcript
+            // until the first turn — see WelcomeBlock for what it states.
+            <div className="conv-item">
+              <WelcomeBlock sessionId={sessionId} />
+            </div>
           ) : (
             groupToolRuns(compactBlocks(state.blocks)).map((item) => (
               <div key={item.kind === 'tool-group' ? item.blockId : item.block.blockId} className="conv-item">
@@ -395,7 +402,7 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
           instead. It reads as an invitation, not a disabled input: no ⏎ hint, no
           caret, and clicking it only moves focus. */}
       {inert ? (
-        <InertComposer onClick={onFocusRequest} />
+        (inertFooter ?? <InertComposer onClick={onFocusRequest} />)
       ) : (
       <Composer
         status={status}
@@ -408,6 +415,13 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
         // at the same time and each has its own timer.
         attachError={attachments.attachError}
         attachments={attachments.chips}
+        // design 7a: the hint row closes with the context readout — the figure
+        // that decides when to /compact belongs where your hands are.
+        contextPercent={
+          meta && meta.contextLimitTokens > 0
+            ? Math.min(100, Math.round((meta.contextUsedTokens / meta.contextLimitTokens) * 100))
+            : null
+        }
         onAttachClick={attachments.onAttachClick}
         onRemoveAttachment={attachments.onRemoveAttachment}
         onInputChange={(e) => {
@@ -431,8 +445,9 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
   );
 }
 
+/** The hydration-failure notice — the only thing left that stands alone. */
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="conv-centered">{children}</div>;
+  return <div className="conv-item conv-centered">{children}</div>;
 }
 
 /** split-session FR-6 / design §Composer: the unfocused pane's composer. */

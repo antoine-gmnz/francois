@@ -21,10 +21,11 @@ function ordered(map: Map<string, AgentInfo>): AgentInfo[] {
     .map(({ agent }) => agent);
 }
 
-export default function AgentsPanel({ sessionId, collapsed }: { sessionId: string | null; collapsed: boolean }) {
+// design 7a: no longer a right-column card — this is a MAIN TAB, so it is
+// never collapsed and its header is a plain title row again.
+export default function AgentsPanel({ sessionId }: { sessionId: string | null }) {
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
-  const toggleCollapsedPane = useStore((s) => s.toggleCollapsedPane);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
   const setNewAgentOpen = useStore((s) => s.setNewAgentOpen);
   const openAgentTab = useStore((s) => s.openAgentTab);
@@ -136,17 +137,9 @@ export default function AgentsPanel({ sessionId, collapsed }: { sessionId: strin
       onClick={() => setFocusedPane('agents')}
       className={focused ? 'agents-panel agents-panel--focused' : 'agents-panel'}
     >
-      <PanelHeader
-        title="AGENTS"
-        count={agents.size}
-        paneKey={3}
-        focused={focused}
-        collapsed={collapsed}
-        onToggleCollapse={() => toggleCollapsedPane('agents')}
-      />
+      <PanelHeader title="AGENTS" count={agents.size} paneKey={3} focused={focused} />
 
-      {!collapsed && (
-        <AgentsListBody
+      <AgentsListBody
           listError={listError}
           loading={loading}
           list={list}
@@ -170,8 +163,7 @@ export default function AgentsPanel({ sessionId, collapsed }: { sessionId: strin
           onHover={setHoverId}
           onKill={kill}
           onAtBottom={(v) => setTrail((t) => (t.atBottom === v ? t : { ...t, atBottom: v }))}
-        />
-      )}
+      />
 
       {newAgentOpen && sessionId && (
         <NewAgentModal sessionId={sessionId} onClose={() => setNewAgentOpen(false)} />

@@ -7,7 +7,7 @@
 // is pure in ./permission-card (unit-tested); this file is DOM assembly +
 // card-local UI state (chosen tier, disclosure, in-flight flag, inline error).
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   PermissionConversationBlock,
   PermissionDecision,
@@ -16,6 +16,8 @@ import type {
 import { permissionsDecide } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useTimedError } from '../../lib/hooks/useTimedError';
+import { focusedSessionId } from '../../lib/layoutStore';
+import { useStore } from '../../lib/store';
 import {
   askSignature,
   cardClass,
@@ -78,12 +80,40 @@ export default function PermissionCard({
     });
   };
 
+  // design 7a: the numbered rows are answerable from the keyboard, exactly as
+  // the mock's composer promises. Capture phase + stopPropagation so `1`–`4`
+  // never also reach app-shell's pane shortcuts, and only while THIS card's
+  // session is the focused one — two mounted panes must not both claim a digit.
+  // Same standing-down rule as every other single-letter global: a digit typed
+  // into a text field or the terminal is a digit, not an answer.
+  useEffect(() => {
+    if (!interactive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const idx = PERMISSION_ACTIONS.findIndex((_, i) => String(i + 1) === e.key);
+      if (idx === -1) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
+      if (el && el.closest('.xterm') !== null) return;
+      if (focusedSessionId(useStore.getState()) !== sessionId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      decide(PERMISSION_ACTIONS[idx].decision);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+    // `decide` closes over the CURRENT tier/interactive, so it belongs in the deps.
+  }, [interactive, sessionId, tier]);
+
   return (
     <div className={cardClass(block.state, inFlight)}>
+      {/* design 7a: the legend rides the top rule — `Permission · waiting 4m`. */}
       <div className="pcard__head">
         <span className="pcard__glyph">◈</span>
-        <span className="pcard__label">PERMISSION</span>
+        <span className="pcard__label">Permission</span>
         {note && <span className={`pcard__note pcard__note--${block.state}`}>{note}</span>}
+        {/* relativeAge already reads "5m ago" / "just now" — no "waiting" prefix,
+            which would double the tense the mock's `waiting 4m` states once. */}
         {pending && <span className="pcard__age">{relativeAge(now - askedAt.current)}</span>}
       </div>
 
@@ -125,36 +155,48 @@ export default function PermissionCard({
       {block.rule && <div className="pcard__meta">rule written: {writtenRuleSentence(block.rule)}</div>}
 
       {pending && (
-        <div className="pcard__actions">
-          <span className={'pcard__tiers' + (tierControlDimmed(hovered) ? ' pcard__tiers--inert' : '')}>
-            {TIERS.map((t) => (
-              <button
-                type="button"
-                key={t}
-                className={'pcard__tier' + (t === tier ? ' pcard__tier--on' : '')}
-                onClick={() => {
-                  if (interactive) setTier(t);
-                }}
+        <>
+          {/* design 7a: the decisions are NUMBERED LINES, not a button row — the
+              terminal grammar the mock uses, and the shape that lets the keyboard
+              answer without hunting for a target. Order is unchanged, so the
+              number of each decision is stable across every ask. */}
+          <div className="pcard__choices">
+            {PERMISSION_ACTIONS.map((a, i) => (
+              <div
+                key={a.decision}
+                className={i === 0 ? 'pcard__choice pcard__choice--lead' : 'pcard__choice'}
+                title={a.label}
+                onClick={() => decide(a.decision)}
+                onMouseEnter={() => setHovered(a.decision)}
+                onMouseLeave={() => setHovered(null)}
               >
-                {tierLabel(t)}
-              </button>
+                <span className={`pcard__choice-key pcard__choice-key--${a.variant}`}>{i + 1}</span>
+                <span className="pcard__choice-label">{a.label}</span>
+              </div>
             ))}
-          </span>
+          </div>
 
-          {PERMISSION_ACTIONS.map((a) => (
-            <button
-              type="button"
-              key={a.decision}
-              className={`pcard__btn pcard__btn--${a.variant}`}
-              title={a.label}
-              onClick={() => decide(a.decision)}
-              onMouseEnter={() => setHovered(a.decision)}
-              onMouseLeave={() => setHovered(null)}
-            >
-              {a.short}
-            </button>
-          ))}
-        </div>
+          {/* The tier only scopes the two `*Always` lines, so it sits under them
+              rather than beside a specific one (§8.6/8.7). */}
+          <div className="pcard__actions">
+            <span className={'pcard__tiers' + (tierControlDimmed(hovered) ? ' pcard__tiers--inert' : '')}>
+              <span className="pcard__tiers-label">always applies to</span>
+              {TIERS.map((t) => (
+                <button
+                  type="button"
+                  key={t}
+                  className={'pcard__tier' + (t === tier ? ' pcard__tier--on' : '')}
+                  onClick={() => {
+                    if (interactive) setTier(t);
+                  }}
+                >
+                  {tierLabel(t)}
+                </button>
+              ))}
+            </span>
+            <span className="pcard__hint">press 1–{PERMISSION_ACTIONS.length}, or click a line</span>
+          </div>
+        </>
       )}
 
       {/* FR-21: inline, transient, never an alert. */}

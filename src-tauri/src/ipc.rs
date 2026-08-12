@@ -5,7 +5,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct AppError {
     pub code: String,
     pub message: String,

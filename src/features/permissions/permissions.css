@@ -7,21 +7,33 @@
    the one live thing in a view. Motion: none — no @keyframes, no animation, no
    transition anywhere in this file (state changes are instant swaps). */
 
+/* design 7a: the ask is a framed BLOCK in the terminal, mono throughout, with
+   its state stated on the top rule. Everything below the frame is the same
+   numbered-choice grammar the CLI uses. */
 .pcard {
-  background: var(--bg-deep);
-  border: 1px solid var(--border);
+  position: relative;
+  background: transparent;
+  border: 1px solid var(--border-2);
   border-radius: var(--radius-lg);
-  padding: var(--space-10) var(--space-12);
+  padding: var(--space-16) var(--space-18) var(--space-14);
+  font-family: var(--font-mono);
 }
 
 /* The pending card is the only one that tints: a warm edge over a barely-warm
    fill, so a parked turn is findable while scrolling without shouting. */
 .pcard--pending {
-  border-color: color-mix(in srgb, var(--attn) 34%, var(--border));
-  background: color-mix(in srgb, var(--attn) 5%, var(--bg-deep));
+  border-color: color-mix(in srgb, var(--attn) 40%, var(--border));
+  background: color-mix(in srgb, var(--attn) 5%, transparent);
 }
 
-/* Resolved cards drop the tint and keep a single edge carrying the outcome. */
+/* Resolved cards drop the tint and keep a single edge carrying the outcome.
+   Square, unlike the pending frame: that outcome edge is 2px, and on a --radius-lg
+   corner it curves away at both ends rather than reading as a straight rail. */
+.pcard--allowed,
+.pcard--denied {
+  border-radius: 0;
+}
+
 .pcard--allowed {
   border-left: 2px solid var(--success);
 }
@@ -38,10 +50,19 @@
   opacity: 0.7;
 }
 
+/* The legend rides the top rule: absolutely positioned, with a --bg-app pad
+   that cuts the border. It has to match the terminal surface exactly — this
+   block only ever renders inside the transcript. */
 .pcard__head {
+  position: absolute;
+  top: -7px;
+  left: var(--space-14);
   display: flex;
   align-items: center;
   gap: var(--space-6);
+  padding: 0 var(--space-7);
+  background: var(--bg-app);
+  white-space: nowrap;
 }
 
 .pcard__glyph {
@@ -51,12 +72,11 @@
 
 .pcard__label {
   color: var(--attn);
-  font-size: var(--font-size-9-5);
-  letter-spacing: 0.08em;
+  font-size: var(--font-size-10-5);
 }
 
 .pcard__note {
-  font-size: var(--font-size-9-5);
+  font-size: var(--font-size-10);
   color: var(--text-faint);
 }
 
@@ -77,10 +97,10 @@
 
 /* §8.2: how long the ask has been parked. Pending only — see relativeAge(). */
 .pcard__age {
-  margin-left: auto;
   flex-shrink: 0;
-  color: var(--text-faint);
-  font-size: var(--font-size-9-5);
+  color: var(--attn);
+  font-size: var(--font-size-10);
+  opacity: 0.8;
 }
 
 /* §8.3: the headline. A <button> so the disclosure is keyboard-reachable, but
@@ -90,14 +110,14 @@
   align-items: baseline;
   gap: var(--space-8);
   width: 100%;
-  margin-top: var(--space-8);
+  margin-top: 0;
   background: none;
   border: none;
   padding: 0;
   font-family: inherit;
   font-size: var(--font-size-12-5);
   line-height: 1.5;
-  color: var(--warn);
+  color: var(--text-bright);
   text-align: left;
   cursor: pointer;
 }
@@ -167,15 +187,68 @@
   overflow-wrap: anywhere;
 }
 
-/* §8.7: tier control at the left, the four decisions right-aligned. Wraps
-   rather than compressing, so a narrow transcript column keeps the buttons at
-   full size. */
+/* ── design 7a: the numbered choices ────────────────────────────────────────
+   One full-width line per decision, keyed by its index. The lead line carries a
+   warm fill because it is the default answer, not because it is safe — the
+   remaining three are equal-weight text rows. Clicking a line answers it, and so
+   does its number (PermissionCard's capture-phase listener). */
+.pcard__choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-12);
+  font-size: var(--font-size-12);
+}
+
+.pcard__choice {
+  display: flex;
+  gap: var(--space-10);
+  padding: var(--space-4) var(--space-8);
+  margin: 0 calc(-1 * var(--space-8));
+  border-radius: var(--radius-base);
+  color: var(--text-hint);
+  cursor: pointer;
+}
+
+.pcard__choice:hover {
+  background: color-mix(in srgb, var(--attn) 8%, transparent);
+  color: var(--text-strong);
+}
+
+.pcard__choice--lead {
+  background: color-mix(in srgb, var(--attn) 12%, transparent);
+  color: var(--text-bright);
+}
+
+.pcard__choice--lead:hover {
+  background: color-mix(in srgb, var(--attn) 18%, transparent);
+}
+
+/* The index. Acid on the lead line — it IS the live thing in this block —
+   and neutral on the rest, so the block still has exactly one accent. */
+.pcard__choice-key {
+  flex-shrink: 0;
+  width: 10px;
+  color: var(--text-dim);
+}
+
+.pcard__choice--lead .pcard__choice-key {
+  color: var(--accent);
+}
+
+.pcard__choice-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* §8.7: the tier control and the keyboard hint, under the choices. The tier only
+   scopes the two `*Always` lines, so it reads as an annotation on them rather
+   than as a fifth decision. */
 .pcard__actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-6);
+  gap: var(--space-8);
   margin-top: var(--space-10);
 }
 
@@ -185,6 +258,15 @@
   gap: var(--space-8);
   margin-right: auto;
   font-size: var(--font-size-10-5);
+}
+
+.pcard__tiers-label {
+  color: var(--text-faint);
+}
+
+.pcard__hint {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
 }
 
 .pcard__tier {
