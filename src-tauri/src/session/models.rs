@@ -236,37 +236,86 @@ pub(crate) fn fetch_live_models() -> Option<Vec<ModelInfo>> {
     (!models.is_empty()).then_some(models)
 }
 
-/// Fetch the live list (updating the cache) or fall back to the tier aliases.
+/// What the cache should hold after one refresh attempt — `refresh_models`'s only
+/// judgment call, kept pure so it can be tested without a network.
+///
+/// A FAILED fetch must never downgrade a warm cache. The static catalog carries no
+/// `context_tokens` at all, so overwriting live entries with it silently collapses
+/// every session's window to the 200K default (`context_limit`'s `unwrap_or`) for
+/// the rest of the run — and the frontend prefetches `session_models` from three
+/// places at bootstrap, all racing `warm_model_cache`, so a single transient
+/// failure among them was enough. Fall back only when nothing is known yet, so the
+/// model picker is never empty.
+pub(crate) fn refreshed_cache(
+    fetched: Option<Vec<ModelInfo>>,
+    cached: &[ModelInfo],
+) -> Vec<ModelInfo> {
+    match fetched {
+        Some(live) => live,
+        None if cached.is_empty() => catalog(),
+        None => cached.to_vec(),
+    }
+}
+
+/// Fetch the live list (updating the cache) or keep what we already know.
 pub(crate) fn refresh_models() -> Vec<ModelInfo> {
-    let models = fetch_live_models().unwrap_or_else(catalog);
-    *model_cache().lock().unwrap() = models.clone();
-    models
+    let fetched = fetch_live_models(); // network first — never under the cache lock
+    let mut cache = model_cache().lock().unwrap();
+    let next = refreshed_cache(fetched, &cache);
+    *cache = next.clone();
+    next
 }
 
 /// Warm the model cache in the background at startup (for nice model labels and
 /// real context windows). Sessions loaded before the fetch completed had their
 /// context limit computed against a cold cache (→ 200K default); once the live
 /// windows are known, recompute and push corrected metas so the header updates.
+///
+/// Retries: a launch that beats the network (or catches the OAuth token mid-refresh)
+/// used to pin every session at 200K for the whole run with nothing to retry it —
+/// and a turn ending against that wrong window clamps `contextUsedTokens` to 200000
+/// and persists it. Back off until the live windows are known, then reconcile.
 pub fn warm_model_cache(app: AppHandle) {
     std::thread::spawn(move || {
-        refresh_models();
-        let updated: Vec<SessionMeta> = {
-            let engine = app.state::<Engine>();
-            let mut map = engine.sessions.lock().unwrap();
-            map.values_mut()
-                .filter_map(|s| {
-                    let limit = context_limit(&s.model_id);
-                    (limit != s.context_limit_tokens).then(|| {
-                        s.context_limit_tokens = limit;
-                        s.meta()
-                    })
-                })
-                .collect()
-        };
-        for m in updated {
-            emit(&app, SessionEvent::Meta { meta: m });
+        for delay in [0u64, 5, 15, 60, 300] {
+            if delay > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(delay));
+            }
+            let Some(live) = fetch_live_models() else {
+                // Keep the picker populated while we retry, but never clobber a
+                // cache that already knows the real windows.
+                let mut cache = model_cache().lock().unwrap();
+                if cache.is_empty() {
+                    *cache = catalog();
+                }
+                continue;
+            };
+            *model_cache().lock().unwrap() = live;
+            reconcile_context_limits(&app);
+            return;
         }
     });
+}
+
+/// Recompute every live session's context limit against the (now warm) cache and
+/// emit a corrected meta for each one that moved.
+fn reconcile_context_limits(app: &AppHandle) {
+    let updated: Vec<SessionMeta> = {
+        let engine = app.state::<Engine>();
+        let mut map = engine.sessions.lock().unwrap();
+        map.values_mut()
+            .filter_map(|s| {
+                let limit = context_limit(&s.model_id);
+                (limit != s.context_limit_tokens).then(|| {
+                    s.context_limit_tokens = limit;
+                    s.meta()
+                })
+            })
+            .collect()
+    };
+    for m in updated {
+        emit(app, SessionEvent::Meta { meta: m });
+    }
 }
 
 /// Human label for a model id: the cached display name, else a best-effort
@@ -395,6 +444,33 @@ mod tests {
         // unknown family → default
         model_cache().lock().unwrap().clear();
         assert_eq!(context_limit("opus"), 200_000);
+    }
+
+    #[test]
+    fn a_failed_refresh_never_downgrades_a_warm_cache() {
+        // THE BUG: `session_models` is prefetched three times at bootstrap and races
+        // warm_model_cache. One transient failure used to write the static catalog
+        // (context_tokens: None) over the live windows, and every session's limit
+        // silently fell to the 200K default for the rest of the run.
+        let live = vec![ModelInfo {
+            id: "claude-opus-5".into(),
+            label: "Opus 5".into(),
+            brief: None,
+            context_tokens: Some(1_000_000),
+            efforts: vec![],
+        }];
+
+        let kept = refreshed_cache(None, &live);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].context_tokens, Some(1_000_000));
+
+        // Cold cache + failed fetch → the tier aliases, so the picker is never empty.
+        let cold = refreshed_cache(None, &[]);
+        assert!(cold.iter().any(|m| m.id == DEFAULT_MODEL));
+
+        // A live fetch always wins.
+        let fresh = refreshed_cache(Some(catalog()), &live);
+        assert_eq!(fresh.len(), catalog().len());
     }
 
     #[test]
