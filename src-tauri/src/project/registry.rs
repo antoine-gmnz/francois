@@ -770,7 +770,12 @@ mod tests {
         // cloud-sessions has no new-session modal to read these from, so an
         // adoption applies THIS snapshot — a field dropped here is a default the
         // user configured and the adopted session silently ignores.
-        let mut p = project_fixture("p1", "api", if cfg!(windows) { "D:\\api" } else { "/api" }, 7);
+        let mut p = project_fixture(
+            "p1",
+            "api",
+            if cfg!(windows) { "D:\\api" } else { "/api" },
+            7,
+        );
         p.defaults = ProjectDefaults {
             model_id: Some("claude-opus-4".into()),
             effort: Some("high".into()),

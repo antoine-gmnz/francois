@@ -309,7 +309,6 @@
   background: var(--bg-panel);
   border: 1px solid var(--border-2);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-card-sm);
   padding: var(--space-4) 0;
   animation: dropIn 90ms ease-out;
 }
@@ -324,6 +323,8 @@
   height: 24px;
   gap: var(--space-7);
   padding: 0 var(--space-12);
+  display: flex;
+  align-items: center;
 }
 .pjsw-row.list-row--hovered {
   background: var(--bg-hover);

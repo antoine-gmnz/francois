@@ -833,7 +833,10 @@ mod tests {
         ));
         // An actionable body wins over the bare status, whatever the status is.
         assert!(matches!(
-            classify_status(404, "your organization has turned allow_remote_sessions off"),
+            classify_status(
+                404,
+                "your organization has turned allow_remote_sessions off"
+            ),
             CloudFetch::Actionable("CLOUD_POLICY_DENIED", _)
         ));
     }
@@ -858,7 +861,10 @@ mod tests {
         );
         // Only the actionable refusals raise.
         assert_eq!(
-            list_result(CloudFetch::Actionable("CLOUD_POLICY_DENIED", POLICY_DENIED_MSG)),
+            list_result(CloudFetch::Actionable(
+                "CLOUD_POLICY_DENIED",
+                POLICY_DENIED_MSG
+            )),
             Err(("CLOUD_POLICY_DENIED", POLICY_DENIED_MSG))
         );
     }
@@ -873,7 +879,10 @@ mod tests {
         );
         match found {
             CloudLookup::Found(s) => {
-                assert_eq!(s.id, "session_01AB", "trust the ref over an id we cannot explain");
+                assert_eq!(
+                    s.id, "session_01AB",
+                    "trust the ref over an id we cannot explain"
+                );
                 assert_eq!(s.branch.as_deref(), Some("fix/flake"));
             }
             other => panic!("expected Found, got {other:?}"),
@@ -897,7 +906,10 @@ mod tests {
             CloudLookup::Unknown
         ));
         assert!(matches!(
-            lookup_verdict(CloudFetch::Body(json!({ "unexpected": true })), "session_01AB"),
+            lookup_verdict(
+                CloudFetch::Body(json!({ "unexpected": true })),
+                "session_01AB"
+            ),
             CloudLookup::Unknown
         ));
         assert!(matches!(

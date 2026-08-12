@@ -103,10 +103,6 @@ export default function SplitPane({
     >
       {/* header */}
       <div className="split-pane__header">
-        {/* FR-10: the 2px accent top rule — the focus signal, flush to the card's
-            top edge. Rendered unconditionally and hidden by CSS on the unfocused
-            pane, so the header's geometry never shifts when focus moves. */}
-        <span className="split-pane__rule" />
         {/* FR-7: the pane number, so `⌘<n>` in the footer and the status bar has
             something on screen to point at. Only in the grid — at two panes the
             positions themselves are the names (left / right). */}
@@ -117,7 +113,7 @@ export default function SplitPane({
         </span>
         {focused ? (
           // The accent chip carries the focus signal in TEXT as well as colour
-          // (design §Accessibility) — the rule must not be the only cue.
+          // (design §Accessibility) — the border must not be the only cue.
           <span className="split-pane__focus-chip">focus</span>
         ) : (
           session && (
