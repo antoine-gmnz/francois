@@ -41,9 +41,17 @@ const STASH_MARK: &str = "uncommitted changes";
 const STASH_CONFIRM: &str = "stash";
 const MCP_MARK: &str = "New MCP server found";
 const MCP_CONFIRM: &str = "Use this MCP server";
-const TRUST_DIALOG: &str = "Trust this directory?";
-const TRUST_LEGACY: &str = "Do you trust the files in this folder";
-const TRUST_REFUSED: &str = "Workspace not trusted";
+/// The trust dialog, matched against the LOWERCASED frame because its wording
+/// has moved across CLI releases ("folder" vs "directory", with and without the
+/// leading "Do you") and an adoption meets it more often than any other prompt:
+/// the default landing is a FRESH worktree, which is by definition a directory
+/// Claude Code has never been run in. `"trust the files in this"` covers both
+/// nouns without matching the settings-page prose "Trusted devices are listed…".
+const TRUST_MARKS: [&str; 3] = [
+    "trust this directory?",
+    "trust the files in this",
+    "workspace not trusted",
+];
 
 /// The two refusals the API also names (`api.rs`'s `classify_api_error`), matched
 /// here because teleport can meet them in the PTY instead — an org that turned
@@ -155,10 +163,7 @@ pub(crate) fn teleport_block(
              it in the MCP SERVERS panel [4], then adopt again.",
         );
     }
-    if normalized.contains(TRUST_DIALOG)
-        || normalized.contains(TRUST_LEGACY)
-        || normalized.contains(TRUST_REFUSED)
-    {
+    if TRUST_MARKS.iter().any(|m| lower.contains(m)) {
         return stalled(
             "Claude Code has not been told it may run in that directory — trust it in \
              the MCP SERVERS panel [4], then adopt again.",
@@ -386,6 +391,35 @@ mod tests {
             let block = teleport_block(&normalize_pty(raw), None, "teleporting").expect("detected");
             assert_eq!(block.code, "CLOUD_ADOPT_STALLED", "on {raw}");
         }
+    }
+
+    #[test]
+    fn the_trust_dialog_matches_every_wording_the_cli_has_shipped() {
+        // The default landing is a FRESH worktree — a directory Claude Code has
+        // never run in — so this is the prompt an adoption meets most often. A
+        // wording the matcher misses parks teleport for the whole FR-9 deadline
+        // and reports a bare stall, which is indistinguishable from a hang.
+        for raw in [
+            "Do you trust the files in this folder?",
+            "Do you trust the files in this directory?",
+            "Trust the files in this directory?",
+            "TRUST THIS DIRECTORY?",
+            "Error: workspace not trusted",
+        ] {
+            let block = teleport_block(&normalize_pty(raw), None, "teleporting")
+                .unwrap_or_else(|| panic!("must be detected: {raw}"));
+            assert_eq!(block.code, "CLOUD_ADOPT_STALLED", "on {raw}");
+            assert!(block.message.contains("panel [4]"), "on {raw}");
+        }
+        // …and still not out of ordinary prose about trust.
+        assert_eq!(
+            teleport_block("Trusted devices are listed in your settings", None, "x"),
+            None
+        );
+        assert_eq!(
+            teleport_block("This directory is already trusted", None, "x"),
+            None
+        );
     }
 
     #[test]
