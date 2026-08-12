@@ -196,6 +196,7 @@ fn session_with_worktree(path: &str) -> Session {
     s.worktree = Some(SessionWorktree {
         branch: "feat/x".into(),
         base_ref: "main".into(),
+        base_resolved: None,
         path: path.into(),
         source_repo_root: "/repo".into(),
         created_branch: true,
@@ -327,6 +328,8 @@ fn creates_a_new_branch_worktree() {
     assert!(sw.created_branch);
     assert!(!sw.fetched); // no remote configured
     assert!(sw.fetch_error.is_none());
+    // FR-7b: no fetch ran, so there is no fresher base to fork from — `baseRef` verbatim.
+    assert_eq!(sw.base_resolved, None);
 
     // git worktree list in the source repo shows the new branch (acceptance §9).
     let host = GitHost::Native;
@@ -571,6 +574,160 @@ fn base_ref_starting_with_dash_is_rejected() {
     assert!(!branch_exists(&host, &cwd, "feat/dash-base"));
 }
 
+// ---------- FR-7b: fork from the fetched tip of the base branch ----------
+
+/// `git` with its stdout captured, trimmed. Same spawn shape as `git`, which only asserts
+/// the status — FR-7b's tests need the commit a ref points at.
+fn git_out(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = Cmd::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("git spawn");
+    assert!(out.status.success(), "git {args:?} failed in {dir:?}");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// An `upstream` repo plus a `local` clone of it, both on `main`. A file-path remote needs
+/// no network, so the fetch inside `resolve_worktree` really runs.
+fn clone_pair(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let upstream = tmp_dir(tag);
+    init_repo(&upstream);
+    let local = tmp_dir(&format!("{tag}-clone"));
+    git(&local, &["clone", "-q", &upstream.to_string_lossy(), "."]);
+    git(&local, &["config", "user.email", "t@example.com"]);
+    git(&local, &["config", "user.name", "Test"]);
+    (upstream, local)
+}
+
+fn commit_in(dir: &std::path::Path, file: &str, msg: &str) -> String {
+    std::fs::write(dir.join(file), msg).unwrap();
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", msg]);
+    git_out(dir, &["rev-parse", "HEAD"])
+}
+
+#[test]
+fn a_new_branch_forks_from_the_fetched_remote_tip_not_the_stale_local_base() {
+    // The whole point of FR-7's fetch: the source checkout's `main` is typically days
+    // behind, and forking from it silently starts every worktree on stale code. After the
+    // fetch, `refs/remotes/origin/main` is the current base, so that is the start point.
+    let (upstream, local) = clone_pair("fork-fresh");
+    let stale = git_out(&local, &["rev-parse", "HEAD"]);
+    let fresh = commit_in(&upstream, "b.txt", "upstream moved on");
+    assert_ne!(stale, fresh);
+
+    let cwd = local.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/fresh".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (session_cwd, sw, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+
+    assert!(sw.fetched);
+    assert_eq!(
+        sw.base_resolved.as_deref(),
+        Some("refs/remotes/origin/main")
+    );
+    assert_eq!(
+        sw.base_ref, "main",
+        "the requested base is still echoed verbatim"
+    );
+    assert_eq!(
+        git_out(std::path::Path::new(&session_cwd), &["rev-parse", "HEAD"]),
+        fresh,
+        "the worktree starts on the fetched tip"
+    );
+    // The local branch itself is never moved — git refuses to update a checked-out branch,
+    // and the user did not ask for their checkout to change.
+    assert_eq!(git_out(&local, &["rev-parse", "main"]), stale);
+}
+
+#[test]
+fn a_local_base_ahead_of_the_remote_keeps_its_own_commits() {
+    // Unpushed local commits on the base branch are work the user expects to build on;
+    // forking around them to the remote tip would drop them from the worktree.
+    let (_upstream, local) = clone_pair("fork-ahead");
+    let ahead = commit_in(&local, "c.txt", "local-only work");
+
+    let cwd = local.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/ahead".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (session_cwd, sw, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+
+    assert!(sw.fetched);
+    assert_eq!(
+        sw.base_resolved, None,
+        "local is not an ancestor of the remote tip"
+    );
+    assert_eq!(
+        git_out(std::path::Path::new(&session_cwd), &["rev-parse", "HEAD"]),
+        ahead
+    );
+}
+
+#[test]
+fn a_base_ref_with_no_remote_counterpart_is_used_verbatim() {
+    // A purely local base branch (equally: a tag or a sha) has no `origin/<baseRef>` to
+    // upgrade to — the fetch succeeded, but there is nothing fresher to fork from.
+    let (_upstream, local) = clone_pair("fork-local-base");
+    git(&local, &["branch", "local-only"]);
+
+    let cwd = local.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/local-base".into(),
+        base_ref: "local-only".into(),
+        adopt: false,
+    };
+    let (_, sw, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    assert!(sw.fetched);
+    assert_eq!(sw.base_resolved, None);
+}
+
+#[test]
+fn a_base_ref_that_is_already_a_remote_tracking_ref_is_left_alone() {
+    // `origin/main` needs no upgrade — and `refs/remotes/origin/origin/main` resolves to
+    // nothing, so the guard must catch it before the probe rather than after.
+    let (upstream, local) = clone_pair("fork-remote-base");
+    let fresh = commit_in(&upstream, "d.txt", "upstream moved on");
+
+    let cwd = local.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/remote-base".into(),
+        base_ref: "origin/main".into(),
+        adopt: false,
+    };
+    let (session_cwd, sw, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    assert_eq!(sw.base_resolved, None);
+    assert_eq!(
+        git_out(std::path::Path::new(&session_cwd), &["rev-parse", "HEAD"]),
+        fresh
+    );
+}
+
+#[test]
+fn an_existing_branch_never_resolves_a_base() {
+    // FR-8: the base is ignored entirely when the branch already exists, so recording a
+    // resolved one would be a lie the status fork-point then trusts.
+    let (upstream, local) = clone_pair("fork-existing");
+    commit_in(&upstream, "e.txt", "upstream moved on");
+    git(&local, &["branch", "feat/existing"]);
+
+    let cwd = local.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/existing".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (_, sw, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    assert!(!sw.created_branch);
+    assert_eq!(sw.base_resolved, None);
+}
+
 #[test]
 fn fetch_failure_is_reported_as_fetched_false_with_fetch_error() {
     // A repo with a remote that cannot be reached: `git fetch` fails fast,
@@ -737,6 +894,56 @@ fn session_worktree_probe_rejects_a_relative_cwd() {
     match session_worktree_probe("relative/path".into(), None) {
         IpcResult::Err { error, .. } => assert_eq!(error.code, "INVALID_INPUT"),
         IpcResult::Ok { .. } => panic!("expected a relative cwd to be rejected"),
+    }
+}
+
+#[test]
+fn status_counts_from_the_resolved_base_not_the_stale_local_one() {
+    // FR-7b/FR-18: a branch forked from `refs/remotes/origin/main` is ahead of the LOCAL
+    // `main` by everything the fetch brought in. Counting `main..HEAD` would report those
+    // commits as the session's own unpushed work — and FR-19's removal guard would block
+    // on a worktree that has nothing in it.
+    let (upstream, local) = clone_pair("status-base");
+    commit_in(&upstream, "f.txt", "upstream moved on");
+
+    let cwd = local.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/status-base".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (worktree_path, sw, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    assert_eq!(
+        sw.base_resolved.as_deref(),
+        Some("refs/remotes/origin/main")
+    );
+
+    let mut s = crate::session::testutil::test_session();
+    s.id = "s1".into();
+    s.worktree = Some(sw);
+    let engine = crate::session::testutil::test_engine_with(s);
+
+    match worktree_status_impl(&engine, "s1") {
+        IpcResult::Ok { data, .. } => {
+            assert!(!data.dirty);
+            assert_eq!(
+                data.unpushed_count, 0,
+                "a fresh worktree is ahead of nothing"
+            );
+            assert!(!data.unpushed);
+        }
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
+    }
+
+    // One real commit in the worktree, and only that one, counts as unpushed.
+    commit_in(
+        std::path::Path::new(&worktree_path),
+        "g.txt",
+        "session work",
+    );
+    match worktree_status_impl(&engine, "s1") {
+        IpcResult::Ok { data, .. } => assert_eq!(data.unpushed_count, 1),
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
     }
 }
 

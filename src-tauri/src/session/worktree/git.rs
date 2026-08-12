@@ -42,6 +42,36 @@ pub(crate) fn branch_exists(host: &GitHost, repo_root: &str, branch: &str) -> bo
     )
 }
 
+/// Whether `rev` resolves to a commit in `repo_root`.
+///
+/// Callers only ever pass a FULLY QUALIFIED ref (`refs/heads/…`, `refs/remotes/…`), so no
+/// value here can start with `-` and be mistaken for an option — `rev-parse` takes no `--`
+/// separator for revisions.
+pub(crate) fn rev_exists(host: &GitHost, repo_root: &str, rev: &str) -> bool {
+    matches!(
+        git_routed(
+            host,
+            repo_root,
+            &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")],
+        ),
+        Ok(o) if o.code == 0
+    )
+}
+
+/// Whether `ancestor` is reachable from `descendant` (`git merge-base --is-ancestor`).
+/// Fully-qualified refs only, same reason as `rev_exists`.
+pub(crate) fn is_ancestor(
+    host: &GitHost,
+    repo_root: &str,
+    ancestor: &str,
+    descendant: &str,
+) -> bool {
+    matches!(
+        git_routed(host, repo_root, &["merge-base", "--is-ancestor", ancestor, descendant]),
+        Ok(o) if o.code == 0
+    )
+}
+
 pub(crate) fn remote_name(host: &GitHost, repo_root: &str) -> Option<String> {
     let o = git_routed(host, repo_root, &["remote"]).ok()?;
     if o.code != 0 {

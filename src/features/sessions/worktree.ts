@@ -199,6 +199,17 @@ export function worktreeFetchWarningLine(worktree: SessionWorktree): string | nu
   return worktree.fetchError ? `could not fetch — forked from local \`${worktree.baseRef}\`` : null;
 }
 
+/**
+ * FR-7b/FR-14: the extra banner line when the branch was forked from the FETCHED base rather
+ * than the source checkout's local copy of it — so the worktree being ahead of the parent
+ * checkout's `main` reads as intended, not as drift. Null when the two are the same ref.
+ */
+export function worktreeBaseLine(worktree: SessionWorktree): string | null {
+  if (!worktree.baseResolved) return null;
+  const shown = worktree.baseResolved.replace(/^refs\/remotes\//, '');
+  return `forked from \`${shown}\` — the fetched tip, not the local \`${worktree.baseRef}\``;
+}
+
 // ---------- FR-14 per-session dismissal (localStorage) ----------
 
 function readDismissed(): string[] {

@@ -18,8 +18,8 @@ mod git;
 pub(crate) use git::path_exists;
 use git::{
     branch_checked_out_at, branch_exists, check_ref_format, compute_status, current_branch,
-    default_branch, fetch_with_timeout, in_use_path_from_stderr, norm_path, remote_name,
-    worktree_list_entries,
+    default_branch, fetch_with_timeout, in_use_path_from_stderr, is_ancestor, norm_path,
+    remote_name, rev_exists, worktree_list_entries,
 };
 
 const NOT_A_REPO_MSG: &str = "not a git repository — initialize with `git init` in the shell";
@@ -33,6 +33,11 @@ const NOT_A_REPO_MSG: &str = "not a git repository — initialize with `git init
 pub(crate) struct SessionWorktree {
     pub(crate) branch: String,
     pub(crate) base_ref: String,
+    /// FR-7b: the start point `git worktree add -b` actually got, when it differs from
+    /// `base_ref` (see contract/common.ts). Skipped when absent, like `fetch_error` — so
+    /// every pre-FR-7b persisted record simply reads back as `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) base_resolved: Option<String>,
     pub(crate) path: String,
     pub(crate) source_repo_root: String,
     pub(crate) created_branch: bool,
@@ -251,6 +256,50 @@ fn probe_branch(
     Ok(exists)
 }
 
+/// FR-7b: the ref a NEW branch should actually fork from.
+///
+/// FR-7's fetch updates `refs/remotes/<remote>/*`, but forking from the local `base_ref`
+/// still lands the worktree on whatever the local branch happened to point at — typically a
+/// `main` last pulled days ago. So when the fetch succeeded and `refs/remotes/<remote>/<base_ref>`
+/// exists, fork from THAT instead, and return it so the caller can record it.
+///
+/// The local branch is never touched. Fast-forwarding it would be the other way to do this, but
+/// git refuses to move a branch that is checked out anywhere — which the base branch, being the
+/// one the source checkout sits on, almost always is.
+///
+/// `None` (keep `base_ref` verbatim) whenever the remote tip is not a strict improvement:
+/// - the fetch failed / was skipped, so the remote-tracking ref is no fresher than the local one;
+/// - there is no remote, or no `<remote>/<base_ref>` (a tag, a sha, a purely local branch);
+/// - `base_ref` already names a remote-tracking ref (`origin/main`) — nothing to upgrade;
+/// - the local branch is NOT an ancestor of the remote tip, i.e. it is ahead or has diverged.
+///   Local commits the user has not pushed are still work they expect to build on; silently
+///   forking around them would lose them from the worktree.
+fn resolve_base_start_point(
+    host: &GitHost,
+    repo_root: &str,
+    remote: Option<&str>,
+    base_ref: &str,
+    fetched: bool,
+) -> Option<String> {
+    if !fetched {
+        return None;
+    }
+    let remote = remote?;
+    let base_ref = base_ref.trim();
+    if base_ref.is_empty() || base_ref.starts_with(&format!("{remote}/")) {
+        return None;
+    }
+    let candidate = format!("refs/remotes/{remote}/{base_ref}");
+    if !rev_exists(host, repo_root, &candidate) {
+        return None;
+    }
+    let local = format!("refs/heads/{base_ref}");
+    if rev_exists(host, repo_root, &local) && !is_ancestor(host, repo_root, &local, &candidate) {
+        return None;
+    }
+    Some(candidate)
+}
+
 /// Resolves a `worktree` request against the given (source) `cwd` into the
 /// SESSION's actual working directory + its `SessionWorktree` provenance.
 /// `adopt` performs NO git mutation (FR-5/FR-12); otherwise runs prune -> fetch
@@ -292,6 +341,7 @@ pub(crate) fn resolve_worktree(
         let sw = SessionWorktree {
             branch,
             base_ref: opts.base_ref.clone(),
+            base_resolved: None,
             path: cwd.to_string(),
             source_repo_root: source_root,
             created_branch: false,
@@ -383,6 +433,23 @@ pub(crate) fn resolve_worktree(
 
     let worktree_path = compute_worktree_path(&host, &source_repo_root, branch);
 
+    // FR-7b: a new branch forks from the JUST-FETCHED tip of the base branch when that is
+    // strictly newer than the local one, so the worktree starts on the current base rather
+    // than on however stale the source checkout's copy of it is. `None` keeps `base_ref`
+    // verbatim. Only meaningful for a new branch — an existing one ignores the base (FR-8).
+    let base_resolved = (!exists)
+        .then(|| {
+            resolve_base_start_point(
+                &host,
+                &source_repo_root,
+                remote.as_deref(),
+                &opts.base_ref,
+                fetched,
+            )
+        })
+        .flatten();
+    let start_point = base_resolved.as_deref().unwrap_or(&opts.base_ref);
+
     // FR-8: `-b <branch> <path> <baseRef>` for a new branch, `<path> <branch>`
     // (baseRef ignored) for an existing one.
     let add_result = if exists {
@@ -395,14 +462,7 @@ pub(crate) fn resolve_worktree(
         git_routed(
             &host,
             &source_repo_root,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                branch,
-                &worktree_path,
-                &opts.base_ref,
-            ],
+            &["worktree", "add", "-b", branch, &worktree_path, start_point],
         )
     };
     match add_result {
@@ -441,6 +501,7 @@ pub(crate) fn resolve_worktree(
         SessionWorktree {
             branch: branch.to_string(),
             base_ref: opts.base_ref.clone(),
+            base_resolved,
             path: worktree_path,
             source_repo_root,
             created_branch: !exists,
@@ -568,7 +629,11 @@ pub(crate) fn worktree_status_impl(
         };
         (
             wt.path.clone(),
-            wt.base_ref.clone(),
+            // FR-7b: the fork point is the ref the branch was actually created off —
+            // `base_ref` alone would count every commit the fetch brought in as "unpushed".
+            wt.base_resolved
+                .clone()
+                .unwrap_or_else(|| wt.base_ref.clone()),
             wt.created_branch,
             s.worktree_distro.clone(),
         )
@@ -644,7 +709,10 @@ pub(crate) fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResu
         (
             wt.path.clone(),
             wt.source_repo_root.clone(),
-            wt.base_ref.clone(),
+            // FR-7b, as in `worktree_status_impl`.
+            wt.base_resolved
+                .clone()
+                .unwrap_or_else(|| wt.base_ref.clone()),
             wt.created_branch,
             s.worktree_distro.clone(),
         )

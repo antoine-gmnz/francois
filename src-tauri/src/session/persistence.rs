@@ -721,6 +721,7 @@ mod tests {
         let wt = SessionWorktree {
             branch: "feat/x".into(),
             base_ref: "main".into(),
+            base_resolved: Some("refs/remotes/origin/main".into()),
             path: "/home/u/.francois-worktrees/api/feat-x".into(),
             source_repo_root: "/home/u/api".into(),
             created_branch: true,
@@ -755,6 +756,28 @@ mod tests {
                 .worktree_distro,
             None
         );
+    }
+
+    #[test]
+    fn a_worktree_record_written_before_base_resolved_still_loads() {
+        // session-worktree FR-7b: `baseResolved` is skipped when absent, so no record
+        // written before it existed carries the key. `parse_session_record` deserializes
+        // with `.ok()`, so any field that failed to be optional would silently unlink the
+        // session from its worktree (losing the removal guard and the FR-14 banner) rather
+        // than erroring — pin that down here, as `fetchError` already relies on it too.
+        let mut rec = serde_json::json!({ "id": "s1", "name": "n", "cwd": "/x" });
+        rec["worktree"] = serde_json::json!({
+            "branch": "feat/x",
+            "baseRef": "main",
+            "path": "/home/u/.francois-worktrees/api/feat-x",
+            "sourceRepoRoot": "/home/u/api",
+            "createdBranch": true,
+            "fetched": true,
+        });
+        let parsed = parse_session_record(&rec, 0).expect("parse");
+        let wt = parsed.worktree.expect("legacy worktree record still loads");
+        assert_eq!(wt.branch, "feat/x");
+        assert_eq!(wt.base_resolved, None);
     }
 
     #[test]

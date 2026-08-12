@@ -62,6 +62,11 @@
 .worktree-notice__warning {
   margin-top: var(--space-4);
 }
+/* FR-7b: provenance, not a warning — dimmer than the notice body it sits under. */
+.worktree-notice__base {
+  margin-top: var(--space-4);
+  color: var(--text-faint);
+}
 .worktree-notice__dismiss {
   font-size: var(--font-size-10);
   color: var(--text-faint);
