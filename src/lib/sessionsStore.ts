@@ -3,13 +3,13 @@
 // selection/filter state. Split out of the former monolithic store.ts — see
 // store.ts for the composition root.
 //
-// Cross-slice coupling: `setActiveSessionId` also resets agentTabStore's
-// `agentTabs`/`mainTab` on a session SWITCH (agent-tab FR-14) — agent ids are
-// session-scoped, so tabs from the previous session must not survive.
+// Cross-slice coupling: `setActiveSessionId` moves agentTabStore's `mainTab`
+// off a dynamic tab on a session SWITCH, and `removeSession` drops the removed
+// session's tabs (fix-agent-view FR-8/FR-9).
 
 import type { StateCreator } from 'zustand';
 import type { SessionId, SessionMeta } from '../../contract/common';
-import { mainTabAfterClose } from '../features/agents/agent-tab';
+import { dropSessionTabs, mainTabAfterClose } from '../features/agents/agent-tab';
 import type { MainTab } from './agentTabStore';
 import {
   clampPaneIndex,
@@ -62,15 +62,19 @@ export interface SessionsSlice {
 
 /**
  * The plain session switch, shared by `setActiveSessionId`'s non-swap branch
- * and `reassignActiveSessionId`: agent ids are session-scoped, so a CHANGE
- * closes every agent tab (and hands SESSION back the main pane if one of them
- * was active). Re-selecting the session already active must not — clicking the
- * current row in the sidebar would otherwise wipe the tabs you are reading.
+ * and `reassignActiveSessionId`.
+ *
+ * fix-agent-view FR-8 (supersedes agent-tab FR-14): a switch no longer CLOSES
+ * anything. Tabs are keyed by session, so the outgoing session keeps its own and
+ * gets them back when you return; pane 0 just cannot stay on a tab belonging to
+ * the session it is leaving, hence the `mainTabAfterClose` fold — which leaves a
+ * built-in `diff`/`shell` tab alone, as before. Re-selecting the session already
+ * active stays a pure no-op.
  */
 function switchTo(s: AppState, activeSessionId: SessionId | null): Partial<AppState> {
   return s.activeSessionId === activeSessionId
     ? { activeSessionId }
-    : { activeSessionId, agentTabs: [], mainTab: mainTabAfterClose(s.mainTab, null) as MainTab };
+    : { activeSessionId, mainTab: mainTabAfterClose(s.mainTab, null) as MainTab };
 }
 
 /**
@@ -124,8 +128,12 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       // reassignAfterRemoval below, which reassigns first — pane 1 is never
       // silently promoted into pane 0 by a removal that has a fallback.)
       const extraPanes = panesWithout(s.extraPanes, id);
-      if (extraPanes.length === s.extraPanes.length) return { sessions };
-      return { sessions, ...compact(s, extraPanes) };
+      // fix-agent-view FR-9: a removed session takes its dynamic tabs with it —
+      // nothing else would ever collect them, since the map is keyed by a
+      // session id that no longer resolves.
+      const agentTabs = dropSessionTabs(s.agentTabs, id);
+      if (extraPanes.length === s.extraPanes.length) return { sessions, agentTabs };
+      return { sessions, agentTabs, ...compact(s, extraPanes) };
     }),
 
   activeSessionId: null,
@@ -135,8 +143,9 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
   setActiveSessionId: (activeSessionId) =>
     set((s) => {
       // split-by-4 FR-19: assigning another pane's session to pane 0 SWAPS the
-      // two rather than showing it twice. (Agent tabs are always empty while
-      // split — FR-20 — so no tab reset is owed here.)
+      // two rather than showing it twice. No tab reset is owed: each pane's tab
+      // travels with the session it belongs to (fix-agent-view §7 case 4), and
+      // the map is keyed by session, so nothing has to be re-homed.
       const j = activeSessionId === null ? null : paneIndexOf(s, activeSessionId);
       if (j !== null && j > 0) {
         const extraPanes = s.extraPanes.slice();

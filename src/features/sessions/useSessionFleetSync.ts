@@ -201,6 +201,19 @@ export function useSessionFleetSync(): SessionFleetSync {
           agentStatusRef.current.set(agent.sessionId, m);
         }
         const prevStatus = m.get(agent.id);
+        // fix-agent-view FR-21: the FIRST update for an agent puts its chip in
+        // that session's strip on its own — no trip through the AGENTS view to
+        // click the card. This map is exactly the "have we seen this agent"
+        // record (it is per session and dropped with the session in
+        // `dropDerived`), so the tab is offered once and once only: closing the
+        // chip, or letting the cap evict it, is final for that agent.
+        if (prevStatus === undefined) {
+          useStore.getState().trackAgentTab(agent.sessionId, {
+            id: agent.id,
+            name: agent.name,
+            status: agent.status,
+          });
+        }
         m.set(agent.id, agent.status);
         updateDerived(agent.sessionId, { runningAgentCount: countRunning(m) }); // FR-5
         // overview: an agent SETTLING is feed-worthy; its intermediate updates

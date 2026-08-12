@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import AccountsModal from '../features/accounts/AccountsModal';
 import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
-import { agentIdFromTab } from '../features/agents/agent-tab';
+import { agentIdFromTab, tabsForSession } from '../features/agents/agent-tab';
 import AdoptCloudSessionModal from '../features/cloud-sessions/AdoptCloudSessionModal';
 import McpPanel from '../features/mcp/McpPanel';
 import { initNotifications } from '../features/notifications/notifications';
@@ -86,7 +86,10 @@ export default function App() {
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
   // agent-tab FR-9: the dynamic per-subagent tabs, after the view segment.
-  const agentTabs = useStore((s) => s.agentTabs);
+  // fix-agent-view FR-1/FR-11: keyed by session now, and the session row only
+  // shows them unsplit — so PANE 0's session is the right list here. Each
+  // SplitPane reads its own.
+  const agentTabs = useStore((s) => tabsForSession(s.agentTabs, s.activeSessionId));
   const closeAgentTab = useStore((s) => s.closeAgentTab);
   const clearAgentTabs = useStore((s) => s.clearAgentTabs);
   // split-by-4: panes 1..3. `activeSessionId`/`mainTab` are PANE 0's, unchanged —
@@ -342,7 +345,13 @@ export default function App() {
                 className="app-main-section"
                 style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
               >
-                <MainPaneBody mainTab={mainTab} activeAgentId={activeAgentId} active={active} home={home} />
+                <MainPaneBody
+                  mainTab={mainTab}
+                  activeAgentId={activeAgentId}
+                  active={active}
+                  home={home}
+                  setMainTab={setMainTab}
+                />
               </section>
             )}
           </div>

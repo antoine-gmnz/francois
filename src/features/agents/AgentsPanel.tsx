@@ -157,8 +157,11 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
             // immediately pulling focus back to pane [3]. The keyboard path
             // (↑/↓ + ⏎, the in-place trail) is deliberately unchanged.
             e.stopPropagation();
-            openAgentTab({ id: agent.id, name: agent.name, status: agent.status });
-            setFocusedPane('main');
+            // fix-agent-view FR-15: the tab is opened for THIS panel's session,
+            // so it lands in the pane that holds it — the focused one, split or
+            // not. openAgentTab moves focus to the main pane itself (FR-4), so
+            // a session that holds no pane cannot pull focus out of pane [3].
+            if (sessionId) openAgentTab(sessionId, { id: agent.id, name: agent.name, status: agent.status });
           }}
           onHover={setHoverId}
           onKill={kill}

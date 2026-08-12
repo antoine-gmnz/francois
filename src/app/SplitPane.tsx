@@ -2,13 +2,17 @@ import { Maximize2, Plus, X } from 'lucide-react';
 import type { SessionId } from '../../contract/common';
 import { formatContextTokens } from '../../contract/conversation-view';
 import { isBusyStatus, STATUS_COLOR, STATUS_LABEL, statusPulses } from '../../contract/fleet-board';
+import AgentView from '../features/agents/AgentView';
+import { agentIdFromTab, tabIdFor, tabsForSession, workflowIdFromTab } from '../features/agents/agent-tab';
 import ConversationView from '../features/conversation/ConversationView';
 import DiffView from '../features/diff/DiffView';
+import WorkflowView from '../features/workflows/WorkflowView';
 import type { PaneTab } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import { toneVar } from '../lib/tone';
 import { BadgePill } from '../ui/BadgePill';
 import { StatusDot } from '../ui/StatusDot';
+import AgentTabChip from './AgentTabChip';
 import EmptyPaneMessage from './EmptyPaneMessage';
 import ShellTabView from './ShellTabView';
 
@@ -77,6 +81,16 @@ export default function SplitPane({
   // (seeded once, then diff.changed) — the same number MainTabStrip shows, with
   // no second subscription per pane.
   const diffCount = useStore((s) => (sessionId ? (s.derived.get(sessionId)?.fileCount ?? 0) : 0));
+  // fix-agent-view FR-12: THIS pane's session's dynamic tabs. `tabsForSession`
+  // hands back a shared empty array for a tab-less session, so the selector is
+  // referentially stable and another session's `agent.update` never re-renders
+  // this pane.
+  const agentTabs = useStore((s) => tabsForSession(s.agentTabs, sessionId));
+  const closeAgentTab = useStore((s) => s.closeAgentTab);
+  // Which dynamic body this pane shows, if any — read straight off the tab id,
+  // exactly as MainPaneBody does for the single pane, so the two cannot drift.
+  const agentId = agentIdFromTab(tab);
+  const runId = workflowIdFromTab(tab);
 
   // toneVar: STATUS_COLOR is the contract's DARK hex map — the `active` tag would
   // otherwise stay acid lime on the light theme's white header (lib/tone.ts).
@@ -158,7 +172,7 @@ export default function SplitPane({
       {/* tab strip — a SUB level: sentence-case, no track, no accent underline.
           FR-9: the grid chrome has none; a pane there is one surface. */}
       {!dense && (
-        <div className="split-pane__tabs">
+        <div className="scz split-pane__tabs">
           {TABS.map((t) => (
             <span
               key={t.id}
@@ -171,6 +185,20 @@ export default function SplitPane({
               {t.id === 'diff' && diffCount > 0 && <BadgePill>{diffCount}</BadgePill>}
             </span>
           ))}
+          {/* fix-agent-view FR-12: THIS pane's session's agent and workflow
+              tabs, after Shell and behind a divider — content, following
+              chrome. Only in the two-pane regime: `dense` has no strip at all
+              (FR-13), which is why `openAgentTab` refuses to open one there. */}
+          {agentTabs.length > 0 && <span className="split-tab-divider" />}
+          {agentTabs.map((t) => (
+            <AgentTabChip
+              key={tabIdFor(t)}
+              tab={t}
+              active={tabIdFor(t) === tab}
+              onOpen={() => onTab(tabIdFor(t) as PaneTab)}
+              onClose={() => closeAgentTab(t.id)}
+            />
+          ))}
         </div>
       )}
 
@@ -178,6 +206,14 @@ export default function SplitPane({
       <div className="split-pane__body">
         {!session ? (
           <EmptyPaneBody index={index} />
+        ) : agentId !== null ? (
+          // fix-agent-view FR-16: the SAME AgentView the single pane renders,
+          // keyed by agent so switching tabs remounts rather than leaking the
+          // previous transcript. FR-17: "Back to session" returns THIS pane.
+          // Unreachable while `dense` — paneTabAt flattens a dynamic tab there.
+          <AgentView key={agentId} agentId={agentId} sessionId={session.id} onBack={() => onTab('session')} />
+        ) : runId !== null ? (
+          <WorkflowView key={runId} runId={runId} sessionId={session.id} />
         ) : dense || tab === 'session' ? (
           <ConversationView
             key={session.id}

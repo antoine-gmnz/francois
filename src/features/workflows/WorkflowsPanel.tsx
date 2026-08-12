@@ -110,9 +110,11 @@ export default function WorkflowsPanel({ sessionId }: { sessionId: string | null
                 // clicked to read it. A run with nothing on disk keeps today's
                 // select-and-expand, and `⏎` (the keyboard path above) never
                 // opens a tab at all.
-                if (resolveCardClick(run).kind === 'open') {
-                  openAgentTab(workflowTabRef(run));
-                  setFocusedPane('main');
+                // fix-agent-view FR-15: opened for THIS panel's session, so the
+                // tab lands in the pane holding it (openAgentTab also moves
+                // focus to the main pane — FR-4).
+                if (sessionId && resolveCardClick(run).kind === 'open') {
+                  openAgentTab(sessionId, workflowTabRef(run));
                   return;
                 }
                 setFocusedPane('workflows');

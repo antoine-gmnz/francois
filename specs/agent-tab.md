@@ -108,8 +108,12 @@ tab after SHELL showing that subagent's own conversation, full text and tool car
   pane [3].
 - **FR-13.** Closing the **active** agent tab activates `session`. Closing an inactive one leaves the
   active tab alone.
-- **FR-14.** Switching the active session closes every agent tab; if an agent tab was active, `session`
-  becomes active. (Agent ids are session-scoped — async-agents FR-23's rule for trails.)
+- **FR-14.** ~~Switching the active session closes every agent tab; if an agent tab was active, `session`
+  becomes active. (Agent ids are session-scoped — async-agents FR-23's rule for trails.)~~
+  **Superseded by `fix-agent-view` FR-8** (2026-08-12): the open-tab list is keyed by session id, so a
+  session switch no longer closes anything — the pane shows the incoming session's own tabs, and
+  falls back to `session` only if it was on a dynamic tab. `clearAgentTabs` survives as the
+  All-projects-widen path only.
 - **FR-15.** Keyboard: with an agent tab active and no modal/input focused, `w` closes it (FR-13's
   fallback applies). `d` / `t` / `o` keep their existing toggle grammar and therefore leave an agent
   tab the same way they leave any other.

@@ -103,8 +103,24 @@ function persistCollapsedPanes(panes: CollapsedPanes): void {
 // as one record. (This generalizes split-session's left/right pair: two panes is
 // simply `extraPanes.length === 1`.)
 
-/** The three tabs a pane can show. A strict subset of MainTab. */
-export type PaneTab = 'session' | 'diff' | 'shell';
+/**
+ * What a pane can show. A strict subset of MainTab — everything except the
+ * app-scoped `overview` and the four dissolved panel tabs, which are chrome
+ * overlays rather than a session's view.
+ *
+ * fix-agent-view FR-3: this used to be the three built-in tabs alone. The
+ * dynamic members joined when agent/workflow tabs became per-session, so a
+ * split pane can show one.
+ */
+export type PaneTab = 'session' | 'diff' | 'shell' | `agent:${string}` | `workflow:${string}`;
+
+/** The three tabs a pane's strip actually draws as buttons. */
+export type BuiltinPaneTab = 'session' | 'diff' | 'shell';
+
+/** fix-agent-view FR-3: is this one of the three built-ins? */
+export function isBuiltinPaneTab(tab: string): tab is BuiltinPaneTab {
+  return tab === 'session' || tab === 'diff' || tab === 'shell';
+}
 
 /**
  * FR-3: the pane count's LAYOUT consequence, and the only thing anything
@@ -187,15 +203,36 @@ export function clampPaneIndex(i: number, count: number): number {
 }
 
 /**
- * FR-20: MainTab → the PaneTab a pane can show. `overview` and the dynamic
- * `agent:<id>`/`workflow:<id>` tabs clamp to 'session'.
+ * MainTab → the PaneTab a pane can show. `overview` and the four dissolved
+ * panel tabs (`agents`/`mcp`/`skills`/`workflows`) clamp to 'session' — they are
+ * chrome overlays over the whole main cell, not one session's view.
  *
- * Declared by §5 under `src/app/appShell.ts`, which re-exports it — it lives
- * here beside `PaneTab` because the store slice below needs it inside `set()`,
- * and importing it the other way would make the two modules cyclic.
+ * fix-agent-view FR-3 narrowed this: the dynamic `agent:<id>` / `workflow:<id>`
+ * tabs are PaneTab members now and pass straight through, so entering a
+ * two-pane split no longer discards the tab you were reading (split-by-4 FR-20,
+ * superseded). The GRID regime still hides them — see `denseTab`.
+ *
+ * Declared by split-by-4 §5 under `src/app/appShell.ts`, which re-exports it —
+ * it lives here beside `PaneTab` because the store slice below needs it inside
+ * its own `set()`, and importing it the other way would make the two modules
+ * cyclic.
  */
 export function clampToPaneTab(tab: MainTab): PaneTab {
-  return tab === 'diff' || tab === 'shell' ? tab : 'session';
+  if (isBuiltinPaneTab(tab)) return tab;
+  return tab.startsWith('agent:') || tab.startsWith('workflow:') ? (tab as PaneTab) : 'session';
+}
+
+/**
+ * fix-agent-view FR-13: a pane's tab as the GRID regime can render it. At three
+ * panes and up a pane is one surface with no tab strip (split-by-4 FR-9), so
+ * there is nowhere to hang a chip and no way back off a dynamic tab — it reads
+ * as `session` instead.
+ *
+ * Applied at READ time (`paneTabAt`) rather than written into the slot, so
+ * shrinking back to two panes restores the tab the pane was really on.
+ */
+export function denseTab(tab: PaneTab): PaneTab {
+  return isBuiltinPaneTab(tab) ? tab : 'session';
 }
 
 // ---------- pure pane readers ----------
@@ -213,10 +250,15 @@ export function paneSessionIdAt(s: PaneReadable, i: number): SessionId | null {
   return s.extraPanes[i - 1]?.sessionId ?? null;
 }
 
-/** Pane `i`'s tab. Pane 0's is `mainTab`, clamped — it may sit on OVERVIEW. */
+/**
+ * Pane `i`'s tab. Pane 0's is `mainTab`, clamped — it may sit on OVERVIEW or on
+ * one of the dissolved panel tabs. fix-agent-view FR-13: in the GRID regime the
+ * result is additionally flattened by `denseTab`, since a dense pane has no
+ * strip to carry a dynamic tab's chip.
+ */
 export function paneTabAt(s: PaneReadable, i: number): PaneTab {
-  if (i === 0) return clampToPaneTab(s.mainTab);
-  return s.extraPanes[i - 1]?.tab ?? 'session';
+  const tab = i === 0 ? clampToPaneTab(s.mainTab) : (s.extraPanes[i - 1]?.tab ?? 'session');
+  return layoutRegime(paneCount(s)) === 'grid' ? denseTab(tab) : tab;
 }
 
 /** FR-19/FR-22: which pane shows `sessionId`, or null. */
@@ -310,6 +352,10 @@ function readPaneSlot(raw: unknown): PaneSlot | null {
   const sessionId = typeof id === 'string' && id.length > 0 ? id : null;
   if (id !== null && sessionId === null) return null; // anything else is garbage
   const tab = obj.tab;
+  // fix-agent-view §6: only the three BUILT-IN tabs survive a reload. `PaneTab`
+  // widened to carry `agent:<id>` / `workflow:<id>`, but those live in memory
+  // only (FR-1) — a persisted one would index into an empty map and strand the
+  // pane on a tab with no chip and no body, so it degrades to 'session' here.
   return { sessionId, tab: tab === 'diff' || tab === 'shell' ? tab : 'session' };
 }
 
@@ -833,8 +879,13 @@ function focusPanePatch(s: AppState, index: number): Partial<AppState> {
 function growPatch(s: AppState, from: number, to: number): Partial<AppState> {
   const patch: Partial<AppState> = columnPatch(layoutRegime(to));
   if (from === 1) {
+    // fix-agent-view FR-10 (supersedes split-by-4 FR-20's second half): entering
+    // split closes NOTHING. Dynamic tabs are keyed by session and every pane
+    // renders its own session's, so pane 0 keeps the agent tab it was on. Only
+    // `overview` and the dissolved panel tabs still clamp — they are overlays
+    // over the whole main cell, and the grid regime flattens the rest at read
+    // time (`denseTab`) rather than by wiping state here.
     patch.mainTab = clampToPaneTab(s.mainTab);
-    patch.agentTabs = [];
   }
   return patch;
 }

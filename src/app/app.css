@@ -693,6 +693,10 @@ body.app-resizing-y * {
   padding: var(--space-6) var(--space-8);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  /* fix-agent-view FR-13: a half-width pane cannot fit three built-ins plus six
+     agent chips — the strip scrolls past overflow rather than squeezing them. */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .split-tab {
   display: flex;
@@ -704,6 +708,7 @@ body.app-resizing-y * {
   color: var(--text-muted);
   cursor: pointer;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .split-pane--focused .split-tab {
   color: var(--text-hint);
@@ -735,6 +740,63 @@ body.app-resizing-y * {
 .split-pane--focused .split-tab .badge-pill {
   background: var(--accent);
   color: var(--bg-app);
+}
+
+/* ── fix-agent-view: dynamic tabs in a pane's SUB-strip ──────────────────────
+   Same anatomy as `.app-tab-chip` (dot · ⇉ · name · ✕), one register down: the
+   sub-strip's 11.5px type, no pill border, and the active chip borrows
+   `.split-tab--on`'s raised fill so a pane never shows two competing "active"
+   idioms. Like every other sub-strip element it desaturates on the UNFOCUSED
+   pane — only the status dot keeps its colour, since it reports the agent's
+   liveness rather than the pane's focus. */
+.split-tab-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: var(--space-2) var(--space-6);
+  background: var(--border-2);
+  flex-shrink: 0;
+}
+.split-tab-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-4) var(--space-7) var(--space-4) var(--space-8);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-11-5);
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 150px;
+  flex-shrink: 0;
+}
+.split-tab-chip:hover {
+  color: var(--text-2);
+}
+.split-tab-chip--active,
+.split-tab-chip--active:hover {
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-raised);
+}
+.split-pane--focused .split-tab-chip {
+  color: var(--text-hint);
+}
+.split-pane--focused .split-tab-chip--active,
+.split-pane--focused .split-tab-chip--active:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover-2);
+}
+.split-tab-chip-glyph {
+  color: var(--accent-2);
+  flex-shrink: 0;
+}
+.split-tab-chip-close {
+  font-size: var(--font-size-9-5);
+  color: var(--text-disabled);
+  flex-shrink: 0;
+}
+.split-tab-chip-close:hover {
+  color: var(--text-dim);
 }
 
 .split-pane__body {

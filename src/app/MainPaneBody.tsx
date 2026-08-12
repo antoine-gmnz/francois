@@ -16,12 +16,14 @@ export interface MainPaneBodyProps {
   activeAgentId: string | null;
   active: SessionMeta | null;
   home: string;
+  /** fix-agent-view FR-17: what an agent tab's "Back to session" returns to. */
+  setMainTab: (tab: MainTab) => void;
 }
 
 /** The main pane's body: one renderer per `MainTab` (Phase 5 dispatch table),
  * with the dynamic `agent:<id>` tabs handled explicitly since they are not a
  * plain `MainTab` key the table can be built over. */
-export default function MainPaneBody({ mainTab, activeAgentId, active, home }: MainPaneBodyProps) {
+export default function MainPaneBody({ mainTab, activeAgentId, active, home, setMainTab }: MainPaneBodyProps) {
   const branch = mainPaneBranch(mainTab);
 
   if (branch === 'agent') {
@@ -30,7 +32,7 @@ export default function MainPaneBody({ mainTab, activeAgentId, active, home }: M
     // session is always present here (FR-14 closes agent tabs when it
     // changes) — the fallback only guards a dangling id.
     return active && activeAgentId !== null ? (
-      <AgentView key={activeAgentId} agentId={activeAgentId} sessionId={active.id} />
+      <AgentView key={activeAgentId} agentId={activeAgentId} sessionId={active.id} onBack={() => setMainTab('session')} />
     ) : (
       <EmptyPaneMessage>select a session</EmptyPaneMessage>
     );
