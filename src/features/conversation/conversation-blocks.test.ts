@@ -749,6 +749,7 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
       setStatus: vi.fn(),
       setErrorMessage: vi.fn(),
       setResumeFailed: vi.fn(),
+      setLimitNotice: vi.fn(),
       setPinned: vi.fn(),
       setCommands: vi.fn(),
       patchUsage: vi.fn(),
@@ -796,6 +797,24 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     });
     expect(setters.setErrorMessage).toHaveBeenCalledWith('nope');
     expect(setters.setStatus).toHaveBeenCalledWith('error');
+    expect(setters.setLimitNotice).not.toHaveBeenCalled();
+  });
+
+  it('session.error USAGE_LIMIT → the banner, and NOT the terminal error state', () => {
+    // THE BUG: a usage-limit failure used to flip the view to `error`, which
+    // disables the composer — and nothing is emitted when the plan window
+    // resets, so the input never came back. The core keeps the session idle;
+    // this handler must not overrule it.
+    const dispatch = vi.fn();
+    const setters = newSetters();
+    applySessionEvent(dispatch, setters, {
+      type: 'session.error',
+      sessionId: 'x',
+      error: { code: 'USAGE_LIMIT', message: 'Claude AI usage limit reached|1753272000' },
+    });
+    expect(setters.setLimitNotice).toHaveBeenCalledWith('Claude AI usage limit reached|1753272000');
+    expect(setters.setStatus).not.toHaveBeenCalled();
+    expect(setters.setErrorMessage).not.toHaveBeenCalled();
   });
 
   it('context.usage → patchUsage(usedTokens, limitTokens)', () => {
@@ -811,6 +830,8 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     applySessionEvent(dispatch, setters, { type: 'message.user', sessionId: 'x', blockId: 'b1', text: 'hi' });
     expect(dispatch).toHaveBeenCalledWith({ t: 'msgUser', blockId: 'b1', text: 'hi' });
     expect(setters.setResumeFailed).toHaveBeenCalledWith(false);
+    // …and the usage-limit banner: the user is retrying, so the old notice goes.
+    expect(setters.setLimitNotice).toHaveBeenCalledWith(null);
   });
 
   it('session.resumeFailed → setResumeFailed(true)', () => {

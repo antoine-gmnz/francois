@@ -39,6 +39,32 @@
   cursor: pointer;
 }
 
+/* usage-limit notice — same banner geometry as .resume-banner, tinted with
+   --error because the turn actually failed. The session behind it is alive, so
+   this must never grow into the dead-session treatment. */
+.limit-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+  border-left: 2px solid var(--error);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-11);
+  margin: var(--space-6) var(--space-8);
+  flex-shrink: 0;
+  animation: fadeIn 120ms ease-out;
+}
+.limit-banner__text {
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+  flex: 1;
+}
+.limit-banner__dismiss {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
 /* session-worktree FR-14 bare-checkout notice — same banner geometry as
    .resume-banner, tinted rather than raised so the two never read as the
    same message when both are up. */

@@ -39,6 +39,25 @@ pub(crate) fn is_terminal(status: &str) -> bool {
     matches!(status, "done" | ERROR)
 }
 
+/// A turn failure the SESSION survives: the account hit its plan usage limit (or
+/// an API rate limit), which is a wall-clock window rather than a broken thread.
+///
+/// This is load-bearing. Nothing is emitted at the moment a limit resets, so a
+/// session parked on the terminal `error` status would stay dead — composer
+/// disabled, placeholder still quoting the limit message — long after the window
+/// rolled over. Such a turn fails, the session returns to `idle`, and the next
+/// message simply works (or fails the same way again if the limit still holds).
+///
+/// Best-effort wording match, like `account::is_credential_failure`: the CLI
+/// carries no machine-readable code for this on the stream, only the result
+/// string (e.g. `Claude AI usage limit reached|1753272000`).
+pub(crate) fn is_transient_failure(message: &str) -> bool {
+    let m = message.to_lowercase();
+    ["usage limit", "rate limit", "rate_limit"]
+        .iter()
+        .any(|needle| m.contains(needle))
+}
+
 /// The status a turn should carry given what it is parked on, or `None` when
 /// nothing is pending and it should read as plainly `running`.
 ///
@@ -123,6 +142,30 @@ mod tests {
             let n = u8::from(is_busy(s)) + u8::from(is_terminal(s)) + u8::from(s == IDLE);
             assert_eq!(n, 1, "{s} landed in {n} buckets");
         }
+    }
+
+    #[test]
+    fn transient_failure_matches_the_limit_wording_only() {
+        // The exact result string the CLI puts on the stream when the plan's
+        // window is exhausted — the one that used to kill the session for good.
+        assert!(is_transient_failure(
+            "Claude AI usage limit reached|1753272000"
+        ));
+        assert!(is_transient_failure("You have reached your usage limit"));
+        assert!(is_transient_failure("API Error: 429 rate limit exceeded"));
+        assert!(is_transient_failure("rate_limit_error"));
+
+        // Everything else genuinely ends the session.
+        assert!(!is_transient_failure(
+            "the Claude Code process ended unexpectedly"
+        ));
+        assert!(!is_transient_failure(
+            "Unauthorized: please run `claude` to log in"
+        ));
+        assert!(!is_transient_failure("prompt is too long"));
+        assert!(!is_transient_failure(
+            "could not start claude: No such file or directory"
+        ));
     }
 
     #[test]
