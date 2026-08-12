@@ -19,6 +19,7 @@ import {
   siblingWorktreeSummaryLine,
   submitErrorBanner,
   truncateBranchLeft,
+  worktreeBaseLine,
   worktreeBranchInUsePath,
   worktreeCreateBlocked,
   worktreeFetchWarningLine,
@@ -329,6 +330,17 @@ describe('worktreeFetchWarningLine (FR-14)', () => {
   it('names the base ref when the fetch failed', () => {
     expect(worktreeFetchWarningLine(wt({ fetched: false, fetchError: 'timed out', baseRef: 'main' }))).toBe(
       'could not fetch — forked from local `main`',
+    );
+  });
+});
+
+describe('worktreeBaseLine (FR-7b)', () => {
+  it('is null when the local base was already the fork point', () => {
+    expect(worktreeBaseLine(wt({ baseResolved: undefined }))).toBeNull();
+  });
+  it('names the remote tip the branch was actually forked from, without the refs/remotes prefix', () => {
+    expect(worktreeBaseLine(wt({ baseRef: 'main', baseResolved: 'refs/remotes/origin/main' }))).toBe(
+      'forked from `origin/main` — the fetched tip, not the local `main`',
     );
   });
 });

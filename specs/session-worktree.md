@@ -95,8 +95,19 @@ session is removed from Francois, the directory is kept.
   and the resulting `SessionWorktree` carries `fetched: false` + `fetchError`. When `probe.remote` is
   null (no remote configured) the fetch is **skipped silently** with `fetched: false` and no
   `fetchError`.
-- **FR-8** The add is `git worktree add -b <branch> <path> <baseRef>` when the branch is new
-  (`createdBranch: true`), and `git worktree add <path> <branch>` when it already exists — in the
+- **FR-7b** A **new** branch forks from the ref the fetch just updated, not from the source
+  checkout's local copy of it: when the fetch succeeded and `refs/remotes/<remote>/<baseRef>` exists,
+  that ref is the start point and is recorded as `baseResolved`. The local branch is **never moved**
+  (git refuses to update a checked-out branch, and the base branch is the one the source checkout
+  usually sits on). `baseRef` is echoed verbatim regardless. The start point stays `baseRef` when the
+  fetch failed or was skipped, when there is no `<remote>/<baseRef>` (a tag, a sha, a purely local
+  branch), when `baseRef` already names a remote-tracking ref, or when the local branch is **not an
+  ancestor** of the remote tip — it is ahead or has diverged, and unpushed local commits on the base
+  are work the worktree must keep. `baseResolved` is also what FR-18 counts `unpushed` from; counting
+  from a stale `baseRef` would bill every fetched commit to the session.
+- **FR-8** The add is `git worktree add -b <branch> <path> <baseResolved ?? baseRef>` when the branch
+  is new (`createdBranch: true`, start point per FR-7b), and `git worktree add <path> <branch>` when
+  it already exists — in the
   latter case `baseRef` is ignored entirely and echoed back verbatim.
 - **FR-9** `worktreePath` = `<dirname(repoRoot)>/.francois-worktrees/<basename(repoRoot)>/<slug>`,
   where `slug` is `branch` lowercased with every character outside `[a-z0-9._-]` replaced by `-`,
@@ -124,7 +135,9 @@ session is removed from Francois, the directory is kept.
 - **FR-14** A **persistent dismissible banner** pinned above the `SESSION` transcript states: no
   dependencies were installed, and local-scope config (`.claude/settings.local.json`, local
   `.mcp.json`) was not carried over, so permission rules and MCP servers may differ from the parent
-  checkout. When `fetchError` is set it also states "could not fetch — forked from local `<baseRef>`".
+  checkout. When `fetchError` is set it also states "could not fetch — forked from local `<baseRef>`",
+  and when `baseResolved` is set it states "forked from `<remote>/<baseRef>` — the fetched tip, not
+  the local `<baseRef>`" (FR-7b), so a worktree ahead of the parent checkout reads as intended.
   Dismissal is per session and persists in `localStorage` under `WORKTREE_NOTICE_STORAGE_KEY`; the
   banner never returns for that session.
 - **FR-15** On a **main-checkout** session's `DIFF` tab, a dim single line lists live sibling
@@ -166,6 +179,8 @@ Binding per PIPELINE.md: `francois:session:<verb>` → `invoke('session_<verb>')
 export interface SessionWorktree {
   branch: string;          // the checked-out branch, verbatim
   baseRef: string;         // the ref it was forked from; echoed verbatim, ignored when createdBranch is false
+  baseResolved?: string;   // FR-7b: the `refs/remotes/<remote>/<baseRef>` actually forked from, when
+                           // the fetch found it newer than the local baseRef; the reliable fork point
   path: string;            // absolute worktree path, in the HOST's dialect (FR-10)
   sourceRepoRoot: string;  // absolute root of the repo this tree belongs to, host dialect
   createdBranch: boolean;  // false ⇒ the branch already existed, or the tree was adopted (FR-5)

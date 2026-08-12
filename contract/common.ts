@@ -198,6 +198,14 @@ export interface CloudProvenance {
 export interface SessionWorktree {
   branch: string; // the checked-out branch, verbatim
   baseRef: string; // the ref it was forked from; echoed verbatim, ignored when createdBranch is false
+  /**
+   * FR-7b: the ref `git worktree add -b` was ACTUALLY given, when the fetch found a newer
+   * `<remote>/<baseRef>` than the local `baseRef` — always a full `refs/remotes/<remote>/<baseRef>`.
+   * Absent when the local base was already current, had diverged, the fetch failed / was skipped,
+   * or `createdBranch` is false (an existing branch ignores the base entirely).
+   * It — not `baseRef` — is the reliable fork point for WorktreeStatusData's unpushed count.
+   */
+  baseResolved?: string;
   path: string; // absolute worktree path, in the HOST's dialect (FR-10)
   sourceRepoRoot: string; // absolute root of the repo this tree belongs to, host dialect
   createdBranch: boolean; // false ⇒ the branch already existed, or the tree was adopted (FR-5)

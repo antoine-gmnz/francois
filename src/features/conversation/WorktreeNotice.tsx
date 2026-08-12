@@ -4,16 +4,18 @@
 // dismissed the banner never returns for that session.
 
 import type { SessionWorktree } from '../../../contract/common';
-import { worktreeFetchWarningLine } from '../sessions/worktree';
+import { worktreeBaseLine, worktreeFetchWarningLine } from '../sessions/worktree';
 
 export default function WorktreeNotice({ worktree, onDismiss }: { worktree: SessionWorktree; onDismiss: () => void }) {
   const fetchWarning = worktreeFetchWarningLine(worktree);
+  const baseLine = worktreeBaseLine(worktree);
   return (
     <div role="status" className="worktree-notice">
       <div className="worktree-notice__text">
         this session runs in an isolated git worktree — no dependencies were installed, and
         local-scope config (<code>.claude/settings.local.json</code>, local <code>.mcp.json</code>) was not
         carried over, so permission rules and MCP servers may differ from the parent checkout.
+        {baseLine && <div className="worktree-notice__base">{baseLine}</div>}
         {fetchWarning && <div className="worktree-notice__warning">{fetchWarning}</div>}
       </div>
       <span onClick={onDismiss} className="worktree-notice__dismiss" title="dismiss">
