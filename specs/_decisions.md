@@ -46,6 +46,9 @@
 - 2026-08-11 · api · `remote-control` "Francois cannot be a client" is scoped to Remote Control sessions only; cloud sessions have documented CLI verbs and ARE reachable — because collapsing the two objects kills a feasible feature · cloud-sessions
 - 2026-08-11 · auth · Francois READS Anthropic credentials (`<configDir>/.credentials.json` → `claudeAiOauth`) but never mints, refreshes or writes them — because two writers on one token file is how a login silently breaks · cloud-sessions
 - 2026-08-11 · api · A hidden CLI surface (`.hideHelp()` flag, undocumented endpoint) may only power a degrade-to-empty convenience path, never the authoritative one, and needs a canary test — because it can move without deprecation · cloud-sessions
+- 2026-08-13 · ui · Block only irreversible choices; risky-but-recoverable ones are annotated, not blocked — because a blocked legitimate case has no escape hatch · attach-to-worktree
+- 2026-08-13 · scope · Worktree UI stays inside New Session, scoped to the probed repo — no cross-project inventory/manager — because git already owns that state · attach-to-worktree
+- 2026-08-13 · design · `design_files: []` stays empty; §8 brief + `specs/design/attach-to-worktree.md` is the design source — because a two-chip/picker addition inside existing modal chrome doesn't warrant fresh Claude Design mockups, matching collapse-right-column/multiple-shells/workflow-details · attach-to-worktree
 
 ## Superseded
 

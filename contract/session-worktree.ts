@@ -18,10 +18,25 @@ export interface WorktreeProbeData {
   branchExists: boolean; // request.branch resolves to a local branch
   branchCheckedOutAt: string | null; // path of the worktree holding it (FR-5); null when free
   worktreePath: string | null; // FR-9 for request.branch; null when branch is absent
+  /** attach-to-worktree FR-1/FR-2: linked worktrees of this repo, main checkout and bare entries
+   *  excluded, git's own order (frontend does not re-sort). [] when isRepo is false or
+   *  `git worktree list` failed — never absent, never an error (FR-4). */
+  worktrees: WorktreeListEntry[];
 }
 // invoke('session_worktree_probe', req): Promise<Result<WorktreeProbeData>>
 // errors: 'INVALID_INPUT' (cwd not absolute / not a directory) | 'GIT_ERROR' | 'INTERNAL'
 // A non-repo cwd resolves ok:true with isRepo:false — never NOT_A_GIT_REPO.
+
+/** attach-to-worktree FR-1/FR-3: one linked worktree of the probed repo, from
+ *  `git worktree list --porcelain`. */
+export interface WorktreeListEntry {
+  path: string; // absolute, host dialect (FR-10)
+  branch: string | null; // null on detached HEAD
+  head: string | null; // full sha; null when git reports none (unborn HEAD)
+  detached: boolean;
+  locked: boolean;
+  prunable: boolean; // the directory is gone; FR-11 disables the row
+}
 
 // ---------- extends francois:session:create ----------
 /** Added to SessionCreateInput (contract/session-engine.ts) as `worktree?: WorktreeCreateOptions`. */
@@ -33,8 +48,15 @@ export interface WorktreeCreateOptions {
 }
 // invoke('session_create', { ...SessionCreateInput, worktree }): Promise<Result<SessionMeta>>
 //   resolved SessionMeta.worktree is present on success.
+// attach-to-worktree FR-14: `branch`/`baseRef` stay REQUIRED on the wire and are IGNORED under
+//   `adopt` — the frontend sends '' for both when attaching to a WorktreeListEntry.path as `cwd`;
+//   the core fills provenance from `git worktree list`, including a detached HEAD (FR-15, no
+//   longer an error — `branch` becomes the 7-char short sha, `detached: true`).
 // added errors: 'NOT_A_GIT_REPO' | 'INVALID_INPUT' | 'WORKTREE_BRANCH_IN_USE' |
-//               'WORKTREE_CREATE_FAILED' | 'GIT_ERROR'
+//               'WORKTREE_CREATE_FAILED' | 'GIT_ERROR' |
+//               'WORKTREE_NOT_FOUND' (adopt only, FR-15: the directory no longer exists — which
+//               subsumes a `prunable` entry, since git cannot list from a gone directory;
+//               'INVALID_INPUT' covers the case where no `git worktree list` entry matches `cwd`)
 
 // ---------- francois:session:worktreeStatus ----------
 export interface WorktreeStatusRequest {

@@ -17,7 +17,7 @@ import { agentTabLabel, tabIdFor, type AgentTabRef } from '../features/agents/ag
 import { CloudChip } from '../features/cloud-sessions/CloudChip';
 import ProjectSwitcher from '../features/projects/ProjectSwitcher';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
-import { truncateBranchLeft } from '../features/sessions/worktree';
+import { truncateBranchLeft, worktreeChipLabel } from '../features/sessions/worktree';
 import LayoutToggle from '../features/usage/LayoutToggle';
 import { sessionInterrupt } from '../lib/api';
 import { abbreviate } from '../lib/path';
@@ -199,8 +199,8 @@ export default function SessionRow({
       <LayoutToggle />
 
       {active?.worktree && (
-        <span className="session-row__branch" title={active.worktree.branch}>
-          ⎇ {truncateBranchLeft(active.worktree.branch, 18)}
+        <span className="session-row__branch" title={worktreeChipLabel(active.worktree)}>
+          ⎇ {truncateBranchLeft(worktreeChipLabel(active.worktree), 18)}
         </span>
       )}
       {/* cloud-sessions FR-16: adopted from a Claude Code on the web session.

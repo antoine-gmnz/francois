@@ -211,6 +211,12 @@ export interface SessionWorktree {
   createdBranch: boolean; // false ⇒ the branch already existed, or the tree was adopted (FR-5)
   fetched: boolean; // a fetch ran and succeeded (FR-7)
   fetchError?: string; // one-line reason; absent when fetched, or when there is no remote
+  /** attach-to-worktree FR-15: the tree has a detached HEAD; `branch` carries the 7-char short
+   *  sha, not a ref. Absent on a session persisted before this feature ⇒ falsy. */
+  detached?: boolean;
+  /** attach-to-worktree FR-16: the tree was adopted, not created by Francois (suppresses the
+   *  session-worktree FR-14 "nothing came along" banner). Absent ⇒ falsy. */
+  adopted?: boolean;
 }
 
 // ---------- projects ----------

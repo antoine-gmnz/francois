@@ -202,6 +202,8 @@ fn session_with_worktree(path: &str) -> Session {
         created_branch: true,
         fetched: false,
         fetch_error: None,
+        detached: None,
+        adopted: None,
     });
     s
 }
@@ -432,6 +434,70 @@ fn adopting_an_existing_worktree_mutates_no_git_state() {
     assert_eq!(sw.branch, "feat/x");
     assert!(!sw.created_branch);
     assert_eq!(norm_path(&sw.source_repo_root), canonical_lower(&repo));
+    // attach-to-worktree FR-16: every adopt-created SessionWorktree is flagged.
+    assert_eq!(sw.adopted, Some(true));
+    // A branch-carrying worktree is not detached.
+    assert_eq!(sw.detached, None);
+}
+
+#[test]
+fn adopting_a_detached_head_worktree_fills_branch_with_the_short_sha() {
+    // attach-to-worktree FR-15: a detached HEAD used to error; it now adopts
+    // with `branch` set to the 7-char short sha and `detached: true`.
+    let repo = tmp_dir("adopt-detached");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+    let host = GitHost::Native;
+    let full_sha = git_out(&repo, &["rev-parse", "HEAD"]);
+    let target = tmp_dir("adopt-detached-wt").to_string_lossy().to_string();
+    git_routed(
+        &host,
+        &cwd,
+        &["worktree", "add", "--detach", &target, "HEAD"],
+    )
+    .expect("add ok");
+
+    let adopt_opts = WorktreeCreateInput {
+        branch: String::new(),
+        base_ref: String::new(),
+        adopt: true,
+    };
+    let (adopted_cwd, sw, _) = resolve_worktree(&target, &adopt_opts).expect("adopt ok");
+    assert_eq!(adopted_cwd, target);
+    assert_eq!(sw.branch, &full_sha[..7]);
+    assert_eq!(sw.detached, Some(true));
+    assert_eq!(sw.adopted, Some(true));
+    assert!(!sw.created_branch);
+}
+
+#[test]
+fn adopting_a_prunable_worktree_is_worktree_not_found() {
+    // attach-to-worktree FR-15: a `git worktree list` entry whose directory was
+    // deleted outside Francois is `prunable` — adopting it is an error, not a
+    // fabricated session pointed at a directory that no longer exists. No git
+    // process can spawn "in" a directory that is entirely gone, so this is
+    // caught by the up-front `path_exists` check rather than by re-listing
+    // from the (now nonexistent) cwd.
+    let repo = tmp_dir("adopt-prunable");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/gone".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (worktree_path, _, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    // Delete the directory OUTSIDE git (as the spec's "Gone" scenario describes)
+    // so `git worktree list` still names it but flags it prunable.
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+
+    let adopt_opts = WorktreeCreateInput {
+        branch: String::new(),
+        base_ref: String::new(),
+        adopt: true,
+    };
+    let err = resolve_worktree(&worktree_path, &adopt_opts).unwrap_err();
+    assert_eq!(err.0, "WORKTREE_NOT_FOUND");
 }
 
 #[test]
@@ -884,6 +950,17 @@ fn session_worktree_probe_reports_branch_existence_and_worktree_path() {
                 norm_path(&data.branch_checked_out_at.expect("checked out")),
                 norm_path(&worktree_path)
             );
+            // attach-to-worktree FR-1/FR-2: the linked worktree shows up, the
+            // main checkout does not.
+            assert_eq!(data.worktrees.len(), 1);
+            assert_eq!(
+                norm_path(&data.worktrees[0].path),
+                norm_path(&worktree_path)
+            );
+            assert_eq!(data.worktrees[0].branch.as_deref(), Some("feat/probed"));
+            assert!(!data.worktrees[0].detached);
+            assert!(!data.worktrees[0].locked);
+            assert!(!data.worktrees[0].prunable);
         }
         IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
     }
@@ -894,6 +971,211 @@ fn session_worktree_probe_rejects_a_relative_cwd() {
     match session_worktree_probe("relative/path".into(), None) {
         IpcResult::Err { error, .. } => assert_eq!(error.code, "INVALID_INPUT"),
         IpcResult::Ok { .. } => panic!("expected a relative cwd to be rejected"),
+    }
+}
+
+// ---------- attach-to-worktree FR-1/FR-2/FR-4: the probe's `worktrees` list ----------
+
+#[test]
+fn probe_worktrees_is_empty_on_a_repo_with_no_linked_worktrees() {
+    // FR-6's disabled-chip case rides on this: a repo is a repo, but the
+    // inventory is empty — never an error (FR-4).
+    let repo = tmp_dir("probe-worktrees-none");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+    match session_worktree_probe(cwd, None) {
+        IpcResult::Ok { data, .. } => {
+            assert!(data.is_repo);
+            assert!(data.worktrees.is_empty());
+        }
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
+    }
+}
+
+#[test]
+fn probe_worktrees_is_empty_on_a_non_repo_cwd() {
+    let dir = tmp_dir("probe-worktrees-non-repo");
+    let cwd = dir.to_string_lossy().to_string();
+    match session_worktree_probe(cwd, None) {
+        IpcResult::Ok { data, .. } => {
+            assert!(!data.is_repo);
+            assert!(data.worktrees.is_empty());
+        }
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
+    }
+}
+
+#[test]
+fn probe_worktrees_excludes_the_main_checkout_and_lists_linked_trees_in_gits_order() {
+    let repo = tmp_dir("probe-worktrees-order");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+
+    let first = resolve_worktree(
+        &cwd,
+        &WorktreeCreateInput {
+            branch: "feat/first".into(),
+            base_ref: "main".into(),
+            adopt: false,
+        },
+    )
+    .expect("create ok")
+    .0;
+    let second = resolve_worktree(
+        &cwd,
+        &WorktreeCreateInput {
+            branch: "feat/second".into(),
+            base_ref: "main".into(),
+            adopt: false,
+        },
+    )
+    .expect("create ok")
+    .0;
+
+    match session_worktree_probe(cwd, None) {
+        IpcResult::Ok { data, .. } => {
+            assert_eq!(data.worktrees.len(), 2);
+            // Neither entry is the main checkout.
+            assert!(data
+                .worktrees
+                .iter()
+                .all(|e| norm_path(&e.path) != norm_path(&repo.to_string_lossy())));
+            // git's own order: creation order.
+            assert_eq!(norm_path(&data.worktrees[0].path), norm_path(&first));
+            assert_eq!(norm_path(&data.worktrees[1].path), norm_path(&second));
+        }
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
+    }
+}
+
+#[test]
+fn probe_worktrees_reports_a_detached_head_entry() {
+    let repo = tmp_dir("probe-worktrees-detached");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+    let host = GitHost::Native;
+    let target = tmp_dir("probe-worktrees-detached-wt")
+        .to_string_lossy()
+        .to_string();
+    git_routed(
+        &host,
+        &cwd,
+        &["worktree", "add", "--detach", &target, "HEAD"],
+    )
+    .expect("add ok");
+
+    match session_worktree_probe(cwd, None) {
+        IpcResult::Ok { data, .. } => {
+            assert_eq!(data.worktrees.len(), 1);
+            assert_eq!(data.worktrees[0].branch, None);
+            assert!(data.worktrees[0].detached);
+            assert!(data.worktrees[0].head.is_some());
+        }
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
+    }
+}
+
+#[test]
+fn probe_worktrees_reports_a_prunable_entry_whose_directory_is_gone() {
+    let repo = tmp_dir("probe-worktrees-prunable");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/prune-me".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (worktree_path, _, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+
+    match session_worktree_probe(cwd, None) {
+        IpcResult::Ok { data, .. } => {
+            assert_eq!(data.worktrees.len(), 1);
+            assert!(data.worktrees[0].prunable);
+        }
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
+    }
+}
+
+// LOW remediation: `worktree_entries_for_probe`'s field-by-field remap has no
+// integration test through `session_worktree_probe` — only the porcelain
+// PARSER (git.rs) is unit-tested for `locked`/`bare` recognition. These two
+// exercise the full remap end to end, so a copy-paste error dropping a field
+// (e.g. `locked`) on the way from `WtEntry` to `WorktreeListEntry` would fail
+// here even though the parser itself stayed correct.
+
+#[test]
+fn probe_worktrees_reports_a_locked_entry() {
+    let repo = tmp_dir("probe-worktrees-locked");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/locked".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (worktree_path, _, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    let host = GitHost::Native;
+    let lock_out =
+        git_routed(&host, &cwd, &["worktree", "lock", &worktree_path]).expect("lock spawn");
+    assert_eq!(
+        lock_out.code, 0,
+        "git worktree lock failed: {}",
+        lock_out.stderr
+    );
+
+    match session_worktree_probe(cwd, None) {
+        IpcResult::Ok { data, .. } => {
+            assert_eq!(data.worktrees.len(), 1);
+            assert!(data.worktrees[0].locked);
+        }
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
+    }
+}
+
+#[test]
+fn probe_worktrees_excludes_a_bare_main_repo_entry() {
+    let src = tmp_dir("probe-worktrees-bare-src");
+    init_repo(&src);
+    let bare = tmp_dir("probe-worktrees-bare-repo");
+    // `tmp_dir` already created `bare` as an empty directory; `clone --bare`
+    // refuses to clone into a non-empty target directory, but an empty one
+    // it created itself is fine.
+    git(
+        &std::env::temp_dir(),
+        &[
+            "clone",
+            "--bare",
+            "-q",
+            &src.to_string_lossy(),
+            &bare.to_string_lossy(),
+        ],
+    );
+    let host = GitHost::Native;
+    let bare_cwd = bare.to_string_lossy().to_string();
+    let target = tmp_dir("probe-worktrees-bare-wt")
+        .to_string_lossy()
+        .to_string();
+    // Attaching a linked worktree needs an empty target dir to add INTO —
+    // `git worktree add` refuses one `tmp_dir` already created.
+    std::fs::remove_dir_all(&target).unwrap();
+    git_routed(&host, &bare_cwd, &["worktree", "add", &target, "main"]).expect("add ok");
+
+    // Probing FROM the bare repo's own dir fails `is_git_repo` (bare repos
+    // report `is-inside-work-tree: false`) — probe from the LINKED worktree
+    // instead, whose repo root resolves back to itself, but whose full
+    // `git worktree list` still includes the bare main entry.
+    match session_worktree_probe(target.clone(), None) {
+        IpcResult::Ok { data, .. } => {
+            assert!(data.is_repo);
+            assert_eq!(data.worktrees.len(), 1);
+            assert_eq!(norm_path(&data.worktrees[0].path), norm_path(&target));
+            assert!(data
+                .worktrees
+                .iter()
+                .all(|e| norm_path(&e.path) != norm_path(&bare_cwd)));
+        }
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
     }
 }
 

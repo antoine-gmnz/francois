@@ -128,23 +128,29 @@ pub(crate) fn current_branch(host: &GitHost, cwd: &str) -> Option<String> {
 }
 
 /// One `git worktree list --porcelain` entry.
+///
+/// attach-to-worktree FR-3: `head`/`detached`/`locked`/`prunable`/`bare` were added
+/// alongside `path`/`branch` — the porcelain lines the parser used to discard.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WtEntry {
     pub(crate) path: String,
     pub(crate) branch: Option<String>,
+    /// Full sha; `None` when git reports no `HEAD <sha>` line (unborn HEAD).
+    pub(crate) head: Option<String>,
+    pub(crate) detached: bool,
+    pub(crate) locked: bool,
+    pub(crate) prunable: bool,
+    pub(crate) bare: bool,
 }
 
 /// Parses `git worktree list --porcelain` (blank-line-separated blocks: a
 /// `worktree <path>` header, then optional `bare`/`HEAD <sha>`/`branch
-/// refs/heads/<name>`/`detached` lines). The FIRST entry is always the main
-/// working tree — used as `sourceRepoRoot` when adopting (FR-12).
-pub(crate) fn worktree_list_entries(host: &GitHost, dir: &str) -> Vec<WtEntry> {
-    let Ok(o) = git_routed(host, dir, &["worktree", "list", "--porcelain"]) else {
-        return Vec::new();
-    };
-    if o.code != 0 {
-        return Vec::new();
-    }
-    let text = String::from_utf8_lossy(&o.stdout);
+/// refs/heads/<name>`/`detached`/`locked[ <reason>]`/`prunable[ <reason>]`
+/// lines). The FIRST entry is always the main working tree — used as
+/// `sourceRepoRoot` when adopting (FR-12) and excluded from the
+/// attach-to-worktree picker (FR-2). Pure; split out so it's directly
+/// unit-testable without a live git spawn.
+pub(crate) fn parse_worktree_porcelain(text: &str) -> Vec<WtEntry> {
     let mut entries = Vec::new();
     let mut cur: Option<WtEntry> = None;
     for line in text.lines() {
@@ -161,10 +167,35 @@ pub(crate) fn worktree_list_entries(host: &GitHost, dir: &str) -> Vec<WtEntry> {
             cur = Some(WtEntry {
                 path: path.to_string(),
                 branch: None,
+                head: None,
+                detached: false,
+                locked: false,
+                prunable: false,
+                bare: false,
             });
         } else if let Some(r) = line.strip_prefix("branch ") {
             if let Some(e) = cur.as_mut() {
                 e.branch = Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string());
+            }
+        } else if let Some(h) = line.strip_prefix("HEAD ") {
+            if let Some(e) = cur.as_mut() {
+                e.head = Some(h.to_string());
+            }
+        } else if line == "detached" {
+            if let Some(e) = cur.as_mut() {
+                e.detached = true;
+            }
+        } else if line == "bare" {
+            if let Some(e) = cur.as_mut() {
+                e.bare = true;
+            }
+        } else if line == "locked" || line.starts_with("locked ") {
+            if let Some(e) = cur.as_mut() {
+                e.locked = true;
+            }
+        } else if line == "prunable" || line.starts_with("prunable ") {
+            if let Some(e) = cur.as_mut() {
+                e.prunable = true;
             }
         }
     }
@@ -172,6 +203,16 @@ pub(crate) fn worktree_list_entries(host: &GitHost, dir: &str) -> Vec<WtEntry> {
         entries.push(e);
     }
     entries
+}
+
+pub(crate) fn worktree_list_entries(host: &GitHost, dir: &str) -> Vec<WtEntry> {
+    let Ok(o) = git_routed(host, dir, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    if o.code != 0 {
+        return Vec::new();
+    }
+    parse_worktree_porcelain(&String::from_utf8_lossy(&o.stdout))
 }
 
 pub(crate) fn norm_path(p: &str) -> String {
@@ -481,35 +522,66 @@ mod tests {
     #[test]
     fn parses_porcelain_blocks_including_the_main_worktree() {
         let porcelain = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree /repo/.francois-worktrees/repo/feat-x\nHEAD def456\nbranch refs/heads/feat/x\n\n";
-        // exercised indirectly through the parser used by worktree_list_entries;
-        // reproduce it here since the function itself needs a live git spawn.
-        let mut entries: Vec<(String, Option<String>)> = Vec::new();
-        let mut cur: Option<(String, Option<String>)> = None;
-        for line in porcelain.lines() {
-            if line.is_empty() {
-                if let Some(e) = cur.take() {
-                    entries.push(e);
-                }
-                continue;
-            }
-            if let Some(path) = line.strip_prefix("worktree ") {
-                if let Some(e) = cur.take() {
-                    entries.push(e);
-                }
-                cur = Some((path.to_string(), None));
-            } else if let Some(r) = line.strip_prefix("branch ") {
-                if let Some(e) = cur.as_mut() {
-                    e.1 = Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string());
-                }
-            }
-        }
-        if let Some(e) = cur.take() {
-            entries.push(e);
-        }
+        let entries = parse_worktree_porcelain(porcelain);
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].0, "/repo");
-        assert_eq!(entries[0].1.as_deref(), Some("main"));
-        assert_eq!(entries[1].1.as_deref(), Some("feat/x"));
+        assert_eq!(entries[0].path, "/repo");
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+        assert_eq!(entries[0].head.as_deref(), Some("abc123"));
+        assert_eq!(entries[1].branch.as_deref(), Some("feat/x"));
+    }
+
+    // ---------- attach-to-worktree FR-3: head/detached/locked/prunable/bare parsing ----------
+
+    #[test]
+    fn parses_a_detached_head_entry() {
+        let porcelain = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree /repo/.francois-worktrees/repo/wt\nHEAD def456\ndetached\n\n";
+        let entries = parse_worktree_porcelain(porcelain);
+        assert_eq!(entries.len(), 2);
+        let wt = &entries[1];
+        assert_eq!(wt.branch, None);
+        assert_eq!(wt.head.as_deref(), Some("def456"));
+        assert!(wt.detached);
+        assert!(!wt.locked);
+        assert!(!wt.prunable);
+        assert!(!wt.bare);
+    }
+
+    #[test]
+    fn parses_a_bare_entry() {
+        let porcelain = "worktree /repo.git\nbare\n\n";
+        let entries = parse_worktree_porcelain(porcelain);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].bare);
+        assert_eq!(entries[0].head, None);
+    }
+
+    #[test]
+    fn parses_locked_with_and_without_a_reason() {
+        let porcelain = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree /wt1\nHEAD def456\nbranch refs/heads/feat/x\nlocked\n\nworktree /wt2\nHEAD ghi789\nbranch refs/heads/feat/y\nlocked reason: mid-rebase\n\n";
+        let entries = parse_worktree_porcelain(porcelain);
+        assert_eq!(entries.len(), 3);
+        assert!(entries[1].locked);
+        assert!(entries[2].locked);
+    }
+
+    #[test]
+    fn parses_prunable_with_and_without_a_reason() {
+        let porcelain = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree /wt1\nHEAD def456\nbranch refs/heads/feat/x\nprunable\n\nworktree /wt2\nHEAD ghi789\nbranch refs/heads/feat/y\nprunable gitdir file points to non-existent location\n\n";
+        let entries = parse_worktree_porcelain(porcelain);
+        assert_eq!(entries.len(), 3);
+        assert!(entries[1].prunable);
+        assert!(entries[2].prunable);
+    }
+
+    #[test]
+    fn parses_an_unborn_head_with_no_head_line() {
+        // No commit yet: no `HEAD <sha>` line, but the branch is still named.
+        let porcelain = "worktree /repo\nbranch refs/heads/main\n\n";
+        let entries = parse_worktree_porcelain(porcelain);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].head, None);
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+        assert!(!entries[0].detached);
     }
 
     #[test]

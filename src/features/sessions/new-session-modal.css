@@ -161,3 +161,71 @@
   cursor: default;
   opacity: 0.5;
 }
+
+/* attach-to-worktree §8 "Picker" — the repo's linked worktrees, replacing the
+   branch/base-ref/preview block while the WORKTREE group is in `attach` mode.
+   max-height ~5 rows; the modal's own body already scrolls, so this is an
+   inner scroll region that must never push Cancel/Create off-screen (the
+   round-8 regression on session-worktree). */
+.worktree-field__picker {
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.worktree-field__row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-10);
+  border-bottom: 1px solid var(--border-2);
+  border-left: 2px solid transparent;
+}
+
+.worktree-field__row:last-child {
+  border-bottom: none;
+}
+
+/* Accent discipline (design brief): the chip already carries the mode's
+   accent, so the row reads selection with a neutral raised background
+   (list-row--selected, shared) plus an accent LEFT EDGE only — never a
+   second accent fill competing with the chip. */
+.worktree-field__row.list-row--selected {
+  border-left-color: var(--accent);
+}
+
+.worktree-field__row-line1 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.worktree-field__row-label {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+  color: var(--text);
+}
+
+.worktree-field__row-note {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.worktree-field__row-path {
+  font-size: var(--font-size-10-5);
+}
+
+/* FR-10: a warning, not a gate — bare `--warn`, no dead fallback, per the
+   design brief. */
+.worktree-field__caution {
+  color: var(--warn);
+  font-size: var(--font-size-10-5);
+}
+
+.worktree-field__resolved-cwd {
+  color: var(--text-faint);
+}
