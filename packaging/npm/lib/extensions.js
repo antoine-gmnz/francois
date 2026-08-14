@@ -106,17 +106,24 @@ function extensionsDir(home = os.homedir()) {
 }
 
 /** Where Tauri's `app_data_dir()` resolves for this app, per OS — the SAME
- * directory `extensions.json` (the toggles) is persisted to. */
+ * directory `extensions.json` (the toggles) is persisted to.
+ *
+ * Each branch joins with the separator flavour of the platform it resolves FOR,
+ * not the one the process happens to run on. `platform` is a parameter so a
+ * caller can ask for another OS's directory; with the ambient `path.join` that
+ * answer came back in the host's separators — a "darwin" path reading
+ * `\Users\u\Library\Application Support` on Windows. On the native platform
+ * these are exactly `path.join`, so nothing about the real lookup changes. */
 function appDataDir({ platform = process.platform, home = os.homedir(), env = process.env } = {}) {
   if (platform === 'darwin') {
-    return path.join(home, 'Library', 'Application Support', APP_IDENTIFIER);
+    return path.posix.join(home, 'Library', 'Application Support', APP_IDENTIFIER);
   }
   if (platform === 'win32') {
-    const base = env.APPDATA || path.join(home, 'AppData', 'Roaming');
-    return path.join(base, APP_IDENTIFIER);
+    const base = env.APPDATA || path.win32.join(home, 'AppData', 'Roaming');
+    return path.win32.join(base, APP_IDENTIFIER);
   }
-  const base = env.XDG_DATA_HOME || path.join(home, '.local', 'share');
-  return path.join(base, APP_IDENTIFIER);
+  const base = env.XDG_DATA_HOME || path.posix.join(home, '.local', 'share');
+  return path.posix.join(base, APP_IDENTIFIER);
 }
 
 /** Best-effort: a missing/unreadable/unparseable file reads as "nothing

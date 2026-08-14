@@ -26,6 +26,10 @@ const {
   resolveInstallSource,
 } = require('./extensions.js');
 
+/** Windows rejects C0 controls in a filename, so a few hostile-name fixtures
+ *  below are unrepresentable there and use their bidi-only variant. */
+const WINDOWS = process.platform === 'win32';
+
 const tempDirs = [];
 function tempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'francois-ext-'));
@@ -93,29 +97,36 @@ describe('isGitUrl / idFromSource', () => {
 
 describe('appDataDir / readToggles', () => {
   it('resolves per OS and reads the app-owned enabled/consent record', () => {
+    // Each expectation is in the separator flavour of the platform being
+    // resolved FOR — `path.join` here would be the HOST's flavour, which made
+    // these three pass on POSIX and fail on Windows for no reason the code
+    // under test is responsible for.
     expect(appDataDir({ platform: 'darwin', home: '/Users/u' })).toContain('Library/Application Support');
     expect(appDataDir({ platform: 'win32', home: 'C:\\Users\\u', env: { APPDATA: 'C:\\Users\\u\\AppData\\Roaming' } })).toBe(
-      path.join('C:\\Users\\u\\AppData\\Roaming', 'com.francois.desktop'),
+      path.win32.join('C:\\Users\\u\\AppData\\Roaming', 'com.francois.desktop'),
     );
     expect(appDataDir({ platform: 'linux', home: '/home/u', env: {} })).toBe(
-      path.join('/home/u', '.local', 'share', 'com.francois.desktop'),
+      path.posix.join('/home/u', '.local', 'share', 'com.francois.desktop'),
     );
 
+    // The round trip runs on the NATIVE platform — what it proves (readToggles
+    // finds what the app wrote) is platform-independent, and simulating another
+    // OS against a real temp directory only mixes separators.
     const home = tempDir();
-    const dataDir = appDataDir({ platform: 'linux', home, env: {} });
+    const dataDir = appDataDir({ home, env: {} });
     fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(
       path.join(dataDir, 'extensions.json'),
       JSON.stringify({ toggles: { git: { enabled: true, consentSha256: 'abc' } } }),
     );
-    expect(readToggles({ platform: 'linux', home, env: {} })).toEqual({
+    expect(readToggles({ home, env: {} })).toEqual({
       git: { enabled: true, consentSha256: 'abc' },
     });
   });
 
   it('reads as no overrides when the file is missing or unparseable', () => {
     const home = tempDir();
-    expect(readToggles({ platform: 'linux', home, env: {} })).toEqual({});
+    expect(readToggles({ home, env: {} })).toEqual({});
   });
 });
 
@@ -127,14 +138,14 @@ describe('listExtensions', () => {
     // A directory with no extension.json is invisible, same as the core's FR-4.
     fs.mkdirSync(path.join(extensionsDir(home), 'not-a-plugin'), { recursive: true });
 
-    const dataDir = appDataDir({ platform: 'linux', home, env: {} });
+    const dataDir = appDataDir({ home, env: {} });
     fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(
       path.join(dataDir, 'extensions.json'),
       JSON.stringify({ toggles: { git: { enabled: true, consentSha256: 'x' } } }),
     );
 
-    const found = listExtensions({ home, platform: 'linux', env: {} });
+    const found = listExtensions({ home, env: {} });
     expect(found.map((e) => e.id)).toEqual(['git', 'zeta']);
     expect(found[0]).toMatchObject({ id: 'git', label: 'git', enabled: true, valid: true });
     expect(found[1]).toMatchObject({ id: 'zeta', label: 'Zeta', enabled: false, valid: true });
@@ -162,11 +173,17 @@ describe('listExtensions', () => {
     // installed via `francois ext install` — a hand-copied directory can
     // carry any name, including these control/bidi sequences.
     const home = tempDir();
-    const hostileName = '\x1b[31mFAKE\x1b[0m‮reversed';
+    // Windows forbids C0 controls (chars 0-31) in a filename outright, so the
+    // ANSI-escape half of this name cannot exist on that OS — there is no
+    // directory to defend against. The bidi override IS representable there,
+    // and it is the half that fools the eye in any UI rather than only in a
+    // terminal, so Windows still exercises the real case.
+    const hostileName = WINDOWS ? 'FAKE‮reversed' : '\x1b[31mFAKE\x1b[0m‮reversed';
+    const expectedId = WINDOWS ? 'FAKEreversed' : '[31mFAKE[0mreversed';
     writePlugin(path.join(extensionsDir(home), hostileName), { manifest: 1, label: 'fine' });
 
     const found = listExtensions({ home });
-    expect(found[0].id).toBe('[31mFAKE[0mreversed');
+    expect(found[0].id).toBe(expectedId);
     expect(found[0].path).not.toMatch(/[\x1b‮]/);
   });
 });
