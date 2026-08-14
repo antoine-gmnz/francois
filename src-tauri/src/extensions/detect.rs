@@ -294,16 +294,21 @@ mod tests {
         // sentinel — once enabled, proving the script itself is not
         // silently broken (which would make the assertion above vacuous).
         let enabled_detection = evaluate(&spec, &root, true);
-        assert!(enabled_detection.detected);
+        assert!(
+            enabled_detection.detected,
+            "the marker script must succeed once enabled — reason: {:?}",
+            enabled_detection.reason
+        );
         assert!(
             sentinel.exists(),
             "the marker script must actually run once enabled"
         );
     }
 
-    /// A cross-platform argv that, when executed, writes an empty file at
-    /// `sentinel` — used to prove an exec predicate did or did not run,
-    /// rather than inferring it from a system binary's exit status.
+    /// A cross-platform argv that, when executed, creates `sentinel` on disk —
+    /// used to prove an exec predicate did or did not run, rather than
+    /// inferring it from a system binary's exit status. Only `.exists()` is
+    /// ever asked of it, so what kind of entry it is does not matter.
     #[cfg(unix)]
     fn marker_script_argv(sentinel: &std::path::Path) -> Vec<String> {
         vec![
@@ -313,12 +318,21 @@ mod tests {
         ]
     }
 
+    /// `mkdir` rather than `type nul > …`, and the path as its OWN argv element
+    /// rather than interpolated into one string. `Command` escapes a quote
+    /// inside an argument as `\"`, which is MSVC's convention and NOT one
+    /// `cmd.exe` understands — so an interpolated, quoted redirect target
+    /// reached cmd as a literal `\"C:\…\"`, an invalid filename, and the
+    /// predicate failed on Windows for a reason that had nothing to do with
+    /// the code under test. Keeping the path a separate argument lets
+    /// `Command` quote it on its own terms, and `mkdir` needs no redirection.
     #[cfg(windows)]
     fn marker_script_argv(sentinel: &std::path::Path) -> Vec<String> {
         vec![
             "cmd".into(),
             "/C".into(),
-            format!("type nul > \"{}\"", sentinel.display()),
+            "mkdir".into(),
+            sentinel.display().to_string(),
         ]
     }
 
