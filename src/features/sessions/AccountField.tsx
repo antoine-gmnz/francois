@@ -35,9 +35,14 @@ export function AccountField({ accounts, accountId, fromProject, onChange }: Acc
           onChange={(e) => onChange(e.target.value)}
         >
           {accountFieldOptions(accounts).map((opt) => (
-            <option key={opt.value} value={opt.value}>
+            // multi-provider-endpoint FR-14: an endpoint account renders disabled
+            // with its reason — visible (the user must see the account they just
+            // created), never keyboard-focusable, and native <option disabled>
+            // is already skipped by ↑/↓ and type-ahead.
+            <option key={opt.value} value={opt.value} disabled={opt.disabled} title={opt.disabledReason ?? undefined}>
               {opt.email ? `${opt.label} · ${opt.email}` : opt.label}
               {opt.needsLogin ? ' (needs login)' : ''}
+              {opt.disabled && opt.disabledReason ? ` — ${opt.disabledReason}` : ''}
             </option>
           ))}
         </select>

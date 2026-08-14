@@ -58,6 +58,9 @@ export type ErrorCode =
   | 'ACCOUNT_DUPLICATE' // multi-account: login identity matches an already-registered account (FR-14)
   | 'ACCOUNT_LOGIN_FAILED' // multi-account: login timed out or the PTY exited without an identity (FR-15)
   | 'ACCOUNT_NOT_AUTHENTICATED' // multi-account: a turn's account has no credentials on disk (FR-22)
+  | 'ACCOUNT_ENDPOINT_UNREACHABLE' // multi-provider-endpoint: the base URL did not answer a usable /models
+  | 'ACCOUNT_ENDPOINT_UNAUTHORIZED' // multi-provider-endpoint: the endpoint rejected the key (401/403)
+  | 'ACCOUNT_KEY_WRITE_FAILED' // multi-provider-endpoint: the key file could not be written or removed
   | 'WORKFLOW_NOT_FOUND' // workflow-details: runId matches no run this session has seen
   | 'WORKFLOW_NO_TRANSCRIPT' // workflow-details FR-2/FR-7: the run has no usable transcriptDir
   | 'WORKFLOW_AGENT_NOT_FOUND' // workflow-details FR-8: agentId matches no agent the scan has seen

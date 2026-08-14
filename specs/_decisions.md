@@ -50,6 +50,8 @@
 - 2026-08-12 · data · A session's provider is DERIVED from its account's kind at creation and never chosen or re-derived — because two sources of truth for which wire a session speaks is how a session ends up pointed at a key it does not have · multi-provider-seam
 - 2026-08-12 · auth · Non-OAuth provider keys live in a 0600/ACL-restricted file in the account config dir, never the OS keychain, and never enter session state, the transcript or diagnostics — because one code path on three platforms beats a keychain that is absent on headless Linux · multi-provider-seam
 - 2026-08-12 · ui · Parity with Claude Code's tuned harness is not a goal for Francois-loop sessions; their first turn states so once, in-transcript — because otherwise every tool-loop quality gap gets filed as a Francois bug · multi-provider-seam
+- 2026-08-12 · auth · Secret material is WRITE-ONLY across the IPC boundary — a payload carries `hasKey`, never the value, and no verb reads a secret back — because a secret that can be read back is one debug log or one screenshot from disclosure · multi-provider-endpoint
+- 2026-08-12 · ui · A new credential kind ships listable-but-NOT-selectable until its runner exists, with a stated reason — because an account that mints a session which dies on an unavailable adapter is worse than one that says "not yet" · multi-provider-endpoint
 
 ## Superseded
 

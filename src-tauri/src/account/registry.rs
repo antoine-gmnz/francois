@@ -56,6 +56,7 @@ pub(crate) fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String
         .iter()
         .filter_map(|e| serde_json::from_value::<AccountRecord>(e.clone()).ok())
         .filter(|r| valid_account_id(&r.id))
+        .filter(account_record_invariant_holds)
         .collect();
     let default_id = doc
         .get("defaultAccountId")
@@ -63,6 +64,22 @@ pub(crate) fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String
         .filter(|s| !s.trim().is_empty())
         .map(String::from);
     (records, default_id)
+}
+
+/// multi-provider-endpoint FR-1: `endpoint` is present IFF `kind ==
+/// OpenAiCompatible` — a record violating that invariant (hand-edited JSON,
+/// or a kind flip that left the sidecar field behind) is dropped rather than
+/// repaired into a half-account.
+fn account_record_invariant_holds(r: &AccountRecord) -> bool {
+    let ok = matches!(r.kind, AccountKind::OpenAiCompatible) == r.endpoint.is_some();
+    if !ok {
+        eprintln!(
+            "accounts: dropping record {} on load — endpoint/kind mismatch \
+             (multi-provider-endpoint FR-1)",
+            r.id
+        );
+    }
+    ok
 }
 
 /// FR-4: exactly one account is `isDefault`. A persisted id that no longer
@@ -114,18 +131,27 @@ pub(crate) fn build_list(inner: &AccountInner) -> Vec<Account> {
         // multi-provider-seam FR-12: the built-in account is a Claude Code
         // OAuth login, like every account today.
         kind: AccountKind::ClaudeCodeOauth,
+        endpoint: None,
     }];
-    out.extend(inner.records.iter().map(|r| Account {
-        id: r.id.clone(),
-        label: r.label.clone(),
-        email: r.email.clone(),
-        organization: r.organization.clone(),
-        config_dir: Some(r.config_dir.clone()),
-        built_in: false,
-        is_default: inner.default_account_id == r.id,
-        created_at: r.created_at,
-        auth_failed_at: inner.auth_failed_at.get(&r.id).copied(),
-        kind: r.kind,
+    out.extend(inner.records.iter().map(|r| {
+        Account {
+            id: r.id.clone(),
+            label: r.label.clone(),
+            email: r.email.clone(),
+            organization: r.organization.clone(),
+            config_dir: Some(r.config_dir.clone()),
+            built_in: false,
+            is_default: inner.default_account_id == r.id,
+            created_at: r.created_at,
+            auth_failed_at: inner.auth_failed_at.get(&r.id).copied(),
+            kind: r.kind,
+            // multi-provider-endpoint FR-1/FR-3: `hasKey` is derived live from the
+            // sidecar file's existence, never from anything persisted.
+            endpoint: r
+                .endpoint
+                .as_ref()
+                .map(|e| account_endpoint(e, &r.config_dir)),
+        }
     }));
     out
 }

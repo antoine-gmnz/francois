@@ -27,13 +27,16 @@ import { useStore } from '../../lib/store';
 import { seedAccountUsage } from '../usage/usage';
 import { AccountRow } from './AccountRow';
 import AccountLoginView from './AccountLoginView';
+import { EndpointForm } from './EndpointForm';
 import { RemoveAccountConfirm } from './RemoveAccountConfirm';
 import {
   ACCOUNTS_ISOLATION_NOTE,
   ACCOUNTS_KEY_HINTS,
+  accountIsEndpoint,
   accountSessionCounts,
   clampCursor,
   moveCursor,
+  newlyAddedAccountId,
 } from './accounts';
 import './accounts.css';
 
@@ -56,6 +59,9 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   const [freshId, setFreshId] = useState<string | null>(null);
+  // multi-provider-endpoint FR-13: the inline add/edit endpoint form. `undefined`
+  // ⇒ adding; a present Account ⇒ editing that row.
+  const [endpointForm, setEndpointForm] = useState<{ account?: Account } | null>(null);
   const alive = useMounted();
   // The live login's id, so cancel can address it from anywhere — including the
   // unmount cleanup, which must fire even when the modal is torn down by a
@@ -88,9 +94,12 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // FR-34: each row shows its OWN meters, so every listed account needs a seed.
   // Cheap and idempotent — app_get_usage never probes (usage-bar FR-22), and a
   // seed for an account the live channel already covered is dropped.
+  // multi-provider-endpoint: usage-bar is an Anthropic plan-limit concept
+  // (explicitly out of scope here) — an endpoint account has no meters to
+  // seed, and AccountRow never renders its quota line (see there).
   useEffect(() => {
     const stops = accounts
-      .filter((a) => usageByAccount[a.id] === undefined)
+      .filter((a) => usageByAccount[a.id] === undefined && !accountIsEndpoint(a))
       .map((a) => seedAccountUsage(a.id, setAccountUsage));
     return () => stops.forEach((stop) => stop());
     // Keyed on the ids alone: re-running on every snapshot write would restart
@@ -206,12 +215,14 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         if (login) closeLogin();
         else if (renamingId) cancelRename();
         else if (confirmId) setConfirmId(null);
+        else if (endpointForm) setEndpointForm(null);
         else onClose();
         return;
       }
       // Everything below is list-state only: while the login TUI is up every
-      // other key belongs to it, and while renaming they belong to the input.
-      if (login || renamingId) return;
+      // other key belongs to it, while renaming they belong to the input, and
+      // while the endpoint form is open every key belongs to its own fields.
+      if (login || renamingId || endpointForm) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
 
@@ -256,7 +267,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     // setDefault, startRename, onClose) read only refs/setters/these same
     // deps, so a version captured at that point stays correct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [login, renamingId, confirmId, selected, accounts, onClose]);
+  }, [login, renamingId, confirmId, endpointForm, selected, accounts, onClose]);
 
   return (
     <div
@@ -276,7 +287,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
           <button
             type="button"
             className="acc-add"
-            disabled={login !== null}
+            disabled={login !== null || endpointForm !== null}
             onClick={() => setLogin({})}
             title="Add an Anthropic account by signing in here"
           >
@@ -284,6 +295,20 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
               +
             </span>
             Add account
+          </button>
+          {/* multi-provider-endpoint FR-13: a second, ghost-weight button beside
+              Add account — endpoint accounts are metadata, not a rival identity. */}
+          <button
+            type="button"
+            className="acc-add acc-add--endpoint"
+            disabled={login !== null || endpointForm !== null}
+            onClick={() => setEndpointForm({})}
+            title="Register an OpenAI-compatible endpoint as an account"
+          >
+            <span className="acc-add-plus" aria-hidden="true">
+              +
+            </span>
+            Add endpoint
           </button>
         </div>
 
@@ -317,6 +342,25 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
                 onConfirm={() => doRemove(confirming)}
               />
             )}
+            {/* Design brief §2: opens inline above the list, not a nested dialog —
+                the list stays visible underneath, pushed down. */}
+            {endpointForm && (
+              <EndpointForm
+                key={endpointForm.account?.id ?? 'add'}
+                account={endpointForm.account}
+                onCancel={() => setEndpointForm(null)}
+                onSaved={(fresh) => {
+                  const addedId = newlyAddedAccountId(accounts, fresh);
+                  setAccounts(fresh);
+                  setEndpointForm(null);
+                  setError(null);
+                  if (addedId) {
+                    setFreshId(addedId);
+                    window.setTimeout(() => alive.current && setFreshId(null), 1200);
+                  }
+                }}
+              />
+            )}
             <div className="scz acc-body">
               {accounts.map((account, i) => (
                 <AccountRow
@@ -337,6 +381,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
                   onStartRename={() => startRename(account)}
                   onRelogin={() => setLogin({ accountId: account.id })}
                   onRemove={() => setConfirmId(account.id)}
+                  onEditEndpoint={() => setEndpointForm({ account })}
                 />
               ))}
             </div>

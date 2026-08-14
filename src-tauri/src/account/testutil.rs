@@ -13,6 +13,27 @@ pub(crate) fn record_fixture(id: &str, label: &str) -> AccountRecord {
         config_dir: format!("/tmp/accounts/{id}"),
         created_at: 1_000,
         kind: AccountKind::ClaudeCodeOauth,
+        endpoint: None,
+    }
+}
+
+/// multi-provider-endpoint: an `openai-compatible` row, config dir on real
+/// disk (`tmp_account_dir`) so `hasKey`/key-file tests can write into it.
+pub(crate) fn endpoint_record_fixture(id: &str, label: &str, base_url: &str) -> AccountRecord {
+    AccountRecord {
+        id: id.into(),
+        label: label.into(),
+        email: None,
+        organization: None,
+        config_dir: tmp_account_dir(&format!("endpoint-{id}"))
+            .to_string_lossy()
+            .into_owned(),
+        created_at: 1_000,
+        kind: AccountKind::OpenAiCompatible,
+        endpoint: Some(EndpointRecord {
+            base_url: base_url.into(),
+            model_ids: None,
+        }),
     }
 }
 

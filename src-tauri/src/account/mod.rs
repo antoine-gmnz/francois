@@ -27,11 +27,18 @@
 // by calling into `session::reassign_account_sessions` with no account lock held.
 
 mod commands;
+/// multi-provider-endpoint FR-1..FR-10: the `openai-compatible` account's
+/// storage half — base-URL validation, the sidecar key file, and the
+/// stateless connection probe. A CHILD of this module, not a sibling of
+/// registry.rs's OAuth-focused FRs, even though both touch `AccountRecord` —
+/// same "one concern per child" shape as `cloud` inside `session`.
+mod endpoint;
 mod login;
 mod mirror;
 mod registry;
 
 pub(crate) use commands::*;
+pub(crate) use endpoint::*;
 pub(crate) use login::*;
 pub(crate) use mirror::*;
 pub(crate) use registry::*;
@@ -92,6 +99,22 @@ pub struct Account {
     auth_failed_at: Option<u64>,
     /// multi-provider-seam FR-12. Required on the wire — every account has a kind.
     kind: AccountKind,
+    /// multi-provider-endpoint FR-1. Present iff `kind == OpenAiCompatible`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    endpoint: Option<AccountEndpoint>,
+}
+
+/// Mirrors `EndpointConfig` (contract/multi-account.ts). Carries NO key
+/// material — `has_key` is DERIVED from the key file's existence (FR-3), never
+/// read off anything persisted.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct AccountEndpoint {
+    #[serde(rename = "baseUrl")]
+    base_url: String,
+    #[serde(rename = "hasKey")]
+    has_key: bool,
+    #[serde(rename = "modelIds", skip_serializing_if = "Option::is_none")]
+    model_ids: Option<Vec<String>>,
 }
 
 /// francois:account:remove data (§5).
@@ -152,6 +175,23 @@ pub(crate) struct AccountRecord {
     /// loads as `ClaudeCodeOauth` via `AccountKind`'s `Default`.
     #[serde(default)]
     kind: AccountKind,
+    /// multi-provider-endpoint FR-1: present iff `kind == OpenAiCompatible` —
+    /// enforced on load by `registry::account_record_invariant_holds`, which
+    /// drops any record that violates it rather than repairing it. The key
+    /// itself is NEVER here (FR-2): only `base_url`/`model_ids` ride the JSON;
+    /// the sidecar `<configDir>/endpoint-key` file is the key's only home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    endpoint: Option<EndpointRecord>,
+}
+
+/// The persisted half of an `openai-compatible` account (multi-provider-endpoint
+/// FR-1). `base_url` is already normalized (FR-4) by the time it lands here.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct EndpointRecord {
+    #[serde(rename = "baseUrl")]
+    pub(crate) base_url: String,
+    #[serde(rename = "modelIds", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model_ids: Option<Vec<String>>,
 }
 
 /// The single in-flight login (FR-16). Lives in mod.rs because both login.rs

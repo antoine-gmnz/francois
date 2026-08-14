@@ -559,3 +559,157 @@
 .acc-field-alert {
   color: var(--error);
 }
+
+/* ── endpoint accounts (multi-provider-endpoint) ────────────────────────── */
+/* The kind chip (design brief §1): neutral — dim border, dim text, no fill.
+   Deliberately NOT built off .acc-pill, which is accent-tinted (DEFAULT); the
+   whole point here is "provider is metadata, not identity" — nothing about
+   an endpoint row may compete with the one accent this modal already spends
+   on Add account. */
+.acc-kind-chip {
+  flex-shrink: 0;
+  font-size: var(--font-size-9-5);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: var(--space-1) var(--space-6);
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--border-2);
+  color: var(--text-faint);
+}
+
+/* "sessions not yet available" — one dim line under the base-URL line,
+   removed entirely once multi-provider-openai lands. */
+.acc-endpoint-note {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+
+/* The secondary Add affordance beside Add account: same chrome, but its plus
+   stays neutral rather than acid — design system v2 spends the one accent
+   per view on the PRIMARY add action, not on both. */
+.acc-add--endpoint .acc-add-plus {
+  color: var(--text-dim);
+}
+.acc-add--endpoint:disabled .acc-add-plus {
+  color: var(--text-disabled);
+}
+
+/* ── endpoint form (design brief §2) ────────────────────────────────────── */
+/* Opens INLINE above the list, inside the same scrolling body — the modal's
+   header/footer stay put (§Resize). Same panel surface + rule the remove
+   confirmation banner uses, so two "opens above the list" states read as one
+   family rather than two different affordances. */
+.acc-endpoint-form {
+  flex-shrink: 0;
+  margin: var(--space-8) var(--space-8) 0;
+  padding: var(--space-12) var(--space-14);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+.acc-endpoint-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.acc-endpoint-label {
+  font-size: var(--font-size-10);
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.acc-endpoint-input {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  height: 30px;
+  color: var(--text-bright);
+  font-size: var(--font-size-12-5);
+  font-family: inherit;
+  padding: 0 var(--space-10);
+  width: 100%;
+  outline: none;
+}
+.acc-endpoint-input:focus {
+  border-color: var(--border-focus);
+}
+.acc-endpoint-input--mono {
+  font-family: var(--font-mono);
+}
+/* Design brief §2 "Validation error" — the offending field takes the error
+   border; same token `.acc-field-alert` uses for the new-session ACCOUNT hint. */
+.acc-endpoint-input--error {
+  border-color: var(--error);
+}
+.acc-endpoint-hint {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.acc-endpoint-key-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+}
+.acc-endpoint-key-row .acc-endpoint-input {
+  flex: 1;
+}
+/* Text action, not a button — matches the modal's other quiet affordances. */
+.acc-endpoint-clear-key {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.acc-endpoint-clear-key:hover {
+  color: var(--error);
+}
+/* The form's only feedback surface — fixed height so a probe outcome landing
+   never shifts the action row underneath it. */
+.acc-endpoint-result {
+  min-height: 15px;
+  font-size: var(--font-size-11);
+  display: flex;
+  align-items: center;
+  /* §Resize: a long base URL echoed back in an error, or a long core message,
+     middle-truncates rather than wraps and pushing the action row down. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acc-endpoint-result--dim {
+  color: var(--text-faint);
+}
+/* Ready green — the same success tone the whole app reserves for "this
+   worked", never the acid accent (design system v2: acid means "the live
+   thing", not "success"). */
+.acc-endpoint-result--ok {
+  color: var(--success);
+}
+.acc-endpoint-result--error {
+  color: var(--error);
+}
+.acc-endpoint-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+.acc-endpoint-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+@keyframes acc-endpoint-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.acc-endpoint-spin {
+  animation: acc-endpoint-spin 0.8s linear infinite;
+}

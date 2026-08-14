@@ -12,6 +12,8 @@ import type {
   WorkflowScript,
 } from '../../contract/workflow-details';
 import type {
+  AccountAddEndpointPayload,
+  AccountAddEndpointResponse,
   AccountAddPayload,
   AccountAddResponse,
   AccountEvent,
@@ -23,6 +25,10 @@ import type {
   AccountRemoveResponse,
   AccountRenameResponse,
   AccountSetDefaultResponse,
+  AccountTestEndpointPayload,
+  AccountTestEndpointResponse,
+  AccountUpdateEndpointPayload,
+  AccountUpdateEndpointResponse,
 } from '../../contract/multi-account';
 import type {
   ProjectAwareSessionCreateRequest,
@@ -316,6 +322,15 @@ export const accountRename = (accountId: AccountId, label: string) =>
 export const accountSetDefault = (accountId: AccountId) =>
   ipc<AccountSetDefaultResponse>('account_set_default', { accountId });
 export const accountRemove = (accountId: AccountId) => ipc<AccountRemoveResponse>('account_remove', { accountId });
+// multi-provider-endpoint (§5). Endpoint accounts add/update resolve the same
+// FRESH re-read list every other mutation does; test is stateless (FR-9) and
+// never touches the registry, so it carries no such list.
+export const accountAddEndpoint = (payload: AccountAddEndpointPayload) =>
+  ipc<AccountAddEndpointResponse>('account_add_endpoint', payload);
+export const accountUpdateEndpoint = (payload: AccountUpdateEndpointPayload) =>
+  ipc<AccountUpdateEndpointResponse>('account_update_endpoint', payload);
+export const accountTestEndpoint = (payload: AccountTestEndpointPayload) =>
+  ipc<AccountTestEndpointResponse>('account_test_endpoint', payload);
 
 /** Subscribe to francois://account/event (account.list + the login sub-stream). */
 export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {

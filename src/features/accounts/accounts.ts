@@ -12,7 +12,13 @@
 
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { AccountId, AppError, SessionId, SessionMeta } from '../../../contract/common';
-import type { Account } from '../../../contract/multi-account';
+import type {
+  Account,
+  AccountAddEndpointPayload,
+  AccountTestEndpointPayload,
+  AccountUpdateEndpointPayload,
+  EndpointProbe,
+} from '../../../contract/multi-account';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 import { accountList, onAccountEvent } from '../../lib/api';
@@ -288,6 +294,21 @@ export interface AccountOption {
   email: string | null;
   isDefault: boolean;
   needsLogin: boolean;
+  /** multi-provider-endpoint FR-14: an openai-compatible account, not yet usable. */
+  disabled: boolean;
+  disabledReason: string | null;
+}
+
+/**
+ * multi-provider-endpoint FR-14: the account pickers show an endpoint row
+ * disabled with this reason, rather than filtering it out — the user must
+ * see the account they just created. Deleted by multi-provider-openai.
+ */
+export const ENDPOINT_UNAVAILABLE_REASON = "Sessions on this provider aren't available yet.";
+
+/** multi-provider-endpoint FR-1: an 'openai-compatible' account, not (yet) a claude-code-oauth one. */
+export function accountIsEndpoint(account: Account): boolean {
+  return account.kind === 'openai-compatible';
 }
 
 /** FR-31: every account, in core order (FR-2 puts the built-in first). */
@@ -298,6 +319,8 @@ export function accountFieldOptions(accounts: Account[]): AccountOption[] {
     email: accountSecondaryEmail(a),
     isDefault: a.isDefault,
     needsLogin: accountNeedsLogin(a),
+    disabled: accountIsEndpoint(a),
+    disabledReason: accountIsEndpoint(a) ? ENDPOINT_UNAVAILABLE_REASON : null,
   }));
 }
 
@@ -426,4 +449,165 @@ export function moveCursor(cursor: number, delta: number, length: number): numbe
 export function clampCursor(cursor: number, length: number): number {
   if (length <= 0) return 0;
   return Math.min(length - 1, Math.max(0, cursor));
+}
+
+// ------------------------------------------------------ endpoint accounts
+// multi-provider-endpoint FR-13..FR-16 — the Accounts modal's endpoint row
+// extras (kind chip, not-yet note, base URL line) and the EndpointForm's pure
+// logic (payload construction, probe/error copy, Save-disabled). The key
+// itself never appears here: only `hasKey` crosses the boundary (FR-3), and
+// the drafted key lives in the form component's own state, never a store.
+
+/** Design brief §1: the dim not-yet-available line under an endpoint row's label. */
+export function endpointRowNote(account: Account): string | null {
+  return accountIsEndpoint(account) ? 'sessions not yet available' : null;
+}
+
+/** Keeps both ends of a long value readable instead of clipping the tail. */
+export function middleTruncate(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const keep = max - 1; // room for the ellipsis character
+  const head = Math.ceil(keep / 2);
+  const tail = Math.floor(keep / 2);
+  return `${value.slice(0, head)}…${value.slice(value.length - tail)}`;
+}
+
+/** Design brief §1: the row's dim `<baseUrl>` line, `no key` marker when keyless. */
+export function endpointBaseUrlLine(account: Account): string | null {
+  if (!account.endpoint) return null;
+  const truncated = middleTruncate(account.endpoint.baseUrl, 40);
+  return account.endpoint.hasKey ? truncated : `${truncated} · no key`;
+}
+
+/** FR-15: the key field's placeholder — never a hint of the real key. */
+export function endpointKeyPlaceholder(hasKey: boolean): string {
+  return hasKey ? '•••••••• stored' : 'sk-…';
+}
+
+/** Splits the Models field, trimming each id and dropping blanks (stray commas). */
+export function parseModelIdsList(text: string): string[] {
+  return text
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+}
+
+/** FR-6: an empty Models field omits the field — the core discovers from /models. */
+export function modelIdsForAdd(text: string): string[] | undefined {
+  const ids = parseModelIdsList(text);
+  return ids.length > 0 ? ids : undefined;
+}
+
+/** FR-7: an empty Models field on an EDIT form clears the override (null), not a no-op. */
+export function modelIdsForUpdate(text: string): string[] | null {
+  const ids = parseModelIdsList(text);
+  return ids.length > 0 ? ids : null;
+}
+
+/** The inverse of modelIdsForAdd/Update — what the form's Models field shows on open. */
+export function formatModelIds(modelIds: string[] | undefined): string {
+  return modelIds ? modelIds.join(', ') : '';
+}
+
+/** Design brief §2 "Empty / adding": Save stays disabled until both are filled, or while busy. */
+export function endpointSaveDisabled(label: string, baseUrl: string, busy: boolean): boolean {
+  return busy || label.trim() === '' || baseUrl.trim() === '';
+}
+
+/** Design brief §2 "Test OK" — zero models is still success, never an error. */
+export function endpointProbeSuccessLine(probe: EndpointProbe): string {
+  return `reachable · ${probe.modelCount} model${probe.modelCount === 1 ? '' : 's'}`;
+}
+
+/**
+ * A 3-digit HTTP status embedded in the core's UNREACHABLE message (FR-8's
+ * "status in the message"). Anchored to the ONE core-guaranteed phrase that
+ * actually carries a status — `format!("the endpoint returned HTTP {code}")`
+ * in src-tauri/src/account/endpoint.rs::probe — rather than a bare
+ * word-boundary scan: the other UNREACHABLE messages (connect refused, DNS,
+ * timeout, transport errors) are free text that can embed an unrelated
+ * 3-digit token (a port, a millisecond count, an attempt counter) which a
+ * bare scan would misreport as a successful-looking status.
+ */
+const STATUS_IN_MESSAGE = /\breturned HTTP ([1-5]\d{2})\b/;
+
+/** Design brief §2 "Test failed" / "Validation error" — one sentence, no stack, no URL echo. */
+export function endpointErrorLine(error: AppError): string {
+  switch (error.code) {
+    case 'ACCOUNT_ENDPOINT_UNAUTHORIZED':
+      return "the endpoint rejected that key";
+    case 'ACCOUNT_ENDPOINT_UNREACHABLE': {
+      const m = error.message.match(STATUS_IN_MESSAGE);
+      return m ? `endpoint answered ${m[1]}` : "couldn't reach that URL";
+    }
+    default:
+      // INVALID_INPUT (and everything else) — the core's message IS the rule.
+      return error.message.trim() === '' ? 'could not save' : error.message;
+  }
+}
+
+/**
+ * FR-9: the probe is stateless and takes unsaved form values. An untouched
+ * key field on an edit form sends `accountId` instead — the core probes with
+ * that account's STORED key, never re-asking for it.
+ */
+export function endpointTestPayload(
+  baseUrl: string,
+  apiKeyDraft: string,
+  accountId: AccountId | undefined,
+): AccountTestEndpointPayload {
+  const apiKey = apiKeyDraft.trim();
+  if (apiKey !== '') return { baseUrl, apiKey };
+  return accountId ? { baseUrl, accountId } : { baseUrl };
+}
+
+/** FR-6: builds account_add_endpoint's payload from the form's draft fields. */
+export function endpointAddPayload(
+  label: string,
+  baseUrl: string,
+  apiKeyDraft: string,
+  modelsDraft: string,
+): AccountAddEndpointPayload {
+  const apiKey = apiKeyDraft.trim();
+  return {
+    label: label.trim(),
+    baseUrl: baseUrl.trim(),
+    apiKey: apiKey !== '' ? apiKey : undefined,
+    modelIds: modelIdsForAdd(modelsDraft),
+  };
+}
+
+/**
+ * FR-7: builds account_update_endpoint's payload. `clearKey` and `apiKey` are
+ * mutually exclusive BY CONSTRUCTION — the form clears one the moment the
+ * other is touched (EndpointForm), so this never has to choose between them.
+ */
+export function endpointUpdatePayload(
+  accountId: AccountId,
+  label: string,
+  baseUrl: string,
+  apiKeyDraft: string,
+  clearKey: boolean,
+  modelsDraft: string,
+): AccountUpdateEndpointPayload {
+  const apiKey = apiKeyDraft.trim();
+  return {
+    accountId,
+    label: label.trim(),
+    baseUrl: baseUrl.trim(),
+    apiKey: !clearKey && apiKey !== '' ? apiKey : undefined,
+    clearKey: clearKey ? true : undefined,
+    modelIds: modelIdsForUpdate(modelsDraft),
+  };
+}
+
+/**
+ * Design brief §1 "Default account" flash parity: which id in `after` was not
+ * in `before` — what a just-saved endpoint row is, so the modal can flash it
+ * the same way a fresh login does. Null when nothing was added (an edit, or a
+ * removal).
+ */
+export function newlyAddedAccountId(before: Account[], after: Account[]): AccountId | null {
+  const beforeIds = new Set(before.map((a) => a.id));
+  return after.find((a) => !beforeIds.has(a.id))?.id ?? null;
 }

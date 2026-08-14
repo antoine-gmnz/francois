@@ -42,6 +42,100 @@ pub(crate) fn unique_temp_path(path: &Path, ext: &str) -> PathBuf {
     path.with_extension(format!("{ext}.{}.{seq}.tmp", std::process::id()))
 }
 
+// ---------- multi-provider-endpoint FR-2: the user-only key file ----------
+//
+// The one primitive both platforms share for a file that must never be
+// readable by anyone but the current user: `<configDir>/endpoint-key` (the
+// endpoint account's API key, account/endpoint.rs). Unlike
+// `permissions::settings::write_private` (which carries over an EXISTING
+// target's mode/ACL because settings.json is user-editable and may already
+// have been loosened), this primitive always forces the restrictive mode —
+// there is no scenario where a looser key file is intentional.
+
+/// Write `bytes` to `path` (creating parent directories as needed) with
+/// permissions restricted to the current user only: `0600` on unix, an ACL
+/// granting solely the current user Full Control on Windows (inheritance from
+/// the parent directory is explicitly stripped — a key file must not inherit
+/// a looser ACL from `<app_data>/accounts/<id>/`).
+pub(crate) fn write_user_only_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    write_user_only_file_platform(path, bytes)
+}
+
+#[cfg(unix)]
+fn write_user_only_file_platform(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(bytes)?;
+    // `.mode()` only governs permissions at CREATION — a key being REPLACED
+    // (account_update_endpoint) opens an already-existing file, whose mode is
+    // untouched by `OpenOptions`, so it is set explicitly here too.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    f.sync_all()
+}
+
+/// Windows has no `0600` — the equivalent is an ACL with a single explicit
+/// grant. `icacls` (present on every supported Windows version) is used
+/// rather than the raw `SetNamedSecurityInfoW` Win32 API: this crate has no
+/// existing ACL-manipulation code to extend, and hand-rolling the security
+/// descriptor plumbing for one sidecar file is a much larger surface than
+/// shelling out to the tool built for exactly this.
+#[cfg(windows)]
+fn write_user_only_file_platform(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    // Write to a sibling temp file and restrict ITS acl BEFORE the file ever
+    // lands at `path`, then rename it into place. Restricting `path` in place
+    // (write then `icacls`) would leave a window — and, worse, a permanent
+    // state if `icacls` itself fails — where a file at the final, expected
+    // path sits under the parent directory's INHERITED (looser) ACL instead
+    // of the restricted one. Renaming atomically means `path` only ever goes
+    // from "doesn't exist" / "previous restricted contents" straight to
+    // "new restricted contents" — never through an unrestricted state, and a
+    // failure anywhere in this sequence leaves the ORIGINAL `path` (if any)
+    // untouched rather than a half-restricted key file behind.
+    let tmp = unique_temp_path(path, "key");
+    std::fs::write(&tmp, bytes)?;
+    if let Err(e) = restrict_to_current_user_only(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    std::fs::rename(&tmp, path)
+}
+
+#[cfg(windows)]
+fn restrict_to_current_user_only(path: &Path) -> std::io::Result<()> {
+    let user = std::env::var("USERNAME")
+        .map_err(|_| std::io::Error::other("could not resolve the current Windows user"))?;
+    let spec = match std::env::var("USERDOMAIN") {
+        Ok(domain) if !domain.trim().is_empty() => format!("{domain}\\{user}"),
+        _ => user,
+    };
+    // /inheritance:r strips whatever the parent directory would otherwise
+    // hand down; /grant:r <spec>:F REPLACES (not adds to) that user's explicit
+    // permissions with Full control — the combination leaves exactly one ACE.
+    let output = std::process::Command::new("icacls")
+        .arg(path)
+        .arg("/inheritance:r")
+        .arg("/grant:r")
+        .arg(format!("{spec}:F"))
+        .output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "icacls could not restrict {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,5 +161,80 @@ mod tests {
         let name = tmp.file_name().unwrap().to_string_lossy().to_string();
         assert!(name.starts_with("CLAUDE.md."), "{name}");
         assert!(name.ends_with(".tmp"), "{name}");
+    }
+
+    // ---------- multi-provider-endpoint FR-2 ----------
+
+    fn tmp_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "francois-fs-util-{tag}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn write_user_only_file_creates_parent_dirs_and_holds_exactly_the_bytes() {
+        let dir = tmp_path("parents");
+        let path = dir.join("nested").join("endpoint-key");
+        write_user_only_file(&path, b"sk-test-123").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"sk-test-123");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_user_only_file_overwrites_an_existing_file_in_place() {
+        let dir = tmp_path("overwrite");
+        let path = dir.join("endpoint-key");
+        write_user_only_file(&path, b"first-key").unwrap();
+        write_user_only_file(&path, b"second-key").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second-key");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_user_only_file_is_0600_on_unix() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tmp_path("unix-mode");
+        let path = dir.join("endpoint-key");
+        write_user_only_file(&path, b"sk-test").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_user_only_file_leaves_exactly_one_ace_on_windows() {
+        let dir = tmp_path("win-acl");
+        let path = dir.join("endpoint-key");
+        write_user_only_file(&path, b"sk-test").unwrap();
+
+        // icacls's own report is the ground truth for what got applied —
+        // inheritance stripped, a single explicit grant for the current user.
+        let out = std::process::Command::new("icacls")
+            .arg(&path)
+            .output()
+            .unwrap();
+        let report = String::from_utf8_lossy(&out.stdout);
+        let user = std::env::var("USERNAME").unwrap();
+        assert!(
+            report.contains(&user),
+            "expected the current user in the ACL report:\n{report}"
+        );
+        // Exactly one ACE line naming the target file (icacls lists the path
+        // once, then one line per grantee for a single-file query).
+        let ace_lines = report
+            .lines()
+            .filter(|l| l.contains(":(") || l.trim_start().starts_with(&user))
+            .count();
+        assert_eq!(
+            ace_lines, 1,
+            "expected a single restricted ACE, got:\n{report}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

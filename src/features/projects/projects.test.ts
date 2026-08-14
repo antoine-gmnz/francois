@@ -452,6 +452,19 @@ describe('project defaults form (FR-34)', () => {
     ]);
   });
 
+  it('marks an openai-compatible account disabled with the not-yet-available reason (multi-provider-endpoint FR-14)', () => {
+    const defs = defaultFieldDefs(MODELS, {}, true, [
+      { id: 'default', label: 'Default', kind: 'claude-code-oauth' },
+      { id: 'e1', label: 'OpenAI', kind: 'openai-compatible' },
+    ]);
+    expect(defs[0].key).toBe('accountId');
+    expect(defs[0].options).toEqual([
+      { value: '', label: 'inherit' },
+      { value: 'default', label: 'Default' },
+      { value: 'e1', label: 'OpenAI', disabled: true, disabledReason: "Sessions on this provider aren't available yet." },
+    ]);
+  });
+
   it('patches and clears the account default like every other field', () => {
     expect(patchDefaults({ modelId: 'm' }, 'accountId', 'a1')).toEqual({ modelId: 'm', accountId: 'a1' });
     expect(patchDefaults({ modelId: 'm', accountId: 'a1' }, 'accountId', '')).toEqual({ modelId: 'm' });

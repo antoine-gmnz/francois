@@ -24,9 +24,12 @@ import {
   accountAvatarHue,
   accountAvatarLetter,
   accountDisplayLabel,
+  accountIsEndpoint,
   accountMetaLine,
   accountMetersView,
   accountNeedsLogin,
+  endpointBaseUrlLine,
+  endpointRowNote,
 } from './accounts';
 
 // One size and one weight for every icon in the row — 13px reads level with the
@@ -65,6 +68,9 @@ export interface AccountRowProps {
   onStartRename: () => void;
   onRelogin: () => void;
   onRemove: () => void;
+  /** multi-provider-endpoint FR-13: the pencil affordance on an endpoint row opens
+   * the full form instead of the inline label-only rename. */
+  onEditEndpoint: () => void;
 }
 
 export function AccountRow({
@@ -84,10 +90,15 @@ export function AccountRow({
   onStartRename,
   onRelogin,
   onRemove,
+  onEditEndpoint,
 }: AccountRowProps): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
   const needsLogin = accountNeedsLogin(account);
-  const meta = accountMetaLine(account, sessionCount);
+  const isEndpoint = accountIsEndpoint(account);
+  // Design brief §1: an endpoint row's second line is its base URL (dim,
+  // middle-truncated, `no key` when keyless) instead of email/session count.
+  const meta = isEndpoint ? endpointBaseUrlLine(account) : accountMetaLine(account, sessionCount);
+  const note = endpointRowNote(account);
   const meters = accountMetersView(snapshot, now);
 
   useEffect(() => {
@@ -130,10 +141,16 @@ export function AccountRow({
             ) : (
               <span className="truncate acc-label">{accountDisplayLabel(account)}</span>
             )}
+            {/* multi-provider-endpoint design brief §1: neutral, no fill — provider
+                is metadata, not identity. OAuth rows get no chip at all. */}
+            {isEndpoint && <span className="acc-kind-chip">endpoint</span>}
             {account.isDefault && <span className="acc-pill">DEFAULT</span>}
             {needsLogin && <span className="acc-pill acc-pill--alert">NEEDS LOGIN</span>}
           </div>
           {meta && !renaming && <span className="truncate acc-meta">{meta}</span>}
+          {/* multi-provider-endpoint FR-14 / design brief §1: dim, one line,
+              removed the moment multi-provider-openai lands. */}
+          {note && !renaming && <span className="acc-endpoint-note">{note}</span>}
         </div>
 
         {/* Icon-only, with the label on `title`/`aria-label`: the mock's rows
@@ -145,13 +162,22 @@ export function AccountRow({
               <Star {...ICON} />
             </button>
           )}
-          <button type="button" className="acc-action" title="Rename" aria-label="Rename" onClick={onStartRename}>
+          {/* multi-provider-endpoint design brief §1: an endpoint row's pencil opens
+              the full form (label/base URL/key/models), not the label-only rename. */}
+          <button
+            type="button"
+            className="acc-action"
+            title={isEndpoint ? 'Edit' : 'Rename'}
+            aria-label={isEndpoint ? 'Edit' : 'Rename'}
+            onClick={isEndpoint ? onEditEndpoint : onStartRename}
+          >
             <Pencil {...ICON} />
           </button>
           {/* FR-17: Re-login is account:add reusing this row + dir. The built-in
               account has no config dir of its own, so it has nothing to re-log
-              into — `claude` owns ~/.claude directly. */}
-          {!account.builtIn && (
+              into — `claude` owns ~/.claude directly. An endpoint account has no
+              interactive login at all (design brief §1: replaced by Edit above). */}
+          {!account.builtIn && !isEndpoint && (
             <button type="button" className="acc-action" title="Re-login" aria-label="Re-login" onClick={onRelogin}>
               <RotateCw {...ICON} />
             </button>
@@ -171,29 +197,35 @@ export function AccountRow({
       </div>
 
       {/* §Responsive: the quota line is what the row drops first when it runs
-          out of width (accounts.css) — identity and actions always survive. */}
-      <div className="acc-quota">
-        {meters.kind === 'meters' && (
-          <>
-            {meters.chips.map((c, i) => (
-              <Meter key={`${c.label}:${i}`} {...c} />
-            ))}
-            {meters.reset && <span className="acc-reset">{meters.reset}</span>}
-            {meters.message && (
-              <span title={meters.message} className="acc-quota-stale">
-                stale
-              </span>
-            )}
-          </>
-        )}
-        {meters.kind === 'none' && <span className="acc-quota-placeholder">—</span>}
-        {meters.kind === 'loading' && <span className="acc-quota-placeholder">…</span>}
-        {meters.kind === 'error' && (
-          <span title={meters.message ?? undefined} className="acc-quota-error">
-            usage unavailable
-          </span>
-        )}
-      </div>
+          out of width (accounts.css) — identity and actions always survive.
+          multi-provider-endpoint: plan-limit meters are an Anthropic concept
+          (usage-bar, explicitly out of scope here) — an endpoint account has
+          none to show, so the row simply ends after its note instead of
+          reading `—`/`usage unavailable` about a meter that was never real. */}
+      {!isEndpoint && (
+        <div className="acc-quota">
+          {meters.kind === 'meters' && (
+            <>
+              {meters.chips.map((c, i) => (
+                <Meter key={`${c.label}:${i}`} {...c} />
+              ))}
+              {meters.reset && <span className="acc-reset">{meters.reset}</span>}
+              {meters.message && (
+                <span title={meters.message} className="acc-quota-stale">
+                  stale
+                </span>
+              )}
+            </>
+          )}
+          {meters.kind === 'none' && <span className="acc-quota-placeholder">—</span>}
+          {meters.kind === 'loading' && <span className="acc-quota-placeholder">…</span>}
+          {meters.kind === 'error' && (
+            <span title={meters.message ?? undefined} className="acc-quota-error">
+              usage unavailable
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

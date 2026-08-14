@@ -89,6 +89,18 @@ export const ACCOUNTS: Account[] = [
     createdAt: T0 - (60 * 24 * 40) * MIN,
     kind: 'claude-code-oauth',
   },
+  // multi-provider-endpoint FR-13: a demo row so the kind chip, base-URL line
+  // and "sessions not yet available" note are visible in the demo fleet.
+  {
+    id: 'acct-openai',
+    label: 'OpenAI',
+    configDir: '~/.francois/accounts/acct-openai',
+    builtIn: false,
+    isDefault: false,
+    createdAt: T0 - (60 * 24 * 10) * MIN,
+    kind: 'openai-compatible',
+    endpoint: { baseUrl: 'https://api.openai.com/v1', hasKey: true },
+  },
 ];
 
 // ---------- projects ----------

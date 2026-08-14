@@ -5,7 +5,7 @@
 // Physical Tauri binding: `francois:account:<verb>` → `invoke('account_<verb>')`;
 // `francois:account:event` → `listen('francois://account/event')`.
 
-import type { AppError, AccountId, Result, SessionId } from './common';
+import type { AppError, AccountId, ModelInfo, Result, SessionId } from './common';
 
 // AccountId lives in common.ts (SessionMeta.accountId / ProjectDefaults.accountId need it
 // and common.ts never imports from feature files) — re-exported here for import-site parity.
@@ -19,6 +19,20 @@ export const DEFAULT_ACCOUNT_ID: AccountId = 'default';
  */
 export type AccountKind = 'claude-code-oauth' | 'openai-compatible';
 
+/**
+ * The endpoint half of an 'openai-compatible' account. Present on `Account` iff
+ * kind === 'openai-compatible'. Carries NO key material: `hasKey` is derived from
+ * the key file's existence and is the only thing that crosses the boundary
+ * (multi-provider-endpoint FR-3).
+ */
+export interface EndpointConfig {
+  /** Normalized: absolute, no trailing slash, https:// except on loopback (FR-4). */
+  baseUrl: string;
+  hasKey: boolean;
+  /** User override of the discovered catalog; absent ⇒ discover from /models. */
+  modelIds?: string[];
+}
+
 export interface Account {
   id: AccountId;
   label: string; // user-editable, non-empty (FR-5)
@@ -31,6 +45,8 @@ export interface Account {
   authFailedAt?: number; // epoch ms of the last credential failure (FR-22/FR-23)
   /** multi-provider-seam FR-12. A persisted record without it loads as 'claude-code-oauth'. */
   kind: AccountKind;
+  /** multi-provider-endpoint FR-1. Present iff kind === 'openai-compatible'. */
+  endpoint?: EndpointConfig;
 }
 
 // francois:account:list — no payload
@@ -65,6 +81,42 @@ export interface AccountRemoveData {
 }
 export type AccountRemoveResponse = Result<AccountRemoveData>;
 // errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_NOT_REMOVABLE', 'INTERNAL'
+
+// francois:account:addEndpoint → invoke('account_add_endpoint')
+export interface AccountAddEndpointPayload {
+  label: string; // non-empty after trim
+  baseUrl: string;
+  apiKey?: string; // WRITE-ONLY. Absent ⇒ no key (a loopback server that needs none).
+  modelIds?: string[]; // non-empty when present
+}
+export type AccountAddEndpointResponse = Result<Account[]>;
+// errors: 'INVALID_INPUT', 'ACCOUNT_KEY_WRITE_FAILED', 'INTERNAL'
+
+// francois:account:updateEndpoint → invoke('account_update_endpoint')
+export interface AccountUpdateEndpointPayload {
+  accountId: AccountId;
+  label?: string;
+  baseUrl?: string;
+  apiKey?: string; // present ⇒ replace the stored key
+  clearKey?: boolean; // true ⇒ delete it. With apiKey ⇒ INVALID_INPUT (FR-7).
+  modelIds?: string[] | null; // null ⇒ clear the override; [] ⇒ INVALID_INPUT
+}
+export type AccountUpdateEndpointResponse = Result<Account[]>;
+// errors: 'ACCOUNT_NOT_FOUND', 'INVALID_INPUT', 'ACCOUNT_KEY_WRITE_FAILED', 'INTERNAL'
+
+// francois:account:testEndpoint → invoke('account_test_endpoint')
+export interface AccountTestEndpointPayload {
+  baseUrl: string;
+  apiKey?: string;
+  /** With no apiKey ⇒ probe with this account's STORED key (FR-9). */
+  accountId?: AccountId;
+}
+export interface EndpointProbe {
+  models: ModelInfo[]; // id + label only (FR-10)
+  modelCount: number;
+}
+export type AccountTestEndpointResponse = Result<EndpointProbe>;
+// errors: 'INVALID_INPUT', 'ACCOUNT_ENDPOINT_UNREACHABLE', 'ACCOUNT_ENDPOINT_UNAUTHORIZED', 'INTERNAL'
 
 // francois:account:event → francois://account/event
 export type AccountEvent =

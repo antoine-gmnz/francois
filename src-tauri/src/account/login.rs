@@ -477,6 +477,7 @@ fn register(
                 // multi-provider-seam FR-12: every login this module drives is
                 // the Claude Code CLI OAuth flow — the only kind reachable here.
                 kind: AccountKind::ClaudeCodeOauth,
+                endpoint: None,
             });
         }
     }

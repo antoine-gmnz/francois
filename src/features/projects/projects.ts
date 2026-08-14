@@ -264,6 +264,9 @@ export type DefaultsKey = keyof ProjectDefaults;
 export interface FieldOption {
   value: string;
   label: string;
+  /** multi-provider-endpoint FR-14: an openai-compatible account, not yet usable — present only when true. */
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export interface DefaultFieldDef {
@@ -306,7 +309,12 @@ const INHERIT: FieldOption = { value: '', label: 'inherit' };
 export interface AccountOptionSource {
   id: string;
   label: string;
+  /** multi-provider-endpoint FR-14: 'openai-compatible' accounts render disabled below. */
+  kind?: string;
 }
+
+/** multi-provider-endpoint FR-14 — said once here, matching accounts.ts's own copy verbatim. */
+const ENDPOINT_UNAVAILABLE_REASON = "Sessions on this provider aren't available yet.";
 
 /**
  * FR-34.2: uniform selects, every one carrying `inherit` first (which is how
@@ -329,7 +337,16 @@ export function defaultFieldDefs(
           {
             key: 'accountId',
             label: 'account',
-            options: [INHERIT, ...accounts.map((a) => ({ value: a.id, label: a.label }))],
+            options: [
+              INHERIT,
+              ...accounts.map((a) => ({
+                value: a.id,
+                label: a.label,
+                ...(a.kind === 'openai-compatible'
+                  ? { disabled: true, disabledReason: ENDPOINT_UNAVAILABLE_REASON }
+                  : {}),
+              })),
+            ],
           },
         ]
       : [];
