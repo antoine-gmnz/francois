@@ -17,6 +17,7 @@ import {
   canLoadMore,
   cellClassName,
   cellText,
+  sanitizeForDisplay,
   toneClassName,
   truncatePathLeft,
   type TableCursor,
@@ -52,8 +53,8 @@ export default function ExtTable({
           runtime data, the one case the CSS contract allows inline. */}
       <div className="ext-table__head" style={{ gridTemplateColumns: template }}>
         {columns.map((c) => (
-          <span key={c.key} className={`ext-table__th ext-table__th--${c.kind}`} title={c.label}>
-            {c.label}
+          <span key={c.key} className={`ext-table__th ext-table__th--${c.kind}`} title={sanitizeForDisplay(c.label)}>
+            {sanitizeForDisplay(c.label)}
           </span>
         ))}
       </div>

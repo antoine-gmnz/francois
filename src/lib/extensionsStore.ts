@@ -56,6 +56,11 @@ export interface ExtensionsSlice {
   extensionsOpen: boolean;
   setExtensionsOpen: (open: boolean) => void;
 
+  /** extension-install FR-16: the extension the consent dialog is open for, if any. */
+  extConsentDialogId: ExtensionId | null;
+  openExtConsentDialog: (extensionId: ExtensionId) => void;
+  closeExtConsentDialog: () => void;
+
   /**
    * FR-13: extensions whose tab has been opened in this app run. A sticky tab
    * survives a session change into a root that no longer detects it; it is
@@ -128,6 +133,10 @@ export const createExtensionsSlice: StateCreator<AppState, [], [], ExtensionsSli
 
   extensionsOpen: false,
   setExtensionsOpen: (extensionsOpen) => set({ extensionsOpen }),
+
+  extConsentDialogId: null,
+  openExtConsentDialog: (extensionId) => set({ extConsentDialogId: extensionId }),
+  closeExtConsentDialog: () => set({ extConsentDialogId: null }),
 
   extStickyIds: [],
   openExtTab: (extensionId) =>

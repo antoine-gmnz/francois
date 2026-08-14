@@ -20,7 +20,15 @@ import { extensionsCloseStream, extensionsOpenStream } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { StatusDot } from '../../ui/StatusDot';
 import ExtSectionError from './ExtSectionError';
-import { SELECT_ROW_COPY, SELECT_SESSION_COPY, earlierLinesNotice, notAvailableCopy, panelRoot, sectionGate } from './extensions';
+import {
+  SELECT_ROW_COPY,
+  SELECT_SESSION_COPY,
+  earlierLinesNotice,
+  notAvailableCopy,
+  panelRoot,
+  sanitizeForDisplay,
+  sectionGate,
+} from './extensions';
 
 /**
  * FR-43: pending grace closes, keyed by panel. Module-level because the
@@ -152,7 +160,7 @@ export default function LogTailSection({
   return (
     <section className="ext-section">
       <div className="ext-section__header">
-        <span className="ext-section__label">{panel.label}</span>
+        <span className="ext-section__label">{sanitizeForDisplay(panel.label)}</span>
         <span className="ext-section__header-right">
           {gate === 'ready' && live && (
             // The ONE acid accent in the tab: the live thing (design brief §2).
@@ -172,7 +180,9 @@ export default function LogTailSection({
           <>
             <div className="ext-log scz" ref={scroller}>
               {notice && <div className="ext-log__notice">{notice}</div>}
-              {lineCount === 0 && !stream?.error && <div className="ext-log__waiting">{panel.emptyCopy}</div>}
+              {lineCount === 0 && !stream?.error && (
+                <div className="ext-log__waiting">{sanitizeForDisplay(panel.emptyCopy)}</div>
+              )}
               {stream?.log.lines.map((line, i) => (
                 // FR-40: keyed by a monotonic line number (dropped-count + index
                 // within the retained slice), not the array index — the ring

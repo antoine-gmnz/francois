@@ -21,6 +21,7 @@ import {
   notAvailableCopy,
   panelRoot,
   receivePanel,
+  sanitizeForDisplay,
   sectionGate,
   startPanelFetch,
   toneColor,
@@ -41,8 +42,6 @@ export interface PanelSectionProps {
   selectable: boolean;
   selectedRowId: string | null;
   onSelectRow: (row: TableRow) => void;
-  /** FR-46: rendered in the header of the one panel that declares an action. */
-  headerAction?: React.ReactNode;
 }
 
 /** FR-29: auto-refresh stops on window blur and resumes on return. */
@@ -71,7 +70,6 @@ export default function PanelSection({
   selectable,
   selectedRowId,
   onSelectRow,
-  headerAction,
 }: PanelSectionProps) {
   const [state, setState] = useState<PanelState>(CLOSED_PANEL);
   const reqRef = useRef(0);
@@ -141,7 +139,7 @@ export default function PanelSection({
   return (
     <section className="ext-section">
       <div className="ext-section__header">
-        <span className="ext-section__label">{panel.label}</span>
+        <span className="ext-section__label">{sanitizeForDisplay(panel.label)}</span>
         <span className="ext-section__header-right">
           {refreshMs !== null && gate === 'ready' && (
             <span className="ext-section__refresh" title={`refreshes every ${Math.round(refreshMs / 1000)}s`}>
@@ -149,7 +147,6 @@ export default function PanelSection({
               <span>{Math.round(refreshMs / 1000)}s</span>
             </span>
           )}
-          {headerAction}
         </span>
       </div>
       <div className="ext-section__body">
@@ -208,7 +205,8 @@ function Body({
   }
 
   // FR-49: a validated zero-row payload is a SUCCESS with its own calm copy.
-  if (isPanelEmpty(state, panel.primitive)) return <EmptyPane className="ext-empty">{panel.emptyCopy}</EmptyPane>;
+  if (isPanelEmpty(state, panel.primitive))
+    return <EmptyPane className="ext-empty">{sanitizeForDisplay(panel.emptyCopy)}</EmptyPane>;
 
   if (panel.primitive === 'key-value') {
     return (

@@ -1,6 +1,6 @@
-/* extensions — the three `ext:<id>` main-pane tabs, the four primitives, the
-   Extensions modal and the launch confirmation. Tokens only (src/styles.css);
-   BEM-lite; no font-weight above 600.
+/* extensions — the `ext:<id>` main-pane tabs, the four primitives, the
+   Extensions modal (Installed rows) and the consent dialog. Tokens only
+   (src/styles.css); BEM-lite; no font-weight above 600.
 
    Identity rule (design brief): acid `--accent` means THE LIVE THING and
    appears exactly once per view — the `live` indicator on a streaming
@@ -50,6 +50,16 @@
 }
 .ext-view__disable:hover {
   color: var(--text-2);
+}
+.ext-view__disable--busy {
+  cursor: default;
+  opacity: 0.5;
+  pointer-events: none;
+}
+.ext-view__error {
+  margin-top: var(--space-8);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
 }
 
 /* -- section --------------------------------------------------------------- */
@@ -367,63 +377,135 @@
   color: var(--text-faint);
   padding-bottom: var(--space-4);
 }
-/* -- the launch action (FR-46..FR-48) -------------------------------------- */
+/* -- consent dialog (extension-install FR-16..FR-18) ------------------------ */
 
-.ext-action {
+.ext-consent__stale {
+  margin-bottom: var(--space-10);
+  font-size: var(--font-size-10-5);
+  color: var(--warn);
+}
+.ext-consent__commands {
   display: flex;
-  align-items: center;
-  gap: var(--space-8);
-}
-.ext-action__note,
-.ext-action__error {
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
-}
-.ext-action__error {
-  color: var(--error);
-}
-.ext-confirm__command {
-  padding: var(--space-12);
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-10);
   border-radius: var(--radius-card);
   background: var(--bg-deep);
   box-shadow: inset 0 0 0 1px var(--border-2);
+}
+.ext-consent__command {
   font-family: var(--font-mono);
-  font-size: var(--font-size-12-5);
+  font-size: var(--font-size-11-5);
   color: var(--text-bright);
+  white-space: pre;
+  overflow-x: auto;
+}
+.ext-consent__path {
+  margin-top: var(--space-10);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
   overflow-wrap: anywhere;
 }
-.ext-confirm__note {
+.ext-consent__error {
   margin-top: var(--space-10);
   font-size: var(--font-size-10-5);
-  color: var(--text-muted);
+  color: var(--error);
 }
 
-/* -- Extensions modal (FR-56/FR-57) ---------------------------------------- */
+/* -- Extensions modal (FR-56/FR-57, extension-install FR-15..FR-20) -------- */
 
 .ext-modal__error {
   margin-bottom: var(--space-8);
   font-size: var(--font-size-11);
   color: var(--error);
 }
+.ext-modal__empty {
+  padding: var(--space-24) var(--space-8);
+  gap: var(--space-8);
+}
+.ext-modal__empty-path {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
 .ext-modal__row {
   display: grid;
-  grid-template-columns: 110px 1fr 34px;
-  align-items: center;
+  grid-template-columns: 1fr auto;
+  align-items: start;
   gap: var(--space-10);
-  padding: var(--space-8) var(--space-10);
+  padding: var(--space-10);
 }
 .ext-modal__row--recessed {
   opacity: 0.62;
 }
-.ext-modal__name {
+.ext-modal__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.ext-modal__idline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.ext-modal__id {
+  font-family: var(--font-mono);
   font-size: var(--font-size-12);
   color: var(--text-strong);
+}
+.ext-modal__name {
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-modal__path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  direction: ltr;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ext-modal__state {
   font-size: var(--font-size-10-5);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-modal__state--ready {
+  color: var(--success);
+}
+.ext-modal__stale-notice {
+  font-size: var(--font-size-10-5);
+  color: var(--warn);
+}
+.ext-modal__manifest-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ext-modal__manifest-cause {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+.ext-modal__manifest-path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.ext-modal__control {
+  display: flex;
+  align-items: center;
+  padding-top: var(--space-2);
+}
+.ext-modal__review {
   white-space: nowrap;
 }
 .ext-toggle {

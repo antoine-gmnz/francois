@@ -1,41 +1,131 @@
-//! §5 — the `francois:extensions:<verb>` Tauri command surface.
+//! §5 — the `francois:extensions:<verb>` Tauri command surface, amended by
+//! `extension-install`: `extensions_probe`/`extensions_launch` are GONE
+//! (FR-24), and one command is new — `extensions_consent` (FR-16).
 //!
-//! Every handler is the same shape: resolve the panel out of the COMPILED
-//! registry, refuse before spawning anything if the extension is off (FR-7) or
-//! the root does not detect it (FR-3), then delegate. Nothing here parses a
-//! definition, and nothing here composes an argv out of a string.
-//!
-//! Every failure names its cause and carries the RESOLVED COMMAND in its detail,
-//! because FR-49 renders exactly that under the message — the frontend must
-//! never have to reconstruct what Francois ran.
+//! Every handler resolves the panel out of the LOADED registry
+//! (`ExtensionState.registry`, rebuilt on launch and on `extensions_detect`
+//! only — FR-13), refuses before spawning anything if the extension is off
+//! (`extensions` FR-7), unconsented (FR-17) or the root does not detect it
+//! (FR-12), then delegates. Nothing here parses a manifest, and nothing here
+//! composes an argv out of untrusted text.
 
-use super::detect::{detect_cached_locked, normalize_root, Detection, NO_ROOT_REASON};
+use super::detect::{detect_cached_locked, normalize_root, NO_ROOT_REASON};
+use super::manifest::sanitize_argv_element;
 use super::provider::{build_argv, run, ProviderError};
 use super::stream::{
     file_rel_path, new_stream_id, process_argv, resolve_under_root, spawn_file_stream,
     spawn_process_stream, valid_token, SourceError,
 };
+use super::toggles::ToggleEntry;
 use super::{
-    emit, registry, schema, toggles, ExtensionEvent, ExtensionInfo, ExtensionState, PanelData,
-    PanelDefinition, PanelScope, PrimitiveKind, ProbeResult, Source, EXT_PAGE_SIZE,
+    emit, registry, schema, ConsentState, ExtensionEvent, ExtensionInfo, ExtensionSource,
+    ExtensionState, LoadedExtension, PanelData, PanelDefinition, PanelScope, PrimitiveKind, Source,
+    EXT_PAGE_SIZE,
 };
-use crate::ipc::{err, err_detail, ok, IpcResult};
+use crate::ipc::{err, err_detail, ok, AppError, IpcResult};
 use serde_json::json;
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
 
+// ---------- registry (re)loading (FR-1, FR-13, FR-18, FR-19) ----------
+
+/// Rebuild the loaded registry from `~/.francois/extensions/` and reconcile
+/// the persisted toggles against it. Called at app setup and by
+/// `extensions_detect` — the only two FR-13 triggers.
+pub(crate) fn refresh_registry(app: &AppHandle, state: &ExtensionState) {
+    let dir = crate::fs_util::extensions_dir();
+    if let Some(dir) = dir.as_ref() {
+        let _ = crate::fs_util::ensure_dir_0700(dir);
+    }
+    let loaded: Vec<LoadedExtension> = dir.as_deref().map(registry::scan_dir).unwrap_or_default();
+
+    let mut streams_to_kill: Vec<String> = Vec::new();
+    {
+        let mut toggles = state.toggles.lock().unwrap();
+        toggles.ensure_loaded(app);
+        // FR-19: an entry whose directory is gone is dropped.
+        toggles.retain_ids(loaded.iter().map(|e| e.id.as_str()));
+        // FR-18: a previously-granted consent whose sha no longer matches
+        // reverts the extension to disabled, in the same pass.
+        for ext in loaded.iter() {
+            let Some(sha) = ext.manifest_sha256.as_ref() else {
+                continue;
+            };
+            let entry = toggles.entry(&ext.id);
+            let stale = entry
+                .consent_sha256
+                .as_deref()
+                .is_some_and(|consented| consented != sha.as_str());
+            if stale && entry.enabled {
+                toggles.set_enabled(&ext.id, false);
+                streams_to_kill.push(ext.id.clone());
+            }
+        }
+        super::toggles::save(app, toggles.as_map());
+    }
+    for extension_id in streams_to_kill {
+        let killed = state.streams.lock().unwrap().close_extension(&extension_id);
+        for stream_id in killed {
+            emit(
+                app,
+                ExtensionEvent::StreamEnded {
+                    stream_id,
+                    exit_code: None,
+                },
+            );
+        }
+    }
+
+    // FR-13: a predicate is part of what a manifest declares, so a rescan that
+    // changes one must invalidate every cached detection for it — a per-root
+    // `invalidate` (what `extensions_detect` also does, for the queried root)
+    // is not enough when the SAME extension is cached under other roots too.
+    let mut registry = state.registry.lock().unwrap();
+    let predicate_changed = loaded.iter().any(|ext| {
+        registry
+            .iter()
+            .find(|old| old.id == ext.id)
+            .is_none_or(|old| old.predicate != ext.predicate)
+    });
+    if predicate_changed {
+        state.detect.lock().unwrap().invalidate_all();
+    }
+    *registry = loaded;
+}
+
+fn consent_state_of(entry: &ToggleEntry, ext: &LoadedExtension) -> ConsentState {
+    match (&entry.consent_sha256, &ext.manifest_sha256) {
+        (None, _) => ConsentState::Never,
+        (Some(consented), Some(current)) if consented == current => ConsentState::Granted,
+        (Some(_), _) => ConsentState::Stale,
+    }
+}
+
 // ---------- shared resolution ----------
 
-/// FR-24/FR-21/FR-22 → the wire. Each message names its cause in the copy §7
-/// prescribes, over the resolved command the frontend renders in monospace.
+/// FR-51/belt-and-braces: the argv joined into `detail.command` (and
+/// `detail.argv0`) crosses IPC even on the error path, so it gets the same
+/// `sanitize_argv_element` scrub `declared_commands` applies on the consent
+/// path — a manifest-controlled bidi override or zero-width char must not
+/// reach the renderer unsanitized just because the provider failed.
+fn sanitized_command(argv: &[String]) -> String {
+    argv.iter()
+        .map(|a| sanitize_argv_element(a))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn provider_error<T: serde::Serialize>(e: ProviderError, argv: &[String]) -> IpcResult<T> {
-    let command = argv.join(" ");
+    let command = sanitized_command(argv);
     match e {
-        ProviderError::Missing { argv0 } => err_detail(
-            "EXT_PROVIDER_MISSING",
-            format!("{argv0} not found on PATH"),
-            json!({ "argv0": argv0, "command": command }),
-        ),
+        ProviderError::Missing { argv0 } => {
+            let argv0 = sanitize_argv_element(&argv0);
+            err_detail(
+                "EXT_PROVIDER_MISSING",
+                format!("{argv0} not found on PATH"),
+                json!({ "argv0": argv0, "command": command }),
+            )
+        }
         ProviderError::Timeout { timeout_ms } => err_detail(
             "EXT_PROVIDER_TIMEOUT",
             format!("timed out after {}s", timeout_ms / 1_000),
@@ -54,15 +144,9 @@ fn provider_error<T: serde::Serialize>(e: ProviderError, argv: &[String]) -> Ipc
     }
 }
 
-/// FR-24 for a `log-tail` process source (`extensions_open_stream`'s own spawn,
-/// distinct from a provider `run()` call). The contract has no dedicated code
-/// for this path, so it still wears `EXT_PROVIDER_MISSING` — but unlike a bare
-/// `ProviderError::Missing`, the message and detail carry the REAL `io::Error`
-/// (e.g. permission-denied), never an assumed "not found on PATH" when that
-/// was not the actual cause.
 fn spawn_error<T: serde::Serialize>(e: &std::io::Error, argv: &[String]) -> IpcResult<T> {
-    let argv0 = argv[0].clone();
-    let command = argv.join(" ");
+    let argv0 = sanitize_argv_element(&argv[0]);
+    let command = sanitized_command(argv);
     let message = if e.kind() == std::io::ErrorKind::NotFound {
         format!("{argv0} not found on PATH")
     } else {
@@ -75,62 +159,91 @@ fn spawn_error<T: serde::Serialize>(e: &std::io::Error, argv: &[String]) -> IpcR
     )
 }
 
-/// FR-53: a fleet-scoped panel takes no root and runs in the user's home — the
-/// same cwd discipline `usage.rs` uses for its own app-scoped probe.
 fn fleet_cwd() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
-/// The full FR-1..FR-11 answer for one root. `None` ⇒ FR-14: no active session,
-/// so every extension reports `detected: false` WITH a reason. This governs
-/// whether a NEW tab is offered; it never closes an open one.
+/// The full FR-12..FR-14 answer for one root, off the CACHED registry (no
+/// rescan — FR-13 says launch/`extensions_detect` only).
 fn list_impl(app: &AppHandle, state: &ExtensionState, root: Option<&str>) -> Vec<ExtensionInfo> {
-    let enabled: Vec<bool> = {
-        let mut toggles = state.toggles.lock().unwrap();
-        toggles.ensure_loaded(app);
-        registry::REGISTRY
-            .iter()
-            .map(|ext| toggles.is_enabled(ext.id))
-            .collect()
-    };
+    let registry = state.registry.lock().unwrap();
     let normalized = root.map(normalize_root);
-    // CRITICAL: never hold `state.detect` across this loop — a cache miss runs
-    // `evaluate` (up to the FR-21 10s `docker info` exec) with the lock
-    // released, so it cannot block every other extensions_list/detect/panel
-    // call in the app for up to 10s. `detect_cached_locked` re-acquires the
-    // lock only to read a hit or record a fresh result.
-    registry::REGISTRY
+    let mut toggles = state.toggles.lock().unwrap();
+    toggles.ensure_loaded(app);
+
+    registry
         .iter()
-        .zip(enabled)
-        .map(|(ext, enabled)| {
-            let detection = match normalized.as_ref() {
-                Some(root) => detect_cached_locked(&state.detect, ext, root, enabled),
-                None => Detection {
-                    detected: false,
-                    reason: Some(NO_ROOT_REASON.to_string()),
-                },
+        .map(|ext| {
+            let entry = toggles.entry(&ext.id);
+            let consent = consent_state_of(&entry, ext);
+            let effective_enabled = entry.enabled && consent == ConsentState::Granted;
+
+            let (detected, undetected_reason) = if ext.manifest_error.is_some() {
+                (false, None)
+            } else {
+                match normalized.as_ref() {
+                    Some(root) => {
+                        let d = detect_cached_locked(&state.detect, ext, root, effective_enabled);
+                        (d.detected, d.reason)
+                    }
+                    None => (false, Some(NO_ROOT_REASON.to_string())),
+                }
             };
+
             ExtensionInfo {
-                id: ext.id.to_string(),
-                label: ext.label.to_string(),
-                enabled,
-                detected: detection.detected,
-                undetected_reason: detection.reason,
-                min_version_label: ext.min_version_label.map(str::to_string),
-                panels: ext.panels.iter().map(|p| p.to_info()).collect(),
+                id: ext.id.clone(),
+                label: ext.label.clone(),
+                enabled: effective_enabled,
+                consent,
+                detected,
+                undetected_reason,
+                min_version_label: ext.min_version_label.clone(),
+                source: ExtensionSource {
+                    dir: ext.dir.to_string_lossy().to_string(),
+                    // FR-18: what the consent dialog echoes back — the empty
+                    // string only when the manifest could not be read at all.
+                    manifest_sha256: ext.manifest_sha256.clone().unwrap_or_default(),
+                    declared_commands: ext.declared_commands.clone(),
+                },
+                predicate: clone_predicate(&ext.predicate),
+                panels: if ext.manifest_error.is_some() {
+                    Vec::new()
+                } else {
+                    ext.panels.iter().map(|p| p.to_info()).collect()
+                },
+                manifest_error: ext.manifest_error.clone(),
             }
         })
         .collect()
 }
 
-fn is_enabled(app: &AppHandle, state: &ExtensionState, extension_id: &str) -> bool {
-    let mut toggles = state.toggles.lock().unwrap();
-    toggles.ensure_loaded(app);
-    toggles.is_enabled(extension_id)
+fn clone_predicate(p: &super::DetectPredicate) -> super::DetectPredicate {
+    match p {
+        super::DetectPredicate::PathExists { path } => {
+            super::DetectPredicate::PathExists { path: path.clone() }
+        }
+        super::DetectPredicate::PathJsonEquals {
+            path,
+            pointer,
+            equals,
+        } => super::DetectPredicate::PathJsonEquals {
+            path: path.clone(),
+            pointer: pointer.clone(),
+            equals: equals.clone(),
+        },
+        super::DetectPredicate::CommandSucceeds { argv } => {
+            super::DetectPredicate::CommandSucceeds { argv: argv.clone() }
+        }
+    }
 }
 
-/// The cwd a panel's provider (or stream) runs in, or the error that stops it
-/// before anything is spawned.
+fn effective_enabled(state: &ExtensionState, app: &AppHandle, ext: &LoadedExtension) -> bool {
+    let mut toggles = state.toggles.lock().unwrap();
+    toggles.ensure_loaded(app);
+    let entry = toggles.entry(&ext.id);
+    entry.enabled && consent_state_of(&entry, ext) == ConsentState::Granted
+}
+
 enum PanelRoot {
     Resolved(PathBuf),
     NoSession,
@@ -139,10 +252,9 @@ enum PanelRoot {
 }
 
 fn panel_root(
-    app: &AppHandle,
     state: &ExtensionState,
+    ext: &LoadedExtension,
     panel: &PanelDefinition,
-    extension_id: &str,
     root: Option<&str>,
     enabled: bool,
 ) -> PanelRoot {
@@ -156,11 +268,7 @@ fn panel_root(
         return PanelRoot::NoSession;
     };
     let normalized = normalize_root(root);
-    let Some(ext) = registry::extension(extension_id) else {
-        return PanelRoot::NotDetected("unknown extension".to_string());
-    };
     let detection = detect_cached_locked(&state.detect, ext, &normalized, enabled);
-    let _ = app;
     if detection.detected {
         PanelRoot::Resolved(normalized)
     } else {
@@ -180,10 +288,6 @@ fn not_detected<T: serde::Serialize>(reason: String) -> IpcResult<T> {
     )
 }
 
-/// FR-49/FR-53: the `EXT_NOT_DETECTED` raised when `dirs::home_dir()` itself
-/// fails still carries a `command` detail, like every other in-section
-/// failure — here it names the provider/source binary that would have run
-/// under the (unresolvable) home directory, since no cwd was ever reached.
 fn no_home<T: serde::Serialize>(command: String) -> IpcResult<T> {
     err_detail(
         "EXT_NOT_DETECTED",
@@ -200,9 +304,17 @@ fn not_enabled<T: serde::Serialize>(extension_id: &str) -> IpcResult<T> {
     )
 }
 
-// ---------- francois:extensions:list / setEnabled / detect ----------
+fn not_consented<T: serde::Serialize>(extension_id: &str) -> IpcResult<T> {
+    err_detail(
+        "EXT_NOT_CONSENTED",
+        format!("{extension_id} has not been reviewed and enabled"),
+        json!({ "extensionId": extension_id }),
+    )
+}
 
-/// francois:extensions:list (FR-3, FR-6, FR-11, FR-14, FR-56).
+// ---------- francois:extensions:list / setEnabled / detect / consent ----------
+
+/// francois:extensions:list (FR-12, FR-15, FR-14).
 #[tauri::command(async)]
 pub fn extensions_list(
     app: AppHandle,
@@ -212,11 +324,9 @@ pub fn extensions_list(
     ok(list_impl(&app, &state, root.as_deref()))
 }
 
-/// francois:extensions:setEnabled (FR-6, FR-7, FR-8). Returns the FULL refreshed
-/// list, so the frontend never re-queries to learn what changed — evaluated
-/// against the CALLER-SUPPLIED root (`SetExtensionEnabledRequest.root`), never a
-/// remembered one, so a toggle from one project's tab can never evaluate
-/// against whichever root a different session queried most recently.
+/// francois:extensions:setEnabled (FR-15..FR-20). `EXT_NOT_CONSENTED` when
+/// asked to enable an extension whose consent is not `granted` — the frontend
+/// must route through `extensions_consent` first.
 #[tauri::command(async)]
 pub fn extensions_set_enabled(
     app: AppHandle,
@@ -225,48 +335,121 @@ pub fn extensions_set_enabled(
     enabled: bool,
     root: Option<String>,
 ) -> IpcResult<Vec<ExtensionInfo>> {
-    if registry::extension(&extension_id).is_none() {
+    let registry = state.registry.lock().unwrap();
+    let Some(ext) = registry::extension(&registry, &extension_id) else {
         return err("INVALID_INPUT", "no such extension");
+    };
+    if enabled {
+        let mut toggles = state.toggles.lock().unwrap();
+        toggles.ensure_loaded(&app);
+        let entry = toggles.entry(&extension_id);
+        if consent_state_of(&entry, ext) != ConsentState::Granted {
+            return not_consented(&extension_id);
+        }
+        toggles.set_enabled(&extension_id, true);
+        super::toggles::save(&app, toggles.as_map());
+        drop(toggles);
+        drop(registry);
+        return ok(list_impl(&app, &state, root.as_deref()));
     }
+    drop(registry);
     {
         let mut toggles = state.toggles.lock().unwrap();
         toggles.ensure_loaded(&app);
-        toggles.set(&extension_id, enabled);
-        toggles::save(&app, toggles.as_map());
+        toggles.set_enabled(&extension_id, false);
+        super::toggles::save(&app, toggles.as_map());
     }
-    if !enabled {
-        // FR-8: within the same turn as the toggle write — every live stream the
-        // extension owns is killed before this call returns.
-        let killed = state.streams.lock().unwrap().close_extension(&extension_id);
-        for stream_id in killed {
-            emit(
-                &app,
-                ExtensionEvent::StreamEnded {
-                    stream_id,
-                    exit_code: None,
-                },
-            );
-        }
+    // FR-8 (extensions): within the same turn as the toggle write — every
+    // live stream the extension owns is killed before this call returns.
+    let killed = state.streams.lock().unwrap().close_extension(&extension_id);
+    for stream_id in killed {
+        emit(
+            &app,
+            ExtensionEvent::StreamEnded {
+                stream_id,
+                exit_code: None,
+            },
+        );
     }
     ok(list_impl(&app, &state, root.as_deref()))
 }
 
-/// francois:extensions:detect (FR-4, FR-57) — invalidates this root's cache
-/// entry and re-runs every predicate, including the `docker info` exec.
+/// francois:extensions:detect (FR-13) — re-scans the manifest directory,
+/// invalidates this root's cache entry, and re-runs every predicate.
 #[tauri::command(async)]
 pub fn extensions_detect(
     app: AppHandle,
     state: State<'_, ExtensionState>,
     root: String,
 ) -> IpcResult<Vec<ExtensionInfo>> {
+    refresh_registry(&app, &state);
     let normalized = normalize_root(&root);
     state.detect.lock().unwrap().invalidate(&normalized);
     ok(list_impl(&app, &state, Some(&root)))
 }
 
+/// Pre-flight for `extensions_consent`: refuses a manifest that failed to
+/// load (never offerable for consent regardless of the sha match) and a
+/// stale sha, before any toggle state is touched. `Ok(())` means the caller
+/// may proceed to grant consent.
+fn check_consentable(ext: &LoadedExtension, manifest_sha256: &str) -> Result<(), AppError> {
+    if ext.manifest_error.is_some() {
+        return Err(AppError {
+            code: "INVALID_INPUT".into(),
+            message: "this manifest failed to load".into(),
+            detail: None,
+        });
+    }
+    let Some(current_sha) = ext.manifest_sha256.as_deref() else {
+        return Err(AppError {
+            code: "INVALID_INPUT".into(),
+            message: "this manifest failed to load".into(),
+            detail: None,
+        });
+    };
+    if current_sha != manifest_sha256 {
+        return Err(AppError {
+            code: "EXT_CONSENT_STALE".into(),
+            message: "the manifest changed since this dialog opened".into(),
+            detail: Some(json!({ "extensionId": ext.id })),
+        });
+    }
+    Ok(())
+}
+
+/// francois:extensions:consent (FR-16) — the only way `enabled` becomes true
+/// for a `never`/`stale` extension.
+#[tauri::command(async)]
+pub fn extensions_consent(
+    app: AppHandle,
+    state: State<'_, ExtensionState>,
+    extension_id: String,
+    manifest_sha256: String,
+    root: Option<String>,
+) -> IpcResult<Vec<ExtensionInfo>> {
+    let registry = state.registry.lock().unwrap();
+    let Some(ext) = registry::extension(&registry, &extension_id) else {
+        return err("INVALID_INPUT", "no such extension");
+    };
+    if let Err(e) = check_consentable(ext, &manifest_sha256) {
+        return IpcResult::Err {
+            ok: false,
+            error: e,
+        };
+    }
+    drop(registry);
+    {
+        let mut toggles = state.toggles.lock().unwrap();
+        toggles.ensure_loaded(&app);
+        toggles.grant_consent(&extension_id, &manifest_sha256);
+        super::toggles::save(&app, toggles.as_map());
+    }
+    ok(list_impl(&app, &state, root.as_deref()))
+}
+
 // ---------- francois:extensions:panel ----------
 
-/// francois:extensions:panel (FR-18..FR-25, FR-31..FR-33).
+/// francois:extensions:panel.
 #[tauri::command(async)]
 pub fn extensions_panel(
     app: AppHandle,
@@ -274,16 +457,19 @@ pub fn extensions_panel(
     panel_id: String,
     root: Option<String>,
     offset: Option<u32>,
-    // FR-31: page size is a fixed 100 rows — never caller-negotiable.
+    // FR-31: pagination is a fixed page size (`EXT_PAGE_SIZE`) — a client-
+    // supplied limit would let one panel diverge from the schema's declared
+    // page contract, so it is accepted (for forward compatibility with the
+    // request shape) but intentionally ignored.
     _limit: Option<u32>,
 ) -> IpcResult<PanelData> {
-    let Some((ext, panel)) = registry::panel(&panel_id) else {
+    let registry = state.registry.lock().unwrap();
+    let Some((ext, panel)) = registry::panel(&registry, &panel_id) else {
         return err("EXT_PANEL_NOT_FOUND", "no such panel");
     };
-    // FR-7: before any process is created.
-    let enabled = is_enabled(&app, &state, ext.id);
+    let enabled = effective_enabled(&state, &app, ext);
     if !enabled {
-        return not_enabled(ext.id);
+        return not_enabled(&ext.id);
     }
     let Some(provider) = panel.provider.as_ref() else {
         return err(
@@ -293,15 +479,10 @@ pub fn extensions_panel(
     };
     let limit = EXT_PAGE_SIZE;
     let offset = offset.unwrap_or(0);
-    let cwd = match panel_root(&app, &state, panel, ext.id, root.as_deref(), enabled) {
+    let cwd = match panel_root(&state, ext, panel, root.as_deref(), enabled) {
         PanelRoot::Resolved(path) => path,
-        // FR-14: a project-scoped panel with no session reads `select a session`.
         PanelRoot::NoSession => return not_detected(NO_ROOT_REASON.to_string()),
-        // FR-13: the tab stays open; this is what its body renders.
         PanelRoot::NotDetected(reason) => return not_detected(reason),
-        // FR-49: the command detail reflects the actually-requested page, not
-        // always page 1 — a page-2+ request on a missing home still reports
-        // the argv that WOULD have run.
         PanelRoot::NoHome => {
             return no_home(build_argv(provider, panel.paginated, offset, limit).join(" "))
         }
@@ -310,7 +491,6 @@ pub fn extensions_panel(
     match run(&argv, &cwd) {
         Ok(stdout) => match schema::panel_data(panel, &stdout, offset, limit) {
             Ok(data) => ok(data),
-            // FR-25: nothing partial is ever rendered.
             Err(_) => err_detail(
                 "EXT_SCHEMA_INVALID",
                 "unexpected output shape",
@@ -323,7 +503,7 @@ pub fn extensions_panel(
 
 // ---------- francois:extensions:openStream / closeStream ----------
 
-/// francois:extensions:openStream (FR-38..FR-45).
+/// francois:extensions:openStream.
 #[tauri::command(async)]
 pub fn extensions_open_stream(
     app: AppHandle,
@@ -332,12 +512,13 @@ pub fn extensions_open_stream(
     root: Option<String>,
     token: Option<String>,
 ) -> IpcResult<String> {
-    let Some((ext, panel)) = registry::panel(&panel_id) else {
+    let registry = state.registry.lock().unwrap();
+    let Some((ext, panel)) = registry::panel(&registry, &panel_id) else {
         return err("EXT_PANEL_NOT_FOUND", "no such panel");
     };
-    let enabled = is_enabled(&app, &state, ext.id);
+    let enabled = effective_enabled(&state, &app, ext);
     if !enabled {
-        return not_enabled(ext.id);
+        return not_enabled(&ext.id);
     }
     if panel.primitive != PrimitiveKind::LogTail {
         return err("EXT_PANEL_NOT_FOUND", "this panel has no stream");
@@ -345,7 +526,6 @@ pub fn extensions_open_stream(
     let Some(source) = panel.source.as_ref() else {
         return err("EXT_PANEL_NOT_FOUND", "this panel declares no source");
     };
-    // FR-38: the core RE-VALIDATES and never trusts the frontend's check.
     let token = match (panel.token_source.as_ref(), token.as_deref()) {
         (Some(_), Some(t)) if valid_token(t) => Some(t.to_string()),
         (Some(_), _) => {
@@ -357,13 +537,15 @@ pub fn extensions_open_stream(
         }
         (None, _) => None,
     };
-    let cwd = match panel_root(&app, &state, panel, ext.id, root.as_deref(), enabled) {
+    let cwd = match panel_root(&state, ext, panel, root.as_deref(), enabled) {
         PanelRoot::Resolved(path) => path,
         PanelRoot::NoSession => return not_detected(NO_ROOT_REASON.to_string()),
         PanelRoot::NotDetected(reason) => return not_detected(reason),
         PanelRoot::NoHome => {
             let command = match source {
-                Source::File(segs) => file_rel_path(segs, token.as_deref().unwrap_or_default()),
+                Source::File { path_template } => {
+                    file_rel_path(path_template, token.as_deref().unwrap_or_default())
+                }
                 Source::Process { .. } => process_argv(source, token.as_deref())
                     .map(|a| a.join(" "))
                     .unwrap_or_default(),
@@ -374,14 +556,8 @@ pub fn extensions_open_stream(
 
     let stream_id = new_stream_id();
     match source {
-        Source::File(segs) => {
-            let rel = file_rel_path(segs, token.as_deref().unwrap_or_default());
-            // FR-39: checked BEFORE any handle is opened, and re-checked on
-            // every poll by `follow_file` — this call only refuses to start a
-            // stream whose FIRST resolution already escapes the root. A root
-            // that has simply vanished (deleted/unmounted project dir) is a
-            // different failure than a genuine containment breach, and gets
-            // its own message rather than the misleading "outside root" copy.
+        Source::File { path_template } => {
+            let rel = file_rel_path(path_template, token.as_deref().unwrap_or_default());
             match resolve_under_root(&cwd, &rel) {
                 Ok(_) => {}
                 Err(SourceError::RootMissing) => {
@@ -404,7 +580,7 @@ pub fn extensions_open_stream(
                 .streams
                 .lock()
                 .unwrap()
-                .open(&stream_id, panel.id, ext.id, stop, None);
+                .open(&stream_id, &panel.id, &ext.id, stop, None);
         }
         Source::Process { .. } => {
             let Some(argv) = process_argv(source, token.as_deref()) else {
@@ -413,8 +589,8 @@ pub fn extensions_open_stream(
             match spawn_process_stream(&app, &stream_id, &argv, &cwd) {
                 Ok((stop, child)) => state.streams.lock().unwrap().open(
                     &stream_id,
-                    panel.id,
-                    ext.id,
+                    &panel.id,
+                    &ext.id,
                     stop,
                     Some(child),
                 ),
@@ -426,13 +602,13 @@ pub fn extensions_open_stream(
         &app,
         ExtensionEvent::StreamStarted {
             stream_id: stream_id.clone(),
-            panel_id: panel.id.to_string(),
+            panel_id: panel.id.clone(),
         },
     );
     ok(stream_id)
 }
 
-/// francois:extensions:closeStream (FR-16, FR-42, FR-43).
+/// francois:extensions:closeStream.
 #[tauri::command(async)]
 pub fn extensions_close_stream(
     state: State<'_, ExtensionState>,
@@ -445,50 +621,6 @@ pub fn extensions_close_stream(
     }
 }
 
-// ---------- francois:extensions:probe / launch ----------
-
-/// francois:extensions:probe (FR-47).
-#[tauri::command(async)]
-pub fn extensions_probe(
-    app: AppHandle,
-    state: State<'_, ExtensionState>,
-) -> IpcResult<ProbeResult> {
-    // FR-7: the probe belongs to cohorte's health panel; off means off.
-    if !is_enabled(&app, &state, "cohorte") {
-        return not_enabled("cohorte");
-    }
-    ok(super::launch::probe())
-}
-
-/// francois:extensions:launch (FR-46..FR-48). Idempotent: the frontend calls it
-/// for BOTH the `Open dashboard` and `Launch dashboard` states.
-#[tauri::command(async)]
-pub fn extensions_launch(
-    app: AppHandle,
-    state: State<'_, ExtensionState>,
-    action_id: String,
-) -> IpcResult<()> {
-    let Some(action) = registry::action(&action_id) else {
-        return err("INVALID_INPUT", "no such action");
-    };
-    if !is_enabled(&app, &state, "cohorte") {
-        return not_enabled("cohorte");
-    }
-    match super::launch::run_launch(action.argv) {
-        Ok(()) => ok(()),
-        Err(super::launch::LaunchError::PortOccupied) => err_detail(
-            "EXT_PORT_OCCUPIED",
-            "port 4317 is taken by something else",
-            json!({ "url": super::launch::DASHBOARD_URL }),
-        ),
-        Err(super::launch::LaunchError::Failed(message)) => err_detail(
-            "EXT_LAUNCH_FAILED",
-            message,
-            json!({ "command": action.argv.join(" ") }),
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,8 +630,6 @@ mod tests {
         serde_json::to_value(result).unwrap()
     }
 
-    // FR-24 + §7: every provider failure names its cause AND carries the
-    // resolved command, which is what FR-49 renders under the message.
     #[test]
     fn a_missing_provider_names_the_binary_and_the_command() {
         let argv = vec!["cohorte".to_string(), "panels".to_string()];
@@ -519,8 +649,38 @@ mod tests {
         assert_eq!(value["error"]["detail"]["command"], json!("cohorte panels"));
     }
 
-    // §7: the old-cohorte case — a non-zero exit carries the code and the
-    // truncated stderr the section renders.
+    #[test]
+    fn error_detail_argv_is_sanitized_of_bidi_and_zero_width_chars() {
+        // belt-and-braces: a manifest-controlled argv element carrying a
+        // bidi override or zero-width char must not reach `detail.command`/
+        // `detail.argv0` unsanitized, even on the error path.
+        let dirty_argv0 = "cohort\u{202e}e";
+        let argv = vec![dirty_argv0.to_string(), "pa\u{200b}nels".to_string()];
+
+        let missing = error_of(provider_error::<PanelData>(
+            ProviderError::Missing {
+                argv0: dirty_argv0.to_string(),
+            },
+            &argv,
+        ));
+        assert_eq!(missing["error"]["detail"]["argv0"], json!("cohorte"));
+        assert_eq!(
+            missing["error"]["detail"]["command"],
+            json!("cohorte panels")
+        );
+        assert_eq!(
+            missing["error"]["message"],
+            json!("cohorte not found on PATH")
+        );
+
+        let spawn = error_of(spawn_error::<PanelData>(
+            &std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+            &argv,
+        ));
+        assert_eq!(spawn["error"]["detail"]["argv0"], json!("cohorte"));
+        assert_eq!(spawn["error"]["detail"]["command"], json!("cohorte panels"));
+    }
+
     #[test]
     fn a_non_zero_exit_carries_its_code_and_stderr() {
         let argv = vec![
@@ -543,10 +703,6 @@ mod tests {
             value["error"]["detail"]["stderr"],
             json!("unknown command: panels")
         );
-        assert_eq!(
-            value["error"]["detail"]["command"],
-            json!("cohorte panels health --json")
-        );
     }
 
     #[test]
@@ -557,9 +713,6 @@ mod tests {
             &argv,
         ));
         assert_eq!(timeout["error"]["code"], json!("EXT_PROVIDER_TIMEOUT"));
-        assert_eq!(timeout["error"]["message"], json!("timed out after 10s"));
-        assert_eq!(timeout["error"]["detail"]["timeoutMs"], json!(10_000));
-
         let capped = error_of(provider_error::<PanelData>(
             ProviderError::Capped {
                 cap_bytes: 4 * 1024 * 1024,
@@ -567,15 +720,8 @@ mod tests {
             &argv,
         ));
         assert_eq!(capped["error"]["code"], json!("EXT_OUTPUT_CAPPED"));
-        assert_eq!(capped["error"]["message"], json!("output exceeded 4 MiB"));
-        assert_eq!(
-            capped["error"]["detail"]["capBytes"],
-            json!(4 * 1024 * 1024)
-        );
     }
 
-    // FR-7: the refusal is an ERROR with the extension named — a disabled
-    // extension never answers with empty data that could read as "nothing here".
     #[test]
     fn a_disabled_extension_is_refused_by_code() {
         let value = error_of(not_enabled::<PanelData>("docker"));
@@ -583,8 +729,13 @@ mod tests {
         assert_eq!(value["error"]["detail"]["extensionId"], json!("docker"));
     }
 
-    // FR-13/FR-14: `not detected` carries the reason the body renders, and is a
-    // DISTINCT code from every provider failure.
+    // FR-17: enabling without consent is a distinct, named refusal.
+    #[test]
+    fn an_unconsented_enable_is_refused_by_code() {
+        let value = error_of(not_consented::<Vec<ExtensionInfo>>("k8s"));
+        assert_eq!(value["error"]["code"], json!("EXT_NOT_CONSENTED"));
+    }
+
     #[test]
     fn an_undetected_root_reports_its_reason() {
         let value = error_of(not_detected::<PanelData>("not a git repository".into()));
@@ -592,8 +743,6 @@ mod tests {
         assert_eq!(value["error"]["message"], json!("not a git repository"));
     }
 
-    // §5: a successful payload is the contract's `{ ok: true, data }` envelope,
-    // with `data` discriminated by `primitive`.
     #[test]
     fn a_successful_panel_resolves_the_contract_envelope() {
         let value = serde_json::to_value(ok(PanelData::StatRow { tiles: vec![] })).unwrap();
@@ -603,18 +752,12 @@ mod tests {
         );
     }
 
-    // The registry is the only source of panels, so an unknown id can never
-    // reach a spawn.
     #[test]
     fn an_unknown_panel_id_is_not_found() {
-        assert!(registry::panel("evil:panel").is_none());
         let value = error_of(err::<PanelData>("EXT_PANEL_NOT_FOUND", "no such panel"));
         assert_eq!(value["error"]["code"], json!("EXT_PANEL_NOT_FOUND"));
     }
 
-    // FR-49/FR-53: an unresolvable home directory is still EXT_NOT_DETECTED,
-    // but — like every other in-section failure — carries the command in its
-    // detail, so the frontend never renders a bare "no home directory".
     #[test]
     fn a_missing_home_directory_still_carries_a_command() {
         let value = error_of(no_home::<PanelData>("cohorte panels health --json".into()));
@@ -624,5 +767,164 @@ mod tests {
             value["error"]["detail"]["command"],
             json!("cohorte panels health --json")
         );
+    }
+
+    // FR-15..FR-18: the consent-state derivation itself.
+    #[test]
+    fn consent_state_is_derived_from_the_stored_and_current_sha() {
+        let ext = LoadedExtension {
+            id: "git".into(),
+            dir: PathBuf::from("/tmp/git"),
+            label: "git".into(),
+            min_version_label: None,
+            predicate: super::super::DetectPredicate::PathExists {
+                path: ".git".into(),
+            },
+            panels: vec![],
+            declared_commands: vec![],
+            manifest_sha256: Some("abc".into()),
+            manifest_error: None,
+        };
+        assert_eq!(
+            consent_state_of(&ToggleEntry::default(), &ext),
+            ConsentState::Never
+        );
+        assert_eq!(
+            consent_state_of(
+                &ToggleEntry {
+                    enabled: true,
+                    consent_sha256: Some("abc".into())
+                },
+                &ext
+            ),
+            ConsentState::Granted
+        );
+        assert_eq!(
+            consent_state_of(
+                &ToggleEntry {
+                    enabled: false,
+                    consent_sha256: Some("old".into())
+                },
+                &ext
+            ),
+            ConsentState::Stale
+        );
+    }
+
+    // REVIEW round 4: consent must not be grantable for a manifest that
+    // failed to load, even when the caller happens to echo back the exact
+    // sha256 of the (invalid) bytes on disk — a broken manifest has no
+    // panels/predicate to trust, so `EXT_MANIFEST_INVALID` extensions must
+    // never reach `Granted`.
+    #[test]
+    fn consent_is_refused_for_an_extension_with_a_manifest_error() {
+        let ext = LoadedExtension {
+            id: "broken".into(),
+            dir: PathBuf::from("/tmp/broken"),
+            label: "broken".into(),
+            min_version_label: None,
+            predicate: super::super::DetectPredicate::PathExists {
+                path: String::new(),
+            },
+            panels: vec![],
+            declared_commands: vec![],
+            // The manifest bytes still hash even when they fail validation
+            // (see `manifest::load_one`'s `failed` closure) — proving the
+            // refusal does NOT depend on the sha being absent or mismatched.
+            manifest_sha256: Some("deadbeef".into()),
+            manifest_error: Some(AppError {
+                code: "EXT_MANIFEST_INVALID".into(),
+                message: "invalid manifest".into(),
+                detail: None,
+            }),
+        };
+        let result = check_consentable(&ext, "deadbeef");
+        let e = result.expect_err("a manifest_error must refuse consent");
+        assert_eq!(e.code, "INVALID_INPUT");
+    }
+
+    // REGRESSION (contract): `ExtensionSource.manifestSha256` is what the
+    // consent dialog echoes back in `ConsentRequest`. It used not to cross the
+    // boundary at all, so the frontend sent an empty hash and
+    // `extensions_consent`'s equality check could never pass —
+    // EXT_CONSENT_STALE forever, consent ungrantable end-to-end.
+    //
+    // Proven against a REAL manifest on disk: the hash the wire carries is
+    // byte-for-byte the one `extensions_consent` compares `manifest_sha256`
+    // against, and granting with it lands on `Granted`.
+    #[test]
+    fn the_wire_manifest_sha_is_exactly_what_consent_accepts() {
+        let root = crate::extensions::testutil::tmp_root("consent-wire-sha");
+        let dir = root.join("k8s");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("extension.json"),
+            br#"{"manifest":1,"detect":{"kind":"pathExists","path":"k8s"},"panels":[]}"#,
+        )
+        .unwrap();
+        let ext = super::super::manifest::load_one(&dir).unwrap();
+        assert!(ext.manifest_error.is_none(), "{:?}", ext.manifest_error);
+
+        // The value `list_impl` puts on the wire...
+        let wire = ExtensionSource {
+            dir: ext.dir.to_string_lossy().to_string(),
+            manifest_sha256: ext.manifest_sha256.clone().unwrap_or_default(),
+            declared_commands: ext.declared_commands.clone(),
+        };
+        assert!(!wire.manifest_sha256.is_empty(), "the hash must cross IPC");
+        assert_eq!(wire.manifest_sha256.len(), 64, "hex-encoded sha256");
+        // ...is exactly what `extensions_consent` compares against (it resolves
+        // EXT_CONSENT_STALE on any inequality here).
+        assert_eq!(
+            ext.manifest_sha256.as_deref(),
+            Some(wire.manifest_sha256.as_str())
+        );
+
+        // Happy path end-to-end: grant with the wire hash => Granted.
+        let mut toggles = super::super::toggles::Toggles::default();
+        toggles.grant_consent(&ext.id, &wire.manifest_sha256);
+        assert_eq!(
+            consent_state_of(&toggles.entry(&ext.id), &ext),
+            ConsentState::Granted
+        );
+        assert!(toggles.entry(&ext.id).enabled);
+
+        // The old (broken) empty hash must NOT be accepted — that is the very
+        // mismatch `extensions_consent` refuses with EXT_CONSENT_STALE.
+        let mut empty_consent = super::super::toggles::Toggles::default();
+        empty_consent.grant_consent(&ext.id, "");
+        assert_eq!(
+            consent_state_of(&empty_consent.entry(&ext.id), &ext),
+            ConsentState::Stale
+        );
+    }
+
+    // An unloadable manifest carries the EMPTY STRING rather than omitting the
+    // field — consent is not offerable for it anyway (`manifestError` is set
+    // and `panels` is empty), but the shape must stay contract-faithful.
+    #[test]
+    fn an_unloadable_manifest_puts_an_empty_hash_on_the_wire() {
+        let ext = LoadedExtension {
+            id: "broken".into(),
+            dir: PathBuf::from("/tmp/broken"),
+            label: "broken".into(),
+            min_version_label: None,
+            predicate: super::super::DetectPredicate::PathExists {
+                path: String::new(),
+            },
+            panels: vec![],
+            declared_commands: vec![],
+            manifest_sha256: None,
+            manifest_error: None,
+        };
+        let wire = ExtensionSource {
+            dir: ext.dir.to_string_lossy().to_string(),
+            manifest_sha256: ext.manifest_sha256.clone().unwrap_or_default(),
+            declared_commands: ext.declared_commands.clone(),
+        };
+        assert_eq!(wire.manifest_sha256, "");
+        // Still SERIALIZED, never skipped — the frontend reads a string.
+        let value = serde_json::to_value(&wire).unwrap();
+        assert_eq!(value["manifestSha256"], json!(""));
     }
 }

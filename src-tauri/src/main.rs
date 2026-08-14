@@ -79,6 +79,10 @@ fn main() {
             account::load_accounts(app.handle());
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
+            // extension-install FR-1/FR-13: load the manifest registry from
+            // ~/.francois/extensions/ once at startup — the other FR-13
+            // trigger is an explicit `extensions_detect`.
+            extensions::load_registry(app.handle());
             // usage-bar FR-11/FR-12: probe once now, then every 5 minutes.
             usage::start_timers(app.handle().clone());
             Ok(())
@@ -173,11 +177,10 @@ fn main() {
             extensions::extensions_list,
             extensions::extensions_set_enabled,
             extensions::extensions_detect,
+            extensions::extensions_consent,
             extensions::extensions_panel,
             extensions::extensions_open_stream,
             extensions::extensions_close_stream,
-            extensions::extensions_probe,
-            extensions::extensions_launch,
             diff::diff_get_summary,
             diff::diff_get_file_diff,
             diff::diff_stage_all,

@@ -79,18 +79,17 @@ import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-u
 import type {
   CloseStreamRequest,
   CloseStreamResponse,
+  ConsentRequest,
+  ConsentResponse,
   DetectExtensionsRequest,
   DetectExtensionsResponse,
   ExtensionEvent,
-  LaunchRequest,
-  LaunchResponse,
   ListExtensionsRequest,
   ListExtensionsResponse,
   OpenStreamRequest,
   OpenStreamResponse,
   PanelRequest,
   PanelResponse,
-  ProbeResponse,
   SetExtensionEnabledRequest,
   SetExtensionEnabledResponse,
 } from '../../contract/extensions';
@@ -388,11 +387,11 @@ export const shellWrite = (shellId: ShellId, data: string) =>
 export const shellResize = (shellId: ShellId, cols: number, rows: number) =>
   ipc<Result<void>>('shell_resize', { shellId, cols, rows } satisfies ShellResizePayload);
 
-// extensions (§5). Eight commands + one event channel. `setEnabled` and
-// `detect` resolve the FULL refreshed list rather than an ack (FR-8/FR-57), so
-// the frontend never re-queries to learn what changed. `launch` is idempotent
-// and the core owns the whole probe→spawn→re-probe→open sequence — the same
-// call backs both the `Open dashboard` and `Launch dashboard` states.
+// extensions (§5, amended by extension-install §5). Seven commands + one event
+// channel. `setEnabled`, `detect` and `consent` all resolve the FULL refreshed
+// list rather than an ack (FR-8/FR-57/FR-16), so the frontend never re-queries
+// to learn what changed. extension-install FR-24 removed `probe`/`launch` —
+// no panel mutates anything anymore.
 export const extensionsList = (req: ListExtensionsRequest) =>
   ipc<ListExtensionsResponse>('extensions_list', req);
 export const extensionsSetEnabled = (req: SetExtensionEnabledRequest) =>
@@ -404,8 +403,9 @@ export const extensionsOpenStream = (req: OpenStreamRequest) =>
   ipc<OpenStreamResponse>('extensions_open_stream', req);
 export const extensionsCloseStream = (req: CloseStreamRequest) =>
   ipc<CloseStreamResponse>('extensions_close_stream', req);
-export const extensionsProbe = () => ipc<ProbeResponse>('extensions_probe');
-export const extensionsLaunch = (req: LaunchRequest) => ipc<LaunchResponse>('extensions_launch', req);
+// extension-install FR-16 — the only way `enabled` becomes true for a
+// `never`/`stale` extension.
+export const extensionsConsent = (req: ConsentRequest) => ipc<ConsentResponse>('extensions_consent', req);
 
 /** Subscribe to francois://extensions/event (the log-tail stream, FR-44). */
 export function onExtensionEvent(cb: (e: ExtensionEvent) => void): Promise<UnlistenFn> {

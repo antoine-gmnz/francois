@@ -14,14 +14,15 @@
 // untouched.
 
 import { useState } from 'react';
+import type { AppError } from '../../../contract/common';
 import type { PanelId, TableRow } from '../../../contract/extensions';
 import { extensionsSetEnabled } from '../../lib/api';
+import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
 import { EmptyPane } from '../../ui/EmptyPane';
-import DashboardAction from './DashboardAction';
 import LogTailSection from './LogTailSection';
 import PanelSection from './PanelSection';
-import { DISABLE_COPY, panelRoot, tokenFromRow } from './extensions';
+import { DISABLE_COPY, panelRoot, sanitizeForDisplay, tokenFromRow } from './extensions';
 import './extensions.css';
 
 export interface ExtensionViewProps {
@@ -56,6 +57,13 @@ export default function ExtensionView({ extensionId, root, sessionId, projectNam
     setSelectedForSessionId(sessionId);
     setSelected({});
   }
+  // FR-58: a failed disable must be distinguishable from a successful one —
+  // same `apply`-style pattern as ExtensionsModal's toggle/redetect.
+  const [disableError, setDisableError] = useState<AppError | null>(null);
+  // Mirrors ExtensionsModal's `apply`/`toggle` busy guard: without it a rapid
+  // double-click fires two concurrent `extensionsSetEnabled` calls.
+  const [disableBusy, setDisableBusy] = useState(false);
+  const alive = useMounted();
 
   if (!info) {
     // The list has not landed yet (or no longer carries this extension) — the
@@ -68,26 +76,40 @@ export default function ExtensionView({ extensionId, root, sessionId, projectNam
   );
 
   const disable = () => {
+    if (disableBusy) return;
+    setDisableBusy(true);
     void extensionsSetEnabled({ extensionId: info.id, enabled: false, root })
       .then((res) => {
-        // FR-8: the store closes the tab, kills the streams and drops the
-        // cursors in the same turn as this write.
-        if (res.ok) setExtensions(res.data);
+        if (!alive.current) return;
+        setDisableBusy(false);
+        if (res.ok) {
+          // FR-8: the store closes the tab, kills the streams and drops the
+          // cursors in the same turn as this write.
+          setDisableError(null);
+          setExtensions(res.data);
+        } else {
+          setDisableError(res.error);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!alive.current) return;
+        setDisableBusy(false);
+        setDisableError({ code: 'INTERNAL', message: 'Could not reach the core' });
+      });
   };
 
   return (
     <div className="ext-view scz">
       <div className="ext-view__header">
-        <span className="ext-view__label">{info.label}</span>
+        <span className="ext-view__label">{sanitizeForDisplay(info.label)}</span>
         <span className="ext-view__scope">{root === null ? 'no session' : (projectName ?? root)}</span>
         {/* FR-58: quiet text control, not a destructive button — it is
             reversible from the same modal that lists it. */}
         <span
           role="button"
-          tabIndex={0}
-          className="ext-view__disable"
+          tabIndex={disableBusy ? -1 : 0}
+          aria-disabled={disableBusy}
+          className={disableBusy ? 'ext-view__disable ext-view__disable--busy' : 'ext-view__disable'}
           onClick={disable}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -100,6 +122,7 @@ export default function ExtensionView({ extensionId, root, sessionId, projectNam
           {DISABLE_COPY}
         </span>
       </div>
+      {disableError && <div className="ext-view__error">{sanitizeForDisplay(disableError.message)}</div>}
 
       {info.panels.map((panel) => {
         // FR-12: fleet panels take no root and no session — a session change
@@ -136,7 +159,6 @@ export default function ExtensionView({ extensionId, root, sessionId, projectNam
             selectable={sourcePanelIds.has(panel.id)}
             selectedRowId={selected[panel.id]?.id ?? null}
             onSelectRow={(row) => setSelected((prev) => ({ ...prev, [panel.id]: row }))}
-            headerAction={panel.action ? <DashboardAction action={panel.action} /> : undefined}
           />
         );
       })}

@@ -35,10 +35,14 @@ function ext(id: string): ExtensionInfo {
     id: id as ExtensionInfo['id'],
     label: id,
     enabled: true,
+    consent: { state: 'granted' },
     detected: true,
     undetectedReason: null,
     minVersionLabel: null,
+    source: { dir: `/home/u/.francois/extensions/${id}`, manifestSha256: `sha-${id}`, declaredCommands: [] },
+    predicate: { kind: 'pathExists', path: '.' },
     panels: [],
+    manifestError: null,
   };
 }
 

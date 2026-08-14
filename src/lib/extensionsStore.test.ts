@@ -26,10 +26,18 @@ function ext(over: Partial<ExtensionInfo> = {}): ExtensionInfo {
     id: 'docker',
     label: 'docker',
     enabled: true,
+    consent: { state: 'granted' },
     detected: true,
     undetectedReason: null,
     minVersionLabel: null,
+    source: {
+      dir: '/home/u/.francois/extensions/docker',
+      manifestSha256: 'sha-docker',
+      declaredCommands: [['docker', 'ps']],
+    },
+    predicate: { kind: 'commandSucceeds', argv: ['docker', 'info'] },
     panels: [],
+    manifestError: null,
     ...over,
   };
 }
@@ -102,6 +110,16 @@ describe('the open extension tabs', () => {
     useStore.getState().setExtensions([ext({ detected: false })]);
     expect(useStore.getState().mainTab).toBe('ext:docker');
     expect(useStore.getState().extStickyIds).toEqual(['docker']);
+  });
+});
+
+describe('the consent dialog (extension-install FR-16)', () => {
+  it('opens against one extension id and closes back to null', () => {
+    expect(useStore.getState().extConsentDialogId).toBeNull();
+    useStore.getState().openExtConsentDialog('k8s');
+    expect(useStore.getState().extConsentDialogId).toBe('k8s');
+    useStore.getState().closeExtConsentDialog();
+    expect(useStore.getState().extConsentDialogId).toBeNull();
   });
 });
 

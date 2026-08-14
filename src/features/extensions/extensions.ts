@@ -20,7 +20,10 @@ import {
   EXT_TIMEOUT_MS,
   TOKEN_PATTERN,
   type ColumnKind,
+  type ConsentRequest,
+  type ConsentState,
   type ExtensionInfo,
+  type ExtensionSource,
   type KeyValueRow,
   type PanelInfo,
   type PanelResponse,
@@ -145,10 +148,13 @@ export function causeText(error: AppError): string {
       return 'unknown panel';
     case 'EXT_STREAM_NOT_FOUND':
       return 'the stream already ended';
-    case 'EXT_PORT_OCCUPIED':
-      return 'port 4317 is taken by something else';
-    case 'EXT_LAUNCH_FAILED':
-      return 'the dashboard did not come up';
+    case 'EXT_MANIFEST_INVALID':
+    case 'EXT_MANIFEST_UNSUPPORTED':
+      return manifestErrorCause(error);
+    case 'EXT_NOT_CONSENTED':
+      return 'not consented yet';
+    case 'EXT_CONSENT_STALE':
+      return 'changed since you enabled it';
     default:
       // Anything the core codes outside the EXT_* family still names itself —
       // the message is human-readable and safe to render (contract/common).
@@ -162,7 +168,7 @@ export function causeText(error: AppError): string {
  */
 export function errorHeadline(error: AppError, minVersionLabel: string | null): string {
   const cause = causeText(error);
-  return minVersionLabel ? `needs ${minVersionLabel} · ${cause}` : cause;
+  return minVersionLabel ? `needs ${sanitizeForDisplay(minVersionLabel)} · ${cause}` : cause;
 }
 
 /**
@@ -174,8 +180,8 @@ export function errorHeadline(error: AppError, minVersionLabel: string | null): 
  */
 export function errorCommand(error: AppError): string | null {
   const detail = detailRecord(error);
-  if (typeof detail.command === 'string' && detail.command !== '') return detail.command;
-  return typeof detail.argv0 === 'string' && detail.argv0 !== '' ? detail.argv0 : null;
+  if (typeof detail.command === 'string' && detail.command !== '') return sanitizeForDisplay(detail.command);
+  return typeof detail.argv0 === 'string' && detail.argv0 !== '' ? sanitizeForDisplay(detail.argv0) : null;
 }
 
 /** FR-24: the core's already-truncated, already-sanitized stderr. */
@@ -405,12 +411,104 @@ export function cellText(kind: ColumnKind, raw: string | undefined, now: number 
   return Number.isFinite(at) && raw.trim() !== '' ? formatRelativeTime(at, now) : raw;
 }
 
-/** FR-36: a `path` cell truncates from the LEFT so the filename survives. */
+/**
+ * FR-36: a `path` cell truncates from the LEFT so the filename survives.
+ * Sanitized first (see `sanitizeForDisplay`) — provider/manifest paths are
+ * untrusted text rendered verbatim in the UI.
+ */
 export function truncatePathLeft(value: string, max: number): string {
-  return value.length <= max ? value : `…${value.slice(value.length - (max - 1))}`;
+  const clean = sanitizeForDisplay(value);
+  return clean.length <= max ? clean : `…${clean.slice(clean.length - (max - 1))}`;
 }
 
 /** The per-kind class the table cell wears (BEM-lite modifier, never inline). */
 export function cellClassName(kind: ColumnKind): string {
   return `ext-cell ext-cell--${kind}`;
+}
+
+// ---------- consent (extension-install FR-15..FR-20) ----------
+
+export const REVIEW_ENABLE_COPY = 'Review & enable';
+export const REVIEW_AGAIN_COPY = 'Review again';
+/** design brief: the row-level warn-tone notice for a `stale` consent. */
+export const STALE_ROW_NOTICE = 'changed since you enabled it';
+/** design brief: the consent dialog's leading warn line for a `stale` consent. */
+export const STALE_DIALOG_NOTICE = 'the manifest changed since you enabled it — review the new commands';
+/** design brief §"Empty state". */
+export const EMPTY_DIR_LABEL = '~/.francois/extensions/';
+export const EMPTY_STATE_COPY = 'Nothing installed yet. Copy examples/extensions/plugin-example/ in to get started.';
+
+/** FR-15..FR-18: what the row's trailing control renders (design brief §"Extensions modal"). */
+export type ConsentControlKind = 'toggle' | 'review' | 'review-again';
+
+export function consentControlKind(consent: ConsentState): ConsentControlKind {
+  if (consent.state === 'granted') return 'toggle';
+  if (consent.state === 'stale') return 'review-again';
+  return 'review';
+}
+
+/**
+ * Defense-in-depth for FR-16/FR-6 (core is expected to strip these
+ * server-side too, per its own remediation item): drops Unicode Cc control
+ * characters (incl. tab/newline, which could forge extra display lines) and
+ * the bidi-control code points (LRE/RLE/LRO/RLO/PDF, LRI/RLI/FSI/PDI, ALM,
+ * LRM/RLM) that let an untrusted manifest string visually reorder or hide
+ * its own bytes.
+ */
+const CONTROL_OR_BIDI_RE =
+  // Cc/C1 controls (incl. \t \n \r) + ALM/LRM/RLM + LRE/RLE/PDF/LRO/RLO + LRI/RLI/FSI/PDI
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+
+export function sanitizeForDisplay(value: string): string {
+  return value.replace(CONTROL_OR_BIDI_RE, '');
+}
+
+/**
+ * FR-16: one argv, joined for display — the dialog renders one of these per
+ * line. Each token is sanitized (see `sanitizeForDisplay`) then wrapped in a
+ * Unicode isolate (LRI…PDI) so a bidi-override that slipped past the core's
+ * own stripping still cannot escape its own token and reorder its neighbors.
+ */
+export function formatArgv(argv: readonly string[]): string {
+  return argv.map((token) => `\u2066${sanitizeForDisplay(token)}\u2069`).join(' ');
+}
+
+/**
+ * FR-18: the hash the dialog SHOWED, echoed back in `ConsentRequest` so a
+ * manifest edited mid-dialog resolves `EXT_CONSENT_STALE` instead of being
+ * consented to by accident. The core carries it on every loaded source; it is
+ * the empty string only when the manifest could not be read at all
+ * (`manifestError` non-null), and such a row offers no consent control.
+ */
+export function sourceManifestSha256(source: ExtensionSource): string {
+  return source.manifestSha256;
+}
+
+/**
+ * FR-16/FR-18: the payload `extensions_consent` is called with — the hash is
+ * taken from the extension the dialog is RENDERING, so what the user read and
+ * what the core checks are the same bytes by construction. Pure, so the
+ * round-trip is unit-testable without a component renderer.
+ */
+export function consentRequest(extension: ExtensionInfo, root: string | null): ConsentRequest {
+  return {
+    extensionId: extension.id,
+    manifestSha256: sourceManifestSha256(extension.source),
+    root,
+  };
+}
+
+/** FR-6/FR-5: the row-level manifest-error register (design brief: cause, then
+ *  the manifest path in mono beneath — reusing the FR-49 error idiom). */
+export function manifestErrorCause(error: AppError): string {
+  if (error.code === 'EXT_MANIFEST_INVALID' || error.code === 'EXT_MANIFEST_UNSUPPORTED') {
+    return sanitizeForDisplay(`invalid manifest · ${error.message}`);
+  }
+  return sanitizeForDisplay(error.message);
+}
+
+export function manifestErrorPath(error: AppError): string | null {
+  const detail = error.detail !== null && typeof error.detail === 'object' ? (error.detail as Record<string, unknown>) : {};
+  return typeof detail.manifestPath === 'string' ? sanitizeForDisplay(detail.manifestPath) : null;
 }

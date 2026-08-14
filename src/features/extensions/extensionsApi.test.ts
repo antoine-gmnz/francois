@@ -35,8 +35,7 @@ describe('extensions channel binding', () => {
     await api.extensionsPanel({ panelId: 'git:log', root: '/repo', offset: 100, limit: 100 });
     await api.extensionsOpenStream({ panelId: 'docker:logs', root: '/repo', token: 'web_1' });
     await api.extensionsCloseStream({ streamId: 's1' });
-    await api.extensionsProbe();
-    await api.extensionsLaunch({ actionId: 'cohorte-dashboard' });
+    await api.extensionsConsent({ extensionId: 'k8s', manifestSha256: 'abc', root: '/repo' });
 
     expect(calls.map((c) => c.cmd)).toEqual([
       'extensions_list',
@@ -45,11 +44,11 @@ describe('extensions channel binding', () => {
       'extensions_panel',
       'extensions_open_stream',
       'extensions_close_stream',
-      'extensions_probe',
-      'extensions_launch',
+      'extensions_consent',
     ]);
     expect(calls[3].args).toEqual({ panelId: 'git:log', root: '/repo', offset: 100, limit: 100 });
     expect(calls[4].args).toEqual({ panelId: 'docker:logs', root: '/repo', token: 'web_1' });
+    expect(calls[6].args).toEqual({ extensionId: 'k8s', manifestSha256: 'abc', root: '/repo' });
   });
 
   it('subscribes to the one extensions event channel', async () => {

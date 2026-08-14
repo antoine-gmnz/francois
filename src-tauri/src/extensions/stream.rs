@@ -13,7 +13,7 @@
 
 use super::provider::{kill_group, own_process_group, render_args, scrub_env};
 use super::schema::sanitize_line;
-use super::{emit, ExtensionEvent, PathSeg, Source, EXT_LOG_MAX_LINES};
+use super::{emit, ExtensionEvent, Source, EXT_LOG_MAX_LINES};
 use crate::process_util::no_window;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -70,15 +70,11 @@ pub(crate) enum SourceError {
     RootMissing,
 }
 
-/// The relative path a `file` source declares, with its single token filled in.
-/// Pure — the segments are compiled in and the token has already been validated.
-pub(crate) fn file_rel_path(segs: &[PathSeg], token: &str) -> String {
-    segs.iter()
-        .map(|s| match s {
-            PathSeg::Lit(l) => (*l).to_string(),
-            PathSeg::Token => token.to_string(),
-        })
-        .collect()
+/// The relative path a `file` source declares, with its single `${token}`
+/// slot filled in (or left as-is if the source declares none). The token has
+/// already been validated against `TOKEN_PATTERN`.
+pub(crate) fn file_rel_path(path_template: &str, token: &str) -> String {
+    path_template.replace("${token}", token)
 }
 
 /// FR-39: resolve `<root>/<rel>` and prove it lives under `root` AFTER symlink
@@ -381,7 +377,7 @@ pub(crate) fn process_argv(source: &Source, token: Option<&str>) -> Option<Vec<S
     let Source::Process { argv0, args } = source else {
         return None;
     };
-    let mut argv = vec![(*argv0).to_string()];
+    let mut argv = vec![argv0.clone()];
     argv.extend(render_args(args, 0, 0, token));
     Some(argv)
 }
@@ -482,7 +478,6 @@ pub(crate) fn spawn_process_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extensions::registry;
     use crate::extensions::testutil::tmp_root;
 
     // FR-38: the charset rule, re-validated in the core. A leading `-` is
@@ -512,14 +507,12 @@ mod tests {
     // FR-38: the declared path, with the one slot filled in.
     #[test]
     fn a_file_source_path_fills_its_single_slot() {
-        let (_, panel) = registry::panel("cohorte:loop-log").unwrap();
-        let Some(Source::File(segs)) = panel.source.as_ref() else {
-            panic!("cohorte:loop-log must declare a file source");
-        };
         assert_eq!(
-            file_rel_path(segs, "extensions"),
+            file_rel_path("specs/reports/${token}.loop.log", "extensions"),
             "specs/reports/extensions.loop.log"
         );
+        // No slot declared ⇒ the template passes through unchanged.
+        assert_eq!(file_rel_path("static.log", "extensions"), "static.log");
     }
 
     // FR-39: it keeps `specs/reports/<id>.loop.log` …
@@ -577,8 +570,18 @@ mod tests {
     // FR-38: the token lands after `--`, so it cannot be read as a flag.
     #[test]
     fn a_process_source_passes_its_token_after_the_double_dash() {
-        let (_, panel) = registry::panel("docker:logs").unwrap();
-        let argv = process_argv(panel.source.as_ref().unwrap(), Some("abc123")).unwrap();
+        let source = Source::Process {
+            argv0: "docker".into(),
+            args: vec![
+                "logs".into(),
+                "-f".into(),
+                "--tail".into(),
+                "200".into(),
+                "--".into(),
+                "${token}".into(),
+            ],
+        };
+        let argv = process_argv(&source, Some("abc123")).unwrap();
         assert_eq!(
             argv,
             vec!["docker", "logs", "-f", "--tail", "200", "--", "abc123"]

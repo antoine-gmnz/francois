@@ -19,7 +19,7 @@ import { CloudChip } from '../features/cloud-sessions/CloudChip';
 import ProjectSwitcher from '../features/projects/ProjectSwitcher';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import { truncateBranchLeft, worktreeChipLabel } from '../features/sessions/worktree';
-import { extTabId } from '../features/extensions/extensions';
+import { extTabId, sanitizeForDisplay } from '../features/extensions/extensions';
 import '../features/extensions/extensions.css';
 import LayoutToggle from '../features/usage/LayoutToggle';
 import { sessionInterrupt } from '../lib/api';
@@ -186,12 +186,12 @@ export default function SessionRow({
           {extTabs.map((e) => (
             <span
               key={e.id}
-              title={`${e.label} extension`}
+              title={`${sanitizeForDisplay(e.label)} extension`}
               onClick={() => openExtTab(e.id)}
               className={mainTab === extTabId(e.id) ? 'session-row__agent session-row__agent--on' : 'session-row__agent'}
             >
               <Puzzle size={11} strokeWidth={1.75} />
-              <span className="truncate">{e.label}</span>
+              <span className="truncate">{sanitizeForDisplay(e.label)}</span>
               <span
                 onClick={(ev) => {
                   ev.stopPropagation();

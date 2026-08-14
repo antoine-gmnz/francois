@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AppError } from '../../../contract/common';
-import type { ExtensionInfo, PanelInfo, TableRow } from '../../../contract/extensions';
+import type { ExtensionInfo, ExtensionSource, PanelInfo, TableRow } from '../../../contract/extensions';
 import {
   EMPTY_CURSOR,
   EMPTY_LOG,
@@ -13,6 +13,8 @@ import {
   causeText,
   cellText,
   CLOSED_PANEL,
+  consentControlKind,
+  consentRequest,
   earlierLinesNotice,
   effectiveRefreshMs,
   errorCommand,
@@ -20,13 +22,18 @@ import {
   errorHeadline,
   extIdFromTab,
   extTabId,
+  formatArgv,
   isExtTab,
   isValidToken,
+  manifestErrorCause,
+  manifestErrorPath,
   nextFetchOffset,
   notAvailableCopy,
   panelRoot,
   receivePanel,
+  sanitizeForDisplay,
   sectionGate,
+  sourceManifestSha256,
   startPanelFetch,
   tokenFromRow,
   toneClassName,
@@ -48,7 +55,15 @@ function panel(over: Partial<PanelInfo> = {}): PanelInfo {
     columns: [{ key: 'subject', label: 'Subject', kind: 'text' }],
     emptyCopy: 'no commits',
     tokenSource: null,
-    action: null,
+    ...over,
+  };
+}
+
+function source(over: Partial<ExtensionSource> = {}): ExtensionSource {
+  return {
+    dir: '/home/u/.francois/extensions/git',
+    manifestSha256: 'sha-git',
+    declaredCommands: [['git', 'branch']],
     ...over,
   };
 }
@@ -58,10 +73,14 @@ function ext(over: Partial<ExtensionInfo> = {}): ExtensionInfo {
     id: 'git',
     label: 'git',
     enabled: true,
+    consent: { state: 'granted' },
     detected: true,
     undetectedReason: null,
     minVersionLabel: null,
+    source: source(),
+    predicate: { kind: 'pathExists', path: '.git' },
     panels: [panel()],
+    manifestError: null,
     ...over,
   };
 }
@@ -165,7 +184,8 @@ describe('error composition', () => {
     expect(causeText(err('EXT_OUTPUT_CAPPED'))).toBe('output exceeded 4 MiB');
     expect(causeText(err('EXT_SCHEMA_INVALID'))).toBe('unexpected output shape');
     expect(causeText(err('EXT_PATH_OUTSIDE_ROOT'))).toBe('path escapes the project root');
-    expect(causeText(err('EXT_PORT_OCCUPIED'))).toBe('port 4317 is taken by something else');
+    expect(causeText(err('EXT_NOT_CONSENTED'))).toBe('not consented yet');
+    expect(causeText(err('EXT_CONSENT_STALE'))).toBe('changed since you enabled it');
   });
 
   it('falls back to the core message for a code it does not special-case', () => {
@@ -175,6 +195,12 @@ describe('error composition', () => {
   it('prefixes the declared minimum version when one exists (FR-26/FR-49)', () => {
     expect(errorHeadline(err('EXT_PROVIDER_EXIT', { code: 1 }), 'cohorte ≥ 2.4.0')).toBe('needs cohorte ≥ 2.4.0 · exited 1');
     expect(errorHeadline(err('EXT_PROVIDER_EXIT', { code: 1 }), null)).toBe('exited 1');
+  });
+
+  it('sanitizes a hostile manifest-declared minVersionLabel before composing the headline', () => {
+    // minVersionLabel is manifest free text — a tab or an embedded newline
+    // must not survive into the rendered headline.
+    expect(errorHeadline(err('EXT_PROVIDER_EXIT', { code: 1 }), 'coh\torte\n≥ 2.4.0')).toBe('needs cohorte≥ 2.4.0 · exited 1');
   });
 
   it('surfaces the resolved command when the core sent one', () => {
@@ -190,6 +216,15 @@ describe('error composition', () => {
     expect(errorCommand(err('EXT_PROVIDER_MISSING', { argv0: 'cohorte', command: 'cohorte panels health' }))).toBe(
       'cohorte panels health',
     );
+  });
+
+  it('sanitizes a hostile detail.command / detail.argv0 before it reaches the render site (security)', () => {
+    // detail.command/argv0 are provider/manifest-declared text — a bidi
+    // override or control character must not survive into what
+    // ExtSectionError renders verbatim.
+    expect(errorCommand(err('EXT_PROVIDER_EXIT', { command: 'git log‮evil.exe' }))).toBe('git logevil.exe');
+    expect(errorCommand(err('EXT_PROVIDER_MISSING', { argv0: 'coh‮orte' }))).toBe('cohorte');
+    expect(errorCommand(err('EXT_PROVIDER_TIMEOUT', { command: 'coh\torte\nrun' }))).toBe('cohorterun');
   });
 
   it('surfaces the truncated stderr of a non-zero exit (FR-24)', () => {
@@ -408,5 +443,201 @@ describe('cell rendering', () => {
   it('truncates a path from the left so the filename survives', () => {
     expect(truncatePathLeft('specs/reports/extensions.loop.log', 100)).toBe('specs/reports/extensions.loop.log');
     expect(truncatePathLeft('a/very/long/path/to/file.ts', 12)).toBe('…/to/file.ts');
+  });
+});
+
+// ---------- consent (extension-install FR-15..FR-20) ----------
+
+describe('consentControlKind', () => {
+  it('maps granted to a toggle and never/stale to a review control', () => {
+    expect(consentControlKind({ state: 'granted' })).toBe('toggle');
+    expect(consentControlKind({ state: 'never' })).toBe('review');
+    expect(consentControlKind({ state: 'stale' })).toBe('review-again');
+  });
+});
+
+describe('sanitizeForDisplay', () => {
+  it('strips Cc/C1 control characters, including tab and newline', () => {
+    expect(sanitizeForDisplay('gitlog\tfake line\n')).toBe('gitlogfake line');
+    expect(sanitizeForDisplay('ab')).toBe('ab');
+  });
+
+  it('strips bidi-override and bidi-isolate code points', () => {
+    // U+202E RIGHT-TO-LEFT OVERRIDE could visually reverse the rest of the token.
+    expect(sanitizeForDisplay('safe‮exe.cmd')).toBe('safeexe.cmd');
+    expect(sanitizeForDisplay('⁦isolated⁩')).toBe('isolated');
+    expect(sanitizeForDisplay('‎LRM‏RLM؜ALM')).toBe('LRMRLMALM');
+  });
+
+  it('leaves ordinary text untouched', () => {
+    expect(sanitizeForDisplay('git log --oneline')).toBe('git log --oneline');
+  });
+
+  it('neutralizes bidi-override/control-character payloads a manifest could put in panel.emptyCopy', () => {
+    // panel.emptyCopy is manifest-declared free text (same trust class as
+    // PanelInfo.label) — regression guard for the round-7 fix wiring it
+    // through sanitizeForDisplay in PanelSection/LogTailSection.
+    expect(sanitizeForDisplay('no rows‮gnp.exe‬')).toBe('no rowsgnp.exe');
+    expect(sanitizeForDisplay('nothing\tyet\n')).toBe('nothingyet');
+  });
+});
+
+// Regression guard for the round-7 remediation: panel.emptyCopy is
+// manifest-declared free text, same trust class as PanelInfo.label, and must
+// be sanitized before render in both places that display it. No DOM test
+// runner is wired for this project (see PIPELINE.md §Testing), so this
+// asserts the call sites directly against source rather than a rendered DOM.
+describe('panel.emptyCopy sanitization at render call sites', () => {
+  it('PanelSection wraps panel.emptyCopy in sanitizeForDisplay before rendering it', async () => {
+    // Vite's `?raw` import (no DOM renderer is wired for this project — see
+    // PIPELINE.md §Testing) gives a source-text regression guard against
+    // reverting the round-7 fix that mirrors the earlier panel.label fix.
+    const src = (await import('./PanelSection.tsx?raw')).default as string;
+    expect(src).toMatch(/EmptyPane[^<]*>\s*\{sanitizeForDisplay\(panel\.emptyCopy\)\}/s);
+  });
+
+  it('LogTailSection wraps panel.emptyCopy in sanitizeForDisplay before rendering it', async () => {
+    const src = (await import('./LogTailSection.tsx?raw')).default as string;
+    expect(src).toMatch(/ext-log__waiting[^<]*>\{sanitizeForDisplay\(panel\.emptyCopy\)\}/s);
+  });
+});
+
+// Regression guard for the round-9 remediation: the modal-level error banner
+// (extensionsSetEnabled/extensionsDetect failures) must be sanitized like
+// every other AppError.message render site this feature touches
+// (ConsentDialog, manifestErrorCause) — not exploitable today (only core
+// static strings reach it), but a regression the moment a core error carries
+// manifest text. Same "no DOM runner" rationale as the panel.emptyCopy guard
+// above: assert the call site against source text.
+describe('ExtensionsModal error banner sanitization', () => {
+  it('wraps error.message in sanitizeForDisplay before rendering it', async () => {
+    const src = (await import('./ExtensionsModal.tsx?raw')).default as string;
+    expect(src).toMatch(/ext-modal__error[^<]*>\{sanitizeForDisplay\(error\.message\)\}/s);
+  });
+});
+
+// Regression guard for the round-10 remediation: `id` is a raw, disk-supplied
+// extension directory name (not core-validated free text like `label`), so
+// it must go through sanitizeForDisplay before render just like every other
+// field on the row — including the invalid-manifest (FR-3) row, where it's
+// the only identifier shown. Same "no DOM runner" rationale as the other
+// call-site guards above: assert the source text directly.
+describe('ExtensionsModal id sanitization', () => {
+  it('wraps e.id in sanitizeForDisplay before rendering it', async () => {
+    const src = (await import('./ExtensionsModal.tsx?raw')).default as string;
+    expect(src).toMatch(/ext-modal__id[^<]*>\{sanitizeForDisplay\(e\.id\)\}/s);
+  });
+});
+
+// Regression guard for the round-11 remediation: a failed `disable`
+// (rejected promise or an `{ ok: false }` response) must surface, not be
+// swallowed — same "no DOM runner" rationale as the other call-site guards
+// above: assert the source text directly.
+describe('ExtensionView disable error surfacing', () => {
+  it('sets disableError from a rejected promise and from an ok:false response, and renders it sanitized', async () => {
+    const src = (await import('./ExtensionView.tsx?raw')).default as string;
+    expect(src).toMatch(/setDisableError\(res\.error\)/);
+    expect(src).toMatch(/catch\(\(\) => \{[\s\S]*?setDisableError\(/);
+    expect(src).toMatch(/ext-view__error[^<]*>\{sanitizeForDisplay\(disableError\.message\)\}/s);
+  });
+});
+
+describe('formatArgv', () => {
+  it('joins an argv array with a single space, wrapping each token in a Unicode isolate', () => {
+    expect(formatArgv(['git', 'log', '--oneline'])).toBe('⁦git⁩ ⁦log⁩ ⁦--oneline⁩');
+    expect(formatArgv(['git'])).toBe('⁦git⁩');
+  });
+
+  it('strips control and bidi-override characters out of each token before wrapping it (hygiene)', () => {
+    // an embedded newline could forge an extra display line; a bidi override
+    // could visually reorder the token's own bytes.
+    const withControl = formatArgv(['git', 'log‮vil.exe', 'a\nb']);
+    expect(withControl).not.toMatch(/[ --؜‎‏‪-‮]/);
+    expect(withControl).toBe('⁦git⁩ ⁦logvil.exe⁩ ⁦ab⁩');
+  });
+});
+
+describe('sourceManifestSha256', () => {
+  it('reads the loaded hash off the source, for the dialog to echo back (FR-18)', () => {
+    expect(sourceManifestSha256(source({ manifestSha256: 'abc123' }))).toBe('abc123');
+  });
+
+  it('is the empty string only for a manifest that could not be read — which offers no consent control', () => {
+    const broken = ext({
+      source: source({ manifestSha256: '' }),
+      manifestError: { code: 'EXT_MANIFEST_INVALID', message: 'unknown primitive "tabel"' },
+      panels: [],
+    });
+    expect(sourceManifestSha256(broken.source)).toBe('');
+    // FR-6: never partially loaded, so there is nothing to consent TO.
+    expect(broken.panels).toEqual([]);
+  });
+});
+
+describe('consentRequest', () => {
+  it('echoes the hash of the manifest the dialog is showing (FR-18)', () => {
+    const shown = ext({ id: 'k8s', consent: { state: 'never' }, source: source({ manifestSha256: 'sha-shown' }) });
+    expect(consentRequest(shown, '/repo')).toEqual({
+      extensionId: 'k8s',
+      manifestSha256: 'sha-shown',
+      root: '/repo',
+    });
+  });
+
+  it('carries a null root through, for a fleet-only consent', () => {
+    expect(consentRequest(ext(), null).root).toBeNull();
+  });
+
+  it('echoes the RELOADED hash after a stale-under-the-dialog reload, never the original', () => {
+    // EXT_CONSENT_STALE reloads the list in place; a second confirm must send
+    // the hash of the commands now on screen, or it would refuse forever.
+    const before = ext({ source: source({ manifestSha256: 'sha-old' }) });
+    const reloaded = ext({ consent: { state: 'stale' }, source: source({ manifestSha256: 'sha-new' }) });
+    expect(consentRequest(before, '/repo').manifestSha256).toBe('sha-old');
+    expect(consentRequest(reloaded, '/repo').manifestSha256).toBe('sha-new');
+  });
+});
+
+// ---------- manifest errors (extension-install FR-5/FR-6) ----------
+
+describe('manifest error composition', () => {
+  const err = (code: AppError['code'], detail?: unknown): AppError => ({ code, message: 'boom', detail });
+
+  it('prefixes an invalid/unsupported manifest with "invalid manifest"', () => {
+    expect(manifestErrorCause(err('EXT_MANIFEST_INVALID', { pointer: '/panels/1/primitive' }))).toBe(
+      'invalid manifest · boom',
+    );
+    expect(manifestErrorCause(err('EXT_MANIFEST_UNSUPPORTED', { found: 2, supported: 1 }))).toBe(
+      'invalid manifest · boom',
+    );
+  });
+
+  it('falls back to the core message for any other code', () => {
+    expect(manifestErrorCause(err('INTERNAL'))).toBe('boom');
+  });
+
+  it('surfaces the manifest path from detail, when present', () => {
+    expect(manifestErrorPath(err('EXT_MANIFEST_INVALID', { manifestPath: '/home/u/.francois/extensions/k8s/extension.json' }))).toBe(
+      '/home/u/.francois/extensions/k8s/extension.json',
+    );
+    expect(manifestErrorPath(err('EXT_MANIFEST_INVALID'))).toBeNull();
+  });
+});
+
+// ---------- FR-49 causeText / manifest codes (extension-install remediation) ----------
+
+describe('causeText for manifest codes', () => {
+  const err = (code: AppError['code'], message: string): AppError => ({ code, message, detail: null });
+
+  it('strips bidi/control chars from error.message for EXT_MANIFEST_INVALID, matching manifestErrorCause', () => {
+    const unsafe = err('EXT_MANIFEST_INVALID', 'bad‮path');
+    expect(causeText(unsafe)).toBe(manifestErrorCause(unsafe));
+    expect(causeText(unsafe)).not.toContain('‮');
+  });
+
+  it('strips bidi/control chars from error.message for EXT_MANIFEST_UNSUPPORTED, matching manifestErrorCause', () => {
+    const unsafe = err('EXT_MANIFEST_UNSUPPORTED', 'bad path');
+    expect(causeText(unsafe)).toBe(manifestErrorCause(unsafe));
+    expect(causeText(unsafe)).not.toContain(' ');
   });
 });

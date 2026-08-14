@@ -1,6 +1,7 @@
 // contract/extensions.ts — the frontend↔core boundary for `extensions`
-// (specs/extensions.md §5). Canonical TypeScript; the Rust core mirrors these
-// with serde structs. Imported READ-ONLY by both surfaces — neither edits it.
+// (specs/extensions.md §5, amended by specs/extension-install.md §5). Canonical
+// TypeScript; the Rust core mirrors these with serde structs. Imported READ-ONLY
+// by both surfaces — neither edits it.
 //
 // Physical binding (PIPELINE.md §Conventions):
 //   francois:extensions:<verb>  → invoke('extensions_<verb_snake_case>', payload) → Result<T>
@@ -10,10 +11,15 @@ import type { AppError, Result } from './common';
 
 // ---------- identity ----------
 
-/** FR-2: the compiled registry holds exactly these three, in this order. */
-export type ExtensionId = 'cohorte' | 'git' | 'docker';
+/** extension-install FR-3: minted from the directory name, never from the manifest. */
+export type ExtensionId = string;
+export const EXTENSION_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+/** extension-install FR-9: a bare binary name resolved on PATH — no separator, no absolute path. */
+export const ARGV0_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
+export const MANIFEST_VERSION = 1;
+export const MANIFEST_MAX_BYTES = 256 * 1024;
 
-/** `${ExtensionId}:${slug}` — e.g. 'git:log'. Compiled in; never minted at runtime. */
+/** `${ExtensionId}:${slug}` — e.g. 'git:log'. Minted by the core (FR-8); never read from the manifest. */
 export type PanelId = string;
 
 /** Core-minted, uuid v4 (FR-44). */
@@ -34,6 +40,37 @@ export type ColumnKind = 'text' | 'status' | 'number' | 'time' | 'path';
  */
 export const TOKEN_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 
+// ---------- detection (extension-install FR-12) ----------
+
+/** The closed predicate set, as the frontend sees it (for the reason copy). */
+export type DetectPredicate =
+  | { kind: 'pathExists'; path: string }
+  | { kind: 'pathJsonEquals'; path: string; pointer: string; equals: string }
+  | { kind: 'commandSucceeds'; argv: string[] };
+
+// ---------- consent (extension-install FR-15..FR-18) ----------
+
+/** The three states a disk extension's consent can be in. */
+export type ConsentState =
+  | { state: 'granted' }
+  | { state: 'never' }
+  /** FR-18: consented, then the manifest bytes changed. */
+  | { state: 'stale' };
+
+export interface ExtensionSource {
+  /** Absolute directory under ~/.francois/extensions. */
+  dir: string;
+  /** FR-18: sha256 of the manifest bytes as loaded. The consent dialog echoes it
+   *  back in `ConsentRequest`, so a manifest edited mid-dialog resolves
+   *  EXT_CONSENT_STALE instead of being consented to by accident. Empty string
+   *  when the manifest could not be read (`manifestError` non-null). */
+  manifestSha256: string;
+  /** FR-16/FR-18: every distinct argv the manifest declares, deduplicated, in
+   *  declaration order — panels first, then the predicate's. What the consent
+   *  dialog renders verbatim. */
+  declaredCommands: string[][];
+}
+
 // ---------- the registry, as the frontend sees it ----------
 
 export interface ColumnDef {
@@ -42,14 +79,6 @@ export interface ColumnDef {
   kind: ColumnKind;
   /** Relative flex weight in the row. Absent ⇒ 1. */
   weight?: number;
-}
-
-export interface PanelAction {
-  /** FR-46: exactly one action exists in the whole registry. */
-  id: 'cohorte-dashboard';
-  label: string;
-  /** The static resolved command, shown verbatim in the FR-48 confirmation. */
-  resolvedCommand: string;
 }
 
 export interface PanelInfo {
@@ -71,25 +100,39 @@ export interface PanelInfo {
    * declares no slot.
    */
   tokenSource: { panelId: PanelId; rowKey: string } | null;
-  /** FR-46. Non-null on `cohorte:health` only. */
-  action: PanelAction | null;
 }
 
 export interface ExtensionInfo {
   id: ExtensionId;
   label: string;
-  /** FR-6: the persisted toggle. A key never written reads as `true`. */
+  /** extension-install FR-15: a key never written reads as FALSE. */
   enabled: boolean;
+  consent: ConsentState;
   /** FR-3, evaluated against the `root` the list was queried with. */
   detected: boolean;
-  /** FR-56: why not — rendered by the modal's `unavailable here` row. Null when detected. */
+  /** FR-14/FR-17: `null` when detected; `not evaluated — enable to detect`
+   *  whenever consent is not `granted` and the predicate is `commandSucceeds`. */
   undetectedReason: string | null;
   /**
    * FR-26: message composition ONLY. Francois runs no version probe and parses
-   * no `--version` output. `null` for git and docker.
+   * no `--version` output. `null` when the manifest declares none.
    */
   minVersionLabel: string | null;
+  source: ExtensionSource;
+  predicate: DetectPredicate;
+  /** extension-install FR-6: empty when `manifestError` is non-null — never partially loaded. */
   panels: PanelInfo[];
+  /** extension-install FR-5/FR-6: the load failure, with its JSON pointer in `detail`. */
+  manifestError: AppError | null;
+}
+
+/** extension-install FR-16 — the only way `enabled` becomes true for a `never`/`stale` extension. */
+export interface ConsentRequest {
+  extensionId: ExtensionId;
+  /** The sha256 the dialog showed, so a manifest edited mid-dialog cannot be
+   *  consented to by accident (FR-18). Mismatch ⇒ EXT_CONSENT_STALE. */
+  manifestSha256: string;
+  root: string | null;
 }
 
 // ---------- panel payloads (one per pull primitive) ----------
@@ -137,7 +180,6 @@ export const EXT_LOG_MAX_BYTES = 1024 * 1024;
 export const EXT_STREAM_GRACE_MS = 10_000;
 export const EXT_FIELD_MAX_CHARS = 512;
 export const EXT_PROBE_TIMEOUT_MS = 2_000;
-export const EXT_DASHBOARD_URL = 'http://127.0.0.1:4317';
 
 // ---------- requests ----------
 
@@ -163,7 +205,8 @@ export interface SetExtensionEnabledRequest {
 }
 
 export interface DetectExtensionsRequest {
-  /** FR-57: invalidates this root's cache entry and re-runs every predicate. */
+  /** extension-install FR-13: invalidates this root's cache entry, re-scans the
+   *  manifest directory and re-runs every predicate. */
   root: string;
 }
 
@@ -188,17 +231,6 @@ export interface CloseStreamRequest {
   streamId: StreamId;
 }
 
-export interface LaunchRequest {
-  actionId: 'cohorte-dashboard';
-}
-
-/** FR-47. */
-export interface ProbeResult {
-  state: 'running' | 'stopped' | 'occupied';
-  /** Present only when `state === 'running'`. */
-  url: string | null;
-}
-
 // ---------- events (francois://extensions/event) ----------
 
 export type ExtensionEvent =
@@ -217,8 +249,7 @@ export type ExtensionEvent =
 // | francois:extensions:panel          | extensions_panel         |
 // | francois:extensions:openStream     | extensions_open_stream   |
 // | francois:extensions:closeStream    | extensions_close_stream  |
-// | francois:extensions:probe          | extensions_probe         |
-// | francois:extensions:launch         | extensions_launch        |
+// | francois:extensions:consent        | extensions_consent       |
 
 export type ListExtensionsResponse = Result<ExtensionInfo[]>;
 /** FR-8: returns the FULL refreshed list, so the frontend never re-queries to learn what changed. */
@@ -227,19 +258,5 @@ export type DetectExtensionsResponse = Result<ExtensionInfo[]>;
 export type PanelResponse = Result<PanelData>;
 export type OpenStreamResponse = Result<StreamId>;
 export type CloseStreamResponse = Result<null>;
-export type ProbeResponse = Result<ProbeResult>;
-
-/**
- * FR-48 — IDEMPOTENT, and the core owns the whole sequence so the two surfaces
- * cannot diverge on it. The frontend calls this for BOTH the `Open dashboard`
- * and `Launch dashboard` states and awaits one answer:
- *
- *   probe `running`  ⇒ the core opens EXT_DASHBOARD_URL with the platform opener, resolves ok
- *   probe `occupied` ⇒ resolves EXT_PORT_OCCUPIED; nothing is spawned
- *   probe `stopped`  ⇒ the core spawns ["cohorte","dashboard","--open"] DETACHED and untracked
- *                      (cohorte's own `--open` opens the browser), then re-probes every 1500 ms
- *                      until `running` — resolves ok — or EXT_LAUNCH_FAILED after 10 s
- *
- * No PID is retained: no stop button, no kill-on-quit, no orphan reconciliation.
- */
-export type LaunchResponse = Result<null>;
+/** extension-install FR-16 — resolves the full refreshed list, same shape as SetExtensionEnabledResponse. */
+export type ConsentResponse = Result<ExtensionInfo[]>;

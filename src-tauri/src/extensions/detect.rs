@@ -1,23 +1,27 @@
-//! FR-3..FR-5, FR-7 — the detection predicates and the per-root cache.
+//! FR-12 (extension-install, supersedes `extensions` FR-3) — the closed
+//! predicate set and the per-root cache.
 //!
-//! A predicate is a filesystem or PATH question and NEVER executes repo-supplied
-//! content: `cohorte` reads one JSON key, `git` stats a path, and `docker` runs
-//! `docker info` — a fixed argv under every provider cap. Detection grants
-//! nothing but whether a tab is offered.
+//! A predicate is a filesystem or PATH question and NEVER executes
+//! repo-supplied content: `pathExists` stats a path, `pathJsonEquals` reads
+//! one JSON pointer out of a file, and `commandSucceeds` runs a declared argv
+//! under every provider cap. Detection grants nothing but whether a tab is
+//! offered.
 //!
-//! FR-4: results are cached per NORMALIZED root and reused on every session
+//! FR-13: results are cached per NORMALIZED root and reused on every session
 //! switch and tab open. There is no watcher and no TTL — only an explicit
 //! `extensions_detect`, a project (re)open, or an app restart invalidates.
 
 use super::provider::{run_predicate, ProviderError};
-use super::{DetectSpec, ExtensionDefinition};
+use super::schema::sanitize_field_strict;
+use super::stream::resolve_under_root;
+use super::{DetectPredicate, LoadedExtension, EXT_FIELD_MAX_CHARS};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// One extension's answer for one root. `reason` is the copy the Extensions
-/// modal renders next to `unavailable here` (FR-56) — always present when the
-/// answer is negative, so a panel is never silently missing.
+/// modal renders next to `unavailable here` — always present when the answer
+/// is negative, so a panel is never silently missing.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Detection {
     pub detected: bool,
@@ -32,35 +36,30 @@ impl Detection {
         }
     }
 
-    fn no(reason: &str) -> Detection {
+    fn no(reason: impl Into<String>) -> Detection {
         Detection {
             detected: false,
-            reason: Some(reason.to_string()),
+            reason: Some(reason.into()),
         }
     }
 }
 
-/// FR-14: with no active session there is no root to evaluate against, so every
-/// extension reports `detected: false` WITH a reason. This governs whether a NEW
-/// tab is offered; it never closes an open one.
+/// FR-14: with no active session there is no root to evaluate against, so
+/// every extension reports `detected: false` WITH a reason.
 pub(crate) const NO_ROOT_REASON: &str = "select a session";
 
-/// FR-7: an exec predicate for a disabled extension is not run AT ALL — off
-/// means off, including for detection. The two filesystem predicates spawn
-/// nothing, so they still answer honestly while disabled.
-pub(crate) const NOT_PROBED_REASON: &str = "turned off — nothing was probed";
+/// FR-7/FR-17: an exec predicate for a disabled OR unconsented extension is
+/// not run AT ALL. The two filesystem predicates spawn nothing, so they still
+/// answer honestly.
+pub(crate) const NOT_PROBED_REASON: &str = "not evaluated — enable to detect";
 
-/// FR-4: the cache key. Trailing separators and `.`/`..` segments must not mint
-/// a second entry for the same project, so the root is canonicalized where the
-/// filesystem allows it and passed through untouched where it does not (a root
-/// that no longer exists still needs a stable key).
+/// FR-4: the cache key. Trailing separators and `.`/`..` segments must not
+/// mint a second entry for the same project.
 pub(crate) fn normalize_root(root: &str) -> PathBuf {
     let path = PathBuf::from(root);
     std::fs::canonicalize(&path).unwrap_or(path)
 }
 
-/// FR-4: `root -> extensionId -> Detection`. In memory only (§6) — it rebuilds
-/// on restart, which is one of the three ways it is invalidated.
 #[derive(Default)]
 pub(crate) struct DetectCache {
     entries: HashMap<PathBuf, HashMap<String, Detection>>,
@@ -78,10 +77,17 @@ impl DetectCache {
             .insert(extension_id.to_string(), detection);
     }
 
-    /// FR-57: `Re-detect` drops this root's whole entry so every predicate runs
-    /// again — including the `docker info` exec.
+    /// `Re-detect` drops this root's whole entry so every predicate runs again.
     pub(crate) fn invalidate(&mut self, root: &Path) {
         self.entries.remove(root);
+    }
+
+    /// FR-13: the whole cache is invalidated whenever the manifest directory
+    /// rescan (app launch, `extensions_detect`) finds a predicate changed for
+    /// any extension — called from `refresh_registry`, which compares the
+    /// outgoing registry's predicates against the freshly loaded ones.
+    pub(crate) fn invalidate_all(&mut self) {
+        self.entries.clear();
     }
 
     #[cfg(test)]
@@ -90,95 +96,112 @@ impl DetectCache {
     }
 }
 
-// ---------- FR-3: the predicates ----------
+// ---------- FR-12: the predicates ----------
 
-/// `<root>/<rel>` parses as JSON and carries `key == value`. Reading one string
-/// out of a JSON document is the whole of it: nothing in the file is executed,
-/// and no other key of it is ever consulted.
-pub(crate) fn json_key_holds(root: &Path, rel: &str, key: &str, value: &str) -> bool {
-    let Ok(bytes) = std::fs::read(root.join(rel)) else {
+/// `<root>/<rel>` parses as JSON and the RFC-6901 pointer resolves to `equals`.
+///
+/// FR-12/FR-17: this predicate runs pre-consent (an unreviewed manifest can
+/// declare any `path`), so the resolution goes through the same
+/// `resolve_under_root` containment proof the `file` log-tail source uses —
+/// never a raw `root.join(rel)` — or a symlink could turn this into a
+/// boolean oracle for reading arbitrary files outside the project root.
+pub(crate) fn json_pointer_equals(root: &Path, rel: &str, pointer: &str, equals: &str) -> bool {
+    let Ok(resolved) = resolve_under_root(root, rel) else {
+        return false;
+    };
+    let Ok(bytes) = std::fs::read(&resolved) else {
         return false;
     };
     let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return false;
     };
-    doc.get(key).and_then(|v| v.as_str()) == Some(value)
+    doc.pointer(pointer).and_then(|v| v.as_str()) == Some(equals)
 }
 
 /// `<root>/<rel>` exists as a FILE or a DIRECTORY — a linked worktree's `.git`
 /// is a file, and `exists()` alone would also miss a broken symlink.
+///
+/// FR-12/FR-17: resolved through `resolve_under_root` first, same reasoning
+/// as `json_pointer_equals` above — a predicate is evaluated before consent,
+/// so it must never stat a path that escapes the root even via a symlink.
 pub(crate) fn path_exists(root: &Path, rel: &str) -> bool {
-    let path = root.join(rel);
-    path.exists() || std::fs::symlink_metadata(&path).is_ok()
+    let Ok(resolved) = resolve_under_root(root, rel) else {
+        return false;
+    };
+    resolved.exists() || std::fs::symlink_metadata(&resolved).is_ok()
+}
+
+/// FR-51: `path`/`pointer`/`equals` are manifest-controlled strings that flow
+/// into an `undetected_reason` and cross IPC — sanitize them the same way
+/// `declared_commands` sanitizes argv elements (control sequences AND
+/// bidi-control/zero-width code points via `sanitize_field_strict`), so a
+/// raw ANSI/control sequence OR a bidi override in a manifest can never ride
+/// along in a detection reason.
+fn sanitize_reason_field(input: &str) -> String {
+    sanitize_field_strict(input, EXT_FIELD_MAX_CHARS)
 }
 
 /// Evaluate one predicate against one root. `enabled == false` short-circuits
-/// the exec predicate ONLY (FR-7): nothing is spawned for a disabled extension,
-/// on any path, including this one.
-pub(crate) fn evaluate(spec: &DetectSpec, root: &Path, enabled: bool) -> Detection {
+/// the exec predicate ONLY (FR-17 — an unconsented/disabled extension never
+/// spawns, including for detection); the two filesystem predicates keep
+/// answering honestly.
+pub(crate) fn evaluate(spec: &DetectPredicate, root: &Path, enabled: bool) -> Detection {
     match spec {
-        DetectSpec::JsonKey {
-            rel,
-            key,
-            value,
-            reason,
-        } => {
-            if json_key_holds(root, rel, key, value) {
+        DetectPredicate::PathExists { path } => {
+            if path_exists(root, path) {
                 Detection::yes()
             } else {
-                Detection::no(reason)
+                let path = sanitize_reason_field(path);
+                Detection::no(format!("{path} not found here"))
             }
         }
-        DetectSpec::PathExists { rel, reason } => {
-            if path_exists(root, rel) {
+        DetectPredicate::PathJsonEquals {
+            path,
+            pointer,
+            equals,
+        } => {
+            if json_pointer_equals(root, path, pointer, equals) {
                 Detection::yes()
             } else {
-                Detection::no(reason)
+                let path = sanitize_reason_field(path);
+                let pointer = sanitize_reason_field(pointer);
+                let equals = sanitize_reason_field(equals);
+                Detection::no(format!("{path}{pointer} is not {equals}"))
             }
         }
-        DetectSpec::CommandOk {
-            argv,
-            missing_reason,
-            failed_reason,
-        } => {
+        DetectPredicate::CommandSucceeds { argv } => {
             if !enabled {
                 return Detection::no(NOT_PROBED_REASON);
             }
-            let argv: Vec<String> = argv.iter().map(|a| (*a).to_string()).collect();
-            match run_predicate(&argv, root) {
+            match run_predicate(argv, root) {
                 Ok(()) => Detection::yes(),
-                // FR-24: the binary is not there at all.
-                Err(ProviderError::Missing { .. }) => Detection::no(missing_reason),
-                // §7: `docker info` hanging is the FR-21 timeout, and reads as
-                // the daemon being unreachable — the same as a non-zero exit.
-                Err(_) => Detection::no(failed_reason),
+                Err(ProviderError::Missing { argv0 }) => {
+                    Detection::no(format!("{argv0} is not installed"))
+                }
+                Err(_) => Detection::no("the command failed"),
             }
         }
     }
 }
 
-/// FR-4/FR-5: the cached read. A cached answer is reused on every session
-/// switch and every tab open, so `docker info` runs once per root per app run.
-/// NEVER holds `cache_mutex` while `evaluate` runs — a cache miss executes the
-/// predicate (including the FR-21-capped `docker info`) with the lock
-/// released, and only re-acquires it to record the result. This keeps a slow
-/// or blocked exec predicate for one root from stalling every other
-/// `extensions_list`/`extensions_detect`/`extensions_panel` call in the app.
+/// FR-13: the cached read. NEVER holds `cache_mutex` while `evaluate` runs — a
+/// cache miss executes the predicate (including a capped `commandSucceeds`
+/// exec) with the lock released, and only re-acquires it to record the
+/// result, so a slow predicate for one root cannot stall every other root's
+/// `extensions_list`/`extensions_detect`/`extensions_panel` call.
 pub(crate) fn detect_cached_locked(
     cache_mutex: &Mutex<DetectCache>,
-    ext: &ExtensionDefinition,
+    ext: &LoadedExtension,
     root: &Path,
     enabled: bool,
 ) -> Detection {
-    if let Some(hit) = cache_mutex.lock().unwrap().get(root, ext.id) {
+    if let Some(hit) = cache_mutex.lock().unwrap().get(root, &ext.id) {
         return hit.clone();
     }
-    let detection = evaluate(&ext.detect, root, enabled);
+    let detection = evaluate(&ext.predicate, root, enabled);
     let mut cache = cache_mutex.lock().unwrap();
-    // FR-7: the "not probed" answer describes the TOGGLE, not the root — caching
-    // it would outlive the toggle it came from.
     if detection.reason.as_deref() != Some(NOT_PROBED_REASON) {
-        cache.put(root, ext.id, detection.clone());
+        cache.put(root, &ext.id, detection.clone());
     }
     detection
 }
@@ -186,15 +209,23 @@ pub(crate) fn detect_cached_locked(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extensions::registry;
     use crate::extensions::testutil::tmp_root;
 
-    // FR-3: cohorte is detected by ONE key of `.claude/pipeline.json`.
+    fn path_exists_predicate(path: &str) -> DetectPredicate {
+        DetectPredicate::PathExists {
+            path: path.to_string(),
+        }
+    }
+
     #[test]
-    fn cohorte_is_detected_by_the_pipeline_key() {
-        let root = tmp_root("detect-cohorte");
-        let spec = &registry::extension("cohorte").unwrap().detect;
-        assert!(!evaluate(spec, &root, true).detected);
+    fn a_path_json_equals_predicate_reads_one_pointer() {
+        let root = tmp_root("detect-json-equals");
+        let spec = DetectPredicate::PathJsonEquals {
+            path: ".claude/pipeline.json".into(),
+            pointer: "/pipeline".into(),
+            equals: "cohorte".into(),
+        };
+        assert!(!evaluate(&spec, &root, true).detected);
 
         std::fs::create_dir_all(root.join(".claude")).unwrap();
         std::fs::write(
@@ -202,97 +233,209 @@ mod tests {
             br#"{"pipeline":"other"}"#,
         )
         .unwrap();
-        assert!(!evaluate(spec, &root, true).detected);
+        assert!(!evaluate(&spec, &root, true).detected);
 
         std::fs::write(root.join(".claude/pipeline.json"), b"{not json").unwrap();
-        assert!(!evaluate(spec, &root, true).detected);
+        assert!(!evaluate(&spec, &root, true).detected);
 
         std::fs::write(
             root.join(".claude/pipeline.json"),
             br#"{"pipeline":"cohorte","name":"Francois"}"#,
         )
         .unwrap();
-        assert!(evaluate(spec, &root, true).detected);
+        assert!(evaluate(&spec, &root, true).detected);
     }
 
-    // FR-3: `.git` as a FILE counts — that is what a linked worktree has.
+    // FR-12: `.git` as a FILE counts — that is what a linked worktree has.
     #[test]
-    fn git_is_detected_by_a_dot_git_file_or_directory() {
+    fn path_exists_matches_a_file_or_a_directory() {
         let root = tmp_root("detect-git");
-        let spec = &registry::extension("git").unwrap().detect;
-        let miss = evaluate(spec, &root, true);
+        let spec = path_exists_predicate(".git");
+        let miss = evaluate(&spec, &root, true);
         assert!(!miss.detected);
-        assert_eq!(miss.reason.as_deref(), Some("not a git repository"));
+        assert!(miss.reason.is_some());
 
         std::fs::write(root.join(".git"), b"gitdir: /elsewhere/.git/worktrees/x").unwrap();
-        assert!(evaluate(spec, &root, true).detected);
+        assert!(evaluate(&spec, &root, true).detected);
 
         let dir_root = tmp_root("detect-git-dir");
         std::fs::create_dir_all(dir_root.join(".git")).unwrap();
-        assert!(evaluate(spec, &dir_root, true).detected);
+        assert!(evaluate(&spec, &dir_root, true).detected);
     }
 
-    // FR-7: OFF MEANS OFF. The exec predicate does not run for a disabled
-    // extension, and the answer says so rather than blaming the machine.
+    // FR-17: OFF (or unconsented) means off. The exec predicate does not run.
+    //
+    // REVIEW round 4: proven DIRECTLY rather than by inference from the
+    // `docker` binary's absence/presence — the argv here is a real marker
+    // script that writes a sentinel file the instant it is executed. If
+    // `evaluate` ever stopped short-circuiting before the exec, this test
+    // would catch it even on a machine where `docker`/whatever binary is
+    // simply not installed (which would make the old assertion pass for the
+    // wrong reason).
     #[test]
     fn a_disabled_extension_never_runs_its_exec_predicate() {
         let root = tmp_root("detect-docker-off");
-        let spec = &registry::extension("docker").unwrap().detect;
-        let detection = evaluate(spec, &root, false);
+        let marker_dir = tmp_root("detect-docker-off-marker");
+        let sentinel = marker_dir.join("ran.marker");
+
+        let spec = DetectPredicate::CommandSucceeds {
+            argv: marker_script_argv(&sentinel),
+        };
+
+        let detection = evaluate(&spec, &root, false);
         assert!(!detection.detected);
         assert_eq!(detection.reason.as_deref(), Some(NOT_PROBED_REASON));
+        assert!(
+            !sentinel.exists(),
+            "the exec predicate must never spawn while disabled"
+        );
+
+        // Control: the same marker script DOES run — and DOES write the
+        // sentinel — once enabled, proving the script itself is not
+        // silently broken (which would make the assertion above vacuous).
+        let enabled_detection = evaluate(&spec, &root, true);
+        assert!(enabled_detection.detected);
+        assert!(
+            sentinel.exists(),
+            "the marker script must actually run once enabled"
+        );
     }
 
-    // FR-7: a filesystem predicate spawns nothing, so a disabled extension still
-    // answers honestly about the root — the modal shows a real state.
+    /// A cross-platform argv that, when executed, writes an empty file at
+    /// `sentinel` — used to prove an exec predicate did or did not run,
+    /// rather than inferring it from a system binary's exit status.
+    #[cfg(unix)]
+    fn marker_script_argv(sentinel: &std::path::Path) -> Vec<String> {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!("touch '{}'", sentinel.display()),
+        ]
+    }
+
+    #[cfg(windows)]
+    fn marker_script_argv(sentinel: &std::path::Path) -> Vec<String> {
+        vec![
+            "cmd".into(),
+            "/C".into(),
+            format!("type nul > \"{}\"", sentinel.display()),
+        ]
+    }
+
     #[test]
     fn a_disabled_extension_still_answers_its_filesystem_predicate() {
         let root = tmp_root("detect-git-off");
         std::fs::create_dir_all(root.join(".git")).unwrap();
-        let spec = &registry::extension("git").unwrap().detect;
-        assert!(evaluate(spec, &root, false).detected);
+        assert!(evaluate(&path_exists_predicate(".git"), &root, false).detected);
     }
 
-    // FR-4: the answer is cached per root and reused — a second read does not
-    // re-run the predicate, which is what keeps `docker info` off the session
-    // switch path (FR-5).
+    // CRITICAL fix: FR-12/FR-17 — an unreviewed manifest's `pathExists` must
+    // not be a boolean oracle over the whole filesystem. `../../etc/passwd`
+    // (almost certainly real on the test machine) must read as NOT detected,
+    // not as a leak of whether the path exists outside the root.
+    #[test]
+    fn path_exists_refuses_to_escape_the_root() {
+        let root = tmp_root("detect-path-exists-escape");
+        assert!(
+            !evaluate(
+                &path_exists_predicate("../../../../etc/passwd"),
+                &root,
+                true
+            )
+            .detected
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_exists_refuses_a_symlink_that_escapes_the_root() {
+        let root = tmp_root("detect-path-exists-symlink-escape");
+        let outside = tmp_root("detect-path-exists-symlink-target");
+        std::fs::write(outside.join("secret"), b"sshhh").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret"), root.join("link")).unwrap();
+        assert!(!evaluate(&path_exists_predicate("link"), &root, true).detected);
+    }
+
+    // Same containment proof for `pathJsonEquals` — it must not read a file
+    // that resolves outside the root, symlink included.
+    #[test]
+    fn json_pointer_equals_refuses_to_escape_the_root() {
+        let root = tmp_root("detect-json-equals-escape");
+        let outside = tmp_root("detect-json-equals-target");
+        std::fs::write(outside.join("secret.json"), br#"{"pipeline":"cohorte"}"#).unwrap();
+        let escape_path = format!(
+            "../{}/secret.json",
+            outside.file_name().unwrap().to_string_lossy()
+        );
+        assert!(!json_pointer_equals(
+            &root,
+            &escape_path,
+            "/pipeline",
+            "cohorte"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn json_pointer_equals_refuses_a_symlink_that_escapes_the_root() {
+        let root = tmp_root("detect-json-equals-symlink-escape");
+        let outside = tmp_root("detect-json-equals-symlink-target");
+        std::fs::write(outside.join("secret.json"), br#"{"pipeline":"cohorte"}"#).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.json"), root.join("link.json")).unwrap();
+        assert!(!json_pointer_equals(
+            &root,
+            "link.json",
+            "/pipeline",
+            "cohorte"
+        ));
+    }
+
+    fn loaded(id: &str, predicate: DetectPredicate) -> LoadedExtension {
+        LoadedExtension {
+            id: id.to_string(),
+            dir: PathBuf::from("/tmp"),
+            label: id.to_string(),
+            min_version_label: None,
+            predicate,
+            panels: Vec::new(),
+            declared_commands: Vec::new(),
+            manifest_sha256: Some("x".into()),
+            manifest_error: None,
+        }
+    }
+
     #[test]
     fn a_detection_is_cached_per_root() {
         let root = tmp_root("detect-cache");
-        let git = registry::extension("git").unwrap();
+        let git = loaded("git", path_exists_predicate(".git"));
         let cache = Mutex::new(DetectCache::default());
         assert!(!cache.lock().unwrap().is_cached(&root, "git"));
-        assert!(!detect_cached_locked(&cache, git, &root, true).detected);
+        assert!(!detect_cached_locked(&cache, &git, &root, true).detected);
         assert!(cache.lock().unwrap().is_cached(&root, "git"));
 
-        // The root becomes a repo — the CACHE still answers no (FR-4: no
-        // watcher, no TTL).
         std::fs::create_dir_all(root.join(".git")).unwrap();
-        assert!(!detect_cached_locked(&cache, git, &root, true).detected);
+        assert!(!detect_cached_locked(&cache, &git, &root, true).detected);
 
-        // FR-57: only an explicit re-detect re-runs the predicate.
         cache.lock().unwrap().invalidate(&root);
-        assert!(detect_cached_locked(&cache, git, &root, true).detected);
+        assert!(detect_cached_locked(&cache, &git, &root, true).detected);
     }
 
-    // FR-7: the "not probed" answer describes the toggle, so it must not be
-    // cached against the root and outlive it.
     #[test]
     fn the_not_probed_answer_is_never_cached() {
         let root = tmp_root("detect-cache-off");
-        let docker = registry::extension("docker").unwrap();
+        let docker = loaded(
+            "docker",
+            DetectPredicate::CommandSucceeds {
+                argv: vec!["docker".into(), "info".into()],
+            },
+        );
         let cache = Mutex::new(DetectCache::default());
-        detect_cached_locked(&cache, docker, &root, false);
+        detect_cached_locked(&cache, &docker, &root, false);
         assert!(!cache.lock().unwrap().is_cached(&root, "docker"));
     }
 
     // CRITICAL fix: `detect_cached_locked` must not hold `cache_mutex` while a
-    // slow `CommandOk` predicate (e.g. `docker info`) runs, or one root's exec
-    // would stall every other root's read. Proven with a real second thread: a
-    // ~150ms `sleep`-backed predicate is in flight on one root while a plain
-    // (uncached) read of a DIFFERENT root races it — if the lock were held
-    // across `evaluate`, the second read would be forced to wait ~150ms too;
-    // instead it completes immediately.
+    // slow `CommandSucceeds` predicate runs.
     #[test]
     fn detect_cached_locked_does_not_hold_the_lock_across_a_slow_evaluate() {
         use std::sync::Arc;
@@ -302,17 +445,12 @@ mod tests {
         let fast_root = tmp_root("detect-cache-lock-free-fast");
         let cache = Arc::new(Mutex::new(DetectCache::default()));
 
-        let slow = ExtensionDefinition {
-            id: "test-slow",
-            label: "Slow",
-            min_version_label: None,
-            detect: DetectSpec::CommandOk {
-                argv: &["sleep", "0.15"],
-                missing_reason: "missing",
-                failed_reason: "failed",
+        let slow = loaded(
+            "test-slow",
+            DetectPredicate::CommandSucceeds {
+                argv: vec!["sleep".into(), "0.15".into()],
             },
-            panels: &[],
-        };
+        );
 
         let cache_for_thread = cache.clone();
         let slow_root_for_thread = slow_root.clone();
@@ -320,7 +458,6 @@ mod tests {
             detect_cached_locked(&cache_for_thread, &slow, &slow_root_for_thread, true)
         });
 
-        // Give the slow evaluate a moment to actually start before racing it.
         std::thread::sleep(Duration::from_millis(30));
         let started = Instant::now();
         cache
@@ -332,12 +469,10 @@ mod tests {
         handle.join().unwrap();
         assert!(
             elapsed < Duration::from_millis(100),
-            "an unrelated root's cache write waited {elapsed:?} — the lock was \
-             held across the slow evaluate"
+            "an unrelated root's cache write waited {elapsed:?}"
         );
     }
 
-    // FR-4: two spellings of one root are ONE cache entry.
     #[test]
     fn roots_normalize_to_one_cache_key() {
         let root = tmp_root("detect-normalize");
@@ -346,15 +481,12 @@ mod tests {
             normalize_root(&root.to_string_lossy()),
             normalize_root(&with_dot)
         );
-        // A root that no longer exists still gets a stable key.
         assert_eq!(
             normalize_root("/francois/gone"),
             PathBuf::from("/francois/gone")
         );
     }
 
-    // Each extension is cached independently — one negative answer never masks
-    // another extension's positive one.
     #[test]
     fn extensions_are_cached_independently_within_a_root() {
         let root = tmp_root("detect-independent");
@@ -362,5 +494,63 @@ mod tests {
         cache.put(&root, "git", Detection::yes());
         assert!(cache.get(&root, "git").unwrap().detected);
         assert!(cache.get(&root, "cohorte").is_none());
+    }
+
+    // FR-51: `path`/`pointer`/`equals` are manifest-controlled and must never
+    // ride an ANSI/control sequence into IPC via the `undetected_reason` —
+    // sanitized the same way `declared_commands` sanitizes argv elements.
+    #[test]
+    fn path_exists_reason_strips_control_sequences_from_the_manifest_path() {
+        let root = tmp_root("detect-path-exists-control-chars");
+        let spec = path_exists_predicate("weird\u{1b}[31mred\u{1b}[0m");
+        let detection = evaluate(&spec, &root, true);
+        assert!(!detection.detected);
+        let reason = detection.reason.unwrap();
+        assert!(!reason.contains('\u{1b}'));
+        assert_eq!(reason, "weirdred not found here");
+    }
+
+    #[test]
+    fn path_json_equals_reason_strips_control_sequences_from_every_field() {
+        let root = tmp_root("detect-json-equals-control-chars");
+        let spec = DetectPredicate::PathJsonEquals {
+            path: "a\u{1b}[31mb".into(),
+            pointer: "/x\u{1b}[0m".into(),
+            equals: "y\u{1b}[0mz".into(),
+        };
+        let detection = evaluate(&spec, &root, true);
+        assert!(!detection.detected);
+        let reason = detection.reason.unwrap();
+        assert!(!reason.contains('\u{1b}'));
+        assert_eq!(reason, "ab/x is not yz");
+    }
+
+    // FR-51 round 15: `sanitize_reason_field` used to strip ANSI/control
+    // sequences only (via `schema::sanitize_field`), unlike
+    // `manifest::sanitize_argv_element` — a manifest-controlled `path` could
+    // ride a bidi override or zero-width char into `undetected_reason`,
+    // which crosses IPC and renders in the Extensions modal.
+    #[test]
+    fn path_exists_reason_strips_bidi_and_zero_width_from_the_manifest_path() {
+        let root = tmp_root("detect-path-exists-bidi-chars");
+        let spec = path_exists_predicate("weird\u{202e}reversed\u{200b}hidden");
+        let detection = evaluate(&spec, &root, true);
+        assert!(!detection.detected);
+        let reason = detection.reason.unwrap();
+        assert!(!reason.contains('\u{202e}'));
+        assert!(!reason.contains('\u{200b}'));
+        assert_eq!(reason, "weirdreversedhidden not found here");
+    }
+
+    #[test]
+    fn invalidate_all_clears_every_root() {
+        let root_a = tmp_root("detect-invalidate-all-a");
+        let root_b = tmp_root("detect-invalidate-all-b");
+        let mut cache = DetectCache::default();
+        cache.put(&root_a, "git", Detection::yes());
+        cache.put(&root_b, "git", Detection::yes());
+        cache.invalidate_all();
+        assert!(cache.get(&root_a, "git").is_none());
+        assert!(cache.get(&root_b, "git").is_none());
     }
 }
