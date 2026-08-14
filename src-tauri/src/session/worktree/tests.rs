@@ -284,6 +284,14 @@ fn canonical_lower(p: &std::path::Path) -> String {
         .to_lowercase()
 }
 
+/// A throwaway temp directory, spelled the way git will spell it back.
+///
+/// Canonicalized deliberately: on a Windows CI runner `%TEMP%` can carry the
+/// DOS 8.3 alias of a long account name (`runneradmin` -> `RUNNER~1`), and git
+/// expands it to the long form in `worktree list`. Handing git the short
+/// spelling makes every path a test compares against git's output differ from
+/// it by name alone. Canonicalizing once, here, keeps the fixtures and git
+/// speaking the same spelling — no test has to know the runner's `%TEMP%`.
 fn tmp_dir(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "francois-worktree-{tag}-{}",
@@ -293,7 +301,11 @@ fn tmp_dir(tag: &str) -> std::path::PathBuf {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    // `canonicalize` returns a `\\?\`-prefixed path on Windows, which git does
+    // not accept as a worktree target — strip it back to a plain path.
+    let c = std::fs::canonicalize(&dir).expect("canonicalize");
+    let s = c.to_string_lossy().to_string();
+    std::path::PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s))
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) {
