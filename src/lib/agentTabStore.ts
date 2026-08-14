@@ -37,7 +37,18 @@ import type { AppState } from './store';
  * members rather than a discriminated object so every existing
  * `mainTab === 'diff'` comparison keeps working untouched.
  */
-export type MainTab = 'overview' | 'agents' | 'mcp' | 'skills' | 'workflows' | PaneTab;
+export type MainTab =
+  | 'overview'
+  | 'agents'
+  | 'mcp'
+  | 'skills'
+  | 'workflows'
+  // extensions FR-9: one main-pane tab per available extension, after SHELL.
+  // Unlike an agent/workflow tab it is NOT session-scoped — extensions FR-12
+  // keeps it open across a session change, so `clearAgentTabs` deliberately
+  // leaves it be (`mainTabAfterClose` only ever rewrites an agent/workflow tab).
+  | `ext:${string}`
+  | PaneTab;
 
 export interface AgentTabSlice {
   // PANE 0's active tab (panes 1..3 carry their own in `extraPanes`)

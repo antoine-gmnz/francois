@@ -365,6 +365,14 @@ function route(cmd: string, a: Args): unknown {
     case 'shell_resize':
       return ok(null);
 
+    // extensions: the demo fleet ships no providers, so the registry reads
+    // empty and no ext tab is offered. Explicit because the default below
+    // resolves ok(null), which is not a list.
+    case 'extensions_list':
+    case 'extensions_set_enabled':
+    case 'extensions_detect':
+      return ok([]);
+
     default:
       // Anything not scripted resolves benignly rather than exploding a panel.
       return ok(null);

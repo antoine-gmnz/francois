@@ -5,7 +5,9 @@
 use serde::Serialize;
 use serde_json::Value;
 
-#[derive(Serialize, Clone, Debug)]
+// `Debug`/`PartialEq` so a domain that carries an AppError INSIDE an event
+// payload (extensions' `ext.stream.error`) can derive them on the union.
+#[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct AppError {
     pub code: String,
     pub message: String,

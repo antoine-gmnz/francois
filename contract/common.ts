@@ -83,6 +83,21 @@ export type ErrorCode =
   | 'CLOUD_REPO_MISMATCH' // cloud-sessions FR-8: teleport's mismatch/not_in_repo/host_unverified (detail: { sessionRepo, currentRepo })
   | 'CLOUD_ADOPT_STALLED' // cloud-sessions FR-8/FR-9: a blocking dialog or the deadline (detail: { phase, logPath? })
   | 'CLOUD_ADOPT_FAILED' // cloud-sessions FR-6: the PTY exited without a usable local session (detail: { logPath? })
+  | 'EXT_NOT_ENABLED' // extensions FR-7: the extension is toggled off; nothing was spawned
+  | 'EXT_NOT_DETECTED' // extension-install FR-1: the extension's predicate does not hold for that root; when raised because no home directory could be resolved (fleet-scoped panels), detail: { command } per FR-49
+  | 'EXT_PANEL_NOT_FOUND' // extension-install FR-12: a panelId that is not in the manifest-derived registry
+  | 'EXT_PROVIDER_MISSING' // extensions FR-24: the binary could not be spawned (detail: { argv0, command })
+  | 'EXT_PROVIDER_TIMEOUT' // extensions FR-21: killed at 10s (detail: { timeoutMs, command })
+  | 'EXT_PROVIDER_EXIT' // extensions FR-24: non-zero exit (detail: { code, stderr, command })
+  | 'EXT_SCHEMA_INVALID' // extensions FR-25: stdout did not validate; nothing was rendered
+  | 'EXT_OUTPUT_CAPPED' // extensions FR-22: killed past 4 MiB (detail: { capBytes, command })
+  | 'EXT_PATH_OUTSIDE_ROOT' // extensions FR-39: a log-tail file source escaped its declared root
+  | 'EXT_INVALID_TOKEN' // extensions FR-38: the token slot failed its charset/length rule
+  | 'EXT_STREAM_NOT_FOUND' // extensions: closeStream addressed an unknown or already-ended stream
+  | 'EXT_MANIFEST_INVALID' // extension-install FR-6: schema failure; detail: { pointer, expected, manifestPath }
+  | 'EXT_MANIFEST_UNSUPPORTED' // extension-install FR-5: unknown `manifest` version; detail: { found, supported }
+  | 'EXT_NOT_CONSENTED' // extension-install FR-17: enable/spawn refused before consent
+  | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
   | 'INTERNAL';
 
 // ---------- sessions ----------

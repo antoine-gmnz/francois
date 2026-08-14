@@ -49,7 +49,14 @@
 - 2026-08-13 · ui · Block only irreversible choices; risky-but-recoverable ones are annotated, not blocked — because a blocked legitimate case has no escape hatch · attach-to-worktree
 - 2026-08-13 · scope · Worktree UI stays inside New Session, scoped to the probed repo — no cross-project inventory/manager — because git already owns that state · attach-to-worktree
 - 2026-08-13 · design · `design_files: []` stays empty; §8 brief + `specs/design/attach-to-worktree.md` is the design source — because a two-chip/picker addition inside existing modal chrome doesn't warrant fresh Claude Design mockups, matching collapse-right-column/multiple-shells/workflow-details · attach-to-worktree
+- 2026-08-04 · security · Sanitize subprocess output in the core before it crosses IPC, never at display time — because the webview holds IPC authority and a display-time strip is one forgotten renderer from an XSS · extensions
+- 2026-08-04 · ui · A main-pane tab family about the SESSION closes on session change; one about the PROJECT re-scopes and stays — because agent:/workflow: set the closing precedent and ext: would silently inherit the wrong one · extensions
+- 2026-08-13 · surfaces · Extension manifests are read from `~/.francois/extensions/` ONLY, never from a repo or any project-relative path — because the impersonation threat was always repo-scoped, and a user directory a clone cannot write to does not carry it · supersedes 2026-08-04 surfaces · extension-install
+- 2026-08-13 · surfaces · A disk-loaded artifact's id is its DIRECTORY NAME, never a field it declares — because a name it cannot forge makes impersonation and id collision structurally impossible instead of validated against · extension-install
+- 2026-08-13 · security · Discovery is not authorization: anything loaded from disk arrives disabled and executes nothing — not even its own detection probe — until the user consents to its declared argv, and the consent is bound to the artifact's content hash — because otherwise the mechanism that precedes the gate walks around it, and trusted-then-mutated is free · extension-install
 
 ## Superseded
 
 <!-- moved here when a line above supersedes them; never deleted -->
+- 2026-08-04 · surfaces · Extension definitions are a compiled-in array — never a manifest read from disk at any scope — because an id allowlist stops unknown extensions but never a repo impersonating a known one · extensions · superseded 2026-08-13 by extension-install
+- 2026-08-13 · api · `ext install <name>` resolves a bare name by the `francois-plugin-<name>` naming convention, never through an index — because the refused non-goal was the registry (search, curation, a trust relationship with whoever is listed), and a string substitution that fetches nothing to decide where to look carries none of that · extension-install

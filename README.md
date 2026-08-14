@@ -48,6 +48,8 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 
 **⇱ Approvals, questions and attachments** — permission cards for gated tool calls (with a rules editor over Claude Code's own `settings.json`), `AskUserQuestion` cards, `/` command autocomplete, arrow-up message recall, and file/clipboard attachments in the composer (drop, paste a screenshot, or pick — Claude reads them off disk through its own tooling).
 
+**⊞ Extensions** — teach Francois about the tools it doesn't ship with. Drop an `extension.json` in `~/.francois/extensions/` (`francois ext install`) and get a main-pane tab beside SESSION / DIFF / SHELL, fed by a command already on your `PATH` and rendered as tables, stat tiles, key-value lists or a live log tail. **No code, ever** — a manifest declares commands, and nothing runs until you've read them in the consent dialog and enabled it. Edit the manifest and it flips straight back off.
+
 **⇄ Remote control** — hand a session to Claude Code's native Remote Control and keep the same thread going from your phone or claude.ai.
 
 **⟳ Durable sessions** — quit, reopen, and your fleet is still there: transcripts, status, model, context usage. Sessions are resumable, not disposable. Optionally run one in its own `git worktree`.

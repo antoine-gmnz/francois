@@ -7,6 +7,7 @@
 
 import { displayWslCwd } from '../../contract/wsl-filesystem';
 import { agentIdFromTab, workflowIdFromTab } from '../features/agents/agent-tab';
+import { extIdFromTab } from '../features/extensions/extensions';
 import type { LayoutRegime } from '../lib/layoutStore';
 import { abbreviate } from '../lib/path';
 import type { MainTab, Pane } from '../lib/store';
@@ -107,16 +108,20 @@ export function shellFooterPath(cwd: string, shellName: string, home: string): s
 
 /**
  * Which `MainPaneBody` renderer a `mainTab` value selects. The dynamic tabs are
- * `agent:<id>` and `workflow:<id>` (workflow-details FR-11) — template-literal
+ * `agent:<id>`, `workflow:<id>` (workflow-details FR-11) and `ext:<id>`
+ * (extensions FR-9) — template-literal
  * `MainTab` members, not plain keys — so they collapse to the `'agent'` /
  * `'workflow'` branches here and `MainPaneBody` handles those explicitly rather
  * than forcing them into the `Record<MainTab, renderer>` table.
  */
-export type MainPaneBranch = 'overview' | 'session' | 'diff' | 'shell' | 'panel' | 'agent' | 'workflow';
+export type MainPaneBranch = 'overview' | 'session' | 'diff' | 'shell' | 'panel' | 'agent' | 'workflow' | 'ext';
 
 export function mainPaneBranch(mainTab: MainTab): MainPaneBranch {
   if (mainTab === 'overview' || mainTab === 'session' || mainTab === 'diff' || mainTab === 'shell') return mainTab;
   if (isPanelTab(mainTab)) return 'panel';
+  // extensions FR-9: `ext:<id>` is the third dynamic-tab kind. Checked before
+  // the agent fallback, which claims everything it does not recognise.
+  if (extIdFromTab(mainTab) !== null) return 'ext';
   return workflowIdFromTab(mainTab) !== null ? 'workflow' : 'agent';
 }
 

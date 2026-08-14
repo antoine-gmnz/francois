@@ -69,3 +69,121 @@ mod tests {
         assert!(name.ends_with(".tmp"), "{name}");
     }
 }
+
+// ---------- extension-install FR-1: ~/.francois ----------
+
+/// `$HOME/.francois` (`%USERPROFILE%\.francois` on Windows) — the one fixed
+/// location `cli-companion` and `extension-install` both anchor to. PURE path
+/// resolution only — nothing is created here, so a test can call this freely
+/// without touching the real machine's home directory. `ensure_dir_0700` is
+/// the (separate, explicit) side-effecting half.
+pub(crate) fn francois_home_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".francois"))
+}
+
+/// `~/.francois/extensions` — the one directory `extension-install` FR-1 reads
+/// manifests from, and nowhere else.
+pub(crate) fn extensions_dir() -> Option<PathBuf> {
+    francois_home_dir().map(|h| h.join("extensions"))
+}
+
+/// Create `dir` (and its ancestors) if missing, at mode `0700` on unix. A
+/// pre-existing directory is left as-is — never re-chmod'd, so a user who
+/// loosened it on purpose is not fought.
+pub(crate) fn ensure_dir_0700(dir: &Path) -> std::io::Result<()> {
+    if dir.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod francois_home_tests {
+    use super::*;
+
+    #[test]
+    fn francois_home_dir_is_a_dot_francois_child_of_home() {
+        let home = francois_home_dir().expect("a home directory must resolve in CI");
+        assert!(home.ends_with(".francois"));
+    }
+
+    #[test]
+    fn extensions_dir_is_a_child_of_the_francois_home() {
+        let dir = extensions_dir().expect("a home directory must resolve in CI");
+        assert!(dir.ends_with("extensions"));
+        assert_eq!(dir.parent(), francois_home_dir().as_deref());
+    }
+
+    // FR-1: "no manifest is read from any other location — not a repo, not
+    // ~/.claude, not a Claude Code plugin, not an env-var override." Prove the
+    // negative directly: `extensions_dir()` reads no env var at all (besides
+    // whatever `dirs::home_dir()` itself consults internally to find $HOME) —
+    // setting a battery of plausible override variables must not move the
+    // result away from `<home>/.francois/extensions`.
+    #[test]
+    fn extensions_dir_ignores_every_env_var_override() {
+        let before = extensions_dir();
+
+        let candidates = [
+            "CLAUDE_CONFIG_DIR",
+            "CLAUDE_HOME",
+            "CLAUDE_PROJECT_DIR",
+            "FRANCOIS_HOME",
+            "FRANCOIS_EXTENSIONS_DIR",
+            "FRANCOIS_CONFIG_DIR",
+            "XDG_CONFIG_HOME",
+        ];
+        for name in candidates {
+            std::env::set_var(name, "/tmp/should-never-be-consulted");
+        }
+
+        let after = extensions_dir();
+
+        for name in candidates {
+            std::env::remove_var(name);
+        }
+
+        assert_eq!(
+            before, after,
+            "extensions_dir() must be unaffected by CLAUDE_*/FRANCOIS_*/XDG_* env vars"
+        );
+        // And it must land under the real home, not under any of the bogus
+        // override values above.
+        if let Some(dir) = after {
+            assert!(
+                !dir.starts_with("/tmp/should-never-be-consulted"),
+                "{dir:?}"
+            );
+        }
+    }
+
+    // The directory is created on first use, and mode 0700 on unix — nothing
+    // under it is group- or world-readable by default.
+    #[cfg(unix)]
+    #[test]
+    fn ensure_dir_0700_creates_and_chmods_a_missing_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "francois-fsutil-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(!dir.exists());
+        ensure_dir_0700(&dir).unwrap();
+        assert!(dir.exists());
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "{mode:o}");
+        // Idempotent — a second call on an existing dir does not error.
+        ensure_dir_0700(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

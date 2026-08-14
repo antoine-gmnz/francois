@@ -9,6 +9,7 @@ mod account;
 mod diagnostics;
 mod diff;
 mod editor;
+mod extensions;
 mod fs_util;
 mod ipc;
 mod permissions;
@@ -57,6 +58,10 @@ fn main() {
         // LEAF lock — `update::app_apply_update` reads the engine's running
         // count BEFORE it ever touches this.
         .manage(update::UpdateState::default())
+        // extensions §6: the toggles, the per-root detection cache and the live
+        // log-tail streams. Another LEAF lock — nothing under extensions/ ever
+        // takes Engine.sessions, and no other domain takes this one.
+        .manage(extensions::ExtensionState::default())
         .setup(|app| {
             diagnostics::install_panic_log(app.handle());
             // Tint with the dark caption up front; the webview re-tints with the
@@ -74,6 +79,10 @@ fn main() {
             account::load_accounts(app.handle());
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
+            // extension-install FR-1/FR-13: load the manifest registry from
+            // ~/.francois/extensions/ once at startup — the other FR-13
+            // trigger is an explicit `extensions_detect`.
+            extensions::load_registry(app.handle());
             // usage-bar FR-11/FR-12: probe once now, then every 5 minutes.
             usage::start_timers(app.handle().clone());
             Ok(())
@@ -165,6 +174,13 @@ fn main() {
             account::account_rename,
             account::account_set_default,
             account::account_remove,
+            extensions::extensions_list,
+            extensions::extensions_set_enabled,
+            extensions::extensions_detect,
+            extensions::extensions_consent,
+            extensions::extensions_panel,
+            extensions::extensions_open_stream,
+            extensions::extensions_close_stream,
             diff::diff_get_summary,
             diff::diff_get_file_diff,
             diff::diff_stage_all,
@@ -188,6 +204,10 @@ fn main() {
                                         // multi-account FR-16: an in-flight login is a real `claude` on
                                         // a PTY plus a half-written config dir — both go on exit.
                 account::cancel_all_logins(app);
+                // extensions FR-43: a `log-tail` process source is a real child
+                // (`docker logs -f`) — it goes with the window, like every other
+                // process this app owns.
+                extensions::kill_all_streams(app);
             }
         });
 }
