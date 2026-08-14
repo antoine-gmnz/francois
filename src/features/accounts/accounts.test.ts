@@ -67,6 +67,7 @@ const BUILT_IN: Account = {
   builtIn: true,
   isDefault: true,
   createdAt: 0,
+  kind: 'claude-code-oauth',
 };
 
 function account(over: Partial<Account> & { id: string }): Account {
@@ -76,6 +77,7 @@ function account(over: Partial<Account> & { id: string }): Account {
     builtIn: false,
     isDefault: false,
     createdAt: 1_000,
+    kind: 'claude-code-oauth',
     ...over,
   };
 }
@@ -93,6 +95,7 @@ function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
     permissionMode: 'default',
     runtime: 'native',
     accountId: DEFAULT_ACCOUNT_ID,
+    provider: 'claude-code',
     ...over,
   };
 }
@@ -688,5 +691,47 @@ describe('list keyboard (§3 Keyboard)', () => {
     expect(clampCursor(4, 3)).toBe(2);
     expect(clampCursor(-1, 3)).toBe(0);
     expect(clampCursor(1, 3)).toBe(1);
+  });
+});
+
+// ------------------------------------------------------ endpoint accounts
+
+// multi-provider-seam FR-12/FR-16: `kind` is a CARRIED discriminator. The core
+// sets it (an older registry's rows default to 'claude-code-oauth') and the
+// frontend never derives it — nothing here reads the capability table. So the
+// only way it breaks on this surface is a feed or a resolution helper rebuilding
+// an Account field-by-field instead of handing the core's own object on.
+describe('Account.kind is carried, never re-derived (multi-provider-seam FR-12)', () => {
+  const endpointish = account({ id: 'e1', label: 'OpenAI', kind: 'openai-compatible' });
+
+  it('the account.list feed applies the list verbatim, both kinds intact', async () => {
+    let handler: ((e: { payload: AccountEvent }) => void) | undefined;
+    let resolveListen: ((u: () => void) => void) | undefined;
+    listenMock.mockImplementation((_n: string, cb: (e: { payload: AccountEvent }) => void) => {
+      handler = cb;
+      return new Promise<() => void>((r) => {
+        resolveListen = r;
+      });
+    });
+    invokeMock.mockResolvedValue({ ok: true, data: [BUILT_IN] });
+
+    const applied: Account[][] = [];
+    const stop = startAccountFeed((a) => applied.push(a));
+    resolveListen?.(() => {});
+    await tick();
+    handler?.({ payload: { type: 'account.list', accounts: [BUILT_IN, endpointish] } });
+
+    expect(applied).toEqual([[BUILT_IN], [BUILT_IN, endpointish]]);
+    expect(applied[0][0].kind).toBe('claude-code-oauth');
+    expect(applied[1][1].kind).toBe('openai-compatible');
+    stop();
+  });
+
+  it('the store and the resolution helpers hand back the SAME object, so no field can be dropped', () => {
+    const list = [BUILT_IN, endpointish];
+    expect(findAccount(list, 'e1')).toBe(endpointish);
+    expect(defaultAccount(list)).toBe(BUILT_IN);
+    useStore.getState().setAccounts(list);
+    expect(useStore.getState().accounts[1]).toBe(endpointish);
   });
 });

@@ -68,6 +68,7 @@ function sess(id: string, projectId?: string): SessionMeta {
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
+    provider: 'claude-code',
     ...(projectId ? { projectId } : {}),
   };
 }

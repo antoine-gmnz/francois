@@ -76,6 +76,7 @@ export const ACCOUNTS: Account[] = [
     builtIn: true,
     isDefault: true,
     createdAt: 0,
+    kind: 'claude-code-oauth',
   },
   {
     id: 'acct-work',
@@ -86,6 +87,7 @@ export const ACCOUNTS: Account[] = [
     builtIn: false,
     isDefault: false,
     createdAt: T0 - (60 * 24 * 40) * MIN,
+    kind: 'claude-code-oauth',
   },
 ];
 
@@ -148,6 +150,7 @@ const BASE: Omit<SessionMeta, 'id' | 'name' | 'cwd'> = {
   permissionMode: 'acceptEdits',
   runtime: 'native',
   accountId: 'acct-work',
+  provider: 'claude-code',
 };
 
 export const SESSIONS: SessionMeta[] = [

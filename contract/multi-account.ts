@@ -12,6 +12,13 @@ import type { AppError, AccountId, Result, SessionId } from './common';
 export type { AccountId } from './common';
 export const DEFAULT_ACCOUNT_ID: AccountId = 'default';
 
+/**
+ * What kind of credential an account is. 'claude-code-oauth' is an interactive
+ * Claude Code login with its own config dir (the only kind today);
+ * 'openai-compatible' is an endpoint + key, added by multi-provider-openai.
+ */
+export type AccountKind = 'claude-code-oauth' | 'openai-compatible';
+
 export interface Account {
   id: AccountId;
   label: string; // user-editable, non-empty (FR-5)
@@ -22,6 +29,8 @@ export interface Account {
   isDefault: boolean; // exactly one true across the list (FR-4)
   createdAt: number; // epoch ms (0 for the built-in)
   authFailedAt?: number; // epoch ms of the last credential failure (FR-22/FR-23)
+  /** multi-provider-seam FR-12. A persisted record without it loads as 'claude-code-oauth'. */
+  kind: AccountKind;
 }
 
 // francois:account:list — no payload

@@ -252,6 +252,9 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
                 // multi-account FR-19: always written (unlike projectId) — a
                 // session always has an account, and 'default' is a real value.
                 "accountId": s.account_id,
+                // multi-provider-seam FR-11: always written — every session has
+                // a provider, derived once at creation and never re-derived.
+                "provider": s.provider,
             });
             // projects FR-18: write projectId ONLY when linked. An unlinked session
             // must omit the key entirely rather than emit null, so a record written
@@ -327,6 +330,9 @@ pub(crate) struct PersistedMeta {
     /// multi-account FR-19: None on every pre-multi-account record. Whether the
     /// id still RESOLVES is decided at load (FR-10), not here — parsing stays pure.
     account_id: Option<String>,
+    /// multi-provider-seam FR-11: absent on every pre-feature record, which
+    /// loads as `Provider::ClaudeCode` (`Provider`'s `Default`).
+    provider: Provider,
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
@@ -410,6 +416,12 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(String::from),
+        // multi-provider-seam FR-11: an unparseable/absent value degrades to
+        // `Provider::ClaudeCode` — every existing session on disk is unaffected.
+        provider: rec
+            .get("provider")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default(),
         claude_session_id: rec
             .get("claudeSessionId")
             .and_then(|v| v.as_str())
@@ -564,6 +576,7 @@ pub fn load_persisted(app: &AppHandle) {
                 // cloud-sessions FR-10: provenance survives quit/reopen — that
                 // is the whole point of persisting it (§9).
                 cloud: m.cloud,
+                provider: m.provider,
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
@@ -728,6 +741,30 @@ mod tests {
         );
         // missing required field → None
         assert!(parse_session_record(&json!({ "name": "x" }), 0).is_none());
+    }
+
+    #[test]
+    fn provider_round_trips_through_a_persisted_record_and_defaults_to_claude_code() {
+        // multi-provider-seam FR-11: a stored record without `provider` (every
+        // session written by a pre-feature release) loads as `Provider::ClaudeCode`.
+        let old = json!({ "id": "abc", "name": "n", "cwd": "/x" });
+        assert_eq!(
+            parse_session_record(&old, 0).unwrap().provider,
+            Provider::ClaudeCode
+        );
+        // an explicit value round-trips verbatim
+        let full = json!({ "id": "abc", "name": "n", "cwd": "/x", "provider": "claude-code" });
+        assert_eq!(
+            parse_session_record(&full, 0).unwrap().provider,
+            Provider::ClaudeCode
+        );
+        // a malformed/unknown value degrades to the default rather than failing
+        // the whole record (matching the "absent" case, not a hard error).
+        let bad = json!({ "id": "abc", "name": "n", "cwd": "/x", "provider": "bogus" });
+        assert_eq!(
+            parse_session_record(&bad, 0).unwrap().provider,
+            Provider::ClaudeCode
+        );
     }
 
     #[test]
@@ -1129,6 +1166,21 @@ mod project_link_tests {
             serde_json::to_value(s.meta()).unwrap()["accountId"],
             "a1",
             "the stored value is reported verbatim, never re-derived"
+        );
+    }
+
+    #[test]
+    fn session_meta_always_carries_a_provider() {
+        // multi-provider-seam FR-11: required on the wire, reported verbatim —
+        // never re-derived from the (possibly since-changed) account.
+        let v = serde_json::to_value(test_session().meta()).unwrap();
+        assert_eq!(v["provider"], "claude-code");
+
+        let mut s = test_session();
+        s.provider = Provider::OpenAiCompatible;
+        assert_eq!(
+            serde_json::to_value(s.meta()).unwrap()["provider"],
+            "openai-compatible"
         );
     }
 

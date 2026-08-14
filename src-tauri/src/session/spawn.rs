@@ -8,8 +8,9 @@
 //! every existing `crate::session::no_window` caller — including usage.rs,
 //! which this refactor does not own — keeps resolving unchanged.
 //!
-//! `spawn_claude` itself stays in turn.rs: it is turn-shaped (stdin/stdout
-//! wiring, the NDJSON user line) rather than argv/env plumbing.
+//! `spawn_claude` itself lives in `session/adapter/claude_code.rs`
+//! (multi-provider-seam FR-3): it is turn-shaped (stdin/stdout wiring, the
+//! NDJSON user line) AND Claude-CLI-shaped, rather than argv/env plumbing.
 
 #[cfg(not(windows))]
 use std::process::Command;

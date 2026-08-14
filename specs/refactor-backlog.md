@@ -194,3 +194,7 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, qu
 - [ ] LOW · src-tauri/src/session/cloud/auth.rs:81 · quality · resolve Bedrock/Vertex/base-URL env through the account-scoped mechanism `account_env` uses, once accounts carry provider config · deferred:cloud-sessions
 - [ ] LOW · src-tauri/src/session/cloud/api.rs:1-1028 · rule · file is 1028 lines, over the ~1000-line cap in PIPELINE.md §Code layout; split the ref-normalizer/repo-matching pure helpers (normalize_cloud_ref, remote_slug, repo_matches, timestamp parsing) plus their tests into a sibling module (cloud/refs.rs), leaving api.rs the HTTP calls and response mapping · deferred:cloud-sessions
 - [ ] LOW · src/features/cloud-sessions/AdoptCloudSessionModal.tsx:146-149 · quality · pick() sets ref/resolved but never updates cursor, so ArrowDown/ArrowUp right after a mouse pick restarts navigation from index 0/-1 instead of the clicked row; thread the row index into onPick (or list.sessions.findIndex) and setCursor to it inside pick · deferred:cloud-sessions
+
+## deferred:multi-provider-seam
+
+- [ ] LOW · src/features/sessions/rename.test.ts:20, src/lib/panelCountsStore.test.ts:11, src/features/sessions/useSessionFleetSync.test.ts:11, src/lib/split-by-4.test.ts:55 · quality · replace the blanket `as unknown as SessionMeta` bypass casts with fully-populated fixture builders so future required contract fields fail loudly instead of silently · deferred:multi-provider-seam

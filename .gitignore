@@ -29,3 +29,6 @@ docs/.vitepress/cache/
 
 # capture scratch — frames and encodes for the README assets (scripts/capture)
 .capture/
+
+# local cargo test run logs — developer paths, never committed (multi-provider-seam review round 2)
+.cargo-test.log

@@ -70,6 +70,7 @@ const metaOf = (id: string, s: SessionStatus): SessionMeta => ({
   permissionMode: 'default',
   runtime: 'native',
   accountId: 'default',
+  provider: 'claude-code',
 });
 
 describe('deriveTrigger (FR-6/FR-14)', () => {

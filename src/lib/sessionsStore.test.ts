@@ -87,3 +87,49 @@ describe('reassignActiveSessionId (FR-27)', () => {
     expect(useStore.getState().mainTab).toBe('diff');
   });
 });
+
+// multi-provider-seam FR-11/FR-16: the frontend gains NO state for `provider` —
+// it is a carried field, set by the core at session_create and never re-derived
+// here. Nothing in src reads it (the capability table has no frontend consumer),
+// so the only way it can break is a store mutation that rebuilds a SessionMeta
+// field-by-field instead of spreading it. That is what these lock.
+describe('SessionMeta.provider is carried through the cache (multi-provider-seam FR-11)', () => {
+  function full(id: string, provider: SessionMeta['provider']): SessionMeta {
+    return {
+      id,
+      name: id,
+      cwd: '/repo',
+      model: { id: 'm', label: 'M' },
+      status: 'idle',
+      contextUsedTokens: 0,
+      contextLimitTokens: 0,
+      startedAt: 0,
+      lastActivityAt: 1,
+      permissionMode: 'default',
+      runtime: 'native',
+      accountId: 'default',
+      provider,
+    };
+  }
+
+  it('survives every in-place patch (status / error / usage)', () => {
+    useStore.getState().setSessions([full('s1', 'claude-code')]);
+    useStore.getState().patchStatus('s1', 'running');
+    useStore.getState().patchError('s1', 'boom');
+    useStore.getState().patchUsage('s1', 10, 100);
+    const s = useStore.getState().sessions[0];
+    expect(s.provider).toBe('claude-code');
+    expect(s.status).toBe('running');
+  });
+
+  it('upsertSession adopts the incoming meta’s provider rather than pinning one', () => {
+    useStore.getState().setSessions([full('s1', 'claude-code')]);
+    // A meta the core sent for a session created against an endpoint account —
+    // the frontend must carry it verbatim, not map it back to 'claude-code'.
+    useStore.getState().upsertSession(full('s1', 'openai-compatible'));
+    expect(useStore.getState().sessions).toHaveLength(1);
+    expect(useStore.getState().sessions[0].provider).toBe('openai-compatible');
+    useStore.getState().upsertSession(full('s2', 'openai-compatible'));
+    expect(useStore.getState().sessions.map((x) => x.provider)).toEqual(['openai-compatible', 'openai-compatible']);
+  });
+});

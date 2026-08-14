@@ -781,6 +781,7 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
       permissionMode: 'default' as const,
       runtime: 'native' as const,
       accountId: 'default',
+      provider: 'claude-code' as const,
     };
     applySessionEvent(dispatch, setters, { type: 'session.meta', meta });
     expect(setters.setStatus).toHaveBeenCalledWith('error');

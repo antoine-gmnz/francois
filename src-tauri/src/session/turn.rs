@@ -1,135 +1,15 @@
-//! turn lifecycle: argv, spawn, begin/finish, and session failure.
+//! turn lifecycle: build a `TurnContext`, route it through the session's
+//! `SessionAdapter` (multi-provider-seam FR-1), and handle completion/failure.
+//! The argv/spawn/stdio-control-channel plumbing lives behind that seam now —
+//! see `session/adapter/claude_code.rs`.
 
 use super::*;
 
 use crate::ipc::AppError;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 
 // ---------- turn execution ----------
-
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum TurnMode {
-    Normal,
-    #[allow(dead_code)]
-    Compact,
-    /// Re-run of a turn whose `--resume` was rejected: skip re-buffering the user
-    /// message; the caller has already cleared claude_session_id so it runs fresh (FR-9).
-    ResumeRetry,
-}
-
-/// The claude argv for a session turn. session-questions FR-1: `-p` with NO
-/// positional prompt (the turn text rides stdin), plus the stdio control channel
-/// (`--input-format stream-json --permission-prompt-tool stdio`). Pure; unit-tested.
-pub(crate) fn turn_args(
-    model_id: &str,
-    resume: Option<&str>,
-    effort: Option<&str>,
-    permission_mode: &str,
-) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "-p".into(),
-        "--output-format".into(),
-        "stream-json".into(),
-        "--input-format".into(),
-        "stream-json".into(),
-        "--permission-prompt-tool".into(),
-        "stdio".into(),
-        "--include-partial-messages".into(),
-        "--verbose".into(),
-        "--model".into(),
-        model_id.into(),
-    ];
-    args.extend(permission_args(permission_mode)); // per-invocation; --resume does not carry it
-    if let Some(e) = effort {
-        args.extend(["--effort".into(), e.into()]);
-    }
-    if let Some(r) = resume {
-        args.extend(["--resume".into(), r.into()]);
-    }
-    args
-}
-
-/// The §5.5 NDJSON user line carrying a turn's text over stdin (FR-1).
-pub(crate) fn user_line(text: &str) -> String {
-    let mut line = serde_json::json!({
-        "type": "user",
-        "message": { "role": "user", "content": [{ "type": "text", "text": text }] }
-    })
-    .to_string();
-    line.push('\n');
-    line
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_claude(
-    cwd: &str,
-    model_id: &str,
-    resume: Option<&str>,
-    text: &str,
-    effort: Option<&str>,
-    permission_mode: &str,
-    runtime: &str,
-    worktree_distro: Option<&str>,
-    account_config_dir: Option<&str>,
-) -> std::io::Result<Child> {
-    let args = turn_args(model_id, resume, effort, permission_mode);
-    let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
-    let mut cmd = Command::new(program);
-    cmd.args(argv);
-    if runtime != "wsl" {
-        cmd.current_dir(cwd); // wsl turns get their cwd via `--cd` inside the distro
-    }
-    if let Some(path) = claude_path_env() {
-        cmd.env("PATH", path);
-    }
-    // multi-account FR-21/FR-24: this turn runs under its session's account.
-    for (k, v) in account_env(account_config_dir, runtime, &[]) {
-        cmd.env(k, v);
-    }
-    no_window(&mut cmd);
-    // session-questions FR-1: stdin is piped — the turn text goes down it as one
-    // NDJSON user line, and the stdio control channel (question answers /
-    // permission denies) rides the same pipe for the rest of the turn.
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = cmd.spawn()?;
-    let wrote = {
-        use std::io::Write as _;
-        match child.stdin.as_mut() {
-            Some(w) => w
-                .write_all(user_line(text).as_bytes())
-                .and_then(|_| w.flush()),
-            None => Ok(()),
-        }
-    };
-    if let Err(e) = wrote {
-        // The child died before reading its prompt — surface it as a spawn failure.
-        let _ = child.kill();
-        return Err(e);
-    }
-    Ok(child)
-}
-
-pub(crate) fn child_stdout_lines(mut child: Child) -> Option<Vec<String>> {
-    let stdout = child.stdout.take()?;
-    let reader = BufReader::new(stdout);
-    let mut lines = Vec::new();
-    for line in reader.lines() {
-        match line {
-            Ok(l) => lines.push(l),
-            Err(_) => break,
-        }
-    }
-    let _ = child.wait();
-    Some(lines)
-}
 
 /// Input-side tokens of ONE API request: every token the model had to read
 /// (fresh prompt + freshly cached + cache hits). `cache_creation_input_tokens`
@@ -227,24 +107,17 @@ pub(crate) fn is_resume_fail(
     resume_used && !got_init && !got_result && !was_interrupted
 }
 
-pub(crate) fn begin_turn(
-    app: &AppHandle,
+/// Build a session's `TurnContext` snapshot: everything `begin_turn` reads
+/// off it, under `Engine.sessions`, released immediately after. `None` ⇔ the
+/// session no longer exists.
+fn build_turn_context(
+    engine: &Engine,
     session_id: &str,
     block_id: String,
     text: String,
     mode: TurnMode,
-) {
-    let engine = app.state::<Engine>();
-    let Some((
-        cwd,
-        model_id,
-        resume,
-        effort,
-        permission_mode,
-        runtime,
-        worktree_distro,
-        account_id,
-    )) = engine.with_session_mut(session_id, |s| {
+) -> Option<TurnContext> {
+    engine.with_session_mut(session_id, |s| {
         // ResumeRetry forces resume off regardless of the stored id, so a
         // still-good id is never dropped preemptively — a fresh init
         // overwrites it only on success.
@@ -253,45 +126,54 @@ pub(crate) fn begin_turn(
         } else {
             s.claude_session_id.clone()
         };
-        (
-            s.cwd.clone(),
-            s.model_id.clone(),
+        TurnContext {
+            session_id: session_id.to_string(),
+            block_id,
+            text,
+            mode,
+            cwd: s.cwd.clone(),
+            model_id: s.model_id.clone(),
+            effort: s.effort.clone(),
+            permission_mode: s.permission_mode.clone(),
+            runtime: s.runtime.clone(),
+            worktree_distro: s.worktree_distro.clone(),
+            account_id: s.account_id.clone(),
+            allow_git: s.allow_git,
             resume,
-            s.effort.clone(),
-            s.permission_mode.clone(),
-            s.runtime.clone(),
-            s.worktree_distro.clone(),
-            s.account_id.clone(),
-        )
+        }
     })
-    else {
+}
+
+/// multi-provider-seam FR-1: snapshot the session into a `TurnContext`, route
+/// it through `adapter_for(session.provider)` (preflight, then spawn/connect),
+/// and store the returned `TurnControl` on `Session.current`. Provider-shaped
+/// behaviour (argv, env, the control-channel protocol, …) lives entirely
+/// behind that seam now — this function is the same for every provider.
+pub(crate) fn begin_turn(
+    app: &AppHandle,
+    session_id: &str,
+    block_id: String,
+    text: String,
+    mode: TurnMode,
+) {
+    let engine = app.state::<Engine>();
+    let provider = engine
+        .with_session(session_id, |s| s.provider)
+        .unwrap_or_default();
+    let adapter = adapter_for(provider);
+    let Some(ctx) = build_turn_context(&engine, session_id, block_id, text, mode) else {
         return;
     };
 
-    // multi-account FR-22: an account with a config dir whose `.claude.json` is
-    // gone (deleted behind Francois' back) has no credentials — spawning would
-    // hang on an interactive login prompt no one can answer. Fail the turn with
-    // ACCOUNT_NOT_AUTHENTICATED and flag the row for `Re-login` instead.
-    let account_config_dir = crate::account::config_dir_of(app, &account_id);
-    if let Some(dir) = account_config_dir.as_deref() {
-        if !crate::account::identity_file_exists(dir) {
-            crate::account::mark_auth_failed(app, &account_id);
-            fail_session(
-                app,
-                session_id,
-                "ACCOUNT_NOT_AUTHENTICATED",
-                "this session's account is not signed in — use Re-login in the Accounts modal",
-            );
-            return;
-        }
+    if let Err(e) = adapter.preflight(app, &ctx) {
+        fail_session(app, session_id, &e.code, &e.message);
+        return;
     }
 
-    let resume_used = resume.is_some();
-
-    if mode == TurnMode::Normal {
+    if ctx.mode == TurnMode::Normal {
         let block = engine
             .with_session_mut(session_id, |s| {
-                s.buf_user(&block_id, text.clone());
+                s.buf_user(&ctx.block_id, ctx.text.clone());
                 s.last_activity_at = now_ms();
                 s.block_buffer.last().cloned()
             })
@@ -303,81 +185,29 @@ pub(crate) fn begin_turn(
             app,
             SessionEvent::MessageUser {
                 session_id: session_id.into(),
-                block_id: block_id.clone(),
-                text: text.clone(),
+                block_id: ctx.block_id.clone(),
+                text: ctx.text.clone(),
             },
         );
     }
 
-    let mut child = match spawn_claude(
-        &cwd,
-        &model_id,
-        resume.as_deref(),
-        &text,
-        effort.as_deref(),
-        &permission_mode,
-        &runtime,
-        worktree_distro.as_deref(),
-        account_config_dir.as_deref(),
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            fail_session(
-                app,
-                session_id,
-                "SPAWN_FAILED",
-                &format!("could not start claude: {e}"),
-            );
-            return;
+    match adapter.begin_turn(app, ctx) {
+        Ok(control) => {
+            engine.with_session_mut(session_id, |s| {
+                s.current = Some(control);
+            });
         }
-    };
-    // session-questions FR-2: the stdin writer joins the turn state for the whole
-    // turn — the reader thread (denies) and session_answer_question (answers)
-    // share it; it closes only when the turn ends.
-    let stdin = Arc::new(Mutex::new(child.stdin.take()));
-    let pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let child = Arc::new(Mutex::new(child));
-    let interrupted = Arc::new(AtomicBool::new(false));
-    engine.with_session_mut(session_id, |s| {
-        s.current = Some(TurnHandle {
-            child: child.clone(),
-            interrupted: interrupted.clone(),
-            stdin: stdin.clone(),
-            pending_questions: pending_questions.clone(),
-            pending_permissions: pending_permissions.clone(),
-        });
-    });
-
-    let app2 = app.clone();
-    let sid = session_id.to_string();
-    // block_id/text carried into the reader so a resume-fail can re-run this turn fresh (FR-9).
-    std::thread::spawn(move || {
-        run_reader(
-            app2,
-            sid,
-            child,
-            interrupted,
-            stdin,
-            pending_questions,
-            pending_permissions,
-            model_id,
-            resume_used,
-            block_id,
-            text,
-        );
-    });
+        Err(e) => fail_session(app, session_id, &e.code, &e.message),
+    }
 }
 
 /// `starting` → `running`: the stream produced its `system/init`, so the turn is
 /// really under way. Idempotent and narrow — it ONLY promotes from `starting`, so
 /// a turn already parked on an approval when a later init arrives is never
 /// dragged back to `running`.
-pub(crate) fn mark_stream_live(app: &AppHandle, session_id: &str) {
-    let promoted = app
-        .state::<Engine>()
+pub(crate) fn mark_stream_live(env: &dyn SessionEnv, session_id: &str) {
+    let promoted = env
+        .engine()
         .with_session_mut(session_id, |s| {
             if s.status != status::STARTING {
                 return false;
@@ -387,13 +217,10 @@ pub(crate) fn mark_stream_live(app: &AppHandle, session_id: &str) {
         })
         .unwrap_or(false);
     if promoted {
-        emit(
-            app,
-            SessionEvent::Status {
-                session_id: session_id.into(),
-                status: status::RUNNING.into(),
-            },
-        );
+        env.emit_session(SessionEvent::Status {
+            session_id: session_id.into(),
+            status: status::RUNNING.into(),
+        });
     }
 }
 
@@ -408,24 +235,25 @@ pub(crate) fn mark_stream_live(app: &AppHandle, session_id: &str) {
 /// Deliberately NOT called from the turn-end drains — a turn tearing down settles
 /// on idle/error via `finish_turn`, and a refresh there would flash `running`
 /// between the last resolution and the terminal status.
-pub(crate) fn refresh_parked_status(app: &AppHandle, session_id: &str) {
-    let engine = app.state::<Engine>();
-    // Phase 1: snapshot the turn's pending handles and RELEASE the sessions lock.
-    // The pending maps are never locked while `engine.sessions` is held (the same
-    // rule decisions.rs follows), so the stdin writers can never stall a command.
-    let handles = engine.with_session(session_id, |s| {
-        s.current
-            .as_ref()
-            .map(|t| (t.pending_questions.clone(), t.pending_permissions.clone()))
-    });
-    let Some(Some((questions, permissions))) = handles else {
+pub(crate) fn refresh_parked_status(env: &dyn SessionEnv, session_id: &str) {
+    let engine = env.engine();
+    // Phase 1: snapshot the turn handle and RELEASE the sessions lock — the
+    // same discipline decisions.rs follows, so a control-channel write can
+    // never stall a command. multi-provider-seam FR-9: derived purely from
+    // `TurnControl::pending_counts()`, so this never knows which adapter it
+    // is talking to.
+    let control = engine
+        .with_session(session_id, |s| s.current.clone())
+        .flatten();
+    let Some(control) = control else {
         return; // no turn in flight ⇒ nothing to be parked on
     };
-    // Separate statements: never hold both pending guards at once.
-    let n_permissions = permissions.lock().unwrap().len();
-    let n_questions = questions.lock().unwrap().len();
+    let PendingCounts {
+        questions: n_questions,
+        permissions: n_permissions,
+    } = control.pending_counts();
 
-    // Phase 2: `next_parked_status` owns the decision (and both guards) — see
+    // Phase 2: `next_parked_status` owns the decision — see
     // session/status.rs, where it is unit-tested.
     let applied = engine
         .with_session_mut(session_id, |s| {
@@ -436,13 +264,10 @@ pub(crate) fn refresh_parked_status(app: &AppHandle, session_id: &str) {
         })
         .flatten();
     if let Some(next) = applied {
-        emit(
-            app,
-            SessionEvent::Status {
-                session_id: session_id.into(),
-                status: next.into(),
-            },
-        );
+        env.emit_session(SessionEvent::Status {
+            session_id: session_id.into(),
+            status: next.into(),
+        });
     }
 }
 
@@ -639,7 +464,88 @@ pub(crate) fn update_used(app: &AppHandle, session_id: &str, used: u64) {
 mod tests {
     use super::*;
 
+    use crate::session::testenv::TestEnv;
+    use crate::session::testutil::{test_engine_with, test_session, FakeTurnControl};
     use serde_json::json;
+
+    /// multi-provider-seam FR-9: `refresh_parked_status` reads
+    /// `TurnControl::pending_counts()` and NOTHING else about the turn — driven
+    /// here by a control that is not the Claude one, which is the whole proof
+    /// that the engine no longer knows which adapter it is talking to.
+    fn parked(status: &str, permissions: usize, questions: usize) -> (TestEnv, Option<String>) {
+        let mut session = test_session();
+        session.status = status.into();
+        session.current = Some(FakeTurnControl::new(questions, permissions));
+        let env = TestEnv {
+            engine: test_engine_with(session),
+            ..Default::default()
+        };
+        refresh_parked_status(&env, "s1");
+        let emitted = env
+            .session_events
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|ev| match ev {
+                SessionEvent::Status { status, .. } => Some(status.clone()),
+                _ => None,
+            });
+        (env, emitted)
+    }
+
+    #[test]
+    fn parked_status_is_derived_from_a_non_claude_turn_controls_pending_counts() {
+        // An approval outranks a question (existing precedence, unchanged).
+        let (env, emitted) = parked(status::RUNNING, 1, 1);
+        assert_eq!(emitted.as_deref(), Some(status::AWAITING_APPROVAL));
+        assert_eq!(
+            env.engine
+                .with_session("s1", |s| s.status.clone())
+                .as_deref(),
+            Some(status::AWAITING_APPROVAL)
+        );
+
+        // Only a question pending ⇒ awaiting_input.
+        let (_, emitted) = parked(status::RUNNING, 0, 1);
+        assert_eq!(emitted.as_deref(), Some(status::AWAITING_INPUT));
+
+        // Nothing pending ⇒ never latched: straight back to running.
+        let (_, emitted) = parked(status::AWAITING_APPROVAL, 0, 0);
+        assert_eq!(emitted.as_deref(), Some(status::RUNNING));
+
+        // Already correct ⇒ no redundant event.
+        let (_, emitted) = parked(status::AWAITING_INPUT, 0, 1);
+        assert_eq!(emitted, None);
+
+        // A session that is no longer busy owns its terminal status.
+        let (env, emitted) = parked(status::ERROR, 1, 0);
+        assert_eq!(emitted, None);
+        assert_eq!(
+            env.engine
+                .with_session("s1", |s| s.status.clone())
+                .as_deref(),
+            Some(status::ERROR)
+        );
+    }
+
+    #[test]
+    fn parked_status_refresh_is_a_no_op_with_no_turn_in_flight() {
+        let mut session = test_session();
+        session.status = status::RUNNING.into();
+        session.current = None; // turn over — nothing to be parked on
+        let env = TestEnv {
+            engine: test_engine_with(session),
+            ..Default::default()
+        };
+        refresh_parked_status(&env, "s1");
+        assert!(env.session_events.lock().unwrap().is_empty());
+        assert_eq!(
+            env.engine
+                .with_session("s1", |s| s.status.clone())
+                .as_deref(),
+            Some(status::RUNNING)
+        );
+    }
 
     #[test]
     fn resume_fail_predicate_truth_table() {
@@ -730,28 +636,6 @@ mod tests {
     }
 
     #[test]
-    fn turn_args_enable_stdio_control_channel_without_positional_prompt() {
-        // FR-1: -p with NO positional prompt, plus the two new flags; every
-        // pre-existing flag intact; permission-mode/effort/resume still appended.
-        let args = turn_args("sonnet", Some("thread-1"), Some("high"), "plan");
-        assert_eq!(args[0], "-p");
-        assert!(
-            args[1].starts_with("--"),
-            "no positional prompt after -p: {args:?}"
-        );
-        let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
-        assert!(has_pair("--output-format", "stream-json"));
-        assert!(has_pair("--input-format", "stream-json"));
-        assert!(has_pair("--permission-prompt-tool", "stdio"));
-        assert!(args.iter().any(|a| a == "--include-partial-messages"));
-        assert!(args.iter().any(|a| a == "--verbose"));
-        assert!(has_pair("--model", "sonnet"));
-        assert!(has_pair("--permission-mode", "plan"));
-        assert!(has_pair("--effort", "high"));
-        assert!(has_pair("--resume", "thread-1"));
-    }
-
-    #[test]
     fn fail_session_finalizes_running_agents_before_terminal_status() {
         // Finding 1 / async-agents FR-16 & FR-7: a session error is a legitimate
         // endedAt setter — no agent is left running (and therefore ticking)
@@ -785,18 +669,5 @@ mod tests {
         assert!(matches!(ems[0], AgentEmission::Step { .. }));
         assert!(matches!(ems[1], AgentEmission::Block { .. }));
         assert!(matches!(ems[2], AgentEmission::Update { .. }));
-    }
-
-    #[test]
-    fn user_line_matches_wire_shape() {
-        // §5.5: the turn text rides stdin as ONE NDJSON user line.
-        let line = user_line("fix the bug");
-        assert!(line.ends_with('\n'));
-        let v: Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(
-            v,
-            json!({ "type": "user", "message": { "role": "user",
-                "content": [{ "type": "text", "text": "fix the bug" }] } })
-        );
     }
 }

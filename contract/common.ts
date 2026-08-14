@@ -126,6 +126,14 @@ export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermiss
 /** Where the claude CLI runs for a session: natively, or inside WSL (Windows only). */
 export type ClaudeRuntime = 'native' | 'wsl';
 
+/**
+ * Which runner drives a session. Names the RUNNER, not the vendor: 'claude-code' is
+ * the Claude Code CLI harness, 'openai-compatible' is Francois's own agent loop over
+ * an OpenAI-dialect endpoint. A future Anthropic-API-through-our-own-loop path would
+ * be a third member, which a vendor-shaped name could not express.
+ */
+export type SessionProvider = 'claude-code' | 'openai-compatible';
+
 export interface ModelInfo {
   id: string; // e.g. 'claude-sonnet-5'
   label: string; // display label, e.g. 'Sonnet 5'
@@ -179,6 +187,12 @@ export interface SessionMeta {
    * user's work. Nothing here implies a live link back to claude.ai.
    */
   cloud?: CloudProvenance;
+  /**
+   * The runner this session's turns go through (multi-provider-seam FR-11).
+   * DERIVED from the session's account kind at creation and never re-derived.
+   * A persisted record without it loads as 'claude-code'.
+   */
+  provider: SessionProvider;
 }
 
 /** The id of a Claude Code on the web session — `'session_…'` or `'cse_…'`. */

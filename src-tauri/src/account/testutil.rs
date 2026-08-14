@@ -12,6 +12,7 @@ pub(crate) fn record_fixture(id: &str, label: &str) -> AccountRecord {
         organization: None,
         config_dir: format!("/tmp/accounts/{id}"),
         created_at: 1_000,
+        kind: AccountKind::ClaudeCodeOauth,
     }
 }
 

@@ -32,6 +32,7 @@ const meta: SessionMeta = {
   permissionMode: 'default',
   runtime: 'native',
   accountId: 'default',
+  provider: 'claude-code',
 };
 
 const agent: AgentInfo = {

@@ -47,6 +47,7 @@ function sess(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
+    provider: 'claude-code',
     ...over,
   };
 }

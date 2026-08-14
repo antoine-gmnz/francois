@@ -30,7 +30,7 @@ use super::*;
 use crate::ipc::{err, ok, IpcResult};
 use serde_json::Value;
 use std::path::PathBuf;
-use tauri::{AppHandle, State};
+use tauri::State;
 
 /// The harness's multi-agent orchestration tool. Unlike `is_subagent_tool` there
 /// is no second spelling — `Workflow` is the only name it ships under.
@@ -560,89 +560,89 @@ pub(crate) fn terminal_watch_run_ids(runs: &[WorkflowRun]) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn emit_workflow_updates(app: &AppHandle, runs: Vec<WorkflowRun>) {
+pub(crate) fn emit_workflow_updates(env: &dyn SessionEnv, runs: Vec<WorkflowRun>) {
     let terminal_ids = terminal_watch_run_ids(&runs);
     for run in runs {
-        emit(app, SessionEvent::WorkflowUpdate { run });
+        env.emit_session(SessionEvent::WorkflowUpdate { run });
     }
     for run_id in terminal_ids {
         // flush_workflow_detail is a no-op flush when no watch is running (it
         // still emits the frozen detail once and stops the watch if there is
         // one) — safe to call whether or not a tab was ever opened.
-        flush_workflow_detail(app, &run_id);
+        flush_workflow_detail(env, &run_id);
     }
 }
 
 /// FR-2: called from the stream reader when a `Workflow` tool_use block opens.
 /// Returns the minted run id so the caller can correlate the rest of the block.
-pub(crate) fn on_workflow_start(app: &AppHandle, session_id: &str, tool_use_id: &str) -> String {
+pub(crate) fn on_workflow_start(
+    env: &dyn SessionEnv,
+    session_id: &str,
+    tool_use_id: &str,
+) -> String {
     let run_uuid = uuid();
     let minted = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         map.get_mut(session_id)
             .map(|s| mint_workflow(s, session_id, &run_uuid, tool_use_id, now_ms()))
     };
     if let Some(run) = minted {
-        emit(app, SessionEvent::WorkflowUpdate { run });
+        env.emit_session(SessionEvent::WorkflowUpdate { run });
     }
     run_uuid
 }
 
 /// FR-4: called when the dispatch's input JSON has fully accumulated.
 pub(crate) fn on_workflow_input_complete(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     run_uuid: &str,
     input: &Value,
 ) {
     let meta = parse_workflow_meta(input);
     let updated = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         map.get_mut(session_id)
             .and_then(|s| apply_workflow_meta(s, run_uuid, meta))
     };
-    emit_workflow_updates(app, updated.into_iter().collect());
+    emit_workflow_updates(env, updated.into_iter().collect());
 }
 
 /// FR-6: called from the tool_result reconciliation for a `Workflow` dispatch.
 pub(crate) fn on_workflow_dispatch_result(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     run_uuid: &str,
     result_text: &str,
     is_error: bool,
 ) {
     let updated = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         map.get_mut(session_id).and_then(|s| {
             apply_workflow_dispatch_result(s, run_uuid, result_text, is_error, now_ms())
         })
     };
-    emit_workflow_updates(app, updated.into_iter().collect());
+    emit_workflow_updates(env, updated.into_iter().collect());
 }
 
 /// FR-8: offer a task-notification to the workflow ladder. Returns whether it
 /// was claimed — the caller falls through to the agent ladder when it was not.
 pub(crate) fn handle_workflow_notification(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
     allow_sole: bool,
 ) -> bool {
     let text = user_line_text(v);
     let updated = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         map.get_mut(session_id).and_then(|s| {
             let id = resolve_notice_workflow(s, &text, allow_sole)?;
             apply_workflow_notice(s, &id, &text, now_ms())
         })
     };
     let claimed = updated.is_some();
-    emit_workflow_updates(app, updated.into_iter().collect());
+    emit_workflow_updates(env, updated.into_iter().collect());
     claimed
 }
 

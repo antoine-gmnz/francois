@@ -5,9 +5,129 @@ use super::*;
 use crate::permissions::PermissionRule;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde_json::json;
+
+// ---------- multi-provider-seam (specs/multi-provider-seam.md) ----------
+
+/// A `TurnControl` that is NOT the Claude one (FR-2/FR-9): no child, no stdin,
+/// no pending maps — just the ids it still holds and a record of what was done
+/// to it. Everything the engine does to a live turn goes through this trait, so
+/// a test can drive that path with an adapter the engine has never heard of;
+/// anything that stops working here is the seam leaking.
+pub(crate) struct FakeTurnControl {
+    questions: Mutex<Vec<String>>,
+    /// `(blockId, rule pattern)` — the pattern half is what
+    /// `pending_permission_pattern` peeks, and it disappears WITH the id the
+    /// moment the ask is claimed, exactly as the real pending entry does.
+    permissions: Mutex<Vec<(String, String)>>,
+    pub(crate) interrupted: AtomicBool,
+    pub(crate) killed: AtomicBool,
+}
+
+impl FakeTurnControl {
+    /// A turn holding `questions` parked asks (`q1`, `q2`, …) and
+    /// `permissions` parked approvals (`p1`, `p2`, …).
+    pub(crate) fn new(questions: usize, permissions: usize) -> Arc<FakeTurnControl> {
+        Arc::new(FakeTurnControl {
+            questions: Mutex::new((1..=questions).map(|i| format!("q{i}")).collect()),
+            permissions: Mutex::new(
+                (1..=permissions)
+                    .map(|i| {
+                        let id = format!("p{i}");
+                        let pattern = FakeTurnControl::pattern_of(&id);
+                        (id, pattern)
+                    })
+                    .collect(),
+            ),
+            interrupted: AtomicBool::new(false),
+            killed: AtomicBool::new(false),
+        })
+    }
+
+    /// The rule pattern the parked approval `id` carries — a real
+    /// `permissions::build_ask` shape, so a rule written from it round-trips
+    /// through the settings.json merge like any other.
+    pub(crate) fn pattern_of(id: &str) -> String {
+        format!("Bash({id}:*)")
+    }
+}
+
+/// Removal IS the claim — same exactly-once semantics the real handle gives,
+/// which is what makes `ControlAck::NotPending` mean the same thing for both.
+fn claim(ids: &Mutex<Vec<String>>, id: &str) -> bool {
+    let mut ids = ids.lock().unwrap();
+    match ids.iter().position(|held| held == id) {
+        Some(i) => {
+            ids.remove(i);
+            true
+        }
+        None => false,
+    }
+}
+
+/// The permission counterpart of `claim` — same removal-is-the-claim rule over
+/// the `(id, pattern)` pairs.
+fn claim_permission(asks: &Mutex<Vec<(String, String)>>, id: &str) -> bool {
+    let mut asks = asks.lock().unwrap();
+    match asks.iter().position(|(held, _)| held == id) {
+        Some(i) => {
+            asks.remove(i);
+            true
+        }
+        None => false,
+    }
+}
+
+impl TurnControl for FakeTurnControl {
+    fn interrupt(&self) {
+        self.interrupted.store(true, Ordering::SeqCst);
+    }
+    fn kill(&self) {
+        self.killed.store(true, Ordering::SeqCst);
+    }
+    fn answer_question(&self, id: &str, _answers: &Value) -> ControlAck {
+        if claim(&self.questions, id) {
+            ControlAck::Applied
+        } else {
+            ControlAck::NotPending
+        }
+    }
+    fn decide_permission(&self, id: &str, _decision: PermissionDecision) -> ControlAck {
+        if claim_permission(&self.permissions, id) {
+            ControlAck::Applied
+        } else {
+            ControlAck::NotPending
+        }
+    }
+    fn pending_permission_pattern(&self, id: &str) -> Option<String> {
+        self.permissions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(held, _)| held == id)
+            .map(|(_, pattern)| pattern.clone())
+    }
+    fn pending_counts(&self) -> PendingCounts {
+        PendingCounts {
+            questions: self.questions.lock().unwrap().len(),
+            permissions: self.permissions.lock().unwrap().len(),
+        }
+    }
+    fn drain_pending(&self) -> (Vec<String>, Vec<String>) {
+        (
+            self.questions.lock().unwrap().drain(..).collect(),
+            self.permissions
+                .lock()
+                .unwrap()
+                .drain(..)
+                .map(|(id, _)| id)
+                .collect(),
+        )
+    }
+}
 
 // ---------- interactive-commands (specs/interactive-commands.md) ----------
 
@@ -32,6 +152,7 @@ pub(crate) fn test_session() -> Session {
         worktree_distro: None,
         account_id: "default".into(),
         cloud: None,
+        provider: Provider::ClaudeCode,
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,

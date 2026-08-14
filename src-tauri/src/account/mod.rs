@@ -40,7 +40,7 @@ pub(crate) use registry::*;
 mod testutil;
 
 use portable_pty::{ChildKiller, MasterPty};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -55,6 +55,20 @@ pub(crate) const DEFAULT_ACCOUNT_ID: &str = "default";
 const EVENT_CHANNEL: &str = "francois://account/event";
 
 // ---------- contract shapes (contract/multi-account.ts, mirrored) ----------
+
+/// Mirrors `AccountKind` (contract/multi-account.ts). 'claude-code-oauth' is the
+/// only kind an account can carry today — the interactive Claude Code login this
+/// whole module drives; 'openai-compatible' is added by multi-provider-openai.
+/// multi-provider-seam FR-12: a persisted record without a `kind` key loads as
+/// `ClaudeCodeOauth`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AccountKind {
+    #[default]
+    #[serde(rename = "claude-code-oauth")]
+    ClaudeCodeOauth,
+    #[serde(rename = "openai-compatible")]
+    OpenAiCompatible,
+}
 
 /// Mirrors `Account`. `configDir`/`builtIn`/`isDefault` distinguish the
 /// synthesized built-in row (never persisted, FR-2) from an added one.
@@ -76,6 +90,8 @@ pub struct Account {
     created_at: u64,
     #[serde(rename = "authFailedAt", skip_serializing_if = "Option::is_none")]
     auth_failed_at: Option<u64>,
+    /// multi-provider-seam FR-12. Required on the wire — every account has a kind.
+    kind: AccountKind,
 }
 
 /// francois:account:remove data (§5).
@@ -132,6 +148,10 @@ pub(crate) struct AccountRecord {
     config_dir: String,
     #[serde(rename = "createdAt", default)]
     created_at: u64,
+    /// multi-provider-seam FR-12: absent on every pre-feature record, which
+    /// loads as `ClaudeCodeOauth` via `AccountKind`'s `Default`.
+    #[serde(default)]
+    kind: AccountKind,
 }
 
 /// The single in-flight login (FR-16). Lives in mod.rs because both login.rs
@@ -214,6 +234,28 @@ pub fn config_dir_of(app: &AppHandle, account_id: &str) -> Option<String> {
             .find(|r| r.id == account_id)
             .map(|r| r.config_dir.clone())
     })
+}
+
+/// multi-provider-seam FR-13: the kind of an account, for deriving a new
+/// session's `provider` at creation. The built-in `default` account and any
+/// id the registry no longer knows are `ClaudeCodeOauth` (`AccountKind`'s
+/// `Default`) — the same "falls back to default" path FR-13 names.
+pub fn kind_of(app: &AppHandle, account_id: &str) -> AccountKind {
+    if account_id == DEFAULT_ACCOUNT_ID {
+        return AccountKind::ClaudeCodeOauth;
+    }
+    app.try_state::<AccountState>()
+        .and_then(|s| {
+            let Ok(inner) = s.0.lock() else {
+                return None;
+            };
+            inner
+                .records
+                .iter()
+                .find(|r| r.id == account_id)
+                .map(|r| r.kind)
+        })
+        .unwrap_or_default()
 }
 
 /// FR-10: every account id a persisted `SessionMeta.accountId` may resolve

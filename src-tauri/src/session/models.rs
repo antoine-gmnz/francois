@@ -358,7 +358,7 @@ pub(crate) fn humanize(id: &str) -> String {
 
 // ---------- serialized public shapes (contract/common.ts) ----------
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct ModelInfo {
     pub id: String,
     pub label: String,
@@ -381,9 +381,14 @@ pub(crate) fn model(id: &str, label: &str) -> ModelInfo {
     }
 }
 
+/// multi-provider-seam FR-10: routed through the session's adapter. v1 has no
+/// per-session/per-account context on this channel (`contract/session-engine.ts`'s
+/// `session_models` payload is empty, unchanged by this feature) — the account
+/// argument is the built-in default, matching the pre-existing global-catalog
+/// behavior verbatim for `claude-code` (today's only reachable provider).
 #[tauri::command(async)]
-pub fn session_models() -> IpcResult<Vec<ModelInfo>> {
-    ok(refresh_models())
+pub fn session_models(app: AppHandle) -> IpcResult<Vec<ModelInfo>> {
+    ok(adapter_for(Provider::ClaudeCode).models(&app, crate::account::DEFAULT_ACCOUNT_ID))
 }
 
 #[cfg(test)]

@@ -20,8 +20,9 @@ function session(over: Partial<SessionMeta> & Pick<SessionMeta, 'id'>): SessionM
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
+    provider: 'claude-code',
     ...over,
-  } as SessionMeta;
+  };
 }
 
 describe('agoPhrase', () => {

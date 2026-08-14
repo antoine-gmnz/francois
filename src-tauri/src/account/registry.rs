@@ -111,6 +111,9 @@ pub(crate) fn build_list(inner: &AccountInner) -> Vec<Account> {
         is_default: inner.default_account_id == DEFAULT_ACCOUNT_ID,
         created_at: 0,
         auth_failed_at: inner.auth_failed_at.get(DEFAULT_ACCOUNT_ID).copied(),
+        // multi-provider-seam FR-12: the built-in account is a Claude Code
+        // OAuth login, like every account today.
+        kind: AccountKind::ClaudeCodeOauth,
     }];
     out.extend(inner.records.iter().map(|r| Account {
         id: r.id.clone(),
@@ -122,6 +125,7 @@ pub(crate) fn build_list(inner: &AccountInner) -> Vec<Account> {
         is_default: inner.default_account_id == r.id,
         created_at: r.created_at,
         auth_failed_at: inner.auth_failed_at.get(&r.id).copied(),
+        kind: r.kind,
     }));
     out
 }
@@ -461,7 +465,8 @@ mod tests {
         assert_eq!(
             built_in,
             json!({ "id": "default", "label": "Default", "configDir": null,
-                    "builtIn": true, "isDefault": true, "createdAt": 0 })
+                    "builtIn": true, "isDefault": true, "createdAt": 0,
+                    "kind": "claude-code-oauth" })
         );
 
         let added = serde_json::to_value(&list[1]).unwrap();
@@ -470,8 +475,21 @@ mod tests {
             json!({ "id": "a1", "label": "work", "email": "dev@acme.io",
                     "organization": "Acme", "configDir": "/tmp/accounts/a1",
                     "builtIn": false, "isDefault": false, "createdAt": 1_000,
-                    "authFailedAt": 4_242 })
+                    "authFailedAt": 4_242, "kind": "claude-code-oauth" })
         );
+    }
+
+    #[test]
+    fn a_persisted_record_without_a_kind_key_loads_as_claude_code_oauth() {
+        // multi-provider-seam FR-12.
+        let (records, _) = parse_registry(
+            json!({ "version": 1, "accounts": [
+                { "id": "a1", "label": "work", "configDir": "/x/a1", "createdAt": 1 }
+            ] })
+            .to_string()
+            .as_bytes(),
+        );
+        assert_eq!(records[0].kind, AccountKind::ClaudeCodeOauth);
     }
 
     #[test]

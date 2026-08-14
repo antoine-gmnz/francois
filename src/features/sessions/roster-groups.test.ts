@@ -22,8 +22,9 @@ function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
+    provider: 'claude-code',
     ...over,
-  } as SessionMeta;
+  };
 }
 
 function project(id: string, name: string, root = `/src/${name}`): ProjectMeta {

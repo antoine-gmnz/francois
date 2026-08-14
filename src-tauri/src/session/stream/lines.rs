@@ -10,35 +10,37 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::process::ChildStdin;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// `type: "system"` lines: only `subtype: "init"` matters here. Returns
 /// whether this line was the init line, so the caller can set `got_init`
 /// (which feeds resume-fail detection).
-pub(crate) fn handle_system_line(app: &AppHandle, session_id: &str, cwd: &str, v: &Value) -> bool {
+pub(crate) fn handle_system_line(
+    env: &dyn SessionEnv,
+    session_id: &str,
+    cwd: &str,
+    v: &Value,
+) -> bool {
     if v.get("subtype").and_then(|subtype| subtype.as_str()) != Some("init") {
         return false;
     }
     if let Some(claude_session_id) = v.get("session_id").and_then(|id| id.as_str()) {
         {
-            let engine = app.state::<Engine>();
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = env.engine().sessions.lock().unwrap();
             if let Some(s) = map.get_mut(session_id) {
                 s.claude_session_id = Some(claude_session_id.to_string());
             }
         }
         // persist the (possibly new) thread id so --resume survives a restart (FR-7)
-        let engine = app.state::<Engine>();
-        persist(app, &engine);
+        env.persist();
     }
-    emit_mcp_from_init(app, session_id, v);
+    emit_mcp_from_init(env, session_id, v);
     // slash-menu FR-2: capture the CLI's own slash_commands; on a
     // CHANGE emit one session.commands carrying the merged
     // registry. Absent array → no change, identical set → silent.
     if let Some(names) = parse_init_slash_commands(v) {
         let changed = {
-            let engine = app.state::<Engine>();
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = env.engine().sessions.lock().unwrap();
             map.get_mut(session_id)
                 .is_some_and(|s| capture_cli_commands(s, names.clone()))
         };
@@ -46,13 +48,10 @@ pub(crate) fn handle_system_line(app: &AppHandle, session_id: &str, cwd: &str, v
             // Engine.sessions dropped — the skills disk scan must
             // never run under it (lock rules).
             let commands = merge_commands(&help_entries(), &discover_skills(cwd), &names);
-            emit(
-                app,
-                SessionEvent::Commands {
-                    session_id: session_id.to_string(),
-                    commands,
-                },
-            );
+            env.emit_session(SessionEvent::Commands {
+                session_id: session_id.to_string(),
+                commands,
+            });
         }
     }
     true
@@ -63,7 +62,7 @@ pub(crate) fn handle_system_line(app: &AppHandle, session_id: &str, cwd: &str, v
 /// (stream_events carry those). Returns whether a synthetic message was
 /// seen, so the caller can set `saw_synthetic`.
 pub(crate) fn handle_assistant_line(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     turn_cmd: Option<&str>,
     v: &Value,
@@ -75,7 +74,7 @@ pub(crate) fn handle_assistant_line(
         return false;
     };
     let card = classify_local_answer(turn_cmd, &answer);
-    finalize_command_block(app, session_id, &uuid(), turn_cmd.unwrap_or(""), &card);
+    finalize_command_block(env, session_id, &uuid(), turn_cmd.unwrap_or(""), &card);
     true
 }
 
@@ -152,7 +151,7 @@ pub(crate) fn parse_background_tasks(v: &Value) -> Option<usize> {
 /// question or permission ask (session-questions FR-10 /
 /// permission-guardrails FR-10). Unmatched ids are ignored.
 pub(crate) fn handle_control_cancel_line(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
@@ -172,7 +171,7 @@ pub(crate) fn handle_control_cancel_line(
             stdin,
             &deny_response(&question.request_id, "question cancelled"),
         );
-        resolve_question(app, session_id, &block_id, "cancelled", None);
+        resolve_question(env, session_id, &block_id, "cancelled", None);
     }
     let claimed_perm = {
         let mut pending = pending_permissions.lock().unwrap();
@@ -183,7 +182,7 @@ pub(crate) fn handle_control_cancel_line(
             stdin,
             &deny_response(&permission.request_id, "request cancelled"),
         );
-        resolve_permission(app, session_id, &block_id, "cancelled", None);
+        resolve_permission(env, session_id, &block_id, "cancelled", None);
     }
 }
 
@@ -208,7 +207,7 @@ fn take_pending_by_request_id<T>(
 /// own drain and an in-flight answer can never double-resolve. No
 /// control_response: child is gone.
 pub(crate) fn drain_orphaned_questions(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
 ) {
@@ -217,14 +216,14 @@ pub(crate) fn drain_orphaned_questions(
         pending.drain().map(|(block_id, _)| block_id).collect()
     };
     for block_id in orphaned {
-        resolve_question(app, session_id, &block_id, "cancelled", None);
+        resolve_question(env, session_id, &block_id, "cancelled", None);
     }
 }
 
 /// permission-guardrails FR-10: identical drain for parked approval cards —
 /// an ask never outlives the turn it parked, and the claim is exactly-once.
 pub(crate) fn drain_orphaned_permissions(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
 ) {
@@ -233,7 +232,7 @@ pub(crate) fn drain_orphaned_permissions(
         pending.drain().map(|(block_id, _)| block_id).collect()
     };
     for block_id in orphaned {
-        resolve_permission(app, session_id, &block_id, "cancelled", None);
+        resolve_permission(env, session_id, &block_id, "cancelled", None);
     }
 }
 
@@ -243,7 +242,7 @@ pub(crate) fn drain_orphaned_permissions(
 /// the partial answer is buffered and persisted rather than living only in the
 /// deltas the UI happened to receive.
 pub(crate) fn close_open_block(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     open_block: Option<(String, BlockKind)>,
     text_accum: &HashMap<String, String>,
@@ -254,16 +253,13 @@ pub(crate) fn close_open_block(
     match kind {
         BlockKind::Text => {
             let text = text_accum.get(&block_id).cloned().unwrap_or_default();
-            finalize_text_block(app, session_id, &block_id, text);
+            finalize_text_block(env, session_id, &block_id, text);
         }
-        BlockKind::Tool => emit(
-            app,
-            SessionEvent::ToolDone {
-                session_id: session_id.to_string(),
-                block_id,
-                meta: "interrupted".into(),
-            },
-        ),
+        BlockKind::Tool => env.emit_session(SessionEvent::ToolDone {
+            session_id: session_id.to_string(),
+            block_id,
+            meta: "interrupted".into(),
+        }),
     }
 }
 
@@ -294,6 +290,7 @@ pub(crate) fn finish_reader_turn(
             let answer = result_text.clone().unwrap_or_default();
             let card = classify_local_answer(turn_cmd, &answer);
             finalize_command_block(app, session_id, &uuid(), turn_cmd.unwrap_or(""), &card);
+            // app: &AppHandle coerces to &dyn SessionEnv
         }
         if let Some(used) = pending_used {
             update_used(app, session_id, used);
@@ -327,7 +324,7 @@ pub(crate) fn finish_reader_turn(
     }
 }
 
-pub(crate) fn emit_mcp_from_init(app: &AppHandle, session_id: &str, init: &Value) {
+pub(crate) fn emit_mcp_from_init(env: &dyn SessionEnv, session_id: &str, init: &Value) {
     let tools: Vec<String> = init
         .get("tools")
         .and_then(|t| t.as_array())
@@ -381,19 +378,15 @@ pub(crate) fn emit_mcp_from_init(app: &AppHandle, session_id: &str, init: &Value
             scope: None,
         };
         {
-            let engine = app.state::<Engine>();
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = env.engine().sessions.lock().unwrap();
             if let Some(s) = map.get_mut(session_id) {
                 s.mcp.insert(name.clone(), info.clone());
             }
         }
-        emit(
-            app,
-            SessionEvent::McpUpdate {
-                session_id: session_id.into(),
-                server: info,
-            },
-        );
+        env.emit_session(SessionEvent::McpUpdate {
+            session_id: session_id.into(),
+            server: info,
+        });
     }
 }
 

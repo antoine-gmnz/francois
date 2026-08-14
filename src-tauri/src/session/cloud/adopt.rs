@@ -378,6 +378,10 @@ fn create_adopted_session(
         .clone()
         .filter(|m| valid_permission_mode(m))
         .unwrap_or_else(|| "default".to_string());
+    // multi-provider-seam FR-13: adoption is no exception — the provider is
+    // DERIVED from the resolved account's kind here too, never assumed from the
+    // fact that the thread came from Claude Code on the web.
+    let provider = Provider::from_account_kind(crate::account::kind_of(app, &account_id));
     let mut session = Session::new(
         id.clone(),
         adopt_name(title, &landing.dir),
@@ -395,6 +399,7 @@ fn create_adopted_session(
         landing.worktree.clone(),
         landing.distro.clone(),
         account_id,
+        provider,
         // FR-10: the LOCAL session teleport hydrated — every later turn resumes
         // this thread over the ordinary `claude --resume` pipeline.
         Some(claude_session_id),
