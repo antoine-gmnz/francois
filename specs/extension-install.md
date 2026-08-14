@@ -1,8 +1,8 @@
 ---
 id: extension-install
 title: Extension install — plugins loaded from disk
-status: in-review
-branch: feat/extension-install
+status: shipped
+branch: feat/extensions
 created: 2026-08-13
 depends_on: [extensions, cli-companion, app-shell, projects]
 loop_pass: 0

@@ -14,10 +14,14 @@ design_files: []
 
 # Extensions
 
-> **BLOCKED on an external commit.** The `cohorte` extension reads `cohorte panels <name> --json`,
-> which does not exist yet (see §2 Non-goals). `ext:git` and `ext:docker` are unblocked and build
-> today; the cohorte panels build against the contract in §5 and stay in the `EXT_PROVIDER_EXIT`
-> error state until that subcommand ships. Do not treat a red cohorte panel as a defect before then.
+> **AMENDED by `specs/extension-install.md`.** Everything below about the four primitives, the
+> provider caps (FR-19..FR-25), refresh & pagination, the streaming lifecycle, rendering hygiene and
+> the error states **still holds**. What no longer does: the **compiled-in registry** and its three
+> entries (`cohorte`, `git`, `docker`). Definitions now come from `~/.francois/extensions/`, detection
+> is a declarative predicate, and nothing runs before the user consents — read `extension-install`
+> for those three. The `cohorte` extension left with the registry, so the "BLOCKED on
+> `cohorte panels --json`" note this spec used to carry is moot; whether a manifest may declare a
+> mutating action is deferred to whenever cohorte returns as a plugin.
 
 ## 1. Summary
 
