@@ -22,6 +22,7 @@ vcs:
   remote: antoine-gmnz/francois
   default_branch: main
   feature_branch_prefix: feat/
+  patch_branch_prefix: fix/                  # same, for /cohorte-patch specs (kind: patch)
 
 # ── repo shape ──────────────────────────────────────────────────────────────
 repo:
@@ -72,6 +73,12 @@ contract:
   ext: ts
   index: ""                                   # no barrel — one file per feature + common.ts
   authored_by: lead
+
+# ── release notes (optional) ────────────────────────────────────────────────
+# No per-feature note-consuming tool detected (no changesets, no note-enforcing
+# CI job) — release.yml derives versions from conventional commits automatically.
+release_notes:
+  enabled: false                              # /cohorte-ship §2b is a no-op
 
 # ── repo-wide commands ──────────────────────────────────────────────────────
 commands:

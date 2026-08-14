@@ -5,8 +5,6 @@ status: draft            # draft → frozen → in-progress → in-review → sh
 branch: feat/<feature-id>
 created: <YYYY-MM-DD>
 depends_on: []           # feature ids this spec builds on
-loop_pass: 0             # /cohorte-loop bookkeeping — the review pass it is on; 0 = no loop running. Written by the driver, not by hand
-loop_phase:              # /cohorte-loop bookkeeping — build | review | fix | done. With loop_pass, this is what `--resume` reads back
 reviewed_base:           # merge-base sha at the last SHIP verdict — freshness-gate anchor (written by /cohorte-review)
 reviewed_digest:         # sha256 (16 hex) of the reviewed source diff vs reviewed_base, specs excluded — /cohorte-ship re-checks
 design_files: []         # design page links — full URLs https://claude.ai/design/p/<projectId>?file=<file>; blank until designed; omit if no UI

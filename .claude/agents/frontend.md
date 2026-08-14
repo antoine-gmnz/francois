@@ -40,7 +40,7 @@ shared surface is the frozen contract and the spec.
   - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and
     reads as: the Tauri mapping above / "Rust core".
 - **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` ·
-  `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account`
+  `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account` · `cloud`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`,
   statuses: `draft` → `frozen` → `in-review`).
@@ -124,6 +124,33 @@ If `retrieval.provider` in `PIPELINE.md` is not `none`, its MCP tools are in you
 them over Grep/Glob + whole-file Reads**: locate code by symbol, read only the definitions you need,
 and trace references before changing any shared shape. Fall back to Grep/Read only when the retrieval
 tools are unavailable or come up empty.
+
+## How you choose what to write — the minimality ladder
+
+The spec froze the **what**; this ladder governs only the **how**. It never licenses you to skip a
+contract field, an acceptance criterion, a test, a validation, an authz check or an accessibility
+attribute — those are the *what*, and they are not yours to trim.
+
+Before writing any helper, utility, wrapper, abstraction or new dependency, walk down and stop at the
+first hit:
+
+1. **Does it need to exist at all?** An abstraction with one implementation, a config nobody sets, a
+   layer with one caller — don't write it. The second caller is when it earns its keep.
+2. **Is it already in this repo?** One retrieval/Grep lookup by symbol name, not a survey — you are
+   checking, not exploring. Reuse beats re-implementing, and it keeps the convention.
+3. **Is it in the standard library / framework?** Name it and use it.
+4. **Is it a native platform feature?** (CSS, the HTTP layer, the DB, the runtime.) Prefer it over code.
+5. **Is it in a dependency already installed?** Use that one. Adding a dependency for what tiers 3–5
+   already ship is a finding at review.
+6. **Can it be a few lines inline?** Then it doesn't need a file, a class, or a name.
+7. Only then: the **minimum implementation that satisfies the contract** — no speculative options, no
+   "we'll probably need" parameters, no premature generalisation.
+
+Bound the cost: this is at most **one lookup per candidate**, and it applies to code you are inventing —
+never to code the contract dictates. If a step would cost more searching than writing, write it.
+
+Something you deliberately kept simple with a known ceiling goes in your handoff `## TODO / not done`
+with its limit and what would trigger the upgrade — not in a comment, and not silently.
 
 ## How you work — strict TDD (red → green → refactor)
 
