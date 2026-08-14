@@ -52,6 +52,9 @@
 - 2026-08-12 · ui · Parity with Claude Code's tuned harness is not a goal for Francois-loop sessions; their first turn states so once, in-transcript — because otherwise every tool-loop quality gap gets filed as a Francois bug · multi-provider-seam
 - 2026-08-12 · auth · Secret material is WRITE-ONLY across the IPC boundary — a payload carries `hasKey`, never the value, and no verb reads a secret back — because a secret that can be read back is one debug log or one screenshot from disclosure · multi-provider-endpoint
 - 2026-08-12 · ui · A new credential kind ships listable-but-NOT-selectable until its runner exists, with a stated reason — because an account that mints a session which dies on an unavailable adapter is worse than one that says "not yet" · multi-provider-endpoint
+- 2026-08-12 · security · Permission rules never cross credentials: a new account kind starts with an empty global tier and every tool asks — because a rule granted to one vendor's model is not consent for another's · multi-provider-openai
+- 2026-08-12 · naming · Tools Francois executes itself take Claude Code's tool NAMES verbatim (Read/Write/Edit/Grep/Glob/Bash) — because permission rules are one vocabulary, and a second dialect would re-ask the user for what they already allowed · multi-provider-openai
+- 2026-08-12 · data · Wire-format conversation state lives in an adapter-owned thread file, never merged into the durable-sessions transcript — because the transcript is a render model and collapsing the two makes every future adapter's wire format the UI's problem · multi-provider-openai
 
 ## Superseded
 
