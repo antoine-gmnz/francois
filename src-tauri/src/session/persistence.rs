@@ -745,6 +745,8 @@ mod tests {
             created_branch: true,
             fetched: true,
             fetch_error: None,
+            detached: None,
+            adopted: None,
         };
         let mut s = test_session();
         s.worktree = Some(wt.clone());
@@ -774,6 +776,51 @@ mod tests {
                 .worktree_distro,
             None
         );
+    }
+
+    #[test]
+    fn worktree_detached_and_adopted_round_trip_through_a_persisted_record() {
+        // attach-to-worktree §5/§6: `detached`/`adopted` persist with the session
+        // like every other worktree field.
+        let wt = SessionWorktree {
+            branch: "1a2b3c4".into(),
+            base_ref: "".into(),
+            base_resolved: None,
+            path: "/home/u/api-wt".into(),
+            source_repo_root: "/home/u/api".into(),
+            created_branch: false,
+            fetched: false,
+            fetch_error: None,
+            detached: Some(true),
+            adopted: Some(true),
+        };
+        let mut rec = serde_json::json!({ "id": "s1", "name": "n", "cwd": "/home/u/api-wt" });
+        rec["worktree"] = serde_json::to_value(&wt).unwrap();
+
+        let parsed = parse_session_record(&rec, 0).expect("parse");
+        let parsed_wt = parsed.worktree.expect("worktree present");
+        assert_eq!(parsed_wt.detached, Some(true));
+        assert_eq!(parsed_wt.adopted, Some(true));
+    }
+
+    #[test]
+    fn a_worktree_record_written_before_attach_to_worktree_still_loads_falsy() {
+        // attach-to-worktree §6/§9 acceptance: a session persisted before this
+        // feature carries no `detached`/`adopted` keys at all — they must read
+        // back as `None` (falsy), never fail the whole record.
+        let mut rec = serde_json::json!({ "id": "s1", "name": "n", "cwd": "/x" });
+        rec["worktree"] = serde_json::json!({
+            "branch": "feat/x",
+            "baseRef": "main",
+            "path": "/home/u/.francois-worktrees/api/feat-x",
+            "sourceRepoRoot": "/home/u/api",
+            "createdBranch": true,
+            "fetched": true,
+        });
+        let parsed = parse_session_record(&rec, 0).expect("parse");
+        let wt = parsed.worktree.expect("legacy worktree record still loads");
+        assert_eq!(wt.detached, None);
+        assert_eq!(wt.adopted, None);
     }
 
     #[test]

@@ -6,8 +6,9 @@
 // are re-exported/used here, never re-implemented.
 
 import type { AppError, SessionMeta, SessionWorktree } from '../../../contract/common';
-import type { WorktreeProbeData, WorktreeStatusData } from '../../../contract/session-worktree';
+import type { WorktreeListEntry, WorktreeProbeData, WorktreeStatusData } from '../../../contract/session-worktree';
 import { WORKTREE_NOTICE_STORAGE_KEY, siblingWorktreeSessions } from '../../../contract/session-worktree';
+import { isPathInside } from '../../../contract/projects';
 
 /** basename(path), either separator — mirrors NewSessionModal's own helper. */
 export function basenameOf(p: string): string {
@@ -276,4 +277,91 @@ export function consumeWorktreePreset(): boolean {
   const v = presetWorktreeOnOpen;
   presetWorktreeOnOpen = false;
   return v;
+}
+
+// ---------- attach-to-worktree (specs/attach-to-worktree.md) ----------
+
+export type WorktreeMode = 'off' | 'create' | 'attach';
+
+/** FR-9/FR-10/FR-11: one picker row, ready to render. */
+export interface WorktreeRow {
+  path: string;
+  /** branch name, or `HEAD @ 1a2b3c4` when detached (`HEAD @ ?` when head is null). */
+  label: string;
+  /** FR-10: the live session already sitting in this directory, if any. */
+  inUseBy: string | null;
+  locked: boolean;
+  /** FR-11: prunable => the row is disabled. */
+  disabled: boolean;
+  /** `directory missing` · `locked` · `in use by "x"`, joined with ` · `; '' when none apply. */
+  note: string;
+}
+
+/** `cwd`/`path` normalize to the same directory (both directions of isPathInside => equal). */
+function samePath(a: string, b: string, caseInsensitive: boolean): boolean {
+  return isPathInside(a, b, caseInsensitive) && isPathInside(b, a, caseInsensitive);
+}
+
+function worktreeRowLabel(entry: WorktreeListEntry): string {
+  if (entry.detached) return `HEAD @ ${entry.head ? entry.head.slice(0, 7) : '?'}`;
+  return entry.branch ?? '';
+}
+
+/** FR-9..FR-11. `sessions` is the live roster; `caseInsensitive` mirrors projects' path rules. */
+export function worktreeRows(entries: WorktreeListEntry[], sessions: SessionMeta[], caseInsensitive: boolean): WorktreeRow[] {
+  return entries.map((entry) => {
+    const inUseSession = sessions.find((s) => samePath(s.cwd, entry.path, caseInsensitive));
+    const inUseBy = inUseSession ? inUseSession.name : null;
+    const notes: string[] = [];
+    if (entry.prunable) notes.push('directory missing');
+    if (entry.locked) notes.push('locked');
+    if (inUseBy) notes.push(`in use by "${inUseBy}"`);
+    return {
+      path: entry.path,
+      label: worktreeRowLabel(entry),
+      inUseBy,
+      locked: entry.locked,
+      disabled: entry.prunable,
+      note: notes.join(' · '),
+    };
+  });
+}
+
+/** FR-12: the name to prefill from a selected row — the row's label. */
+export function attachNamePrefill(row: WorktreeRow): string {
+  return row.label;
+}
+
+/**
+ * FR-12: row selection may only prefill the session name "if the name is
+ * still empty AND untouched" — never overwrite a name that already has
+ * content, even if that content was itself a prefill (e.g. from
+ * useProjectDefaults/useDirectoryPicker setting an untouched
+ * project/directory basename) rather than something the user typed.
+ */
+export function attachNameShouldPrefill(name: string, nameTouched: boolean): boolean {
+  return !nameTouched && name.trim() === '';
+}
+
+/** FR-17: the attach half of the Create gate. Mirrors `worktreeCreateBlocked`'s staleness rule. */
+export interface WorktreeAttachGateState {
+  mode: WorktreeMode;
+  probing: boolean;
+  probeErrored: boolean;
+  selectedPath: string | null;
+  rows: WorktreeRow[];
+  caseInsensitive: boolean;
+}
+
+export function worktreeAttachBlocked(state: WorktreeAttachGateState): boolean {
+  if (state.mode !== 'attach') return false;
+  if (state.probing || state.probeErrored) return true;
+  if (state.selectedPath === null) return true;
+  const stillPresent = state.rows.some((r) => samePath(r.path, state.selectedPath as string, state.caseInsensitive));
+  return !stillPresent;
+}
+
+/** FR-19: the chip/status-bar label for a session's worktree. */
+export function worktreeChipLabel(worktree: SessionWorktree): string {
+  return worktree.detached ? `HEAD @ ${worktree.branch}` : worktree.branch;
 }

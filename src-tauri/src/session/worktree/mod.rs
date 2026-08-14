@@ -44,6 +44,27 @@ pub(crate) struct SessionWorktree {
     pub(crate) fetched: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) fetch_error: Option<String>,
+    /// attach-to-worktree FR-15: the tree has a detached HEAD; `branch` carries the
+    /// 7-char short sha, not a ref. Absent on a session persisted before this feature.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) detached: Option<bool>,
+    /// attach-to-worktree FR-16: the tree was adopted, not created by Francois.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) adopted: Option<bool>,
+}
+
+/// attach-to-worktree FR-1/FR-3: one linked worktree of the probed repo, from
+/// `git worktree list --porcelain`. Mirrors contract/session-worktree.ts
+/// `WorktreeListEntry` exactly.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeListEntry {
+    path: String,
+    branch: Option<String>,
+    head: Option<String>,
+    detached: bool,
+    locked: bool,
+    prunable: bool,
 }
 
 #[derive(Serialize)]
@@ -57,6 +78,10 @@ pub struct WorktreeProbeData {
     branch_exists: bool,
     branch_checked_out_at: Option<String>,
     worktree_path: Option<String>,
+    /// attach-to-worktree FR-1/FR-2: linked worktrees, main checkout and `bare`
+    /// entries excluded, git's own order. `[]` when `is_repo` is false or `git
+    /// worktree list` failed — never absent, never an error (FR-4).
+    worktrees: Vec<WorktreeListEntry>,
 }
 
 #[derive(Serialize)]
@@ -226,6 +251,26 @@ fn compute_worktree_path(host: &GitHost, repo_root: &str, branch: &str) -> Strin
     suffix_until_free(&base, |p| path_exists(host, p))
 }
 
+/// attach-to-worktree FR-1/FR-2/FR-4: the picker's inventory — every linked
+/// worktree of `dir`'s repo except the main working tree (always the FIRST
+/// `--porcelain` block) and any `bare` entry. `[]` (never absent, never an
+/// error) when `git worktree list` failed or returned nothing.
+fn worktree_entries_for_probe(host: &GitHost, dir: &str) -> Vec<WorktreeListEntry> {
+    let mut entries = worktree_list_entries(host, dir).into_iter();
+    entries.next(); // FR-2: the main working tree is always the first block.
+    entries
+        .filter(|e| !e.bare)
+        .map(|e| WorktreeListEntry {
+            path: e.path,
+            branch: e.branch,
+            head: e.head,
+            detached: e.detached,
+            locked: e.locked,
+            prunable: e.prunable,
+        })
+        .collect()
+}
+
 // ---------- FR-6/FR-8/FR-11/FR-12: the creation/adopt flow (called from session_create) ----------
 
 /// The branch state as it is RIGHT NOW, re-read before each git mutation:
@@ -311,17 +356,38 @@ pub(crate) fn resolve_worktree(
     let host = adopt_host(cwd, opts.adopt);
 
     if opts.adopt {
+        // attach-to-worktree FR-15: the directory may have been removed between
+        // the probe and this call (the race FR-17 tries to close client-side) —
+        // no git process can spawn "in" a directory that no longer exists, so
+        // that race is WORKTREE_NOT_FOUND directly, before attempting (and
+        // failing, as NOT_A_GIT_REPO) an `is_git_repo` check there. This is also
+        // the ONLY path that can ever observe a gone-directory adopt: the entries
+        // below are gathered by spawning `git worktree list` INSIDE `cwd` itself
+        // (see MEDIUM remediation note below), which requires `cwd` to exist —
+        // so a `prunable` entry (git's own "directory is gone" flag) can never
+        // reach that far. Handling it here, once, keeps the two checks from
+        // drifting into two different error messages for the same condition.
+        if !path_exists(&host, cwd) {
+            return Err((
+                "WORKTREE_NOT_FOUND".into(),
+                "that worktree's directory no longer exists".into(),
+            ));
+        }
         if !is_git_repo(&host, cwd) {
             return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
         }
+        // MEDIUM remediation: spawned INSIDE `cwd` (not `repo_root`) — deliberately,
+        // so `target.prunable` below can never fire (see the `path_exists` comment
+        // above): a directory `git worktree list` still names but no longer exists
+        // cannot host a `git` spawn to list FROM in the first place, so that race is
+        // caught once, up front, rather than duplicated as a second dead branch here.
         let entries = worktree_list_entries(&host, cwd);
         let source_root = entries
             .first()
             .map(|e| e.path.clone())
             .unwrap_or_else(|| repo_root(&host, cwd));
-        // MEDIUM remediation: no matching `git worktree list` entry (or a match
-        // with no branch checked out — a detached HEAD) means there is nothing
-        // real to adopt at `cwd` — error rather than fabricate provenance from
+        // no matching `git worktree list` entry means there is nothing real to
+        // adopt at `cwd` — error rather than fabricate provenance from
         // `opts.branch`/`repo_root`, which the caller never asked to be trusted.
         let Some(target) = entries
             .iter()
@@ -332,11 +398,19 @@ pub(crate) fn resolve_worktree(
                 "no worktree is registered at that path".into(),
             ));
         };
-        let Some(branch) = target.branch.clone() else {
-            return Err((
-                "INVALID_INPUT".into(),
-                "that worktree has no branch checked out".into(),
-            ));
+        // attach-to-worktree FR-15: a detached HEAD is no longer an error — the
+        // branch becomes the 7-char short sha and `detached` is set. `head` is
+        // only absent for an unborn HEAD, which is never itself `detached`.
+        let (branch, detached) = match &target.branch {
+            Some(b) => (b.clone(), false),
+            None => (
+                target
+                    .head
+                    .as_deref()
+                    .map(|h| h.chars().take(7).collect::<String>())
+                    .unwrap_or_else(|| "HEAD".to_string()),
+                true,
+            ),
         };
         let sw = SessionWorktree {
             branch,
@@ -347,6 +421,9 @@ pub(crate) fn resolve_worktree(
             created_branch: false,
             fetched: false,
             fetch_error: None,
+            detached: detached.then_some(true),
+            // FR-16: every adopt-created SessionWorktree sets adopted: true.
+            adopted: Some(true),
         };
         return Ok((cwd.to_string(), sw, host_distro(&host)));
     }
@@ -507,6 +584,8 @@ pub(crate) fn resolve_worktree(
             created_branch: !exists,
             fetched,
             fetch_error,
+            detached: None,
+            adopted: None,
         },
         host_distro(&host),
     ))
@@ -589,6 +668,7 @@ pub fn session_worktree_probe(cwd: String, branch: Option<String>) -> IpcResult<
             branch_exists: false,
             branch_checked_out_at: None,
             worktree_path: None,
+            worktrees: Vec::new(),
         });
     }
     let repo_root_path = repo_root(&host, &cwd);
@@ -609,6 +689,9 @@ pub fn session_worktree_probe(cwd: String, branch: Option<String>) -> IpcResult<
         }
         _ => (false, None, None),
     };
+    // attach-to-worktree FR-1: rides the same probe call, no per-tree git spawn,
+    // no debounce change.
+    let worktrees = worktree_entries_for_probe(&host, &repo_root_path);
     ok(WorktreeProbeData {
         is_repo: true,
         repo_root: Some(repo_root_path),
@@ -618,6 +701,7 @@ pub fn session_worktree_probe(cwd: String, branch: Option<String>) -> IpcResult<
         branch_exists: exists,
         branch_checked_out_at: checked_out_at,
         worktree_path,
+        worktrees,
     })
 }
 

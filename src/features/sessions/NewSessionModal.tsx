@@ -121,8 +121,20 @@ export default function NewSessionModal({
     setRuntime,
   });
 
-  // session-worktree FR-1..FR-5: the "Isolate in worktree" group.
-  const worktree = useWorktreeGroup({ cwd, name, openRef, modelId, projectRootMissing, submitting });
+  // session-worktree FR-1..FR-5 + attach-to-worktree FR-1..FR-17: the WORKTREE group.
+  const sessions = useStore((s) => s.sessions);
+  const worktree = useWorktreeGroup({
+    cwd,
+    name,
+    nameTouched,
+    setName,
+    openRef,
+    modelId,
+    projectRootMissing,
+    submitting,
+    sessions,
+    caseInsensitive: IS_WINDOWS,
+  });
 
   const modelEfforts = models.find((m) => m.id === modelId)?.efforts ?? [];
 
@@ -182,6 +194,10 @@ export default function NewSessionModal({
       // retry fails identically with no cue that the fix is to pick none.
       if (res.error.code === 'PROJECT_NOT_FOUND' || res.error.code === 'PROJECT_ROOT_MISSING') {
         await recoverFromProjectError();
+      } else if (res.error.code === 'WORKTREE_NOT_FOUND' && worktree.mode === 'attach') {
+        // §7 "Tree removed between probe and create": surface the error AND
+        // re-probe, so the stale (now-wrong) row can't be retried identically.
+        worktree.reprobe();
       } else {
         const racePath = worktreeBranchInUsePath(res.error);
         if (racePath) worktree.applyRacePath(racePath);
@@ -191,8 +207,15 @@ export default function NewSessionModal({
 
   const submit = async () => {
     if (!canCreate) return;
+    // attach-to-worktree FR-14: `branch`/`baseRef` stay required on the wire and
+    // are IGNORED under `adopt` — the core fills provenance from `git worktree
+    // list`. The frontend never guesses them; it sends ''.
+    if (worktree.mode === 'attach' && worktree.selectedPath) {
+      await createSession(worktree.selectedPath, { branch: '', baseRef: '', adopt: true });
+      return;
+    }
     const worktreeOpts =
-      worktree.worktreeEnabled && worktree.probe?.isRepo
+      worktree.mode === 'create' && worktree.probe?.isRepo
         ? { branch: worktree.branch.trim(), baseRef: worktree.baseRef.trim() || worktree.probe.defaultBranch || 'main' }
         : undefined;
     await createSession(cwd.trim(), worktreeOpts);
@@ -216,7 +239,11 @@ export default function NewSessionModal({
         onClose();
       } else if (e.key === 'Enter' && canCreate) {
         const activeEl = document.activeElement as HTMLElement | null;
-        if (activeEl?.tagName !== 'SELECT') {
+        // attach-to-worktree: a focused picker row owns Enter first — this
+        // listener runs in the capture phase, ahead of WorktreeAttachPicker's
+        // own bubble-phase handler, so without this guard Enter would submit
+        // with the STALE previous selectedPath before the row's onSelect runs.
+        if (activeEl?.tagName !== 'SELECT' && activeEl?.dataset.worktreeRow === undefined) {
           e.preventDefault();
           void submit();
         }
