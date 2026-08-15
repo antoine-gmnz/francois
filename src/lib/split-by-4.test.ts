@@ -52,7 +52,22 @@ async function freshStore() {
 }
 
 function meta(id: string, lastActivityAt: number, status: SessionMeta['status'] = 'idle'): SessionMeta {
-  return { id, lastActivityAt, status } as unknown as SessionMeta;
+  return {
+    id,
+    name: id,
+    cwd: '/repo',
+    model: { id: 'm', label: 'M' },
+    status,
+    contextUsedTokens: 0,
+    contextLimitTokens: 0,
+    startedAt: 0,
+    lastActivityAt,
+    permissionMode: 'default',
+    runtime: 'native',
+    accountId: 'default',
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
+  };
 }
 
 /** The minimum a pane reader needs — cast at the call sites, not here. */

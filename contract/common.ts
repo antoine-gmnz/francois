@@ -130,12 +130,26 @@ export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermiss
 export type ClaudeRuntime = 'native' | 'wsl';
 
 /**
- * Which runner drives a session. Names the RUNNER, not the vendor: 'claude-code' is
- * the Claude Code CLI harness, 'openai-compatible' is Francois's own agent loop over
- * an OpenAI-dialect endpoint. A future Anthropic-API-through-our-own-loop path would
- * be a third member, which a vendor-shaped name could not express.
+ * Who owns the agent loop (multi-provider-seam FR-11a). Renames SessionProvider —
+ * same two members, honest name: 'claude-code' is the Claude Code CLI harness
+ * driving its own loop, 'francois' is our loop in the Rust core. It answers
+ * "who decides what happens next", NOT "which vendor's API" — that is
+ * ProviderProtocol plus the session's account, which together name the wire and
+ * the credential.
+ *
+ * NOT called `runtime`: SessionMeta.runtime is taken by wsl-filesystem and means
+ * native-vs-WSL. NOT called 'native' for the second member, for the same reason.
  */
-export type SessionProvider = 'claude-code' | 'openai-compatible';
+export type AgentRuntime = 'claude-code' | 'francois';
+
+/**
+ * Which wire dialect the session's endpoint speaks (multi-provider-seam FR-11a).
+ * Orthogonal to AgentRuntime: the Claude Code CLI honours ANTHROPIC_BASE_URL, so
+ * ('claude-code','anthropic') against a third-party endpoint is a real cell — one
+ * a single collapsed enum could not name. Vendor IDENTITY is neither of these
+ * two; it is the session's account and its endpoint baseUrl.
+ */
+export type ProviderProtocol = 'anthropic' | 'openai';
 
 export interface ModelInfo {
   id: string; // e.g. 'claude-sonnet-5'
@@ -191,11 +205,17 @@ export interface SessionMeta {
    */
   cloud?: CloudProvenance;
   /**
-   * The runner this session's turns go through (multi-provider-seam FR-11).
-   * DERIVED from the session's account kind at creation and never re-derived.
-   * A persisted record without it loads as 'claude-code'.
+   * Who owns this session's agent loop (multi-provider-seam FR-11a). DERIVED
+   * from the account's kind at creation and never re-derived. Absent ⇒
+   * 'claude-code'; a record carrying the superseded `provider` key maps
+   * 'claude-code' → 'claude-code', 'openai-compatible' → 'francois'.
    */
-  provider: SessionProvider;
+  agentRuntime: AgentRuntime;
+  /**
+   * The wire dialect this session's endpoint speaks (multi-provider-seam FR-11a).
+   * Absent ⇒ 'anthropic'; superseded `provider: 'openai-compatible'` ⇒ 'openai'.
+   */
+  protocol: ProviderProtocol;
 }
 
 /** The id of a Claude Code on the web session — `'session_…'` or `'cse_…'`. */

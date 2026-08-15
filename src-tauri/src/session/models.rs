@@ -385,10 +385,10 @@ pub(crate) fn model(id: &str, label: &str) -> ModelInfo {
 /// per-session/per-account context on this channel (`contract/session-engine.ts`'s
 /// `session_models` payload is empty, unchanged by this feature) — the account
 /// argument is the built-in default, matching the pre-existing global-catalog
-/// behavior verbatim for `claude-code` (today's only reachable provider).
+/// behavior verbatim for `claude-code` (today's only reachable runtime).
 #[tauri::command(async)]
 pub fn session_models(app: AppHandle) -> IpcResult<Vec<ModelInfo>> {
-    ok(adapter_for(Provider::ClaudeCode).models(&app, crate::account::DEFAULT_ACCOUNT_ID))
+    ok(adapter_for(AgentRuntime::ClaudeCode).models(&app, crate::account::DEFAULT_ACCOUNT_ID))
 }
 
 #[cfg(test)]

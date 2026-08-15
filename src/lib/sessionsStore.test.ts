@@ -12,7 +12,22 @@ import type { SessionMeta } from '../../contract/common';
 import { useStore } from './store';
 
 function meta(id: string): SessionMeta {
-  return { id, name: id, lastActivityAt: 1 } as unknown as SessionMeta;
+  return {
+    id,
+    name: id,
+    cwd: '/repo',
+    model: { id: 'm', label: 'M' },
+    status: 'idle',
+    contextUsedTokens: 0,
+    contextLimitTokens: 0,
+    startedAt: 0,
+    lastActivityAt: 1,
+    permissionMode: 'default',
+    runtime: 'native',
+    accountId: 'default',
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
+  };
 }
 
 beforeEach(() => {
@@ -88,13 +103,18 @@ describe('reassignActiveSessionId (FR-27)', () => {
   });
 });
 
-// multi-provider-seam FR-11/FR-16: the frontend gains NO state for `provider` —
-// it is a carried field, set by the core at session_create and never re-derived
-// here. Nothing in src reads it (the capability table has no frontend consumer),
-// so the only way it can break is a store mutation that rebuilds a SessionMeta
-// field-by-field instead of spreading it. That is what these lock.
-describe('SessionMeta.provider is carried through the cache (multi-provider-seam FR-11)', () => {
-  function full(id: string, provider: SessionMeta['provider']): SessionMeta {
+// multi-provider-seam FR-11a: the frontend gains NO state for `agentRuntime`/
+// `protocol` — they are carried fields, set by the core at session_create and
+// never re-derived here. Nothing in src reads them (the capability table has
+// no frontend consumer), so the only way it can break is a store mutation that
+// rebuilds a SessionMeta field-by-field instead of spreading it. That is what
+// these lock.
+describe('SessionMeta.agentRuntime/protocol are carried through the cache (multi-provider-seam FR-11a)', () => {
+  function full(
+    id: string,
+    agentRuntime: SessionMeta['agentRuntime'],
+    protocol: SessionMeta['protocol'],
+  ): SessionMeta {
     return {
       id,
       name: id,
@@ -108,28 +128,32 @@ describe('SessionMeta.provider is carried through the cache (multi-provider-seam
       permissionMode: 'default',
       runtime: 'native',
       accountId: 'default',
-      provider,
+      agentRuntime,
+      protocol,
     };
   }
 
   it('survives every in-place patch (status / error / usage)', () => {
-    useStore.getState().setSessions([full('s1', 'claude-code')]);
+    useStore.getState().setSessions([full('s1', 'claude-code', 'anthropic')]);
     useStore.getState().patchStatus('s1', 'running');
     useStore.getState().patchError('s1', 'boom');
     useStore.getState().patchUsage('s1', 10, 100);
     const s = useStore.getState().sessions[0];
-    expect(s.provider).toBe('claude-code');
+    expect(s.agentRuntime).toBe('claude-code');
+    expect(s.protocol).toBe('anthropic');
     expect(s.status).toBe('running');
   });
 
-  it('upsertSession adopts the incoming meta’s provider rather than pinning one', () => {
-    useStore.getState().setSessions([full('s1', 'claude-code')]);
+  it('upsertSession adopts the incoming meta’s agentRuntime/protocol rather than pinning one', () => {
+    useStore.getState().setSessions([full('s1', 'claude-code', 'anthropic')]);
     // A meta the core sent for a session created against an endpoint account —
     // the frontend must carry it verbatim, not map it back to 'claude-code'.
-    useStore.getState().upsertSession(full('s1', 'openai-compatible'));
+    useStore.getState().upsertSession(full('s1', 'francois', 'openai'));
     expect(useStore.getState().sessions).toHaveLength(1);
-    expect(useStore.getState().sessions[0].provider).toBe('openai-compatible');
-    useStore.getState().upsertSession(full('s2', 'openai-compatible'));
-    expect(useStore.getState().sessions.map((x) => x.provider)).toEqual(['openai-compatible', 'openai-compatible']);
+    expect(useStore.getState().sessions[0].agentRuntime).toBe('francois');
+    expect(useStore.getState().sessions[0].protocol).toBe('openai');
+    useStore.getState().upsertSession(full('s2', 'francois', 'openai'));
+    expect(useStore.getState().sessions.map((x) => x.agentRuntime)).toEqual(['francois', 'francois']);
+    expect(useStore.getState().sessions.map((x) => x.protocol)).toEqual(['openai', 'openai']);
   });
 });

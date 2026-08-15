@@ -1,13 +1,14 @@
-//! The `SessionAdapter` seam (specs/multi-provider-seam.md FR-1..FR-10): the
-//! trait boundary between the session engine and whatever actually drives a
-//! turn. `ClaudeCodeAdapter` (claude_code.rs) is the only real implementation
-//! today — it wraps the pre-existing spawn/stdio/stream code with NO
-//! behavioural change. `adapter_for` dispatches a session's `Provider` to its
-//! adapter; a future `multi-provider-openai` adds a second implementation
-//! without touching the engine, the commands, or any pane.
+//! The `SessionAdapter` seam (specs/multi-provider-seam.md FR-1..FR-10,
+//! FR-11a/FR-13a/FR-14a): the trait boundary between the session engine and
+//! whatever actually drives a turn. `ClaudeCodeAdapter` (claude_code.rs) is
+//! the only real implementation today — it wraps the pre-existing
+//! spawn/stdio/stream code with NO behavioural change. `adapter_for`
+//! dispatches a session's `AgentRuntime` to its adapter; a future
+//! `multi-provider-openai` adds a second implementation without touching the
+//! engine, the commands, or any pane.
 //!
-//! This file owns the shared vocabulary (`Provider`, `TurnMode`,
-//! `TurnContext`, the two traits, `PendingCounts`/`ControlAck`/
+//! This file owns the shared vocabulary (`AgentRuntime`, `ProviderProtocol`,
+//! `TurnMode`, `TurnContext`, the two traits, `PendingCounts`/`ControlAck`/
 //! `PermissionDecision`) and declares `claude_code`, the child that provides
 //! the one real implementation — same "model in mod.rs, one concern per
 //! child" shape the rest of this domain follows.
@@ -28,30 +29,53 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::AppHandle;
 
-/// Mirrors contract/common.ts `SessionProvider`. Names the RUNNER, not the
-/// vendor: `ClaudeCode` is the Claude Code CLI harness, `OpenAiCompatible` is
-/// Francois's own agent loop over an OpenAI-dialect endpoint (added by
-/// `multi-provider-openai`) — see the contract doc comment for the full
-/// reasoning (a future Anthropic-API-through-our-own-loop path would be a
-/// third member a vendor-shaped name could not express).
+/// Mirrors contract/common.ts `AgentRuntime` (multi-provider-seam FR-11a;
+/// renames `SessionProvider` — same two members, honest name). Answers "who
+/// owns the agent loop", NOT "which vendor's API": `ClaudeCode` is the Claude
+/// Code CLI harness driving its own loop, `Francois` is our own loop in this
+/// Rust core (added by `multi-provider-openai`). Which wire dialect the
+/// endpoint speaks is the orthogonal `ProviderProtocol` below — see the
+/// contract doc comment for the full reasoning (a future
+/// Anthropic-API-through-our-own-loop cell is what a single collapsed enum
+/// could not express).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Provider {
+pub enum AgentRuntime {
     #[default]
     #[serde(rename = "claude-code")]
     ClaudeCode,
-    #[serde(rename = "openai-compatible")]
-    OpenAiCompatible,
+    #[serde(rename = "francois")]
+    Francois,
 }
 
-impl Provider {
-    /// multi-provider-seam FR-13: a session's provider is DERIVED from its
-    /// account's kind at creation — `session_create` never accepts a provider
-    /// directly. Exhaustive over `AccountKind`, so a third kind fails to
-    /// compile here rather than falling back silently.
-    pub(crate) fn from_account_kind(kind: crate::account::AccountKind) -> Provider {
+/// Mirrors contract/common.ts `ProviderProtocol` (multi-provider-seam
+/// FR-11a). Which wire dialect a session's endpoint speaks — orthogonal to
+/// `AgentRuntime`: the Claude Code CLI honours `ANTHROPIC_BASE_URL`, so
+/// `(ClaudeCode, Anthropic)` against a third-party endpoint is a real cell a
+/// single collapsed enum could not name.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ProviderProtocol {
+    #[default]
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    #[serde(rename = "openai")]
+    Openai,
+}
+
+impl AgentRuntime {
+    /// multi-provider-seam FR-13a: both axes are DERIVED from the account's
+    /// kind at creation — `session_create` never accepts either directly.
+    /// Exhaustive over `AccountKind`, so a third kind fails to compile here
+    /// rather than falling back silently.
+    pub(crate) fn from_account_kind(
+        kind: crate::account::AccountKind,
+    ) -> (AgentRuntime, ProviderProtocol) {
         match kind {
-            crate::account::AccountKind::ClaudeCodeOauth => Provider::ClaudeCode,
-            crate::account::AccountKind::OpenAiCompatible => Provider::OpenAiCompatible,
+            crate::account::AccountKind::ClaudeCodeOauth => {
+                (AgentRuntime::ClaudeCode, ProviderProtocol::Anthropic)
+            }
+            crate::account::AccountKind::OpenAiCompatible => {
+                (AgentRuntime::Francois, ProviderProtocol::Openai)
+            }
         }
     }
 }
@@ -159,14 +183,14 @@ pub(crate) trait TurnControl: Send + Sync {
 }
 
 /// FR-1: the whole runner contract — turn start, the live control channel,
-/// pending-state introspection, and the provider's model catalog.
+/// pending-state introspection, and the runtime's model catalog.
 pub(crate) trait SessionAdapter: Send + Sync {
     /// Part of the runner contract per FR-1, and what the dispatch tests
-    /// assert `adapter_for` on — production code routes BY provider
-    /// (`adapter_for`) rather than asking an adapter which one it is, so
-    /// nothing outside the tests calls this yet.
+    /// assert `adapter_for` on — production code routes BY runtime
+    /// (`adapter_for`, FR-14a) rather than asking an adapter which one it
+    /// is, so nothing outside the tests calls this yet.
     #[allow(dead_code)]
-    fn provider(&self) -> Provider;
+    fn agent_runtime(&self) -> AgentRuntime;
     /// Refuse a turn before any I/O.
     fn preflight(&self, app: &AppHandle, ctx: &TurnContext) -> Result<(), AppError>;
     /// Own spawning/connecting and starting the reader thread; the returned
@@ -187,14 +211,15 @@ fn unavailable_error() -> AppError {
     }
 }
 
-/// FR-4: `Provider::OpenAiCompatible` resolves to this stub — unreachable
-/// today, since no account can carry that kind yet (multi-provider-openai
-/// adds it). Exists so `adapter_for`'s match is total rather than a `panic!`.
+/// FR-4/FR-14a: `AgentRuntime::Francois` resolves to this stub — unreachable
+/// today, since no account can carry a kind that maps to it yet
+/// (multi-provider-openai adds it). Exists so `adapter_for`'s match is total
+/// rather than a `panic!`.
 struct UnavailableAdapter;
 
 impl SessionAdapter for UnavailableAdapter {
-    fn provider(&self) -> Provider {
-        Provider::OpenAiCompatible
+    fn agent_runtime(&self) -> AgentRuntime {
+        AgentRuntime::Francois
     }
     fn preflight(&self, _app: &AppHandle, _ctx: &TurnContext) -> Result<(), AppError> {
         Err(unavailable_error())
@@ -214,11 +239,13 @@ impl SessionAdapter for UnavailableAdapter {
 static CLAUDE_CODE_ADAPTER: ClaudeCodeAdapter = ClaudeCodeAdapter;
 static UNAVAILABLE_ADAPTER: UnavailableAdapter = UnavailableAdapter;
 
-/// FR-4: dispatch a session's provider to its adapter.
-pub(crate) fn adapter_for(provider: Provider) -> &'static dyn SessionAdapter {
-    match provider {
-        Provider::ClaudeCode => &CLAUDE_CODE_ADAPTER,
-        Provider::OpenAiCompatible => &UNAVAILABLE_ADAPTER,
+/// FR-4/FR-14a: dispatch a session's `agentRuntime` ALONE to its adapter —
+/// `protocol` is read inside the `francois` runtime to pick the wire codec,
+/// never here.
+pub(crate) fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter {
+    match runtime {
+        AgentRuntime::ClaudeCode => &CLAUDE_CODE_ADAPTER,
+        AgentRuntime::Francois => &UNAVAILABLE_ADAPTER,
     }
 }
 
@@ -227,39 +254,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn provider_serializes_to_the_contract_shape() {
+    fn agent_runtime_serializes_to_the_contract_shape() {
         assert_eq!(
-            serde_json::to_value(Provider::ClaudeCode).unwrap(),
+            serde_json::to_value(AgentRuntime::ClaudeCode).unwrap(),
             serde_json::json!("claude-code")
         );
         assert_eq!(
-            serde_json::to_value(Provider::OpenAiCompatible).unwrap(),
-            serde_json::json!("openai-compatible")
+            serde_json::to_value(AgentRuntime::Francois).unwrap(),
+            serde_json::json!("francois")
         );
-        assert_eq!(Provider::default(), Provider::ClaudeCode);
+        assert_eq!(AgentRuntime::default(), AgentRuntime::ClaudeCode);
     }
 
     #[test]
-    fn provider_is_derived_from_account_kind_exhaustively() {
+    fn provider_protocol_serializes_to_the_contract_shape() {
         assert_eq!(
-            Provider::from_account_kind(crate::account::AccountKind::ClaudeCodeOauth),
-            Provider::ClaudeCode
+            serde_json::to_value(ProviderProtocol::Anthropic).unwrap(),
+            serde_json::json!("anthropic")
         );
         assert_eq!(
-            Provider::from_account_kind(crate::account::AccountKind::OpenAiCompatible),
-            Provider::OpenAiCompatible
+            serde_json::to_value(ProviderProtocol::Openai).unwrap(),
+            serde_json::json!("openai")
+        );
+        assert_eq!(ProviderProtocol::default(), ProviderProtocol::Anthropic);
+    }
+
+    #[test]
+    fn from_account_kind_is_exhaustive_and_returns_the_pair() {
+        assert_eq!(
+            AgentRuntime::from_account_kind(crate::account::AccountKind::ClaudeCodeOauth),
+            (AgentRuntime::ClaudeCode, ProviderProtocol::Anthropic)
+        );
+        assert_eq!(
+            AgentRuntime::from_account_kind(crate::account::AccountKind::OpenAiCompatible),
+            (AgentRuntime::Francois, ProviderProtocol::Openai)
         );
     }
 
     #[test]
-    fn adapter_for_dispatches_by_provider() {
+    fn adapter_for_dispatches_by_runtime() {
         assert_eq!(
-            adapter_for(Provider::ClaudeCode).provider(),
-            Provider::ClaudeCode
+            adapter_for(AgentRuntime::ClaudeCode).agent_runtime(),
+            AgentRuntime::ClaudeCode
         );
         assert_eq!(
-            adapter_for(Provider::OpenAiCompatible).provider(),
-            Provider::OpenAiCompatible
+            adapter_for(AgentRuntime::Francois).agent_runtime(),
+            AgentRuntime::Francois
         );
     }
 

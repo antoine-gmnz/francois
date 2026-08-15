@@ -94,27 +94,35 @@ existing in history too.
 **Still to do before the branch is pushable:** `origin/feat/multi-provider` still points at the old
 `14895a6`, so landing this needs a `git push --force-with-lease`. Not done here.
 
-## Phase B — the axis split · ~half a day
+## Phase B — the axis split · ~half a day — **DONE 2026-08-15**
 
-**Closes:** the seam's 2026-08-14 HIGH. **Must precede Phase E** — `OpenAiAdapter` is the first
-consumer of both axes, and building it against the collapsed enum is what the split exists to
-prevent.
+**Closes:** the seam's 2026-08-14 HIGH (and, unplanned, its deferred round-2 LOW — see below).
+**Must precede Phase E** — `OpenAiAdapter` is the first consumer of both axes, and building it
+against the collapsed enum is what the split exists to prevent.
 
 Implements seam **FR-11a / FR-13a / FR-14a**.
 
-- [ ] **contract**
-  - [ ] `AgentRuntime = 'claude-code' | 'francois'` and `ProviderProtocol = 'anthropic' | 'openai'`
-        in `contract/common.ts`
-  - [ ] `SessionMeta.provider` → `SessionMeta.agentRuntime` + `SessionMeta.protocol`, both required
-  - [ ] `providerCapabilities` → `runtimeCapabilities`; `ProviderCapability(-ies)` →
-        `RuntimeCapability(-ies)` in `contract/multi-provider-seam.ts` (+ its test)
-- [ ] **core**
-  - [ ] `Provider` → `AgentRuntime` in `session/adapter/mod.rs` (`ClaudeCode`, `Francois`)
-  - [ ] `from_account_kind` returns the `(runtime, protocol)` pair per FR-13a's table
-  - [ ] `adapter_for` dispatches on `agentRuntime` **alone**; `protocol` is read inside the runtime
-  - [ ] `session/persistence.rs`: absent keys ⇒ `('claude-code','anthropic')`, **and** the legacy
-        `provider` key mapped (`'claude-code'`→pair, `'openai-compatible'`→`('francois','openai')`)
-- [ ] **frontend** — ~6 `SessionMeta` fixtures carry two fields instead of one
+- [x] **contract**
+  - [x] `AgentRuntime = 'claude-code' | 'francois'` and `ProviderProtocol = 'anthropic' | 'openai'`
+        in `contract/common.ts` — `SessionProvider` **removed**, not aliased
+  - [x] `SessionMeta.provider` → `SessionMeta.agentRuntime` + `SessionMeta.protocol`, both required
+  - [x] `providerCapabilities` → `runtimeCapabilities`; `ProviderCapability(-ies)` →
+        `RuntimeCapability(-ies)` in `contract/multi-provider-seam.ts` (+ its test). Values
+        unchanged; `ProviderCapabilities` left unspent for the model-level flag set FR-14's
+        "Reserved name" note parks it for.
+- [x] **core**
+  - [x] `Provider` → `AgentRuntime` in `session/adapter/mod.rs` (`ClaudeCode`, `Francois`), plus the
+        new `ProviderProtocol` (`Anthropic`, `Openai`)
+  - [x] `from_account_kind` returns the `(runtime, protocol)` pair per FR-13a's table, still over an
+        exhaustive `match` on `AccountKind` — a third kind fails to compile rather than defaulting
+  - [x] `adapter_for` dispatches on `agentRuntime` **alone**; `protocol` is read inside the runtime
+        (it is deliberately not a parameter — that is the whole of FR-14a)
+  - [x] `session/persistence.rs`: `parse_agent_runtime_and_protocol` — absent keys ⇒
+        `('claude-code','anthropic')`, **and** the legacy `provider` key mapped
+        (`'claude-code'`→pair, `'openai-compatible'`→`('francois','openai')`). Save side writes only
+        the two new keys; the legacy key is read, never written.
+- [x] **frontend** — 13 `SessionMeta` fixture sites carry two fields instead of one (the estimate of
+      ~6 was low)
 
 **Watch for.** The four fixtures using `as unknown as SessionMeta` (`sessions/rename.test.ts:20`,
 `lib/panelCountsStore.test.ts:11`, `sessions/useSessionFleetSync.test.ts:11`,
@@ -122,8 +130,26 @@ Implements seam **FR-11a / FR-13a / FR-14a**.
 to compile when the required fields change, so the split goes silently untested in four places. Fix
 them here; you are in the files anyway.
 
+- [x] Done, and the warning paid off: `rename.test.ts`'s fixture was carrying a **stale pre-split
+      shape** (`modelId`, `contextMaxTokens`, `createdAt` — none of which exist on the current
+      `SessionMeta`), which the cast had been hiding. Two further cast sites the round-2 note never
+      listed (`lib/sessionsStore.test.ts:15`, `features/notifications/notifications.test.ts:322,435,452`)
+      were mechanical and were fixed too. **No `as unknown as SessionMeta` remains in `src/`.**
+
 **Gate:** a persistence round-trip test proving a `sessions.json` carrying the old `provider` key
 loads as the right pair.
+
+- [x] `legacy_provider_key_migrates_to_the_right_pair` (both legacy values + an unrecognised one) and
+      `both_keys_absent_defaults_to_claude_code_anthropic`, in `session::persistence::tests`.
+
+**Verified green.** `npx tsc --noEmit` clean · `npm test` 86 files / 1721 passed ·
+`cargo test` 908 passed, 3 ignored, **1 failed — the pre-existing golden replay only** (the Phase A
+note above: it reads the live `~/.claude/skills/` dir, and the sole divergence in the failure output
+is the missing `cohorte-loop` entry). The Phase E canary held: `session/stream/fixtures/
+turn.expected.json` is byte-untouched, so no Claude Code session behaviour moved.
+
+**Seam status** moved `blocked` → `in-review`: both of its open items are now closed (Phase A took
+round-2 CRITICAL #2, this phase took the 2026-08-14 HIGH). Phase D is its re-review.
 
 ## Phase C — endpoint re-review · ~1 hr
 

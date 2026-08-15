@@ -160,11 +160,16 @@ pub(crate) struct SessionMeta {
     /// pre-feature frontend reads an ordinary session.
     #[serde(skip_serializing_if = "Option::is_none")]
     cloud: Option<CloudProvenance>,
-    /// multi-provider-seam FR-11: the runner this session's turns go through.
+    /// multi-provider-seam FR-11a: who owns this session's agent loop.
     /// DERIVED from the session's account kind at creation and never
     /// re-derived. Required on the wire (never omitted): a persisted record
-    /// without it loads as `Provider::ClaudeCode` (`Provider`'s `Default`).
-    provider: Provider,
+    /// without it loads as `AgentRuntime::ClaudeCode` (`AgentRuntime`'s
+    /// `Default`).
+    #[serde(rename = "agentRuntime")]
+    agent_runtime: AgentRuntime,
+    /// multi-provider-seam FR-11a: the wire dialect this session's endpoint
+    /// speaks. Same derivation/persistence discipline as `agent_runtime`.
+    protocol: ProviderProtocol,
 }
 
 #[derive(Serialize, Clone)]
@@ -439,9 +444,14 @@ pub(crate) struct Session {
     /// `Session::new` parameter on purpose — `cloud/adopt.rs` is the single
     /// writer, so no other creation path can accidentally claim provenance.
     cloud: Option<CloudProvenance>,
-    /// multi-provider-seam FR-11: DERIVED from the account's kind at creation
-    /// (FR-13) and never re-derived afterward — see `Provider::from_account_kind`.
-    provider: Provider,
+    /// multi-provider-seam FR-11a: DERIVED from the account's kind at creation
+    /// (FR-13a) and never re-derived afterward — see
+    /// `AgentRuntime::from_account_kind`.
+    agent_runtime: AgentRuntime,
+    /// multi-provider-seam FR-11a: the wire dialect, derived alongside
+    /// `agent_runtime` from the same `from_account_kind` call and never
+    /// re-derived afterward.
+    protocol: ProviderProtocol,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     /// multi-provider-seam FR-2: the live turn, reached only through
@@ -530,7 +540,8 @@ impl Session {
         worktree: Option<SessionWorktree>,
         worktree_distro: Option<String>,
         account_id: String,
-        provider: Provider,
+        agent_runtime: AgentRuntime,
+        protocol: ProviderProtocol,
         claude_session_id: Option<String>,
         block_buffer: Vec<BufBlock>,
     ) -> Session {
@@ -554,7 +565,8 @@ impl Session {
             worktree_distro,
             account_id,
             cloud: None,
-            provider,
+            agent_runtime,
+            protocol,
             queue: VecDeque::new(),
             claude_session_id,
             current: None,
@@ -599,7 +611,8 @@ impl Session {
             worktree: self.worktree.clone(),
             account_id: self.account_id.clone(),
             cloud: self.cloud.clone(),
-            provider: self.provider,
+            agent_runtime: self.agent_runtime,
+            protocol: self.protocol,
         }
     }
 

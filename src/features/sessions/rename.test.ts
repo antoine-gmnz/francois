@@ -21,13 +21,18 @@ const META: SessionMeta = {
   id: 's1',
   name: 'renamed',
   cwd: '/tmp/p',
+  model: { id: 'sonnet', label: 'Sonnet' },
   status: 'idle',
-  modelId: 'sonnet',
   contextUsedTokens: 0,
-  contextMaxTokens: 200000,
-  createdAt: 0,
+  contextLimitTokens: 200000,
+  startedAt: 0,
   lastActivityAt: 0,
-} as unknown as SessionMeta;
+  permissionMode: 'default',
+  runtime: 'native',
+  accountId: 'default',
+  agentRuntime: 'claude-code',
+  protocol: 'anthropic',
+};
 
 describe('canCommitRename (FR-10)', () => {
   it('accepts a non-empty trimmed name', () => {

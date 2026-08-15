@@ -144,11 +144,12 @@ fn build_turn_context(
     })
 }
 
-/// multi-provider-seam FR-1: snapshot the session into a `TurnContext`, route
-/// it through `adapter_for(session.provider)` (preflight, then spawn/connect),
-/// and store the returned `TurnControl` on `Session.current`. Provider-shaped
-/// behaviour (argv, env, the control-channel protocol, …) lives entirely
-/// behind that seam now — this function is the same for every provider.
+/// multi-provider-seam FR-1/FR-14a: snapshot the session into a `TurnContext`,
+/// route it through `adapter_for(session.agent_runtime)` (preflight, then
+/// spawn/connect), and store the returned `TurnControl` on `Session.current`.
+/// Runtime-shaped behaviour (argv, env, the control-channel protocol, …)
+/// lives entirely behind that seam now — this function is the same for
+/// every runtime.
 pub(crate) fn begin_turn(
     app: &AppHandle,
     session_id: &str,
@@ -157,10 +158,10 @@ pub(crate) fn begin_turn(
     mode: TurnMode,
 ) {
     let engine = app.state::<Engine>();
-    let provider = engine
-        .with_session(session_id, |s| s.provider)
+    let agent_runtime = engine
+        .with_session(session_id, |s| s.agent_runtime)
         .unwrap_or_default();
-    let adapter = adapter_for(provider);
+    let adapter = adapter_for(agent_runtime);
     let Some(ctx) = build_turn_context(&engine, session_id, block_id, text, mode) else {
         return;
     };

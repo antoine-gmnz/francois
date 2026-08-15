@@ -13,7 +13,7 @@
 
 use super::*;
 
-// `super::*` only brings in this module's own siblings (Provider, TurnContext,
+// `super::*` only brings in this module's own siblings (AgentRuntime, TurnContext,
 // TurnControl, …) — the shared session data model (Session, Engine,
 // PendingQuestion/PendingPermission, emit, the stdio control-response
 // builders, run_reader, refresh_models, the spawn/env helpers, …) needs its
@@ -238,8 +238,8 @@ impl TurnControl for TurnHandle {
 // ---------- the adapter ----------
 
 impl SessionAdapter for ClaudeCodeAdapter {
-    fn provider(&self) -> Provider {
-        Provider::ClaudeCode
+    fn agent_runtime(&self) -> AgentRuntime {
+        AgentRuntime::ClaudeCode
     }
 
     /// FR-7: the `ACCOUNT_NOT_AUTHENTICATED` preflight that used to live
@@ -389,8 +389,8 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_adapter_reports_its_provider() {
-        assert_eq!(ClaudeCodeAdapter.provider(), Provider::ClaudeCode);
+    fn claude_code_adapter_reports_its_runtime() {
+        assert_eq!(ClaudeCodeAdapter.agent_runtime(), AgentRuntime::ClaudeCode);
     }
 
     /// permission-guardrails FR-7: the ask pattern an `*Always` decision writes

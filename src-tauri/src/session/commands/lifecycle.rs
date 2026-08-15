@@ -249,9 +249,11 @@ pub fn session_create(
     let id = uuid();
     let name = name.unwrap_or_else(|| basename(&cwd));
     let context_limit_tokens = context_limit(&model_id);
-    // multi-provider-seam FR-13: derived from the resolved account's kind —
-    // session_create gains no field and the new-session modal gains no control.
-    let provider = Provider::from_account_kind(crate::account::kind_of(&app, &account_id));
+    // multi-provider-seam FR-13a: both axes derived from the resolved
+    // account's kind — session_create gains no field and the new-session
+    // modal gains no control.
+    let (agent_runtime, protocol) =
+        AgentRuntime::from_account_kind(crate::account::kind_of(&app, &account_id));
     let session = Session::new(
         id.clone(),
         name,
@@ -269,7 +271,8 @@ pub fn session_create(
         session_worktree,
         worktree_distro,
         account_id, // multi-account FR-19: stored VERBATIM, never re-derived
-        provider,
+        agent_runtime,
+        protocol,
         None, // claude_session_id
         Vec::new(),
     );

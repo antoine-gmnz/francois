@@ -57,9 +57,9 @@ const questionAsked = (sessionId: string, blockId: string): SessionEvent => ({
   questions: [],
 });
 const status = (sessionId: string, s: SessionStatus): SessionEvent => ({ type: 'session.status', sessionId, status: s });
-const metaOf = (id: string, s: SessionStatus): SessionMeta => ({
+const metaOf = (id: string, s: SessionStatus, name = 'x'): SessionMeta => ({
   id,
-  name: 'x',
+  name,
   cwd: '/repo',
   model: { id: 'm', label: 'M' },
   status: s,
@@ -70,7 +70,8 @@ const metaOf = (id: string, s: SessionStatus): SessionMeta => ({
   permissionMode: 'default',
   runtime: 'native',
   accountId: 'default',
-  provider: 'claude-code',
+  agentRuntime: 'claude-code',
+  protocol: 'anthropic',
 });
 
 describe('deriveTrigger (FR-6/FR-14)', () => {
@@ -319,7 +320,7 @@ describe('initNotifications runtime wiring', () => {
   it('fires a granted notification with title/body/extra for an attention trigger', async () => {
     notifications.initNotifications();
     await tick();
-    store.useStore.setState({ sessions: [{ id: 's1', name: 'api-refactor' } as unknown as SessionMeta] });
+    store.useStore.setState({ sessions: [metaOf('s1', 'idle', 'api-refactor')] });
     sessionHandler?.({ payload: { type: 'question.asked', sessionId: 's1', blockId: 'b1', questions: [] } });
     await tick();
 
@@ -432,7 +433,7 @@ describe('initNotifications runtime wiring', () => {
     notifications.initNotifications();
     await tick();
     store.useStore.setState({
-      sessions: [{ id: 's9', name: 's9' } as unknown as SessionMeta],
+      sessions: [metaOf('s9', 'idle', 's9')],
       activeSessionId: null,
       mainTab: 'diff',
       focusedPane: 'agents',
@@ -449,7 +450,7 @@ describe('initNotifications runtime wiring', () => {
   it('FR-13: clicking without extra falls back to lastNotifiedSessionId', async () => {
     notifications.initNotifications();
     await tick();
-    store.useStore.setState({ sessions: [{ id: 's7', name: 's7' } as unknown as SessionMeta], activeSessionId: null });
+    store.useStore.setState({ sessions: [metaOf('s7', 'idle', 's7')], activeSessionId: null });
     sessionHandler?.({ payload: { type: 'question.asked', sessionId: 's7', blockId: 'b1', questions: [] } });
     await tick();
 

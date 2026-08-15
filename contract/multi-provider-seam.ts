@@ -1,11 +1,23 @@
-// contract/multi-provider-seam.ts — the provider capability table.
+// contract/multi-provider-seam.ts — the runtime capability table.
 // Authored from specs/multi-provider-seam.md §5. Pure, no IPC: same idiom as
 // isBusyStatus in contract/fleet-board.ts. Imports shared vocabulary from
 // common.ts; never redefines it.
+//
+// FR-14 (amended 2026-08-14): the table keys on the AGENT RUNTIME, not the
+// protocol. `mcp`, `subagents`, `skills`, `workflows`, `interactiveCommands`
+// and `compaction` are properties of who owns the loop — a `francois`-runtime
+// session has the same gaps whichever dialect it speaks. `remoteControl` and
+// `usageBar` are genuinely vendor-shaped rather than runtime-shaped, but stay
+// here anyway: both are false for every non-Anthropic configuration, and
+// splitting one table into two to express that would cost more than it says.
+//
+// Reserved name: `ProviderCapabilities` is deliberately NOT spent here. It
+// belongs to the model-level flag set (streaming, vision, reasoning,
+// parallel_tool_calls, structured_output) a later feature will need.
 
-import type { SessionProvider } from './common';
+import type { AgentRuntime } from './common';
 
-export type ProviderCapability =
+export type RuntimeCapability =
   | 'mcp'
   | 'subagents'
   | 'skills'
@@ -21,10 +33,10 @@ export interface CapabilityState {
   reason?: string;
 }
 
-/** Exhaustive over ProviderCapability — a new member without both values must not compile. */
-export type ProviderCapabilities = Record<ProviderCapability, CapabilityState>;
+/** Exhaustive over RuntimeCapability — a new member without both values must not compile. */
+export type RuntimeCapabilities = Record<RuntimeCapability, CapabilityState>;
 
-const CAPABILITIES: Record<SessionProvider, ProviderCapabilities> = {
+const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
   'claude-code': {
     mcp: { available: true },
     subagents: { available: true },
@@ -35,18 +47,28 @@ const CAPABILITIES: Record<SessionProvider, ProviderCapabilities> = {
     usageBar: { available: true },
     compaction: { available: true },
   },
-  'openai-compatible': {
+  // Every `false` here is a CURRENT gap, not a permanent property of the runner,
+  // except `remoteControl` and `usageBar` — those two are genuinely Anthropic
+  // services with nothing to port. The wording carries that difference: a gap
+  // reads "yet", a vendor service states what it is. Interoperable capabilities
+  // are the point of the whole arc (specs/capability-registry.md), so a reason
+  // line that reads "X is a Claude Code feature" would be writing the gap into
+  // the architecture.
+  francois: {
     mcp: { available: false, reason: "MCP servers aren't available on this provider yet." },
     subagents: { available: false, reason: "Subagents aren't available on this provider yet." },
-    skills: { available: false, reason: 'Skills are a Claude Code feature.' },
-    workflows: { available: false, reason: 'Workflows are a Claude Code feature.' },
-    interactiveCommands: { available: false, reason: 'Slash commands are a Claude Code feature.' },
+    skills: { available: false, reason: "Skills aren't available on this provider yet." },
+    workflows: { available: false, reason: "Workflows aren't available on this provider yet." },
+    interactiveCommands: {
+      available: false,
+      reason: "Slash commands aren't available on this provider yet.",
+    },
     remoteControl: { available: false, reason: 'Remote Control is an Anthropic service.' },
-    usageBar: { available: false, reason: "This provider bills per token, not against a plan." },
+    usageBar: { available: false, reason: 'This provider bills per token, not against a plan.' },
     compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
   },
 };
 
-export function providerCapabilities(provider: SessionProvider): ProviderCapabilities {
-  return CAPABILITIES[provider];
+export function runtimeCapabilities(runtime: AgentRuntime): RuntimeCapabilities {
+  return CAPABILITIES[runtime];
 }

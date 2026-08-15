@@ -20,7 +20,8 @@ function session(over: Partial<SessionMeta> & Pick<SessionMeta, 'id'>): SessionM
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
-    provider: 'claude-code',
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
     ...over,
   };
 }
