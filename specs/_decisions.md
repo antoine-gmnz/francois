@@ -46,7 +46,6 @@
 - 2026-08-11 · api · `remote-control` "Francois cannot be a client" is scoped to Remote Control sessions only; cloud sessions have documented CLI verbs and ARE reachable — because collapsing the two objects kills a feasible feature · cloud-sessions
 - 2026-08-11 · auth · Francois READS Anthropic credentials (`<configDir>/.credentials.json` → `claudeAiOauth`) but never mints, refreshes or writes them — because two writers on one token file is how a login silently breaks · cloud-sessions
 - 2026-08-11 · api · A hidden CLI surface (`.hideHelp()` flag, undocumented endpoint) may only power a degrade-to-empty convenience path, never the authoritative one, and needs a canary test — because it can move without deprecation · cloud-sessions
-- 2026-08-12 · naming · A session's provider names the RUNNER (`claude-code` | `openai-compatible`), never the vendor — because an Anthropic-API-through-our-own-loop path would make a vendor name a lie the day it lands · multi-provider-seam
 - 2026-08-12 · data · A session's provider is DERIVED from its account's kind at creation and never chosen or re-derived — because two sources of truth for which wire a session speaks is how a session ends up pointed at a key it does not have · multi-provider-seam
 - 2026-08-12 · auth · Non-OAuth provider keys live in a 0600/ACL-restricted file in the account config dir, never the OS keychain, and never enter session state, the transcript or diagnostics — because one code path on three platforms beats a keychain that is absent on headless Linux · multi-provider-seam
 - 2026-08-12 · ui · Parity with Claude Code's tuned harness is not a goal for Francois-loop sessions; their first turn states so once, in-transcript — because otherwise every tool-loop quality gap gets filed as a Francois bug · multi-provider-seam
@@ -55,7 +54,12 @@
 - 2026-08-12 · security · Permission rules never cross credentials: a new account kind starts with an empty global tier and every tool asks — because a rule granted to one vendor's model is not consent for another's · multi-provider-openai
 - 2026-08-12 · naming · Tools Francois executes itself take Claude Code's tool NAMES verbatim (Read/Write/Edit/Grep/Glob/Bash) — because permission rules are one vocabulary, and a second dialect would re-ask the user for what they already allowed · multi-provider-openai
 - 2026-08-12 · data · Wire-format conversation state lives in an adapter-owned thread file, never merged into the durable-sessions transcript — because the transcript is a render model and collapsing the two makes every future adapter's wire format the UI's problem · multi-provider-openai
+- 2026-08-14 · naming · A session carries TWO axes — `agentRuntime` (who owns the loop) and `protocol` (the wire dialect); the vendor is named by the account, by neither axis — because Claude Code honours ANTHROPIC_BASE_URL, so runtime×dialect is a real matrix one enum cannot name · supersedes 2026-08-12 naming · multi-provider-seam
+- 2026-08-14 · ui · A capability that is merely not built yet says "yet"; only a genuine vendor service states what it is — because "X is a Claude Code feature" writes a v1 gap into the architecture and the next agent reads it as settled · multi-provider-seam
+- 2026-08-14 · api · Skills port across runtimes (name+description injected into the system prompt); MCP, subagents and workflows do not until they have a client/dispatcher — because a skill's whole mechanism is instructions, and the discovery already exists · multi-provider-openai
 
 ## Superseded
+
+- 2026-08-12 · naming · A session's provider names the RUNNER (`claude-code` | `openai-compatible`), never the vendor — because an Anthropic-API-through-our-own-loop path would make a vendor name a lie the day it lands · multi-provider-seam
 
 <!-- moved here when a line above supersedes them; never deleted -->

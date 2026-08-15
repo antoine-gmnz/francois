@@ -47,8 +47,15 @@ correctness requirement in this feature and it is specified fail-closed througho
 - The Responses API, and any per-vendor branch. v1 speaks **Chat Completions + SSE**; a vendor is
   supported by dialect, not by name. **Tested vendor: OpenAI.** Others are expected to work and carry
   no guarantee.
-- MCP, subagents, skills, workflows, slash commands, remote control, usage bar, compaction — all
+- MCP, subagents, workflows, slash commands, remote control, usage bar, compaction — all
   already `available: false` in the seam's table. This feature *renders* that, it does not change it.
+  - **Amended 2026-08-14 (lead sign-off): `skills` is removed from this list** and is now in scope
+    (FR-23..FR-27). Reasoning in §4 — a skill is markdown, the discovery already exists, and a
+    Francois-loop session with no portable capability at all would leave the arc's central claim
+    without a single instance. The other seven stay non-goals, unchanged.
+- **Installing** a skill from these sessions (FR-26): enabling a plugin writes Claude Code's
+  `settings.json`, which is that runner's control surface. Reading what is already installed is the
+  portable half; writing that runner's config is not.
 - A token/cost meter. The accepted v1 gap; the likeliest immediate follow-up.
 - Cross-provider model switching. Switching within a provider works; crossing offers nothing here
   (FR-21).
@@ -72,6 +79,19 @@ provider yet.` — one dim line where the list would be, not an empty box.
 conversation, because the message array was persisted alongside it.
 
 ## 4. Functional requirements
+
+> **Amended 2026-08-14 (architecture review, lead sign-off) — vocabulary.** `multi-provider-seam`
+> FR-11a splits its single `SessionProvider` discriminator into two axes: `agentRuntime`
+> (`'claude-code' | 'francois'` — who owns the loop) and `protocol` (`'anthropic' | 'openai'` —
+> which wire dialect). Everywhere below, read `Provider::OpenAiCompatible` as
+> `AgentRuntime::Francois`, `session.provider` as `session.agentRuntime`, and
+> `providerCapabilities()` as `runtimeCapabilities()`. This feature is the **first consumer of both
+> axes** and must not be dispatched until the seam's 2026-08-14 remediation item lands — building
+> `OpenAiAdapter` against the collapsed enum is exactly what the split exists to prevent.
+>
+> Concretely: `OpenAiAdapter` is the `francois`-runtime adapter, and its `protocol: 'openai'` is
+> what selects the Chat-Completions codec **inside** it. A future `protocol: 'anthropic'` case in
+> the same runtime is a codec, not a second adapter.
 
 ### Core — the loop
 
@@ -166,6 +186,45 @@ conversation, because the message array was persisted alongside it.
   provider is metadata, not identity.
 - **FR-22** `multi-provider-endpoint` FR-14 is **deleted**: endpoint rows in both account pickers
   become fully selectable, with no reason line and normal keyboard nav.
+
+### Core — skills, the one capability that ports (added 2026-08-14, lead sign-off)
+
+> **Why this is in scope after all.** §2 Non-goals lists skills among the capabilities this feature
+> only *renders* as unavailable. That held while every capability was equally out of reach — but
+> skills are not like the other seven. A skill is **markdown instructions**; MCP needs a client,
+> subagents need a dispatcher, workflows need a script host, compaction needs a summarizer. Injecting
+> instructions into a system prompt is the whole mechanism, and the discovery half already exists
+> (`session/skills.rs` walks project / user / plugin / marketplace `SKILL.md`). Shipping the
+> Francois loop with *zero* portable capabilities would make "capabilities are interoperable" a
+> claim with no instance behind it, and the cheapest instance is the one already on disk.
+
+- **FR-23** `OpenAiAdapter` injects skill instructions into the request's `system` message. The
+  source is the **existing** discovery in `session/skills.rs` — the `installed` set for the
+  session's `cwd` (project + user + enabled-plugin `SKILL.md`), read through a function shared with
+  the skills panel and **never** reimplemented. Slash-command `*.md` files (`kind: 'command'`) are
+  excluded: they are `interactiveCommands`, which stays `available: false`.
+- **FR-24** Injection is **name + description only**, not full bodies: each installed skill
+  contributes one line (`<name>: <description>`) under a fixed preamble telling the model these
+  procedures are available and to follow the named one when it applies. Full `SKILL.md` bodies are
+  **not** concatenated — a dozen skills would blow the context window before the first user message,
+  and FR-7 refuses the turn at the limit. The block is capped at **8_000 characters**; skills past
+  the cap are dropped, and the drop is silent to the model but counted for FR-26.
+  *(A progressive-disclosure design — a `Skill` tool the model calls to fetch one body on demand —
+  is the right end state and is out of scope here; `specs/capability-registry.md` owns it.)*
+- **FR-25** The block is rebuilt per turn from a fresh discovery read, so a skill added on disk
+  mid-session takes effect on the next turn — the same "effects apply on the next turn" contract
+  `skills-panel` already states. It is **not** persisted into the thread file (FR-16): the thread
+  file holds the conversation, and baking a system prompt into it would freeze a stale skill list
+  across a resume.
+- **FR-26** With at least one skill injected, `skills` becomes `{ available: true }` for the
+  `francois` runtime in `contract/multi-provider-seam.ts` (the seam's FR-15 table), and pane [5]
+  renders the installed list normally rather than a reason line. **Install** stays disabled on these
+  sessions with `Installing skills isn't available on this provider yet.` — enabling a plugin writes
+  to Claude Code's `~/.claude/settings.json`, which is that runner's control surface, not ours.
+- **FR-27** A test asserts the injected block: it names every installed skill, excludes every
+  `kind: 'command'` entry, respects the 8_000-character cap, and is byte-identical for two turns
+  with unchanged discovery — so a prompt-cache-defeating nondeterminism (map iteration order) fails
+  loudly rather than silently costing money.
 
 ## 5. API contract
 
@@ -280,7 +339,13 @@ line inside the pane's normal frame), the **provider grouping** in the model pic
 - [ ] `contextTokensFor` matches longest-prefix and falls back to 128k; a turn over the window is
       refused before the request (FR-7).
 - [ ] Every capability with `available: false` renders its `reason` in the pane's frame, and no
-      component branches on `provider` outside the table (FR-20) — grep is the check.
+      component branches on `agentRuntime` or `protocol` outside the table (FR-20) — grep is the
+      check.
+- [ ] `SessionMeta` carries `agentRuntime` + `protocol` and `OpenAiAdapter` is reached by
+      `agentRuntime` alone; no code path dispatches an adapter on `protocol` (seam FR-11a/FR-14a).
+- [ ] Installed skills for the session's `cwd` appear in the injected system block, slash-command
+      entries do not, the block is capped and deterministic across two turns, and pane [5] renders
+      the list with **Install** disabled (FR-23..FR-27).
 - [ ] `FRANCOIS_TOOLS` and the Rust tool enum are asserted equal (§5).
 - [ ] A Claude Code session's behaviour is byte-identical to before — the seam's golden replay test
       (`multi-provider-seam` FR-18) still passes untouched.

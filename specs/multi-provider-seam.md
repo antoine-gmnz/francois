@@ -155,6 +155,66 @@ switch model, quit and resume, run a subagent, open an agent tab.
   `accountId` that no longer resolves falls back to `default`, hence to `'claude-code'` (the
   existing multi-account FR-10 path, unchanged).
 
+> **Amended 2026-08-14 (architecture review, lead sign-off) — FR-11/FR-13 split into two axes.**
+> See FR-11a/FR-13a below. The text above is kept verbatim as the record of what was frozen and
+> built; where the two disagree, FR-11a/FR-13a win.
+
+- **FR-11a** `SessionProvider` collapsed **two orthogonal things** into one enum: *who owns the
+  agent loop* and *which wire dialect the endpoint speaks*. They separate:
+
+  ```ts
+  /** Who owns the agent loop. Renames SessionProvider; same discriminator, honest name. */
+  export type AgentRuntime = 'claude-code' | 'francois';
+
+  /** Which wire dialect the session's endpoint speaks. New axis. */
+  export type ProviderProtocol = 'anthropic' | 'openai';
+  ```
+
+  `SessionMeta.provider` is replaced by **`agentRuntime: AgentRuntime`** and
+  **`protocol: ProviderProtocol`**, both required, both set at `session_create` and never
+  re-derived. A persisted record with neither key loads as `('claude-code', 'anthropic')`; a record
+  carrying the superseded `provider` key maps `'claude-code' → ('claude-code', 'anthropic')` and
+  `'openai-compatible' → ('francois', 'openai')`, so no session written by an intermediate build is
+  orphaned.
+
+  **Not `runtime`.** `SessionMeta.runtime: ClaudeRuntime` is already taken by `wsl-filesystem` and
+  means native-vs-WSL. `agentRuntime` is the free name, and `'francois'` for the second member is
+  the vocabulary the journal and `FRANCOIS_TOOLS` already use — not `'native'`, which the *other*
+  `runtime` field spends on the opposite meaning.
+
+  **Why now rather than later.** The collapsed enum cannot name a cell that is real today: the
+  Claude Code CLI honours `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, so
+  `agentRuntime: 'claude-code'` against a third-party Anthropic-dialect endpoint is a working
+  configuration with no value in `SessionProvider`. (`spawn.rs:189`'s `account_env` sets only
+  `CLAUDE_CONFIG_DIR` today, so there is nowhere to put the override either — that half is
+  deferred, see FR-13a.) The cost of the split is a contract reshape while nothing is merged to
+  `main`; the cost of deferring it is the same reshape plus a migration over every persisted
+  session, and a third enum member that is a lie on the day it lands (journal, 2026-08-12 `naming`).
+
+- **FR-13a** Both axes derive from the account's kind at creation. Mapping, exhaustive over
+  `AccountKind`:
+
+  | `AccountKind` | `agentRuntime` | `protocol` |
+  |---|---|---|
+  | `claude-code-oauth` | `claude-code` | `anthropic` |
+  | `openai-compatible` | `francois` | `openai` |
+
+  An `accountId` that no longer resolves falls back to `default`, hence to
+  `('claude-code', 'anthropic')` — the existing multi-account FR-10 path, unchanged.
+
+  **Deferred, and what the split exists for:** a third kind `'anthropic-compatible'` (endpoint +
+  key, Anthropic dialect) maps to `('claude-code', 'anthropic')` and needs `account_env` to emit
+  `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`. That is its own feature, not this amendment — but it
+  is the cell that makes the two axes load-bearing rather than tidy, and the mapping table is
+  written so adding it is a row, not a redesign.
+
+- **FR-14a** `adapter_for` dispatches on **`agentRuntime` alone** — the runtime is who owns the
+  loop, which is exactly what picks an adapter. `protocol` is read *inside* the `francois` runtime
+  to pick the wire codec, and is not an adapter-dispatch key. The Rust `Provider` enum
+  (`session/adapter/mod.rs`) becomes `AgentRuntime` with the same two members renamed
+  (`ClaudeCode`, `Francois`), and `Provider::from_account_kind` becomes
+  `AgentRuntime::from_account_kind` returning the pair.
+
 ### Contract — capability table
 
 - **FR-14** `contract/multi-provider-seam.ts` exports a pure
@@ -162,21 +222,46 @@ switch model, quit and resume, run a subagent, open an agent tab.
   same idiom as `isBusyStatus` in `contract/fleet-board.ts`. Each entry is
   `{ available: boolean; reason?: string }`; `reason` is present **iff** `available` is false, is a
   single user-facing sentence, and is what a disabled pane renders.
+  - **Amended 2026-08-14 (architecture review, lead sign-off).** Under FR-11a the table keys on
+    the **runtime**, not the protocol: `mcp`, `subagents`, `skills`, `workflows`,
+    `interactiveCommands` and `compaction` are properties of *who owns the loop*, and a
+    `francois`-runtime session has the same gaps whichever dialect it speaks. The export becomes
+    `runtimeCapabilities(runtime: AgentRuntime): RuntimeCapabilities`, with
+    `ProviderCapability`/`ProviderCapabilities` renamed `RuntimeCapability`/`RuntimeCapabilities`.
+    The two entries that are genuinely vendor-shaped rather than runtime-shaped — `remoteControl`
+    and `usageBar` — stay in this table anyway: both are false for every non-Anthropic
+    configuration, and splitting one table into two to express that would cost more than it says.
+    Values are unchanged; this is a rename plus the FR-15 rewording.
+  - **Reserved name.** The doc this amendment came from uses `ProviderCapabilities` for a
+    *model*-level flag set (`streaming`, `vision`, `reasoning`, `parallel_tool_calls`,
+    `structured_output`, `parallel_tool_calls`). That is a different concept from this table, which
+    is product-level pane availability. The rename above frees `ProviderCapabilities` for the
+    model-level meaning when a feature needs it — do not spend the name on anything else.
 - **FR-15** The table, exhaustive over `ProviderCapability`:
 
   | capability | `claude-code` | `openai-compatible` |
   |---|---|---|
   | `mcp` | true | false — "MCP servers aren't available on this provider yet." |
   | `subagents` | true | false — "Subagents aren't available on this provider yet." |
-  | `skills` | true | false — "Skills are a Claude Code feature." |
-  | `workflows` | true | false — "Workflows are a Claude Code feature." |
-  | `interactiveCommands` | true | false — "Slash commands are a Claude Code feature." |
+  | `skills` | true | false — "Skills aren't available on this provider yet." |
+  | `workflows` | true | false — "Workflows aren't available on this provider yet." |
+  | `interactiveCommands` | true | false — "Slash commands aren't available on this provider yet." |
   | `remoteControl` | true | false — "Remote Control is an Anthropic service." |
   | `usageBar` | true | false — "This provider bills per token, not against a plan." |
   | `compaction` | true | false — "Compaction isn't available on this provider yet." |
 
   Adding a `ProviderCapability` member without a value for **both** providers must not compile
   (`Record<ProviderCapability, CapabilityState>`, no index signature).
+
+  - **Amended 2026-08-14 (architecture review, lead sign-off).** Three reasons were reworded:
+    `skills`, `workflows` and `interactiveCommands` read "X is a Claude Code feature", which states
+    a **permanent property of the runner** where the truth is a **current gap**. They now take the
+    "aren't available on this provider yet" form the other three gaps already use. `remoteControl`
+    and `usageBar` keep their wording deliberately — those two name Anthropic *services*, and there
+    is nothing to port. No `available` value changes; this is wording only, and no test asserts the
+    strings. The distinction matters because interoperable capabilities are the point of the arc
+    (`specs/capability-registry.md`): a reason line that says a capability *is* a Claude Code
+    feature writes the gap into the architecture, and the next agent reads it as settled.
 - **FR-16** **No frontend consumer.** No component, store, or selector calls
   `providerCapabilities()` in this feature. The frontend's only change is carrying the two new
   fields through the types it already passes around.
@@ -241,6 +326,45 @@ export type SessionProvider = 'claude-code' | 'openai-compatible';
    * A persisted record without it loads as 'claude-code'.
    */
   provider: SessionProvider;
+```
+
+**Amended 2026-08-14 (FR-11a/FR-13a/FR-14a).** `SessionProvider` and `SessionMeta.provider` above
+are **superseded**. What `contract/common.ts` carries instead:
+
+```ts
+/**
+ * Who owns the agent loop. Renames SessionProvider — same two members, honest
+ * name: 'claude-code' is the Claude Code CLI harness driving its own loop,
+ * 'francois' is our loop in the Rust core. It answers "who decides what happens
+ * next", NOT "which vendor's API" — that is `ProviderProtocol` plus the session's
+ * account, which together name the wire and the credential.
+ *
+ * NOT called `runtime`: SessionMeta.runtime is taken by wsl-filesystem and means
+ * native-vs-WSL. NOT called 'native' for the second member, for the same reason.
+ */
+export type AgentRuntime = 'claude-code' | 'francois';
+
+/**
+ * Which wire dialect the session's endpoint speaks. Orthogonal to AgentRuntime:
+ * the Claude Code CLI honours ANTHROPIC_BASE_URL, so ('claude-code','anthropic')
+ * against a third-party endpoint is a real cell — one a single collapsed enum
+ * could not name. Vendor IDENTITY is neither of these two; it is the session's
+ * account and its endpoint baseUrl.
+ */
+export type ProviderProtocol = 'anthropic' | 'openai';
+```
+
+`SessionMeta` gains both, as **required** fields:
+
+```ts
+  /**
+   * multi-provider-seam FR-11a. DERIVED from the account's kind at creation and
+   * never re-derived. Absent ⇒ 'claude-code'; a record carrying the superseded
+   * `provider` key maps 'claude-code' → 'claude-code', 'openai-compatible' → 'francois'.
+   */
+  agentRuntime: AgentRuntime;
+  /** multi-provider-seam FR-11a. Absent ⇒ 'anthropic'; superseded `provider: 'openai-compatible'` ⇒ 'openai'. */
+  protocol: ProviderProtocol;
 ```
 
 ### `contract/multi-account.ts` — additions
@@ -393,7 +517,7 @@ omitted from the front-matter deliberately.
 
 - [x] CRITICAL · `src-tauri/src/session/commands/decisions.rs:73,121` · security · `pending_permission_pattern` (new in this diff) peeks the ask pattern from `Session.block_buffer` instead of the adapter's live pending-permissions map the pre-refactor code peeked; `buf_permission_resolve` (`session/mod.rs:773`) only flips `card["state"]` on resolve and never clears `card["ask"]`, so the pattern stays discoverable forever. `permissions_decide` with `remember: true` for a block_id that is no longer pending (already allowed/denied/cancelled, anywhere in session history) therefore still finds a pattern and calls `crate::permissions::write_rule(...)`, persisting an "always allow/deny" rule to `settings.json` **before** the subsequent `control.decide_permission` fails with `ControlAck::NotPending`. Pre-refactor this returned `PERMISSION_NOT_PENDING` and wrote nothing — this bypasses the must-be-pending authorization gate `permission-guardrails` exists to enforce, and violates FR-19's no-behavioural-change mandate. → **Fix:** return the pattern only when the matched block's own `card["state"] == "pending"` (or peek through `TurnControl`'s live pending state instead of the transcript buffer), plus a regression test asserting a second `permissions_decide(remember: true)` on a resolved block_id does not invoke `write_rule`. — fixed: the buffer peek is **deleted** (`grep block_buffer src-tauri/src/session/commands/decisions.rs` now matches nothing) and the gate reads the **live turn** again. `PendingPermission` carries its `pattern` (`session/mod.rs:317`, populated `stdio.rs:183`) — the field the seam refactor dropped, which is what pushed the lookup into the transcript in the first place; `TurnControl` gains `pending_permission_pattern(id)` (`adapter/mod.rs:153`, impl `claude_code.rs:157,208`) as a peek that claims nothing, so it stays independent of the exactly-once claim; and `permissions_decide`'s rule-first half is extracted into `remember_rule(engine, control, …)` (`decisions.rs:75,83`) so the must-be-pending authorization is unit-testable without an `AppHandle`. The agent chose the live-pending-state option over gating on `card["state"] == "pending"` — the card only flips once `resolve_permission` lands, so a claimed-but-not-yet-resolved ask (e.g. `control_cancel_request`) would still have read as pending; `a_still_pending_looking_card_with_no_live_ask_authorizes_nothing` pins that difference. 5 new tests, and the red was **proven not assumed**: restoring the buffer peek makes the two regression tests fail with the rule actually written to disk. `cargo test` 906 passed / 0 failed.
 
-- [ ] CRITICAL · `src-tauri/src/account/endpoint.rs` (whole new file), `src-tauri/src/account/commands.rs:44-293`, `src-tauri/src/account/mod.rs:1114-1209`, `src-tauri/src/fs_util.rs:44-137`, `src-tauri/src/main.rs:1576-1578`, `contract/common.ts:61-63`, `contract/multi-account.ts`, `src/features/accounts/EndpointForm.tsx`, `AccountRow.tsx`, `AccountsModal.tsx`, `accounts.ts`, `accounts.css`, `src/features/projects/DefaultsSection.tsx`, `projects.ts`, `src/features/sessions/AccountField.tsx`, `src/demo/fixtures.ts` · spec-violation · **Lead-owned — git history surgery, NOT a code change; awaiting the human's go-ahead.** Round-1 CRITICAL #2 unresolved and its remedy expired: the whole `multi-provider-endpoint` FR-1..FR-10 surface is mixed into this feature's diff, which §2 Non-goals explicitly disclaims ("Only `Account.kind` lands here" / "No error codes are added to `ErrorCode`"). It is now **committed** in `1ec2f0f`, so the approved "separate it at commit time" remedy no longer applies — separating it means rewriting `1ec2f0f` (reset + re-stage, or interactive rebase). → **Fix:** split `1ec2f0f` so the endpoint hunks land in their own commit, and land `multi-provider-endpoint`'s own re-review verdict first. This diff must not merge as-is under the `multi-provider-seam` spec. *(Merged from core CRITICAL #2 + frontend HIGH — same finding, both surfaces.)*
+- [ ] CRITICAL · `src-tauri/src/account/endpoint.rs` (whole new file), `src-tauri/src/account/commands.rs:44-293`, `src-tauri/src/account/mod.rs:1114-1209`, `src-tauri/src/fs_util.rs:44-137`, `src-tauri/src/main.rs:1576-1578`, `contract/common.ts:61-63`, `contract/multi-account.ts`, `src/features/accounts/EndpointForm.tsx`, `AccountRow.tsx`, `AccountsModal.tsx`, `accounts.ts`, `accounts.css`, `src/features/projects/DefaultsSection.tsx`, `projects.ts`, `src/features/sessions/AccountField.tsx`, `src/demo/fixtures.ts` · spec-violation · **Lead-owned — git history surgery, NOT a code change; awaiting the human's go-ahead.** Round-1 CRITICAL #2 unresolved and its remedy expired: the whole `multi-provider-endpoint` FR-1..FR-10 surface is mixed into this feature's diff, which §2 Non-goals explicitly disclaims ("Only `Account.kind` lands here" / "No error codes are added to `ErrorCode`"). It is now **committed** in `1ec2f0f`, so the approved "separate it at commit time" remedy no longer applies — separating it means rewriting `1ec2f0f` (reset + re-stage, or interactive rebase). → **Fix:** split `1ec2f0f` so the endpoint hunks land in their own commit, and land `multi-provider-endpoint`'s own re-review verdict first. This diff must not merge as-is under the `multi-provider-seam` spec. *(Merged from core CRITICAL #2 + frontend HIGH — same finding, both surfaces.)* — **history half fixed 2026-08-14** (roadmap Phase A): the branch was reset to its merge-base `9d47115` and re-committed as four scope-clean commits — `d958075` cohorte pipeline, `3470d1d` **seam only**, `d2ab6ee` **endpoint only**, `0511040` the `multi-provider-openai` spec (which belonged to neither). The eleven files that mixed both scopes (`contract/common.ts`, `contract/multi-account.ts`, `specs/_decisions.md`, `specs/refactor-backlog.md`, `src-tauri/src/account/{mod,registry,testutil,login}.rs`, `src/demo/fixtures.ts`, `accounts.test.ts`, `projects.test.ts`) were each written down to their seam-only form for `3470d1d` and restored for `d2ab6ee`; `git diff backup/pre-phase-a HEAD` is empty, so the split reproduces the old tree byte for byte. `npx tsc --noEmit` and `npm test` are green at both feature commits (1699 then 1720). The finding's **second half — "land `multi-provider-endpoint`'s own re-review verdict first" — is still open**, and is roadmap Phase C.
 
 - [x] HIGH · `src-tauri/src/session/stream/fixtures/turn.expected.json` + spec §4 FR-18 · spec-violation · Round-1 HIGH still open, no option chosen. FR-18/§1 claim the expected list was "generated once at the earliest point it can run (after FR-5+FR-6, before FR-1..FR-4)" so the trait extraction is proven a no-op **by construction**. No such intermediate state ever existed — the feature is one commit — so the list was generated against fully-refactored code. It locks future behaviour against a real transcript (valuable) but does not demonstrate pre/post equality, which §1 calls this feature's whole deliverable. → **Fix:** either (a) reconstruct an independent witness, or (b) amend FR-18/§1 to state the no-op claim rests on the test suite plus review. — fixed: **option (b)**, ruled in on evidence, not on cost — see the round-1 HIGH line above for the full reasoning (FR-6's amendment makes (a)'s generating point unreachable, so (a) yields no diff either). FR-18 and §1 amended.
 
@@ -404,5 +528,15 @@ omitted from the front-matter deliberately.
 - [x] MEDIUM · `contract/multi-account.ts:102` · quality (serde-drift risk) · `AccountUpdateEndpointPayload.modelIds?: string[] | null` needs three distinct states (omitted / `null` / array) but a plain `Option<Vec<String>>` Rust mirror cannot distinguish omitted from null, risking a silent override-clear on any partial update. → **Fix:** mirror with the double-`Option` pattern, or record that every caller makes the ambiguous state unreachable. — **verified, not a defect; no code change.** The mirror is not a plain `Option<Vec<String>>`: `src-tauri/src/account/endpoint.rs:171` defines a three-state `ModelIdsUpdate { Unset, Clear, Set(Vec<String>) }`, and `model_ids_update_from` (`endpoint.rs:185-193`) maps absent → `Unset`, `Value::Null` → `Clear`, array → `Set`, driven by a hand-written `CommandArg` impl (`commands.rs:20-29`) precisely because Tauri's automatic derive would collapse the two. `apply_update_endpoint` (`endpoint.rs:232-234`) then leaves `model_ids` untouched on `Unset` and clears only on `Clear`, with unit coverage at `endpoint.rs:531,538`. The finding's own escape hatch ("record that the ambiguous state is unreachable") is satisfied by construction. *(Also note: `AccountUpdateEndpointPayload` is `multi-provider-endpoint`'s contract, not this feature's §5 — it rides on the scope split above.)*
 
 - [x] LOW · `.cargo-test.log:1` (new file) · quality · A raw local `cargo test` run log was committed — Windows junction messages and temp paths embedding the developer's real Windows username (`C:\Users\gnzan\...`), not covered by `.gitignore`, reporting a stale count ("898 passed") that contradicts the spec's own remediation note ("901 passed"). → **Fix:** `git rm .cargo-test.log` and add it to `.gitignore`.
+
+### 2026-08-14 — architecture review (lead-initiated, not a review round)
+
+Compared against an external architecture doc for the multi-provider arc
+(`multi-provider-agent-architecture.md`). Two amendments landed above (FR-11a/FR-13a/FR-14a, the
+runtime/protocol split; FR-15's rewording) and one new draft spec was opened
+(`specs/capability-registry.md`). The rewording is already applied to
+`contract/multi-provider-seam.ts`. The split is **spec-only so far** — one open item:
+
+- [ ] HIGH · `contract/common.ts`, `contract/multi-provider-seam.ts`, `src-tauri/src/session/adapter/mod.rs`, `src-tauri/src/session/persistence.rs`, `src-tauri/src/session/mod.rs`, plus every `SessionMeta` fixture · spec-violation · The shipped code implements the **superseded** FR-11/FR-13/FR-14: one `SessionProvider` discriminator, `SessionMeta.provider`, `Provider`/`adapter_for`, `providerCapabilities`. FR-11a/FR-13a/FR-14a replace that with `agentRuntime` + `protocol`, `AgentRuntime::from_account_kind` returning the pair, dispatch on `agentRuntime` alone, and `runtimeCapabilities`. → **Fix:** one build pass across both surfaces implementing FR-11a/FR-13a/FR-14a, including the persistence fallbacks (absent ⇒ `('claude-code','anthropic')`; superseded `provider` key mapped per FR-11a) and the `RuntimeCapability`/`RuntimeCapabilities` rename. Do this **before** `multi-provider-openai` is dispatched — that feature's `OpenAiAdapter` is the first consumer of both axes, and building it against the collapsed enum is what the amendment exists to avoid.
 
 **Deferred (out of scope — recorded, not dispatched).** LOW · `src/features/sessions/rename.test.ts:20`, `src/lib/panelCountsStore.test.ts:11`, `src/features/sessions/useSessionFleetSync.test.ts:11`, `src/lib/split-by-4.test.ts:55` · quality · these pre-existing `SessionMeta` fixtures use `as unknown as SessionMeta` (a full bypass), so they compiled without every required field before this diff and will keep silently missing future required fields including `provider`. → Replace the blanket bypass casts with fully-populated fixture builders. Untouched by this diff; the pattern predates the feature.
