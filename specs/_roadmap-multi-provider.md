@@ -162,13 +162,16 @@ planned — four reviewers at once (both features × both surfaces), one preflig
   - FR-3/FR-15 key boundary holds — only `hasKey`/`baseUrl` cross to the frontend; no key material
     in any store, log, `title`, or error copy.
   - FR-14 holds — both pickers render the endpoint option `disabled`, never filtered out.
-- [ ] Fix pass — **2 MEDIUM open, neither blocking**:
-  - `EndpointForm.tsx:161-163` — the Base URL error border fires on Save but not on a
-    `Test`-triggered `INVALID_INPUT`, so the design brief's validation state is half-wired.
-  - `account/commands.rs:367,436,450` — the three FR-7 `INVALID_INPUT` guards sit inline in
-    `#[tauri::command]` handlers with no test harness, so **acceptance criterion §9 is unverified by
-    `cargo test`**. Extract them to pure fns in `endpoint.rs` alongside `model_ids_update_from`.
-- [ ] `status: frozen` → SHIP-ready — held until the two MEDIUMs are fixed or explicitly parked.
+- [x] Fix pass — both MEDIUMs closed by `8fb9a2e` *(2026-08-16)*:
+  - `EndpointForm.tsx:161-163` — the Base URL error border fired on Save but not on a
+    `Test`-triggered `INVALID_INPUT`. Extracted `endpointBaseUrlHasError(saveError, probeError)`,
+    both paths + negatives covered.
+  - `account/commands.rs:367,436,450` — the three FR-7 `INVALID_INPUT` guards were inline in
+    `#[tauri::command]` handlers with no harness. Extracted to `validate_key_clear_conflict`,
+    `validate_model_ids_on_add`, `validate_model_ids_on_update` in `endpoint.rs`, a test each.
+    Behaviour unchanged (same codes, messages, ordering) — **§9 is now verified by `cargo test`**.
+- [ ] `status: in-review` → `shipped` — the spec's own front matter still says `in-review`; flip it
+      with Phase F, since the verdict is SHIP and nothing is open.
 
 ## Phase D — seam re-review, round 3 · ~1 hr — **REVIEWED 2026-08-16, verdict REVISE**
 
@@ -184,7 +187,14 @@ planned — four reviewers at once (both features × both surfaces), one preflig
     which is the Phase E precondition.
   - **`as unknown as SessionMeta` is gone from `src/` entirely**, with no substitute escape hatch.
     The round-2 backlog item is closed.
-- [ ] **The one CRITICAL — the golden replay, escalated.** Phase A logged it as a known local
+- [x] **The one CRITICAL — the golden replay, escalated.** Closed by `6d3c50d` *(2026-08-16)*, via
+      the reviewer's option (a): `SessionEnv::discover_commands(&self, cwd) -> Vec<SkillInfo>`, the
+      `AppHandle` impl delegating to `discover_skills(cwd)` unchanged, `TestEnv` returning a fixed
+      two-entry inventory that never touches disk, and `handle_system_line` calling through the env.
+      `turn.expected.json`'s `session.commands` entries regenerated against that fixed inventory;
+      **every other event byte-unchanged — the canary held.** The red proved itself during the fix
+      (this machine carries a `cohorte-patch` skill the capture machine did not). `cargo test`
+      912 passed / 0 failed. Phase A logged it as a known local
       failure; round 3 rules it a **merge blocker**, and it is the seam's own architecture that is
       wrong, not just the fixture. `handle_system_line` (`stream/lines.rs:50`) builds
       `session.commands` from `discover_skills(cwd)` (`session/skills.rs:141`), which reads the live
@@ -197,27 +207,110 @@ planned — four reviewers at once (both features × both surfaces), one preflig
       today's `discover_skills`, `TestEnv`/the golden supplying a fixed list. Option (b)
       (normalize `session.commands` out of the comparison) would drop coverage of one of FR-17's
       seven mandated line kinds and read as a weakened test under FR-19.
-- [ ] Target: SHIP verdict on the seam + endpoint pair **before any openai code exists** — **not yet
-      met.** Endpoint is SHIP; the seam needs this one fix, then a re-review of the touched surface.
+- [x] Target: SHIP verdict on the seam + endpoint pair **before any openai code exists** — **met
+      2026-08-16.** Endpoint SHIP (round 2), seam SHIP (round 4, 0 findings across both surfaces);
+      `specs/multi-provider-seam.md` is `status: shipped` with its freshness anchor filled in
+      (`reviewed_base 9d47115`, digest `f94d48b5b2e3548a`). Phase E is unblocked.
 
-## Phase E — build `multi-provider-openai` · multi-day
+## Phase E — build `multi-provider-openai` · multi-day — **IN PROGRESS 2026-08-16**
 
 27 FRs. Sequenced to front-load risk.
 
-- [ ] **1. The gate first, TDD-red-proven.** FR-9..FR-13 is the spec's own highest-severity
-      requirement. Write the tests before the loop exists and *prove they fail*: an unmatched tool
-      asks; a `deny` rule never executes; `plan` refuses `Write`/`Edit`/`Bash`; `acceptEdits`
-      auto-allows only `Write`/`Edit`; a `cwd` escape is refused **before** any card.
-- [ ] **2. Lift the `pattern`/`patternLabel` builder** out of `claude_code.rs` into a module both
-      adapters call (FR-11). Own commit — this touches seam code, and the golden replay test is
-      what proves it moved no behaviour.
-- [ ] **3. The loop** — SSE parse (FR-4), tool-call accumulation **by `index`** (FR-5), the 50-round
-      cap (FR-6), context refusal (FR-7), interrupt consistency (FR-8), thread persistence
-      (FR-16/FR-17).
-- [ ] **4. Skill injection** (FR-23..FR-27) reusing `session/skills.rs`'s discovery — **no second
-      filesystem walk**. Flip `skills` to `available: true` for the `francois` runtime.
-- [ ] **5. Frontend** — disabled-pane treatment (FR-20), model picker grouping (FR-21), first-turn
-      notice (FR-19), and **delete** `multi-provider-endpoint` FR-14 (FR-22).
+- [x] **1. The gate first, TDD-red-proven.** FR-9..FR-13 — **done**, `openai/gate.rs`, 18 tests, red
+      proven first. `evaluate(tool, input, cwd, permission_mode, rules) -> GateDecision` +
+      `resolve_in_cwd`. Every listed case covered, plus `bypassPermissions` and the
+      unrecognised-mode-is-`default` fail-closed half.
+  - **No rule matcher existed anywhere in the core** — Claude Code matches upstream, so one had to be
+    written. It is built only on the existing `path_key`/`path_relative_to_cwd`/`split_pattern`
+    primitives and pinned by the invariant that matters: *a pattern `generate_pattern` produces for a
+    call always matches that same call*, table-tested over all six tools. Without it the loop would
+    silently re-ask for what the user already allowed — the exact failure the 2026-08-12 `naming`
+    decision exists to prevent. **Ceiling:** it understands `generate_pattern`'s own shapes only (bare
+    tool, `Tool(path)`, `Bash(prefix:*)`, `Bash(exact)`), which matches `permission-guardrails` §2's
+    stated non-goal; hand-typed arbitrary globs would need a real glob engine.
+  - **Interpretation, flagged for review:** FR-12's "`bypassPermissions` skips the gate entirely" is
+    read as skipping the *approval step*; FR-13's "confined to the session's `cwd`" carries no mode
+    qualifier, so containment runs **before the mode is consulted, in every mode**. Pinned by
+    `bypass_permissions_does_not_bypass_cwd_containment`.
+  - **One string the spec never pinned:** FR-10's deny message is verbatim, FR-12's plan-mode refusal
+    is only "a refusal string". Chose `"Francois: {tool} is not available while this session is in
+    plan mode."`, echoing `permission-guardrails` FR-12's own `Francois: …` prefix.
+- [x] **2. Lift the `pattern`/`patternLabel` builder** out of `claude_code.rs` into a module both
+      adapters call (FR-11) — **already true, no work needed.** `generate_pattern` /
+      `label_for_pattern` / `build_ask` are public in `src-tauri/src/permissions/patterns.rs` and
+      called from five sites (`session/stdio.rs:181`, `commands/decisions.rs:254`,
+      `persistence.rs:1051`, `permissions/rules.rs:125`, `session/events.rs:295`). `claude_code.rs`
+      never owned them — it only peeks a *pending* ask's pattern (`peek_permission_pattern:161`).
+      FR-11's conditional ("**if** that builder is private to `claude_code.rs`") does not fire, so
+      the planned own-commit refactor is a no-op and the golden-replay canary has nothing to prove
+      here. `OpenAiAdapter` calls `permissions::build_ask` directly.
+
+**Crate decision taken 2026-08-16, logged in `_decisions.md`.** The core has **no async runtime at
+all** — no `tokio`, no `reqwest`; `ureq = "2"` (blocking) is the only HTTP client, used today by the
+endpoint probe (`account/endpoint.rs:300`) and the update checker. The Francois loop therefore
+streams SSE over blocking `ureq` on a spawned thread, which is the shape `begin_turn` already uses
+(`claude_code.rs:323-339` hands stdout to a reader thread). Pulling an async runtime into a
+zero-async crate would be a larger change than the feature it serves.
+- [~] **3. The loop.** Components **done**, orchestration in flight.
+  - [x] `openai/wire.rs` (22 tests) — FR-3 request envelope + the six JSON-schema tool declarations,
+        FR-4 incremental SSE decode (safe across a chunk boundary mid-line), FR-5 accumulation **by
+        `index`** with malformed JSON degrading to an error string, `MAX_ROUND_TRIPS = 50` (FR-6),
+        FR-7 context table mirrored + pinned against the contract, §7 error mapping with a test that
+        the key never reaches a message. Fixture:
+        `openai/fixtures/sse_turn.txt` — interleaved indices, `arguments` split across three chunks,
+        a heartbeat line, `[DONE]`; replayed three ways (one push / mid-line split / byte at a time).
+  - [x] `openai/tools.rs` (44 tests) — the six executors + an `execute` dispatcher. Containment is
+        **not** re-implemented here: the five path tools take an already-resolved `&Path` from
+        `gate::resolve_in_cwd`, and `Bash` is FR-13's stated exception.
+  - [x] `openai/thread.rs` (10 tests) — FR-16 atomic write reusing `valid_session_id`, FR-17
+        corrupt-file degrade to a fresh thread + `session.resumeFailed`, and FR-8's
+        `drop_unanswered_tool_calls` as a **pure** pass the loop runs before every write.
+  - [x] `openai/runner.rs` — `OpenAiAdapter`/`FrancoisTurnHandle`, the round-trip loop, the
+        permission park, `adapter_for` registration + **`UnavailableAdapter` deleted** (FR-1: the
+        match stays total *through the real implementation*), FR-19's notice.
+    - The park is the one genuinely new mechanism: the Claude path answers over a pipe, so the
+      Francois loop instead mirrors `stdio.rs`'s park half (`build_ask` → pending entry →
+      `buf_permission` → `append_transcript` → `PermissionAsked` → `refresh_parked_status`, reusing
+      `claim_pending` for the exactly-once claim) and blocks the loop thread on a `Condvar` that
+      `decide_permission` signals.
+    - **Covered by unit tests:** the round-trip cap and context-refusal predicates, unknown-tool and
+      malformed-argument → error-string mapping, `ThreadToolCall` reconstruction, request-message
+      assembly (skill block prepended, never mutating the persisted array), path resolution, and
+      `resolve_models`. **Integration-only** (this crate has no `AppHandle` harness — its documented
+      convention): `begin_turn`/`run_loop` itself, the park/wake race, and `interrupt`/`kill`.
+- [x] **FR-18's wire gap, closed.** `session_models` took no account or session, so
+      `models(account_id)` could never be reached with an endpoint account and FR-18 could not
+      function. It now takes `session_id: Option<String>`, resolves `(agentRuntime, accountId)` off
+      the session and routes through `adapter_for(runtime).models(...)`; an omitted or unknown id
+      falls back to `(ClaudeCode, "default")`, **byte-identical to the old behaviour**. The decision
+      is a pure `resolve_models_target`, unit-tested. `contract/session-engine.ts` gained
+      `SessionModelsInput`; every existing call site still passes nothing.
+- [x] **4. Skill injection** (FR-23..FR-27) — `openai/skills.rs`, 8 tests.
+      `build_skill_block(env, cwd) -> SkillBlock`, 8_000-char cap (Unicode scalars, not bytes),
+      deterministic across turns. **No second filesystem walk and no `SessionEnv` change was needed**
+      — Phase D's `discover_commands` (`6d3c50d`) already routed discovery correctly, so the fix that
+      unblocked this branch paid for itself here. FR-26 flip landed in
+      `contract/multi-provider-seam.ts`, and the seam test's "nothing available on francois yet" case
+      was **rewritten to assert the new truth**, not deleted.
+- [x] **5. Frontend** — FR-20 disabled-pane treatment via a new `src/lib/runtimeCapability.ts`
+      (`sessionCapability`) + a shared `src/ui/CapabilityNotice.tsx`, wired into all four panes, the
+      usage bar and the slash menu; FR-22's disabled-endpoint block deleted from `accounts.ts`,
+      `AccountField`, `DefaultsSection`, `projects.ts` and `AccountRow` + css. **FR-20's grep gate is
+      clean — zero direct `agentRuntime`/`protocol` branches in `src/`.** FR-19 is core-emitted (its
+      renderer already existed at `CommandCard.tsx:48`), so it moved to the runner.
+  - [ ] **FR-21's provider heading is blocked, not skipped.** The grouping logic is extracted and
+        tested (`features/sessions/model-picker.ts`), but `session_models` carries **no account or
+        session on the wire** (`claude_code.rs:344-352` documents it), so FR-18's endpoint catalog
+        can never reach the picker and there is nothing to group by provider. Widening that command
+        is folded into the runner's dispatch; the heading follows it, sourced from the session's
+        **account label** — never from `agentRuntime`/`protocol`, which FR-20 forbids.
+
+**Two lead decisions taken during the build, both now pinned by tests.** `Grep` became a real regex
+tool (`regex` 1.13.1 added) rather than the literal-substring matcher it was first built as — it
+carries Claude Code's name, so a model sends `fn \w+` and silently got zero matches. And `Bash`'s
+`timeout` is **seconds**, per FR-14's own wording, diverging deliberately from Claude Code's
+millisecond schema; the schema description says so outright and a regression test guards it, because
+a revert to milliseconds would look like a fix rather than a 5000× unit error.
 
 **Gate:** the seam's golden replay (`src-tauri/src/session/stream/fixtures/turn.expected.json`)
 still passes **untouched**. That is the regression canary for the whole phase — a diff there means

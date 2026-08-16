@@ -57,6 +57,7 @@
 - 2026-08-14 · naming · A session carries TWO axes — `agentRuntime` (who owns the loop) and `protocol` (the wire dialect); the vendor is named by the account, by neither axis — because Claude Code honours ANTHROPIC_BASE_URL, so runtime×dialect is a real matrix one enum cannot name · supersedes 2026-08-12 naming · multi-provider-seam
 - 2026-08-14 · ui · A capability that is merely not built yet says "yet"; only a genuine vendor service states what it is — because "X is a Claude Code feature" writes a v1 gap into the architecture and the next agent reads it as settled · multi-provider-seam
 - 2026-08-14 · api · Skills port across runtimes (name+description injected into the system prompt); MCP, subagents and workflows do not until they have a client/dispatcher — because a skill's whole mechanism is instructions, and the discovery already exists · multi-provider-openai
+- 2026-08-16 · stack · The Francois loop streams SSE over the crate's existing blocking `ureq` on a spawned thread — no `tokio`, no `reqwest`, no async runtime — because the core has zero async today and `begin_turn` already hands work to a reader thread, so an async runtime would be a larger change than the feature it serves · multi-provider-openai
 
 ## Superseded
 
