@@ -14,6 +14,7 @@
 //! child" shape the rest of this domain follows.
 
 mod claude_code;
+mod openai;
 
 pub(crate) use claude_code::ClaudeCodeAdapter;
 // `session_compact` (a synchronous side-spawn, not a full turn) and the
@@ -21,6 +22,9 @@ pub(crate) use claude_code::ClaudeCodeAdapter;
 // engine-shaped" reasoning `spawn.rs`'s module doc gives for keeping them out
 // of the pure argv/env helpers.
 pub(crate) use claude_code::{child_stdout_lines, spawn_claude};
+/// multi-provider-openai FR-1: the real `AgentRuntime::Francois` adapter —
+/// `UnavailableAdapter` is gone, not kept alongside it.
+pub(crate) use openai::OpenAiAdapter;
 
 use super::*;
 
@@ -203,41 +207,8 @@ pub(crate) trait SessionAdapter: Send + Sync {
     fn models(&self, app: &AppHandle, account_id: &str) -> Vec<ModelInfo>;
 }
 
-fn unavailable_error() -> AppError {
-    AppError {
-        code: "INVALID_INPUT".into(),
-        message: "provider not available in this build".into(),
-        detail: None,
-    }
-}
-
-/// FR-4/FR-14a: `AgentRuntime::Francois` resolves to this stub — unreachable
-/// today, since no account can carry a kind that maps to it yet
-/// (multi-provider-openai adds it). Exists so `adapter_for`'s match is total
-/// rather than a `panic!`.
-struct UnavailableAdapter;
-
-impl SessionAdapter for UnavailableAdapter {
-    fn agent_runtime(&self) -> AgentRuntime {
-        AgentRuntime::Francois
-    }
-    fn preflight(&self, _app: &AppHandle, _ctx: &TurnContext) -> Result<(), AppError> {
-        Err(unavailable_error())
-    }
-    fn begin_turn(
-        &self,
-        _app: &AppHandle,
-        _ctx: TurnContext,
-    ) -> Result<std::sync::Arc<dyn TurnControl>, AppError> {
-        Err(unavailable_error())
-    }
-    fn models(&self, _app: &AppHandle, _account_id: &str) -> Vec<ModelInfo> {
-        Vec::new()
-    }
-}
-
 static CLAUDE_CODE_ADAPTER: ClaudeCodeAdapter = ClaudeCodeAdapter;
-static UNAVAILABLE_ADAPTER: UnavailableAdapter = UnavailableAdapter;
+static OPENAI_ADAPTER: OpenAiAdapter = OpenAiAdapter;
 
 /// FR-4/FR-14a: dispatch a session's `agentRuntime` ALONE to its adapter —
 /// `protocol` is read inside the `francois` runtime to pick the wire codec,
@@ -245,7 +216,7 @@ static UNAVAILABLE_ADAPTER: UnavailableAdapter = UnavailableAdapter;
 pub(crate) fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter {
     match runtime {
         AgentRuntime::ClaudeCode => &CLAUDE_CODE_ADAPTER,
-        AgentRuntime::Francois => &UNAVAILABLE_ADAPTER,
+        AgentRuntime::Francois => &OPENAI_ADAPTER,
     }
 }
 

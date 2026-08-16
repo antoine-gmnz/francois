@@ -45,6 +45,19 @@
   margin-top: var(--space-5);
 }
 
+/* multi-provider-openai FR-21: the neutral group heading above the family
+   list — text only, no chip/accent/icon (design brief §5). Same dim,
+   letter-spaced treatment as the form's own section labels
+   (`.new-session-modal__label`), uppercased in CSS rather than in the
+   string so an arbitrary account label still reads as a small-caps heading. */
+.model-picker__provider-heading {
+  padding: var(--space-8) var(--space-10) var(--space-4);
+  font-size: var(--font-size-10);
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 /* Shared panel look for both the family list and the flown-out submenu. */
 .model-picker__panel {
   background: var(--bg-panel);

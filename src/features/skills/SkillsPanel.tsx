@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SkillInfo } from '../../../contract/common';
 import { skillsInstall, skillsRun } from '../../lib/api';
+import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { HintBar } from '../../ui/HintBar';
 import { Modal, ModalHeader } from '../../ui/Modal';
@@ -17,6 +18,11 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
   const focused = focusedPane === 'skills';
 
   const { skills, status, listError, refetch } = useSkillsFeed(sessionId);
+  // multi-provider-openai FR-20/FR-26: skills' capability for this session's
+  // runtime — currently false for `francois` until a core agent injects at
+  // least one skill (FR-26); this reads the table, never hardcodes around it.
+  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
+  const capability = sessionCapability(meta, 'skills');
 
   const [runModal, setRunModal] = useState<{ name: string } | null>(null);
   const [installModal, setInstallModal] = useState<{ name: string; description: string; pluginId?: string } | null>(null);
@@ -55,6 +61,7 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
       <PanelHeader title="SKILLS" count={skills.length} paneKey={5} focused={focused} />
 
       <SkillsListBody
+          capability={capability}
           filterOpen={filterOpen}
           query={query}
           filterRef={filterRef}

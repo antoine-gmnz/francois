@@ -48,14 +48,24 @@ export function sourceTag(c: SlashCommandInfo): string {
 
 // ---------- visibility (FR-5/9/12) ----------
 
-/** The popup renders iff eligible AND ≥1 match AND not dismissed at this token AND composer enabled. */
+/**
+ * The popup renders iff eligible AND not dismissed at this token AND composer
+ * enabled, AND — when interactiveCommands is available — at least one match.
+ *
+ * multi-provider-openai FR-20: when the capability is unavailable, the
+ * `matchCount` gate is dropped so the popup still opens (there is never a
+ * registry to match against) and shows the disabled-pane treatment instead of
+ * rows — the same "never render empty" rule every other consumer follows.
+ */
 export function popupVisible(args: {
   token: string | null;
   matchCount: number;
   dismissedToken: string | null;
   disabled: boolean;
+  available: boolean;
 }): boolean {
-  return args.token !== null && args.matchCount > 0 && args.dismissedToken !== args.token && !args.disabled;
+  if (args.token === null || args.dismissedToken === args.token || args.disabled) return false;
+  return args.available ? args.matchCount > 0 : true;
 }
 
 /**

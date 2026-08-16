@@ -22,6 +22,7 @@ import {
 } from './message-history';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { composerPlaceholder, hasPendingQuestionBlock } from '../questions/question-card';
+import { sessionCapability } from '../../lib/runtimeCapability';
 import {
   completionText,
   filterCommands,
@@ -160,7 +161,15 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
 
   const token = slashToken(input);
   const filtered = useMemo(() => filterCommands(commands, token ?? ''), [commands, token]);
-  const popupOpen = popupVisible({ token, matchCount: filtered.length, dismissedToken, disabled });
+  // multi-provider-openai FR-20: interactiveCommands' capability for this session.
+  const interactiveCommandsCapability = sessionCapability(meta, 'interactiveCommands');
+  const popupOpen = popupVisible({
+    token,
+    matchCount: filtered.length,
+    dismissedToken,
+    disabled,
+    available: interactiveCommandsCapability.available,
+  });
 
   // FR-9: dismissal holds only while the token stays the dismissed one.
   useEffect(() => {
@@ -439,6 +448,7 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
         onHover={setSelIdx}
         onRun={runCommand}
         onDismiss={dismissPopup}
+        popupUnavailableReason={interactiveCommandsCapability.available ? null : (interactiveCommandsCapability.reason ?? null)}
       />
       )}
     </div>

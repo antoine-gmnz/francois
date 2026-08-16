@@ -298,6 +298,44 @@ pub fn kind_of(app: &AppHandle, account_id: &str) -> AccountKind {
         .unwrap_or_default()
 }
 
+/// What an `openai-compatible` account needs to issue a request
+/// (multi-provider-openai FR-2/FR-3/FR-18): the normalized base URL, the
+/// `modelIds` override if the account carries one, and the config dir the key
+/// sidecar lives in.
+///
+/// `None` for the built-in `default` account, for an unknown id, and for any
+/// account whose kind is not `OpenAiCompatible` — FR-2's preflight turns each of
+/// those into `INVALID_INPUT` before any I/O.
+///
+/// **The key is deliberately not returned.** It is read from
+/// `<configDir>/endpoint-key` per request (`endpoint::read_key`, FR-3) and never
+/// held in session state — the write-only boundary the 2026-08-12 `auth`
+/// decision draws. Handing back a config dir keeps that read at the call site,
+/// where it is one line and cannot be accidentally cloned into a struct that
+/// outlives the request.
+/// `pub(crate)` rather than `pub` like its two neighbours: it hands back
+/// `EndpointRecord`, which is itself `pub(crate)`, and a `pub` fn leaking a
+/// private type is a `private_interfaces` warning.
+pub(crate) fn endpoint_of(app: &AppHandle, account_id: &str) -> Option<(EndpointRecord, String)> {
+    if account_id == DEFAULT_ACCOUNT_ID {
+        return None;
+    }
+    app.try_state::<AccountState>().and_then(|s| {
+        let Ok(inner) = s.0.lock() else {
+            return None;
+        };
+        let record = inner.records.iter().find(|r| r.id == account_id)?;
+        if record.kind != AccountKind::OpenAiCompatible {
+            return None;
+        }
+        // `account_record_invariant_holds` drops any OpenAiCompatible record
+        // with no endpoint at load, so `None` here means the registry was
+        // mutated out from under us — still not a panic.
+        let endpoint = record.endpoint.clone()?;
+        Some((endpoint, record.config_dir.clone()))
+    })
+}
+
 /// FR-10: every account id a persisted `SessionMeta.accountId` may resolve
 /// against — the built-in id plus every registered one.
 pub fn known_ids(app: &AppHandle) -> std::collections::HashSet<String> {

@@ -57,7 +57,12 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
   francois: {
     mcp: { available: false, reason: "MCP servers aren't available on this provider yet." },
     subagents: { available: false, reason: "Subagents aren't available on this provider yet." },
-    skills: { available: false, reason: "Skills aren't available on this provider yet." },
+    // multi-provider-openai FR-23..FR-27: a skill is markdown instructions, and
+    // the Francois loop injects the installed set into its system message —
+    // the one capability that actually ports across runtimes. See
+    // OpenAiAdapter's skills.rs for the injection and specs/multi-provider-
+    // openai.md §4 "Core — skills" for why this is the sole exception.
+    skills: { available: true },
     workflows: { available: false, reason: "Workflows aren't available on this provider yet." },
     interactiveCommands: {
       available: false,

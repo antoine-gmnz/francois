@@ -40,11 +40,8 @@ export function DefaultsSection({
             >
               {stale && <option value={value}>{`${value} (unavailable)`}</option>}
               {field.options.map((o) => (
-                <option key={o.value} value={o.value} disabled={o.disabled} title={o.disabledReason}>
+                <option key={o.value} value={o.value}>
                   {o.label}
-                  {/* multi-provider-endpoint FR-14: visible reason, not just a native
-                      disabled option a mouse-only user could still miss. */}
-                  {o.disabled && o.disabledReason ? ` — ${o.disabledReason}` : ''}
                 </option>
               ))}
             </select>

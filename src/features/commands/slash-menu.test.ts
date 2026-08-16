@@ -98,23 +98,61 @@ describe('sourceTag (FR-6)', () => {
 
 describe('popupVisible (FR-5/9/12)', () => {
   it('renders iff eligible, matching, not dismissed, composer enabled', () => {
-    expect(popupVisible({ token: 'us', matchCount: 2, dismissedToken: null, disabled: false })).toBe(true);
-    expect(popupVisible({ token: '', matchCount: 7, dismissedToken: null, disabled: false })).toBe(true);
+    expect(popupVisible({ token: 'us', matchCount: 2, dismissedToken: null, disabled: false, available: true })).toBe(true);
+    expect(popupVisible({ token: '', matchCount: 7, dismissedToken: null, disabled: false, available: true })).toBe(true);
   });
 
   it('never renders when not eligible or nothing matches', () => {
-    expect(popupVisible({ token: null, matchCount: 7, dismissedToken: null, disabled: false })).toBe(false);
-    expect(popupVisible({ token: 'zzz', matchCount: 0, dismissedToken: null, disabled: false })).toBe(false);
+    expect(popupVisible({ token: null, matchCount: 7, dismissedToken: null, disabled: false, available: true })).toBe(
+      false,
+    );
+    expect(popupVisible({ token: 'zzz', matchCount: 0, dismissedToken: null, disabled: false, available: true })).toBe(
+      false,
+    );
   });
 
   it('stays hidden while dismissed at the same token, reopens on a different one', () => {
-    expect(popupVisible({ token: 'us', matchCount: 2, dismissedToken: 'us', disabled: false })).toBe(false);
-    expect(popupVisible({ token: '', matchCount: 7, dismissedToken: '', disabled: false })).toBe(false);
-    expect(popupVisible({ token: 'usa', matchCount: 1, dismissedToken: 'us', disabled: false })).toBe(true);
+    expect(popupVisible({ token: 'us', matchCount: 2, dismissedToken: 'us', disabled: false, available: true })).toBe(
+      false,
+    );
+    expect(popupVisible({ token: '', matchCount: 7, dismissedToken: '', disabled: false, available: true })).toBe(
+      false,
+    );
+    expect(popupVisible({ token: 'usa', matchCount: 1, dismissedToken: 'us', disabled: false, available: true })).toBe(
+      true,
+    );
   });
 
   it('never renders when the composer is disabled (FR-12)', () => {
-    expect(popupVisible({ token: '', matchCount: 7, dismissedToken: null, disabled: true })).toBe(false);
+    expect(popupVisible({ token: '', matchCount: 7, dismissedToken: null, disabled: true, available: true })).toBe(
+      false,
+    );
+  });
+
+  // multi-provider-openai FR-20: interactiveCommands unavailable — the popup
+  // still opens (to show the disabled-pane reason) even with zero matches, but
+  // stays governed by eligibility/dismissal/disabled exactly like the normal path.
+  describe('when interactiveCommands is unavailable (multi-provider-openai FR-20)', () => {
+    it('opens with zero matches, unlike the available path', () => {
+      expect(popupVisible({ token: '', matchCount: 0, dismissedToken: null, disabled: false, available: false })).toBe(
+        true,
+      );
+      expect(
+        popupVisible({ token: 'anything', matchCount: 0, dismissedToken: null, disabled: false, available: false }),
+      ).toBe(true);
+    });
+
+    it('still respects eligibility, dismissal and the disabled composer', () => {
+      expect(popupVisible({ token: null, matchCount: 0, dismissedToken: null, disabled: false, available: false })).toBe(
+        false,
+      );
+      expect(popupVisible({ token: '', matchCount: 0, dismissedToken: '', disabled: false, available: false })).toBe(
+        false,
+      );
+      expect(popupVisible({ token: '', matchCount: 0, dismissedToken: null, disabled: true, available: false })).toBe(
+        false,
+      );
+    });
   });
 });
 

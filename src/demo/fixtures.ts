@@ -89,8 +89,8 @@ export const ACCOUNTS: Account[] = [
     createdAt: T0 - (60 * 24 * 40) * MIN,
     kind: 'claude-code-oauth',
   },
-  // multi-provider-endpoint FR-13: a demo row so the kind chip, base-URL line
-  // and "sessions not yet available" note are visible in the demo fleet.
+  // multi-provider-endpoint FR-13: a demo row so the kind chip and base-URL
+  // line are visible in the demo fleet — fully selectable per FR-22.
   {
     id: 'acct-openai',
     label: 'OpenAI',

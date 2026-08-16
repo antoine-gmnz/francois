@@ -58,10 +58,14 @@ describe('runtimeCapabilities', () => {
     }
   });
 
-  it('makes nothing available on the francois runtime yet', () => {
+  it('makes nothing available on the francois runtime yet, except skills', () => {
+    // multi-provider-openai FR-23..FR-27: skills is the one capability that
+    // ports across runtimes (markdown instructions, injected into the
+    // system message) — every other gap in the table still holds.
     const caps = runtimeCapabilities('francois');
     for (const capability of CAPABILITIES) {
-      expect(caps[capability].available).toBe(false);
+      const expected = capability === 'skills';
+      expect(caps[capability].available).toBe(expected);
     }
   });
 

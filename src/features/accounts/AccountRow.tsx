@@ -29,7 +29,6 @@ import {
   accountMetersView,
   accountNeedsLogin,
   endpointBaseUrlLine,
-  endpointRowNote,
 } from './accounts';
 
 // One size and one weight for every icon in the row — 13px reads level with the
@@ -98,7 +97,6 @@ export function AccountRow({
   // Design brief §1: an endpoint row's second line is its base URL (dim,
   // middle-truncated, `no key` when keyless) instead of email/session count.
   const meta = isEndpoint ? endpointBaseUrlLine(account) : accountMetaLine(account, sessionCount);
-  const note = endpointRowNote(account);
   const meters = accountMetersView(snapshot, now);
 
   useEffect(() => {
@@ -148,9 +146,6 @@ export function AccountRow({
             {needsLogin && <span className="acc-pill acc-pill--alert">NEEDS LOGIN</span>}
           </div>
           {meta && !renaming && <span className="truncate acc-meta">{meta}</span>}
-          {/* multi-provider-endpoint FR-14 / design brief §1: dim, one line,
-              removed the moment multi-provider-openai lands. */}
-          {note && !renaming && <span className="acc-endpoint-note">{note}</span>}
         </div>
 
         {/* Icon-only, with the label on `title`/`aria-label`: the mock's rows

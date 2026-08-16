@@ -152,6 +152,21 @@ export function accountIdForSessionCreate(accountId: AccountId): AccountId {
 }
 
 /**
+ * multi-provider-openai FR-21: the model picker's neutral group heading —
+ * the SELECTED account's own label, sourced here (not from `agentRuntime`/
+ * `protocol`, which FR-20's grep gate forbids any component from branching
+ * on). "Provider is metadata, not identity" (design brief §Rule 1): this is
+ * deliberately the account's label, not a vendor name — a GPT session and a
+ * Claude session read as the same kind of object, just under a different
+ * account. Empty before the registry hydrates (or for an id it never knew),
+ * so the picker simply renders no heading yet rather than a fabricated one.
+ */
+export function modelPickerProviderHeading(accounts: Account[], accountId: AccountId): string {
+  const account = findAccount(accounts, accountId);
+  return account ? accountDisplayLabel(account) : '';
+}
+
+/**
  * FR-30: which account's snapshot the usage bar renders and the status-bar chip
  * names — the SELECTED session's, or the isDefault account with no session
  * selected. An accountId that no longer resolves reads as the default (FR-10).
@@ -294,24 +309,19 @@ export interface AccountOption {
   email: string | null;
   isDefault: boolean;
   needsLogin: boolean;
-  /** multi-provider-endpoint FR-14: an openai-compatible account, not yet usable. */
-  disabled: boolean;
-  disabledReason: string | null;
 }
-
-/**
- * multi-provider-endpoint FR-14: the account pickers show an endpoint row
- * disabled with this reason, rather than filtering it out — the user must
- * see the account they just created. Deleted by multi-provider-openai.
- */
-export const ENDPOINT_UNAVAILABLE_REASON = "Sessions on this provider aren't available yet.";
 
 /** multi-provider-endpoint FR-1: an 'openai-compatible' account, not (yet) a claude-code-oauth one. */
 export function accountIsEndpoint(account: Account): boolean {
   return account.kind === 'openai-compatible';
 }
 
-/** FR-31: every account, in core order (FR-2 puts the built-in first). */
+/**
+ * FR-31: every account, in core order (FR-2 puts the built-in first).
+ * multi-provider-openai FR-22: an endpoint row is fully selectable now — the
+ * `disabled`/`disabledReason` block multi-provider-endpoint FR-14 shipped is
+ * deleted, not just relaxed.
+ */
 export function accountFieldOptions(accounts: Account[]): AccountOption[] {
   return accounts.map((a) => ({
     value: a.id,
@@ -319,8 +329,6 @@ export function accountFieldOptions(accounts: Account[]): AccountOption[] {
     email: accountSecondaryEmail(a),
     isDefault: a.isDefault,
     needsLogin: accountNeedsLogin(a),
-    disabled: accountIsEndpoint(a),
-    disabledReason: accountIsEndpoint(a) ? ENDPOINT_UNAVAILABLE_REASON : null,
   }));
 }
 
@@ -453,15 +461,11 @@ export function clampCursor(cursor: number, length: number): number {
 
 // ------------------------------------------------------ endpoint accounts
 // multi-provider-endpoint FR-13..FR-16 — the Accounts modal's endpoint row
-// extras (kind chip, not-yet note, base URL line) and the EndpointForm's pure
-// logic (payload construction, probe/error copy, Save-disabled). The key
-// itself never appears here: only `hasKey` crosses the boundary (FR-3), and
-// the drafted key lives in the form component's own state, never a store.
-
-/** Design brief §1: the dim not-yet-available line under an endpoint row's label. */
-export function endpointRowNote(account: Account): string | null {
-  return accountIsEndpoint(account) ? 'sessions not yet available' : null;
-}
+// extras (kind chip, base URL line — the not-yet note FR-14 shipped is
+// deleted by multi-provider-openai FR-22) and the EndpointForm's pure logic
+// (payload construction, probe/error copy, Save-disabled). The key itself
+// never appears here: only `hasKey` crosses the boundary (FR-3), and the
+// drafted key lives in the form component's own state, never a store.
 
 /** Keeps both ends of a long value readable instead of clipping the tail. */
 export function middleTruncate(value: string, max: number): string {

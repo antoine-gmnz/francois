@@ -86,6 +86,8 @@ export type ErrorCode =
   | 'CLOUD_REPO_MISMATCH' // cloud-sessions FR-8: teleport's mismatch/not_in_repo/host_unverified (detail: { sessionRepo, currentRepo })
   | 'CLOUD_ADOPT_STALLED' // cloud-sessions FR-8/FR-9: a blocking dialog or the deadline (detail: { phase, logPath? })
   | 'CLOUD_ADOPT_FAILED' // cloud-sessions FR-6: the PTY exited without a usable local session (detail: { logPath? })
+  | 'PROVIDER_REQUEST_FAILED' // multi-provider-openai: the endpoint errored, or the tool loop hit its cap
+  | 'PROVIDER_CONTEXT_EXCEEDED' // multi-provider-openai: the next request would exceed the model's window
   | 'INTERNAL';
 
 // ---------- sessions ----------

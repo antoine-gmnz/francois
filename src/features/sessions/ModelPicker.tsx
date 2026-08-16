@@ -1,22 +1,26 @@
 import { useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from '../../../contract/common';
 import { useDismiss } from '../../lib/hooks/useDismiss';
+import { groupByFamily } from './model-picker';
 import './model-picker.css';
-
-function familyOf(model: ModelInfo): string {
-  return model.label.split(' ')[0] || model.label;
-}
 
 export default function ModelPicker({
   models,
   modelId,
   onChange,
   loading,
+  providerHeading,
 }: {
   models: ModelInfo[];
   modelId: string;
   onChange: (id: string) => void;
   loading: boolean;
+  /**
+   * multi-provider-openai FR-21: the neutral group heading above the family
+   * list — the selected account's own label (design brief §5: text only, no
+   * chip, no accent, no icon). Empty renders no heading.
+   */
+  providerHeading?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -25,15 +29,7 @@ export default function ModelPicker({
   const triggerRef = useRef<HTMLDivElement>(null);
   const selected = models.find((m) => m.id === modelId) ?? null;
 
-  const families = useMemo(() => {
-    const map = new Map<string, ModelInfo[]>();
-    for (const m of models) {
-      const family = familyOf(m);
-      if (!map.has(family)) map.set(family, []);
-      map.get(family)!.push(m);
-    }
-    return Array.from(map, ([family, items]) => ({ family, items }));
-  }, [models]);
+  const families = useMemo(() => groupByFamily(models), [models]);
 
   const disabled = loading || models.length === 0;
 
@@ -75,6 +71,7 @@ export default function ModelPicker({
           className="model-picker__panel model-picker__popover"
           style={{ top: rect.top, left: rect.left, width: rect.width }}
         >
+          {providerHeading && <div className="model-picker__provider-heading">{providerHeading}</div>}
           {families.map(({ family, items }) => {
             const active = hovered === family;
             const familySelected = items.some((m) => m.id === modelId);

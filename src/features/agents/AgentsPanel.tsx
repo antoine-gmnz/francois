@@ -3,6 +3,7 @@ import type { AgentInfo, AppError } from '../../../contract/common';
 import { agentsActivity, agentsDispatch, agentsKill } from '../../lib/api';
 import { agentIdToDropForTrailError, collapseTrail, receiveTrailActivity, toggleTrail } from './agent-trail';
 import { setPaletteAgents } from '../palette/paletteData';
+import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { HintBar } from '../../ui/HintBar';
 import { Modal, ModalHeader } from '../../ui/Modal';
@@ -33,6 +34,10 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
 
   const { agents, setAgents, loading, listError, trail, setTrail, pendingKill, setPendingKill, selectedId, setSelectedId } =
     useAgentsFeed({ sessionId, syncAgentTab });
+
+  // multi-provider-openai FR-20: subagents' capability for this session's runtime.
+  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
+  const capability = sessionCapability(meta, 'subagents');
 
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -140,6 +145,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
       <PanelHeader title="AGENTS" count={agents.size} paneKey={3} focused={focused} />
 
       <AgentsListBody
+          capability={capability}
           listError={listError}
           loading={loading}
           list={list}

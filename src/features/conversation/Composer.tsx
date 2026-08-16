@@ -29,6 +29,8 @@ export interface ComposerProps {
   onHover: (i: number) => void;
   onRun: (name: string) => void;
   onDismiss: () => void;
+  /** multi-provider-openai FR-20: interactiveCommands' reason when unavailable — forwarded to SlashMenu. */
+  popupUnavailableReason: string | null;
   // session-attachments (design §1): presentational only — the staged list and
   // every handler live in ConversationView's useSessionAttachments.
   /** Already filtered to staged IMAGES whose ref is still in the prompt (FR-12). */
@@ -70,6 +72,7 @@ export default function Composer({
   onHover,
   onRun,
   onDismiss,
+  popupUnavailableReason,
   attachments,
   onAttachClick,
   onRemoveAttachment,
@@ -85,7 +88,16 @@ export default function Composer({
           anchor to the input bar's width, not the pane's. */}
       <div className="composer-col">
         {/* slash-menu popup — anchored above the input bar, never covering it (FR-5) */}
-        {popupOpen && <SlashMenu items={filtered} selIdx={selIdx} onHover={onHover} onRun={onRun} onDismiss={onDismiss} />}
+        {popupOpen && (
+          <SlashMenu
+            items={filtered}
+            selIdx={selIdx}
+            onHover={onHover}
+            onRun={onRun}
+            onDismiss={onDismiss}
+            unavailableReason={popupUnavailableReason}
+          />
+        )}
         {/* One line per failing source, stacked above the bar (the wrapper is what
             is positioned, so a second line pushes the first up instead of
             overlapping it). */}

@@ -108,7 +108,13 @@ export const appSetWindowTheme = (theme: 'light' | 'dark') =>
   ipc<Result<null>>('app_set_window_theme', { theme });
 
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
-export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
+// multi-provider-openai FR-18/FR-21: keyed on `accountId`, not `sessionId` —
+// the model picker's only mount (the New Session modal) has no session yet.
+// Every existing call site (no account context) keeps invoking with no
+// payload and the core keeps answering with the default account's Claude
+// Code catalog unchanged.
+export const sessionModels = (accountId?: AccountId) =>
+  ipc<Result<ModelInfo[]>>('session_models', accountId ? { accountId } : undefined);
 // projects FR-19: session_create gained an optional projectId, stored verbatim —
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
 // session-worktree: session_create also gained an optional `worktree` (spec §5),

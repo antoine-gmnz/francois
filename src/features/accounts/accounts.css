@@ -577,13 +577,6 @@
   color: var(--text-faint);
 }
 
-/* "sessions not yet available" — one dim line under the base-URL line,
-   removed entirely once multi-provider-openai lands. */
-.acc-endpoint-note {
-  font-size: var(--font-size-10-5);
-  color: var(--text-faint);
-}
-
 /* The secondary Add affordance beside Add account: same chrome, but its plus
    stays neutral rather than acid — design system v2 spends the one accent
    per view on the PRIMARY add action, not on both. */

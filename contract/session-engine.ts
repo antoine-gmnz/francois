@@ -9,7 +9,7 @@
 // `francois:session:event` → Tauri event `francois://session/event`. Every
 // command RESOLVES a `Result<T>` (never rejects across the bridge).
 
-import type { SessionId, ModelInfo, SessionEvent, Result, PermissionMode, ClaudeRuntime } from './common';
+import type { SessionId, AccountId, ModelInfo, SessionEvent, Result, PermissionMode, ClaudeRuntime } from './common';
 import type { WorktreeCreateOptions } from './session-worktree';
 
 // ---------- francois:session:create ----------
@@ -75,8 +75,24 @@ export interface SessionCompactInput {
 //   Side effect (FR-12): re-emits one `session.meta` per registry entry, in
 //   registry order, on francois://session/event before resolving.
 
-// ---------- francois:session:models  (no payload) ----------
-// invoke('session_models'): Promise<Result<ModelInfo[]>>
+// ---------- francois:session:models ----------
+
+/**
+ * multi-provider-openai FR-18/FR-21's account-keyed wire fix: `accountId`,
+ * NOT `sessionId` — the model picker's only mount is the New Session modal
+ * (`useModelCatalog`), which is choosing a model in order to create a
+ * session and so has no session id yet, only the account the user picked in
+ * the form. Omitted/undefined (every pre-existing call site — the palette
+ * prefetch, the project registry warm-up) resolves EXACTLY as before, the
+ * default account's Claude Code catalog. When present and resolvable, the
+ * core routes through THAT account's own runtime (derived from its
+ * `AccountKind`), which is what makes an `openai-compatible` account's model
+ * list reachable at all.
+ */
+export interface SessionModelsInput {
+  accountId?: AccountId;
+}
+// invoke('session_models', req?: SessionModelsInput): Promise<Result<ModelInfo[]>>
 
 // ---------- v1 static model catalog (§5.1) ----------
 // Mirrors the Rust core's catalog; UIs may use it directly for labels.

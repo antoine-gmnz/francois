@@ -35,14 +35,12 @@ export function AccountField({ accounts, accountId, fromProject, onChange }: Acc
           onChange={(e) => onChange(e.target.value)}
         >
           {accountFieldOptions(accounts).map((opt) => (
-            // multi-provider-endpoint FR-14: an endpoint account renders disabled
-            // with its reason — visible (the user must see the account they just
-            // created), never keyboard-focusable, and native <option disabled>
-            // is already skipped by ↑/↓ and type-ahead.
-            <option key={opt.value} value={opt.value} disabled={opt.disabled} title={opt.disabledReason ?? undefined}>
+            // multi-provider-openai FR-22: multi-provider-endpoint FR-14's
+            // disabled-with-reason block is deleted — every account, endpoint
+            // included, is an ordinary selectable, keyboard-reachable option.
+            <option key={opt.value} value={opt.value}>
               {opt.email ? `${opt.label} · ${opt.email}` : opt.label}
               {opt.needsLogin ? ' (needs login)' : ''}
-              {opt.disabled && opt.disabledReason ? ` — ${opt.disabledReason}` : ''}
             </option>
           ))}
         </select>

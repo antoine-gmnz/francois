@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import type { RefObject } from 'react';
 import type { AppError, SkillInfo } from '../../../contract/common';
+import type { CapabilityState } from '../../../contract/multi-provider-seam';
+import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { ListRow } from '../../ui/ListRow';
 
 const scopeTag: Record<string, string> = { project: 'proj', user: 'user', plugin: 'plugin' };
 
 export interface SkillsListBodyProps {
+  /** multi-provider-openai FR-20: skills' capability state for this session. */
+  capability: CapabilityState;
   filterOpen: boolean;
   query: string;
   filterRef: RefObject<HTMLInputElement>;
@@ -21,6 +25,7 @@ export interface SkillsListBodyProps {
 /** Pane [5]'s scrollable skill/command list: the "/" filter row, its
  *  error/loading/empty states, and the row list itself. */
 export function SkillsListBody({
+  capability,
   filterOpen,
   query,
   filterRef,
@@ -48,7 +53,9 @@ export function SkillsListBody({
         </div>
       )}
 
-      {status === 'error' ? (
+      {!capability.available ? (
+        <CapabilityNotice reason={capability.reason ?? ''} />
+      ) : status === 'error' ? (
         <div className="skills-error-row">
           <span className="skills-error-icon">⚠</span>
           <span className="skills-error-msg">{listError?.message ?? 'failed to load skills'} · ⏎ retry</span>

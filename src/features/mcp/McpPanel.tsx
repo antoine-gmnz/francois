@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppError, McpServerInfo, SessionEvent } from '../../../contract/common';
 import type { McpApprovalState, McpDecision, McpRegistryEntry, McpServerDetail } from '../../../contract/mcp-panel';
 import { mcpApprovals, mcpDecide, mcpDetach, mcpDetail, mcpList, mcpReconnect, onSessionEvent } from '../../lib/api';
+import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { useDismiss } from '../../lib/hooks/useDismiss';
+import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { HintBar } from '../../ui/HintBar';
 import { StatusDot } from '../../ui/StatusDot';
 import { approvalSummary, approveAllDecision, canReconnect, detailText, dotColor, hasApprovalWork, isApprovable, scopeColor, scopeText } from './mcp';
@@ -115,6 +117,9 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
 
   const { servers, setServers, listError, reload } = useMcpServers(sessionId);
   const { approvals, decide, deciding, decideError } = useApprovals(sessionId, reload);
+  // multi-provider-openai FR-20: mcp's capability for this session's runtime.
+  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
+  const capability = sessionCapability(meta, 'mcp');
   const [selected, setSelected] = useState(0);
   const [popover, setPopover] = useState<{ name: string; top: number; left: number } | null>(null);
   const focused = focusedPane === 'mcp';
@@ -206,7 +211,9 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
       )}
 
       <div ref={rowsRef} className="scz mcp-rows">
-          {listError ? (
+          {!capability.available ? (
+            <CapabilityNotice reason={capability.reason ?? ''} />
+          ) : listError ? (
             <div className="mcp-list-error">session unavailable</div>
           ) : servers.length === 0 ? (
             <div className="mcp-empty">no MCP servers · attach one with ⌘K</div>

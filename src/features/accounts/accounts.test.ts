@@ -32,7 +32,6 @@ import {
 import { useStore } from '../../lib/store';
 import {
   ACCOUNTS_ISOLATION_NOTE,
-  ENDPOINT_UNAVAILABLE_REASON,
   LOGIN_CANCEL_HINT,
   LOGIN_TITLE,
   accountAvatarHue,
@@ -54,12 +53,12 @@ import {
   endpointErrorLine,
   endpointKeyPlaceholder,
   endpointProbeSuccessLine,
-  endpointRowNote,
   endpointSaveDisabled,
   endpointTestPayload,
   endpointUpdatePayload,
   findAccount,
   formatModelIds,
+  modelPickerProviderHeading,
   loginErrorMessage,
   middleTruncate,
   modelIdsForAdd,
@@ -469,6 +468,17 @@ describe('registry resolution (FR-2/FR-4/FR-18/FR-20)', () => {
     expect(resolveNewSessionAccountId([], 'a1')).toBe(DEFAULT_ACCOUNT_ID);
   });
 
+  it('modelPickerProviderHeading (FR-21) is the SELECTED account\'s own label', () => {
+    const endpoint = account({ id: 'e1', label: 'My Endpoint', kind: 'openai-compatible' });
+    expect(modelPickerProviderHeading([BUILT_IN, a1, endpoint], 'a1')).toBe('perso');
+    expect(modelPickerProviderHeading([BUILT_IN, a1, endpoint], 'e1')).toBe('My Endpoint');
+    expect(modelPickerProviderHeading([BUILT_IN, a1, endpoint], BUILT_IN.id)).toBe('Default');
+  });
+
+  it('modelPickerProviderHeading is empty before the registry hydrates — never a fabricated label', () => {
+    expect(modelPickerProviderHeading([], 'a1')).toBe('');
+  });
+
   it('accountIdForSessionCreate always sends the selection verbatim (CRITICAL fix)', () => {
     // Explicitly picking the built-in Default account must be sent as-is, even
     // when a DIFFERENT account carries isDefault — omitting it here would have
@@ -485,8 +495,6 @@ describe('registry resolution (FR-2/FR-4/FR-18/FR-20)', () => {
         email: 'me@work.example',
         isDefault: true,
         needsLogin: false,
-        disabled: false,
-        disabledReason: null,
       },
       {
         value: 'a1',
@@ -494,8 +502,6 @@ describe('registry resolution (FR-2/FR-4/FR-18/FR-20)', () => {
         email: 'p@x.example',
         isDefault: false,
         needsLogin: false,
-        disabled: false,
-        disabledReason: null,
       },
     ]);
   });
@@ -803,11 +809,10 @@ describe('endpoint accounts (multi-provider-endpoint FR-13..FR-16)', () => {
     expect(accountIsEndpoint(BUILT_IN)).toBe(false);
   });
 
-  it('states the not-yet-available reason exactly once (FR-14)', () => {
-    expect(ENDPOINT_UNAVAILABLE_REASON).toBe("Sessions on this provider aren't available yet.");
-  });
-
-  it('marks an openai-compatible field option disabled with the reason, leaving oauth options alone (FR-14)', () => {
+  // multi-provider-openai FR-22: multi-provider-endpoint FR-14's disabled
+  // block is deleted — an openai-compatible option is now as plain as an
+  // oauth one, with no reason line and no `disabled` flag anywhere.
+  it('keeps an openai-compatible field option fully selectable, same shape as an oauth one (FR-22)', () => {
     const opts = accountFieldOptions([BUILT_IN, endpointAccount]);
     expect(opts[0]).toEqual({
       value: DEFAULT_ACCOUNT_ID,
@@ -815,8 +820,6 @@ describe('endpoint accounts (multi-provider-endpoint FR-13..FR-16)', () => {
       email: 'me@work.example',
       isDefault: true,
       needsLogin: false,
-      disabled: false,
-      disabledReason: null,
     });
     expect(opts[1]).toEqual({
       value: 'e1',
@@ -824,14 +827,7 @@ describe('endpoint accounts (multi-provider-endpoint FR-13..FR-16)', () => {
       email: null,
       isDefault: false,
       needsLogin: false,
-      disabled: true,
-      disabledReason: ENDPOINT_UNAVAILABLE_REASON,
     });
-  });
-
-  it('shows the not-yet note only on endpoint rows (design brief §1)', () => {
-    expect(endpointRowNote(endpointAccount)).toBe('sessions not yet available');
-    expect(endpointRowNote(BUILT_IN)).toBeNull();
   });
 
   it('middle-truncates a long base URL, keeping both ends readable', () => {

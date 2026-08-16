@@ -884,6 +884,26 @@ a {
   color: var(--text-faint);
 }
 
+/* The disabled-pane treatment (multi-provider-openai FR-20, design brief §1):
+   left-aligned, vertically centered, wraps to at most two lines then clips —
+   src/ui/CapabilityNotice.tsx. Deliberately NOT .empty-pane: that primitive
+   centers both axes and reads "nothing here yet, something may arrive"; this
+   is permanent for the session and left-aligned per the brief. */
+.capability-notice {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: var(--space-8) var(--space-10);
+}
+.capability-notice__text {
+  color: var(--text-faint);
+  font-size: var(--font-size-12-5);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* Selectable option pill (NewSessionModal.tsx:388-407, 415-435, 445-458,
    469-491 — effort/permission/git/runtime chips). `chip--danger` only takes
    effect combined with `chip--selected`, matching the bypassPermissions
