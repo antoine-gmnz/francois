@@ -49,6 +49,7 @@ import {
   clampCursor,
   defaultAccount,
   endpointAddPayload,
+  endpointBaseUrlHasError,
   endpointBaseUrlLine,
   endpointErrorLine,
   endpointKeyPlaceholder,
@@ -885,6 +886,20 @@ describe('endpoint accounts (multi-provider-endpoint FR-13..FR-16)', () => {
     expect(endpointSaveDisabled('', 'https://x', false)).toBe(true);
     expect(endpointSaveDisabled('OpenAI', 'https://x', false)).toBe(false);
     expect(endpointSaveDisabled('OpenAI', 'https://x', true)).toBe(true);
+  });
+
+  it('highlights Base URL on an INVALID_INPUT from either Save or Test (design brief §2 Validation error, round-2 MEDIUM)', () => {
+    const invalidInput: AppError = { code: 'INVALID_INPUT', message: 'base URL must be https' };
+    const unreachable: AppError = { code: 'ACCOUNT_ENDPOINT_UNREACHABLE', message: 'timed out' };
+    // Save path (already covered pre-fix).
+    expect(endpointBaseUrlHasError(invalidInput, null)).toBe(true);
+    // Test path — the gap this fix closes: a probe's own INVALID_INPUT must
+    // highlight the field exactly like a save-triggered one does.
+    expect(endpointBaseUrlHasError(null, invalidInput)).toBe(true);
+    // Neither error, or a non-INVALID_INPUT error on either path — no border.
+    expect(endpointBaseUrlHasError(null, null)).toBe(false);
+    expect(endpointBaseUrlHasError(null, unreachable)).toBe(false);
+    expect(endpointBaseUrlHasError(unreachable, null)).toBe(false);
   });
 
   it('reads the probe success line — zero models is success, not an error (design brief §2)', () => {

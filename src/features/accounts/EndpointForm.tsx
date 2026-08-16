@@ -22,6 +22,7 @@ import { Button } from '../../ui/Button';
 import './accounts.css';
 import {
   endpointAddPayload,
+  endpointBaseUrlHasError,
   endpointErrorLine,
   endpointKeyPlaceholder,
   endpointProbeSuccessLine,
@@ -132,6 +133,9 @@ export function EndpointForm({ account, onCancel, onSaved }: EndpointFormProps):
             ? endpointErrorLine(probe.error)
             : null;
   const resultTone = saveError !== null || probe.kind === 'error' ? 'error' : probe.kind === 'ok' ? 'ok' : 'dim';
+  // Round-2 review MEDIUM: account_test_endpoint can also fail INVALID_INPUT
+  // (FR-8), so the Base URL border must fire on that path too, not Save alone.
+  const baseUrlHasError = endpointBaseUrlHasError(saveError, probe.kind === 'error' ? probe.error : null);
 
   return (
     <div className="acc-endpoint-form">
@@ -159,7 +163,7 @@ export function EndpointForm({ account, onCancel, onSaved }: EndpointFormProps):
         <input
           id="acc-endpoint-baseurl-input"
           className={`acc-endpoint-input acc-endpoint-input--mono${
-            saveError?.code === 'INVALID_INPUT' ? ' acc-endpoint-input--error' : ''
+            baseUrlHasError ? ' acc-endpoint-input--error' : ''
           }`}
           value={baseUrl}
           placeholder="https://api.openai.com/v1"

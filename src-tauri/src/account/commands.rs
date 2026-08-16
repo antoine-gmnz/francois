@@ -362,10 +362,8 @@ pub fn account_add_endpoint(
         Ok(u) => u,
         Err(msg) => return err("INVALID_INPUT", msg),
     };
-    if let Some(ids) = &model_ids {
-        if ids.is_empty() {
-            return err("INVALID_INPUT", "modelIds cannot be empty when present");
-        }
+    if let Err((code, msg)) = validate_model_ids_on_add(&model_ids) {
+        return err(code, msg);
     }
 
     let id = crate::session::uuid();
@@ -432,8 +430,8 @@ pub fn account_update_endpoint(
     model_ids: ModelIdsUpdate,
 ) -> IpcResult<Vec<Account>> {
     let clear_key = clear_key.unwrap_or(false);
-    if api_key.is_some() && clear_key {
-        return err("INVALID_INPUT", "apiKey and clearKey cannot both be set");
+    if let Err((code, msg)) = validate_key_clear_conflict(&api_key, clear_key) {
+        return err(code, msg);
     }
     let label = match label.as_deref().map(validate_label) {
         Some(Err(msg)) => return err("INVALID_INPUT", msg),
@@ -445,10 +443,8 @@ pub fn account_update_endpoint(
         Some(Ok(u)) => Some(u),
         None => None,
     };
-    if let ModelIdsUpdate::Set(ids) = &model_ids {
-        if ids.is_empty() {
-            return err("INVALID_INPUT", "modelIds cannot be empty");
-        }
+    if let Err((code, msg)) = validate_model_ids_on_update(&model_ids) {
+        return err(code, msg);
     }
 
     let config_dir = {

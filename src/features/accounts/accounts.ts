@@ -514,6 +514,17 @@ export function endpointSaveDisabled(label: string, baseUrl: string, busy: boole
   return busy || label.trim() === '' || baseUrl.trim() === '';
 }
 
+/**
+ * Design brief §2 "Validation error" — the offending field takes the error
+ * border. `INVALID_INPUT` is FR-4's Base-URL rule, and per FR-8 the contract
+ * `account_test_endpoint` can return that same code (round-2 review MEDIUM) —
+ * so the border must fire on either the Save error or the Test probe's error,
+ * not Save alone.
+ */
+export function endpointBaseUrlHasError(saveError: AppError | null, probeError: AppError | null): boolean {
+  return saveError?.code === 'INVALID_INPUT' || probeError?.code === 'INVALID_INPUT';
+}
+
 /** Design brief §2 "Test OK" — zero models is still success, never an error. */
 export function endpointProbeSuccessLine(probe: EndpointProbe): string {
   return `reachable · ${probe.modelCount} model${probe.modelCount === 1 ? '' : 's'}`;

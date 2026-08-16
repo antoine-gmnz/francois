@@ -195,6 +195,48 @@ pub(crate) fn model_ids_update_from(
     }
 }
 
+/// FR-7: `apiKey` and `clearKey` cannot both be set on an update — ambiguous
+/// intent (write a new key vs remove the key in the same call). Same
+/// (code, message) convention as `apply_update_endpoint` below, so
+/// `commands.rs` can handle every one of these guards with the same
+/// `Err((code, msg)) => return err(code, msg)` shape.
+pub(crate) fn validate_key_clear_conflict(
+    api_key: &Option<String>,
+    clear_key: bool,
+) -> Result<(), (&'static str, &'static str)> {
+    if api_key.is_some() && clear_key {
+        return Err(("INVALID_INPUT", "apiKey and clearKey cannot both be set"));
+    }
+    Ok(())
+}
+
+/// FR-7: `modelIds: []` on add is refused — a present-but-empty override
+/// would claim the account allows no models at all.
+pub(crate) fn validate_model_ids_on_add(
+    model_ids: &Option<Vec<String>>,
+) -> Result<(), (&'static str, &'static str)> {
+    if let Some(ids) = model_ids {
+        if ids.is_empty() {
+            return Err(("INVALID_INPUT", "modelIds cannot be empty when present"));
+        }
+    }
+    Ok(())
+}
+
+/// FR-7: `modelIds` present-but-empty on update is refused the same way —
+/// only the `Set` arm of the tri-state can be empty; `Unset`/`Clear` are
+/// always fine.
+pub(crate) fn validate_model_ids_on_update(
+    model_ids: &ModelIdsUpdate,
+) -> Result<(), (&'static str, &'static str)> {
+    if let ModelIdsUpdate::Set(ids) = model_ids {
+        if ids.is_empty() {
+            return Err(("INVALID_INPUT", "modelIds cannot be empty"));
+        }
+    }
+    Ok(())
+}
+
 /// FR-7: partial update. An absent `label`/`base_url` leaves the row
 /// unchanged; `model_ids` is the tri-state above. Addressing a non-endpoint
 /// account is `INVALID_INPUT`, not `ACCOUNT_NOT_FOUND` — the account exists,
@@ -621,6 +663,40 @@ mod tests {
             .config_dir
             .clone();
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---------- FR-7: the three commands.rs INVALID_INPUT guards ----------
+
+    #[test]
+    fn key_clear_conflict_is_rejected_only_when_both_are_set() {
+        assert_eq!(
+            validate_key_clear_conflict(&Some("sk-x".to_string()), true).unwrap_err(),
+            ("INVALID_INPUT", "apiKey and clearKey cannot both be set")
+        );
+        assert!(validate_key_clear_conflict(&Some("sk-x".to_string()), false).is_ok());
+        assert!(validate_key_clear_conflict(&None, true).is_ok());
+        assert!(validate_key_clear_conflict(&None, false).is_ok());
+    }
+
+    #[test]
+    fn model_ids_on_add_rejects_an_empty_array_but_allows_absent_or_populated() {
+        assert_eq!(
+            validate_model_ids_on_add(&Some(vec![])).unwrap_err(),
+            ("INVALID_INPUT", "modelIds cannot be empty when present")
+        );
+        assert!(validate_model_ids_on_add(&None).is_ok());
+        assert!(validate_model_ids_on_add(&Some(vec!["gpt-4o".to_string()])).is_ok());
+    }
+
+    #[test]
+    fn model_ids_on_update_rejects_an_empty_set_but_allows_unset_clear_and_populated() {
+        assert_eq!(
+            validate_model_ids_on_update(&ModelIdsUpdate::Set(vec![])).unwrap_err(),
+            ("INVALID_INPUT", "modelIds cannot be empty")
+        );
+        assert!(validate_model_ids_on_update(&ModelIdsUpdate::Unset).is_ok());
+        assert!(validate_model_ids_on_update(&ModelIdsUpdate::Clear).is_ok());
+        assert!(validate_model_ids_on_update(&ModelIdsUpdate::Set(vec!["m1".to_string()])).is_ok());
     }
 
     // ---------- FR-7: the modelIds tri-state ----------
