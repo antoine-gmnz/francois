@@ -47,7 +47,7 @@ pub(crate) fn handle_system_line(
         if changed {
             // Engine.sessions dropped — the skills disk scan must
             // never run under it (lock rules).
-            let commands = merge_commands(&help_entries(), &discover_skills(cwd), &names);
+            let commands = merge_commands(&help_entries(), &env.discover_commands(cwd), &names);
             env.emit_session(SessionEvent::Commands {
                 session_id: session_id.to_string(),
                 commands,

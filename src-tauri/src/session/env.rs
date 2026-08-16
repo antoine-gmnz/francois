@@ -31,6 +31,15 @@ pub(crate) trait SessionEnv: Send + Sync {
     /// summary. Named for the effect, not the call, so a test double can be a
     /// no-op without pretending to understand the diff domain.
     fn note_file_diff(&self, session_id: &str, cwd: &str);
+    /// The installed-skills/commands inventory for `cwd` (slash-menu FR-3/4),
+    /// injected rather than read straight off disk — the parse path's own
+    /// review finding: `discover_skills` walks the LIVE `~/.claude/skills`,
+    /// `~/.claude/plugins/marketplaces` and `~/.claude/settings.json`, which
+    /// made the golden replay diverge on every machine whose installed
+    /// skills differ from the capture machine's (and fail outright on CI,
+    /// where `~/.claude` never exists). A test double returns a fixed list
+    /// instead of touching the filesystem at all.
+    fn discover_commands(&self, cwd: &str) -> Vec<SkillInfo>;
 }
 
 impl SessionEnv for AppHandle {
@@ -54,6 +63,9 @@ impl SessionEnv for AppHandle {
     }
     fn note_file_diff(&self, session_id: &str, cwd: &str) {
         on_tool_done(self, session_id, cwd);
+    }
+    fn discover_commands(&self, cwd: &str) -> Vec<SkillInfo> {
+        crate::session::discover_skills(cwd)
     }
 }
 
@@ -104,5 +116,34 @@ pub(crate) mod testenv {
                 .unwrap()
                 .push((session_id.to_string(), cwd.to_string()));
         }
+        fn discover_commands(&self, _cwd: &str) -> Vec<SkillInfo> {
+            fixed_command_inventory()
+        }
+    }
+
+    /// The fixed stand-in `discover_commands` returns instead of touching
+    /// disk — reproducible on any machine and on CI, where the real
+    /// `~/.claude` never exists. `fixtures/turn.expected.json`'s
+    /// `session.commands` skill entries are generated from exactly this
+    /// list (golden_replay_produces_the_locked_session_event_sequence).
+    pub(crate) fn fixed_command_inventory() -> Vec<SkillInfo> {
+        vec![
+            SkillInfo {
+                name: "seam-fixture-skill-one".into(),
+                description: "fixed inventory injected via SessionEnv::discover_commands, not the live disk (multi-provider-seam FR-6)".into(),
+                installed: true,
+                scope: Some("user".into()),
+                kind: Some("skill".into()),
+                plugin_id: None,
+            },
+            SkillInfo {
+                name: "seam-fixture-skill-two".into(),
+                description: "second fixed entry, same reason".into(),
+                installed: true,
+                scope: Some("user".into()),
+                kind: Some("skill".into()),
+                plugin_id: None,
+            },
+        ]
     }
 }

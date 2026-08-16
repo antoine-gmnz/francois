@@ -48,82 +48,81 @@
         "source": "builtin"
       },
       {
-        "name": "cohorte-align-ds",
-        "description": "Align the code UI kit to the design system (design → code)",
+        "name": "seam-fixture-skill-one",
+        "description": "fixed inventory injected via SessionEnv::discover_commands, not the live disk (multi-provider-seam FR-6)",
         "source": "skill",
         "scope": "user"
+      },
+      {
+        "name": "seam-fixture-skill-two",
+        "description": "second fixed entry, same reason",
+        "source": "skill",
+        "scope": "user"
+      },
+      {
+        "name": "cohorte-align-ds",
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-audit",
-        "description": "Audit the existing codebase (or a domain) against PIPELINE.md conventions + TDD coverage; produce a …",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-brainstorm",
-        "description": "Interactive multi-persona panel that challenges and clarifies a feature idea before speccing",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-build",
-        "description": "Author the contract from the frozen spec, then dispatch one implementer agent per surface in paralle…",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-doctor",
-        "description": "Diagnose the pipeline installation — core version, pointer, agents↔surfaces, hooks, gate, retrieval,…",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-fix",
-        "description": "Apply a REVIEW REPORT — append it to the spec's Remediation, then re-dispatch ONLY the surfaces that…",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-init-pipeline",
-        "description": "Detect this project's stack, interview the gaps, and generate PIPELINE.md + render the agents so the…",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-loop",
-        "description": "Autonomous /cohorte-build → /cohorte-review → /cohorte-fix → /cohorte-review loop for one feature, u…",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-refactor",
-        "description": "Apply the refactor backlog for one or more domains via the surface implementer agents (TDD-first, pa…",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-review",
-        "description": "Dispatch the read-only review agent to audit the feature against its frozen spec",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-ship",
-        "description": "At a SHIP verdict, dispatch the release agent to commit, push, and open the PR (with your confirmati…",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-spec",
-        "description": "Interactively capture a frozen feature spec (or apply a review return) into specs/<id>.md",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "cohorte-update-pipeline",
-        "description": "Refresh the pipeline core (global ~/.claude, or a repo's bundled .claude) to the latest published co…",
-        "source": "skill",
-        "scope": "user"
+        "description": "",
+        "source": "cli"
       },
       {
         "name": "deep-research",
