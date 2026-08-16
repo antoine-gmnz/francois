@@ -1,14 +1,14 @@
 ---
 id: multi-provider-seam
 title: Session adapter seam
-status: in-review
+status: shipped
 branch: feat/multi-provider
 created: 2026-08-12
 depends_on: [session-engine, multi-account, durable-sessions, permission-guardrails]
-loop_pass: 3
+loop_pass: 4
 loop_phase: review
-reviewed_base:
-reviewed_digest:
+reviewed_base: 9d471154a835f85ac1987132268dbe9b779da95e
+reviewed_digest: f94d48b5b2e3548a
 ---
 
 # Session adapter seam
@@ -455,9 +455,9 @@ omitted from the front-matter deliberately.
 
 ## 9. Acceptance criteria
 
-- [ ] `SessionAdapter` and `TurnControl` exist per FR-1/FR-2; `ClaudeCodeAdapter` is the only real
+- [x] `SessionAdapter` and `TurnControl` exist per FR-1/FR-2; `ClaudeCodeAdapter` is the only real
       implementation (FR-3).
-- [ ] No file under `src-tauri/src/session/commands/` names `Child`, `ChildStdin`, or a pending
+- [x] No file under `src-tauri/src/session/commands/` names `Child`, `ChildStdin`, or a pending
       map **on the turn-control path** — `session_interrupt`, `session_answer_question` and
       `permissions_decide` reach the turn only through `TurnControl` (FR-8).
       **Exempt (amended 2026-08-12, review round 1, lead sign-off):** `session_compact`'s
@@ -467,20 +467,20 @@ omitted from the front-matter deliberately.
       would mean inventing a "run a one-shot side command" adapter method that FR-1's trait
       deliberately does not have. FR-8's own text was always scoped to the three control commands;
       this checkbox overreached past it. The carve-out is documented in `session/adapter/mod.rs`.
-- [ ] `run_reader` accepts a `BufRead` source and emits through a `SessionEnv` (FR-5/FR-6).
-- [ ] `session_models` and the auth preflight go through the adapter (FR-7/FR-10).
-- [ ] `contract/common.ts` and `contract/multi-account.ts` carry the two required discriminators;
+- [x] `run_reader` accepts a `BufRead` source and emits through a `SessionEnv` (FR-5/FR-6).
+- [x] `session_models` and the auth preflight go through the adapter (FR-7/FR-10).
+- [x] `contract/common.ts` and `contract/multi-account.ts` carry the two required discriminators;
       `contract/multi-provider-seam.ts` exports the capability table (FR-11/FR-12/FR-14).
-- [ ] A vitest case asserts `providerCapabilities()` is exhaustive for both providers and that every
+- [x] A vitest case asserts `providerCapabilities()` is exhaustive for both providers and that every
       `available: false` entry has a non-empty `reason` (FR-15).
-- [ ] No frontend component, store or selector references `providerCapabilities` (FR-16) — grep is
+- [x] No frontend component, store or selector references `providerCapabilities` (FR-16) — grep is
       the check.
-- [ ] `turn.ndjson` is committed and covers all seven line kinds listed in FR-17.
-- [ ] The golden replay test passes and its expected list was hand-reviewed before the trait
+- [x] `turn.ndjson` is committed and covers all seven line kinds listed in FR-17.
+- [x] The golden replay test passes and its expected list was hand-reviewed before the trait
       extraction commit (FR-18).
-- [ ] A `sessions.json` and an account registry written by the previous release load with correct
+- [x] A `sessions.json` and an account registry written by the previous release load with correct
       defaults and no error (FR-11/FR-12).
-- [ ] `npm test`, `npx tsc --noEmit`, `cargo test` all green with no test deleted or weakened
+- [x] `npm test`, `npx tsc --noEmit`, `cargo test` all green with no test deleted or weakened
       (FR-19).
 
 ## Remediation
@@ -552,3 +552,14 @@ genuinely provider-agnostic, which is the Phase E precondition. Full report:
 `specs/reports/multi-provider-seam.md`.
 
 - [x] CRITICAL · `src-tauri/src/session/stream/lines.rs:50` (`handle_system_line`), exercised by `src-tauri/src/session/stream/mod.rs:474` `golden_replay_produces_the_locked_session_event_sequence` · spec-violation · The `session.commands` event the golden locks is built by `merge_commands(&help_entries(), &discover_skills(cwd), &names)`, and `discover_skills` (`src-tauri/src/session/skills.rs:141`) reads the **live** `~/.claude/skills`, `~/.claude/plugins/marketplaces` and `~/.claude/settings.json` off `dirs::home_dir()` — never routed through `SessionEnv`, the exact seam FR-6 exists for. The golden therefore diverges on any machine whose skills differ from the capture machine's and fails deterministically on CI (no `~/.claude` there at all), so `release.yml`'s `gate` job turns `main` red on merge. Breaches FR-19's "cargo test … green" criterion and makes FR-18's forward lock unreliable for this event. → **Fix (option (a), chosen over (b)):** add an injectable command-inventory hook to `SessionEnv` — `fn discover_commands(&self, cwd: &str) -> Vec<SkillInfo>` — with the production impl delegating to today's `discover_skills(cwd)` and `TestEnv`/the golden test supplying a fixed list matching the fixture's own `slash_commands` merge input; `handle_system_line` calls `env.discover_commands(cwd)` rather than the free function. Option (b) (normalize `session.commands` out of the golden comparison the way ids already are) is **rejected**: it would drop coverage of one of FR-17's seven mandated line kinds and read as a weakened test under FR-19. — **fixed 2026-08-16.** Added `SessionEnv::discover_commands(&self, cwd: &str) -> Vec<SkillInfo>` (`src-tauri/src/session/env.rs`): the `AppHandle` impl delegates unchanged to `discover_skills(cwd)`; `TestEnv`'s impl ignores `cwd` and returns a fixed two-entry `fixed_command_inventory()` (`seam-fixture-skill-one`/`-two`, `installed: true`, `scope: "user"`) instead of touching disk. `handle_system_line` (`lines.rs:50`) now calls `env.discover_commands(cwd)` in place of the free function. Proven red-then-green: with the trait wired but `lines.rs` still calling `discover_skills` directly, the golden test failed — and its failure output showed this exact dev machine has an extra locally-installed skill (`cohorte-patch`) the original capture machine didn't, the live-machine divergence the finding describes, caught live. Flipping `lines.rs` to `env.discover_commands(cwd)` turned it green. `fixtures/turn.expected.json`'s `session.commands` entry was regenerated to match the fixed inventory (the two `seam-fixture-skill-*` entries replace the 13 `cohorte-*` skill entries that came off the capture machine's disk; the `cohorte-*` names still appear as `source: "cli"` entries afterward — the real captured `slash_commands` array in `turn.ndjson` reports them independent of any disk scan, unaffected by this fix); every other event in the fixture is byte-identical. `cd src-tauri && cargo test --quiet`: 912 passed / 0 failed / 3 ignored.
+
+### 2026-08-16 — review round 4 (SHIP, 0 findings)
+
+Both touched surfaces (core, frontend + shared `contract/` remainder) reviewed in full — round 3's
+CRITICAL disqualified the small-diff fast path. Core: round 3's `SessionEnv::discover_commands` fix
+holds, the golden replay is machine-independent, and every FR-1..FR-14a requirement re-verified
+intact against the amended spec, including round 2's `pending_permission_pattern` fix. Frontend:
+still zero `as unknown as SessionMeta` casts, `runtimeCapabilities()` exhaustive by construction with
+matching test coverage, FR-16 grep-clean, `contract/multi-account.ts`'s endpoint additions confirmed
+non-regressive to `Account`'s seam-owned fields. `npm test`, `npx tsc --noEmit`, `cargo test` (912
+passed) all green. Full report: `specs/reports/multi-provider-seam.md`.
