@@ -151,18 +151,54 @@ turn.expected.json` is byte-untouched, so no Claude Code session behaviour moved
 **Seam status** moved `blocked` → `in-review`: both of its open items are now closed (Phase A took
 round-2 CRITICAL #2, this phase took the 2026-08-14 HIGH). Phase D is its re-review.
 
-## Phase C — endpoint re-review · ~1 hr
+## Phase C — endpoint re-review · ~1 hr — **REVIEWED 2026-08-16, verdict SHIP**
 
-Runs parallel to D, but **after B** (B touches `AccountKind`'s mapping).
+Runs parallel to D, but **after B** (B touches `AccountKind`'s mapping). Ran parallel to D as
+planned — four reviewers at once (both features × both surfaces), one preflight shared between them.
 
-- [ ] `/cohorte-review multi-provider-endpoint`
-- [ ] Fix pass if it returns findings
-- [ ] `status: frozen` → SHIP-ready
+- [x] `/cohorte-review multi-provider-endpoint` — **SHIP**, blocking 0. 0 CRITICAL · 0 HIGH ·
+      2 MEDIUM · 3 LOW. All **11** round-1 remediation items verified landed (6 core, 5 frontend).
+      Report: `specs/reports/multi-provider-endpoint.md`.
+  - FR-3/FR-15 key boundary holds — only `hasKey`/`baseUrl` cross to the frontend; no key material
+    in any store, log, `title`, or error copy.
+  - FR-14 holds — both pickers render the endpoint option `disabled`, never filtered out.
+- [ ] Fix pass — **2 MEDIUM open, neither blocking**:
+  - `EndpointForm.tsx:161-163` — the Base URL error border fires on Save but not on a
+    `Test`-triggered `INVALID_INPUT`, so the design brief's validation state is half-wired.
+  - `account/commands.rs:367,436,450` — the three FR-7 `INVALID_INPUT` guards sit inline in
+    `#[tauri::command]` handlers with no test harness, so **acceptance criterion §9 is unverified by
+    `cargo test`**. Extract them to pure fns in `endpoint.rs` alongside `model_ids_update_from`.
+- [ ] `status: frozen` → SHIP-ready — held until the two MEDIUMs are fixed or explicitly parked.
 
-## Phase D — seam re-review, round 3 · ~1 hr
+## Phase D — seam re-review, round 3 · ~1 hr — **REVIEWED 2026-08-16, verdict REVISE**
 
-- [ ] `/cohorte-review multi-provider-seam` with A and B landed
-- [ ] Target: SHIP verdict on the seam + endpoint pair **before any openai code exists**
+- [x] `/cohorte-review multi-provider-seam` with A and B landed — **REVISE**, blocking 1.
+      1 CRITICAL · 0 HIGH/MEDIUM/LOW. frontend surface came back clean (0 findings).
+      Report: `specs/reports/multi-provider-seam.md`.
+  - **Everything the phase set out to prove, landed.** FR-14a (`adapter_for` dispatches on
+    `AgentRuntime` alone, `protocol` never a parameter), FR-13a (exhaustive `match` on `AccountKind`,
+    no wildcard), the persistence migration + both its tests, `runtimeCapabilities()` matching FR-15
+    verbatim, both round-2 carry-overs intact, no stale `Provider`/`SessionProvider` anywhere.
+  - **The trait boundary is genuinely provider-agnostic** — no `Child`/stdio/NDJSON shape on
+    `SessionAdapter`/`TurnControl` signatures. `OpenAiAdapter` should be able to implement them,
+    which is the Phase E precondition.
+  - **`as unknown as SessionMeta` is gone from `src/` entirely**, with no substitute escape hatch.
+    The round-2 backlog item is closed.
+- [ ] **The one CRITICAL — the golden replay, escalated.** Phase A logged it as a known local
+      failure; round 3 rules it a **merge blocker**, and it is the seam's own architecture that is
+      wrong, not just the fixture. `handle_system_line` (`stream/lines.rs:50`) builds
+      `session.commands` from `discover_skills(cwd)` (`session/skills.rs:141`), which reads the live
+      `~/.claude/skills`, `~/.claude/plugins/marketplaces` and `~/.claude/settings.json` off
+      `dirs::home_dir()` — **never routed through `SessionEnv`, the exact seam FR-6 exists for**. So
+      it fails on any machine whose skills differ from the capture machine's and deterministically on
+      CI (no `~/.claude` at all) ⇒ `release.yml`'s `gate` job turns `main` red on merge.
+      **Reviewer picks option (a) over (b)** of the two Phase A candidates: add
+      `SessionEnv::discover_commands(&self, cwd) -> Vec<SkillInfo>`, production impl delegating to
+      today's `discover_skills`, `TestEnv`/the golden supplying a fixed list. Option (b)
+      (normalize `session.commands` out of the comparison) would drop coverage of one of FR-17's
+      seven mandated line kinds and read as a weakened test under FR-19.
+- [ ] Target: SHIP verdict on the seam + endpoint pair **before any openai code exists** — **not yet
+      met.** Endpoint is SHIP; the seam needs this one fix, then a re-review of the touched surface.
 
 ## Phase E — build `multi-provider-openai` · multi-day
 
