@@ -252,3 +252,10 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-17). None are CRITICAL/HIG
 - [ ] LOW · contract/multi-provider-seam.ts:457 · spec-violation · FR-26 asks every disabled capability read as a "current gap"; `grok.remoteControl`'s reason reads as settled architecture instead — reword to "not yet" framing or except `remoteControl` in FR-26 explicitly · deferred:multi-provider-grok
 - [ ] LOW · src/features/accounts/AccountsModal.tsx:61 · quality · `installs` typed `Record<string, CliInstallState>` though every site keys by `CliToolId`; type it `Record<CliToolId, CliInstallState>` · deferred:multi-provider-grok
 - [ ] LOW · src/lib/api.ts:1666, src/features/accounts/accounts.test.ts:1043 · test-coverage · `accountCliTools`/`accountInstallCli` have no `invokeMock` test unlike every other new wrapper in this diff; add the two missing cases · deferred:multi-provider-grok
+
+## deferred:ext-path-resolution
+
+Logged per spec §2 non-goal (explicit — not a review finding). Marion's unresolved panel caveat: if
+filtering relative PATH entries is right for extension spawns, it is right everywhere.
+
+- [ ] MEDIUM · src-tauri/src/process_util.rs (`login_shell_path_env`) · security · the eight `claude` spawn sites take the login shell's PATH unfiltered, so an empty or relative entry (`.`, `node_modules/.bin`, the field a `PATH=$PATH:` leaves) is searched — same exposure `ext-path-resolution` FR-5 closed on the extensions side, deliberately not generalized inside that patch because it would change eight working call sites. → **Fix:** move the empty/non-absolute filter into `login_shell_path_env` itself, drop the extension-side copy, and re-run the `claude`-spawn battery · deferred:ext-path-resolution

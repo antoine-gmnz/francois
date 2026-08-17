@@ -398,6 +398,145 @@ pub fn touch_last_used(app: &AppHandle, project_id: &str) {
     }
 }
 
+// ---------- cross-domain writes (session-profiles, multi-account) ----------
+//
+// A project default that names a row in ANOTHER registry (a profile, an account)
+// is cleared here when that row is deleted, so projects.json stops accumulating
+// references to things that are gone. Both sweeps share one loop and one persist
+// path — they differ only in which `Option<String>` they null out.
+
+/// Pure half, so a sweep is unit-testable without an AppHandle. `field` picks the
+/// default to clear; returns how many projects changed.
+fn clear_default_from<F>(projects: &mut [Project], id: &str, field: F) -> usize
+where
+    F: Fn(&mut ProjectDefaults) -> &mut Option<String>,
+{
+    let mut cleared = 0;
+    for p in projects.iter_mut() {
+        let slot = field(&mut p.defaults);
+        if slot.as_deref() == Some(id) {
+            *slot = None;
+            cleared += 1;
+        }
+    }
+    cleared
+}
+
+pub(crate) fn clear_profile_from(projects: &mut [Project], profile_id: &str) -> usize {
+    clear_default_from(projects, profile_id, |d| &mut d.profile_id)
+}
+
+pub(crate) fn clear_account_from(projects: &mut [Project], account_id: &str) -> usize {
+    clear_default_from(projects, account_id, |d| &mut d.account_id)
+}
+
+/// I/O half, shared by both sweeps.
+///
+/// Deliberately BEST-EFFORT — it never reports failure to its caller, and both
+/// callers run it AFTER the row's own removal has committed. The worst case is a
+/// project still naming an id that no longer resolves, which both modals already
+/// drop silently when they resolve a default (session-profiles FR-21,
+/// multi-account FR-20). Failing (or rolling back) the removal over a
+/// project-registry write would be the worse trade: it would refuse the thing the
+/// user actually asked for to protect a reference that is harmless when stale.
+fn clear_default<F>(app: &AppHandle, id: &str, what: &str, field: F)
+where
+    F: Fn(&mut ProjectDefaults) -> &mut Option<String>,
+{
+    let Some(state) = app.try_state::<ProjectRegistry>() else {
+        return;
+    };
+    let mut projects = state.projects.lock().unwrap();
+    let snapshot = projects.clone();
+    if clear_default_from(&mut projects, id, field) == 0 {
+        return; // no project referenced it — do not rewrite the file
+    }
+    // Roll memory back on a persist failure, matching commit()'s "memory and
+    // disk agree" contract: a cleared default that never reached disk would
+    // reappear on the next launch and disagree with what the UI just showed.
+    if let Err(msg) = persist_registry(app, &projects) {
+        eprintln!("projects: could not persist cleared default {what}: {msg}");
+        *projects = snapshot;
+    }
+}
+
+/// Called by `profiles_remove` once the profile is gone.
+pub fn clear_default_profile(app: &AppHandle, profile_id: &str) {
+    clear_default(app, profile_id, "profile", |d| &mut d.profile_id)
+}
+
+/// Called by `account_remove` once the account row and its config dir are gone.
+pub fn clear_default_account(app: &AppHandle, account_id: &str) {
+    clear_default(app, account_id, "account", |d| &mut d.account_id)
+}
+
+/// Boot-time reconcile: drop any project default naming a profile or account
+/// that no longer exists. The delete-time sweeps above keep the registry clean
+/// from now on; this catches references stranded BEFORE those existed (or by a
+/// clear that could not be persisted).
+///
+/// Pure half. `None` for a set means "this registry could not be trusted this
+/// run" and its field is left completely alone — see `reconcile_defaults` for
+/// why that distinction is load-bearing. Returns how many fields were cleared.
+pub(crate) fn reconcile_defaults_in(
+    projects: &mut [Project],
+    profile_ids: Option<&HashSet<String>>,
+    account_ids: Option<&HashSet<String>>,
+) -> usize {
+    let mut cleared = 0;
+    for p in projects.iter_mut() {
+        if let (Some(known), Some(id)) = (profile_ids, p.defaults.profile_id.as_deref()) {
+            if !known.contains(id) {
+                p.defaults.profile_id = None;
+                cleared += 1;
+            }
+        }
+        if let (Some(known), Some(id)) = (account_ids, p.defaults.account_id.as_deref()) {
+            if !known.contains(id) {
+                p.defaults.account_id = None;
+                cleared += 1;
+            }
+        }
+    }
+    cleared
+}
+
+/// Called once at startup, AFTER both `account::load_accounts` and
+/// `profiles::load_profiles` — it validates against what they loaded, so running
+/// it earlier would invalidate every id.
+///
+/// A registry is only trusted to invalidate references when it came back
+/// NON-EMPTY, because an empty result is ambiguous: `parse_registry` yields
+/// nothing both for "genuinely none" and for a corrupt or unreadable file. Given
+/// that ambiguity the two errors are not symmetric — wrongly keeping a stale id
+/// costs an `(unavailable)` label in one modal, while wrongly clearing valid ids
+/// silently destroys every project's configuration on a transient read failure.
+/// So an empty registry clears nothing. For accounts, "non-empty" means at least
+/// one REGISTERED account: `known_ids` always contains the built-in id, so its
+/// presence proves nothing about whether accounts.json was read.
+pub fn reconcile_defaults(app: &AppHandle) {
+    let Some(state) = app.try_state::<ProjectRegistry>() else {
+        return;
+    };
+    let profile_ids = crate::profiles::known_ids(app);
+    let account_ids = crate::account::known_ids(app);
+    let trusted_profiles = (!profile_ids.is_empty()).then_some(&profile_ids);
+    let trusted_accounts = (account_ids.len() > 1).then_some(&account_ids);
+    if trusted_profiles.is_none() && trusted_accounts.is_none() {
+        return;
+    }
+
+    let mut projects = state.projects.lock().unwrap();
+    let snapshot = projects.clone();
+    if reconcile_defaults_in(&mut projects, trusted_profiles, trusted_accounts) == 0 {
+        return; // nothing stale — do not rewrite the file at every launch
+    }
+    if let Err(msg) = persist_registry(app, &projects) {
+        eprintln!("projects: could not persist reconciled defaults: {msg}");
+        *projects = snapshot;
+    }
+}
+
 // ---------- cross-domain lookups (cloud-sessions) ----------
 
 /// Everything a session created OUTSIDE the new-session modal needs from a
@@ -1100,5 +1239,217 @@ mod decision_tests {
         }
         // a relative path is never a valid root either way
         assert!(validate_root("relative/path").is_err());
+    }
+    // ---------- session-profiles: clearing a deleted profile's references ----------
+
+    // A sweep only reads one `defaults` field, so the root needs to be
+    // well-formed, not to exist — no temp dirs here.
+    fn with_profile(id: &str, profile: Option<&str>) -> Project {
+        let root = if cfg!(windows) {
+            format!("D:\\{id}")
+        } else {
+            format!("/tmp/{id}")
+        };
+        let mut p = project_fixture(id, id, &root, 0);
+        p.defaults.profile_id = profile.map(str::to_string);
+        p
+    }
+
+    #[test]
+    fn clearing_a_profile_only_touches_the_projects_naming_it() {
+        let mut projects = vec![
+            with_profile("p1", Some("pr1")),
+            with_profile("p2", Some("pr2")),
+            with_profile("p3", Some("pr1")),
+            with_profile("p4", None),
+        ];
+        assert_eq!(clear_profile_from(&mut projects, "pr1"), 2);
+        assert_eq!(projects[0].defaults.profile_id, None);
+        assert_eq!(projects[1].defaults.profile_id.as_deref(), Some("pr2"));
+        assert_eq!(projects[2].defaults.profile_id, None);
+        assert_eq!(projects[3].defaults.profile_id, None);
+    }
+
+    // The caller skips the disk write entirely on 0 — a profile no project used
+    // must not rewrite projects.json.
+    #[test]
+    fn clearing_an_unreferenced_profile_reports_no_change() {
+        let mut projects = vec![with_profile("p1", Some("pr2")), with_profile("p2", None)];
+        assert_eq!(clear_profile_from(&mut projects, "pr1"), 0);
+        assert_eq!(projects[0].defaults.profile_id.as_deref(), Some("pr2"));
+    }
+
+    // Every OTHER default is independent of the profile and must survive the
+    // sweep — clearing the profile is not clearing the project's config.
+    #[test]
+    fn clearing_a_profile_leaves_every_other_default_intact() {
+        let mut projects = vec![with_profile("p1", Some("pr1"))];
+        projects[0].defaults.model_id = Some("claude-opus-4".into());
+        projects[0].defaults.effort = Some("high".into());
+        projects[0].defaults.permission_mode = Some("plan".into());
+        projects[0].defaults.account_id = Some("acct-2".into());
+
+        assert_eq!(clear_profile_from(&mut projects, "pr1"), 1);
+        let d = &projects[0].defaults;
+        assert_eq!(d.profile_id, None);
+        assert_eq!(d.model_id.as_deref(), Some("claude-opus-4"));
+        assert_eq!(d.effort.as_deref(), Some("high"));
+        assert_eq!(d.permission_mode.as_deref(), Some("plan"));
+        assert_eq!(d.account_id.as_deref(), Some("acct-2"));
+    }
+
+    #[test]
+    fn clearing_an_account_only_touches_the_projects_naming_it() {
+        let mut projects = vec![
+            with_profile("p1", None),
+            with_profile("p2", None),
+            with_profile("p3", None),
+        ];
+        projects[0].defaults.account_id = Some("acct-1".into());
+        projects[1].defaults.account_id = Some("acct-2".into());
+        projects[2].defaults.account_id = Some("acct-1".into());
+
+        assert_eq!(clear_account_from(&mut projects, "acct-1"), 2);
+        assert_eq!(projects[0].defaults.account_id, None);
+        assert_eq!(projects[1].defaults.account_id.as_deref(), Some("acct-2"));
+        assert_eq!(projects[2].defaults.account_id, None);
+    }
+
+    #[test]
+    fn clearing_an_unreferenced_account_reports_no_change() {
+        let mut projects = vec![with_profile("p1", None)];
+        projects[0].defaults.account_id = Some("acct-2".into());
+        assert_eq!(clear_account_from(&mut projects, "acct-1"), 0);
+        assert_eq!(projects[0].defaults.account_id.as_deref(), Some("acct-2"));
+    }
+
+    // The two sweeps must not reach into each other's field: removing an account
+    // leaves the project's profile default alone, and vice versa. A `field`
+    // picker wired to the wrong member would pass every test above.
+    #[test]
+    fn the_two_sweeps_are_independent() {
+        let mut projects = vec![with_profile("p1", Some("pr1"))];
+        projects[0].defaults.account_id = Some("acct-1".into());
+
+        assert_eq!(clear_account_from(&mut projects, "acct-1"), 1);
+        assert_eq!(projects[0].defaults.account_id, None);
+        assert_eq!(projects[0].defaults.profile_id.as_deref(), Some("pr1"));
+
+        assert_eq!(clear_profile_from(&mut projects, "pr1"), 1);
+        assert_eq!(projects[0].defaults.profile_id, None);
+
+        // An id that happens to collide across the two registries only clears the
+        // field its own sweep owns.
+        let mut shared = vec![with_profile("p2", Some("same-id"))];
+        shared[0].defaults.account_id = Some("same-id".into());
+        assert_eq!(clear_profile_from(&mut shared, "same-id"), 1);
+        assert_eq!(shared[0].defaults.profile_id, None);
+        assert_eq!(shared[0].defaults.account_id.as_deref(), Some("same-id"));
+    }
+
+    // ---------- boot-time reconcile ----------
+
+    fn ids(list: &[&str]) -> HashSet<String> {
+        list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn reconcile_drops_only_the_ids_that_no_longer_exist() {
+        let mut projects = vec![
+            with_profile("p1", Some("pr-live")),
+            with_profile("p2", Some("pr-gone")),
+            with_profile("p3", None),
+        ];
+        projects[0].defaults.account_id = Some("acct-live".into());
+        projects[1].defaults.account_id = Some("acct-gone".into());
+
+        let (profiles, accounts) = (ids(&["pr-live"]), ids(&["default", "acct-live"]));
+        assert_eq!(
+            reconcile_defaults_in(&mut projects, Some(&profiles), Some(&accounts)),
+            2
+        );
+        assert_eq!(projects[0].defaults.profile_id.as_deref(), Some("pr-live"));
+        assert_eq!(
+            projects[0].defaults.account_id.as_deref(),
+            Some("acct-live")
+        );
+        assert_eq!(projects[1].defaults.profile_id, None);
+        assert_eq!(projects[1].defaults.account_id, None);
+    }
+
+    // THE important one. An empty/unreadable registry arrives as `None`, and must
+    // clear NOTHING — the failure mode it guards against is wiping every
+    // project's configuration because a JSON file momentarily failed to parse.
+    #[test]
+    fn reconcile_leaves_a_field_untouched_when_its_registry_is_not_trusted() {
+        let mut projects = vec![with_profile("p1", Some("pr-gone"))];
+        projects[0].defaults.account_id = Some("acct-gone".into());
+
+        // Neither registry trusted: nothing is cleared, even though both ids are
+        // absent from every set.
+        assert_eq!(reconcile_defaults_in(&mut projects, None, None), 0);
+        assert_eq!(projects[0].defaults.profile_id.as_deref(), Some("pr-gone"));
+        assert_eq!(
+            projects[0].defaults.account_id.as_deref(),
+            Some("acct-gone")
+        );
+
+        // One trusted, one not: only the trusted field is reconciled.
+        let accounts = ids(&["default"]);
+        assert_eq!(
+            reconcile_defaults_in(&mut projects, None, Some(&accounts)),
+            1
+        );
+        assert_eq!(projects[0].defaults.profile_id.as_deref(), Some("pr-gone"));
+        assert_eq!(projects[0].defaults.account_id, None);
+    }
+
+    // The caller skips the disk write on 0, so a clean registry must report 0 —
+    // otherwise every launch rewrites projects.json.
+    #[test]
+    fn reconcile_reports_no_change_when_every_reference_resolves() {
+        let mut projects = vec![
+            with_profile("p1", Some("pr-live")),
+            with_profile("p2", None),
+        ];
+        projects[0].defaults.account_id = Some("default".into());
+        let (profiles, accounts) = (ids(&["pr-live"]), ids(&["default"]));
+        assert_eq!(
+            reconcile_defaults_in(&mut projects, Some(&profiles), Some(&accounts)),
+            0
+        );
+        assert_eq!(projects[0].defaults.profile_id.as_deref(), Some("pr-live"));
+        assert_eq!(projects[0].defaults.account_id.as_deref(), Some("default"));
+    }
+
+    // The built-in account id must survive: it is always valid and is never a
+    // registered row.
+    #[test]
+    fn reconcile_keeps_the_builtin_default_account() {
+        let mut projects = vec![with_profile("p1", None)];
+        projects[0].defaults.account_id = Some("default".into());
+        let accounts = ids(&["default", "acct-1"]);
+        assert_eq!(
+            reconcile_defaults_in(&mut projects, None, Some(&accounts)),
+            0
+        );
+        assert_eq!(projects[0].defaults.account_id.as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn clearing_a_profile_round_trips_through_the_registry_file() {
+        let dir = tmp_root("clear-persist");
+        let path = dir.join("projects.json");
+        let mut projects = vec![
+            with_profile("p1", Some("pr1")),
+            with_profile("p2", Some("pr2")),
+        ];
+        clear_profile_from(&mut projects, "pr1");
+        save_to(&path, &projects).unwrap();
+
+        let reloaded = load_from(&path);
+        assert_eq!(reloaded[0].defaults.profile_id, None);
+        assert_eq!(reloaded[1].defaults.profile_id.as_deref(), Some("pr2"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

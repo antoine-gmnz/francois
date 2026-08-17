@@ -1,123 +1,90 @@
-/* ProfilesModal.tsx — list + editor layout. Modal chrome (backdrop/panel/
-   header/body/footer) comes from src/ui/Modal.tsx + .modal-* in styles.css;
-   field/label/hint chrome is reused verbatim from new-session-modal.css
-   (`.new-session-modal__*`) rather than duplicated here. */
+/* ProfilesModal.tsx — the modal deliberately reuses the PROJECTS chrome
+   (`.pj-backdrop` / `.pj-panel` / `.pj-header` / `.pj-body` / `.pj-list` /
+   `.pj-config` / `.pj-group` / `.pj-row` / `.pj-input`) from
+   src/features/projects/projects.css, which ProfilesModal imports directly.
+   The two modals are siblings the user moves between, so they read as one
+   surface. Only what is genuinely profile-specific lives here.
 
-.pf-header-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-10);
+   The pane [1] / welcome-header chip (`.pf-chip*`) is unrelated to the modal
+   and stays as-is at the bottom. */
+
+/* A profile has fewer fields than a project, so the panel is narrower.
+
+   It also takes a DEFINITE height, where `.pj-panel` deliberately sets only
+   `max-height` (projects §8 C: a fixed height renders a full panel around a
+   one-line "no projects yet"). Diverging on purpose — projects' content varies
+   in height by project (a long CLAUDE.md notes block, N rules), so shrink-wrap
+   reads as fitting the content; a profile is always the same three groups, so
+   shrink-wrap instead means the panel JUMPS as conditional hints appear and
+   disappear (the replace-mode note, the extra-args advisory, an inline denial).
+   A stable box is the calmer surface, and it is what stops the no-selection and
+   empty-registry states from collapsing to a sliver. */
+.pf-panel {
+  width: min(720px, 92vw);
+  height: min(560px, 86vh);
 }
 
-.pf-title {
-  font-size: var(--font-size-14);
-  color: var(--text-strong);
+/* The "select a profile" placeholder must not inherit `.pj-config`'s scroller
+   flex, or the one-line message stretches. */
+.pf-config-empty {
+  flex: 1;
+  display: block;
 }
 
-.pf-count {
+/* Every field here is full width under its own section header, so none of them
+   is a `.pj-row` cell. `.pj-input` is authored to BE such a cell (`flex: 1`,
+   which in these column-flex groups would stretch it vertically instead of
+   horizontally), so both axes need correcting. */
+.pf-field {
+  width: 100%;
+  flex: none;
+}
+
+/* The prompt is the one field that earns real height; `.pj-textarea`'s 64px min
+   is sized for projects' NOTES, not a role doctrine. */
+.pf-prompt {
+  min-height: 120px;
   font-size: var(--font-size-11);
-  color: var(--text-dim);
 }
 
-.pf-body {
-  display: grid;
-  grid-template-columns: 180px 1fr;
-  gap: var(--space-16);
-  min-height: 320px;
-}
-
-.pf-list {
-  border-right: 1px solid var(--border-2);
-  padding-right: var(--space-12);
+/* The editor column: the scrolling form, then its footer. `.pj-body` is a flex
+   ROW of [240px list | editor], so wrapping the form and the footer in a column
+   here is what makes the footer start where the form starts — without restating
+   `.pj-list`'s 240px as a magic indent that would then drift from it. */
+.pf-editor-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  overflow-y: auto;
 }
 
-.pf-new {
-  font-size: var(--font-size-12-5);
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: var(--space-5) var(--space-10);
-  border-radius: var(--radius-base);
-}
+/* The footer: the explicit save (FR-9 needs a discrete commit) on the left,
+   `ui/RemoveControl`'s destructive row on the right. Outside the scrolling
+   `.pj-config` so it never scrolls away behind a long system prompt, but inside
+   the editor column so it is bounded by the form it acts on. Padding and border
+   mirror `.pj-header`, which bounds the panel at the other end.
 
-.pf-new:hover {
-  color: var(--text);
-  background: var(--bg-panel);
-}
-
-.pf-row {
+   The remove row takes `flex: 1` rather than the footer using `space-between`,
+   because the save button is REMOVED from the DOM while a removal is being
+   confirmed — under `space-between` a lone remaining child falls back to the
+   left, so the confirmation would jump across the footer. Filling the free space
+   and right-aligning inside it puts the row in the same place either way. */
+.pf-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-5);
-  cursor: pointer;
-}
-
-.pf-row-name {
-  font-size: var(--font-size-12-5);
-}
-
-.pf-row-mark {
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-base);
-  padding: 0 var(--space-5);
+  gap: var(--space-10);
+  padding: var(--space-10) var(--space-16);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 
-.pf-empty {
-  font-size: var(--font-size-12-5);
-  color: var(--text-faint);
-  padding: var(--space-10);
+.pf-footer .remove-row {
+  flex: 1;
+  padding-top: 0;
 }
 
-.pf-editor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-14);
-  overflow-y: auto;
-}
-
-.pf-row-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.pf-textarea {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-base);
-  color: var(--text);
-  font-size: var(--font-size-12-5);
-  font-family: inherit;
-  padding: var(--space-10);
-  width: 100%;
-  resize: vertical;
-  outline: none;
-}
-
-.pf-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-10);
-  margin-top: var(--space-5);
-}
-
-.pf-remove-btn {
-  color: var(--error);
-}
-
-.pf-remove-confirm {
-  font-size: var(--font-size-11);
-  color: var(--text-dim);
-}
-
-/* ---------- chip (FR-22) ---------- */
+/* ---------- chip (FR-22) — pane [1] + welcome header, not the modal ---------- */
 
 .pf-chip {
   display: inline-flex;

@@ -24,7 +24,6 @@ import { useDirectoryPicker } from './useDirectoryPicker';
 import { useWorktreeGroup } from './useWorktreeGroup';
 import { WorktreeField } from './WorktreeField';
 import { submitErrorBanner, worktreeBranchInUsePath } from './worktree';
-import { profileFormOverrides } from '../profiles/profiles';
 import './new-session-modal.css';
 
 // PermissionMode choices (contract/common.ts): label + the plain-language consequence.
@@ -117,10 +116,6 @@ export default function NewSessionModal({
     const picked = profiles.find((p) => p.id === pendingNewSessionProfileId) ?? null;
     if (!picked) return; // registry not hydrated yet — retry once it is
     setProfileId(picked.id);
-    const overrides = profileFormOverrides(picked);
-    if (overrides.modelId !== undefined) setModelId(overrides.modelId);
-    if (overrides.effort !== undefined) setEffort(overrides.effort);
-    if (overrides.permissionMode !== undefined) setPermissionMode(overrides.permissionMode);
     setPendingNewSessionProfileId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingNewSessionProfileId, profiles]);
@@ -350,19 +345,10 @@ export default function NewSessionModal({
           }}
         />
 
-        {/* session-profiles: right after ACCOUNT — picking one pre-fills the
-            controls below (still editable, FR-18). */}
-        <ProfileField
-          profiles={profiles}
-          profileId={profileId}
-          onChange={(id) => {
-            setProfileId(id);
-            const overrides = profileFormOverrides(profiles.find((p) => p.id === id) ?? null);
-            if (overrides.modelId !== undefined) setModelId(overrides.modelId);
-            if (overrides.effort !== undefined) setEffort(overrides.effort);
-            if (overrides.permissionMode !== undefined) setPermissionMode(overrides.permissionMode);
-          }}
-        />
+        {/* session-profiles: right after ACCOUNT. A profile contributes a name,
+            a system prompt and extra args only — the model / effort / permission
+            controls below belong to the PROJECT and are left untouched. */}
+        <ProfileField profiles={profiles} profileId={profileId} onChange={setProfileId} />
 
         {modelEfforts.length > 0 && (
           <div>

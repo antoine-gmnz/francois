@@ -53,6 +53,7 @@ import {
   accountRemove,
   accountRename,
   accountSetDefault,
+  projectList,
 } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
@@ -406,6 +407,11 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         setCursorId(null);
         // FR-9's repointed sessions arrive as session.meta events on the session
         // stream, which pane [1] already owns — nothing to apply here.
+        // The core also cleared this account from every project that named it as
+        // its default, so the projects registry we hold is stale — re-read it.
+        void projectList().then((projects) => {
+          if (alive.current && projects.ok) useStore.getState().setProjects(projects.data);
+        });
       })
       .catch(onIpcRejected);
   };

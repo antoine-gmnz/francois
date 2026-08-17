@@ -327,6 +327,10 @@ pub fn account_remove(
     }
     // FR-9: driven from here, never from under the account lock.
     let reassigned_sessions = crate::session::reassign_account_sessions(&app, &account_id);
+    // Same discipline one registry over: a removed account must not stay named as
+    // any project's default account. Best-effort and after the row is gone — see
+    // `project::clear_default_account`.
+    crate::project::clear_default_account(&app, &account_id);
     emit(
         &app,
         AccountEvent::List {

@@ -12,9 +12,6 @@
 //! (multi-provider-seam FR-3): it is turn-shaped (stdin/stdout wiring, the
 //! NDJSON user line) AND Claude-CLI-shaped, rather than argv/env plumbing.
 
-#[cfg(not(windows))]
-use std::process::Command;
-
 pub(crate) use crate::process_util::no_window;
 
 pub(crate) fn valid_effort(e: &str) -> bool {
@@ -86,51 +83,12 @@ pub(crate) fn claude_invocation(
     }
 }
 
-/// A GUI app launched from Finder/Dock/Spotlight (not a terminal) inherits
-/// launchd's minimal default PATH, not the interactive shell's — so a `claude`
-/// installed via nvm/homebrew/~/.local/bin/etc. is invisible to `Command::new`
-/// even though it runs fine from a terminal. Ask the user's login shell for
-/// its PATH once and merge it in ahead of every spawn. Markers rather than a
-/// plain `echo $PATH` because an interactive shell (`-i`, needed since many
-/// PATH exports live in .zshrc/.bashrc, not the non-interactive .zprofile)
-/// may print MOTD/nvm-banner noise before its output.
-#[cfg(not(windows))]
-fn login_shell_path() -> Option<String> {
-    const START: &str = "__francois_path_start__";
-    const END: &str = "__francois_path_end__";
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = Command::new(shell)
-        // `${PATH}` (not `$PATH`), so the shell doesn't read the marker's trailing
-        // text as part of the variable name and expand it to nothing.
-        .args(["-ilc", &format!("echo -n {START}${{PATH}}{END}")])
-        .output()
-        .ok()?;
-    let text = String::from_utf8(out.stdout).ok()?;
-    let start = text.find(START)? + START.len();
-    let end = text[start..].find(END)? + start;
-    let path = text[start..end].trim();
-    (!path.is_empty()).then(|| path.to_string())
-}
-#[cfg(windows)]
-fn login_shell_path() -> Option<String> {
-    None // Windows GUI apps inherit the full user PATH from explorer.exe already.
-}
-
-static SHELL_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-
-/// The PATH to spawn `claude` with: the login shell's PATH (memoized, resolved
-/// at most once per run) prefixed onto the process's own, so directories only
-/// a shell rc file adds are searched too. `None` when unresolvable — callers
-/// then leave the spawn's PATH untouched.
-pub(crate) fn claude_path_env() -> Option<String> {
-    let shell_path = SHELL_PATH.get_or_init(login_shell_path).as_ref()?;
-    let current = std::env::var("PATH").unwrap_or_default();
-    Some(if current.is_empty() {
-        shell_path.clone()
-    } else {
-        format!("{shell_path}:{current}")
-    })
-}
+/// FR-1/FR-2 (ext-path-resolution): the login-shell PATH resolver moved
+/// verbatim to `process_util::login_shell_path_env`, shared with the two
+/// extension spawn sites. This re-export keeps every existing `claude` call
+/// site (`session::claude_path_env`) resolving unchanged, with no filtering
+/// applied to their PATH.
+pub(crate) use crate::process_util::login_shell_path_env as claude_path_env;
 
 /// wsl.exe children need environment variables forwarded across the distro
 /// boundary explicitly: setting one on this (Windows-side) process's own env

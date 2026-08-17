@@ -14,10 +14,48 @@ design_files: []
 
 # Session profiles
 
+## Amendments
+
+Applied to this spec in place, after it shipped. Each one names what it changed so the FR text above
+can be read as current rather than as history.
+
+### A1 — 2026-08-17 · a profile is project-paired, and the modal is a Projects sibling in fact
+
+`modelId` / `effort` / `permissionMode` are **removed** from `SessionProfile`, from
+`ProfileCreateInput`/`ProfileUpdateInput`, from the Rust registry, and from the modal. A profile is
+always paired with a project, and the project's own session defaults already own those three — two
+owners for one value is a silent-precedence bug waiting to be filed, and the profile was winning
+without saying so. Consequences: selecting a profile now pre-fills **nothing** (FR-15/FR-18 §3
+story 2); `projectDefaultProfileResolution` carries only a `profileId`; `DENIED_ARG_FLAGS` keeps
+`--model` / `--permission-mode` / `--dangerously-skip-permissions` but for the inverted reason — a
+profile must not smuggle back in as raw argv what the project owns. Profiles already on disk keep the
+three keys harmlessly (serde ignores unknown fields). The modal also stops being a `src/ui/Modal`
+and reuses the Projects-modal chrome literally (§8).
+
+### A2 — 2026-08-17 · deleting a profile clears it from every project that named it
+
+`profiles_remove` now also clears `defaults.profileId` on every project pointing at the deleted
+profile (`project::clear_default_profile`), so the registry stops accumulating references to profiles
+that are gone. The sweep is **best-effort and runs after** the profile removal committed: a failed
+project write leaves a stale id, which FR-21's silent drop already tolerates, whereas failing the
+removal would refuse what the user actually asked for to protect a reference that is harmless when
+stale. FR-21's drop therefore stays — as the backstop for that case and for registries written before
+the sweep existed. Sessions already created from the profile are untouched: they snapshot it (FR-16)
+and keep showing its name (FR-22).
+
+A **boot-time reconcile** (`project::reconcile_defaults`, called from `main.rs` after all three
+registries load) catches references stranded before this sweep existed, or by a clear that could not
+be persisted. It refuses to act on a registry that came back EMPTY, because
+`parse_registry` yields nothing both for "genuinely none" and for a corrupt or unreadable file, and
+the two mistakes are not symmetric: keeping a stale id costs an `(unavailable)` label in one modal,
+while clearing valid ids would silently destroy every project's configuration on a transient read
+failure. For accounts, "non-empty" means at least one REGISTERED account — `known_ids` always
+contains the built-in id, so its presence proves nothing.
+
 ## 1. Summary
 
-Named, user-owned **session profiles** — a system prompt, model, effort, permission mode and raw
-extra CLI args bundled under a name — so a role-carrying shell alias becomes a first-class thing
+Named, user-owned **session profiles** — a system prompt and raw extra CLI args bundled under a
+name — so a role-carrying shell alias becomes a first-class thing
 inside Francois. Today Francois builds its own `claude` argv (`src-tauri/src/session/turn.rs`) and
 exposes only model, effort, permission mode, runtime and worktree: there is no way to give a session
 a system prompt, and no way to pass a flag Francois does not itself model, so role-driven work falls
@@ -28,8 +66,8 @@ session, persisted across a reopen.
 ## 2. Goals & non-goals
 
 - **Goals**
-  - A `SessionProfile` entity in an app-owned registry: `name`, `systemPrompt`, `modelId`, `effort`,
-    `permissionMode`, `extraArgs`.
+  - A `SessionProfile` entity in an app-owned registry: `name`, `systemPrompt`, `extraArgs`.
+    (Amendment A1 removed `modelId` / `effort` / `permissionMode` — the project owns those.)
   - `--system-prompt` (**REPLACE** semantics, deliberately) threaded through `turn_args` on **every**
     invocation including `--resume`, exactly as `permission_mode` already is.
   - **Snapshot-at-creation**: a session copies the resolved values into its own record. Editing a
@@ -37,7 +75,7 @@ session, persisted across a reopen.
   - Raw `extraArgs` passthrough, with a denylist refused **at save time with a named reason** — never
     a silent drop at spawn.
   - A Profiles modal (sibling to the Projects modal) to create / edit / delete; a profile picker in
-    New Session that **pre-fills editable fields**; a project-level default profile *by id*.
+    New Session; a project-level default profile *by id*.
   - Profile name surfaced on the session (sidebar card + welcome header).
 - **Non-goals**
   - **Mid-session profile switching** — earlier turns ran under a different doctrine, and `--resume`
@@ -59,16 +97,16 @@ mitigation (the user can always see *why* a session behaves differently).
 ## 3. User stories / flows
 
 1. **Author a profile.** ⌘K → `Profiles…` (or the Projects-modal sibling entry) → Profiles modal →
-   *New profile* → name `agent-architect`, paste the role prompt into the textarea, optionally set
-   model / effort / permission mode, optionally paste the alias tail into *Extra args* → Save. A
-   denied flag refuses the save inline, naming the flag and the reason; nothing is written.
+   *New profile* → name `agent-architect`, paste the role prompt into the textarea, optionally paste
+   the alias tail into *Extra args* → Save. A denied flag refuses the save inline, naming the flag
+   and the reason; nothing is written.
 2. **Start a session from a profile.** New Session → the profile picker → `agent-architect`. The
-   dialog's existing model / effort / permission-mode controls **pre-fill** and stay editable. The
-   user changes the model, then creates. The session runs with the profile's system prompt and the
-   edited model; its card shows the `agent-architect` chip.
+   dialog's model / effort / permission-mode controls are **untouched** — they belong to the project
+   (amendment A1). The user adjusts them if they want, then creates. The session runs with the
+   profile's system prompt and the project's model; its card shows the `agent-architect` chip.
 3. **Project default.** A project names a profile by id. Opening New Session under that project shows
-   the **resolved** profile already selected and its values pre-filled *before* create — never a
-   silent application (discovery is not authorization).
+   the **resolved** profile already selected *before* create — never a silent application (discovery
+   is not authorization).
 4. **Palette path.** ⌘K → `New session with profile…` → pick a profile → the New Session dialog opens
    with that profile selected.
 5. **Reopen.** Quit and relaunch: the session resumes over `--resume` and still carries its
@@ -131,9 +169,10 @@ mitigation (the user can always see *why* a session behaves differently).
 - **FR-17** `profile.replacesSystemPrompt` is `true` iff the session was created with a non-empty
   `systemPrompt`. It exists so the UI can pick the replace-mode treatment **without reading the
   prompt text**.
-- **FR-18** Selecting a profile and then editing a pre-filled field still snapshots the profile
+- **FR-18** Selecting a profile and then editing any New Session field still snapshots the profile
   identity. There is no "modified" state: the chip records where the session came from, the resolved
-  values are the truth.
+  values are the truth. (Amendment A1: a profile no longer pre-fills anything, so the fields being
+  edited are the project's, not the profile's.)
 - **FR-19** The durable-sessions persistence record gains `systemPrompt`, `extraArgs` and the profile
   ref. Absent on load ⇒ a pre-feature session with no profile. A resumed session spawns with its
   persisted values, not with the profile's current ones.
@@ -141,8 +180,9 @@ mitigation (the user can always see *why* a session behaves differently).
 **Project defaults**
 
 - **FR-20** `ProjectDefaults` gains `profileId?`. The contents always resolve from the registry at
-  dialog-open time; a project can never define a profile.
-- **FR-21** A project default profile is shown **resolved and pre-filled in the New Session dialog
+  dialog-open time; a project can never define a profile. Deleting a profile clears this field
+  wherever it named that profile (amendment A2).
+- **FR-21** A project default profile is shown **resolved and selected in the New Session dialog
   before create**, exactly like any other default. A `profileId` that no longer resolves is dropped
   silently and the dialog opens with no profile selected.
 
@@ -220,7 +260,8 @@ export const MAX_EXTRA_ARGS_RAW = 4096;
 /**
  * FR-9. Refused at save time with a named reason. The first eight own the stream contract the
  * whole event pipeline parses; --permission-mode / --dangerously-skip-permissions are refused so
- * `permissionMode` stays the single source of truth; --append-system-prompt is a v1 non-goal that
+ * the PROJECT's session defaults own model/permissions (amendment A1) and a profile must not
+ * smuggle them back in as raw argv; --append-system-prompt is a v1 non-goal that
  * would fight replace mode; --permission-prompt-tool owns the stdio control channel.
  */
 export const DENIED_ARG_FLAGS: readonly string[] = [
@@ -247,10 +288,6 @@ export interface SessionProfile {
   name: string; // trimmed, 1–MAX_PROFILE_NAME; NOT unique (FR-3)
   /** Inline text. Present and non-empty ⇒ REPLACE mode: it replaces Claude Code's own prompt. */
   systemPrompt?: string;
-  modelId?: string;
-  /** low | medium | high | xhigh | max */
-  effort?: string;
-  permissionMode?: PermissionMode;
   /** Verbatim as typed, for round-tripping the editor (FR-8). */
   extraArgsRaw?: string;
   /** Core-parsed tokens (FR-7); the argv actually appended. */
@@ -268,9 +305,6 @@ export interface SessionProfile {
 export interface ProfileCreateInput {
   name: string;
   systemPrompt?: string;
-  modelId?: string;
-  effort?: string;
-  permissionMode?: PermissionMode;
   extraArgsRaw?: string;
 }
 // invoke('profiles_create', req: ProfileCreateInput): Promise<Result<SessionProfile>>
@@ -316,8 +350,8 @@ the same domain) — though the field itself lands in `common.ts`, where `Projec
   Session state gains `system_prompt: Option<String>`, `extra_args: Vec<String>` and the profile ref,
   all persisted with the durable-sessions record and all read back on resume (FR-19).
 - **Frontend** — a `profilesStore` (zustand, `src/lib/`) holding the list, loaded on mount and after
-  each mutation. New Session holds the selected profile id plus its pre-filled-then-editable field
-  values in local dialog state. The chip reads `SessionMeta.profile`; no store lookup (FR-22).
+  each mutation. New Session holds the selected profile id in local dialog state (and nothing else
+  from the profile — amendment A1). The chip reads `SessionMeta.profile`; no store lookup (FR-22).
 - **Derived** — `replacesSystemPrompt` is computed once at creation, not derived at render time.
 
 ## 7. Edge cases & errors
@@ -331,7 +365,8 @@ the same domain) — though the field itself lands in `common.ts`, where `Projec
 | Unmodelled (but allowed) flag | Saves; non-blocking advisory beside the token (FR-10) |
 | Denied flag reaches `session_create` | `PROFILE_ARG_DENIED`; no session is created (FR-11) |
 | `profileId` in `session_create` does not resolve | `PROFILE_NOT_FOUND`; no session is created |
-| Project default `profileId` no longer resolves | Dropped silently; the dialog opens with no profile selected (FR-21) |
+| A profile is deleted while projects name it as their default | Those projects' `defaults.profileId` are cleared by the core in the same command (amendment A2); sessions already created keep the snapshot |
+| Project default `profileId` no longer resolves | Dropped silently; the dialog opens with no profile selected (FR-21) — now only reachable via a failed clear or a pre-A2 registry |
 | Profile deleted after sessions exist | Sessions keep working and keep the snapshotted chip name (FR-22) |
 | Profile edited after sessions exist | Running and persisted sessions are untouched; the next session started from it gets the new values |
 | Session persisted before this feature | No `profile`, no `systemPrompt`, no `extraArgs`; resumes exactly as today (FR-19) |
@@ -340,11 +375,13 @@ the same domain) — though the field itself lands in `common.ts`, where `Projec
 
 ## 8. Design brief
 
-Additions inside existing chrome: a **Profiles modal** built on the Projects-modal pattern
-(list + editor: name, prompt textarea, model, effort, permission mode, one *Extra args* text field
-with inline denial + advisory), a **profile picker** in New Session whose selection pre-fills the
-existing controls, a **profile chip** on the sidebar/fleet card and in the session-welcome header,
-and two palette entries. The acid accent appears **only** in the focused session's welcome header;
+Additions inside existing chrome: a **Profiles modal** that reuses the Projects-modal chrome
+literally (amendment A1 — same backdrop/panel/header, same `pj-group` / 120px-label form language,
+`+ New profile` pinned under the list; sections IDENTITY / ROLE / ARGS holding name, prompt textarea
+and one *Extra args* field with inline denial + advisory, plus an explicit Save the Projects modal
+does not have, because FR-9 can refuse a save), a **profile picker** in New Session that pre-fills
+**nothing**, a **profile chip** on the sidebar/fleet card and in the session-welcome header, and two
+palette entries. The acid accent appears **only** in the focused session's welcome header;
 everywhere else the chip is neutral with a replace-mode marker (FR-22).
 
 Per the 2026-08-13 · design decision, `design_files` stays empty — an addition inside existing modal
@@ -361,18 +398,20 @@ chrome does not warrant fresh Claude Design mockups.
 - [x] A session created from a replace-mode profile spawns `claude … --system-prompt <text> <extraArgs>`, with the extra args last (FR-12)
 - [x] The same holds on a `--resume` turn after a quit and relaunch (FR-13, FR-19)
 - [x] `turn_args` unit tests cover prompt present/absent, extra args present/empty, and the resume path (FR-14)
-- [ ] Selecting a profile then editing the model creates a session with the edited model AND the profile chip (FR-18)
+- [ ] Selecting a profile leaves the model / effort / permission controls untouched, and creating still carries the profile chip (FR-18, amendment A1)
 - [x] `session_create` with a denied flag in `extraArgs` returns `PROFILE_ARG_DENIED` and creates nothing (FR-11)
-- [ ] A project default profile is visible and pre-filled in New Session before create (FR-21)
+- [ ] A project default profile is visible and selected in New Session before create (FR-21)
 - [ ] Deleting a profile leaves its sessions running and still showing its name (FR-22)
+- [x] Deleting a profile clears `defaults.profileId` on every project that named it, leaving each project's other defaults intact (amendment A2)
+- [x] The boot-time reconcile drops references to profiles/accounts that are gone, and clears NOTHING when the registry it validates against came back empty (amendment A2)
 - [ ] The acid chip appears in the focused welcome header only; sidebar cards are neutral (FR-22)
 - [ ] Profiles are identical under two different accounts (FR-2)
 - [x] A session persisted before this feature resumes unchanged (FR-19)
 - [x] `Profiles…` and `New session with profile…` are reachable from ⌘K (FR-24)
 
 > Left open — no pipeline stage runs the app, so these need a manual pass with Francois up:
-> FR-1 (survives restart, `name` order), FR-18 (profile + edited model), FR-21 (default visible
-> and pre-filled), FR-22 delete-safety, FR-22 acid-chip placement, FR-2 (identical under two
+> FR-1 (survives restart, `name` order), FR-18 (profile + untouched controls), FR-21 (default
+> visible and selected), FR-22 delete-safety, FR-22 acid-chip placement, FR-2 (identical under two
 > accounts). Tick them only after exercising each by hand.
 
 ## Remediation

@@ -65,13 +65,19 @@ pub struct ProjectDefaults {
     #[serde(rename = "allowGit", default, skip_serializing_if = "Option::is_none")]
     allow_git: Option<bool>,
     /// multi-account FR-20: the account a new session under this project opens
-    /// on. Stored verbatim like every other default — a removed account falls
-    /// back to the isDefault one in the modal, never here.
+    /// on. CLEARED HERE when the account it names is removed
+    /// (`clear_default_account`); the modal's fallback to the isDefault account
+    /// stays the backstop for a clear that could not be persisted, and for
+    /// registries written before the sweep existed.
     #[serde(rename = "accountId", default, skip_serializing_if = "Option::is_none")]
     account_id: Option<String>,
     /// session-profiles FR-20/FR-21: the profile a new session under this
-    /// project pre-fills from. Stored verbatim like every other default — a
-    /// profile that no longer resolves is dropped in the modal, never here.
+    /// project starts with. Unlike every other default, this one is CLEARED
+    /// HERE when the profile it names is deleted (`clear_default_profile`), so
+    /// the registry does not accumulate references to profiles that are gone.
+    /// The modal still drops an unresolvable id silently (FR-21) — that stays
+    /// the backstop for a clear that could not be persisted, and for registries
+    /// written before the sweep existed.
     #[serde(rename = "profileId", default, skip_serializing_if = "Option::is_none")]
     profile_id: Option<String>,
 }

@@ -227,28 +227,12 @@
   flex-shrink: 0;
   transition: opacity 90ms ease-out;
 }
-.pj-action-glyph {
-  cursor: pointer;
-  flex-shrink: 0;
-}
 .pj-footer-note {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   font-size: var(--font-size-10);
   color: var(--text-faint);
-}
-.pj-remove-row {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: var(--space-12);
-  padding-top: var(--space-4);
-}
-.pj-remove-confirm {
-  font-size: var(--font-size-10-5);
-  color: var(--error);
-  text-align: right;
 }
 .pj-missing-tag {
   font-size: var(--font-size-9);

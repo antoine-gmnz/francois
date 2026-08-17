@@ -1,8 +1,9 @@
 // session-profiles — the New Session modal's PROFILE row (story 2/4). Selecting
-// a profile pre-fills the model/effort/permission-mode controls below (still
-// editable, FR-18) and carries its systemPrompt/extraArgs silently through to
-// session_create. Renders nothing until at least one profile exists — the
-// pre-feature form is untouched until one is authored.
+// a profile carries its systemPrompt/extraArgs silently through to
+// session_create, and touches nothing else: a profile carries no model / effort
+// / permission mode, because the PROJECT's session defaults own those three.
+// Renders nothing until at least one profile exists — the pre-feature form is
+// untouched until one is authored.
 
 import { newSessionProfileOptions } from '../profiles/profiles';
 import type { SessionProfile } from '../../../contract/session-profiles';
@@ -37,7 +38,7 @@ export function ProfileField({ profiles, profileId, onChange }: ProfileFieldProp
       {/* §2 accepted consequence (FR-23), stated again here — the moment it
           actually applies to this session, not just where it was authored. */}
       {selected?.systemPrompt && selected.systemPrompt.trim() !== '' && (
-        <div className="new-session-modal__hint">replaces the system prompt — model/effort/permissions below stay editable</div>
+        <div className="new-session-modal__hint">replaces the system prompt — the controls below are unaffected</div>
       )}
     </div>
   );
