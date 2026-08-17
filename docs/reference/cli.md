@@ -16,6 +16,44 @@ the install/launch companion — it is **not** a live control channel into an al
 | `francois shortcut --remove` | Unregister just the desktop entry, without touching the npm package. |
 | `francois uninstall` | Unregister the desktop entry, then remove the npm package. This is the supported way to uninstall. |
 | `francois --help` | Usage. |
+| `francois ext …` | Manage extensions on disk — see below. |
+
+## Managing extensions
+
+These three verbs operate **directly on `~/.francois/extensions/`**: no socket, no running app
+required, and they never enable anything. Enabling is the app's job, behind the consent dialog —
+see the [Extensions guide](/guide/extensions).
+
+| Command | Effect |
+| --- | --- |
+| `francois ext install <name\|path\|git-url>` | Copy a local directory, or clone a git URL, into `~/.francois/extensions/<id>/`. Validates the manifest before writing. Installs **disabled**. |
+| `francois ext install … --force` | Overwrite an existing install. This is also how you update one. |
+| `francois ext list` | List every installed extension: id, label, path, and `enabled` / `disabled` / `invalid manifest`. |
+| `francois ext remove <id>` | Delete an installed extension and its consent record. Asks for confirmation. |
+| `francois ext remove <id> --yes` | Skip the confirmation. |
+| `francois ext --help` | Usage. |
+
+The install source can be four things, resolved most-explicit-first:
+
+| You type | Francois uses |
+| --- | --- |
+| `./my-plugin` | that directory, copied |
+| `https://…` or `git@host:path` | that repository, cloned shallow |
+| `thing` | `github.com/antoine-gmnz/francois-plugin-thing` |
+| `someone/thing` | `github.com/someone/francois-plugin-thing` |
+
+An **existing local directory always wins** over the bare-name form, so a bare name never silently
+reaches the network when a local answer exists. The bare-name form is a naming convention resolved
+by string substitution — there is no registry index, nothing to search, and no version resolution.
+
+The extension's **id is the directory name** it lands under (with any `francois-plugin-` prefix
+stripped), never a field the manifest declares. It must match `^[a-z][a-z0-9-]{0,31}$`.
+
+::: warning Updating flips it back off
+Consent is bound to the manifest's sha256. Reinstalling with `--force` — or editing the manifest by
+hand — reverts the extension to **disabled**, and you re-enable it in the app after reviewing the
+new commands.
+:::
 
 ## Why `francois uninstall` and not `npm uninstall -g francois`
 

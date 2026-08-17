@@ -1,0 +1,559 @@
+/* extensions — the `ext:<id>` main-pane tabs, the four primitives, the
+   Extensions modal (Installed rows) and the consent dialog. Tokens only
+   (src/styles.css); BEM-lite; no font-weight above 600.
+
+   Identity rule (design brief): acid `--accent` means THE LIVE THING and
+   appears exactly once per view — the `live` indicator on a streaming
+   log-tail. Status tones never borrow it; `toneColor` in extensions.ts is the
+   single source for those, and no rule here paints a status with the accent.
+
+   Hostile content is the normal case: every text treatment truncates rather
+   than widening, so 512 characters of punctuation in a branch name can never
+   produce a horizontal scrollbar on the pane. */
+
+.ext-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-14) var(--space-16) var(--space-24);
+  font-family: var(--font-mono);
+}
+
+/* -- tab header strip ------------------------------------------------------ */
+
+.ext-view__header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+  padding-bottom: var(--space-10);
+  border-bottom: 1px solid var(--border-2);
+}
+.ext-view__label {
+  font-size: var(--font-size-13);
+  color: var(--text-bright);
+  letter-spacing: 0.02em;
+}
+.ext-view__scope {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-view__disable {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ext-view__disable:hover {
+  color: var(--text-2);
+}
+.ext-view__disable--busy {
+  cursor: default;
+  opacity: 0.5;
+  pointer-events: none;
+}
+.ext-view__error {
+  margin-top: var(--space-8);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+
+/* -- section --------------------------------------------------------------- */
+
+.ext-section {
+  padding: var(--space-14) 0;
+  border-bottom: 1px solid var(--border);
+}
+.ext-section:last-child {
+  border-bottom: none;
+}
+.ext-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  margin-bottom: var(--space-10);
+}
+.ext-section__label {
+  font-size: var(--font-size-11);
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ext-section__header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+}
+.ext-section__refresh {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+}
+.ext-section__body {
+  min-width: 0;
+}
+
+/* the ONE accent in the tab: a live stream */
+.ext-live {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--font-size-9-5);
+  color: var(--accent);
+  letter-spacing: 0.06em;
+}
+
+/* -- notes: no-session · not-available · no-selection ----------------------- */
+
+.ext-note {
+  padding: var(--space-12) var(--space-4);
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+}
+.ext-note--recessed {
+  color: var(--text-faint);
+}
+.ext-empty {
+  padding: var(--space-16) 0;
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+
+/* -- error state (FR-49) --------------------------------------------------- */
+
+.ext-error {
+  padding: var(--space-11);
+  border-radius: var(--radius-card);
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+}
+.ext-error__cause {
+  font-size: var(--font-size-11-5);
+  color: var(--error);
+}
+.ext-error__command,
+.ext-error__detail {
+  margin-top: var(--space-6);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.ext-error__retry {
+  margin-top: var(--space-10);
+}
+
+/* -- loading skeletons ----------------------------------------------------- */
+
+.ext-skeleton {
+  background: var(--bg-hover);
+  border-radius: var(--radius-base);
+}
+.ext-skeleton-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.ext-skeleton-row {
+  height: 16px;
+}
+.ext-skeleton-row:nth-child(2) {
+  width: 88%;
+}
+.ext-skeleton-row:nth-child(3) {
+  width: 72%;
+}
+.ext-skeleton-row:nth-child(4) {
+  width: 80%;
+}
+.ext-stat.ext-skeleton {
+  height: 52px;
+  min-width: 120px;
+}
+
+/* -- key-value ------------------------------------------------------------- */
+
+.ext-kv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.ext-kv__row {
+  display: grid;
+  grid-template-columns: 10px 180px 1fr;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.ext-kv__key {
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-kv__value {
+  font-size: var(--font-size-11-5);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- table ----------------------------------------------------------------- */
+
+.ext-table {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ext-table__head {
+  display: grid;
+  gap: var(--space-10);
+  padding: 0 var(--space-8) var(--space-6);
+  border-bottom: 1px solid var(--border);
+}
+.ext-table__th {
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-table__th--number {
+  text-align: right;
+}
+.ext-table__row {
+  display: grid;
+  gap: var(--space-10);
+  align-items: center;
+  padding: var(--space-6) var(--space-8);
+  min-width: 0;
+}
+.ext-table__marker {
+  position: absolute;
+  left: 0;
+  font-size: var(--font-size-9);
+  color: var(--text-muted);
+}
+.ext-table__row {
+  position: relative;
+}
+.ext-cell {
+  font-size: var(--font-size-11);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ext-cell--number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.ext-cell--time {
+  color: var(--text-faint);
+}
+.ext-cell--path {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  direction: ltr;
+}
+
+/* status tag — toned by the row, never by the accent */
+.ext-tag {
+  display: inline-block;
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-9-5);
+  line-height: 15px;
+  color: var(--text-2);
+  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+}
+.ext-tag--ok {
+  color: var(--success);
+  box-shadow: inset 0 0 0 1px var(--success-dim);
+}
+.ext-tag--warn {
+  color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.ext-tag--error {
+  color: var(--error);
+  box-shadow: inset 0 0 0 1px var(--error-dim);
+}
+.ext-tag--busy {
+  color: var(--hue-blue);
+  box-shadow: inset 0 0 0 1px var(--hue-blue);
+}
+.ext-tag--neutral {
+  color: var(--text-muted);
+}
+
+/* Load more / cap notice — a full-width quiet row, not a floating button */
+.ext-table__more {
+  padding: var(--space-8);
+  text-align: center;
+  font-size: var(--font-size-10-5);
+  color: var(--text-hint);
+  cursor: pointer;
+  border-top: 1px solid var(--border);
+}
+.ext-table__more:hover {
+  background: var(--bg-hover);
+}
+.ext-table__more--capped {
+  color: var(--text-faint);
+  cursor: default;
+}
+.ext-table__more--capped:hover {
+  background: transparent;
+}
+
+/* -- stat-row -------------------------------------------------------------- */
+
+.ext-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.ext-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 120px;
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-card);
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-2);
+}
+.ext-stat__label {
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ext-stat__value {
+  font-size: var(--font-size-17);
+  color: var(--text-bright);
+  font-weight: 500;
+}
+.ext-stat__sublabel {
+  font-size: var(--font-size-10);
+  color: var(--text-muted);
+}
+
+/* -- log-tail -------------------------------------------------------------- */
+
+.ext-log {
+  max-height: 280px;
+  overflow: auto;
+  padding: var(--space-8) var(--space-10);
+  border-radius: var(--radius-card);
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 1px var(--border-2);
+}
+.ext-log__line {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ext-log__notice,
+.ext-log__waiting {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  padding-bottom: var(--space-4);
+}
+/* -- consent dialog (extension-install FR-16..FR-18) ------------------------ */
+
+.ext-consent__stale {
+  margin-bottom: var(--space-10);
+  font-size: var(--font-size-10-5);
+  color: var(--warn);
+}
+.ext-consent__commands {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-10);
+  border-radius: var(--radius-card);
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 1px var(--border-2);
+}
+.ext-consent__command {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11-5);
+  color: var(--text-bright);
+  white-space: pre;
+  overflow-x: auto;
+}
+.ext-consent__path {
+  margin-top: var(--space-10);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.ext-consent__error {
+  margin-top: var(--space-10);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+
+/* -- Extensions modal (FR-56/FR-57, extension-install FR-15..FR-20) -------- */
+
+.ext-modal__error {
+  margin-bottom: var(--space-8);
+  font-size: var(--font-size-11);
+  color: var(--error);
+}
+.ext-modal__empty {
+  padding: var(--space-24) var(--space-8);
+  gap: var(--space-8);
+}
+.ext-modal__empty-path {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+.ext-modal__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: var(--space-10);
+  padding: var(--space-10);
+}
+.ext-modal__row--recessed {
+  opacity: 0.62;
+}
+.ext-modal__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.ext-modal__idline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.ext-modal__id {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+  color: var(--text-strong);
+}
+.ext-modal__name {
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-modal__path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  direction: ltr;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-modal__state {
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-modal__state--ready {
+  color: var(--success);
+}
+.ext-modal__stale-notice {
+  font-size: var(--font-size-10-5);
+  color: var(--warn);
+}
+.ext-modal__manifest-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ext-modal__manifest-cause {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+.ext-modal__manifest-path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.ext-modal__control {
+  display: flex;
+  align-items: center;
+  padding-top: var(--space-2);
+}
+.ext-modal__review {
+  white-space: nowrap;
+}
+.ext-toggle {
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--bg-hover-2);
+  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  justify-content: flex-start;
+}
+.ext-toggle--on {
+  background: var(--success-dim);
+  justify-content: flex-end;
+}
+.ext-toggle__knob {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-2);
+}
+.ext-toggle--on .ext-toggle__knob {
+  background: var(--text-bright);
+}
+
+/* -- titlebar entry -------------------------------------------------------- */
+
+.ext-titlebar-btn {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-2);
+}
+.ext-titlebar-btn:hover {
+  color: var(--text-2);
+}
+
+/* -- tab strip chip -------------------------------------------------------- */
+
+.ext-tab-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+.ext-tab-chip__glyph {
+  color: var(--text-faint);
+}

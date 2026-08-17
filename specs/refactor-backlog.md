@@ -195,6 +195,33 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, qu
 - [ ] LOW · src-tauri/src/session/cloud/api.rs:1-1028 · rule · file is 1028 lines, over the ~1000-line cap in PIPELINE.md §Code layout; split the ref-normalizer/repo-matching pure helpers (normalize_cloud_ref, remote_slug, repo_matches, timestamp parsing) plus their tests into a sibling module (cloud/refs.rs), leaving api.rs the HTTP calls and response mapping · deferred:cloud-sessions
 - [ ] LOW · src/features/cloud-sessions/AdoptCloudSessionModal.tsx:146-149 · quality · pick() sets ref/resolved but never updates cursor, so ArrowDown/ArrowUp right after a mouse pick restarts navigation from index 0/-1 instead of the clicked row; thread the row index into onPick (or list.sessions.findIndex) and setCursor to it inside pick · deferred:cloud-sessions
 
+## deferred:extensions
+
+- [ ] LOW · src-tauri/src/session/status.rs, src-tauri/src/session/stream/lines.rs · quality · pure `cargo fmt` reflow unrelated to extensions rode along in this diff — split it into its own formatting commit · deferred:extensions
+- [ ] LOW · src-tauri/tauri.conf.json · quality · CSP/devCsp block appears in the extensions diff but belongs to the already-shipped webview-hardening feature (c0337ff) — no action unless it drifted · deferred:extensions
+- [ ] MEDIUM · src-tauri/src/extensions/commands.rs:725,742 · quality · `extensions_probe`/`extensions_launch` hardcode `"cohorte"` as the owning extension for the FR-46 action — have `registry::action` return the owning `ExtensionDefinition` and derive the enabled-check from it · deferred:extensions
+- [ ] LOW · src-tauri/src/extensions/commands.rs:624,679 · quality · `EXT_PANEL_NOT_FOUND` covers three distinct causes with no discriminator — add `detail: { reason }` to the two stream-shape refusals · deferred:extensions
+- [ ] LOW · src/features/extensions/ExtensionView.tsx:741 · quality · a failed `extensions_set_enabled` is swallowed by `.catch(() => {})`, so a failed disable looks successful — surface the `AppError` inline · deferred:extensions
+- [ ] LOW · src/features/extensions/DashboardAction.tsx:464-478 · spec-violation · FR-47 `occupied` state keeps the button label "Launch dashboard" and relegates the required occupied copy to a sibling note — swap the button's own label when `state === 'occupied'` or record the alternate reading · deferred:extensions
+- [ ] LOW · src/features/palette/paletteCommands.ts:3218-3233 · convention · `manage-extensions` palette command uses Unicode glyph `▤` instead of a lucide-react icon, matching ~25 other glyph entries in the registry — resolve as part of the deferred registry-wide glyph→icon migration decision · deferred:extensions
+- [ ] MEDIUM · src-tauri/src/extensions/provider.rs:2437 · quality · `run_capped` collapses every `cmd.spawn()` failure to `ProviderError::Missing` ("not found on PATH"), misnaming permission-denied and resource-exhaustion causes on the high-traffic panel/predicate path — thread the real `io::Error` out and mirror `commands.rs::spawn_error`'s `NotFound`-vs-other branching (FR-49) · deferred:extensions
+- [ ] MEDIUM · src-tauri/src/extensions/stream.rs:329,341 · quality · `follow_file` `read_to_string`s the whole unread tail with no byte cap before truncating to `EXT_LOG_MAX_LINES`, so only the emitted line count is bounded, not the allocation — seek to `len.saturating_sub(EXT_LOG_MAX_BYTES)` before reading (or use a bounded ring) to match provider stdout's 4 MiB cap (FR-22) · deferred:extensions
+
+## deferred:extension-install
+
+- [x] MEDIUM · src/features/extensions/ExtSectionError.tsx:23 · security · Apply `sanitizeForDisplay` (or `formatArgv`-style token wrapping) to `errorCommand`'s return value in `extensions.ts` or at the render site — the core's resolved argv is rendered raw · deferred:extension-install
+- [x] CRITICAL · src/features/extensions/ExtensionsModal.tsx:76 · security · Apply `sanitizeForDisplay` to the modal's top-level `{error.message}` (toggle/redetect failures) — rendered raw, same hazard class as the consent-dialog error · deferred:extension-install
+- [ ] LOW · src-tauri/src/extensions/registry.rs:1037 · quality · `scan_dir` uses `e.path().is_dir()` which follows symlinks; use `symlink_metadata` to skip (or explicitly document) top-level symlinks under `~/.francois/extensions/` · deferred:extension-install
+- [ ] LOW · src/features/extensions/ExtensionsModal.tsx:73 · quality · `extConsentDialogId` is never reset on the outer modal's `onClose`; call `closeExtConsentDialog()` alongside `setOpen(false)` (or add a test pinning the current CSS-layering-dependent behavior) · deferred:extension-install
+
+## deferred:session-profiles
+
+- [ ] LOW · src-tauri/src/session/commands/lifecycle.rs:313 · quality · `PROFILE_NOT_FOUND` uses the literal `"no such profile"` instead of `crate::profiles::NOT_FOUND_MSG` — reuse the constant like project/account do · deferred:session-profiles
+- [ ] LOW · src-tauri/src/profiles/mod.rs:36-38 · quality · `MAX_PROFILE_NAME`/`MAX_SYSTEM_PROMPT`/`MAX_EXTRA_ARGS_RAW` are hand-duplicated from `contract/session-profiles.ts` with nothing asserting they stay in sync — add a unit test pinning the Rust constants to the contract's values · deferred:session-profiles
+- [ ] LOW · src/features/profiles/profiles.ts:96-99 · quality · exported `ProfileOptionSource` is dead code, duplicating the actually-used identical interface at `src/features/projects/projects.ts:317-320` — delete it, or have `projects.ts` import it · deferred:session-profiles
+- [ ] MEDIUM · src-tauri/src/session/persistence.rs:653-830 · quality · No unit test round-trips `systemPrompt`/`extraArgs`/`profile` through `persist`→`parse_session_record` (FR-19), only implicit coverage via unrelated pre-feature-record tests — add a test building a record with these fields set (and one with them omitted) asserting round-trip/default behavior, mirroring the worktree round-trip test · deferred:session-profiles
+- [ ] LOW · src/features/profiles/profiles.ts:75 · quality · `flagAdvisoryTokens` classifies via `t.startsWith('-')`, misreading a plain value beginning with `-` (e.g. a negative-number arg) as a flag needing the FR-10 advisory — track advisory tokens by index-following-a-flag instead of value shape · deferred:session-profiles
+
 ## deferred:multi-provider-endpoint
 
 - [ ] LOW · src/features/accounts/AccountRow.tsx:1-33 · quality · add `import './accounts.css';` so the component imports the stylesheet whose classes it renders · deferred:multi-provider-endpoint

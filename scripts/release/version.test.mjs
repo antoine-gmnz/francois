@@ -46,6 +46,20 @@ describe('decideBump', () => {
     expect(decideBump(['', '  ', 'feat: real'])).toBe('minor');
   });
 
+  // Regression: `git log --format=%B%x00` separates RECORDS with a newline, so
+  // every entry but the newest arrives with its subject one line down. That
+  // shipped 0.18.15 for a branch carrying two `feat:` commits, because only the
+  // newest commit's type was ever read.
+  it('reads the subject through the leading newline git leaves on every record but the first', () => {
+    expect(decideBump(['fix: newest', '\nfeat(extensions): older feature'])).toBe('minor');
+    expect(decideBump(['\n\nfeat: padded'])).toBe('minor');
+  });
+
+  it('sees a breaking marker on a shifted subject too', () => {
+    expect(decideBump(['fix: newest', '\nfeat!: older breaking change'])).toBe('major');
+    expect(isBreaking('\nrefactor!: moved everything')).toBe(true);
+  });
+
   it('treats an empty history as a patch', () => {
     expect(decideBump([])).toBe('patch');
   });

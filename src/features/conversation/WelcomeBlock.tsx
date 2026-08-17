@@ -20,6 +20,7 @@ import { projectRepoBrief } from '../../lib/api';
 import { useAppVersion } from '../../lib/hooks/useAppVersion';
 import { useStore } from '../../lib/store';
 import { Logo } from '../../ui/Logo';
+import { ProfileChip } from '../profiles/ProfileChip';
 import { claudeMdSegments, identityParts, recentInRepo, workingOnSegments, type Segment } from './welcome';
 
 export interface WelcomeBlockProps {
@@ -70,6 +71,9 @@ export default function WelcomeBlock({ sessionId }: WelcomeBlockProps) {
         <Logo size={56} title="Francois" />
         <div className="welcome__meta">
           {identity.length > 0 && <span>{identity.join(' · ')}</span>}
+          {/* session-profiles FR-22: the ONE acid chip this view gets — the
+              focused session's own welcome header, never the sidebar/fleet card. */}
+          {meta.profile && <ProfileChip profile={meta.profile} accent />}
           <span className="welcome__cwd">{displayWslCwd(meta.cwd) ?? meta.cwd}</span>
         </div>
       </div>

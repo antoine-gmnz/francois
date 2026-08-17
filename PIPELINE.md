@@ -198,7 +198,7 @@ gate:
   - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`). Commands never reject for domain failures — every fallible call resolves to `Result`.
   - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in `contract/common.ts`).
   - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and reads as: the Tauri mapping above / "Rust core".
-- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account` · `cloud`
+- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account` · `cloud` · `extensions`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
@@ -261,6 +261,12 @@ that owns the feature — never in a new top-level file.
   `scripts/capture/` — a PowerShell window-grabber that regenerates the README
   screenshot and GIF from the app running against the `src/demo/` fake fleet
   (`VITE_FRANCOIS_DEMO=1`). It is a local tool, never run by CI; see its README.
+- **examples** (`examples/extensions/`): worked `extension.json` manifests a plugin author
+  copies to start — **not a surface**, and not shipped in any build. They are not inert
+  documentation either: `src-tauri/src/extensions/manifest.rs` loads
+  `examples/extensions/plugin-example/` as a `cargo test` fixture, so a schema change that
+  breaks the example fails the build (extension-install FR-32). Treat an example as part of
+  the schema's test surface — update it in the same commit as the schema, never after.
 - **Size**: no source file over ~1000 lines. Past that, split by concern rather than
   growing the file — and move each test with the code it covers.
 
@@ -311,6 +317,8 @@ that owns the feature — never in a new top-level file.
 | `notifications` *(frozen)* | desktop notification when a session is blocked on an approval/question, or its turn finished/errored | session-engine, app-shell, session-questions, permission-guardrails, command-palette |
 | `session-brake` *(frozen)* | stop a running turn mid-flight | session-engine, conversation-view |
 | `design-refresh` | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |
+| `extensions` | main-pane `ext:` tabs fed by out-of-process providers under hard caps — four declarative primitives (`key-value`, `table`, `stat-row`, `log-tail`), per-project detection with caching, per-extension toggles | app-shell, agent-tab, workflow-details, projects, command-palette, session-engine |
+| `extension-install` | plugins loaded from `~/.francois/extensions/*/extension.json` instead of a compiled registry — closed detection-predicate set, consent bound to the manifest sha256, `francois ext install\|list\|remove`; amends `extensions` | extensions, cli-companion, app-shell, projects |
 | `fix-agent-view` | dynamic tabs keyed by session instead of one global list — the single pane and both panes of a two-pane split render their own session's agent/workflow tabs after SHELL (the grid stays flat), and a spawned subagent adds its own chip on its first `agent.update`; supersedes agent-tab FR-14 + split-by-4 FR-20 | agent-tab, workflow-details, split-by-4, design-refresh, async-agents, agents-panel, workflow-panel, app-shell |
 | `multi-provider-seam` *(in-review)* | the `SessionAdapter`/`TurnControl` trait seam between the session engine and whatever drives a turn, `ClaudeCodeAdapter` as its only implementation, the `AgentRuntime`/`ProviderProtocol`/`AccountKind` discriminators, and the `runtimeCapabilities()` table. Zero user-visible change | session-engine, multi-account, durable-sessions, permission-guardrails |
 | `multi-provider-endpoint` *(in-review)* | `Account.kind: 'openai-compatible'` — endpoint accounts (label, base URL, key file, model override) added, tested, edited and removed from the Accounts modal; listable but not yet session-selectable | multi-account, multi-provider-seam, projects |

@@ -88,6 +88,23 @@ export type ErrorCode =
   | 'CLOUD_ADOPT_FAILED' // cloud-sessions FR-6: the PTY exited without a usable local session (detail: { logPath? })
   | 'PROVIDER_REQUEST_FAILED' // multi-provider-openai: the endpoint errored, or the tool loop hit its cap
   | 'PROVIDER_CONTEXT_EXCEEDED' // multi-provider-openai: the next request would exceed the model's window
+  | 'EXT_NOT_ENABLED' // extensions FR-7: the extension is toggled off; nothing was spawned
+  | 'EXT_NOT_DETECTED' // extension-install FR-1: the extension's predicate does not hold for that root; when raised because no home directory could be resolved (fleet-scoped panels), detail: { command } per FR-49
+  | 'EXT_PANEL_NOT_FOUND' // extension-install FR-12: a panelId that is not in the manifest-derived registry
+  | 'EXT_PROVIDER_MISSING' // extensions FR-24: the binary could not be spawned (detail: { argv0, command })
+  | 'EXT_PROVIDER_TIMEOUT' // extensions FR-21: killed at 10s (detail: { timeoutMs, command })
+  | 'EXT_PROVIDER_EXIT' // extensions FR-24: non-zero exit (detail: { code, stderr, command })
+  | 'EXT_SCHEMA_INVALID' // extensions FR-25: stdout did not validate; nothing was rendered
+  | 'EXT_OUTPUT_CAPPED' // extensions FR-22: killed past 4 MiB (detail: { capBytes, command })
+  | 'EXT_PATH_OUTSIDE_ROOT' // extensions FR-39: a log-tail file source escaped its declared root
+  | 'EXT_INVALID_TOKEN' // extensions FR-38: the token slot failed its charset/length rule
+  | 'EXT_STREAM_NOT_FOUND' // extensions: closeStream addressed an unknown or already-ended stream
+  | 'EXT_MANIFEST_INVALID' // extension-install FR-6: schema failure; detail: { pointer, expected, manifestPath }
+  | 'EXT_MANIFEST_UNSUPPORTED' // extension-install FR-5: unknown `manifest` version; detail: { found, supported }
+  | 'EXT_NOT_CONSENTED' // extension-install FR-17: enable/spawn refused before consent
+  | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
+  | 'PROFILE_NOT_FOUND' // session-profiles: a profileId that is not in the registry
+  | 'PROFILE_ARG_DENIED' // session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -222,6 +239,8 @@ export interface SessionMeta {
    * Absent ⇒ 'anthropic'; superseded `provider: 'openai-compatible'` ⇒ 'openai'.
    */
   protocol: ProviderProtocol;
+  /** Present ⇔ created from a profile; snapshot-only (session-profiles FR-16). */
+  profile?: SessionProfileRef;
 }
 
 /** The id of a Claude Code on the web session — `'session_…'` or `'cse_…'`. */
@@ -254,6 +273,12 @@ export interface SessionWorktree {
   createdBranch: boolean; // false ⇒ the branch already existed, or the tree was adopted (FR-5)
   fetched: boolean; // a fetch ran and succeeded (FR-7)
   fetchError?: string; // one-line reason; absent when fetched, or when there is no remote
+  /** attach-to-worktree FR-15: the tree has a detached HEAD; `branch` carries the 7-char short
+   *  sha, not a ref. Absent on a session persisted before this feature ⇒ falsy. */
+  detached?: boolean;
+  /** attach-to-worktree FR-16: the tree was adopted, not created by Francois (suppresses the
+   *  session-worktree FR-14 "nothing came along" banner). Absent ⇒ falsy. */
+  adopted?: boolean;
 }
 
 // ---------- projects ----------
@@ -275,6 +300,24 @@ export interface ProjectDefaults {
   allowGit?: boolean;
   /** A removed account falls back to the isDefault account in the modal (multi-account FR-20). */
   accountId?: AccountId;
+  /** A profile that no longer resolves is dropped in the modal (session-profiles FR-21). */
+  profileId?: ProfileId;
+}
+
+// ---------- session profiles ----------
+
+export type ProfileId = string; // uuid v4
+
+/**
+ * The profile identity a session snapshots at creation (session-profiles FR-16). Absent ⇒
+ * no profile. Never re-resolved against the registry: a deleted profile's name still
+ * renders (FR-22).
+ */
+export interface SessionProfileRef {
+  id: ProfileId;
+  name: string; // snapshotted at creation
+  /** true iff the session was created with a non-empty systemPrompt (FR-17). */
+  replacesSystemPrompt: boolean;
 }
 
 // ---------- subagents ----------

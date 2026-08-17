@@ -9,10 +9,12 @@ mod account;
 mod diagnostics;
 mod diff;
 mod editor;
+mod extensions;
 mod fs_util;
 mod ipc;
 mod permissions;
 mod process_util;
+mod profiles;
 mod project;
 mod session;
 mod shell;
@@ -42,6 +44,10 @@ fn main() {
         // projects §6: the registry is loaded once at startup (see setup below)
         // and is memory-authoritative thereafter — Francois is its only writer.
         .manage(project::ProjectRegistry::default())
+        // session-profiles §6: the profile registry, app-scoped and shared
+        // across every account (FR-2) — same load-once-at-startup discipline
+        // as projects/accounts.
+        .manage(profiles::ProfileRegistry::default())
         .manage(session::RemoteRegistry::default())
         // cloud-sessions §6: `ref → { killer, phase, … }` for the at-most-one
         // adoption per cloud session (§7 #9). Process-lifetime only — nothing
@@ -57,6 +63,10 @@ fn main() {
         // LEAF lock — `update::app_apply_update` reads the engine's running
         // count BEFORE it ever touches this.
         .manage(update::UpdateState::default())
+        // extensions §6: the toggles, the per-root detection cache and the live
+        // log-tail streams. Another LEAF lock — nothing under extensions/ ever
+        // takes Engine.sessions, and no other domain takes this one.
+        .manage(extensions::ExtensionState::default())
         .setup(|app| {
             diagnostics::install_panic_log(app.handle());
             // Tint with the dark caption up front; the webview re-tints with the
@@ -72,8 +82,16 @@ fn main() {
             // BEFORE sessions, so load_persisted can fall an accountId that no
             // longer resolves back to `default` (FR-10).
             account::load_accounts(app.handle());
+            // session-profiles: no ordering dependency on session load — a
+            // session's profile ref is snapshotted verbatim and never
+            // re-resolved (FR-16) — loaded here alongside its registry peers.
+            profiles::load_profiles(app.handle());
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
+            // extension-install FR-1/FR-13: load the manifest registry from
+            // ~/.francois/extensions/ once at startup — the other FR-13
+            // trigger is an explicit `extensions_detect`.
+            extensions::load_registry(app.handle());
             // usage-bar FR-11/FR-12: probe once now, then every 5 minutes.
             usage::start_timers(app.handle().clone());
             Ok(())
@@ -112,6 +130,10 @@ fn main() {
             project::project_get_standards,
             project::project_set_standards,
             project::project_repo_brief,
+            profiles::profiles_list,
+            profiles::profiles_create,
+            profiles::profiles_update,
+            profiles::profiles_remove,
             session::conversation_get_transcript,
             session::agents_list,
             session::agents_dispatch,
@@ -170,6 +192,13 @@ fn main() {
             account::account_codex_login,
             account::account_update_endpoint,
             account::account_test_endpoint,
+            extensions::extensions_list,
+            extensions::extensions_set_enabled,
+            extensions::extensions_detect,
+            extensions::extensions_consent,
+            extensions::extensions_panel,
+            extensions::extensions_open_stream,
+            extensions::extensions_close_stream,
             diff::diff_get_summary,
             diff::diff_get_file_diff,
             diff::diff_stage_all,
@@ -193,6 +222,10 @@ fn main() {
                                         // multi-account FR-16: an in-flight login is a real `claude` on
                                         // a PTY plus a half-written config dir — both go on exit.
                 account::cancel_all_logins(app);
+                // extensions FR-43: a `log-tail` process source is a real child
+                // (`docker logs -f`) — it goes with the window, like every other
+                // process this app owns.
+                extensions::kill_all_streams(app);
             }
         });
 }

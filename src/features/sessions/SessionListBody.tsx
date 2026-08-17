@@ -20,8 +20,9 @@ import { StatusDot } from '../../ui/StatusDot';
 import { sessionAccountBadge } from '../accounts/accounts';
 import { CloudChip } from '../cloud-sessions/CloudChip';
 import { filteredEmptyLabel } from '../projects/projects';
+import { ProfileChip } from '../profiles/ProfileChip';
 import type { RosterGroup } from './roster-groups';
-import { truncateBranchLeft } from './worktree';
+import { truncateBranchLeft, worktreeChipLabel } from './worktree';
 import '../accounts/accounts.css';
 import './sidebar.css';
 
@@ -275,6 +276,9 @@ function SessionCard({
         {/* cloud-sessions FR-16: where this session came FROM. Neutral, never
             accent — provenance is a fact, not a live state. */}
         {session.cloud && <CloudChip cloud={session.cloud} size="sm" />}
+        {/* session-profiles FR-22: NEUTRAL here — the acid accent is reserved
+            for the focused session's own welcome header (one accent per view). */}
+        {session.profile && <ProfileChip profile={session.profile} size="sm" />}
         {/* split-by-4 FR-22: which pane is showing this session. */}
         {paneLabel && (
           <span className={paneAccent ? 'sidebar-card__pane sidebar-card__pane--accent' : 'sidebar-card__pane'}>
@@ -311,8 +315,8 @@ function SessionCard({
       {/* session-worktree FR-13: branch glyph + name, on its own line so it never
           squeezes the meta row's usage bar. */}
       {session.worktree && (
-        <div className="sidebar-card__branch" title={session.worktree.branch}>
-          <span className="sidebar-card__branch-glyph">⎇</span> {truncateBranchLeft(session.worktree.branch, 20)}
+        <div className="sidebar-card__branch" title={worktreeChipLabel(session.worktree)}>
+          <span className="sidebar-card__branch-glyph">⎇</span> {truncateBranchLeft(worktreeChipLabel(session.worktree), 20)}
         </div>
       )}
 

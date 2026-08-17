@@ -43,6 +43,7 @@ import type {
   StandardsRead,
 } from '../../contract/projects';
 import type { RepoBrief } from '../../contract/session-welcome';
+import type { ProfileCreateInput, ProfileRemoveInput, ProfileUpdateInput, SessionProfile } from '../../contract/session-profiles';
 import type { PermissionDecision, PermissionRule, PermissionTier } from '../../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { SessionCreateInput } from '../../contract/session-engine';
@@ -86,6 +87,23 @@ import type {
   CloudResolveRequest,
 } from '../../contract/cloud-sessions';
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
+import type {
+  CloseStreamRequest,
+  CloseStreamResponse,
+  ConsentRequest,
+  ConsentResponse,
+  DetectExtensionsRequest,
+  DetectExtensionsResponse,
+  ExtensionEvent,
+  ListExtensionsRequest,
+  ListExtensionsResponse,
+  OpenStreamRequest,
+  OpenStreamResponse,
+  PanelRequest,
+  PanelResponse,
+  SetExtensionEnabledRequest,
+  SetExtensionEnabledResponse,
+} from '../../contract/extensions';
 
 // Exported so other invoke sites (e.g. ShellTerminal.tsx, which redefines this
 // byte-identically) can share the one wrapper instead of redeclaring it.
@@ -123,8 +141,13 @@ export const sessionModels = (accountId?: AccountId) =>
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
 // session-worktree: session_create also gained an optional `worktree` (spec §5),
 // sourced from the canonical SessionCreateInput field rather than re-declared here.
+// session-profiles FR-15: session_create also gained systemPrompt/extraArgs/profileId —
+// the frontend sends the RESOLVED (post-edit) values plus the profile id, and the core
+// snapshots the profile's name from the registry itself.
 export const sessionCreate = (
-  req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'> & Pick<SessionCreateInput, 'worktree'>,
+  req: NewSessionRequest &
+    Pick<ProjectAwareSessionCreateRequest, 'projectId'> &
+    Pick<SessionCreateInput, 'worktree' | 'systemPrompt' | 'extraArgs' | 'profileId'>,
 ) => ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
 // session-rename §5: mutate a session's display name. The core validates/cleans it
@@ -213,6 +236,13 @@ export const projectSetStandards = (projectId: ProjectId, standards: ProjectStan
 // because the core owns the cwd (and the git routing that follows from it).
 export const projectRepoBrief = (sessionId: SessionId) =>
   ipc<Result<RepoBrief>>('project_repo_brief', { sessionId });
+
+// session-profiles (§5.2). Four commands, no event channel: every mutation is
+// initiated by this frontend and resolves with the new state (spec §5 preamble).
+export const profilesList = () => ipc<Result<SessionProfile[]>>('profiles_list');
+export const profilesCreate = (req: ProfileCreateInput) => ipc<Result<SessionProfile>>('profiles_create', req);
+export const profilesUpdate = (req: ProfileUpdateInput) => ipc<Result<SessionProfile>>('profiles_update', req);
+export const profilesRemove = (req: ProfileRemoveInput) => ipc<Result<null>>('profiles_remove', req);
 
 // slash-menu FR-1/4: merged per-session command registry (francois:session:listCommands)
 export const sessionListCommands = (sessionId: SessionId) =>
@@ -401,6 +431,31 @@ export const shellWrite = (shellId: ShellId, data: string) =>
   ipc<Result<void>>('shell_write', { shellId, data } satisfies ShellWritePayload);
 export const shellResize = (shellId: ShellId, cols: number, rows: number) =>
   ipc<Result<void>>('shell_resize', { shellId, cols, rows } satisfies ShellResizePayload);
+
+// extensions (§5, amended by extension-install §5). Seven commands + one event
+// channel. `setEnabled`, `detect` and `consent` all resolve the FULL refreshed
+// list rather than an ack (FR-8/FR-57/FR-16), so the frontend never re-queries
+// to learn what changed. extension-install FR-24 removed `probe`/`launch` —
+// no panel mutates anything anymore.
+export const extensionsList = (req: ListExtensionsRequest) =>
+  ipc<ListExtensionsResponse>('extensions_list', req);
+export const extensionsSetEnabled = (req: SetExtensionEnabledRequest) =>
+  ipc<SetExtensionEnabledResponse>('extensions_set_enabled', req);
+export const extensionsDetect = (req: DetectExtensionsRequest) =>
+  ipc<DetectExtensionsResponse>('extensions_detect', req);
+export const extensionsPanel = (req: PanelRequest) => ipc<PanelResponse>('extensions_panel', req);
+export const extensionsOpenStream = (req: OpenStreamRequest) =>
+  ipc<OpenStreamResponse>('extensions_open_stream', req);
+export const extensionsCloseStream = (req: CloseStreamRequest) =>
+  ipc<CloseStreamResponse>('extensions_close_stream', req);
+// extension-install FR-16 — the only way `enabled` becomes true for a
+// `never`/`stale` extension.
+export const extensionsConsent = (req: ConsentRequest) => ipc<ConsentResponse>('extensions_consent', req);
+
+/** Subscribe to francois://extensions/event (the log-tail stream, FR-44). */
+export function onExtensionEvent(cb: (e: ExtensionEvent) => void): Promise<UnlistenFn> {
+  return stream<ExtensionEvent>('francois://extensions/event', cb);
+}
 
 /** Subscribe to francois://shell/event (shell.data / shell.exit). */
 export function onShellEvent(cb: (e: ShellEvent) => void): Promise<UnlistenFn> {

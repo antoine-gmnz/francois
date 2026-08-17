@@ -667,6 +667,7 @@ mod tests {
             runtime: None,
             allow_git: Some(true),
             account_id: Some("a1".into()),
+            profile_id: None,
         };
         let v = serde_json::to_value(meta_of(&p)).unwrap();
         assert_eq!(v["id"], "p1");
@@ -705,6 +706,30 @@ mod tests {
         assert!(serde_json::to_value(&cleared)
             .unwrap()
             .get("accountId")
+            .is_none());
+    }
+
+    #[test]
+    fn a_projects_profile_default_survives_the_update_round_trip() {
+        // session-profiles FR-20/FR-21: the frontend sends `defaults.profileId`
+        // on project_update. Exactly the accountId bug above — without the field
+        // on the Rust mirror serde drops it, so the Projects-modal PROFILE select
+        // reverts to "inherit" on the next list and a project can never be given
+        // a default profile.
+        let sent: ProjectDefaults =
+            serde_json::from_value(json!({ "modelId": "opus", "profileId": "pr1" })).unwrap();
+        assert_eq!(sent.profile_id.as_deref(), Some("pr1"));
+        assert_eq!(
+            serde_json::to_value(&sent).unwrap(),
+            json!({ "modelId": "opus", "profileId": "pr1" })
+        );
+        // "inherit" stays an omitted key, never a null or an empty string.
+        let cleared: ProjectDefaults =
+            serde_json::from_value(json!({ "modelId": "opus" })).unwrap();
+        assert_eq!(cleared.profile_id, None);
+        assert!(serde_json::to_value(&cleared)
+            .unwrap()
+            .get("profileId")
             .is_none());
     }
 
@@ -783,6 +808,7 @@ mod tests {
             runtime: Some("wsl".into()),
             allow_git: Some(true),
             account_id: Some("acct-2".into()),
+            profile_id: Some("pr1".into()),
         };
         let root = p.root.clone();
         let projects = vec![p];

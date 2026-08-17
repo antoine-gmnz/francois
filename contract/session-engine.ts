@@ -9,7 +9,16 @@
 // `francois:session:event` → Tauri event `francois://session/event`. Every
 // command RESOLVES a `Result<T>` (never rejects across the bridge).
 
-import type { SessionId, AccountId, ModelInfo, SessionEvent, Result, PermissionMode, ClaudeRuntime } from './common';
+import type {
+  SessionId,
+  AccountId,
+  ModelInfo,
+  SessionEvent,
+  Result,
+  PermissionMode,
+  ClaudeRuntime,
+  ProfileId,
+} from './common';
 import type { WorktreeCreateOptions } from './session-worktree';
 
 // ---------- francois:session:create ----------
@@ -25,8 +34,15 @@ export interface SessionCreateInput {
   runtime?: ClaudeRuntime;
   /** omit to create a normal (non-isolated) session; see session-worktree.ts. */
   worktree?: WorktreeCreateOptions;
+  /** Resolved (post-edit) prompt text; present ⇒ --system-prompt on every turn (session-profiles FR-12/FR-13). */
+  systemPrompt?: string;
+  /** Resolved argv tokens, appended last. Re-validated against DENIED_ARG_FLAGS (session-profiles FR-11). */
+  extraArgs?: string[];
+  /** The profile the values came from; the core snapshots its name itself (session-profiles FR-15). */
+  profileId?: ProfileId;
 }
 // invoke('session_create', req: SessionCreateInput): Promise<Result<SessionMeta>>
+// Added error codes for session-profiles: 'PROFILE_NOT_FOUND' | 'PROFILE_ARG_DENIED'.
 
 // ---------- francois:session:remove ----------
 

@@ -475,6 +475,25 @@ describe('project defaults form (FR-34)', () => {
     expect(defaultsSelectValue({ accountId: 'a1' }, 'accountId')).toBe('a1');
     expect(defaultsSelectValue({}, 'accountId')).toBe('');
   });
+
+  // session-profiles FR-20: a project can pre-fill the new-session PROFILE field.
+  it('offers a profile select once at least one profile exists — unlike account it needs no SECOND', () => {
+    expect(defaultFieldDefs(MODELS, {}, true, [], []).map((d) => d.key)).not.toContain('profileId');
+
+    const defs = defaultFieldDefs(MODELS, {}, true, [], [{ id: 'p1', name: 'agent-architect' }]);
+    expect(defs[0].key).toBe('profileId');
+    expect(defs[0].options).toEqual([
+      { value: '', label: 'inherit' },
+      { value: 'p1', label: 'agent-architect' },
+    ]);
+  });
+
+  it('patches and clears the profile default like every other field', () => {
+    expect(patchDefaults({ modelId: 'm' }, 'profileId', 'p1')).toEqual({ modelId: 'm', profileId: 'p1' });
+    expect(patchDefaults({ modelId: 'm', profileId: 'p1' }, 'profileId', '')).toEqual({ modelId: 'm' });
+    expect(defaultsSelectValue({ profileId: 'p1' }, 'profileId')).toBe('p1');
+    expect(defaultsSelectValue({}, 'profileId')).toBe('');
+  });
 });
 
 // ---------- standards rules editing (FR-34.3/FR-35, §7 case 11) ----------

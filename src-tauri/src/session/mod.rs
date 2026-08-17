@@ -89,6 +89,10 @@ pub(crate) use worktree::*;
 #[cfg(test)]
 mod testutil;
 
+// session-profiles §6: the snapshot-at-creation profile identity SessionMeta
+// carries (FR-16) — defined in the `profiles` domain, the same cross-domain
+// pattern `project::SessionSeed` follows.
+use crate::profiles::SessionProfileRef;
 // usage-bar §6: the /usage meter grammar + stream-json answer extraction now live
 // in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
 // is unchanged — these are the same functions, imported instead of defined.
@@ -170,6 +174,9 @@ pub(crate) struct SessionMeta {
     /// multi-provider-seam FR-11a: the wire dialect this session's endpoint
     /// speaks. Same derivation/persistence discipline as `agent_runtime`.
     protocol: ProviderProtocol,
+    /// session-profiles FR-16: present ⇔ created from a profile; snapshot-only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<SessionProfileRef>,
 }
 
 #[derive(Serialize, Clone)]
@@ -452,6 +459,16 @@ pub(crate) struct Session {
     /// `agent_runtime` from the same `from_account_kind` call and never
     /// re-derived afterward.
     protocol: ProviderProtocol,
+    /// session-profiles FR-12/FR-13: REPLACE-mode prompt, snapshotted at
+    /// creation and threaded through every turn's `turn_args` — never
+    /// re-read from the profile (FR-16).
+    system_prompt: Option<String>,
+    /// session-profiles FR-12: raw extra argv tokens, appended last to every
+    /// turn's `turn_args`. Empty when the session carries none.
+    extra_args: Vec<String>,
+    /// session-profiles FR-16: the profile identity this session was created
+    /// from, if any — snapshot-only, never re-resolved.
+    profile: Option<SessionProfileRef>,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     /// multi-provider-seam FR-2: the live turn, reached only through
@@ -544,6 +561,9 @@ impl Session {
         protocol: ProviderProtocol,
         claude_session_id: Option<String>,
         block_buffer: Vec<BufBlock>,
+        system_prompt: Option<String>,
+        extra_args: Vec<String>,
+        profile: Option<SessionProfileRef>,
     ) -> Session {
         Session {
             id,
@@ -567,6 +587,9 @@ impl Session {
             cloud: None,
             agent_runtime,
             protocol,
+            system_prompt,
+            extra_args,
+            profile,
             queue: VecDeque::new(),
             claude_session_id,
             current: None,
@@ -613,6 +636,7 @@ impl Session {
             cloud: self.cloud.clone(),
             agent_runtime: self.agent_runtime,
             protocol: self.protocol,
+            profile: self.profile.clone(),
         }
     }
 

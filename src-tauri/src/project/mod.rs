@@ -69,6 +69,11 @@ pub struct ProjectDefaults {
     /// back to the isDefault one in the modal, never here.
     #[serde(rename = "accountId", default, skip_serializing_if = "Option::is_none")]
     account_id: Option<String>,
+    /// session-profiles FR-20/FR-21: the profile a new session under this
+    /// project pre-fills from. Stored verbatim like every other default — a
+    /// profile that no longer resolves is dropped in the modal, never here.
+    #[serde(rename = "profileId", default, skip_serializing_if = "Option::is_none")]
+    profile_id: Option<String>,
 }
 
 /// One registry entry, exactly as persisted in projects.json (FR-1). `rootExists`

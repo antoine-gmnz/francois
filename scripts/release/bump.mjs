@@ -49,8 +49,16 @@ try {
 const manifestVersion = JSON.parse(read('src-tauri/tauri.conf.json')).version;
 
 // %B is the full message; NUL-delimited so multi-line bodies survive the split.
+//
+// `git log` still separates RECORDS with a newline, so every entry after the
+// first arrives as "\n<subject>\n<body>" — its subject one line down from where
+// the conventional-commit header is looked for. Left as-is, only the newest
+// commit's type was ever read: a `feat:` in any older commit silently released
+// a patch. Trim each entry back to its own subject line.
 const range = lastTag ? `${lastTag}..HEAD` : 'HEAD';
-const messages = git('log', '--format=%B%x00', range).split('\0');
+const messages = git('log', '--format=%B%x00', range)
+  .split('\0')
+  .map((message) => message.trim());
 
 const plan = planRelease({ baselines: [lastTag, manifestVersion], messages });
 

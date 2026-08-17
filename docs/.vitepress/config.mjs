@@ -45,6 +45,7 @@ export default defineConfig({
           items: [
             { text: 'Agents, MCP & skills', link: '/guide/agents-mcp-skills' },
             { text: 'Command palette', link: '/guide/command-palette' },
+            { text: 'Extensions', link: '/guide/extensions' },
           ],
         },
         {

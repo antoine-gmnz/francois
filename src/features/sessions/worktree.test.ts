@@ -4,9 +4,11 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, SessionMeta, SessionWorktree } from '../../../contract/common';
-import type { WorktreeProbeData, WorktreeStatusData } from '../../../contract/session-worktree';
+import type { WorktreeListEntry, WorktreeProbeData, WorktreeStatusData } from '../../../contract/session-worktree';
 import { WORKTREE_NOTICE_STORAGE_KEY } from '../../../contract/session-worktree';
 import {
+  attachNamePrefill,
+  attachNameShouldPrefill,
   basenameOf,
   canOpenWorktreeRecovery,
   consumeWorktreePreset,
@@ -19,13 +21,16 @@ import {
   siblingWorktreeSummaryLine,
   submitErrorBanner,
   truncateBranchLeft,
+  worktreeAttachBlocked,
   worktreeBaseLine,
   worktreeBranchInUsePath,
+  worktreeChipLabel,
   worktreeCreateBlocked,
   worktreeFetchWarningLine,
   worktreeRemovalBlockReason,
+  worktreeRows,
 } from './worktree';
-import type { WorktreeGateState, WorktreeProbeState, WorktreeRecoveryGateState } from './worktree';
+import type { WorktreeAttachGateState, WorktreeGateState, WorktreeProbeState, WorktreeRecoveryGateState, WorktreeRow } from './worktree';
 
 function fakeStorage(): Storage {
   const map = new Map<string, string>();
@@ -280,6 +285,7 @@ describe('liveWorktreeProbe (FR-1 — a probe belongs to the cwd it was requeste
     branchExists: true,
     branchCheckedOutAt: '/elsewhere',
     worktreePath: '/x/.francois-worktrees/repo-a/feat-x',
+    worktrees: [],
   };
   const state: WorktreeProbeState = { cwd: '/repo-a', data, errored: false };
 
@@ -460,5 +466,152 @@ describe('command-palette worktree preset (FR-16)', () => {
     requestWorktreePreset();
     expect(consumeWorktreePreset()).toBe(true);
     expect(consumeWorktreePreset()).toBe(false);
+  });
+});
+
+// ---------- attach-to-worktree (specs/attach-to-worktree.md) ----------
+
+function wtEntry(over: Partial<WorktreeListEntry> = {}): WorktreeListEntry {
+  return {
+    path: '/x/.francois-worktrees/repo/feat-b',
+    branch: 'feat/b',
+    head: '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b',
+    detached: false,
+    locked: false,
+    prunable: false,
+    ...over,
+  };
+}
+
+describe('worktreeRows (FR-9/FR-10/FR-11)', () => {
+  it('labels a normal entry with its branch', () => {
+    const [row] = worktreeRows([wtEntry({ branch: 'feat/auth' })], [], true);
+    expect(row.label).toBe('feat/auth');
+    expect(row.disabled).toBe(false);
+    expect(row.note).toBe('');
+    expect(row.inUseBy).toBeNull();
+  });
+
+  it('labels a detached entry with the 7-char short sha', () => {
+    const [row] = worktreeRows([wtEntry({ branch: null, detached: true, head: '1a2b3c4d5e6f' })], [], true);
+    expect(row.label).toBe('HEAD @ 1a2b3c4');
+  });
+
+  it('labels a detached entry with an unknown head as HEAD @ ?', () => {
+    const [row] = worktreeRows([wtEntry({ branch: null, detached: true, head: null })], [], true);
+    expect(row.label).toBe('HEAD @ ?');
+  });
+
+  it('is disabled with "directory missing" when prunable', () => {
+    const [row] = worktreeRows([wtEntry({ prunable: true })], [], true);
+    expect(row.disabled).toBe(true);
+    expect(row.note).toBe('directory missing');
+  });
+
+  it('is selectable with "locked" when locked', () => {
+    const [row] = worktreeRows([wtEntry({ locked: true })], [], true);
+    expect(row.disabled).toBe(false);
+    expect(row.note).toBe('locked');
+  });
+
+  it('annotates "in use by" a live session whose cwd normalizes to the path (FR-10)', () => {
+    const live = session({ id: 's2', name: 'other session', cwd: '/x/.francois-worktrees/repo/feat-b' });
+    const [row] = worktreeRows([wtEntry()], [live], true);
+    expect(row.inUseBy).toBe('other session');
+    expect(row.note).toBe('in use by "other session"');
+    expect(row.disabled).toBe(false); // FR-10: never blocked
+  });
+
+  it('matches in-use case-insensitively when caseInsensitive is true', () => {
+    const live = session({ id: 's2', name: 'other', cwd: '/X/.FRANCOIS-WORKTREES/REPO/FEAT-B' });
+    const rowsCi = worktreeRows([wtEntry()], [live], true);
+    expect(rowsCi[0].inUseBy).toBe('other');
+    const rowsCs = worktreeRows([wtEntry()], [live], false);
+    expect(rowsCs[0].inUseBy).toBeNull();
+  });
+
+  it('joins multiple annotations in order: directory missing · locked · in use by', () => {
+    const live = session({ id: 's2', name: 'other', cwd: '/x/.francois-worktrees/repo/feat-b' });
+    const [row] = worktreeRows([wtEntry({ prunable: true, locked: true })], [live], true);
+    expect(row.note).toBe('directory missing · locked · in use by "other"');
+  });
+});
+
+describe('attachNamePrefill (FR-12)', () => {
+  it('is the row label', () => {
+    const row: WorktreeRow = { path: '/p', label: 'feat/auth', inUseBy: null, locked: false, disabled: false, note: '' };
+    expect(attachNamePrefill(row)).toBe('feat/auth');
+  });
+});
+
+describe('attachNameShouldPrefill (FR-12: "only if the name is still empty and untouched")', () => {
+  it('allows prefill when the name is empty and untouched', () => {
+    expect(attachNameShouldPrefill('', false)).toBe(true);
+  });
+
+  it('blocks prefill once the name has been touched, even if still empty', () => {
+    expect(attachNameShouldPrefill('', true)).toBe(false);
+  });
+
+  it('blocks prefill when the name is non-empty and untouched — e.g. a project/directory default', () => {
+    // useProjectDefaults / useDirectoryPicker set an UNTOUCHED non-empty name
+    // (project basename / cwd basename) as soon as a repo cwd is chosen;
+    // picking a row must never silently overwrite it.
+    expect(attachNameShouldPrefill('my-project', false)).toBe(false);
+  });
+
+  it('blocks prefill when the name is non-empty and touched', () => {
+    expect(attachNameShouldPrefill('my session', true)).toBe(false);
+  });
+});
+
+describe('worktreeAttachBlocked (FR-17)', () => {
+  function gate(over: Partial<WorktreeAttachGateState> = {}): WorktreeAttachGateState {
+    return {
+      mode: 'attach',
+      probing: false,
+      probeErrored: false,
+      selectedPath: '/p',
+      rows: [{ path: '/p', label: 'feat/x', inUseBy: null, locked: false, disabled: false, note: '' }],
+      caseInsensitive: true,
+      ...over,
+    };
+  }
+
+  it('is never blocked outside attach mode', () => {
+    expect(worktreeAttachBlocked(gate({ mode: 'off', selectedPath: null, rows: [] }))).toBe(false);
+    expect(worktreeAttachBlocked(gate({ mode: 'create', selectedPath: null, rows: [] }))).toBe(false);
+  });
+
+  it('is unblocked with a settled probe and a valid selection', () => {
+    expect(worktreeAttachBlocked(gate())).toBe(false);
+  });
+
+  it('blocks while a probe is in flight or the last one errored', () => {
+    expect(worktreeAttachBlocked(gate({ probing: true }))).toBe(true);
+    expect(worktreeAttachBlocked(gate({ probeErrored: true }))).toBe(true);
+  });
+
+  it('blocks when no row is selected', () => {
+    expect(worktreeAttachBlocked(gate({ selectedPath: null }))).toBe(true);
+  });
+
+  it('blocks when the selected path is no longer among the current rows (a re-probe invalidated it)', () => {
+    expect(worktreeAttachBlocked(gate({ selectedPath: '/gone' }))).toBe(true);
+  });
+
+  it('matches the selected path case-insensitively when caseInsensitive is true', () => {
+    expect(worktreeAttachBlocked(gate({ selectedPath: '/P', caseInsensitive: true }))).toBe(false);
+    expect(worktreeAttachBlocked(gate({ selectedPath: '/P', caseInsensitive: false }))).toBe(true);
+  });
+});
+
+describe('worktreeChipLabel (FR-19)', () => {
+  it('is the branch name for a non-detached worktree', () => {
+    expect(worktreeChipLabel(wt({ branch: 'feat/auth', detached: undefined }))).toBe('feat/auth');
+  });
+
+  it('is "HEAD @ <sha>" for a detached worktree — branch already carries the short sha', () => {
+    expect(worktreeChipLabel(wt({ branch: '1a2b3c4', detached: true }))).toBe('HEAD @ 1a2b3c4');
   });
 });

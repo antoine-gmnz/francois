@@ -8,8 +8,10 @@ import type { AccountId, ClaudeRuntime, ModelInfo, PermissionMode } from '../../
 import { isWslUncPath } from '../../../contract/wsl-filesystem';
 import type { Account } from '../../../contract/multi-account';
 import type { ProjectMeta } from '../../../contract/projects';
+import type { SessionProfile } from '../../../contract/session-profiles';
 import { resolveNewSessionAccountId } from '../accounts/accounts';
 import { applyProjectDefaults, baseFormValues } from '../projects/projects';
+import { projectDefaultProfileResolution } from '../profiles/profiles';
 import { IS_WINDOWS } from '../../lib/platform';
 import { basename } from './new-session-form';
 
@@ -33,6 +35,16 @@ export interface UseProjectDefaultsParams {
   setAccountId: (accountId: AccountId) => void;
   /** Records whether the applied account came from the project (FR-31 affordance). */
   setAccountFromProject: (from: boolean) => void;
+  /** session-profiles FR-20/FR-21: the registry the project's default profile resolves against. */
+  profiles: SessionProfile[];
+  setProfileId: (profileId: string) => void;
+  /**
+   * palette FR-24 story 4: a pending "New session with profile…" pick that
+   * NewSessionModal's own effect is applying this mount. While one is
+   * pending, the project's default profile must not touch `profileId` at
+   * all — the palette's choice owns the field until it is consumed.
+   */
+  pendingProfileId: string | null;
 }
 
 export function useProjectDefaults(params: UseProjectDefaultsParams): void {
@@ -54,6 +66,9 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     accounts,
     setAccountId,
     setAccountFromProject,
+    profiles,
+    setProfileId,
+    pendingProfileId,
   } = params;
 
   const appliedRef = useRef<string | null>(null);
@@ -93,8 +108,37 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     // restores the pre-projects flow rather than stranding the old root.
     setCwd(project ? project.root : '');
     if (!nameTouched) setName(project ? basename(project.root) : '');
+
+    // session-profiles FR-21 vs palette FR-24 story 4: the project's default
+    // profile, resolved against the live registry and applied AFTER the plain
+    // defaults above (a named profile is the more specific choice and its own
+    // model/effort/permission-mode win) — UNLESS a palette pick is pending,
+    // in which case profileId is left entirely alone this mount.
+    const resolution = projectDefaultProfileResolution(profiles, project?.defaults.profileId, pendingProfileId);
+    if (resolution) {
+      setProfileId(resolution.profileId);
+      if (resolution.overrides.modelId !== undefined) setModelId(resolution.overrides.modelId);
+      if (resolution.overrides.effort !== undefined) setEffort(resolution.overrides.effort);
+      if (resolution.overrides.permissionMode !== undefined) setPermissionMode(resolution.overrides.permissionMode);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, project, models, modelsLoading]);
+
+  // Same "registry arrives late" re-resolve as accounts, for a project default
+  // profile that named nothing until profiles_list landed.
+  const profilesSeenRef = useRef(false);
+  useEffect(() => {
+    if (profilesSeenRef.current || profiles.length === 0) return;
+    profilesSeenRef.current = true;
+    const resolution = projectDefaultProfileResolution(profiles, project?.defaults.profileId, pendingProfileId);
+    if (resolution) {
+      setProfileId(resolution.profileId);
+      if (resolution.overrides.modelId !== undefined) setModelId(resolution.overrides.modelId);
+      if (resolution.overrides.effort !== undefined) setEffort(resolution.overrides.effort);
+      if (resolution.overrides.permissionMode !== undefined) setPermissionMode(resolution.overrides.permissionMode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profiles]);
 
   // The registry is hydrated at app boot, but the modal can (in principle) open
   // before it lands — in which case the effect above resolved against an EMPTY

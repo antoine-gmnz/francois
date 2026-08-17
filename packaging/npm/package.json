@@ -29,8 +29,8 @@
   "files": [
     "assets/icon.png",
     "bin/",
-    "lib/desktop.js",
-    "lib/platform.js",
+    "lib/",
+    "!**/*.test.mjs",
     "install.js",
     "uninstall.js",
     "manifest.json",

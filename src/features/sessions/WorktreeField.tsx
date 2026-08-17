@@ -1,10 +1,13 @@
-// WorktreeField — session-worktree §8 screen 1: the "Isolate in worktree" group
-// of the New Session modal (FR-1..FR-5, FR-9). Absent entirely on a non-repo cwd
-// (FR-1) — no gap, no disabled control. All state and decision logic lives in
-// useWorktreeGroup / worktree.ts; this file is layout only.
+// WorktreeField — session-worktree §8 screen 1 + attach-to-worktree §8: the
+// WORKTREE group of the New Session modal. Absent entirely on a non-repo cwd
+// (session-worktree FR-1) — no gap, no disabled control. All state and
+// decision logic lives in useWorktreeGroup / worktree.ts; this file is layout
+// only.
 
 import { Chip } from '../../ui/Chip';
 import type { UseWorktreeGroupResult } from './useWorktreeGroup';
+import { WorktreeAttachPicker } from './WorktreeAttachPicker';
+import './new-session-modal.css';
 
 export interface WorktreeFieldProps {
   worktree: UseWorktreeGroupResult;
@@ -14,8 +17,8 @@ export interface WorktreeFieldProps {
 export function WorktreeField({ worktree, onOpenRecovery }: WorktreeFieldProps): JSX.Element | null {
   const {
     probe,
-    worktreeEnabled,
-    setWorktreeEnabled,
+    mode,
+    setMode,
     branch,
     setBranch,
     baseRef,
@@ -25,21 +28,41 @@ export function WorktreeField({ worktree, onOpenRecovery }: WorktreeFieldProps):
     recoveryPath,
     recovering,
     canOpenRecovery,
+    rows,
+    selectedPath,
+    selectRow,
   } = worktree;
 
   if (!probe?.isRepo) return null;
+
+  // attach-to-worktree FR-6: the ONE deliberate departure from the
+  // absent-never-disabled rule that otherwise governs the group — the concept
+  // applies (this cwd IS a repo), only the inventory is empty.
+  const attachDisabled = rows.length === 0;
+
+  const hint =
+    mode === 'attach' ? 'opens this session in a worktree that already exists' : 'runs this session in its own git worktree';
 
   return (
     <div>
       <label className="new-session-modal__label">WORKTREE</label>
       <div className="new-session-modal__chip-row">
-        <Chip selected={worktreeEnabled} onClick={() => setWorktreeEnabled((v) => !v)}>
-          {worktreeEnabled ? '✓ ' : ''}Isolate in worktree
+        <Chip selected={mode === 'create'} onClick={() => setMode(mode === 'create' ? 'off' : 'create')}>
+          {mode === 'create' ? '✓ ' : ''}Isolate in worktree
+        </Chip>
+        <Chip
+          selected={mode === 'attach'}
+          className={attachDisabled ? 'is-disabled' : undefined}
+          onClick={attachDisabled ? undefined : () => setMode(mode === 'attach' ? 'off' : 'attach')}
+        >
+          {mode === 'attach' ? '✓ ' : ''}Attach to existing
         </Chip>
       </div>
-      <div className="new-session-modal__hint new-session-modal__hint--below-chips">runs this session in its own git worktree</div>
+      <div className="new-session-modal__hint new-session-modal__hint--below-chips">
+        {attachDisabled ? 'no other worktrees in this repo' : hint}
+      </div>
 
-      {worktreeEnabled && (
+      {mode === 'create' && (
         <div className="worktree-field">
           <div>
             <label className="new-session-modal__label">BRANCH</label>
@@ -95,6 +118,10 @@ export function WorktreeField({ worktree, onOpenRecovery }: WorktreeFieldProps):
           )}
         </div>
       )}
+
+      {/* attach-to-worktree FR-7: replaces the branch/base-ref/preview block
+          entirely — no recovery offer, nothing to recover from. */}
+      {mode === 'attach' && <WorktreeAttachPicker rows={rows} selectedPath={selectedPath} onSelect={selectRow} />}
     </div>
   );
 }

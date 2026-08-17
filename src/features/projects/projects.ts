@@ -309,6 +309,17 @@ export interface AccountOptionSource {
 }
 
 /**
+ * The slice of `SessionProfile` (contract/session-profiles.ts) the defaults
+ * form needs — structural for the same reason AccountOptionSource is: the
+ * dependency runs sessions/profiles → projects, not the reverse (session-profiles
+ * FR-20).
+ */
+export interface ProfileOptionSource {
+  id: string;
+  name: string;
+}
+
+/**
  * FR-34.2: uniform selects, every one carrying `inherit` first (which is how
  * a default is cleared — FR-7 replaces the whole defaults object).
  * `allow git` is a select, not a toggle, precisely because it has three states.
@@ -322,6 +333,7 @@ export function defaultFieldDefs(
   defaults: ProjectDefaults,
   allowWsl: boolean,
   accounts: AccountOptionSource[] = [],
+  profiles: ProfileOptionSource[] = [],
 ): DefaultFieldDef[] {
   const accountField: DefaultFieldDef[] =
     accounts.length > 1
@@ -336,8 +348,21 @@ export function defaultFieldDefs(
           },
         ]
       : [];
+  // session-profiles FR-20: offered whenever at least one profile exists — a
+  // single profile is still a real choice, unlike the account field's >1 gate.
+  const profileField: DefaultFieldDef[] =
+    profiles.length > 0
+      ? [
+          {
+            key: 'profileId',
+            label: 'profile',
+            options: [INHERIT, ...profiles.map((p) => ({ value: p.id, label: p.name }))],
+          },
+        ]
+      : [];
   return [
     ...accountField,
+    ...profileField,
     {
       key: 'modelId',
       label: 'model',
@@ -412,6 +437,10 @@ export function patchDefaults(
     // multi-account FR-20: the account a new session under this project opens on.
     case 'accountId':
       next.accountId = value;
+      break;
+    // session-profiles FR-20: the profile a new session under this project opens on.
+    case 'profileId':
+      next.profileId = value;
       break;
   }
   return next;

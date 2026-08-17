@@ -1,0 +1,115 @@
+{
+  "manifest": 1,
+  "label": "git example",
+  "detect": {
+    "kind": "pathExists",
+    "path": ".git"
+  },
+  "panels": [
+    {
+      "id": "branches",
+      "label": "Branches",
+      "scope": "project",
+      "primitive": "table",
+      "paginated": false,
+      "emptyCopy": "no branches",
+      "columns": [
+        {
+          "key": "branch",
+          "label": "Branch",
+          "kind": "text",
+          "weight": 2
+        },
+        {
+          "key": "commit",
+          "label": "Commit",
+          "kind": "text"
+        },
+        {
+          "key": "when",
+          "label": "When",
+          "kind": "text"
+        },
+        {
+          "key": "subject",
+          "label": "Subject",
+          "kind": "text",
+          "weight": 3
+        }
+      ],
+      "provider": {
+        "argv0": "git",
+        "args": [
+          "for-each-ref",
+          "--format=%(refname:short)\u001f%(objectname:short)\u001f%(committerdate:iso-strict)\u001f%(contents:subject)",
+          "refs/heads"
+        ],
+        "output": {
+          "kind": "lines",
+          "separator": "\u001f",
+          "fields": [
+            "branch",
+            "commit",
+            "when",
+            "subject"
+          ],
+          "idField": "branch"
+        }
+      }
+    },
+    {
+      "id": "log",
+      "label": "Log",
+      "scope": "project",
+      "primitive": "table",
+      "paginated": true,
+      "emptyCopy": "no commits",
+      "columns": [
+        {
+          "key": "commit",
+          "label": "Commit",
+          "kind": "text"
+        },
+        {
+          "key": "author",
+          "label": "Author",
+          "kind": "text"
+        },
+        {
+          "key": "when",
+          "label": "When",
+          "kind": "text"
+        },
+        {
+          "key": "subject",
+          "label": "Subject",
+          "kind": "text",
+          "weight": 4
+        }
+      ],
+      "provider": {
+        "argv0": "git",
+        "args": [
+          "log",
+          "--format=%h\u001f%an\u001f%cI\u001f%s"
+        ],
+        "pageArgs": [
+          "--skip=${offset}",
+          "-n",
+          "${limit}"
+        ],
+        "output": {
+          "kind": "lines",
+          "separator": "\u001f",
+          "fields": [
+            "commit",
+            "author",
+            "when",
+            "subject"
+          ],
+          "idField": "commit"
+        }
+      }
+    }
+  ]
+}

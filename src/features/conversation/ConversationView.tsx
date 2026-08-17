@@ -357,8 +357,9 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
           composer) during a drag, never the sidebar or the status bar. */}
       <DropOverlay state={attachments.overlay} />
       {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript
-          so it never scrolls away. */}
-      {meta?.worktree && !worktreeNoticeDismissed && (
+          so it never scrolls away. attach-to-worktree FR-18: suppressed for an
+          adopted tree — Francois made no claim about what is in it. */}
+      {meta?.worktree && !meta.worktree.adopted && !worktreeNoticeDismissed && (
         <WorktreeNotice
           worktree={meta.worktree}
           onDismiss={() => {

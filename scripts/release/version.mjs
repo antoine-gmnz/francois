@@ -10,12 +10,28 @@ const HEADER = /^(?<type>[a-zA-Z]+)(?:\((?<scope>[^)]*)\))?(?<bang>!)?:/;
 const BREAKING_FOOTER = /^BREAKING[ -]CHANGE\s*:/m;
 
 /**
+ * Split a commit message into its subject and body, ignoring any leading blank
+ * lines. Callers read messages out of `git log` with a record delimiter, which
+ * leaves a newline in front of every entry but the first — without this, those
+ * subjects read as empty and every conventional-commit type behind them is
+ * invisible. Defended here rather than only at the caller: this is the half
+ * under test.
+ * @param {string} message
+ */
+function subjectAndBody(message) {
+  const lines = message.split('\n');
+  let start = 0;
+  while (start < lines.length && lines[start].trim() === '') start += 1;
+  return { subject: lines[start] ?? '', body: lines.slice(start + 1).join('\n') };
+}
+
+/**
  * Does this commit message declare a breaking change?
  * @param {string} message full commit message (subject + body)
  */
 export function isBreaking(message) {
-  const [subject = '', ...body] = message.split('\n');
-  return Boolean(HEADER.exec(subject)?.groups.bang) || BREAKING_FOOTER.test(body.join('\n'));
+  const { subject, body } = subjectAndBody(message);
+  return Boolean(HEADER.exec(subject)?.groups.bang) || BREAKING_FOOTER.test(body);
 }
 
 /**
@@ -31,7 +47,7 @@ export function decideBump(messages) {
   for (const message of messages) {
     if (!message.trim()) continue;
     if (isBreaking(message)) return 'major';
-    const type = HEADER.exec(message.split('\n')[0] ?? '')?.groups.type?.toLowerCase();
+    const type = HEADER.exec(subjectAndBody(message).subject)?.groups.type?.toLowerCase();
     if (type === 'feat') bump = 'minor';
   }
   return bump;

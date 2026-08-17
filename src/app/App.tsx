@@ -4,11 +4,16 @@ import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab, tabsForSession } from '../features/agents/agent-tab';
 import AdoptCloudSessionModal from '../features/cloud-sessions/AdoptCloudSessionModal';
+import ExtensionsModal from '../features/extensions/ExtensionsModal';
+import { visibleExtensions } from '../features/extensions/extensions';
+import { detectionRoot, initExtensionEvents, refreshExtensions } from '../features/extensions/extensionsFeed';
 import McpPanel from '../features/mcp/McpPanel';
 import { initNotifications } from '../features/notifications/notifications';
 import PaletteRoot from '../features/palette/PaletteView';
 import { registerBuiltinCommands } from '../features/palette/paletteCommands';
 import PermissionsModal from '../features/permissions/PermissionsModal';
+import ProfilesModal from '../features/profiles/ProfilesModal';
+import { loadProfiles } from '../features/profiles/profiles';
 import ProjectsModal from '../features/projects/ProjectsModal';
 import NewSessionModal from '../features/sessions/NewSessionModal';
 import RenameSessionModal from '../features/sessions/RenameSessionModal';
@@ -21,6 +26,7 @@ import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { isBusyStatus } from '../../contract/fleet-board';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { focusedSessionId, layoutRegime, paneCount, paneSessionIdAt, paneTabAt } from '../lib/layoutStore';
+import { basename } from '../lib/path';
 import { useStore } from '../lib/store';
 import './app.css';
 import AppRow from './AppRow';
@@ -76,15 +82,26 @@ export default function App() {
   const clearProjectSwitchRollback = useStore((s) => s.clearProjectSwitchRollback);
   const permissionsOpen = useStore((s) => s.permissionsOpen);
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
+  const projects = useStore((s) => s.projects);
   const projectsOpen = useStore((s) => s.projectsOpen);
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
   const accountsOpen = useStore((s) => s.accountsOpen);
   const setAccountsOpen = useStore((s) => s.setAccountsOpen);
+  const profilesOpen = useStore((s) => s.profilesOpen);
+  const setProfilesOpen = useStore((s) => s.setProfilesOpen);
+  const setProfiles = useStore((s) => s.setProfiles);
   const updateModalOpen = useStore((s) => s.updateModalOpen);
   const setUpdateModalOpen = useStore((s) => s.setUpdateModalOpen);
   const setAccounts = useStore((s) => s.setAccounts);
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
+  // extensions FR-9..FR-11: the `ext:<id>` tabs, after the view segment and
+  // before the dynamic agent/workflow tabs.
+  const extensions = useStore((s) => s.extensions);
+  const extStickyIds = useStore((s) => s.extStickyIds);
+  const extensionsOpen = useStore((s) => s.extensionsOpen);
+  const openExtTab = useStore((s) => s.openExtTab);
+  const closeExtTab = useStore((s) => s.closeExtTab);
   // agent-tab FR-9: the dynamic per-subagent tabs, after the view segment.
   // fix-agent-view FR-1/FR-11: keyed by session now, and the session row only
   // shows them unsplit — so PANE 0's session is the right list here. Each
@@ -123,6 +140,10 @@ export default function App() {
 
   useEffect(() => {
     initShellEvents();
+    // extensions FR-44: ONE app-wide subscription to francois://extensions/event.
+    // App-wide rather than per-section because a log-tail stream outlives its
+    // section by the FR-43 grace period.
+    initExtensionEvents();
     // notifications FR-5: one app-wide subscription to francois://session/event
     // (idempotent — a second mount effect never double-registers).
     initNotifications();
@@ -134,6 +155,13 @@ export default function App() {
   // store this writes, so no surface ever fetches the registry itself.
   useEffect(() => startAccountFeed(setAccounts), [setAccounts]);
 
+  // session-profiles: app-scoped registry (FR-2 — shared across every
+  // account), hydrated once at boot. No event channel (spec §5 preamble) — the
+  // Profiles modal re-reads after every mutation of its own.
+  useEffect(() => {
+    void loadProfiles(setProfiles);
+  }, [setProfiles]);
+
   // self-update FR-7: ONE check when the shell mounts, and it is SILENT on
   // failure — a launch-time network blip must not shout. The helper itself is
   // idempotent per app run, so StrictMode's double mount still checks once.
@@ -142,6 +170,21 @@ export default function App() {
   }, []);
 
   const { home, appVersion } = useAppIdentity(active?.name);
+
+  // extensions FR-4/FR-11: one `extensions_list` per project root. Re-runs when
+  // the active session's root changes (FR-12's re-scope) and on a session going
+  // away (root null ⇒ nothing NEW is offered; an open tab is untouched).
+  const extRoot = detectionRoot(active);
+  useEffect(() => {
+    void refreshExtensions(extRoot);
+  }, [extRoot]);
+
+  const extTabs = visibleExtensions(extensions, extStickyIds);
+  // FR-13: the name the `not available in <project>` copy carries — the
+  // registered project when the session has one, else the root's basename.
+  const activeProjectName = active
+    ? ((active.projectId ? (projects.find((p) => p.id === active.projectId)?.name ?? null) : null) ?? basename(active.cwd))
+    : null;
 
   // Keep the native caption bar painted to match --bg-app for the active theme
   // (white in light, dark otherwise). Runs on mount and every toggle; no-op off Windows.
@@ -193,6 +236,7 @@ export default function App() {
     accountsOpen,
     renameOpen: renameSessionId !== null,
     updateModalOpen,
+    extensionsOpen,
     setNewSessionOpen,
     setNewAgentOpen,
     setFocusedPane,
@@ -246,6 +290,9 @@ export default function App() {
         diffCount={diffCount}
         agentTabs={agentTabs}
         closeAgentTab={closeAgentTab}
+        extTabs={extTabs}
+        openExtTab={openExtTab}
+        closeExtTab={closeExtTab}
         elapsedMs={elapsedMs}
         home={home}
       />
@@ -351,6 +398,7 @@ export default function App() {
                   active={active}
                   home={home}
                   setMainTab={setMainTab}
+                  projectName={activeProjectName}
                 />
               </section>
             )}
@@ -421,6 +469,15 @@ export default function App() {
       {/* multi-account FR-34: the Accounts modal. Like Projects it needs NO
           session — an account is registered whether or not anything is running. */}
       {accountsOpen && <AccountsModal onClose={() => setAccountsOpen(false)} />}
+
+      {/* session-profiles: the Profiles modal, sibling to Projects. Needs NO
+          session — a profile is authored whether or not anything is running. */}
+      {profilesOpen && <ProfilesModal onClose={() => setProfilesOpen(false)} />}
+
+      {/* extensions FR-56: the Extensions modal, from ⌘K and the app row. Needs
+          NO session — every registry entry is listed either way, undetected ones
+          included; only `Re-detect` requires a root. */}
+      {extensionsOpen && <ExtensionsModal root={extRoot} projectName={activeProjectName} />}
 
       {/* self-update FR-10: opened by the app row's version chip and by the
           palette's `Check for updates`. Needs no session. */}

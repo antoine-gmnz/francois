@@ -1,6 +1,6 @@
 [package]
 name = "francois"
-version = "0.18.13"
+version = "0.20.1"
 description = "Francois — Claude Code session orchestrator (preview)"
 edition = "2021"
 license = "AGPL-3.0-only"
@@ -38,6 +38,9 @@ notify = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # session-attachments: the clipboard image arrives as base64 over the IPC bridge.
 base64 = "0.22"
+# extension-install FR-18: the sha256 of a manifest's bytes, so consent can be
+# bound to its content and a later edit reverts the extension to disabled.
+sha2 = "0.10"
 
 # self-update FR-15: the relauncher is spawned DETACHED so it outlives the app.
 # On unix that means `setsid()` in a pre_exec hook — there is no std API for it,

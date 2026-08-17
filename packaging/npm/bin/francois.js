@@ -10,9 +10,11 @@
  */
 
 const { spawn, spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const desktop = require('../lib/desktop.js');
+const extensions = require('../lib/extensions.js');
 const {
   assetKey,
   readInstallRecord,
@@ -30,10 +32,117 @@ Usage
   francois shortcut            re-register the Start Menu / Launchpad / menu entry
   francois shortcut --remove   unregister it
   francois uninstall           unregister the desktop entry, then npm-uninstall this package
+  francois ext install <name>  install a plugin by name, local path, or git URL
+  francois ext list            list installed plugins (works with the app closed)
+  francois ext remove <id>     delete an installed plugin
   francois --help              this message
 
 Anything else is forwarded to the app.
 `;
+
+const EXT_USAGE = `francois ext — manage plugins in ~/.francois/extensions (filesystem only,
+never the app's socket — this works with the app closed).
+
+Usage
+  francois ext install <name|path|git-url> [--force]
+  francois ext list
+  francois ext remove <id> [--yes]
+
+A bare <name> resolves by CONVENTION to the repository
+\`github.com/antoine-gmnz/francois-plugin-<name>\`; \`<owner>/<name>\` uses that
+owner instead. There is no index and nothing to search — the convention is a
+URL shorthand, so any plugin is still installable by its full URL. An existing
+local directory of that name always wins, so nothing reaches the network when
+a local answer exists.
+
+Installing never enables a plugin — review and enable it in Extensions (⌘K).
+`;
+
+/** A single blocking line read off stdin — no dependency, works in a real
+ * terminal and under a piped `echo y |` in CI alike. */
+function confirmSync(question) {
+  process.stdout.write(question);
+  const buf = Buffer.alloc(4096);
+  let bytesRead = 0;
+  try {
+    bytesRead = fs.readSync(0, buf, 0, buf.length, null);
+  } catch {
+    return false;
+  }
+  const answer = buf.toString('utf8', 0, bytesRead).trim().toLowerCase();
+  return answer === 'y' || answer === 'yes';
+}
+
+function runExt(args) {
+  const sub = args[0];
+  if (!sub || sub === '--help' || sub === '-h') {
+    process.stdout.write(EXT_USAGE);
+    return;
+  }
+
+  if (sub === 'install') {
+    const force = args.includes('--force');
+    const source = args.slice(1).find((a) => !a.startsWith('--'));
+    if (!source) die('francois ext install <name|path|git-url>');
+    let result;
+    try {
+      result = extensions.installExtension(source, { force });
+    } catch (error) {
+      die(error.message);
+    }
+    // The resolved source is printed because a bare name is ambiguous by
+    // design: the user must be able to see whether it copied a directory or
+    // cloned a repository, without re-deriving the convention in their head.
+    // `result.source`/`result.id`/`result.path` are all untrusted (attacker-
+    // controlled path/URL text) — sanitize before they ever reach stdout, the
+    // same as the `list` path.
+    process.stdout.write(
+      `francois: installed "${extensions.sanitizeForDisplay(result.id)}" from ${extensions.sanitizeForDisplay(result.source)}\n`
+    );
+    process.stdout.write(`francois:   at ${extensions.sanitizeForDisplay(result.path)}\n`);
+    // FR-15/FR-28: discovery is not authorization — it always arrives inert.
+    process.stdout.write('francois: disabled — enable it in Extensions (⌘K)\n');
+    return;
+  }
+
+  if (sub === 'list') {
+    const found = extensions.listExtensions();
+    if (found.length === 0) {
+      process.stdout.write(`francois: nothing installed yet — see ${extensions.extensionsDir()}\n`);
+      return;
+    }
+    for (const ext of found) {
+      const status = !ext.valid ? 'invalid manifest' : ext.enabled ? 'enabled' : 'disabled';
+      process.stdout.write(`${ext.id}\t${ext.label}\t${ext.path}\t${status}\n`);
+    }
+    return;
+  }
+
+  if (sub === 'remove') {
+    const id = args[1];
+    if (!id || id.startsWith('--')) die('francois ext remove <id>');
+    let target;
+    try {
+      target = extensions.resolveExtensionDir(id);
+    } catch (error) {
+      die(error.message);
+    }
+    process.stdout.write(`francois: about to delete ${target}\n`);
+    if (!args.includes('--yes') && !confirmSync('remove this extension? [y/N] ')) {
+      process.stdout.write('francois: cancelled.\n');
+      return;
+    }
+    try {
+      extensions.removeExtension(id);
+    } catch (error) {
+      die(error.message);
+    }
+    process.stdout.write(`francois: removed "${id}".\n`);
+    return;
+  }
+
+  die(`unknown "francois ext ${sub}" — see \`francois ext --help\`.`);
+}
 
 function die(message) {
   process.stderr.write(`\nfrancois: ${message}\n\n`);
@@ -76,6 +185,13 @@ function main() {
     const manifest = readManifest();
     const pkg = require('../package.json');
     process.stdout.write(`francois ${manifest ? manifest.appVersion : 'unknown'} (npm ${pkg.version})\n`);
+    return;
+  }
+
+  // extension-install FR-27: filesystem verbs, off the socket — work with the
+  // app closed, and never reach the app's dispatch below.
+  if (argv[0] === 'ext') {
+    runExt(argv.slice(1));
     return;
   }
 

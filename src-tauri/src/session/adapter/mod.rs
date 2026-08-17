@@ -124,6 +124,12 @@ pub(crate) struct TurnContext {
     /// still-good id is never dropped preemptively (a fresh init overwrites
     /// it on success).
     pub(crate) resume: Option<String>,
+    /// session-profiles FR-13: the REPLACE-mode prompt, snapshotted at session
+    /// creation and carried on EVERY turn — never re-read from the profile.
+    pub(crate) system_prompt: Option<String>,
+    /// session-profiles FR-12: raw extra argv tokens, appended last to the
+    /// runtime's own argv. Empty when the session carries none.
+    pub(crate) extra_args: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -310,6 +316,8 @@ mod tests {
             account_id: "default".into(),
             allow_git: false,
             resume: None,
+            system_prompt: None,
+            extra_args: Vec::new(),
         };
         assert_eq!(ctx.session_id, "s1");
         assert!(ctx.mode == TurnMode::Normal);

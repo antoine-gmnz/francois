@@ -140,6 +140,10 @@ fn build_turn_context(
             account_id: s.account_id.clone(),
             allow_git: s.allow_git,
             resume,
+            // session-profiles FR-13: both ride EVERY turn of this session,
+            // snapshotted at creation — never re-read from the profile.
+            system_prompt: s.system_prompt.clone(),
+            extra_args: s.extra_args.clone(),
         }
     })
 }
