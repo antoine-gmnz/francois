@@ -85,6 +85,11 @@ pub(crate) fn filter_absolute_path_entries(path: &str) -> Option<String> {
 mod path_filter_tests {
     use super::*;
 
+    // POSIX fixtures: `/abs`-style entries are only absolute per `Path::is_absolute()`
+    // on unix — on Windows the same string has no drive/prefix and is relative, so
+    // these fixtures would assert something false there. Gated `#[cfg(unix)]`, with
+    // a drive-letter counterpart below covering the same behaviour on Windows.
+    #[cfg(unix)]
     #[test]
     fn drops_empty_and_relative_entries_keeping_order() {
         assert_eq!(
@@ -93,16 +98,43 @@ mod path_filter_tests {
         );
     }
 
-    #[test]
-    fn an_all_relative_input_yields_no_override() {
-        assert_eq!(filter_absolute_path_entries(".:node_modules/.bin:"), None);
-    }
-
+    #[cfg(unix)]
     #[test]
     fn a_single_absolute_entry_survives() {
         assert_eq!(
             filter_absolute_path_entries("/usr/bin"),
             Some("/usr/bin".to_string())
         );
+    }
+
+    // The function splits on `':'` unconditionally (it only ever sees real data
+    // from `login_shell_path_env`, which is unix-only — Windows's `login_shell_path`
+    // is `None` by design, see spec §2 non-goals). A drive-letter fixture like
+    // `C:\abs` would misparse here since the drive's own `:` collides with the
+    // splitter, so these Windows fixtures use UNC paths (`\\server\share\...`),
+    // which `Path::is_absolute()` also accepts on Windows and contain no `:`.
+    #[cfg(windows)]
+    #[test]
+    fn drops_empty_and_relative_entries_keeping_order() {
+        assert_eq!(
+            filter_absolute_path_entries(r":\\server\abs:.:node_modules\.bin:\\server\other"),
+            Some(r"\\server\abs:\\server\other".to_string())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_single_absolute_entry_survives() {
+        assert_eq!(
+            filter_absolute_path_entries(r"\\server\share"),
+            Some(r"\\server\share".to_string())
+        );
+    }
+
+    // `.` and `node_modules/.bin` are relative on every platform — no `#[cfg]` split
+    // needed.
+    #[test]
+    fn an_all_relative_input_yields_no_override() {
+        assert_eq!(filter_absolute_path_entries(".:node_modules/.bin:"), None);
     }
 }

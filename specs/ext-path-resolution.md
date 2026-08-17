@@ -169,4 +169,12 @@ and `design_files` is omitted from the front-matter.
 
 ## Remediation
 
-(Empty until a review returns findings.)
+### 2026-08-17 — CI failure on PR #82 (windows-latest)
+
+- 2026-08-17 — 2 findings, all fixed. The FR-5 filter's unit tests asserted POSIX absolute paths, but
+  `Path::is_absolute()` on Windows requires a drive or UNC prefix, so `/abs` / `/usr/bin` filtered out
+  and 2/1023 `cargo test` cases failed on `windows-latest` (ubuntu green). Test fixtures only —
+  production behaviour was never affected, since `login_shell_path()` is `#[cfg(windows)] → None` per
+  §2 non-goals. Fixed by `#[cfg(unix)]`-gating the POSIX fixtures and adding `#[cfg(windows)]`
+  counterparts using **UNC** paths (`\\server\share`) rather than drive letters, whose own `:` would
+  collide with the function's `':'` splitter. `filter_absolute_path_entries` itself unchanged.
