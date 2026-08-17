@@ -1,14 +1,14 @@
 ---
 id: multi-provider-endpoint
 title: Endpoint accounts
-status: in-review
+status: shipped
 branch: feat/multi-provider
 created: 2026-08-12
 depends_on: [multi-account, multi-provider-seam, projects]
-loop_pass: 0
-loop_phase:
-reviewed_base:
-reviewed_digest:
+loop_pass: 2
+loop_phase: review
+reviewed_base: 9d471154a835f85ac1987132268dbe9b779da95e
+reviewed_digest: 613128971e423573
 design_files: []
 ---
 

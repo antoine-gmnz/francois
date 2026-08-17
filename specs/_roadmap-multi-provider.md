@@ -170,8 +170,11 @@ planned — four reviewers at once (both features × both surfaces), one preflig
     `#[tauri::command]` handlers with no harness. Extracted to `validate_key_clear_conflict`,
     `validate_model_ids_on_add`, `validate_model_ids_on_update` in `endpoint.rs`, a test each.
     Behaviour unchanged (same codes, messages, ordering) — **§9 is now verified by `cargo test`**.
-- [ ] `status: in-review` → `shipped` — the spec's own front matter still says `in-review`; flip it
-      with Phase F, since the verdict is SHIP and nothing is open.
+- [x] `status: in-review` → `shipped` — flipped with Phase F on 2026-08-17, along with its freshness
+      anchor (`reviewed_base 9d47115`, digest `613128971e423573`). All three specs in the arc carry
+      the **same** anchor on purpose: they ship as one PR, so the digest that matters is the one
+      covering the final tree, not each feature's own review-time snapshot (the seam's earlier
+      `f94d48b5b2e3548a` was stale the moment Phase E landed a line of code).
 
 ## Phase D — seam re-review, round 3 · ~1 hr — **REVIEWED 2026-08-16, verdict REVISE**
 
@@ -212,7 +215,7 @@ planned — four reviewers at once (both features × both surfaces), one preflig
       `specs/multi-provider-seam.md` is `status: shipped` with its freshness anchor filled in
       (`reviewed_base 9d47115`, digest `f94d48b5b2e3548a`). Phase E is unblocked.
 
-## Phase E — build `multi-provider-openai` · multi-day — **IN PROGRESS 2026-08-16**
+## Phase E — build `multi-provider-openai` · multi-day — **DONE 2026-08-17**
 
 27 FRs. Sequenced to front-load risk.
 
@@ -324,13 +327,42 @@ a revert to milliseconds would look like a fix rather than a 5000× unit error.
 still passes **untouched**. That is the regression canary for the whole phase — a diff there means
 a Claude Code session's behaviour moved.
 
-## Phase F — ship · ~2 hrs
+## Phase F — ship · ~2 hrs — **IN PROGRESS 2026-08-17**
 
-- [ ] `/cohorte-review` per touched surface
-- [ ] SHIP verdict
-- [ ] `/cohorte-ship` — one PR, one release
-- [ ] `git fetch && git branch -f main origin/main` first (seam round-2 noted local `main` was 50
-      commits stale; a stale base poisons the freshness digest)
+- [x] `git fetch && git branch -f main origin/main` **first** (seam round-2 noted local `main` was 50
+      commits stale; a stale base poisons the freshness digest). Already converged — both refs sit at
+      `4d7cbbc` (v0.19.0). The branch's merge-base is still `9d47115`, four commits behind, which is
+      why every diff in this phase is taken against a merge-base and never against `main` directly.
+- [x] `/cohorte-review multi-provider-openai` per touched surface — **round 2, verdict SHIP,
+      blocking 0.** Two reviewers in parallel over `fe62665..HEAD` (the same base round 1 used: the
+      commit after the shipped seam + endpoint work, so neither is re-reviewed).
+      Report: `specs/reports/multi-provider-openai.md`.
+  - **core: 0 findings.** All three round-1 core items verified landed, and the second CRITICAL's
+    ancestor walk re-checked for the thing that actually mattered — containment did **not** weaken:
+    `..` escapes and symlinked ancestors through a not-yet-created nested path still deny, pinned by
+    a test each alongside the positive case.
+  - **frontend: SHIP with 1 HIGH + 1 MEDIUM**, both round-1 items verified landed (FR-26's install
+    gate covers the mouse *and* keyboard paths, since `useSkillsKeyboard` routes through the same
+    gated `activate`), and **FR-20's grep gate still clean** — every `agentRuntime`/`protocol` hit
+    outside `runtimeCapability.ts` is a fixture assignment or a comment saying not to branch on them.
+- [x] **The two non-blocking findings closed anyway**, not parked. The HIGH was a real out-of-order
+      race in `useModelCatalog` (a slow endpoint `/models` landing over a newer account's catalog),
+      which the backlog is the wrong home for; the MEDIUM was a five-site selector dedup we were
+      already in the files for. Both recorded in the spec's `## Remediation` round 2.
+- [x] SHIP verdict · DoD ticked (12 of 15). **Three criteria left open on purpose** — the end-to-end
+      turn (FR-1/FR-3/FR-4), the interrupted-mid-tool-call thread (FR-8) and quit-and-reopen
+      continuity (FR-16). Nothing in the pipeline runs the app against a real endpoint, and each has
+      a covered *pure* half but no covered whole; ticking them on unit coverage that doesn't reach
+      would be the weakened-test move FR-19 exists to forbid. The spec says so inline.
+- [x] All three specs flipped to `status: shipped` with a shared freshness anchor (see Phase C).
+- [ ] `/cohorte-ship` — one PR, one release. Needs `git push --force-with-lease`:
+      `origin/feat/multi-provider` still points at the pre-Phase-A `14895a6` (Phase A §"Still to do").
+- [ ] Delete the `backup/pre-phase-a` tag once the PR is merged — it is Phase A's rollback handle and
+      has no purpose after that.
+
+**Green at the ship gate** (2026-08-17): `npx tsc --noEmit` clean · `npm test` 90 files / **1747
+passed** · `cargo test` **1034 passed**, 3 ignored, **0 failed**. The golden replay canary passes
+untouched, which is the whole-arc regression signal: no Claude Code session behaviour moved.
 
 ---
 

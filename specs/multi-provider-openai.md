@@ -1,14 +1,14 @@
 ---
 id: multi-provider-openai
 title: OpenAI-compatible sessions
-status: frozen
+status: shipped
 branch: feat/multi-provider
 created: 2026-08-12
 depends_on: [multi-provider-seam, multi-provider-endpoint, permission-guardrails, durable-sessions, conversation-view]
-loop_pass: 0
-loop_phase:
-reviewed_base:
-reviewed_digest:
+loop_pass: 2
+loop_phase: review
+reviewed_base: 9d471154a835f85ac1987132268dbe9b779da95e
+reviewed_digest: 613128971e423573
 design_files: []
 ---
 
@@ -320,36 +320,44 @@ line inside the pane's normal frame), the **provider grouping** in the model pic
 
 ## 9. Acceptance criteria
 
+> **Three left open deliberately** (round 2, 2026-08-17). Nothing in the pipeline *runs* the app, and
+> these three need a live session against a real endpoint, not a unit test: the end-to-end turn
+> (FR-1/FR-3/FR-4 — `begin_turn`/`run_loop` is integration-only in a crate with no `AppHandle`
+> harness), the interrupted-mid-tool-call thread (FR-8 — its pure half,
+> `drop_unanswered_tool_calls`, *is* covered; `interrupt`/`kill` is not), and quit-and-reopen
+> continuity (FR-16 — the corrupt-file half of that line *is* covered by `thread.rs`). Tick them by
+> hand once exercised against a real endpoint.
+
 - [ ] A session on an OpenAI endpoint account streams a reply, calls tools, and completes a turn;
       `UnavailableAdapter` is gone (FR-1/FR-3/FR-4).
-- [ ] Tool-call deltas accumulated out of order, and split mid-`arguments`, reconstruct correctly
+- [x] Tool-call deltas accumulated out of order, and split mid-`arguments`, reconstruct correctly
       against a recorded SSE fixture (FR-5).
-- [ ] **Gate tests, the feature's highest-severity requirement:** an unmatched tool asks; a `deny`
+- [x] **Gate tests, the feature's highest-severity requirement:** an unmatched tool asks; a `deny`
       rule never executes; `plan` refuses `Write`/`Edit`/`Bash`; `acceptEdits` auto-allows only
       `Write`/`Edit`; a path escaping `cwd` is refused before any card (FR-9/FR-10/FR-12/FR-13).
-- [ ] No default-allow path exists for any of the six tools — grep plus a test that every
+- [x] No default-allow path exists for any of the six tools — grep plus a test that every
       `FrancoisToolName` with no matching rule produces a card (FR-10).
-- [ ] `PermissionAsk.pattern` for the same `Bash` command is byte-identical between the Claude path
+- [x] `PermissionAsk.pattern` for the same `Bash` command is byte-identical between the Claude path
       and the Francois loop (FR-11).
-- [ ] The loop cap ends the turn at 50 round-trips with `PROVIDER_REQUEST_FAILED` (FR-6).
+- [x] The loop cap ends the turn at 50 round-trips with `PROVIDER_REQUEST_FAILED` (FR-6).
 - [ ] A turn interrupted mid-tool-call leaves a thread file the endpoint accepts on the next request
       (FR-8).
 - [ ] Quit and reopen mid-thread continues the same conversation; a corrupted thread file yields a
       fresh thread plus `session.resumeFailed`, never a failure to open (FR-16/FR-17).
-- [ ] `contextTokensFor` matches longest-prefix and falls back to 128k; a turn over the window is
+- [x] `contextTokensFor` matches longest-prefix and falls back to 128k; a turn over the window is
       refused before the request (FR-7).
-- [ ] Every capability with `available: false` renders its `reason` in the pane's frame, and no
+- [x] Every capability with `available: false` renders its `reason` in the pane's frame, and no
       component branches on `agentRuntime` or `protocol` outside the table (FR-20) — grep is the
       check.
-- [ ] `SessionMeta` carries `agentRuntime` + `protocol` and `OpenAiAdapter` is reached by
+- [x] `SessionMeta` carries `agentRuntime` + `protocol` and `OpenAiAdapter` is reached by
       `agentRuntime` alone; no code path dispatches an adapter on `protocol` (seam FR-11a/FR-14a).
-- [ ] Installed skills for the session's `cwd` appear in the injected system block, slash-command
+- [x] Installed skills for the session's `cwd` appear in the injected system block, slash-command
       entries do not, the block is capped and deterministic across two turns, and pane [5] renders
       the list with **Install** disabled (FR-23..FR-27).
-- [ ] `FRANCOIS_TOOLS` and the Rust tool enum are asserted equal (§5).
-- [ ] A Claude Code session's behaviour is byte-identical to before — the seam's golden replay test
+- [x] `FRANCOIS_TOOLS` and the Rust tool enum are asserted equal (§5).
+- [x] A Claude Code session's behaviour is byte-identical to before — the seam's golden replay test
       (`multi-provider-seam` FR-18) still passes untouched.
-- [ ] `npm test`, `npx tsc --noEmit`, `cargo test` all green.
+- [x] `npm test`, `npx tsc --noEmit`, `cargo test` all green.
 
 ## Remediation
 
@@ -359,29 +367,31 @@ Full report: `specs/reports/multi-provider-openai.md`. The three LOWs are **not*
 are parked in `specs/refactor-backlog.md` under `## deferred:multi-provider-openai`, so this list
 carries only what a fix round must close.
 
+**All five closed by `56d89d6`** *(2026-08-17)* — verified in place before the round-2 dispatch.
+
 **core**
 
-- [ ] **CRITICAL** `gate.rs:182` (`path_arg`) + `runner.rs` (`path_arg_of`) — `Grep`/`Glob` declare
+- [x] **CRITICAL** `gate.rs:182` (`path_arg`) + `runner.rs` (`path_arg_of`) — `Grep`/`Glob` declare
       `path` optional with *"Defaults to the session's working directory"* (`wire.rs:99,113`), but
       an absent key yields `None`, so `tools::execute` returns `missing_path()`'s
       *"Internal error: no resolved path was supplied for this tool."* (`tools.rs:527`). Every call
       taking the documented default errors. Substitute `cwd` for `Grep`/`Glob` when `path` is
       absent or empty, before containment resolution, in **both** helpers. Cover the omitted-`path`
       case for each of the two tools — no test does today.
-- [ ] **CRITICAL** `gate.rs:196-227` (`resolve_in_cwd`) — only the *immediate* parent is
+- [x] **CRITICAL** `gate.rs:196-227` (`resolve_in_cwd`) — only the *immediate* parent is
       canonicalized for a not-yet-existing target, so a `Write` to a nested new directory inside
       `cwd` (`newdir/newfile.ts`, `newdir` absent) is rejected as *"… is outside the session
       directory."* even though `tools::write` calls `create_dir_all` for exactly that case
       (`tools.rs:120-121`). Walk `joined`'s ancestors to the first that exists, canonicalize it,
       assert `starts_with(canonical_cwd)`, then rejoin the remaining segments. **Containment must
       not weaken:** a nested path escaping `cwd` via `..` or a symlinked ancestor still denies.
-- [ ] **MEDIUM** `runner.rs:1354` — `PERMISSION_DENIED_MSG` duplicates `gate.rs`'s private
+- [x] **MEDIUM** `runner.rs:1354` — `PERMISSION_DENIED_MSG` duplicates `gate.rs`'s private
       `DENY_MESSAGE` plus a drift-guard test. Export `DENY_MESSAGE` as `pub(crate)`, import it,
       delete the copy and the now-redundant guard.
 
 **frontend**
 
-- [ ] **CRITICAL** `SkillsPanel.tsx:44-47` — FR-26's *"Install stays disabled on these sessions with
+- [x] **CRITICAL** `SkillsPanel.tsx:44-47` — FR-26's *"Install stays disabled on these sessions with
       `Installing skills isn't available on this provider yet.`"* is unimplemented; that string
       appears nowhere in `src/`. `activate()` opens `InstallModal` unconditionally, and confirming
       it writes Claude Code's global `settings.json` — the control-surface write §2 declares a
@@ -391,5 +401,36 @@ carries only what a fix round must close.
       `francois`. Gate `activate()`'s install branch and `SkillsListBody.tsx:105`'s `enable`
       affordance through the existing `sessionCapability` chokepoint — **FR-20's grep gate must
       stay clean** (no component may compare `agentRuntime`/`protocol` to a literal).
-- [ ] **MEDIUM** `ModelPicker.tsx:16-25` — `providerHeading?: string` is optional though its sole
+- [x] **MEDIUM** `ModelPicker.tsx:16-25` — `providerHeading?: string` is optional though its sole
       caller always supplies a required non-optional string. Make it required; drop the `&&` guard.
+
+### Round 2 — 2026-08-17 · verdict SHIP · blocking 0
+
+Full report: `specs/reports/multi-provider-openai.md`. Both surfaces returned SHIP; **core returned
+zero findings**, and all five round-1 items were verified landed correctly (containment specifically
+re-checked as *not* weakened by the ancestor walk). The two below are non-blocking quality findings —
+closed anyway rather than parked, because the first is a real race, not a nit.
+
+**frontend** — both closed by the round-2 fix pass *(2026-08-17)*
+
+- [x] **HIGH** `useModelCatalog.ts:28-43` — the `session_models` fetch had no staleness guard, so an
+      out-of-order resolution (an endpoint account's real `GET /models` round-trip is far slower than
+      the default account's local catalog) could `setModels`/`setModelId` over a newer account's
+      already-correct catalog, rendering the endpoint's models under the "Default" heading. Extracted
+      `startModelCatalogFetch(accountId, fetchModels, callbacks)` returning a `stop()` that flips a
+      closed-over `cancelled` flag — the same shape `useSessionFleetSync.ts:161` already uses — with
+      the `useEffect` returning it as cleanup, still keyed on `[accountId]`. The race is pinned by
+      `drops a stale resolution that arrives after the account switched, even out of order`, which
+      starts A, stops it, starts B, resolves **B first and A second**, and asserts only B ever
+      reached state. Red proven before green.
+- [x] **MEDIUM** the identical `sessions.find((x) => x.id === sessionId) ?? null` selector, added to
+      four panes for the `sessionCapability` lookup and pre-existing in a fifth — extracted to
+      `src/lib/hooks/useSessionMeta.ts` and called from all five (`AgentsPanel`, `McpPanel`,
+      `SkillsPanel`, `WorkflowsPanel`, `ConversationView`, which also shed its now-unused `useStore`
+      import).
+
+**Left alone, deliberately.** `useSessionMeta.ts` ships without a test: it is a single `find`
+selector with no branching and no framework-free half to extract, and vitest runs
+`environment: 'node'` here with no DOM renderer wired — the same reason the pre-existing
+`useAppVersion.ts` has none. And `SplitPane.tsx:79` / `AgentView.tsx:51` carry a superficially
+similar lookup but were outside the finding's five sites, so the sweep was not widened.
