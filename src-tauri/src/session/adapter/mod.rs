@@ -15,6 +15,7 @@
 
 mod claude_code;
 mod codex;
+mod grok;
 mod openai;
 
 pub(crate) use claude_code::ClaudeCodeAdapter;
@@ -25,6 +26,8 @@ pub(crate) use claude_code::ClaudeCodeAdapter;
 pub(crate) use claude_code::{child_stdout_lines, spawn_claude};
 /// multi-provider-codex FR-3: the `AgentRuntime::Codex` adapter.
 pub(crate) use codex::{codex_program, CodexAdapter};
+/// multi-provider-grok FR-3: the `AgentRuntime::Grok` adapter.
+pub(crate) use grok::{grok_program, GrokAdapter};
 /// multi-provider-openai FR-1: the real `AgentRuntime::Francois` adapter —
 /// `UnavailableAdapter` is gone, not kept alongside it.
 pub(crate) use openai::OpenAiAdapter;
@@ -58,6 +61,11 @@ pub enum AgentRuntime {
     /// collapsed enum could not name and the whole reason FR-11a split the axes.
     #[serde(rename = "codex")]
     Codex,
+    /// multi-provider-grok FR-1: xAI's `grok` CLI driving its own loop —
+    /// structurally the same cell as `Codex` (a vendor CLI, `ProviderProtocol::
+    /// Openai` because the wire dialect underneath is an OpenAI-compatible one).
+    #[serde(rename = "grok")]
+    Grok,
 }
 
 /// Mirrors contract/common.ts `ProviderProtocol` (multi-provider-seam
@@ -94,6 +102,10 @@ impl AgentRuntime {
             crate::account::AccountKind::CodexCli => {
                 (AgentRuntime::Codex, ProviderProtocol::Openai)
             }
+            // multi-provider-grok FR-2: xAI's API is an OpenAI `/chat/completions`
+            // dialect, so `Openai` is the honest protocol value even though the
+            // vendor is neither Anthropic nor OpenAI.
+            crate::account::AccountKind::GrokCli => (AgentRuntime::Grok, ProviderProtocol::Openai),
         }
     }
 }
@@ -230,6 +242,7 @@ pub(crate) trait SessionAdapter: Send + Sync {
 static CLAUDE_CODE_ADAPTER: ClaudeCodeAdapter = ClaudeCodeAdapter;
 static OPENAI_ADAPTER: OpenAiAdapter = OpenAiAdapter;
 static CODEX_ADAPTER: CodexAdapter = CodexAdapter;
+static GROK_ADAPTER: GrokAdapter = GrokAdapter;
 
 /// FR-4/FR-14a: dispatch a session's `agentRuntime` ALONE to its adapter —
 /// `protocol` is read inside the `francois` runtime to pick the wire codec,
@@ -239,6 +252,7 @@ pub(crate) fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter 
         AgentRuntime::ClaudeCode => &CLAUDE_CODE_ADAPTER,
         AgentRuntime::Francois => &OPENAI_ADAPTER,
         AgentRuntime::Codex => &CODEX_ADAPTER,
+        AgentRuntime::Grok => &GROK_ADAPTER,
     }
 }
 
@@ -255,6 +269,14 @@ mod tests {
         assert_eq!(
             serde_json::to_value(AgentRuntime::Francois).unwrap(),
             serde_json::json!("francois")
+        );
+        assert_eq!(
+            serde_json::to_value(AgentRuntime::Codex).unwrap(),
+            serde_json::json!("codex")
+        );
+        assert_eq!(
+            serde_json::to_value(AgentRuntime::Grok).unwrap(),
+            serde_json::json!("grok")
         );
         assert_eq!(AgentRuntime::default(), AgentRuntime::ClaudeCode);
     }
@@ -282,6 +304,15 @@ mod tests {
             AgentRuntime::from_account_kind(crate::account::AccountKind::OpenAiCompatible),
             (AgentRuntime::Francois, ProviderProtocol::Openai)
         );
+        assert_eq!(
+            AgentRuntime::from_account_kind(crate::account::AccountKind::CodexCli),
+            (AgentRuntime::Codex, ProviderProtocol::Openai)
+        );
+        // multi-provider-grok FR-2.
+        assert_eq!(
+            AgentRuntime::from_account_kind(crate::account::AccountKind::GrokCli),
+            (AgentRuntime::Grok, ProviderProtocol::Openai)
+        );
     }
 
     #[test]
@@ -293,6 +324,15 @@ mod tests {
         assert_eq!(
             adapter_for(AgentRuntime::Francois).agent_runtime(),
             AgentRuntime::Francois
+        );
+        assert_eq!(
+            adapter_for(AgentRuntime::Codex).agent_runtime(),
+            AgentRuntime::Codex
+        );
+        // multi-provider-grok FR-3.
+        assert_eq!(
+            adapter_for(AgentRuntime::Grok).agent_runtime(),
+            AgentRuntime::Grok
         );
     }
 

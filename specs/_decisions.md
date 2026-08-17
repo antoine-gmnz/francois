@@ -77,3 +77,6 @@
 <!-- moved here when a line above supersedes them; never deleted -->
 - 2026-08-04 · surfaces · Extension definitions are a compiled-in array — never a manifest read from disk at any scope — because an id allowlist stops unknown extensions but never a repo impersonating a known one · extensions · superseded 2026-08-13 by extension-install
 - 2026-08-13 · api · `ext install <name>` resolves a bare name by the `francois-plugin-<name>` naming convention, never through an index — because the refused non-goal was the registry (search, curation, a trust relationship with whoever is listed), and a string substitution that fetches nothing to decide where to look carries none of that · extension-install
+- 2026-08-17 · surfaces · An OpenAI-compatible vendor API earns no adapter; only its CLI earns a runtime — because endpoint accounts already drive the API · multi-provider-grok
+- 2026-08-17 · api · A doc-derived wire format is marked PROVISIONAL and needs a live capture before the parser — because undocumented details are where it bites · multi-provider-grok
+- 2026-08-17 · security · An OS guarantee absent on a platform degrades to one in-transcript notice, never a blocked session — because a blocked platform has no escape hatch · multi-provider-grok

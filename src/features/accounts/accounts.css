@@ -987,3 +987,136 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── vendor CLI: installed-ness, and the npm that fixes it ──────────────────
+   A CLI you have not installed yet is a NORMAL state, not a fault, so this
+   borrows the dashed "empty slot" register the API KEYS section already uses
+   (`.acc-soon`, `.acc-key-row--empty`) rather than the error one. Nothing here
+   goes red until npm actually fails.
+
+   Identity-neutral by design: the card is about the machine, not the provider,
+   so it takes no `--hue-*` and never the accent — the accent means "the one
+   live thing in a view", and the live thing in this pane is the credential
+   you came to manage. */
+.acc-cli-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.acc-cli-card {
+  display: flex;
+  gap: var(--space-10);
+  padding: var(--space-10) var(--space-12);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-card);
+}
+.acc-cli-card-icon {
+  flex-shrink: 0;
+  display: flex;
+  padding-top: 1px;
+  color: var(--text-faint);
+}
+.acc-cli-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+  flex: 1;
+}
+.acc-cli-card-title {
+  font-size: var(--font-size-12);
+  color: var(--text-bright);
+}
+.acc-cli-card-note {
+  font-size: var(--font-size-11);
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+/* Wraps rather than truncates: the command is meant to be copied, and half a
+   package name is worse than a second line. */
+.acc-cli-card-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-4);
+}
+.acc-cli-cmd {
+  flex: 1;
+  min-width: 12rem;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-2);
+  background: var(--bg-deep);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-8);
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+.acc-cli-card-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.acc-cli-install {
+  background: transparent;
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6) var(--space-11);
+  color: var(--text-bright);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.acc-cli-install:hover:not(:disabled) {
+  border-color: var(--text-2);
+  background: var(--bg-raised);
+}
+.acc-cli-install:disabled {
+  color: var(--text-disabled);
+  border-color: var(--border-2);
+  cursor: default;
+}
+.acc-cli-docs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.acc-cli-docs:hover {
+  color: var(--text-2);
+}
+/* npm's own transcript. Selectable and bounded — `outputTail` caps the lines,
+   so this never needs to scroll and never pushes the credentials off screen. */
+.acc-cli-log {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-8);
+  background: var(--bg-deep);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  line-height: 1.5;
+  color: var(--text-faint);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.acc-cli-error {
+  font-size: var(--font-size-11);
+  line-height: 1.5;
+  color: var(--error);
+  white-space: pre-wrap;
+  user-select: text;
+}

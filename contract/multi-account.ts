@@ -16,13 +16,16 @@ export const DEFAULT_ACCOUNT_ID: AccountId = 'default';
  * What kind of credential an account is. 'claude-code-oauth' is an interactive
  * Claude Code login with its own config dir; 'openai-compatible' is an endpoint +
  * key, added by multi-provider-openai; 'codex-cli' is an interactive `codex login`
- * with its own CODEX_HOME, added by multi-provider-codex (FR-2).
+ * with its own CODEX_HOME, added by multi-provider-codex (FR-2); 'grok-cli' is an
+ * interactive `grok login` with its own GROK_HOME, added by multi-provider-grok
+ * (FR-2).
  *
- * The two interactive kinds are structurally the same trade — a per-account config
- * dir the vendor's own CLI fills in — and differ only in which CLI and which env
- * var (CLAUDE_CONFIG_DIR vs CODEX_HOME, see multi-provider-codex FR-18).
+ * The three interactive kinds are structurally the same trade — a per-account
+ * config dir the vendor's own CLI fills in — and differ only in which CLI and
+ * which env var (CLAUDE_CONFIG_DIR vs CODEX_HOME vs GROK_HOME, see
+ * multi-provider-codex FR-18 / multi-provider-grok FR-19).
  */
-export type AccountKind = 'claude-code-oauth' | 'openai-compatible' | 'codex-cli';
+export type AccountKind = 'claude-code-oauth' | 'openai-compatible' | 'codex-cli' | 'grok-cli';
 
 /**
  * The endpoint half of an 'openai-compatible' account. Present on `Account` iff
@@ -53,13 +56,14 @@ export interface Account {
   /** multi-provider-endpoint FR-1. Present iff kind === 'openai-compatible'. */
   endpoint?: EndpointConfig;
   /**
-   * multi-provider-codex FR-21a. Present iff kind === 'codex-cli'; derived on
-   * every list from `auth.json`'s existence in the account's CODEX_HOME (FR-20),
+   * multi-provider-codex FR-21a, widened by multi-provider-grok FR-22. Present
+   * iff kind === 'codex-cli' | 'grok-cli'; derived on every list from
+   * `auth.json`'s existence in the account's CODEX_HOME / GROK_HOME (FR-20),
    * never persisted — the same shape and reasoning as EndpointConfig.hasKey.
    *
    * Distinct from `authFailedAt`, which only ever gets set BY a failed turn: a
-   * freshly added Codex account has no credential and no failure yet, and must
-   * still read as "sign in first" rather than as healthy.
+   * freshly added Codex/Grok account has no credential and no failure yet, and
+   * must still read as "sign in first" rather than as healthy.
    */
   signedIn?: boolean;
 }
@@ -127,6 +131,26 @@ export interface AccountCodexLoginPayload {
 export type AccountCodexLoginResponse = Result<void>;
 // errors: 'INVALID_INPUT', 'SPAWN_FAILED', 'INTERNAL'
 
+// francois:account:addGrok → invoke('account_add_grok')
+// multi-provider-grok FR-20. Label only: a Grok account has no URL and no key,
+// just a GROK_HOME that `grok login` fills in afterwards.
+export interface AccountAddGrokPayload {
+  label: string; // non-empty after trim
+}
+export type AccountAddGrokResponse = Result<Account[]>;
+// errors: 'INVALID_INPUT', 'INTERNAL'
+
+// francois:account:grokLogin → invoke('account_grok_login')
+// multi-provider-grok FR-21. Resolves as soon as `grok login` is spawned; the
+// browser round-trip happens out of band and the refreshed list arrives on
+// account.list once auth.json lands — no PTY and no loginId, mirroring
+// account:codexLogin exactly.
+export interface AccountGrokLoginPayload {
+  accountId: AccountId;
+}
+export type AccountGrokLoginResponse = Result<void>;
+// errors: 'INVALID_INPUT', 'SPAWN_FAILED', 'INTERNAL'
+
 // francois:account:updateEndpoint → invoke('account_update_endpoint')
 export interface AccountUpdateEndpointPayload {
   accountId: AccountId;
@@ -153,9 +177,64 @@ export interface EndpointProbe {
 export type AccountTestEndpointResponse = Result<EndpointProbe>;
 // errors: 'INVALID_INPUT', 'ACCOUNT_ENDPOINT_UNREACHABLE', 'ACCOUNT_ENDPOINT_UNAUTHORIZED', 'INTERNAL'
 
+// ---------------------------------------------------------------- CLI tools
+//
+// The vendor CLIs a provider's login route is driven by. Not accounts and not a
+// registry: a CLI is installed once per MACHINE and every account on that
+// provider shares it, which is why this lives beside the account surface rather
+// than on `Account`.
+//
+// `grok` now backs a real `grok-cli` AccountKind (multi-provider-grok FR-2) —
+// installing it is the first half of the route, `addGrok` + `grokLogin` the rest.
+
+export type CliToolId = 'claude' | 'codex' | 'grok';
+
+export interface CliToolStatus {
+  id: CliToolId;
+  /** The command a user would type — `claude`, `codex`, `grok`. */
+  bin: string;
+  installed: boolean;
+  /**
+   * `<bin> --version`, first line, trimmed. Absent when the probe timed out or
+   * the CLI answered nothing — `installed` stays true either way, because the
+   * executable IS on PATH and a slow version banner is not a missing install.
+   */
+  version?: string;
+  /** The resolved executable, Windows shims (`.cmd`) included. Absent iff !installed. */
+  program?: string;
+  /** What `npm i -g` would install — also what the UI shows as the manual command. */
+  npmPackage: string;
+  docsUrl: string;
+}
+
+// francois:account:cliTools → invoke('account_cli_tools')
+// Probes all three every call (no cache): installing outside the app is the
+// normal case, so a stale "not installed" would outlive the fix.
+export type AccountCliToolsResponse = Result<CliToolStatus[]>; // errors: 'INTERNAL'
+
+// francois:account:installCli → invoke('account_install_cli')
+// Resolves as soon as `npm i -g <package>` is SPAWNED. Output and the outcome
+// arrive on francois://account/event, like the Claude login sub-stream — an
+// install takes tens of seconds and the modal must stay usable throughout.
+export interface AccountInstallCliPayload {
+  tool: CliToolId;
+}
+export type AccountInstallCliResponse = Result<void>;
+// errors: 'INVALID_INPUT' (an install is already in flight for this tool),
+//         'CLI_INSTALL_UNAVAILABLE' (npm is not on PATH — nothing to install with),
+//         'SPAWN_FAILED', 'INTERNAL'
+
 // francois:account:event → francois://account/event
 export type AccountEvent =
   | { type: 'account.list'; accounts: Account[] }
   | { type: 'account.login.data'; loginId: string; data: string }
   | { type: 'account.login.done'; loginId: string; account: Account }
-  | { type: 'account.login.failed'; loginId: string; error: AppError };
+  | { type: 'account.login.failed'; loginId: string; error: AppError }
+  /** A chunk of the install's merged stdout+stderr, verbatim. */
+  | { type: 'cli.install.output'; tool: CliToolId; data: string }
+  /**
+   * Terminal. `error` absent ⇒ npm exited 0. `tools` is the RE-PROBED status of
+   * all three either way, so a failed install still corrects the UI if the CLI
+   * turned out to be there (or a successful one that npm reported oddly).
+   */
+  | { type: 'cli.install.done'; tool: CliToolId; tools: CliToolStatus[]; error?: AppError };

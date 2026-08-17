@@ -595,6 +595,38 @@ mod tests {
 
 // ---------------------------------------------------------------- codex-cli
 
+/// francois:account:cliTools — is each vendor CLI installed on this machine?
+///
+/// `async` because it spawns up to three bounded `--version` probes; on the
+/// blocking pool they would hold a Tauri worker for as long as the slowest CLI
+/// takes to answer.
+///
+/// Never cached: a user who installs `codex` in a terminal while the modal is
+/// open reopens it expecting the truth, and there is no event that would tell us
+/// otherwise. `Result` rather than a bare list for parity with every other
+/// command — a probe has no failure mode of its own, so this only ever resolves
+/// `ok`.
+#[tauri::command(async)]
+pub fn account_cli_tools() -> IpcResult<Vec<CliToolStatus>> {
+    ok(probe_all())
+}
+
+/// francois:account:installCli — `npm i -g <package>` for one catalog CLI.
+///
+/// Resolves as soon as npm is SPAWNED, like `account_codex_login`: a global
+/// install takes tens of seconds and the modal stays usable throughout. Output
+/// and the outcome arrive on `francois://account/event`.
+///
+/// `tool` is an id, never a package name — the catalog in cli_tools.rs is what
+/// maps it, so nothing a caller sends can widen what reaches npm's argv.
+#[tauri::command]
+pub fn account_install_cli(app: AppHandle, tool: String) -> IpcResult<()> {
+    match start_install(&app, &tool) {
+        Ok(()) => ok(()),
+        Err(e) => err(&e.code, e.message),
+    }
+}
+
 /// francois:account:addCodex (multi-provider-codex FR-18/FR-24): create a
 /// `codex-cli` account.
 ///
@@ -704,5 +736,93 @@ pub fn account_codex_login(
         Err((code, msg)) => return err(code, msg),
     };
     start_codex_login_poller(&app, config_dir, child);
+    ok(())
+}
+
+// ---------------------------------------------------------------- grok-cli
+
+/// francois:account:addGrok (multi-provider-grok FR-20): create a `grok-cli`
+/// account. Mirrors `account_add_codex` exactly — label only, empty dir,
+/// `account_grok_login` fills it in afterwards.
+#[tauri::command]
+pub fn account_add_grok(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    label: String,
+) -> IpcResult<Vec<Account>> {
+    let label = match validate_label(&label) {
+        Ok(l) => l,
+        Err(msg) => return err("INVALID_INPUT", msg),
+    };
+
+    let id = crate::session::uuid();
+    let Some(config_dir) = accounts_dir(&app).map(|d| d.join(&id)) else {
+        return err("INTERNAL", "could not resolve the app data directory");
+    };
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        return err(
+            "INTERNAL",
+            format!("could not create {}: {e}", config_dir.display()),
+        );
+    }
+
+    let accounts = {
+        let Ok(mut inner) = state.0.lock() else {
+            let _ = std::fs::remove_dir_all(&config_dir);
+            return err("INTERNAL", "account state is unavailable");
+        };
+        apply_add_grok(
+            &mut inner,
+            id,
+            config_dir.to_string_lossy().into_owned(),
+            label,
+        );
+        if let Err(msg) = persist(&app, &inner) {
+            eprintln!("accounts: could not persist accounts.json: {msg}");
+        }
+        build_list(&inner)
+    };
+    emit(
+        &app,
+        AccountEvent::List {
+            accounts: accounts.clone(),
+        },
+    );
+    ok(accounts)
+}
+
+/// francois:account:grokLogin (FR-21): run `grok login` against one account's
+/// `GROK_HOME`. Mirrors `account_codex_login` exactly, sharing its in-flight
+/// reservation flag (see `grok_login_in_flight`'s doc comment).
+#[tauri::command]
+pub fn account_grok_login(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    account_id: String,
+) -> IpcResult<()> {
+    if grok_login_in_flight(&state) {
+        return err("INVALID_INPUT", MSG_IN_FLIGHT);
+    }
+
+    let config_dir = {
+        let Ok(inner) = state.0.lock() else {
+            return err("INTERNAL", "account state is unavailable");
+        };
+        match inner.records.iter().find(|r| r.id == account_id) {
+            Some(r) if r.kind == AccountKind::GrokCli => r.config_dir.clone(),
+            Some(_) => return err("INVALID_INPUT", "this account is not a Grok account"),
+            None => return err("INVALID_INPUT", NOT_FOUND_MSG),
+        }
+    };
+
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        return err("INTERNAL", format!("could not create {config_dir}: {e}"));
+    }
+
+    let child = match spawn_grok_login(&config_dir) {
+        Ok(child) => child,
+        Err((code, msg)) => return err(code, msg),
+    };
+    start_grok_login_poller(&app, config_dir, child);
     ok(())
 }

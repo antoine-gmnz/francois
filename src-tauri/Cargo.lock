@@ -1083,6 +1083,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
+ "toml 0.8.2",
  "ureq",
  "uuid",
  "windows-sys 0.59.0",

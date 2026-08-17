@@ -18,6 +18,8 @@ import type {
   AccountAddEndpointPayload,
   AccountTestEndpointPayload,
   AccountUpdateEndpointPayload,
+  CliToolId,
+  CliToolStatus,
   EndpointProbe,
 } from '../../../contract/multi-account';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
@@ -58,6 +60,46 @@ export function startAccountFeed(apply: (accounts: Account[]) => void): () => vo
     })
     .catch(() => {
       /* ignore — no account updates, rest of the app unaffected */
+    });
+
+  return () => {
+    live = false;
+    unlisten?.();
+    unlisten = undefined;
+  };
+}
+
+export interface CliToolsFeedHandlers {
+  /** A chunk of npm's merged output for one tool's install. */
+  onOutput?: (tool: CliToolId, data: string) => void;
+  /** Terminal. `error` null ⇒ it worked; `tools` is the re-probed list either way. */
+  onDone?: (tool: CliToolId, tools: CliToolStatus[], error: AppError | null) => void;
+}
+
+/**
+ * The CLI-install sub-stream of the same channel. Mounted only while the
+ * Accounts modal is open, exactly like `startLoginFeed` — an install is started
+ * from that modal and its transcript has nowhere else to render.
+ *
+ * It does NOT filter by tool: the handlers get the id and the caller decides,
+ * which keeps a second install started from another provider's pane from being
+ * silently swallowed here.
+ */
+export function startCliToolsFeed(handlers: CliToolsFeedHandlers): () => void {
+  let live = true;
+  let unlisten: UnlistenFn | undefined;
+
+  void onAccountEvent((e) => {
+    if (!live) return;
+    if (e.type === 'cli.install.output') handlers.onOutput?.(e.tool, e.data);
+    else if (e.type === 'cli.install.done') handlers.onDone?.(e.tool, e.tools, e.error ?? null);
+  })
+    .then((u) => {
+      if (!live) u();
+      else unlisten = u;
+    })
+    .catch(() => {
+      /* ignore — the card falls back to its own optimistic state */
     });
 
   return () => {
@@ -287,6 +329,11 @@ export function accountIsCodex(account: Account): boolean {
   return account.kind === 'codex-cli';
 }
 
+/** multi-provider-grok FR-2: a 'grok-cli' account. */
+export function accountIsGrok(account: Account): boolean {
+  return account.kind === 'grok-cli';
+}
+
 /**
  * Does a plan-limit probe make sense for this account?
  *
@@ -308,7 +355,7 @@ export function accountUsageProbeable(account: Account): boolean {
  * The one place in `src/` allowed to map a kind to a runtime, for the same
  * reason `runtimeCapability.ts` is the one place allowed to read the table: FR-23
  * forbids components branching on the runtime, not helpers deriving it. Total
- * over `AccountKind`, so a fourth kind fails to typecheck here.
+ * over `AccountKind`, so a fifth kind fails to typecheck here.
  */
 function accountRuntime(account: Account): AgentRuntime {
   switch (account.kind) {
@@ -318,6 +365,8 @@ function accountRuntime(account: Account): AgentRuntime {
       return 'francois';
     case 'codex-cli':
       return 'codex';
+    case 'grok-cli':
+      return 'grok';
   }
 }
 
@@ -350,6 +399,30 @@ export function codexSaveDisabled(label: string, busy: boolean): boolean {
 
 /** FR-24: the `account_add_codex` payload — label only, trimmed. */
 export function codexAddPayload(label: string): { label: string } {
+  return { label: label.trim() };
+}
+
+/**
+ * multi-provider-grok FR-22: the Grok analogue of `codexNeedsFirstLogin` —
+ * same shape, same reasoning (`signedIn` is present iff kind is 'codex-cli' |
+ * 'grok-cli'), a separate account kind so it does not read a Codex row.
+ */
+export function grokNeedsFirstLogin(account: Account): boolean {
+  return accountIsGrok(account) && account.signedIn === false;
+}
+
+/** multi-provider-grok FR-21: the label on a Grok row's login action. */
+export function grokLoginActionLabel(account: Account): string {
+  return grokNeedsFirstLogin(account) ? 'Sign in' : 'Re-login';
+}
+
+/** multi-provider-grok FR-20: Save is disabled until the label has non-whitespace content. */
+export function grokSaveDisabled(label: string, busy: boolean): boolean {
+  return busy || label.trim() === '';
+}
+
+/** multi-provider-grok FR-20: the `account_add_grok` payload — label only, trimmed. */
+export function grokAddPayload(label: string): { label: string } {
   return { label: label.trim() };
 }
 

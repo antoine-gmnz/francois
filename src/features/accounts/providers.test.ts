@@ -52,6 +52,20 @@ function codex(over: Partial<Account> = {}): Account {
   };
 }
 
+function grok(over: Partial<Account> = {}): Account {
+  return {
+    id: 'g1',
+    label: 'SuperGrok',
+    configDir: '/cfg/g1',
+    builtIn: false,
+    isDefault: false,
+    createdAt: 4,
+    kind: 'grok-cli',
+    signedIn: true,
+    ...over,
+  };
+}
+
 function endpoint(baseUrl: string, over: Partial<Account> = {}): Account {
   return {
     id: `e-${baseUrl}`,
@@ -85,9 +99,10 @@ describe('baseUrlHost', () => {
 });
 
 describe('providerIdForAccount', () => {
-  it('maps the two CLI kinds to their vendor', () => {
+  it('maps the three CLI kinds to their vendor', () => {
     expect(providerIdForAccount(claude())).toBe('anthropic');
     expect(providerIdForAccount(codex())).toBe('openai');
+    expect(providerIdForAccount(grok())).toBe('xai');
   });
 
   it('routes an endpoint account by the host of its base URL', () => {
@@ -107,15 +122,18 @@ describe('isKeyCredential', () => {
     expect(isKeyCredential(endpoint('https://api.openai.com/v1'))).toBe(true);
     expect(isKeyCredential(claude())).toBe(false);
     expect(isKeyCredential(codex())).toBe(false);
+    expect(isKeyCredential(grok())).toBe(false);
   });
 });
 
 describe('accountWantsAttention', () => {
-  it('covers both ways a credential can be asking for something', () => {
+  it('covers all three ways a credential can be asking for something', () => {
     expect(accountWantsAttention(claude({ authFailedAt: 5 }))).toBe(true);
     expect(accountWantsAttention(codex({ signedIn: false }))).toBe(true);
+    expect(accountWantsAttention(grok({ signedIn: false }))).toBe(true);
     expect(accountWantsAttention(claude())).toBe(false);
     expect(accountWantsAttention(codex())).toBe(false);
+    expect(accountWantsAttention(grok())).toBe(false);
   });
 });
 
@@ -137,6 +155,14 @@ describe('providerGroups', () => {
     expect(openai.cliAccounts.map((a) => a.id)).toEqual(['b']);
     expect(openai.keyAccounts.map((a) => a.id)).toEqual(['c']);
     expect(findGroup(groups, 'anthropic').accounts.map((a) => a.id)).toEqual(['a']);
+  });
+
+  it('buckets a grok-cli account into xAI as a CLI login', () => {
+    const groups = providerGroups([grok({ id: 'g' })]);
+    const xai = findGroup(groups, 'xai');
+    expect(xai.cliAccounts.map((a) => a.id)).toEqual(['g']);
+    expect(xai.keyAccounts).toEqual([]);
+    expect(xai.connected).toBe(true);
   });
 
   it('reads `2 logins · 1 key` on a connected provider', () => {
@@ -295,6 +321,11 @@ describe('credentialLoginLabel', () => {
     expect(credentialLoginLabel(codex({ signedIn: false }))).toBe('Sign in');
     expect(credentialLoginLabel(codex({ signedIn: true }))).toBe('Re-login');
   });
+
+  it('says Sign in for a never-authed Grok account, Re-login once there was a credential', () => {
+    expect(credentialLoginLabel(grok({ signedIn: false }))).toBe('Sign in');
+    expect(credentialLoginLabel(grok({ signedIn: true }))).toBe('Re-login');
+  });
 });
 
 describe('the catalog itself', () => {
@@ -308,6 +339,38 @@ describe('the catalog itself', () => {
   it('tints every tile from the neutral hue ramp — a provider is identity, not status', () => {
     for (const spec of PROVIDERS) {
       expect(spec.hue.startsWith('var(--hue-')).toBe(true);
+    }
+  });
+
+  // The install axis. `cliTool` says which vendor CLI Francois can detect and
+  // install; `cliLogin` says which one it can drive a sign-in through. They are
+  // NOT the same question, and xAI is the case that proves it.
+  it('can install every CLI it can sign in with — a login route with no install route would strand the user', () => {
+    for (const spec of PROVIDERS) {
+      if (spec.cliLogin) expect(spec.cliTool).toBe(spec.cliLogin);
+    }
+  });
+
+  // multi-provider-grok FR-28: cliLogin flipped from null once addGrok/grokLogin
+  // gave xAI a real sign-in route — cliTool and cliLogin now agree, like every
+  // other provider that can sign in through its own CLI.
+  it('signs in to xAI through the grok CLI now that FR-28 wired it up', () => {
+    const xai = providerSpec('xai');
+    expect(xai.cliTool).toBe('grok');
+    expect(xai.cliLogin).toBe('grok');
+  });
+
+  // The converse guard: a provider we can neither drive nor install must not
+  // grow a card offering to install something that has no package behind it.
+  it('claims no CLI for the providers whose tools it does not ship', () => {
+    for (const id of ['google', 'moonshot', 'qwen', 'openrouter', 'deepseek', 'custom'] as const) {
+      expect(providerSpec(id).cliTool).toBeNull();
+    }
+  });
+
+  it('names a CLI in prose exactly when there is one to name', () => {
+    for (const spec of PROVIDERS) {
+      if (spec.cliTool) expect(spec.cliName).toBe(spec.cliTool);
     }
   });
 });

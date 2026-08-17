@@ -179,6 +179,7 @@ pub(crate) fn test_session() -> Session {
         workflow_by_tool: HashMap::new(),
         workflow_scripts: HashMap::new(),
         cli_commands: Vec::new(),
+        grok_sandbox_notice_emitted: false,
     }
 }
 

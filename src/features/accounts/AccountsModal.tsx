@@ -43,14 +43,24 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountId, AppError } from '../../../contract/common';
-import type { Account } from '../../../contract/multi-account';
-import { accountCodexLogin, accountLoginCancel, accountRemove, accountRename, accountSetDefault } from '../../lib/api';
+import type { Account, CliToolId, CliToolStatus } from '../../../contract/multi-account';
+import {
+  accountCliTools,
+  accountCodexLogin,
+  accountGrokLogin,
+  accountInstallCli,
+  accountLoginCancel,
+  accountRemove,
+  accountRename,
+  accountSetDefault,
+} from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
 import { seedAccountUsage } from '../usage/usage';
 import AccountLoginView from './AccountLoginView';
 import { CodexForm } from './CodexForm';
 import { EndpointForm } from './EndpointForm';
+import { GrokForm } from './GrokForm';
 import { ProviderDetail } from './ProviderDetail';
 import { ProviderRail } from './ProviderRail';
 import { RemoveAccountConfirm } from './RemoveAccountConfirm';
@@ -58,11 +68,14 @@ import {
   ACCOUNTS_KEY_HINTS,
   accountIsCodex,
   accountIsEndpoint,
+  accountIsGrok,
   accountSessionCounts,
   accountUsageProbeable,
   moveCursor,
   newlyAddedAccountId,
+  startCliToolsFeed,
 } from './accounts';
+import { IDLE_INSTALL, findCliTool, reduceInstall, type CliInstallState } from './cliTools';
 import {
   accountSessionNames,
   cliSectionState,
@@ -115,6 +128,17 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // discriminated `addForm` union, so the two existing forms keep their exact
   // open/close conditions and nothing about the endpoint flow moves.
   const [codexForm, setCodexForm] = useState(false);
+  // multi-provider-grok FR-20: the fourth add form, same shape as codexForm.
+  const [grokForm, setGrokForm] = useState(false);
+  // The vendor CLIs, probed once per modal open. Machine-scoped rather than
+  // account-scoped, so it lives HERE and not in the account store: the registry
+  // survives the modal closing, this fact does not — a user who installs `codex`
+  // in a terminal must see the truth on the next open, not a cached "missing".
+  const [cliTools, setCliTools] = useState<CliToolStatus[]>([]);
+  // Keyed by tool, not one slot: two providers' cards can be on screen across a
+  // rail switch, and a shared slot would show `grok`'s npm output under
+  // Anthropic's install.
+  const [installs, setInstalls] = useState<Record<string, CliInstallState>>({});
   const alive = useMounted();
   // The live login's id, so cancel can address it from anywhere — including the
   // unmount cleanup, which must fire even when the modal is torn down by a
@@ -149,8 +173,12 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // removed row (or from another provider's pane) resolves to the first card.
   const selected =
     paneAccounts.find((a) => a.id === cursorId) ?? paneAccounts[0] ?? null;
+  // `null` covers both "this provider has no CLI" and "the probe has not
+  // answered" — the pane treats them the same, which is what keeps a slow probe
+  // from flashing a "not installed" card at a machine that has it.
+  const selectedCliTool = findCliTool(cliTools, group.spec.cliTool);
   const confirming = confirmId ? (accounts.find((a) => a.id === confirmId) ?? null) : null;
-  const busy = login !== null || endpointForm !== null || codexForm;
+  const busy = login !== null || endpointForm !== null || codexForm || grokForm;
 
   // Redesign hangs a reset countdown off every quota gauge. Same granularity
   // rule the usage bar follows: one text tick a minute, not motion — the
@@ -179,6 +207,79 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts.map((a) => a.id).join(','), setAccountUsage]);
 
+  // Probe the vendor CLIs once per open. Failures are SILENT: an unanswered
+  // probe leaves `cliTools` empty, which reads as "no CLI facts" — every card
+  // and the "+ Add login" block are then absent rather than wrong, and the
+  // modal's actual job (managing credentials) is unaffected.
+  useEffect(() => {
+    void accountCliTools()
+      .then((res) => {
+        if (alive.current && res.ok) setCliTools(res.data);
+      })
+      .catch(() => {});
+  }, [alive]);
+
+  // The install sub-stream, mounted for as long as the modal is — NOT for as
+  // long as a card is on screen. An install started from Anthropic's pane keeps
+  // streaming while the user reads OpenAI's, and its `done` must still land.
+  useEffect(
+    () =>
+      startCliToolsFeed({
+        onOutput: (tool, data) => {
+          if (!alive.current) return;
+          setInstalls((prev) => ({
+            ...prev,
+            [tool]: reduceInstall(prev[tool] ?? IDLE_INSTALL, { kind: 'output', data }),
+          }));
+        },
+        onDone: (tool, tools, error) => {
+          if (!alive.current) return;
+          // The re-probed list is what removes the card on success — the state
+          // below only carries the failure transcript.
+          setCliTools(tools);
+          setInstalls((prev) => ({
+            ...prev,
+            [tool]: reduceInstall(prev[tool] ?? IDLE_INSTALL, { kind: 'done', error }),
+          }));
+        },
+      }),
+    [alive],
+  );
+
+  /**
+   * Start `npm i -g` for one provider's CLI. Flipped to `installing`
+   * optimistically so the button cannot be pressed twice while the invoke is in
+   * flight; a refused start (npm missing, one already running) lands as the
+   * failure it is, in the card rather than the modal's error bar — it is that
+   * card's business and the credentials below are unaffected.
+   */
+  const doInstallCli = (tool: CliToolId) => {
+    setInstalls((prev) => ({
+      ...prev,
+      [tool]: { phase: 'installing', output: '', error: null },
+    }));
+    void accountInstallCli({ tool })
+      .then((res) => {
+        if (alive.current && !res.ok) {
+          setInstalls((prev) => ({
+            ...prev,
+            [tool]: { phase: 'failed', output: prev[tool]?.output ?? '', error: res.error },
+          }));
+        }
+      })
+      .catch(() => {
+        if (!alive.current) return;
+        setInstalls((prev) => ({
+          ...prev,
+          [tool]: {
+            phase: 'failed',
+            output: prev[tool]?.output ?? '',
+            error: { code: 'INTERNAL', message: 'Could not reach the core' },
+          },
+        }));
+      });
+  };
+
   // multi-provider-codex FR-25: `codex login` for one card. Nothing to render
   // and nothing to cancel — the browser is the UI, and the card's `signedIn`
   // flips when the refreshed account.list arrives (FR-21a). Only a failure to
@@ -187,6 +288,18 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     setError(null);
     try {
       const res = await accountCodexLogin({ accountId: account.id });
+      if (alive.current && !res.ok) setError(res.error);
+    } catch {
+      if (alive.current) setError({ code: 'INTERNAL', message: 'Could not reach the core' });
+    }
+  };
+
+  // multi-provider-grok FR-21: `grok login` for one card, same shape as
+  // doCodexLogin above — no PTY, no loginId, only a spawn failure to surface.
+  const doGrokLogin = async (account: Account) => {
+    setError(null);
+    try {
+      const res = await accountGrokLogin({ accountId: account.id });
       if (alive.current && !res.ok) setError(res.error);
     } catch {
       if (alive.current) setError({ code: 'INTERNAL', message: 'Could not reach the core' });
@@ -306,9 +419,10 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
 
   // Redesign 8b: the provider's own add affordances. Which one "+ Add login"
   // means is the provider's business, not the modal's — the catalog says
-  // whether this vendor is driven by `claude` or by `codex`.
+  // whether this vendor is driven by `claude`, `codex` or `grok`.
   const addLogin = () => {
     if (group.spec.cliLogin === 'codex') setCodexForm(true);
+    else if (group.spec.cliLogin === 'grok') setGrokForm(true);
     else if (group.spec.cliLogin === 'claude') setLogin({});
   };
 
@@ -325,11 +439,13 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     else if (keySectionState(group.spec).available) addKey();
   };
 
-  // FR-25: a Codex card MUST NOT reach the Claude PTY login — that would run
-  // `claude` against a CODEX_HOME. Routing lives here rather than in the card
-  // so the card stays a renderer with one `onLogin`.
+  // FR-25 / multi-provider-grok FR-21: a Codex or Grok card MUST NOT reach the
+  // Claude PTY login — that would run `claude` against their own config dir.
+  // Routing lives here rather than in the card so the card stays a renderer
+  // with one `onLogin`.
   const doLogin = (account: Account) => {
     if (accountIsCodex(account)) void doCodexLogin(account);
+    else if (accountIsGrok(account)) void doGrokLogin(account);
     else setLogin({ accountId: account.id });
   };
 
@@ -345,13 +461,14 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         else if (confirmId) setConfirmId(null);
         else if (endpointForm) setEndpointForm(null);
         else if (codexForm) setCodexForm(false);
+        else if (grokForm) setGrokForm(false);
         else onClose();
         return;
       }
       // Everything below is list-state only: while the login TUI is up every
       // other key belongs to it, while renaming they belong to the input, and
       // while a form is open every key belongs to its own fields.
-      if (login || renamingId || endpointForm || codexForm) return;
+      if (login || renamingId || endpointForm || codexForm || grokForm) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
 
@@ -418,7 +535,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     // setDefault, startRename, addPrimary, onClose) read only refs/setters/
     // these same deps, so a version captured at that point stays correct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [login, renamingId, confirmId, endpointForm, codexForm, selected, paneAccounts, groups, providerId, accounts, onClose]);
+  }, [login, renamingId, confirmId, endpointForm, codexForm, grokForm, selected, paneAccounts, groups, providerId, accounts, onClose]);
 
   return (
     <div
@@ -466,6 +583,9 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
             renamingId={renamingId}
             renameDraft={renameDraft}
             busy={busy}
+            cliTool={selectedCliTool}
+            cliInstall={group.spec.cliTool ? installs[group.spec.cliTool] : undefined}
+            onInstallCli={() => group.spec.cliTool && doInstallCli(group.spec.cliTool)}
             takeover={
               login ? (
                 <AccountLoginView
@@ -514,6 +634,16 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
                     // through: `account_add_codex` emits account.list, which this
                     // modal already subscribes to.
                     setCodexForm(false);
+                    setError(null);
+                  }}
+                />
+              ) : grokForm ? (
+                <GrokForm
+                  onCancel={() => setGrokForm(false)}
+                  onSaved={() => {
+                    // Same as CodexForm: `account_add_grok` emits account.list,
+                    // which this modal already subscribes to.
+                    setGrokForm(false);
                     setError(null);
                   }}
                 />

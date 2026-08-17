@@ -17,9 +17,11 @@
 
 import type { ReactNode } from 'react';
 import type { AccountId } from '../../../contract/common';
-import type { Account } from '../../../contract/multi-account';
+import type { Account, CliToolStatus } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 import { accountIsEndpoint } from './accounts';
+import { CliToolCard, CliToolChip } from './CliToolCard';
+import { IDLE_INSTALL, loginBlockedReason, type CliInstallState } from './cliTools';
 import { ApiKeyRow, CredentialCard } from './CredentialCard';
 import { ProviderTile } from './ProviderTile';
 import {
@@ -42,6 +44,15 @@ export interface ProviderDetailProps {
   renameDraft: string;
   /** A login or a form is up — every add affordance is inert until it closes. */
   busy: boolean;
+  /**
+   * This provider's vendor CLI, or null when it has none / the probe has not
+   * answered yet. Passed in rather than looked up here so the pane stays a
+   * renderer and one probe result feeds every provider's pane identically.
+   */
+  cliTool: CliToolStatus | null;
+  /** The live `npm i -g` for THIS provider's tool. Idle when nothing is running. */
+  cliInstall?: CliInstallState;
+  onInstallCli: () => void;
   /** Replaces both sections: the login terminal takes over THIS pane, not the modal. */
   takeover?: ReactNode;
   /** Opens above the sections, pushing them down (the add/edit forms). */
@@ -69,6 +80,9 @@ export function ProviderDetail({
   renamingId,
   renameDraft,
   busy,
+  cliTool,
+  cliInstall = IDLE_INSTALL,
+  onInstallCli,
   takeover,
   form,
   onRenameDraft,
@@ -85,6 +99,10 @@ export function ProviderDetail({
 }: ProviderDetailProps): JSX.Element {
   const cli = cliSectionState(group.spec);
   const keys = keySectionState(group.spec);
+  // "+ Add login" spawns the vendor's CLI. Without it on PATH the only outcome
+  // is SPAWN_FAILED, so the button is disabled with the reason rather than left
+  // to fail — the same trade the endpoint form makes with an unreachable URL.
+  const loginBlocked = loginBlockedReason(group.spec, cliTool);
   // The mock hangs the dot off the provider name too, so the pane says the same
   // thing the rail row said — you never have to look back at the rail to check.
   const dotClass = group.status === 'none' ? null : `acc-dot acc-dot--${group.status}`;
@@ -109,9 +127,9 @@ export function ProviderDetail({
             <button
               type="button"
               className="acc-ghost-add"
-              disabled={busy}
+              disabled={busy || loginBlocked !== null}
               onClick={onAddLogin}
-              title={`Sign in to ${group.spec.name} with the ${group.spec.cliLogin} CLI`}
+              title={loginBlocked ?? `Sign in to ${group.spec.name} with the ${group.spec.cliLogin} CLI`}
             >
               + Add login
             </button>
@@ -127,8 +145,22 @@ export function ProviderDetail({
             <div className="acc-section-head">
               <span className="acc-section-eyebrow">CLI logins</span>
               <span className="acc-section-rule" />
+              <CliToolChip tool={cliTool} />
             </div>
             <div className="acc-section-body">
+              {/* Above BOTH branches, deliberately: a missing CLI is the reason
+                  the credentials below cannot be used, and for xAI it is the
+                  only actionable thing in a section that otherwise just says
+                  "coming soon". */}
+              {cliTool && !cliTool.installed && (
+                <CliToolCard
+                  spec={group.spec}
+                  tool={cliTool}
+                  state={cliInstall}
+                  busy={busy}
+                  onInstall={onInstallCli}
+                />
+              )}
               {!cli.available ? (
                 <div className="acc-soon">{cli.comingSoon}</div>
               ) : group.cliAccounts.length === 0 ? (

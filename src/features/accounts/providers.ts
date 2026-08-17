@@ -25,13 +25,16 @@
 // `runtimeCapabilities()` makes on the session side.
 
 import type { AccountId, SessionMeta } from '../../../contract/common';
-import type { Account } from '../../../contract/multi-account';
+import type { Account, CliToolId } from '../../../contract/multi-account';
 import {
   accountIsCodex,
   accountIsEndpoint,
+  accountIsGrok,
   accountNeedsLogin,
   codexLoginActionLabel,
   codexNeedsFirstLogin,
+  grokLoginActionLabel,
+  grokNeedsFirstLogin,
   resolveNewSessionAccountId,
 } from './accounts';
 
@@ -48,11 +51,11 @@ export type ProviderId =
 
 /**
  * Which interactive CLI login a provider offers *here*. `null` is the honest
- * answer for the six providers whose own CLIs (gemini, kimi, qwen-code, …) this
+ * answer for the providers whose own CLIs (gemini, kimi, qwen-code, …) this
  * app does not drive yet — the section renders "coming soon" instead of an
  * affordance that would do nothing.
  */
-export type CliLogin = 'claude' | 'codex' | null;
+export type CliLogin = 'claude' | 'codex' | 'grok' | null;
 
 export interface ProviderSpec {
   id: ProviderId;
@@ -77,6 +80,22 @@ export interface ProviderSpec {
   hosts: readonly string[];
   /** Named in the "coming soon" note, so the sentence says which CLI is missing. */
   cliName: string | null;
+  /**
+   * Which vendor CLI this provider's route needs on the machine — the axis the
+   * install card branches on.
+   *
+   * Deliberately NOT the same question as `cliLogin` in general: a provider can
+   * carry a `cliTool` (installable, detectable) with no `cliLogin` (no sign-in
+   * route yet) — that used to be xAI's own shape before multi-provider-grok
+   * wired `addGrok`/`grokLogin` up, and it is why the two fields stayed apart
+   * rather than being collapsed into one. Collapsing them would mean either
+   * hiding the install affordance behind a sign-in that does not exist, or
+   * claiming a sign-in that does not.
+   *
+   * `null` for the providers whose CLI Francois neither drives nor installs —
+   * `gemini`/`kimi`/`qwen-code` are in `cliName` as prose only.
+   */
+  cliTool: CliToolId | null;
 }
 
 /**
@@ -98,6 +117,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     apiBaseUrl: null,
     hosts: ['api.anthropic.com'],
     cliName: 'claude',
+    cliTool: 'claude',
   },
   {
     id: 'openai',
@@ -108,6 +128,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     apiBaseUrl: 'https://api.openai.com/v1',
     hosts: ['api.openai.com'],
     cliName: 'codex',
+    cliTool: 'codex',
   },
   {
     id: 'google',
@@ -118,6 +139,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     hosts: ['generativelanguage.googleapis.com'],
     cliName: 'gemini',
+    cliTool: null,
   },
   {
     id: 'moonshot',
@@ -128,6 +150,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     apiBaseUrl: 'https://api.moonshot.ai/v1',
     hosts: ['api.moonshot.ai', 'api.moonshot.cn'],
     cliName: 'kimi',
+    cliTool: null,
   },
   {
     id: 'openrouter',
@@ -138,6 +161,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     apiBaseUrl: 'https://openrouter.ai/api/v1',
     hosts: ['openrouter.ai'],
     cliName: null,
+    cliTool: null,
   },
   {
     id: 'deepseek',
@@ -148,16 +172,21 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     apiBaseUrl: 'https://api.deepseek.com/v1',
     hosts: ['api.deepseek.com'],
     cliName: null,
+    cliTool: null,
   },
   {
     id: 'xai',
     name: 'xAI',
     monogram: 'XA',
     hue: 'var(--hue-slate)',
-    cliLogin: null,
+    // multi-provider-grok FR-28: flipped from null once addGrok/grokLogin gave
+    // this provider a real sign-in route (§Verification before parsing FR-11 —
+    // provisional against xAI's docs until a live turn reconciles §5).
+    cliLogin: 'grok',
     apiBaseUrl: 'https://api.x.ai/v1',
     hosts: ['api.x.ai'],
     cliName: 'grok',
+    cliTool: 'grok',
   },
   {
     id: 'qwen',
@@ -168,6 +197,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     apiBaseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     hosts: ['dashscope-intl.aliyuncs.com', 'dashscope.aliyuncs.com'],
     cliName: 'qwen-code',
+    cliTool: null,
   },
   {
     id: 'custom',
@@ -180,6 +210,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     apiBaseUrl: '',
     hosts: [],
     cliName: null,
+    cliTool: null,
   },
 ] as const;
 
@@ -207,7 +238,7 @@ export function baseUrlHost(baseUrl: string): string {
 }
 
 /**
- * Which provider an account belongs to. Total over `AccountKind`, so a fourth
+ * Which provider an account belongs to. Total over `AccountKind`, so a fifth
  * kind fails to typecheck here rather than landing silently in `custom`.
  */
 export function providerIdForAccount(account: Account): ProviderId {
@@ -216,6 +247,8 @@ export function providerIdForAccount(account: Account): ProviderId {
       return 'anthropic';
     case 'codex-cli':
       return 'openai';
+    case 'grok-cli':
+      return 'xai';
     case 'openai-compatible': {
       const host = baseUrlHost(account.endpoint?.baseUrl ?? '');
       if (host === '') return 'custom';
@@ -230,12 +263,12 @@ export function isKeyCredential(account: Account): boolean {
 }
 
 /**
- * "Asking for something": a Claude row whose last turn failed auth, or a Codex
- * row that has never been signed in at all. Both read as the rail's red dot and
- * both pin the card's actions visible.
+ * "Asking for something": a Claude row whose last turn failed auth, or a
+ * Codex/Grok row that has never been signed in at all. All three read as the
+ * rail's red dot and all pin the card's actions visible.
  */
 export function accountWantsAttention(account: Account): boolean {
-  return accountNeedsLogin(account) || codexNeedsFirstLogin(account);
+  return accountNeedsLogin(account) || codexNeedsFirstLogin(account) || grokNeedsFirstLogin(account);
 }
 
 /** The rail's 6×6 dot. `none` ⇒ the provider is not connected, so no dot at all. */
@@ -429,13 +462,16 @@ export function accountSessionNames(accounts: Account[], sessions: SessionMeta[]
  * The word on a credential card's login action, or `null` when the card has no
  * login route at all.
  *
- * Three cases, and the null one is load-bearing: the built-in account has no
- * config dir of its own — `claude` owns `~/.claude` directly — so there is
- * nothing for it to re-log into, and an endpoint account's credential is a key
- * you Edit, never an interactive sign-in. Codex rows say *Sign in* until there
- * is a credential to renew (FR-25), which `codexLoginActionLabel` decides.
+ * The null case is load-bearing: the built-in account has no config dir of its
+ * own — `claude` owns `~/.claude` directly — so there is nothing for it to
+ * re-log into, and an endpoint account's credential is a key you Edit, never
+ * an interactive sign-in. Codex and Grok rows both say *Sign in* until there is
+ * a credential to renew (FR-25 / multi-provider-grok FR-21), which
+ * `codexLoginActionLabel`/`grokLoginActionLabel` decide.
  */
 export function credentialLoginLabel(account: Account): string | null {
   if (accountIsEndpoint(account) || account.builtIn) return null;
-  return accountIsCodex(account) ? codexLoginActionLabel(account) : 'Re-login';
+  if (accountIsCodex(account)) return codexLoginActionLabel(account);
+  if (accountIsGrok(account)) return grokLoginActionLabel(account);
+  return 'Re-login';
 }
