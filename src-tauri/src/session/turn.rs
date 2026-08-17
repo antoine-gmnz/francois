@@ -26,11 +26,14 @@ pub(crate) enum TurnMode {
 /// The claude argv for a session turn. session-questions FR-1: `-p` with NO
 /// positional prompt (the turn text rides stdin), plus the stdio control channel
 /// (`--input-format stream-json --permission-prompt-tool stdio`). Pure; unit-tested.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn turn_args(
     model_id: &str,
     resume: Option<&str>,
     effort: Option<&str>,
     permission_mode: &str,
+    system_prompt: Option<&str>,
+    extra_args: &[String],
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-p".into(),
@@ -49,9 +52,16 @@ pub(crate) fn turn_args(
     if let Some(e) = effort {
         args.extend(["--effort".into(), e.into()]);
     }
+    // session-profiles FR-12/FR-13: REPLACE-mode prompt rides EVERY invocation,
+    // including a --resume turn (--resume itself carries neither).
+    if let Some(sp) = system_prompt {
+        args.extend(["--system-prompt".into(), sp.into()]);
+    }
     if let Some(r) = resume {
         args.extend(["--resume".into(), r.into()]);
     }
+    // session-profiles FR-12: appended LAST, after every argument Francois builds.
+    args.extend(extra_args.iter().cloned());
     args
 }
 
@@ -77,8 +87,17 @@ pub(crate) fn spawn_claude(
     runtime: &str,
     worktree_distro: Option<&str>,
     account_config_dir: Option<&str>,
+    system_prompt: Option<&str>,
+    extra_args: &[String],
 ) -> std::io::Result<Child> {
-    let args = turn_args(model_id, resume, effort, permission_mode);
+    let args = turn_args(
+        model_id,
+        resume,
+        effort,
+        permission_mode,
+        system_prompt,
+        extra_args,
+    );
     let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
     let mut cmd = Command::new(program);
     cmd.args(argv);
@@ -244,6 +263,8 @@ pub(crate) fn begin_turn(
         runtime,
         worktree_distro,
         account_id,
+        system_prompt,
+        extra_args,
     )) = engine.with_session_mut(session_id, |s| {
         // ResumeRetry forces resume off regardless of the stored id, so a
         // still-good id is never dropped preemptively — a fresh init
@@ -262,6 +283,10 @@ pub(crate) fn begin_turn(
             s.runtime.clone(),
             s.worktree_distro.clone(),
             s.account_id.clone(),
+            // session-profiles FR-13: both ride EVERY turn of this session,
+            // snapshotted at creation — never re-read from the profile.
+            s.system_prompt.clone(),
+            s.extra_args.clone(),
         )
     })
     else {
@@ -319,6 +344,8 @@ pub(crate) fn begin_turn(
         &runtime,
         worktree_distro.as_deref(),
         account_config_dir.as_deref(),
+        system_prompt.as_deref(),
+        &extra_args,
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -733,7 +760,7 @@ mod tests {
     fn turn_args_enable_stdio_control_channel_without_positional_prompt() {
         // FR-1: -p with NO positional prompt, plus the two new flags; every
         // pre-existing flag intact; permission-mode/effort/resume still appended.
-        let args = turn_args("sonnet", Some("thread-1"), Some("high"), "plan");
+        let args = turn_args("sonnet", Some("thread-1"), Some("high"), "plan", None, &[]);
         assert_eq!(args[0], "-p");
         assert!(
             args[1].starts_with("--"),
@@ -749,6 +776,55 @@ mod tests {
         assert!(has_pair("--permission-mode", "plan"));
         assert!(has_pair("--effort", "high"));
         assert!(has_pair("--resume", "thread-1"));
+    }
+
+    // ---------- session-profiles FR-12/FR-13/FR-14 ----------
+
+    #[test]
+    fn turn_args_omit_system_prompt_and_extra_args_when_absent() {
+        let args = turn_args("sonnet", None, None, "default", None, &[]);
+        assert!(!args.iter().any(|a| a == "--system-prompt"));
+        assert_eq!(args.last().unwrap(), "sonnet"); // nothing appended past --model
+    }
+
+    #[test]
+    fn turn_args_append_a_present_system_prompt() {
+        let args = turn_args("sonnet", None, None, "default", Some("be terse"), &[]);
+        let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
+        assert!(has_pair("--system-prompt", "be terse"));
+    }
+
+    #[test]
+    fn turn_args_append_extra_args_last_after_every_built_argument() {
+        let extra = vec!["--add-dir".to_string(), "/tmp".to_string()];
+        let args = turn_args(
+            "sonnet",
+            Some("thread-1"),
+            Some("high"),
+            "plan",
+            Some("be terse"),
+            &extra,
+        );
+        // FR-12: extra_args are LAST, after everything Francois builds — including resume.
+        assert_eq!(&args[args.len() - 2..], &["--add-dir", "/tmp"]);
+    }
+
+    #[test]
+    fn turn_args_carry_system_prompt_and_extra_args_on_the_resume_path() {
+        // FR-13: both ride EVERY invocation, including --resume.
+        let extra = vec!["--add-dir".to_string(), "/tmp".to_string()];
+        let args = turn_args(
+            "sonnet",
+            Some("thread-1"),
+            None,
+            "default",
+            Some("be terse"),
+            &extra,
+        );
+        let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
+        assert!(has_pair("--system-prompt", "be terse"));
+        assert!(has_pair("--resume", "thread-1"));
+        assert!(args.iter().any(|a| a == "--add-dir"));
     }
 
     #[test]

@@ -64,7 +64,10 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
   // Read from the app-wide registry the account feed keeps current — the modal
   // never fetches accounts itself.
   const accounts = useStore((s) => s.accounts);
-  const fieldDefs = defaultFieldDefs(registry.models, selected?.defaults ?? {}, IS_WINDOWS, accounts);
+  // session-profiles FR-20: same pattern — read from the app-wide registry
+  // App.tsx keeps current, the modal never fetches profiles itself.
+  const profiles = useStore((s) => s.profiles);
+  const fieldDefs = defaultFieldDefs(registry.models, selected?.defaults ?? {}, IS_WINDOWS, accounts, profiles);
 
   return (
     <div onClick={onClose} className="pj-backdrop">
@@ -72,7 +75,18 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
         {/* header */}
         <div className="pj-header">
           <span className="pj-title">PROJECTS</span>
-          <span className="pj-count">{projectCountLabel(registry.projects.length)}</span>
+          <div className="pj-header-right">
+            <span className="pj-count">{projectCountLabel(registry.projects.length)}</span>
+            {/* session-profiles §3 story 1: the Projects-modal sibling entry into
+                the Profiles modal, alongside the ⌘K "Profiles…" palette command. */}
+            <button
+              type="button"
+              className="pj-profiles-link"
+              onClick={() => useStore.getState().setProfilesOpen(true)}
+            >
+              Profiles…
+            </button>
+          </div>
         </div>
 
         <div className="pj-body">

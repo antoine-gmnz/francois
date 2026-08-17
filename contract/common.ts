@@ -98,6 +98,8 @@ export type ErrorCode =
   | 'EXT_MANIFEST_UNSUPPORTED' // extension-install FR-5: unknown `manifest` version; detail: { found, supported }
   | 'EXT_NOT_CONSENTED' // extension-install FR-17: enable/spawn refused before consent
   | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
+  | 'PROFILE_NOT_FOUND' // session-profiles: a profileId that is not in the registry
+  | 'PROFILE_ARG_DENIED' // session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -194,6 +196,8 @@ export interface SessionMeta {
    * user's work. Nothing here implies a live link back to claude.ai.
    */
   cloud?: CloudProvenance;
+  /** Present ⇔ created from a profile; snapshot-only (session-profiles FR-16). */
+  profile?: SessionProfileRef;
 }
 
 /** The id of a Claude Code on the web session — `'session_…'` or `'cse_…'`. */
@@ -253,6 +257,24 @@ export interface ProjectDefaults {
   allowGit?: boolean;
   /** A removed account falls back to the isDefault account in the modal (multi-account FR-20). */
   accountId?: AccountId;
+  /** A profile that no longer resolves is dropped in the modal (session-profiles FR-21). */
+  profileId?: ProfileId;
+}
+
+// ---------- session profiles ----------
+
+export type ProfileId = string; // uuid v4
+
+/**
+ * The profile identity a session snapshots at creation (session-profiles FR-16). Absent ⇒
+ * no profile. Never re-resolved against the registry: a deleted profile's name still
+ * renders (FR-22).
+ */
+export interface SessionProfileRef {
+  id: ProfileId;
+  name: string; // snapshotted at creation
+  /** true iff the session was created with a non-empty systemPrompt (FR-17). */
+  replacesSystemPrompt: boolean;
 }
 
 // ---------- subagents ----------

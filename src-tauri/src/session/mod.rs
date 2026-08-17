@@ -89,6 +89,10 @@ mod testutil;
 // lives in permissions.rs; this file owns only the control-channel wiring
 // (parking an ask, writing the control_response) — spec §6.
 use crate::permissions::PermissionAsk;
+// session-profiles §6: the snapshot-at-creation profile identity SessionMeta
+// carries (FR-16) — defined in the `profiles` domain, the same cross-domain
+// pattern `project::SessionSeed` follows.
+use crate::profiles::SessionProfileRef;
 // usage-bar §6: the /usage meter grammar + stream-json answer extraction now live
 // in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
 // is unchanged — these are the same functions, imported instead of defined.
@@ -161,6 +165,9 @@ pub(crate) struct SessionMeta {
     /// pre-feature frontend reads an ordinary session.
     #[serde(skip_serializing_if = "Option::is_none")]
     cloud: Option<CloudProvenance>,
+    /// session-profiles FR-16: present ⇔ created from a profile; snapshot-only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<SessionProfileRef>,
 }
 
 #[derive(Serialize, Clone)]
@@ -447,6 +454,16 @@ pub(crate) struct Session {
     /// `Session::new` parameter on purpose — `cloud/adopt.rs` is the single
     /// writer, so no other creation path can accidentally claim provenance.
     cloud: Option<CloudProvenance>,
+    /// session-profiles FR-12/FR-13: REPLACE-mode prompt, snapshotted at
+    /// creation and threaded through every turn's `turn_args` — never
+    /// re-read from the profile (FR-16).
+    system_prompt: Option<String>,
+    /// session-profiles FR-12: raw extra argv tokens, appended last to every
+    /// turn's `turn_args`. Empty when the session carries none.
+    extra_args: Vec<String>,
+    /// session-profiles FR-16: the profile identity this session was created
+    /// from, if any — snapshot-only, never re-resolved.
+    profile: Option<SessionProfileRef>,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     current: Option<TurnHandle>,
@@ -531,6 +548,9 @@ impl Session {
         account_id: String,
         claude_session_id: Option<String>,
         block_buffer: Vec<BufBlock>,
+        system_prompt: Option<String>,
+        extra_args: Vec<String>,
+        profile: Option<SessionProfileRef>,
     ) -> Session {
         Session {
             id,
@@ -552,6 +572,9 @@ impl Session {
             worktree_distro,
             account_id,
             cloud: None,
+            system_prompt,
+            extra_args,
+            profile,
             queue: VecDeque::new(),
             claude_session_id,
             current: None,
@@ -596,6 +619,7 @@ impl Session {
             worktree: self.worktree.clone(),
             account_id: self.account_id.clone(),
             cloud: self.cloud.clone(),
+            profile: self.profile.clone(),
         }
     }
 

@@ -314,6 +314,42 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // 13i — Profiles (session-profiles FR-24): the ⌘K route to the Profiles
+  // modal, alongside its sibling entry inside the Projects modal. Needs NO
+  // session — a profile is authored whether or not anything is running.
+  registerPaletteCommand({
+    id: 'manage-profiles',
+    glyph: '◆',
+    name: 'Profiles…',
+    hint: () => {
+      const n = useStore.getState().profiles.length;
+      return `${n} profile${n === 1 ? '' : 's'}`;
+    },
+    run: () => {
+      useStore.getState().setProfilesOpen(true);
+    },
+  });
+
+  // 13j — New session with profile… (session-profiles FR-24, story 4): pick a
+  // profile, then open New Session pre-selected on it — the one-shot
+  // pendingNewSessionProfileId slot NewSessionModal consumes on mount.
+  registerPaletteCommand({
+    id: 'new-session-with-profile',
+    glyph: '＋',
+    name: 'New session with profile…',
+    hint: () => 'pick a profile',
+    enabled: () => useStore.getState().profiles.length > 0,
+    run: () => ({
+      placeholder: 'pick a profile',
+      items: useStore.getState().profiles.map((p) => ({ id: p.id, label: p.name })),
+      onPick: (profileId) => {
+        const st = useStore.getState();
+        st.setPendingNewSessionProfileId(profileId);
+        st.setNewSessionOpen(true);
+      },
+    }),
+  });
+
   // 13c/13d — Accounts (multi-account FR-33): the mouse-free route to the same
   // modal the status-bar chip opens, plus a direct "Add account" that lands
   // straight in the login view via the one-shot accountsAutoAdd flag. Neither

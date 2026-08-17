@@ -138,7 +138,18 @@ pub fn session_compact(
     session_id: String,
 ) -> IpcResult<Option<()>> {
     // Snapshot cwd/model/resume/effort; enforce status.
-    let (cwd, model_id, resume, effort, permission_mode, runtime, worktree_distro, account_id) = {
+    let (
+        cwd,
+        model_id,
+        resume,
+        effort,
+        permission_mode,
+        runtime,
+        worktree_distro,
+        account_id,
+        system_prompt,
+        extra_args,
+    ) = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(&session_id) else {
             return err("SESSION_NOT_FOUND", "no such session");
@@ -162,6 +173,10 @@ pub fn session_compact(
             s.runtime.clone(),
             s.worktree_distro.clone(),
             s.account_id.clone(),
+            // session-profiles FR-13: /compact is a claude spawn on behalf of
+            // this session like any other turn — both ride along.
+            s.system_prompt.clone(),
+            s.extra_args.clone(),
         )
     };
     // multi-account FR-21: a /compact turn is a claude spawn on behalf of the
@@ -207,6 +222,8 @@ pub fn session_compact(
         &runtime,
         worktree_distro.as_deref(),
         account_config_dir.as_deref(),
+        system_prompt.as_deref(),
+        &extra_args,
     ) {
         // session-questions FR-5: /compact rides the stdin path like any turn, but a
         // compaction can never park on a question — close the pipe right away; the

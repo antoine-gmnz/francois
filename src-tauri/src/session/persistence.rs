@@ -285,6 +285,18 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
             if let Some(c) = &s.cloud {
                 rec["cloud"] = serde_json::to_value(c).unwrap_or(Value::Null);
             }
+            // session-profiles FR-19: snapshotted at creation, resumed with
+            // exactly the persisted values — never re-read from the profile.
+            // Same omit-not-null convention as projectId/worktree.
+            if let Some(sp) = &s.system_prompt {
+                rec["systemPrompt"] = Value::String(sp.clone());
+            }
+            if !s.extra_args.is_empty() {
+                rec["extraArgs"] = serde_json::to_value(&s.extra_args).unwrap_or(Value::Null);
+            }
+            if let Some(p) = &s.profile {
+                rec["profile"] = serde_json::to_value(p).unwrap_or(Value::Null);
+            }
             rec
         })
         .collect();
@@ -339,6 +351,17 @@ pub(crate) struct PersistedMeta {
     /// rather than costing the session its whole record — the chip is the only
     /// thing that depends on it.
     cloud: Option<CloudProvenance>,
+    /// session-profiles FR-19: None on every pre-feature record. A
+    /// whitespace-only value normalizes to None, matching the
+    /// registry's own edge case (§7).
+    system_prompt: Option<String>,
+    /// session-profiles FR-19: empty on every pre-feature record.
+    extra_args: Vec<String>,
+    /// session-profiles FR-16/FR-19: None on every pre-feature record, and
+    /// on every session not created from a profile. A malformed value loads
+    /// as "no profile" rather than costing the session its whole record —
+    /// only the chip depends on it.
+    profile: Option<SessionProfileRef>,
 }
 
 pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
@@ -433,6 +456,26 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .unwrap_or_default(),
         cloud: rec
             .get("cloud")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        // session-profiles FR-19 / edge case §7: whitespace-only reads back
+        // as absent, the same normalization the registry applies at save.
+        system_prompt: rec
+            .get("systemPrompt")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(String::from),
+        extra_args: rec
+            .get("extraArgs")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        profile: rec
+            .get("profile")
             .filter(|v| !v.is_null())
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
     })
@@ -564,6 +607,11 @@ pub fn load_persisted(app: &AppHandle) {
                 // cloud-sessions FR-10: provenance survives quit/reopen — that
                 // is the whole point of persisting it (§9).
                 cloud: m.cloud,
+                // session-profiles FR-19: a resumed session spawns with ITS
+                // persisted values, not the profile's current ones.
+                system_prompt: m.system_prompt,
+                extra_args: m.extra_args,
+                profile: m.profile,
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,

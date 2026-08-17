@@ -12,6 +12,7 @@ import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
 import { accountIdForSessionCreate } from '../accounts/accounts';
 import { AccountField } from './AccountField';
+import { ProfileField } from './ProfileField';
 import { ProjectField } from './ProjectField';
 import { DirectoryField } from './DirectoryField';
 import { NameField } from './NameField';
@@ -23,6 +24,7 @@ import { useDirectoryPicker } from './useDirectoryPicker';
 import { useWorktreeGroup } from './useWorktreeGroup';
 import { WorktreeField } from './WorktreeField';
 import { submitErrorBanner, worktreeBranchInUsePath } from './worktree';
+import { profileFormOverrides } from '../profiles/profiles';
 import './new-session-modal.css';
 
 // PermissionMode choices (contract/common.ts): label + the plain-language consequence.
@@ -71,6 +73,10 @@ export default function NewSessionModal({
   // useProjectDefaults below.
   const [accountId, setAccountId] = useState<string>(DEFAULT_ACCOUNT_ID);
   const [accountFromProject, setAccountFromProject] = useState(false);
+  // session-profiles FR-15/FR-18: '' = no profile. The picked profile's
+  // systemPrompt/extraArgs are NOT re-edited here — session_create reads them
+  // straight off the live registry entry at submit time.
+  const [profileId, setProfileId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<AppError | null>(null);
   // RE-ARM on every mount. StrictMode runs mount → cleanup → mount on the same
@@ -92,6 +98,25 @@ export default function NewSessionModal({
   // multi-account: hydrated app-wide by App.tsx's account feed — the modal
   // never reads the registry itself.
   const accounts = useStore((s) => s.accounts);
+  // session-profiles: hydrated app-wide by App.tsx at boot — same pattern.
+  const profiles = useStore((s) => s.profiles);
+
+  // palette FR-24 "New session with profile…": a one-shot preselect consumed
+  // once, then cleared, so re-opening the modal later never re-applies it.
+  const pendingNewSessionProfileId = useStore((s) => s.pendingNewSessionProfileId);
+  const setPendingNewSessionProfileId = useStore((s) => s.setPendingNewSessionProfileId);
+  useEffect(() => {
+    if (!pendingNewSessionProfileId) return;
+    const picked = profiles.find((p) => p.id === pendingNewSessionProfileId) ?? null;
+    if (!picked) return; // registry not hydrated yet — retry once it is
+    setProfileId(picked.id);
+    const overrides = profileFormOverrides(picked);
+    if (overrides.modelId !== undefined) setModelId(overrides.modelId);
+    if (overrides.effort !== undefined) setEffort(overrides.effort);
+    if (overrides.permissionMode !== undefined) setPermissionMode(overrides.permissionMode);
+    setPendingNewSessionProfileId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNewSessionProfileId, profiles]);
 
   useProjectDefaults({
     projectId,
@@ -111,6 +136,9 @@ export default function NewSessionModal({
     accounts,
     setAccountId,
     setAccountFromProject,
+    profiles,
+    setProfileId,
+    pendingProfileId: pendingNewSessionProfileId,
   });
 
   const { picking, pickerError, applyCwd, browse } = useDirectoryPicker({
@@ -172,6 +200,12 @@ export default function NewSessionModal({
       // sent verbatim — see accountIdForSessionCreate for why the built-in
       // 'default' id is never special-cased into an omitted field.
       accountId: accountIdForSessionCreate(accountId),
+      // session-profiles FR-15/FR-18: profileId rides regardless of any edit
+      // to the fields it pre-filled — the chip records where the session came
+      // from, the RESOLVED values (read live off the registry) are the truth.
+      profileId: profileId || undefined,
+      systemPrompt: profiles.find((p) => p.id === profileId)?.systemPrompt,
+      extraArgs: profiles.find((p) => p.id === profileId)?.extraArgs,
     });
     if (!openRef.current) {
       // Modal was cancelled mid-flight: still real, upsert but don't force-select.
@@ -300,6 +334,20 @@ export default function NewSessionModal({
           onChange={(id) => {
             setAccountId(id);
             setAccountFromProject(false);
+          }}
+        />
+
+        {/* session-profiles: right after ACCOUNT — picking one pre-fills the
+            controls below (still editable, FR-18). */}
+        <ProfileField
+          profiles={profiles}
+          profileId={profileId}
+          onChange={(id) => {
+            setProfileId(id);
+            const overrides = profileFormOverrides(profiles.find((p) => p.id === id) ?? null);
+            if (overrides.modelId !== undefined) setModelId(overrides.modelId);
+            if (overrides.effort !== undefined) setEffort(overrides.effort);
+            if (overrides.permissionMode !== undefined) setPermissionMode(overrides.permissionMode);
           }}
         />
 

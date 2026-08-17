@@ -1,0 +1,149 @@
+/* ProfilesModal.tsx — list + editor layout. Modal chrome (backdrop/panel/
+   header/body/footer) comes from src/ui/Modal.tsx + .modal-* in styles.css;
+   field/label/hint chrome is reused verbatim from new-session-modal.css
+   (`.new-session-modal__*`) rather than duplicated here. */
+
+.pf-header-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+}
+
+.pf-title {
+  font-size: var(--font-size-14);
+  color: var(--text-strong);
+}
+
+.pf-count {
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+}
+
+.pf-body {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: var(--space-16);
+  min-height: 320px;
+}
+
+.pf-list {
+  border-right: 1px solid var(--border-2);
+  padding-right: var(--space-12);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  overflow-y: auto;
+}
+
+.pf-new {
+  font-size: var(--font-size-12-5);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: var(--space-5) var(--space-10);
+  border-radius: var(--radius-base);
+}
+
+.pf-new:hover {
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+.pf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  cursor: pointer;
+}
+
+.pf-row-name {
+  font-size: var(--font-size-12-5);
+}
+
+.pf-row-mark {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  padding: 0 var(--space-5);
+  flex-shrink: 0;
+}
+
+.pf-empty {
+  font-size: var(--font-size-12-5);
+  color: var(--text-faint);
+  padding: var(--space-10);
+}
+
+.pf-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  overflow-y: auto;
+}
+
+.pf-row-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.pf-textarea {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  color: var(--text);
+  font-size: var(--font-size-12-5);
+  font-family: inherit;
+  padding: var(--space-10);
+  width: 100%;
+  resize: vertical;
+  outline: none;
+}
+
+.pf-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  margin-top: var(--space-5);
+}
+
+.pf-remove-btn {
+  color: var(--error);
+}
+
+.pf-remove-confirm {
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+}
+
+/* ---------- chip (FR-22) ---------- */
+
+.pf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* Pane [1]'s row is a `gap`-spaced flex line — the chip must never push the
+   status readout off the card. Mirrors .cloud-chip--sm exactly. */
+.pf-chip--sm {
+  gap: var(--space-4);
+  flex-shrink: 0;
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+}
+
+/* ONLY in the focused session's own welcome header — design system v2's one
+   acid accent per view. */
+.pf-chip--accent {
+  color: var(--accent);
+}
+
+.pf-chip__mark {
+  color: inherit;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
