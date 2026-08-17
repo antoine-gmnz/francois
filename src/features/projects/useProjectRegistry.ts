@@ -5,7 +5,7 @@
 // project_get_standards on every selection change). Split out of
 // ProjectsModal per REFACTOR.md §6c.
 
-import { useEffect, useState, type MutableRefObject } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ModelInfo } from '../../../contract/common';
 import type { ProjectMeta, StandardsRead } from '../../../contract/projects';
 import { projectGetStandards, projectList, sessionModels } from '../../lib/api';
@@ -111,6 +111,28 @@ export function useProjectRegistry(): ProjectRegistry {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // FR-32, second read trigger: the core edits projects.json BEHIND this modal
+  // when a profile or an account is deleted, clearing every project default that
+  // named it (session-profiles §A2 / multi-account §A1). Both modals can be open
+  // at once — Profiles opens layered over Projects — so without this the config
+  // form kept rendering a default the core had already cleared, as
+  // `<id> (unavailable)`. Keyed on the two registries' identity, which changes
+  // only when their own modal re-reads them.
+  //
+  // Safe to re-run: `reload()` deliberately does not reseed the Identity drafts
+  // unless the selection changes, so an unblurred edit survives it.
+  const profilesRegistry = useStore((s) => s.profiles);
+  const accountsRegistry = useStore((s) => s.accounts);
+  const registriesSeen = useRef(false);
+  useEffect(() => {
+    if (!registriesSeen.current) {
+      registriesSeen.current = true; // the mount effect above already read
+      return;
+    }
+    void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profilesRegistry, accountsRegistry]);
 
   // Reseed the Identity drafts whenever the SELECTION changes, wherever the change
   // came from. A list row sets `selectedId` directly and never goes through

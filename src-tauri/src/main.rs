@@ -86,6 +86,13 @@ fn main() {
             // session's profile ref is snapshotted verbatim and never
             // re-resolved (FR-16) — loaded here alongside its registry peers.
             profiles::load_profiles(app.handle());
+            // MUST come after all three registries above: it drops project
+            // defaults naming a profile/account that no longer exists, validating
+            // against what those loads produced. Running it earlier would see
+            // empty registries and invalidate every id — which is also why it
+            // refuses to act on a registry that came back empty
+            // (session-profiles §A2 / multi-account §A1).
+            project::reconcile_defaults(app.handle());
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
             // extension-install FR-1/FR-13: load the manifest registry from
