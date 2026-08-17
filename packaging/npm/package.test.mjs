@@ -10,8 +10,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // rather than reimplemented from the `files` globs — the point of this file is
 // to catch a mismatch between what npm packs and what the CLI needs, so
 // deriving one from the other would be circular.
+// On Windows npm is a `.cmd` shim, which execFileSync cannot spawn by bare
+// name — it looks for an executable called exactly `npm` and gets ENOENT.
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 function packedFiles() {
-  const out = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+  const out = execFileSync(NPM, ['pack', '--dry-run', '--json'], {
     cwd: __dirname,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
