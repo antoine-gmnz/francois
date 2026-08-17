@@ -133,16 +133,20 @@ export type ClaudeRuntime = 'native' | 'wsl';
 
 /**
  * Who owns the agent loop (multi-provider-seam FR-11a). Renames SessionProvider —
- * same two members, honest name: 'claude-code' is the Claude Code CLI harness
- * driving its own loop, 'francois' is our loop in the Rust core. It answers
- * "who decides what happens next", NOT "which vendor's API" — that is
- * ProviderProtocol plus the session's account, which together name the wire and
- * the credential.
+ * honest name: 'claude-code' is the Claude Code CLI harness driving its own loop,
+ * 'francois' is our loop in the Rust core, 'codex' is OpenAI's codex CLI driving
+ * its own (multi-provider-codex FR-1). It answers "who decides what happens
+ * next", NOT "which vendor's API" — that is ProviderProtocol plus the session's
+ * account, which together name the wire and the credential.
+ *
+ * 'codex' is what makes the two axes load-bearing rather than tidy: it pairs with
+ * protocol 'openai' exactly as 'francois' does, and the two differ ONLY in who
+ * owns the loop. A single collapsed enum could not tell them apart.
  *
  * NOT called `runtime`: SessionMeta.runtime is taken by wsl-filesystem and means
  * native-vs-WSL. NOT called 'native' for the second member, for the same reason.
  */
-export type AgentRuntime = 'claude-code' | 'francois';
+export type AgentRuntime = 'claude-code' | 'francois' | 'codex';
 
 /**
  * Which wire dialect the session's endpoint speaks (multi-provider-seam FR-11a).

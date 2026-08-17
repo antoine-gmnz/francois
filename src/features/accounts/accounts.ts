@@ -11,7 +11,8 @@
 // session's accountId (§6) — never stored separately, so it can never drift.
 
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { AccountId, AppError, SessionId, SessionMeta } from '../../../contract/common';
+import type { AccountId, AgentRuntime, AppError, SessionId, SessionMeta } from '../../../contract/common';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
 import type {
   Account,
   AccountAddEndpointPayload,
@@ -314,6 +315,77 @@ export interface AccountOption {
 /** multi-provider-endpoint FR-1: an 'openai-compatible' account, not (yet) a claude-code-oauth one. */
 export function accountIsEndpoint(account: Account): boolean {
   return account.kind === 'openai-compatible';
+}
+
+/** multi-provider-codex FR-24: a 'codex-cli' account. */
+export function accountIsCodex(account: Account): boolean {
+  return account.kind === 'codex-cli';
+}
+
+/**
+ * Does a plan-limit probe make sense for this account?
+ *
+ * Derived from the capability table via the account's own runtime, so it is the
+ * SAME source of truth the disabled usage bar reads — rather than a hand-kept
+ * list of kinds to exclude. That distinction is not cosmetic: the previous
+ * `!accountIsEndpoint(a)` negation silently admitted `codex-cli` the day that
+ * kind was added, and the probe spawns `claude` pointed at the account's config
+ * dir, which `claude` then initializes as its own.
+ */
+export function accountUsageProbeable(account: Account): boolean {
+  return runtimeCapabilities(accountRuntime(account)).usageBar.available;
+}
+
+/**
+ * The `AgentRuntime` an account's sessions run on — the frontend mirror of the
+ * core's `AgentRuntime::from_account_kind` (multi-provider-seam FR-13a).
+ *
+ * The one place in `src/` allowed to map a kind to a runtime, for the same
+ * reason `runtimeCapability.ts` is the one place allowed to read the table: FR-23
+ * forbids components branching on the runtime, not helpers deriving it. Total
+ * over `AccountKind`, so a fourth kind fails to typecheck here.
+ */
+function accountRuntime(account: Account): AgentRuntime {
+  switch (account.kind) {
+    case 'claude-code-oauth':
+      return 'claude-code';
+    case 'openai-compatible':
+      return 'francois';
+    case 'codex-cli':
+      return 'codex';
+  }
+}
+
+/**
+ * multi-provider-codex FR-25: does this row's action say *Sign in* (never
+ * authenticated) rather than *Re-login* (was, isn't now)?
+ *
+ * Only ever true for a Codex row: `signedIn` is the one field that can say
+ * "no credential yet" BEFORE a turn has failed, and it is present iff the kind
+ * is 'codex-cli' (FR-21a). Claude rows keep answering this through
+ * `accountNeedsLogin`, which reads `authFailedAt`.
+ */
+export function codexNeedsFirstLogin(account: Account): boolean {
+  return accountIsCodex(account) && account.signedIn === false;
+}
+
+/**
+ * FR-25: the label on a Codex row's login action. `Sign in` before there is any
+ * credential, `Re-login` once there was one — the same two words the Claude
+ * rows use, chosen off `signedIn` rather than off a failure flag.
+ */
+export function codexLoginActionLabel(account: Account): string {
+  return codexNeedsFirstLogin(account) ? 'Sign in' : 'Re-login';
+}
+
+/** FR-24: Save is disabled until the label has non-whitespace content. */
+export function codexSaveDisabled(label: string, busy: boolean): boolean {
+  return busy || label.trim() === '';
+}
+
+/** FR-24: the `account_add_codex` payload — label only, trimmed. */
+export function codexAddPayload(label: string): { label: string } {
+  return { label: label.trim() };
 }
 
 /**

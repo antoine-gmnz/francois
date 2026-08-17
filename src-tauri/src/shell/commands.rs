@@ -214,7 +214,7 @@ fn spawn_shell(
     // (None for the built-in `default` account — no override).
     let account_config_dir = engine
         .account_of(session_id)
-        .and_then(|id| crate::account::config_dir_of(app, &id));
+        .and_then(|id| crate::account::claude_config_dir_of(app, &id));
     let (cols, rows) = (80u16, 24u16);
     let (pty, reader, child) =
         open_and_spawn(cwd, &runtime, account_config_dir.as_deref(), cols, rows)?;
@@ -357,7 +357,7 @@ pub fn shell_restart(
         .unwrap_or_else(|| "native".to_string());
     let account_config_dir = engine
         .account_of(&info.session_id)
-        .and_then(|id| crate::account::config_dir_of(&app, &id));
+        .and_then(|id| crate::account::claude_config_dir_of(&app, &id));
     let (pty, reader, mut child) = match open_and_spawn(
         &info.cwd,
         &runtime,

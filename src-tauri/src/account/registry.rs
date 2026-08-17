@@ -132,6 +132,7 @@ pub(crate) fn build_list(inner: &AccountInner) -> Vec<Account> {
         // OAuth login, like every account today.
         kind: AccountKind::ClaudeCodeOauth,
         endpoint: None,
+        signed_in: None,
     }];
     out.extend(inner.records.iter().map(|r| {
         Account {
@@ -151,6 +152,11 @@ pub(crate) fn build_list(inner: &AccountInner) -> Vec<Account> {
                 .endpoint
                 .as_ref()
                 .map(|e| account_endpoint(e, &r.config_dir)),
+            // multi-provider-codex FR-20/FR-21a: derived live from `auth.json`,
+            // never persisted — a stored flag would go stale the moment the user
+            // ran `codex logout` in a terminal.
+            signed_in: (r.kind == AccountKind::CodexCli)
+                .then(|| crate::account::codex_auth_file_exists(&r.config_dir)),
         }
     }));
     out

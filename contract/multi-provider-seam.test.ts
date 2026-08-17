@@ -13,12 +13,13 @@ const CAPABILITIES: RuntimeCapability[] = [
   'skillsInstall',
   'workflows',
   'interactiveCommands',
+  'permissions',
   'remoteControl',
   'usageBar',
   'compaction',
 ];
 
-const RUNTIMES: AgentRuntime[] = ['claude-code', 'francois'];
+const RUNTIMES: AgentRuntime[] = ['claude-code', 'francois', 'codex'];
 
 describe('runtimeCapabilities', () => {
   it('answers for every runtime', () => {
@@ -59,19 +60,53 @@ describe('runtimeCapabilities', () => {
     }
   });
 
-  it('makes nothing available on the francois runtime yet, except skills', () => {
+  it('makes nothing available on the francois runtime yet, except skills and permissions', () => {
     // multi-provider-openai FR-23..FR-27: skills is the one capability that
     // ports across runtimes (markdown instructions, injected into the
     // system message) — every other gap in the table still holds. FR-26:
     // `skillsInstall` stays a gap even though `skills` itself opened up —
     // enabling a plugin writes Claude Code's own control surface, which
     // this feature never touches.
+    //
+    // multi-provider-codex FR-16: `permissions` is true here and it is not a
+    // gap that closed — that adapter IS the gate (multi-provider-openai
+    // FR-9..FR-13), so it was always governed by our cards. The member is new;
+    // the truth it states is not.
     const caps = runtimeCapabilities('francois');
     for (const capability of CAPABILITIES) {
-      const expected = capability === 'skills';
+      const expected = capability === 'skills' || capability === 'permissions';
       expect(caps[capability].available).toBe(expected);
     }
     expect(caps.skillsInstall.available).toBe(false);
+  });
+
+  // multi-provider-codex FR-16.
+  it('makes nothing available on the codex runtime', () => {
+    const caps = runtimeCapabilities('codex');
+    for (const capability of CAPABILITIES) {
+      expect(caps[capability].available).toBe(false);
+    }
+  });
+
+  it("states codex's sandbox rather than calling permissions an unbuilt gap (FR-16)", () => {
+    // The wording carries a real distinction: every other false on this row is
+    // something we have not built ("yet"), but Codex tool calls ARE governed —
+    // by an OS sandbox chosen from permissionMode (FR-9). A "not available yet"
+    // here would imply they run ungoverned, which is the opposite of the truth.
+    const reason = runtimeCapabilities('codex').permissions.reason!;
+    expect(reason).toBe('Codex enforces permissions with its own sandbox.');
+    expect(reason).not.toMatch(/yet/);
+  });
+
+  it('does not tell a codex session it bills per token instead of a plan (FR-16)', () => {
+    // `codex login` authenticates against a ChatGPT PLAN, so the francois row's
+    // usageBar reason would be factually wrong here. This is a gap, not a
+    // property of the runtime — and the two rows must not converge by copy.
+    const codex = runtimeCapabilities('codex').usageBar.reason!;
+    const francois = runtimeCapabilities('francois').usageBar.reason!;
+    expect(codex).not.toBe(francois);
+    expect(codex).toMatch(/yet/);
+    expect(codex).not.toMatch(/per token/);
   });
 
   // FR-14a: the table keys on the runtime alone. `protocol` is not a key here —

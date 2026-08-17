@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, SessionMeta } from '../../../contract/common';
 import type { Account, AccountEvent, EndpointConfig } from '../../../contract/multi-account';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 
@@ -17,7 +18,9 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 
 import {
   accountAdd,
+  accountAddCodex,
   accountAddEndpoint,
+  accountCodexLogin,
   accountList,
   accountLoginCancel,
   accountLoginResize,
@@ -42,6 +45,12 @@ import {
   accountSessionCounts,
   accountDisplayLabel,
   accountFieldOptions,
+  accountIsCodex,
+  accountUsageProbeable,
+  codexAddPayload,
+  codexLoginActionLabel,
+  codexNeedsFirstLogin,
+  codexSaveDisabled,
   accountMetersView,
   accountNeedsLogin,
   accountSecondaryEmail,
@@ -989,5 +998,88 @@ describe('endpoint accounts (multi-provider-endpoint FR-13..FR-16)', () => {
   it('names the newly added account by diffing the list the core returned (fresh-flash parity with login)', () => {
     expect(newlyAddedAccountId([BUILT_IN], [BUILT_IN, endpointAccount])).toBe('e1');
     expect(newlyAddedAccountId([BUILT_IN, endpointAccount], [BUILT_IN, endpointAccount])).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// multi-provider-codex — the 'codex-cli' account kind (FR-21a/FR-24/FR-25).
+
+describe('codex accounts', () => {
+  const codex = (over: Partial<Account> = {}) =>
+    account({ id: 'cx', kind: 'codex-cli', signedIn: false, ...over });
+
+  it('recognises a codex account and does not confuse it with an endpoint one', () => {
+    expect(accountIsCodex(codex())).toBe(true);
+    expect(accountIsEndpoint(codex())).toBe(false);
+    expect(accountIsCodex(account({ id: 'a' }))).toBe(false);
+    expect(accountIsCodex(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
+  });
+
+  // FR-21a: the whole reason `signedIn` exists — `authFailedAt` cannot answer
+  // this, because it is only ever set BY a failed turn.
+  it('says Sign in before there is any credential and Re-login after', () => {
+    expect(codexLoginActionLabel(codex({ signedIn: false }))).toBe('Sign in');
+    expect(codexLoginActionLabel(codex({ signedIn: true }))).toBe('Re-login');
+  });
+
+  it('never claims a non-codex row needs a first sign-in', () => {
+    // A Claude row has no `signedIn` at all; asking must not read `undefined`
+    // as "not signed in" and offer a Codex login on the wrong runtime.
+    expect(codexNeedsFirstLogin(account({ id: 'a' }))).toBe(false);
+    expect(codexNeedsFirstLogin(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
+    expect(codexNeedsFirstLogin(codex({ signedIn: true }))).toBe(false);
+    expect(codexNeedsFirstLogin(codex({ signedIn: false }))).toBe(true);
+  });
+
+  // FR-24: a Codex account is a label and nothing else.
+  it('disables Save until the label has real content', () => {
+    expect(codexSaveDisabled('', false)).toBe(true);
+    expect(codexSaveDisabled('   ', false)).toBe(true);
+    expect(codexSaveDisabled('Work', true)).toBe(true); // busy
+    expect(codexSaveDisabled('Work', false)).toBe(false);
+  });
+
+  it('trims the label into the add payload', () => {
+    expect(codexAddPayload('  Work ChatGPT  ')).toEqual({ label: 'Work ChatGPT' });
+  });
+
+  it('sends account_add_codex and account_codex_login on the right channels', async () => {
+    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
+    await accountAddCodex({ label: 'Work' });
+    expect(invokeMock).toHaveBeenCalledWith('account_add_codex', { label: 'Work' });
+
+    invokeMock.mockResolvedValueOnce({ ok: true, data: undefined });
+    await accountCodexLogin({ accountId: 'cx' });
+    expect(invokeMock).toHaveBeenCalledWith('account_codex_login', { accountId: 'cx' });
+  });
+
+  // FR-21: no account kind is disabled in the picker — the endpoint block
+  // multi-provider-openai FR-22 deleted stayed deleted, and Codex never had one.
+  it('is selectable in the account picker', () => {
+    const options = accountFieldOptions([account({ id: 'a' }), codex()]);
+    expect(options.map((o) => o.value)).toEqual(['a', 'cx']);
+    expect(options).toHaveLength(2);
+  });
+
+  // The bug this guards: a freshly added Codex account came back carrying a full
+  // Claude profile (.claude.json, projects/, sessions/) because the usage seed
+  // spawned `claude` with that account's dir as CLAUDE_CONFIG_DIR — and `claude`
+  // initializes whatever dir it is pointed at. The filter used to be
+  // `!accountIsEndpoint(a)`, which admitted every kind that was not an endpoint.
+  it('never probes plan limits for an account whose runtime has no plan', () => {
+    expect(accountUsageProbeable(account({ id: 'a' }))).toBe(true);
+    expect(accountUsageProbeable(codex())).toBe(false);
+    expect(accountUsageProbeable(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
+  });
+
+  it('derives probeability from the capability table, not from a list of kinds', () => {
+    // The guarantee that matters for the NEXT runtime: whatever the table says
+    // about usageBar is what the seed does, with nothing to remember to update.
+    for (const kind of ['claude-code-oauth', 'openai-compatible', 'codex-cli'] as const) {
+      const runtime = { 'claude-code-oauth': 'claude-code', 'openai-compatible': 'francois', 'codex-cli': 'codex' } as const;
+      expect(accountUsageProbeable(account({ id: 'x', kind }))).toBe(
+        runtimeCapabilities(runtime[kind]).usageBar.available,
+      );
+    }
   });
 });

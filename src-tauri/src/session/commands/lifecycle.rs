@@ -202,8 +202,18 @@ pub fn session_create(
         }
     }
 
-    if let Err((code, msg)) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref()) {
-        return err(code, msg);
+    // multi-provider-codex FR-5: this preflight runs `claude --version` with the
+    // account's dir as CLAUDE_CONFIG_DIR. On a non-Claude account it checks the
+    // WRONG BINARY — and worse, `claude` initializes whatever config dir it is
+    // pointed at, so it seeds a Codex account's CODEX_HOME with a full Claude
+    // profile (`.claude.json`, `projects/`, `sessions/`) the moment a session is
+    // created. Each runtime's own preflight is its adapter's
+    // (`SessionAdapter::preflight`), which is where the Codex auth check lives.
+    if crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::ClaudeCodeOauth {
+        if let Err((code, msg)) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref())
+        {
+            return err(code, msg);
+        }
     }
 
     // projects FR-19: a link must resolve to a live registry entry. The core does

@@ -21,19 +21,20 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppError } from '../../../contract/common';
 import type { Account } from '../../../contract/multi-account';
-import { accountLoginCancel, accountRemove, accountRename, accountSetDefault } from '../../lib/api';
+import { accountCodexLogin, accountLoginCancel, accountRemove, accountRename, accountSetDefault } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
 import { seedAccountUsage } from '../usage/usage';
 import { AccountRow } from './AccountRow';
 import AccountLoginView from './AccountLoginView';
+import { CodexForm } from './CodexForm';
 import { EndpointForm } from './EndpointForm';
 import { RemoveAccountConfirm } from './RemoveAccountConfirm';
 import {
   ACCOUNTS_ISOLATION_NOTE,
   ACCOUNTS_KEY_HINTS,
-  accountIsEndpoint,
   accountSessionCounts,
+  accountUsageProbeable,
   clampCursor,
   moveCursor,
   newlyAddedAccountId,
@@ -62,6 +63,10 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // multi-provider-endpoint FR-13: the inline add/edit endpoint form. `undefined`
   // ⇒ adding; a present Account ⇒ editing that row.
   const [endpointForm, setEndpointForm] = useState<{ account?: Account } | null>(null);
+  // multi-provider-codex FR-24: the third add form. Separate state rather than a
+  // discriminated `addForm` union, so the two existing forms keep their exact
+  // open/close conditions and nothing about the endpoint flow moves.
+  const [codexForm, setCodexForm] = useState(false);
   const alive = useMounted();
   // The live login's id, so cancel can address it from anywhere — including the
   // unmount cleanup, which must fire even when the modal is torn down by a
@@ -97,15 +102,36 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // multi-provider-endpoint: usage-bar is an Anthropic plan-limit concept
   // (explicitly out of scope here) — an endpoint account has no meters to
   // seed, and AccountRow never renders its quota line (see there).
+  // multi-provider-codex: the filter is now the CAPABILITY, not a list of kinds.
+  // `!accountIsEndpoint` silently included Codex accounts, and the seed spawns
+  // `claude` with that account's dir as CLAUDE_CONFIG_DIR — which `claude` then
+  // initializes, seeding a Codex CODEX_HOME with a Claude profile. The core
+  // refuses this outright now (usage.rs `request_probe`); asking the table here
+  // means a fourth runtime is covered the day its row is added, instead of the
+  // day someone remembers to extend a negation.
   useEffect(() => {
     const stops = accounts
-      .filter((a) => usageByAccount[a.id] === undefined && !accountIsEndpoint(a))
+      .filter((a) => usageByAccount[a.id] === undefined && accountUsageProbeable(a))
       .map((a) => seedAccountUsage(a.id, setAccountUsage));
     return () => stops.forEach((stop) => stop());
     // Keyed on the ids alone: re-running on every snapshot write would restart
     // the seeds the writes are the result of.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts.map((a) => a.id).join(','), setAccountUsage]);
+
+  // multi-provider-codex FR-25: `codex login` for one row. Nothing to render
+  // and nothing to cancel — the browser is the UI, and the row's `signedIn`
+  // flips when the refreshed account.list arrives (FR-21a). Only a failure to
+  // START it is worth surfacing here.
+  const doCodexLogin = async (account: Account) => {
+    setError(null);
+    try {
+      const res = await accountCodexLogin({ accountId: account.id });
+      if (alive.current && !res.ok) setError(res.error);
+    } catch {
+      if (alive.current) setError({ code: 'INTERNAL', message: 'Could not reach the core' });
+    }
+  };
 
   // FR-16: whatever ends the login — Esc, CLOSE, the modal unmounting — kills
   // the PTY and deletes the half-written dir through this ONE path.
@@ -216,6 +242,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         else if (renamingId) cancelRename();
         else if (confirmId) setConfirmId(null);
         else if (endpointForm) setEndpointForm(null);
+        else if (codexForm) setCodexForm(false);
         else onClose();
         return;
       }
@@ -287,7 +314,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
           <button
             type="button"
             className="acc-add"
-            disabled={login !== null || endpointForm !== null}
+            disabled={login !== null || endpointForm !== null || codexForm}
             onClick={() => setLogin({})}
             title="Add an Anthropic account by signing in here"
           >
@@ -301,7 +328,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
           <button
             type="button"
             className="acc-add acc-add--endpoint"
-            disabled={login !== null || endpointForm !== null}
+            disabled={login !== null || endpointForm !== null || codexForm}
             onClick={() => setEndpointForm({})}
             title="Register an OpenAI-compatible endpoint as an account"
           >
@@ -309,6 +336,20 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
               +
             </span>
             Add endpoint
+          </button>
+          {/* multi-provider-codex FR-24: the same ghost weight as Add endpoint —
+              a Codex account is another credential, not a rival identity. */}
+          <button
+            type="button"
+            className="acc-add acc-add--endpoint"
+            disabled={login !== null || endpointForm !== null || codexForm}
+            onClick={() => setCodexForm(true)}
+            title="Add a Codex CLI account signed in with your ChatGPT plan"
+          >
+            <span className="acc-add-plus" aria-hidden="true">
+              +
+            </span>
+            Add Codex
           </button>
         </div>
 
@@ -361,6 +402,18 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
                 }}
               />
             )}
+            {codexForm && (
+              <CodexForm
+                onCancel={() => setCodexForm(false)}
+                onSaved={() => {
+                  // Unlike EndpointForm this does not thread the fresh list
+                  // through: `account_add_codex` emits account.list, which this
+                  // modal already subscribes to.
+                  setCodexForm(false);
+                  setError(null);
+                }}
+              />
+            )}
             <div className="scz acc-body">
               {accounts.map((account, i) => (
                 <AccountRow
@@ -382,6 +435,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
                   onRelogin={() => setLogin({ accountId: account.id })}
                   onRemove={() => setConfirmId(account.id)}
                   onEditEndpoint={() => setEndpointForm({ account })}
+                  onCodexLogin={() => doCodexLogin(account)}
                 />
               ))}
             </div>

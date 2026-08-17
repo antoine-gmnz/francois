@@ -26,6 +26,7 @@
 // was removed) is driven from commands.rs AFTER the registry write returns,
 // by calling into `session::reassign_account_sessions` with no account lock held.
 
+mod codex;
 mod commands;
 /// multi-provider-endpoint FR-1..FR-10: the `openai-compatible` account's
 /// storage half — base-URL validation, the sidecar key file, and the
@@ -37,6 +38,7 @@ mod login;
 mod mirror;
 mod registry;
 
+pub(crate) use codex::*;
 pub(crate) use commands::*;
 pub(crate) use endpoint::*;
 pub(crate) use login::*;
@@ -75,6 +77,30 @@ pub enum AccountKind {
     ClaudeCodeOauth,
     #[serde(rename = "openai-compatible")]
     OpenAiCompatible,
+    /// multi-provider-codex FR-2: an interactive `codex login` with its own
+    /// `CODEX_HOME`. Structurally the same trade as `ClaudeCodeOauth` — a
+    /// per-account config dir the vendor's own CLI fills in — differing only in
+    /// which CLI and which env var (FR-18).
+    #[serde(rename = "codex-cli")]
+    CodexCli,
+}
+
+impl AccountKind {
+    /// multi-provider-codex FR-18: the environment variable that points this
+    /// kind's CLI at an account's own config dir. `None` for kinds whose
+    /// credential is not a config dir at all (`OpenAiCompatible` keys off a
+    /// sidecar key file instead).
+    ///
+    /// This exists so `account_env` stops hard-coding `CLAUDE_CONFIG_DIR`: the
+    /// variable is a property OF THE KIND, and putting it here keeps the
+    /// `match` exhaustive so a fourth kind cannot silently inherit Claude's.
+    pub(crate) fn config_dir_env_var(self) -> Option<&'static str> {
+        match self {
+            AccountKind::ClaudeCodeOauth => Some("CLAUDE_CONFIG_DIR"),
+            AccountKind::CodexCli => Some("CODEX_HOME"),
+            AccountKind::OpenAiCompatible => None,
+        }
+    }
 }
 
 /// Mirrors `Account`. `configDir`/`builtIn`/`isDefault` distinguish the
@@ -102,6 +128,15 @@ pub struct Account {
     /// multi-provider-endpoint FR-1. Present iff `kind == OpenAiCompatible`.
     #[serde(skip_serializing_if = "Option::is_none")]
     endpoint: Option<AccountEndpoint>,
+    /// multi-provider-codex FR-21a. Present iff `kind == CodexCli`, and
+    /// **derived** on every list from `auth.json`'s existence (FR-20) — the same
+    /// shape and the same reasoning as `AccountEndpoint::has_key`.
+    ///
+    /// It exists because `authFailedAt` cannot answer this: that flag is only
+    /// ever set BY a failed turn, so a freshly added Codex account would look
+    /// healthy right up until the first message bounced.
+    #[serde(rename = "signedIn", skip_serializing_if = "Option::is_none")]
+    signed_in: Option<bool>,
 }
 
 /// Mirrors `EndpointConfig` (contract/multi-account.ts). Carries NO key
@@ -276,6 +311,29 @@ pub fn config_dir_of(app: &AppHandle, account_id: &str) -> Option<String> {
     })
 }
 
+/// multi-provider-codex FR-18: `config_dir_of`, but **only for accounts whose
+/// config dir is a Claude one** — `None` for a `codex-cli` or
+/// `openai-compatible` account.
+///
+/// Every spawn of `claude` on behalf of a session goes through a
+/// `CLAUDE_CONFIG_DIR` derived from `config_dir_of`, which returns a directory
+/// for ANY kind. Pointing `claude` at a Codex account's `CODEX_HOME` does not
+/// fail quietly: `claude` INITIALIZES whatever directory it is given, so the
+/// account came back carrying `.claude.json`, `projects/`, `sessions/` and
+/// `session-env/` — observed in the dev build the first time a Codex account
+/// was created.
+///
+/// `None` is the right answer rather than the Codex dir, because the caller's
+/// question is specifically "which Claude config should this spawn use", and
+/// for a non-Claude account there is none. `None` already means "no override"
+/// at every call site (the built-in `default` account's answer).
+pub fn claude_config_dir_of(app: &AppHandle, account_id: &str) -> Option<String> {
+    if kind_of(app, account_id) != AccountKind::ClaudeCodeOauth {
+        return None;
+    }
+    config_dir_of(app, account_id)
+}
+
 /// multi-provider-seam FR-13: the kind of an account, for deriving a new
 /// session's `provider` at creation. The built-in `default` account and any
 /// id the registry no longer knows are `ClaudeCodeOauth` (`AccountKind`'s
@@ -395,6 +453,17 @@ pub(crate) fn wsl_translatable_config_dir(path: &str) -> bool {
 /// FR-22: does this account's config dir report an identity on disk?
 pub fn identity_file_exists(config_dir: &str) -> bool {
     Path::new(config_dir).join(".claude.json").is_file()
+}
+
+/// multi-provider-codex FR-20: the same question for a `codex-cli` account —
+/// signed in iff `codex login` has written an `auth.json` into its `CODEX_HOME`.
+///
+/// **Derived, never persisted**, exactly like `identity_file_exists`: an auth
+/// flag stored in `accounts.json` would go stale the moment the user ran
+/// `codex logout` in a terminal, and would then block turns on an account that
+/// is actually fine (or, worse, wave through one that is not).
+pub fn codex_auth_file_exists(config_dir: &str) -> bool {
+    Path::new(config_dir).join("auth.json").is_file()
 }
 
 /// FR-22/23: flag an account's credential failure (in-memory only) and publish

@@ -166,6 +166,8 @@ fn main() {
             account::account_set_default,
             account::account_remove,
             account::account_add_endpoint,
+            account::account_add_codex,
+            account::account_codex_login,
             account::account_update_endpoint,
             account::account_test_endpoint,
             diff::diff_get_summary,

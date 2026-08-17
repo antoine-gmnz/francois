@@ -191,19 +191,49 @@ pub(crate) fn account_env(
     runtime: &str,
     extra_wslenv: &[&str],
 ) -> Vec<(String, String)> {
+    account_env_for_kind(
+        config_dir,
+        crate::account::AccountKind::ClaudeCodeOauth,
+        runtime,
+        extra_wslenv,
+    )
+}
+
+/// multi-provider-codex FR-18: the same environment, for whichever CLI the
+/// account's kind names.
+///
+/// `account_env` above hard-coded `CLAUDE_CONFIG_DIR`, which was correct while
+/// every config-dir account was a Claude one. A Codex account points the same
+/// mechanism at `CODEX_HOME` instead — so the variable moved out of this
+/// function and onto `AccountKind::config_dir_env_var`, where the `match` is
+/// exhaustive and a fourth kind cannot silently inherit Claude's.
+///
+/// `account_env` is kept as the Claude-kind alias rather than being replaced at
+/// all ~dozen call sites: those sites (the /usage probe, the create-time probe,
+/// the remote-control PTY, the SHELL PTY) are Claude-shaped for reasons of their
+/// own, and a Codex session reaching them would be a bug that a mechanical
+/// find-and-replace would have hidden.
+pub(crate) fn account_env_for_kind(
+    config_dir: Option<&str>,
+    kind: crate::account::AccountKind,
+    runtime: &str,
+    extra_wslenv: &[&str],
+) -> Vec<(String, String)> {
+    let var = kind.config_dir_env_var();
     let mut out: Vec<(String, String)> = Vec::new();
-    if let Some(dir) = config_dir {
-        out.push(("CLAUDE_CONFIG_DIR".to_string(), dir.to_string()));
+    if let (Some(dir), Some(var)) = (config_dir, var) {
+        out.push((var.to_string(), dir.to_string()));
     }
     if runtime == "wsl" {
-        let mut entries: Vec<&str> = extra_wslenv.to_vec();
-        if config_dir.is_some() {
+        let mut entries: Vec<String> = extra_wslenv.iter().map(|e| e.to_string()).collect();
+        if let (true, Some(var)) = (config_dir.is_some(), var) {
             // `/u` passes it INTO the distro, `/p` translates the Windows path
             // to its `/mnt/…` form — the argv never carries the path (FR-24).
-            entries.push("CLAUDE_CONFIG_DIR/up");
+            entries.push(format!("{var}/up"));
         }
         if !entries.is_empty() {
-            out.push(("WSLENV".to_string(), wsl_env_list(&entries)));
+            let refs: Vec<&str> = entries.iter().map(String::as_str).collect();
+            out.push(("WSLENV".to_string(), wsl_env_list(&refs)));
         }
     }
     out
@@ -310,6 +340,73 @@ mod tests {
             entries.iter().any(|e| e.starts_with("TERM/")),
             "the caller's own TERM entry survives the merge: {entries:?}"
         );
+    }
+
+    // ---------- multi-provider-codex FR-18: the variable follows the KIND ----------
+
+    #[test]
+    fn a_codex_account_exports_codex_home_and_never_claude_config_dir() {
+        use crate::account::AccountKind;
+        let env = account_env_for_kind(
+            Some("/data/accounts/a1"),
+            AccountKind::CodexCli,
+            "native",
+            &[],
+        );
+        let map: std::collections::HashMap<&str, &str> =
+            env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(map["CODEX_HOME"], "/data/accounts/a1");
+        // The regression that matters: pointing `codex` at a CLAUDE_CONFIG_DIR
+        // would silently run it against the wrong (or a non-existent) home, and
+        // the turn would fail with an auth error that names neither.
+        assert!(!map.contains_key("CLAUDE_CONFIG_DIR"));
+    }
+
+    #[test]
+    fn a_claude_account_is_unchanged_by_the_generalization() {
+        use crate::account::AccountKind;
+        // `account_env` is now an alias — it must still produce byte-identical
+        // output, since every pre-existing call site goes through it.
+        assert_eq!(
+            account_env(Some("/data/accounts/a1"), "wsl", &["TERM/u"]),
+            account_env_for_kind(
+                Some("/data/accounts/a1"),
+                AccountKind::ClaudeCodeOauth,
+                "wsl",
+                &["TERM/u"]
+            )
+        );
+    }
+
+    #[test]
+    fn a_codex_config_dir_rides_wslenv_under_its_own_name() {
+        use crate::account::AccountKind;
+        let env = account_env_for_kind(
+            Some("D:\\francois\\accounts\\a1"),
+            AccountKind::CodexCli,
+            "wsl",
+            &["TERM/u"],
+        );
+        let map: std::collections::HashMap<&str, &str> =
+            env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let entries: Vec<&str> = map["WSLENV"].split(':').collect();
+        assert!(entries.contains(&"CODEX_HOME/up"), "{entries:?}");
+        assert!(!entries.contains(&"CLAUDE_CONFIG_DIR/up"), "{entries:?}");
+        assert!(entries.iter().any(|e| e.starts_with("TERM/")));
+    }
+
+    #[test]
+    fn an_endpoint_account_exports_no_config_dir_variable_at_all() {
+        use crate::account::AccountKind;
+        // Its credential is a sidecar key file, not a config dir — so there is
+        // no CLI to point anywhere, and inventing a variable would be noise.
+        assert!(account_env_for_kind(
+            Some("/data/accounts/a1"),
+            AccountKind::OpenAiCompatible,
+            "native",
+            &[]
+        )
+        .is_empty());
     }
 
     #[test]

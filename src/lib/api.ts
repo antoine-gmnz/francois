@@ -17,6 +17,10 @@ import type {
   AccountAddPayload,
   AccountAddResponse,
   AccountEvent,
+  AccountAddCodexPayload,
+  AccountAddCodexResponse,
+  AccountCodexLoginPayload,
+  AccountCodexLoginResponse,
   AccountListResponse,
   AccountLoginAck,
   AccountLoginCancelPayload,
@@ -337,6 +341,13 @@ export const accountUpdateEndpoint = (payload: AccountUpdateEndpointPayload) =>
   ipc<AccountUpdateEndpointResponse>('account_update_endpoint', payload);
 export const accountTestEndpoint = (payload: AccountTestEndpointPayload) =>
   ipc<AccountTestEndpointResponse>('account_test_endpoint', payload);
+// multi-provider-codex (§5). `addCodex` resolves the same fresh list every other
+// mutation does; `codexLogin` resolves as soon as the browser round-trip starts
+// and the row's `signedIn` arrives later on account.list.
+export const accountAddCodex = (payload: AccountAddCodexPayload) =>
+  ipc<AccountAddCodexResponse>('account_add_codex', payload);
+export const accountCodexLogin = (payload: AccountCodexLoginPayload) =>
+  ipc<AccountCodexLoginResponse>('account_codex_login', payload);
 
 /** Subscribe to francois://account/event (account.list + the login sub-stream). */
 export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {

@@ -391,6 +391,72 @@ untouched, which is the whole-arc regression signal: no Claude Code session beha
 
 ---
 
+## Phase H — `multi-provider-codex` · multi-day — **IN PROGRESS 2026-08-17**
+
+**A third runtime: OpenAI's `codex` CLI.** Spec frozen at `specs/multi-provider-codex.md`.
+
+Where `multi-provider-openai` reaches OpenAI models by *being* the loop, this reaches them by
+**delegating the loop to a CLI that already has one** — which buys OpenAI's own harness, its OS-level
+sandbox, and the headline: **ChatGPT subscription auth, no API key**.
+
+**This is the cell the axis split was built for.** Phase B's own note said it was "a refactor
+justified by a hypothetical" until a second runtime speaking an already-used dialect arrived.
+`('codex','openai')` is that cell — same protocol as `('francois','openai')`, different loop owner.
+It retires the "optional, cheap, and worth it" section below as the *justification* for Phase B
+(that section stays on its own merits, but it is no longer load-bearing).
+
+**Verified against `codex-cli` 0.147.0 on 2026-08-17, not inferred** — two live probes plus the
+binary's own serde tables:
+
+- `codex exec --json` emits a clean thread/item JSONL stream: `thread.started` · `turn.started` ·
+  `item.started`/`item.updated`/`item.completed` · `turn.completed` · `turn.failed` · `error`.
+  Item types: `agent_message` · `reasoning` · `command_execution` · `file_change` · `mcp_tool_call` ·
+  `collab_tool_call` · `web_search` · `todo_list`.
+- `codex exec resume <thread_id>` **works and carries context** (prompt tokens grew 27k → 41k across
+  the probe pair), but accepts **neither `-C/--cd` nor `-s/--sandbox`**. `-c sandbox_mode="…"` on
+  resume is verified working and is the escape hatch. Two argv shapes, each verified.
+- **No assistant text deltas.** `agent_message` arrives whole in one `item.completed`. Tool activity
+  *is* live (`command_execution` emits `item.started` first), so a turn is never silent — but the
+  reply appears at once. This is a real UX regression against Claude sessions and is written into the
+  spec as a non-goal rather than papered over.
+- `<CODEX_HOME>/models_cache.json` is a real catalog (`slug`, `display_name`, `description`,
+  `supported_reasoning_levels`) that maps onto `ModelInfo` field for field — **no network call** in
+  `models()`.
+
+- [x] Freeze `specs/multi-provider-codex.md` — 26 FRs, 3 deferred questions.
+- [x] **contract** — `AgentRuntime` +`'codex'`, `AccountKind` +`'codex-cli'`,
+      `RuntimeCapability` +`'permissions'` (which forces the member onto **all three** rows), the
+      `codex` capability row, `Account.signedIn`, the two new channels, and
+      `contract/multi-provider-codex.ts` for the wire types. Seam contract test extended: 9 cases.
+- [x] **core** — `AgentRuntime::Codex`, `AccountKind::CodexCli`, `session/adapter/codex/`
+      (`args.rs` 12 tests · `wire.rs` 17 · `models.rs` 11 · `runner.rs` 14 · `mod.rs` 2),
+      `account/codex.rs` (4), `account_env_for_kind` emitting `CODEX_HOME` (4).
+      **`cargo test` 1099 passed / 0 failed**, `cargo fmt` clean.
+- [x] **frontend** — `CodexForm`, the third add button, the `codex` kind chip, the row's
+      Sign in/Re-login routed to `codex login` **instead of** the Claude PTY, and the `permissions`
+      capability wired into `PermissionsModal`. **`npm test` 1750 passed**, `tsc` clean,
+      FR-23's grep gate clean.
+- [ ] `/cohorte-review multi-provider-codex` per touched surface. **Not yet run — this is the
+      remaining gate before the spec can go `in-review`.**
+- [ ] **The end-to-end turn is unverified.** Every pure half is covered (argv, parse, translate,
+      catalog, env, capability table) and the translation test replays a real captured stream — but
+      nothing has driven `CodexAdapter::begin_turn` against a live `codex` from inside the app.
+      Same honest gap Phase F recorded for `multi-provider-openai`'s DoD; do not tick it on unit
+      coverage that does not reach.
+
+**Gate, same as Phase E's:** the golden replay
+(`src-tauri/src/session/stream/fixtures/turn.expected.json`) passes **untouched**. A diff there means
+Claude Code session behaviour moved.
+
+**Two traps this phase must not fall into.**
+
+1. `RuntimeCapability` gaining `permissions` is **not** additive — `RuntimeCapabilities` is an
+   exhaustive `Record`, so the `claude-code` and `francois` rows must both gain it in the same edit
+   or the contract does not compile. That is the design working, not a nuisance.
+2. `account_env` (`session/spawn.rs:189`) emits `CLAUDE_CONFIG_DIR` **unconditionally** today. It has
+   to become runtime-aware, and the `WSLENV` merge has to carry whichever variable was chosen. The
+   merge helper is already general (Phase-B-era `merge_wsl_env`); only the caller is hard-coded.
+
 ## Optional, cheap, and worth it: `anthropic-compatible` accounts
 
 Seam FR-13a defers a third `AccountKind` — endpoint + key speaking the **Anthropic** dialect,
@@ -422,9 +488,13 @@ When it starts, it is **three** features, not one:
 ## Critical path
 
 ```
-A ──▶ B ──▶ D ──▶ E ──▶ F
+A ──▶ B ──▶ D ──▶ E ──▶ F ──▶ H
            ╰──▶ C ──╯
 ```
 
 The single highest-leverage constraint is **B landing before E starts**. Everything else on this
 list is recoverable; that one is not cheaply.
+
+**H is where B gets paid back.** It needs nothing from E — the two runtimes share only the seam —
+but it needs B's split completely, because `('codex','openai')` and `('francois','openai')` differ
+in exactly the axis B introduced.

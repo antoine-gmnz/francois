@@ -592,3 +592,117 @@ mod tests {
         assert_eq!(inner.default_account_id, "a1");
     }
 }
+
+// ---------------------------------------------------------------- codex-cli
+
+/// francois:account:addCodex (multi-provider-codex FR-18/FR-24): create a
+/// `codex-cli` account.
+///
+/// Deliberately much thinner than `account_add_endpoint`: there is nothing to
+/// validate but the label, and nothing to write into the directory. The dir is
+/// created empty and `account_codex_login` fills it (FR-19).
+///
+/// It is also thinner than `account_add` (the Claude path), which spawns an
+/// interactive login as part of adding, because `codex login` is a separate,
+/// re-runnable action here — the row is useful the moment it exists, and a
+/// failed browser round-trip should not cost the user the account they just
+/// named.
+#[tauri::command]
+pub fn account_add_codex(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    label: String,
+) -> IpcResult<Vec<Account>> {
+    let label = match validate_label(&label) {
+        Ok(l) => l,
+        Err(msg) => return err("INVALID_INPUT", msg),
+    };
+
+    let id = crate::session::uuid();
+    let Some(config_dir) = accounts_dir(&app).map(|d| d.join(&id)) else {
+        return err("INTERNAL", "could not resolve the app data directory");
+    };
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        return err(
+            "INTERNAL",
+            format!("could not create {}: {e}", config_dir.display()),
+        );
+    }
+
+    let accounts = {
+        let Ok(mut inner) = state.0.lock() else {
+            // Same cleanup discipline as add-endpoint: a row that never reached
+            // the registry must not leave a directory behind.
+            let _ = std::fs::remove_dir_all(&config_dir);
+            return err("INTERNAL", "account state is unavailable");
+        };
+        apply_add_codex(
+            &mut inner,
+            id,
+            config_dir.to_string_lossy().into_owned(),
+            label,
+        );
+        // A write failure is never fatal — the row lives for this run and the
+        // next successful write records it.
+        if let Err(msg) = persist(&app, &inner) {
+            eprintln!("accounts: could not persist accounts.json: {msg}");
+        }
+        build_list(&inner)
+    };
+    emit(
+        &app,
+        AccountEvent::List {
+            accounts: accounts.clone(),
+        },
+    );
+    ok(accounts)
+}
+
+/// francois:account:codexLogin (FR-25): run `codex login` against one account's
+/// `CODEX_HOME`.
+///
+/// Returns as soon as the browser round-trip has been started. The row's
+/// `signedIn` flips when `auth.json` lands, published by the poller — the
+/// command does not block on it, because the user may take minutes in the
+/// browser and the modal must stay usable throughout.
+#[tauri::command]
+pub fn account_codex_login(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    account_id: String,
+) -> IpcResult<()> {
+    // FR-16 (multi-account): one interactive login at a time, shared with the
+    // Claude path — two browser tabs racing for one credential store is the same
+    // hazard whichever CLI opened them.
+    if codex_login_in_flight(&state) {
+        return err("INVALID_INPUT", MSG_IN_FLIGHT);
+    }
+
+    let config_dir = {
+        let Ok(inner) = state.0.lock() else {
+            return err("INTERNAL", "account state is unavailable");
+        };
+        match inner.records.iter().find(|r| r.id == account_id) {
+            Some(r) if r.kind == AccountKind::CodexCli => r.config_dir.clone(),
+            // The built-in row and Claude/endpoint rows have no `codex login`.
+            Some(_) => return err("INVALID_INPUT", "this account is not a Codex account"),
+            None => return err("INVALID_INPUT", NOT_FOUND_MSG),
+        }
+    };
+
+    // The dir can have been removed under us (a synced app-data folder, a manual
+    // clean) — recreate rather than fail, since an empty CODEX_HOME is exactly
+    // what a fresh login expects anyway.
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        return err("INTERNAL", format!("could not create {config_dir}: {e}"));
+    }
+
+    // The child is handed to the poller rather than dropped here: dropping it
+    // leaves a zombie, and the poller uses its liveness to stop early.
+    let child = match spawn_codex_login(&config_dir) {
+        Ok(child) => child,
+        Err((code, msg)) => return err(code, msg),
+    };
+    start_codex_login_poller(&app, config_dir, child);
+    ok(())
+}

@@ -24,6 +24,18 @@ export type RuntimeCapability =
   | 'skillsInstall'
   | 'workflows'
   | 'interactiveCommands'
+  /**
+   * multi-provider-codex FR-11: whether Francois' OWN approval cards + rules
+   * editor govern this runtime's tool calls. True for 'claude-code' (Claude Code
+   * asks over the control channel and we render the card) and for 'francois'
+   * (that adapter IS the gate — multi-provider-openai FR-9..FR-13). False for
+   * 'codex', whose transport is non-interactive: `codex exec` takes its prompt on
+   * stdin and then closes it, so there is no channel to park an ask on. Its
+   * enforcement is the sandbox `permissionMode` selects (FR-9), which is real
+   * enforcement — just not ours, and the UI has to say so rather than render a
+   * rules editor that governs nothing.
+   */
+  | 'permissions'
   | 'remoteControl'
   | 'usageBar'
   | 'compaction';
@@ -45,6 +57,7 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     skillsInstall: { available: true },
     workflows: { available: true },
     interactiveCommands: { available: true },
+    permissions: { available: true },
     remoteControl: { available: true },
     usageBar: { available: true },
     compaction: { available: true },
@@ -78,8 +91,50 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
       available: false,
       reason: "Slash commands aren't available on this provider yet.",
     },
+    // This adapter IS the permission gate (multi-provider-openai FR-9..FR-13):
+    // nothing executes without our approval step, so the cards and the rules
+    // editor govern it exactly as they govern a Claude session.
+    permissions: { available: true },
     remoteControl: { available: false, reason: 'Remote Control is an Anthropic service.' },
     usageBar: { available: false, reason: 'This provider bills per token, not against a plan.' },
+    compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
+  },
+  // multi-provider-codex FR-16. Codex owns its own loop like claude-code, but
+  // over a NON-INTERACTIVE transport (`codex exec --json`, prompt on stdin, stdin
+  // then closed), which is what drives most of these falses: with no channel back
+  // into a live turn there is nothing to ask on, install through, or drive a slash
+  // command over.
+  //
+  // Two reasons here deliberately DIVERGE from the francois row rather than being
+  // copied, because the same word would be false:
+  //   - usageBar: a Codex session authenticated with `codex login` bills against a
+  //     ChatGPT PLAN. "Bills per token, not against a plan" would be a lie — this
+  //     is a gap we have not built, so it reads "yet" like the other gaps.
+  //   - permissions: not a gap at all. Codex enforces with an OS-level sandbox
+  //     chosen from permissionMode (FR-9). Stating that is honest; "isn't
+  //     available yet" would imply the calls run ungoverned, which is the opposite
+  //     of the truth.
+  codex: {
+    mcp: { available: false, reason: "MCP servers aren't available on this provider yet." },
+    subagents: { available: false, reason: "Subagents aren't available on this provider yet." },
+    // Codex has its own skills dir, but the panes read Claude Code's control
+    // surface; inverting discovery is capability-registry, not this feature.
+    skills: { available: false, reason: "Skills aren't available on this provider yet." },
+    skillsInstall: {
+      available: false,
+      reason: "Installing skills isn't available on this provider yet.",
+    },
+    workflows: { available: false, reason: "Workflows aren't available on this provider yet." },
+    interactiveCommands: {
+      available: false,
+      reason: "Slash commands aren't available on this provider yet.",
+    },
+    permissions: {
+      available: false,
+      reason: 'Codex enforces permissions with its own sandbox.',
+    },
+    remoteControl: { available: false, reason: 'Remote Control is an Anthropic service.' },
+    usageBar: { available: false, reason: "Plan limits aren't available on this provider yet." },
     compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
   },
 };

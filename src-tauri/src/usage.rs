@@ -351,6 +351,18 @@ fn emit_snapshot(app: &AppHandle, account_id: &str, snapshot: &UsageSnapshot) {
 /// `CLAUDE_CONFIG_DIR` is resolved BEFORE that lock is taken — account state is
 /// another leaf, and the two are never held at once.
 fn request_probe(app: &AppHandle, account_id: &str, manual: bool) -> bool {
+    // multi-provider-codex FR-16: the usage probe runs `claude` with this
+    // account's config dir as CLAUDE_CONFIG_DIR. On a non-Claude account that is
+    // not merely useless — it POINTS THE WRONG CLI AT THE WRONG HOME, and
+    // `claude` writes `.claude.json` + `projects/` + `sessions/` into a
+    // directory that belongs to `codex` (observed: a freshly added Codex account
+    // came back carrying a full Claude profile). `usageBar` is already
+    // `available: false` for both non-Claude runtimes, so there is nothing to
+    // probe for either; this is where that becomes true rather than merely
+    // rendered.
+    if crate::account::kind_of(app, account_id) != crate::account::AccountKind::ClaudeCodeOauth {
+        return false;
+    }
     let config_dir = crate::account::config_dir_of(app, account_id);
     let Some(state) = app.try_state::<UsageState>() else {
         return false;

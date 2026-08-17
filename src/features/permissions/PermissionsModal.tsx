@@ -20,18 +20,33 @@ import {
   otherTier,
 } from './permissions-editor';
 import { tierChip } from './permission-card';
+import { sessionCapability } from '../../lib/runtimeCapability';
+import { useStore } from '../../lib/store';
+import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import './permissions.css';
 
 export default function PermissionsModal({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+  const meta = useStore((st) => st.sessions.find((x) => x.id === sessionId) ?? null);
   const [rules, setRules] = useState<PermissionRule[]>([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // multi-provider-codex FR-11: on a runtime whose tool calls these rules do not
+  // govern, the editor says so instead of listing rules that decide nothing. A
+  // Codex session is sandboxed by Codex itself (FR-9), so the rules here would
+  // be read by no one — and an editor that silently governs nothing is worse
+  // than one that is honestly switched off.
+  const capability = sessionCapability(meta, 'permissions');
+
   // FR-26: read-on-open. v1 does not watch the settings files, so opening the
   // modal IS the refresh — three processes write them (§7 #7).
   useEffect(() => {
+    if (!capability.available) {
+      setLoading(false);
+      return;
+    }
     let mounted = true;
     void permissionsList(sessionId).then((res) => {
       if (!mounted) return;
@@ -42,7 +57,7 @@ export default function PermissionsModal({ sessionId, onClose }: { sessionId: st
     return () => {
       mounted = false;
     };
-  }, [sessionId]);
+  }, [sessionId, capability.available]);
 
   // FR-29: Escape closes — BUBBLE phase, the convention every other modal follows
   // (NewSessionModal, McpPanel, SkillsPanel, AgentsPanel). App.tsx's own
@@ -84,6 +99,17 @@ export default function PermissionsModal({ sessionId, onClose }: { sessionId: st
           </span>
         </div>
 
+        {!capability.available ? (
+          // multi-provider-codex FR-11 — the whole body, replaced by the one
+          // dim line the table supplies. Not an empty list and not a disabled
+          // form: there is nothing here to filter, and offering the controls
+          // greyed out would still imply they would work if only you were
+          // allowed. The reason is rendered verbatim (the contract owns the
+          // copy), and the footer below is swapped for the same reason — it
+          // names Claude, which is the wrong runtime to name here.
+          <CapabilityNotice reason={capability.reason!} />
+        ) : (
+          <>
         <input
           value={query}
           autoFocus
@@ -148,6 +174,8 @@ export default function PermissionsModal({ sessionId, onClose }: { sessionId: st
         </div>
 
         <div className="pmodal-footer">Claude enforces these itself — a ruled call never asks again.</div>
+          </>
+        )}
       </div>
     </div>
   );

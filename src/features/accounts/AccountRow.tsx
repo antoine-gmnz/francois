@@ -24,10 +24,12 @@ import {
   accountAvatarHue,
   accountAvatarLetter,
   accountDisplayLabel,
+  accountIsCodex,
   accountIsEndpoint,
   accountMetaLine,
   accountMetersView,
   accountNeedsLogin,
+  codexLoginActionLabel,
   endpointBaseUrlLine,
 } from './accounts';
 
@@ -70,6 +72,8 @@ export interface AccountRowProps {
   /** multi-provider-endpoint FR-13: the pencil affordance on an endpoint row opens
    * the full form instead of the inline label-only rename. */
   onEditEndpoint: () => void;
+  /** multi-provider-codex FR-25: `codex login` for this row. */
+  onCodexLogin: () => void;
 }
 
 export function AccountRow({
@@ -90,10 +94,12 @@ export function AccountRow({
   onRelogin,
   onRemove,
   onEditEndpoint,
+  onCodexLogin,
 }: AccountRowProps): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
   const needsLogin = accountNeedsLogin(account);
   const isEndpoint = accountIsEndpoint(account);
+  const isCodex = accountIsCodex(account);
   // Design brief §1: an endpoint row's second line is its base URL (dim,
   // middle-truncated, `no key` when keyless) instead of email/session count.
   const meta = isEndpoint ? endpointBaseUrlLine(account) : accountMetaLine(account, sessionCount);
@@ -142,6 +148,9 @@ export function AccountRow({
             {/* multi-provider-endpoint design brief §1: neutral, no fill — provider
                 is metadata, not identity. OAuth rows get no chip at all. */}
             {isEndpoint && <span className="acc-kind-chip">endpoint</span>}
+            {/* multi-provider-codex FR-24: same neutral treatment — which CLI
+                backs an account is metadata, not identity. */}
+            {isCodex && <span className="acc-kind-chip">codex</span>}
             {account.isDefault && <span className="acc-pill">DEFAULT</span>}
             {needsLogin && <span className="acc-pill acc-pill--alert">NEEDS LOGIN</span>}
           </div>
@@ -171,9 +180,21 @@ export function AccountRow({
           {/* FR-17: Re-login is account:add reusing this row + dir. The built-in
               account has no config dir of its own, so it has nothing to re-log
               into — `claude` owns ~/.claude directly. An endpoint account has no
-              interactive login at all (design brief §1: replaced by Edit above). */}
+              interactive login at all (design brief §1: replaced by Edit above).
+
+              multi-provider-codex FR-25: a Codex row keeps the same slot and the
+              same glyph, but MUST NOT reach `onRelogin` — that opens the Claude
+              PTY login, which would run `claude` against a CODEX_HOME. It routes
+              to `codex login` instead, and its label says Sign in until there is
+              a credential to renew. */}
           {!account.builtIn && !isEndpoint && (
-            <button type="button" className="acc-action" title="Re-login" aria-label="Re-login" onClick={onRelogin}>
+            <button
+              type="button"
+              className="acc-action"
+              title={isCodex ? codexLoginActionLabel(account) : 'Re-login'}
+              aria-label={isCodex ? codexLoginActionLabel(account) : 'Re-login'}
+              onClick={isCodex ? onCodexLogin : onRelogin}
+            >
               <RotateCw {...ICON} />
             </button>
           )}

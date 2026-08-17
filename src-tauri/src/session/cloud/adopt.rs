@@ -523,7 +523,7 @@ fn run_adoption(
     // account before the app-wide one — the adopt modal has no account picker,
     // so the project's own default is what the user configured for this repo.
     let account_id = cloud_account_id(app, input.account_id.or(seed.account_id.as_deref()));
-    let config_dir = crate::account::config_dir_of(app, &account_id);
+    let config_dir = crate::account::claude_config_dir_of(app, &account_id);
     let token = cloud_access_token(config_dir.as_deref())
         .map_err(|(code, message)| AdoptError::new(code, message))?;
 

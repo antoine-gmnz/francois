@@ -14,6 +14,7 @@
 //! child" shape the rest of this domain follows.
 
 mod claude_code;
+mod codex;
 mod openai;
 
 pub(crate) use claude_code::ClaudeCodeAdapter;
@@ -22,6 +23,8 @@ pub(crate) use claude_code::ClaudeCodeAdapter;
 // engine-shaped" reasoning `spawn.rs`'s module doc gives for keeping them out
 // of the pure argv/env helpers.
 pub(crate) use claude_code::{child_stdout_lines, spawn_claude};
+/// multi-provider-codex FR-3: the `AgentRuntime::Codex` adapter.
+pub(crate) use codex::{codex_program, CodexAdapter};
 /// multi-provider-openai FR-1: the real `AgentRuntime::Francois` adapter —
 /// `UnavailableAdapter` is gone, not kept alongside it.
 pub(crate) use openai::OpenAiAdapter;
@@ -49,6 +52,12 @@ pub enum AgentRuntime {
     ClaudeCode,
     #[serde(rename = "francois")]
     Francois,
+    /// multi-provider-codex FR-1: OpenAI's `codex` CLI driving its own loop.
+    /// Pairs with `ProviderProtocol::Openai` exactly as `Francois` does — the
+    /// two differ ONLY in who owns the loop, which is the cell a single
+    /// collapsed enum could not name and the whole reason FR-11a split the axes.
+    #[serde(rename = "codex")]
+    Codex,
 }
 
 /// Mirrors contract/common.ts `ProviderProtocol` (multi-provider-seam
@@ -79,6 +88,11 @@ impl AgentRuntime {
             }
             crate::account::AccountKind::OpenAiCompatible => {
                 (AgentRuntime::Francois, ProviderProtocol::Openai)
+            }
+            // multi-provider-codex FR-2. Same protocol as the row above, and a
+            // different runtime — the pair that makes the split load-bearing.
+            crate::account::AccountKind::CodexCli => {
+                (AgentRuntime::Codex, ProviderProtocol::Openai)
             }
         }
     }
@@ -209,6 +223,7 @@ pub(crate) trait SessionAdapter: Send + Sync {
 
 static CLAUDE_CODE_ADAPTER: ClaudeCodeAdapter = ClaudeCodeAdapter;
 static OPENAI_ADAPTER: OpenAiAdapter = OpenAiAdapter;
+static CODEX_ADAPTER: CodexAdapter = CodexAdapter;
 
 /// FR-4/FR-14a: dispatch a session's `agentRuntime` ALONE to its adapter —
 /// `protocol` is read inside the `francois` runtime to pick the wire codec,
@@ -217,6 +232,7 @@ pub(crate) fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter 
     match runtime {
         AgentRuntime::ClaudeCode => &CLAUDE_CODE_ADAPTER,
         AgentRuntime::Francois => &OPENAI_ADAPTER,
+        AgentRuntime::Codex => &CODEX_ADAPTER,
     }
 }
 
