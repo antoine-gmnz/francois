@@ -1,12 +1,12 @@
 ---
 id: multi-provider-grok
 title: xAI / Grok integration — a fourth agent runtime
-status: frozen
+status: shipped
 branch: feat/x-ai-integration
 created: 2026-08-17
 depends_on: [multi-provider-seam, multi-account, multi-provider-codex, durable-sessions, session-engine, conversation-view, projects]
-reviewed_base:
-reviewed_digest:
+reviewed_base: 3a7942fd412395621766bf74d8ac91bfc1e420fa
+reviewed_digest: fa7a8f895402bd8c
 design_files: []
 ---
 
@@ -21,8 +21,9 @@ sandbox profiles. Structurally this is `multi-provider-codex` again — a vendor
 config home, a non-interactive turn, sandbox-as-enforcement — and it deliberately reuses that
 feature's shapes rather than inventing parallel ones.
 
-Two things make it *not* a copy. Grok's `streaming-json` is **ACP-shaped** (JSON-RPC `session/update`
-notifications), which carries real **text deltas** and **structured tool calls** that
+Two things make it *not* a copy. Grok's `streaming-json` is a **flat `type`-tagged NDJSON stream**
+(reconciled against the real CLI per FR-11 — it is *not* ACP/JSON-RPC, despite the provisional guess
+this spec originally carried), which carries real **text deltas** and **structured tool calls** that
 `codex exec --json` does not have — so a Grok turn streams where a Codex turn appears at once. And
 the **xAI API needs no code at all**: `providers.ts` already carries the `xai` preset pointing at
 `https://api.x.ai/v1`, which is an OpenAI-compatible `/chat/completions` surface, so the shipped
@@ -35,10 +36,12 @@ the **xAI API needs no code at all**: `providers.ts` already carries the `xai` p
 - `AgentRuntime::Grok` — a fourth member, and `GrokAdapter: SessionAdapter` behind it.
 - `AccountKind::GrokCli` — an account authenticated by `grok login` inside its **own** `GROK_HOME`,
   exactly mirroring how `codex-cli` accounts own a `CODEX_HOME`. Several xAI accounts side by side.
-- A turn: `grok -p --output-format streaming-json` with the prompt on stdin and the session pinned by
-  `-s <sessionId>`, so a follow-up turn is the *same argv* and there is no anchor to lose (FR-8).
-- Event translation from ACP `sessionUpdate` variants into the transcript blocks the view already
-  knows — **including live assistant text**, which this runtime gets for free (FR-14).
+- A turn: `grok -p <PROMPT> --output-format streaming-json` with the prompt as a flag value (Grok does
+  not read piped stdin in headless mode) and the session named by Francois' own `SessionId` — `-s <id>`
+  on the first turn, `--resume <id>` on every turn after, since `-s` mints a session and errors on an
+  id that already exists (FR-8).
+- Event translation from Grok's flat `type`-tagged NDJSON lines into the transcript blocks the view
+  already knows — **including live assistant text**, which this runtime gets for free (FR-14).
 - Francois' `permissionMode` mapped onto Grok's **sandbox profile**, pinned per invocation so the
   user's own `config.toml` cannot silently widen it.
 - A model catalog read from Grok's own `config.toml`, with a static fallback (FR-23).
@@ -53,10 +56,10 @@ the **xAI API needs no code at all**: `providers.ts` already carries the `xai` p
   base URL `https://api.x.ai/v1` and a key, and the Francois loop drives `grok-4.6` / `grok-4.6-mini`
   today. `providers.ts`' `xai` entry already carries that `apiBaseUrl`, `hosts: ['api.x.ai']` and the
   `XA` tile. Hardening that path is `xai-endpoint-hardening`, not this feature.
-- **Approval cards.** `grok -p` is non-interactive: stdin carries the prompt and then closes, so there
-  is no channel to park an ask on, and ACP's `session/request_permission` is a *request* needing a
-  reply nobody can give. Enforcement is the **sandbox** `permissionMode` selects (FR-9); the same
-  trade, and the same `permissions: { available: false }`, as `codex`.
+- **Approval cards.** `grok -p` is non-interactive: the prompt rides argv as a flag value and the child
+  never reads stdin for follow-up input, so there is no channel to park an ask on. Enforcement is the
+  **sandbox** `permissionMode` selects (FR-9); the same trade, and the same
+  `permissions: { available: false }`, as `codex`.
 - **Full ACP over `grok agent stdio`.** Could carry real permission round-trips, but is a brand-new
   protocol layer with no precedent here. The upgrade path — see §10.
 - **`agent_thought_chunk` / reasoning blocks.** `BlockKind` has no thinking member, and rendering a
@@ -87,9 +90,9 @@ Selecting it repopulates the model picker from Grok's catalog under that account
 type a message, send.
 
 **The turn.** The composer clears, the session goes `running`. Grok's reply **types itself in** as
-`agent_message_chunk` deltas arrive. Each tool it runs appears as a card that goes live on `tool_call`
+`type: 'text'` deltas arrive. Each tool it runs appears as a card that goes live on `tool_call`
 and completes in place on `tool_call_update`. The diff badge updates when it edits files. The turn
-ends on the `session/prompt` response and the context meter fills from the reported usage.
+ends on the `type: 'end'` line and the context meter fills from its reported usage.
 
 **The next turn** is the same argv with the same `-s <sessionId>`, so Grok still has the whole
 conversation. Quit Francois, reopen: the transcript is there (durable-sessions) and the session id is
@@ -115,7 +118,7 @@ Skills, Workflows — render the disabled notice with their reason, and the usag
 
 ### Verification before parsing
 
-- **FR-11** **Build step 1, before any parser is written.** §5's wire format is derived from xAI's
+- **FR-11** **Build step 1, before any parser is written.** §5's wire format was derived from xAI's
   published docs and the ACP standard, **not** from a live capture — `grok` was not installed when
   this spec was frozen. The implementer must first run one real turn
   (`grok -p "list the files here" --output-format streaming-json`), commit the raw NDJSON as
@@ -132,33 +135,53 @@ Skills, Workflows — render the disabled notice with their reason, and the usag
   `codex/args.rs`' header comment is the precedent: both argv shapes were verified live because the
   difference was documented nowhere but `--help`.
 
+  **Completed.** `grok` 1.0.5 was installed and exercised live. §5 was wrong on the envelope, not just
+  the field names: there is no JSON-RPC/ACP wrapper at all — each stdout line is a flat `type`-tagged
+  object (verified against a live unauthenticated invocation plus the CLI's own bundled
+  `docs/user-guide/14-headless-mode.md`). Answers to the three points above: (1) `-s <id>` **mints
+  only** and errors on an id that already exists — FR-8 below carries the resulting fallback; (2)
+  `--cwd` is real but unused, matching `codex`'s precedent of the process-level working directory;
+  (3) the vocabulary is `text` / `thought` / `tool_call` / `tool_call_update` / `usage` / `plan` /
+  `available_commands` / `end` / `error`, and usage/stop-reason arrive on the terminal `end` line, not
+  a separate response. Sandbox profile names were the one part of the provisional contract that needed
+  no correction. Full detail: `contract/multi-provider-grok.ts`'s "FR-11 reconciliation" header comment
+  and `grok/args.rs`'s header comment. Still open: no xAI credential was available during the build, so
+  `fixtures/exec_turn.jsonl` is assembled from the bundled docs' worked examples rather than a live
+  authenticated capture — re-verify against a real authenticated turn when credentials exist.
+
 ### The transport
 
-- **FR-5** A turn spawns:
+- **FR-5** A turn spawns (reconciled per FR-11 — `-p`/`--single` takes the prompt as its **value**, and
+  the session flag is `-s <id>` on a first turn or `--resume <id>` after, per FR-8):
 
   ```
-  grok -p --output-format streaming-json
-       --session-id <francois session id>
+  grok -p <prompt> --output-format streaming-json
+       -s <francois session id>            # first turn only
+       --resume <francois session id>      # every turn after
        --model <model_id>
        --sandbox <profile>
        --always-approve
        --no-auto-update
   ```
 
-  with the session's `cwd` as the child's **working directory**, the prompt **written to stdin and
-  stdin then closed**, stdout piped, stderr null. No positional prompt: it keeps multi-line text,
-  quotes and shell metacharacters out of argv entirely — the same reasoning `claude -p` and
-  `codex exec` already follow.
+  with the session's `cwd` as the child's **working directory** (`Command::current_dir`; `--cwd` is a
+  real flag but deliberately unused — see FR-11), stdout piped, stdin **not used** (Grok's headless
+  mode does not read piped stdin into the prompt), stderr null. The prompt still never touches a
+  shell: `Command` passes argv elements straight to `CreateProcess`/`execve` with no shell in between,
+  so multi-line text, quotes and metacharacters ride the argument verbatim regardless of which channel
+  carries them — the same safety `claude -p` and `codex exec` get from avoiding a positional prompt.
 - **FR-6** `--always-approve` is on **every** invocation. It is the analogue of Codex's
   `approval_policy="never"`: the transport cannot answer a prompt, so nothing may block waiting for
   one. The sandbox (FR-9) is the whole of the enforcement.
 - **FR-7** `--no-auto-update` is on every invocation — xAI documents it for headless/CI use, and a
   background self-update mutating the binary mid-turn is a failure mode with no useful diagnosis.
-- **FR-8** **Session continuity is the argv, not a captured anchor.** Francois passes its own
-  `SessionId` as `--session-id` on the first turn and every turn after, which per xAI's docs
-  "create[s] or resume[s] a named headless session". `Session.claude_session_id` stores it for
-  parity with the other runtimes. If FR-11(1) shows Grok rejects a foreign id, fall back to the Codex
-  shape: capture Grok's own id from the first turn and pass `--resume <id>` afterwards.
+- **FR-8** **Session continuity is the argv, never a captured anchor — but not the *same* argv every
+  turn.** `-s <id>` mints a session and **errors on an id that already exists** (confirmed live, FR-11);
+  it is not the "create-or-resume" verb the docs' prose implied. So Francois passes its own `SessionId`
+  as `-s <id>` on the **first** turn only, and as `--resume <id>` on every turn after — always its own
+  id, never one captured from Grok, so there is no separate anchor to lose (this is the Codex-shaped
+  fallback FR-11 itself anticipated, and the exact trap `codex exec resume` set). `Session.claude_session_id`
+  stores that same id for parity with the other runtimes.
 - **FR-9** `permissionMode` → Grok sandbox profile, pinned per invocation:
 
   | `permissionMode` | `--sandbox` |
@@ -175,31 +198,38 @@ Skills, Workflows — render the disabled notice with their reason, and the usag
 - **FR-10** `GrokTurnHandle` owns the `Child` and an `interrupted` flag — and, like
   `CodexTurnHandle` and unlike `TurnHandle`, **no pending maps and no stdin writer**, because neither
   exists on this transport.
-- **FR-12** A stdout line that is not valid JSON, carries no `method`, or carries a `method` /
-  `sessionUpdate` this version does not know, is **ignored rather than fatal**. Grok prints
-  human-readable preamble on some paths and will add variants between releases; a turn must never die
-  on output it does not recognise.
+- **FR-12** A stdout line that is not valid JSON, carries no `type`, or carries a `type` this version
+  does not know, is **ignored rather than fatal**. Grok prints human-readable preamble on some paths
+  and will add variants between releases (the docs already note `max_turns_reached` and
+  `auto_compact_*` among others this feature does not model); a turn must never die on output it does
+  not recognise.
 
 ### Event translation
 
-- **FR-13** `session/update` notifications translate to the `SessionEvent` members the transcript
-  already renders. Nothing Grok-shaped crosses the IPC boundary.
-- **FR-14** `agent_message_chunk` appends to the live assistant block as a **delta**, so text streams.
-  This is the one place this runtime is *better* than `codex`, and it must not be flattened into a
+- **FR-13** Each stdout line, discriminated on its flat `type` field (**not** an ACP/JSON-RPC
+  envelope — see FR-11), translates to the `SessionEvent` members the transcript already renders.
+  Nothing Grok-shaped crosses the IPC boundary.
+- **FR-14** `type: 'text'` appends to the live assistant block as a **delta**, so text streams. This is
+  the one place this runtime is *better* than `codex`, and it must not be flattened into a
   whole-message write for symmetry's sake.
 - **FR-15** `tool_call` opens a tool card and `tool_call_update` completes it **in place**, addressed
-  by `toolCallId`. ACP's `kind` (`read` / `edit` / `execute` / `search` / `fetch` / …) selects which
-  card the view draws; an unknown `kind` renders as a generic tool card rather than being dropped.
-  Per the standing naming decision, a card's displayed name uses **Claude Code's tool vocabulary**
-  (`Read`/`Write`/`Edit`/`Grep`/`Glob`/`Bash`) so permission rules stay one vocabulary.
-- **FR-16** The context meter fills from the turn's reported token usage. Cached input counts toward
-  the window; a reasoning-token count that is a *subset* of output tokens is not added twice (the
-  `CodexUsage` lesson). If FR-11(3) finds no usage is reported at all, the meter stays empty rather
-  than being estimated — a wrong number is worse than none.
-- **FR-17** The turn ends on the `session/prompt` response. A `stopReason` of `refusal` or an error
-  response ends the turn as **errored** with the message surfaced; `cancelled` after a user brake
-  ends it as interrupted, not failed.
-- **FR-18** `agent_thought_chunk` and `plan` are parsed and dropped (§2). Dropping must be explicit
+  by `toolCallId`. Grok's own `kind` field (`read` / `edit` / `execute` / `search` / `fetch` / …)
+  selects which card the view draws; an unknown `kind` renders as a generic tool card rather than
+  being dropped. Per the standing naming decision, a card's displayed name uses **Claude Code's tool
+  vocabulary** (`Read`/`Write`/`Edit`/`Grep`/`Glob`/`Bash`) so permission rules stay one vocabulary —
+  Grok's own tool name (e.g. `read_file`) is carried but never displayed.
+- **FR-16** The context meter fills from the terminal `end` line's aggregate usage **only** — one
+  authoritative figure, not a running sum over the per-response `usage` lines a turn may also emit
+  (the same rule `codex`'s `turn.completed` follows). Usage fields are **snake_case** on the real wire
+  (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`,
+  `reasoning_tokens`) — reconciled per FR-11 from the frozen spec's guessed camelCase. Both cache
+  buckets count toward the window even though they are billed differently; `reasoning_tokens` is a
+  *subset* of `output_tokens` and must not be added twice (the `CodexUsage` lesson). No usage on `end`
+  ⇒ the meter stays empty rather than estimated — a wrong number is worse than none.
+- **FR-17** The turn ends on the `type: 'end'` line. A `stopReason` of `refusal`, or a `type: 'error'`
+  line, ends the turn as **errored** with the message surfaced; `cancelled` after a user brake ends it
+  as interrupted, not failed.
+- **FR-18** `type: 'thought'` and `type: 'plan'` are parsed and dropped (§2). Dropping must be explicit
   in code, not a fall-through, so the follow-up that renders them has an obvious seam.
 
 ### Accounts
@@ -256,10 +286,18 @@ Skills, Workflows — render the disabled notice with their reason, and the usag
 `francois:account:*`, and per the standing decision a re-keyed domain is never split across a second
 file.
 
-> **PROVISIONAL** — derived from xAI's published docs (`docs.x.ai/build/cli/headless-scripting`,
-> `/build/settings`, `/build/features/{permissions,sandbox}`) and the Agent Client Protocol standard.
-> **Not live-verified.** FR-11 requires reconciliation against a captured turn before the parser is
-> written; treat every optional field below as "the docs did not say", not as defensive padding.
+> **RECONCILED (FR-11).** This section originally guessed an ACP/JSON-RPC envelope from xAI's
+> published docs (`docs.x.ai/build/cli/headless-scripting`, `/build/settings`,
+> `/build/features/{permissions,sandbox}`) and the Agent Client Protocol standard, before `grok` was
+> installed anywhere this spec could verify it against. That guess was wrong on the envelope, not just
+> field names — the types below are the real wire, confirmed live against `grok` 1.0.5
+> (`@xai-official/grok`): a live unauthenticated invocation, and the CLI's own bundled
+> `docs/user-guide/14-headless-mode.md`. **Still not fully verified**: no xAI credential was available
+> during the build, so `fixtures/exec_turn.jsonl` is assembled from the bundled docs' worked examples
+> rather than a live authenticated capture — re-run this reconciliation against a real authenticated
+> turn once credentials exist. This block is kept in sync with `contract/multi-provider-grok.ts`,
+> which is the file serde actually mirrors; that file's own header carries the full reconciliation
+> notes.
 
 ```ts
 import type { AgentRuntime } from './common';
@@ -299,68 +337,100 @@ export type AccountGrokLoginResponse = Result<void>;
 // that serde mirror against.
 
 /**
- * One stdout line of `--output-format streaming-json`: a JSON-RPC 2.0 message.
- * FR-12 — an unknown `method`, a missing `method`, or a non-JSON line is IGNORED.
+ * One stdout line of `grok -p --output-format streaming-json`, discriminated on
+ * `type` — a FLAT object, never a JSON-RPC/ACP envelope (FR-11).
+ * FR-12 — a non-JSON line, a value carrying no `type`, or a `type` this version
+ * does not know is IGNORED. The vocabulary is explicitly non-exhaustive: the
+ * CLI's own docs note `max_turns_reached` and `auto_compact_*` among others,
+ * which is exactly why the union ends in a forward-compatibility member.
  */
 export type GrokLine =
-  | { jsonrpc: '2.0'; method: 'session/update'; params: GrokUpdateParams }
-  /** The turn's terminal response. `id` correlates with the prompt request. */
-  | { jsonrpc: '2.0'; id: number | string; result?: GrokPromptResult; error?: GrokRpcError }
-  /** Forward compatibility: a method this version does not know. */
-  | { jsonrpc: '2.0'; method: string; params?: unknown };
-
-export interface GrokUpdateParams {
-  sessionId?: string;
-  update: GrokSessionUpdate;
-}
-
-export interface GrokRpcError {
-  code: number;
-  message: string;
-  data?: unknown;
-}
-
-/** FR-17. `stopReason` is ACP's enum; anything else ends the turn cleanly. */
-export interface GrokPromptResult {
-  stopReason?: 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled';
-  usage?: GrokUsage;
-}
+  /** FR-14: a chunk of assistant text — a DELTA. Append, never replace. */
+  | { type: 'text'; data: string }
+  /** FR-18: parsed and DROPPED. `BlockKind` has no thinking member (§2). */
+  | { type: 'thought'; data?: string }
+  /** FR-15: opens a tool card, addressed by `toolCallId`. */
+  | {
+      type: 'tool_call';
+      toolCallId: string;
+      title?: string;
+      kind?: GrokToolKind;
+      status?: GrokToolStatus;
+      /** Grok's own tool name, e.g. `read_file`. The card DISPLAYS Claude Code's
+       *  vocabulary (Read/Write/Edit/Grep/Glob/Bash) per FR-15's naming rule. */
+      toolName?: string;
+      rawInput?: unknown;
+      content?: GrokToolContent[];
+      locations?: unknown[];
+    }
+  /** FR-15: completes that card IN PLACE, matched on the same `toolCallId`. */
+  | {
+      type: 'tool_call_update';
+      toolCallId: string;
+      status?: GrokToolStatus;
+      title?: string;
+      content?: GrokToolContent[];
+      rawOutput?: unknown;
+      locations?: unknown[];
+    }
+  /**
+   * A per-response usage boundary. Recognized but NOT applied to the context
+   * meter: FR-16 reads the meter off `end`'s aggregate only — one authoritative
+   * figure, not a running sum (the same rule `codex`'s `turn.completed` follows).
+   */
+  | { type: 'usage'; messageId?: string; stopReason?: GrokStopReason; usage?: GrokUsage;
+      signature?: string }
+  /** FR-18: parsed and DROPPED, same reasoning as `thought`. */
+  | { type: 'plan'; entries?: unknown[] }
+  /** The tool / slash-command inventory. No transcript block corresponds to it. */
+  | { type: 'available_commands'; availableCommands?: unknown[] }
+  /** FR-17: the turn's terminal line. */
+  | {
+      type: 'end';
+      stopReason?: GrokStopReason;
+      usage?: GrokUsage;
+      sessionId?: string;
+      requestId?: string;
+      num_turns?: number;
+      modelUsage?: unknown;
+    }
+  /**
+   * FR-17: a failed spawn / auth / turn. Ends the turn ERRORED with `message`
+   * surfaced. This is the line a `grok` with no credential emits before exiting.
+   */
+  | { type: 'error'; message?: string }
+  /** Forward compatibility (FR-12): a `type` this version does not know. */
+  | { type: string };
 
 /**
- * FR-16. Field names are the least-certain part of this contract — ACP does not
- * standardise usage reporting, so FR-11(3) must confirm them. No usage ⇒ the
- * context meter stays empty rather than estimated.
+ * FR-17. `refusal` or an `error` line ends the turn errored; `cancelled` after a
+ * user brake ends it interrupted, not failed; anything else ends it cleanly.
+ * Open-ended on purpose — an unrecognised reason must not fail a turn.
+ */
+export type GrokStopReason =
+  | 'end_turn'
+  | 'max_tokens'
+  | 'max_turn_requests'
+  | 'refusal'
+  | 'cancelled'
+  | string;
+
+/**
+ * FR-16 — snake_case off the real wire (reconciled; this section originally
+ * guessed camelCase). Both cache buckets occupy the context window even though
+ * they are billed differently, so both count toward the meter; `reasoning_tokens`
+ * is a SUBSET of `output_tokens` and must NOT be added twice — the `CodexUsage`
+ * lesson. The docs' own total: input + cache_read + cache_creation + output.
+ *
+ * No usage reported ⇒ the meter stays empty rather than estimated.
  */
 export interface GrokUsage {
-  inputTokens?: number;
-  cachedInputTokens?: number;
-  outputTokens?: number;
-  reasoningOutputTokens?: number;
-}
-
-/**
- * The ACP SessionUpdate union, discriminated on `sessionUpdate`.
- * FR-14: `agent_message_chunk` is a DELTA — append, never replace.
- * FR-18: `agent_thought_chunk` and `plan` are parsed and dropped.
- */
-export type GrokSessionUpdate =
-  | { sessionUpdate: 'agent_message_chunk'; content: GrokContent }
-  | { sessionUpdate: 'agent_thought_chunk'; content: GrokContent }
-  | { sessionUpdate: 'user_message_chunk'; content: GrokContent }
-  | { sessionUpdate: 'tool_call'; toolCallId: string; title?: string; kind?: GrokToolKind;
-      status?: GrokToolStatus; rawInput?: unknown }
-  | { sessionUpdate: 'tool_call_update'; toolCallId: string; status?: GrokToolStatus;
-      title?: string; content?: GrokToolContent[]; rawOutput?: unknown }
-  | { sessionUpdate: 'plan'; entries?: unknown[] }
-  | { sessionUpdate: 'available_commands_update'; availableCommands?: unknown[] }
-  | { sessionUpdate: 'current_mode_update'; currentModeId?: string }
-  /** Forward compatibility (FR-12). */
-  | { sessionUpdate: string };
-
-/** ACP content block. Only `text` is rendered in v1. */
-export interface GrokContent {
-  type: 'text' | string;
-  text?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  /** A subset of `output_tokens`. Never added to the total. */
+  reasoning_tokens?: number;
 }
 
 /** A tool call's output. `content` members carry the text a card's body shows. */
@@ -372,18 +442,35 @@ export interface GrokToolContent {
   newText?: string;
 }
 
+/** A content block. Only `text` is rendered in v1. */
+export interface GrokContent {
+  type: 'text' | string;
+  text?: string;
+}
+
 /** FR-15: selects the card the view draws. Unknown ⇒ generic tool card. */
 export type GrokToolKind =
-  | 'read' | 'edit' | 'delete' | 'move' | 'search'
-  | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';
+  | 'read'
+  | 'edit'
+  | 'delete'
+  | 'move'
+  | 'search'
+  | 'execute'
+  | 'think'
+  | 'fetch'
+  | 'switch_mode'
+  | 'other'
+  | string;
 
-export type GrokToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type GrokToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | string;
 
 /**
- * FR-9: `permissionMode` → Grok's sandbox profile. Grok's own vocabulary; the
- * mapping lives in the core (`grok/args.rs`) because argv construction is
- * core-shaped, and is mirrored here so the contract names every value that can
- * reach the CLI. `devbox` and `strict` are declared but unmapped — see FR-9.
+ * FR-9: `permissionMode` → Grok's sandbox profile. Grok's own vocabulary,
+ * confirmed against the CLI's `docs/user-guide/18-sandbox.md` — the one part of
+ * the provisional contract FR-11 found already correct. The mapping lives in the
+ * core (`grok/args.rs`) because argv construction is core-shaped, and is
+ * mirrored here so the contract names every value that can reach the CLI.
+ * `devbox` and `strict` are declared but never SELECTED — see FR-9.
  *
  * No 'ask' member on purpose: this transport is non-interactive and the core
  * pins `--always-approve` on every invocation (FR-6).
@@ -426,13 +513,13 @@ its own conversation state inside `$GROK_HOME`, which is exactly why FR-8 works.
 | `grok login` never completes | Nothing breaks: `signedIn` stays false, the row keeps its **Sign in** action. No timeout — the browser round-trip is out of band. |
 | Credentials expire mid-turn | Grok exits non-zero; turn errors with its stderr-free message, `authFailedAt` is stamped, the row shows the failure. |
 | Non-JSON / unknown line on stdout | Ignored (FR-12). Never fatal. |
-| Unknown `sessionUpdate` variant | Ignored. An unknown tool `kind` renders a generic card (FR-15). |
+| Unknown `type` variant | Ignored. An unknown tool `kind` renders a generic card (FR-15). |
 | No usage reported | Context meter stays empty, not estimated (FR-16). |
-| `stopReason: 'refusal'` | Turn ends **errored**, message surfaced (FR-17). |
+| `stopReason: 'refusal'` or a `type: 'error'` line | Turn ends **errored**, message surfaced (FR-17). |
 | User brakes the turn | `Child` killed, `interrupted` set; a `cancelled` stop reason ends it interrupted, not failed (FR-17). |
 | Windows | Session runs; one in-transcript sandbox notice per session (FR-27). |
 | `config.toml` absent or model-less | Static fallback catalog; never an empty picker (FR-25). |
-| Grok rejects a foreign `--session-id` | FR-11(1) catches it at build time; fall back to capture-and-`--resume` (FR-8). |
+| `-s <id>` on a turn that isn't the first | Confirmed live (FR-11): errors, since `-s` mints only. `--resume <id>` is used on every turn after the first (FR-8). |
 | A fifth runtime is added later | Every `AgentRuntime` match is exhaustive with no wildcard — it fails to compile rather than silently defaulting (FR-1). |
 
 ## 8. Design brief
@@ -449,31 +536,40 @@ modal chrome does not warrant fresh Claude Design mockups.
 
 - [ ] A real `grok -p --output-format streaming-json` turn is captured to
       `grok/fixtures/exec_turn.jsonl` and §5 reconciled against it, with divergences reported (FR-11).
-- [ ] `AgentRuntime` has four members; every core `match` on it is exhaustive with no wildcard arm,
+      **Partially verified**: §5 was reconciled and the divergences reported (this review), but the
+      fixture itself is still assembled from the CLI's bundled docs, not a live authenticated capture —
+      no xAI credential was available during the build. Re-run against a real authenticated turn before
+      ticking this box.
+- [x] `AgentRuntime` has four members; every core `match` on it is exhaustive with no wildcard arm,
       proven by a compile-time test (FR-1).
-- [ ] `AccountKind::GrokCli` maps to `(Grok, Openai)`; `adapter_for(Grok)` returns `GrokAdapter`
+- [x] `AccountKind::GrokCli` maps to `(Grok, Openai)`; `adapter_for(Grok)` returns `GrokAdapter`
       (FR-2, FR-3).
 - [ ] A session on a `grok-cli` account persists and reloads as `grok` after quit/reopen (FR-4).
-- [ ] `args.rs` unit tests pin the argv for a fresh and a follow-up turn, and the full
+      **Not yet directly tested** — flagged by review as `deferred:multi-provider-grok` (parked, not
+      blocking): the generic serde round-trip covers the shape, but no test pins `agentRuntime: "grok"`
+      specifically.
+- [x] `args.rs` unit tests pin the argv for a fresh and a follow-up turn, and the full
       `permissionMode` → sandbox table including the fail-closed default (FR-5, FR-9).
-- [ ] `--always-approve` and `--no-auto-update` appear on every invocation (FR-6, FR-7).
-- [ ] Replaying the fixture produces streaming assistant text, and a tool card that goes live and then
+- [x] `--always-approve` and `--no-auto-update` appear on every invocation (FR-6, FR-7).
+- [x] Replaying the fixture produces streaming assistant text, and a tool card that goes live and then
       completes in place addressed by `toolCallId` (FR-13, FR-14, FR-15).
-- [ ] A malformed line, an unknown `method` and an unknown `sessionUpdate` in the fixture are all
-      ignored without ending the turn (FR-12).
-- [ ] `agent_thought_chunk` and `plan` produce no transcript block (FR-18).
-- [ ] Adding a Grok account creates its config dir; the row shows **Sign in**; `grok login` is spawned
+- [x] A malformed line and an unknown `type` in the fixture are both ignored without ending the turn
+      (FR-12).
+- [x] `type: 'thought'` and `type: 'plan'` produce no transcript block (FR-18).
+- [x] Adding a Grok account creates its config dir; the row shows **Sign in**; `grok login` is spawned
       with `GROK_HOME` set to that dir (FR-19, FR-20, FR-21).
-- [ ] `signedIn` flips true when `auth.json` appears and is absent on non-CLI kinds (FR-22).
-- [ ] A turn on an unauthenticated account fails `ACCOUNT_NOT_AUTHENTICATED` without spawning (FR-23).
-- [ ] `models` reads a `config.toml` catalog, and falls back to the static list when it is absent —
+- [x] `signedIn` flips true when `auth.json` appears and is absent on non-CLI kinds (FR-22).
+- [x] A turn on an unauthenticated account fails `ACCOUNT_NOT_AUTHENTICATED` without spawning (FR-23).
+- [x] `models` reads a `config.toml` catalog, and falls back to the static list when it is absent —
       never empty (FR-25).
-- [ ] `CAPABILITIES['grok']` is exhaustive; the four right-column panes render their reason and the
+- [x] `CAPABILITIES['grok']` is exhaustive; the four right-column panes render their reason and the
       usage bar hides, with wording specific to a SuperGrok / X Premium+ plan (FR-26).
 - [ ] On Windows a Grok session runs and emits exactly one sandbox notice per session (FR-27).
-- [ ] `providers.ts`' `xai` entry has `cliLogin: 'grok'`, and `cli_tools.rs`' header comment no longer
+      **Not yet tested** — flagged by review as `deferred:multi-provider-grok` (parked, not blocking):
+      no test covers `claim_grok_sandbox_notice()`'s true-once/false-after behavior.
+- [x] `providers.ts`' `xai` entry has `cliLogin: 'grok'`, and `cli_tools.rs`' header comment no longer
       claims no `grok-cli` `AccountKind` exists (FR-28).
-- [ ] `npx tsc --noEmit`, `npm test` and `cargo test` are green.
+- [x] `npx tsc --noEmit`, `npm test` and `cargo test` are green.
 
 ## 10. Open questions (deliberately deferred)
 
@@ -492,4 +588,4 @@ modal chrome does not warrant fresh Claude Design mockups.
 
 ## Remediation
 
-(Empty until a review returns findings.)
+- 2026-08-17 — 1 finding, all fixed (preflight abort, BLOCK, no review ran)
