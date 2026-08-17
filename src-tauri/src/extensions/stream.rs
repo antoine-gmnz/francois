@@ -11,7 +11,7 @@
 //! frontend's check, and a `file` source may only open paths that resolve —
 //! after symlinks — under the panel's declared root (FR-39).
 
-use super::provider::{kill_group, own_process_group, render_args, scrub_env};
+use super::provider::{apply_ext_env, kill_group, own_process_group, render_args};
 use super::schema::sanitize_line;
 use super::{emit, ExtensionEvent, Source, EXT_LOG_MAX_LINES};
 use crate::process_util::no_window;
@@ -410,16 +410,18 @@ pub(crate) fn spawn_process_stream(
     argv: &[String],
     cwd: &Path,
 ) -> Result<(Arc<AtomicBool>, Arc<Mutex<Child>>), std::io::Error> {
+    // ext-path-resolution FR-8: no slot to acquire here, so no ordering
+    // concern — just resolve and filter (FR-5) the login shell's PATH.
+    let path_override = crate::process_util::login_shell_path_env()
+        .and_then(|p| crate::process_util::filter_absolute_path_entries(&p));
+
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    cmd.env_clear();
-    for (k, v) in scrub_env(std::env::vars()) {
-        cmd.env(k, v);
-    }
+    apply_ext_env(&mut cmd, path_override.as_deref());
     no_window(&mut cmd);
     // FR-43: the same discipline as a provider call — the child is put in its
     // own process group at spawn, so `Live::kill()`'s `killpg` actually reaches

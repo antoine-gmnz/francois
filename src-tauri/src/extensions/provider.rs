@@ -135,6 +135,23 @@ pub(crate) fn scrub_env<I: IntoIterator<Item = (String, String)>>(
         .collect()
 }
 
+/// ext-path-resolution FR-3/FR-4/FR-9: the ONLY place in `extensions/` that
+/// calls `env_clear()`. Both provider spawn sites (`run_capped`,
+/// `stream::spawn_process_stream`) go through this so they cannot drift back
+/// apart. `path_override` — already filtered to absolute entries by the
+/// caller (FR-5/FR-7) — replaces the scrubbed `PATH`; `None` leaves the
+/// scrubbed process `PATH` untouched. `PATH` is already an `ENV_ALLOWLIST`
+/// member, so this is a value override, not a widening (FR-9).
+pub(crate) fn apply_ext_env(cmd: &mut Command, path_override: Option<&str>) {
+    cmd.env_clear();
+    for (k, v) in scrub_env(std::env::vars()) {
+        cmd.env(k, v);
+    }
+    if let Some(path) = path_override {
+        cmd.env("PATH", path);
+    }
+}
+
 // ---------- FR-21/FR-22/FR-24: the spawn ----------
 
 fn read_capped(mut reader: impl Read, cap: usize, capped: &AtomicBool) -> Vec<u8> {
@@ -213,6 +230,12 @@ pub(crate) fn run_capped(
     cap_bytes: usize,
     concurrency: usize,
 ) -> Result<Vec<u8>, ProviderError> {
+    // FR-7: resolved BEFORE acquire_slot, so the first-call `$SHELL -ilc` cost
+    // (1-3s with a heavy rc file) never holds one of the four concurrency slots.
+    let path_override = crate::process_util::login_shell_path_env();
+    let path_override =
+        path_override.and_then(|p| crate::process_util::filter_absolute_path_entries(&p));
+
     let _slot = acquire_slot(concurrency);
 
     let mut cmd = Command::new(&argv[0]);
@@ -221,10 +244,7 @@ pub(crate) fn run_capped(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    cmd.env_clear();
-    for (k, v) in scrub_env(std::env::vars()) {
-        cmd.env(k, v);
-    }
+    apply_ext_env(&mut cmd, path_override.as_deref());
     no_window(&mut cmd);
     own_process_group(&mut cmd);
 
@@ -612,6 +632,91 @@ mod tests {
             assert!(!text.contains("CLAUDE_FRANCOIS_EXT_TEST"), "{text}");
             assert!(!text.contains("secret"), "{text}");
         }
+    }
+
+    // ---- ext-path-resolution FR-3/FR-4/FR-5/FR-9 ----
+
+    #[cfg(unix)]
+    fn echo_path_command() -> Command {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", "echo -n \"$PATH\""]);
+        cmd
+    }
+    #[cfg(windows)]
+    fn echo_path_command() -> Command {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "echo %PATH%"]);
+        cmd
+    }
+
+    // FR-3/FR-5: the child actually receives the (filtered) login shell's
+    // PATH. Tolerates `None` (no usable $SHELL on this machine) rather than
+    // being flaky, per acceptance criteria.
+    #[test]
+    fn apply_ext_env_overrides_path_with_the_filtered_login_shell_path() {
+        let Some(login_path) = crate::process_util::login_shell_path_env() else {
+            return; // FR-6: nominal on a machine with no usable $SHELL
+        };
+        let Some(filtered) = crate::process_util::filter_absolute_path_entries(&login_path) else {
+            return; // every entry was relative/empty — nothing to assert
+        };
+        let first_entry = filtered.split(':').next().unwrap().to_string();
+
+        let mut cmd = echo_path_command();
+        apply_ext_env(&mut cmd, Some(&filtered));
+        let output = cmd.output().expect("the marker command must spawn");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(&first_entry),
+            "expected the resolved login-shell PATH prefix {first_entry:?} in {stdout:?}"
+        );
+    }
+
+    // FR-9 non-regression: the override goes through the SAME allowlist path
+    // as every other extension env var — no extra variable leaks in.
+    #[test]
+    fn apply_ext_env_still_scrubs_to_the_allowlist_with_a_path_override() {
+        std::env::set_var("FRANCOIS_EXT_PATH_TEST_SECRET", "leak-me-not");
+        let mut cmd = Command::new("/usr/bin/env");
+        apply_ext_env(&mut cmd, Some("/custom/bin:/usr/bin"));
+        let output = cmd.output();
+        std::env::remove_var("FRANCOIS_EXT_PATH_TEST_SECRET");
+        if let Ok(output) = output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(!stdout.contains("FRANCOIS_EXT_PATH_TEST_SECRET"));
+            assert!(stdout.contains("PATH=/custom/bin:/usr/bin"));
+        }
+    }
+
+    // FR-4: pins that `apply_ext_env` is the ONLY `env_clear()` call site left
+    // in `extensions/`, so `stream.rs` (or any future spawn site) cannot
+    // silently drift back to its own inline scrub block.
+    #[test]
+    fn apply_ext_env_is_the_only_env_clear_call_site_in_extensions() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/extensions");
+        let mut sites: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("extensions dir must exist") {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            // Only the production code counts — a file's own `mod tests`
+            // block (this test included) legitimately mentions `env_clear()`
+            // in strings/comments/assertions. Every file in this crate puts
+            // its tests in a single trailing `mod tests { ... }`.
+            let production = text.split("mod tests {").next().unwrap_or(text.as_str());
+            for (i, line) in production.lines().enumerate() {
+                if line.contains("env_clear()") && !line.trim_start().starts_with("///") {
+                    sites.push(format!("{}:{}", path.display(), i + 1));
+                }
+            }
+        }
+        assert_eq!(
+            sites.len(),
+            1,
+            "env_clear() must appear exactly once in extensions/, in apply_ext_env: {sites:?}"
+        );
     }
 
     // FR-21/FR-23: the adapter is driven entirely by the declared format.
