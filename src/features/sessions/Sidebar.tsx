@@ -15,11 +15,11 @@ import { useStore } from '../../lib/store';
 import { getEditorList } from './editors';
 import { FilterInput } from './FilterInput';
 import {
+  buildRoster,
   flattenGroups,
-  groupSessionsByRepo,
   loadCollapsedGroups,
   persistCollapsedGroups,
-  type RosterGroup,
+  type RosterProjectNode,
 } from './roster-groups';
 import { SessionContextMenu, type MenuState } from './SessionContextMenu';
 import { SessionListBody } from './SessionListBody';
@@ -63,6 +63,8 @@ export default function Sidebar({ home }: { home: string }) {
   // projects FR-27: the board's project scope (null = All projects).
   const activeProjectId = useStore((s) => s.activeProjectId);
   const projects = useStore((s) => s.projects);
+  // project-groups FR-11: the roster's second tier.
+  const groupRegistry = useStore((s) => s.groups);
   const projectsOpen = useStore((s) => s.projectsOpen);
   const setMainTab = useStore((s) => s.setMainTab);
   // Per-session derived figures NOT on SessionMeta: diff file count + running
@@ -96,10 +98,14 @@ export default function Sidebar({ home }: { home: string }) {
     [sessions, activeProjectId, sidebarFilter],
   );
 
-  // design 7a: the roster is grouped by repo. `groups` is what paints; `visible`
-  // is the same sessions flattened in PAINTED order, which is what the keyboard
-  // cursor indexes — a collapsed group's rows drop out of both.
-  const groups = useMemo(() => groupSessionsByRepo(inScope, projects), [inScope, projects]);
+  // design 7a: the roster is grouped by repo. project-groups FR-11 adds a second
+  // tier above it. `groups` is what paints; `visible` is the same sessions
+  // flattened in PAINTED order, which is what the keyboard cursor indexes — a
+  // collapsed group's or project's rows drop out of both.
+  const groups = useMemo(
+    () => buildRoster(inScope, projects, groupRegistry),
+    [inScope, projects, groupRegistry],
+  );
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(loadCollapsedGroups);
   const visible = useMemo(() => flattenGroups(groups, collapsedGroups), [groups, collapsedGroups]);
 
@@ -113,10 +119,11 @@ export default function Sidebar({ home }: { home: string }) {
     });
   };
 
-  // A group heading's `+`. For a project-backed group it also scopes the board
-  // to that project first, so the modal's project field lands on the repo whose
-  // heading was clicked rather than on whatever was selected before.
-  const newInGroup = (group: RosterGroup) => {
+  // A project heading's `+` (project-groups FR-25: never on a group heading). It
+  // also scopes the board to that project first, so the modal's project field
+  // lands on the repo whose heading was clicked rather than on whatever was
+  // selected before.
+  const newInGroup = (group: RosterProjectNode) => {
     if (group.projectId !== null && group.projectId !== activeProjectId) {
       useStore.getState().setActiveProjectId(group.projectId);
     }

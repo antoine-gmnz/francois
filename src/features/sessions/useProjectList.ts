@@ -31,12 +31,12 @@ export function useProjectList(
   useEffect(() => {
     void safeCall(projectList()).then((res) => {
       if (!openRef.current || !res.ok) return;
-      setProjects(res.data);
+      setProjects(res.data.projects);
       if (preselectedRef.current) return;
       preselectedRef.current = true;
       // A project whose root vanished can't back a session (FR-23) — don't
       // preselect it, or the modal opens already blocked.
-      const active = res.data.find((p) => p.id === activeProjectId && p.rootExists);
+      const active = res.data.projects.find((p) => p.id === activeProjectId && p.rootExists);
       if (active) setProjectId(active.id);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -45,7 +45,7 @@ export function useProjectList(
   const recoverFromProjectError = async () => {
     const fresh = await safeCall(projectList());
     if (!openRef.current) return;
-    if (fresh.ok) setProjects(fresh.data);
+    if (fresh.ok) setProjects(fresh.data.projects);
     setProjectId('');
   };
 

@@ -4,11 +4,15 @@
 // Split out of ProjectsModal per REFACTOR.md §6c.
 
 import { useState, type MutableRefObject } from 'react';
-import type { ProjectMeta, ProjectStandards, StandardsRead } from '../../../contract/projects';
+import type { GroupId, ProjectMeta, ProjectStandards, StandardsRead } from '../../../contract/projects';
 import {
+  projectAssignGroup,
   projectCreate,
+  projectCreateGroup,
   projectGetStandards,
   projectRemove,
+  projectRemoveGroup,
+  projectRenameGroup,
   projectSetStandards,
   projectUpdate,
   sessionPickDirectory,
@@ -39,6 +43,9 @@ export interface ProjectMutationsDeps {
   setNotes: (n: string) => void;
   setError: (section: ProjectSection, message: string | null) => void;
   setRemoveConfirm: (v: boolean) => void;
+  // project-groups FR-19..FR-22
+  setGroupError: (message: string | null) => void;
+  setNewGroupDraft: (v: string | null) => void;
 }
 
 export interface ProjectMutations {
@@ -50,6 +57,11 @@ export interface ProjectMutations {
   commitNotes: () => void;
   addProject: () => Promise<void>;
   doRemove: () => Promise<void>;
+  // project-groups FR-19..FR-22
+  addGroup: (name: string) => Promise<void>;
+  renameGroup: (groupId: GroupId, name: string) => Promise<void>;
+  removeGroup: (groupId: GroupId) => Promise<void>;
+  assignGroup: (groupId: GroupId | null) => Promise<void>;
 }
 
 export function useProjectMutations(deps: ProjectMutationsDeps): ProjectMutations {
@@ -70,6 +82,8 @@ export function useProjectMutations(deps: ProjectMutationsDeps): ProjectMutation
     setNotes,
     setError,
     setRemoveConfirm,
+    setGroupError,
+    setNewGroupDraft,
   } = deps;
   const [busy, setBusy] = useState(false);
 
@@ -188,5 +202,73 @@ export function useProjectMutations(deps: ProjectMutationsDeps): ProjectMutation
     if (alive.current) setBusy(false);
   };
 
-  return { busy, commitName, commitRoot, commitDefault, commitRules, commitNotes, addProject, doRemove };
+  // project-groups FR-19: "+ New group" — the inline field commits on Enter,
+  // mirroring addProject's re-read-after-write pattern (no optimistic insert).
+  const addGroup = async (name: string) => {
+    if (busy) return;
+    setBusy(true);
+    const res = await safeCall(projectCreateGroup(name));
+    if (!alive.current) return;
+    if (res.ok) {
+      setGroupError(null);
+      setNewGroupDraft(null);
+    } else {
+      setGroupError(res.error.message); // e.g. INVALID_INPUT
+    }
+    await reload();
+    if (alive.current) setBusy(false);
+  };
+
+  // FR-22/§7 case 5: on INVALID_INPUT the row reverts to the persisted name —
+  // `reload()` refetches it, and the row's OWN edit-draft state (not held here)
+  // is what actually paints the revert once it re-seeds from the fresh list.
+  const renameGroup = async (groupId: GroupId, name: string) => {
+    setBusy(true);
+    const res = await safeCall(projectRenameGroup(groupId, name));
+    if (!alive.current) return;
+    setGroupError(res.ok ? null : res.error.message);
+    await reload();
+    if (alive.current) setBusy(false);
+  };
+
+  // FR-8/FR-9: deletes the group and (best-effort, server-side) ungroups its
+  // members — no session state changes. A single re-read repaints both the
+  // groups block and every affected project row (FR-22).
+  const removeGroup = async (groupId: GroupId) => {
+    setBusy(true);
+    const res = await safeCall(projectRemoveGroup(groupId));
+    if (!alive.current) return;
+    setGroupError(res.ok ? null : res.error.message); // e.g. GROUP_NOT_FOUND
+    await reload();
+    if (alive.current) setBusy(false);
+  };
+
+  // FR-21: the Identity "Group" <select>, committing on change — no Save
+  // button, same as every other Identity field.
+  const assignGroup = async (groupId: GroupId | null) => {
+    if (!selectedId) return;
+    setBusy(true);
+    const res = await safeCall(projectAssignGroup(selectedId, groupId));
+    if (!alive.current) return;
+    // §7 case 6: GROUP_NOT_FOUND (deleted elsewhere) surfaces on Identity, not
+    // the groups block — it is this project's field that rejected the value.
+    setError('identity', res.ok ? null : res.error.message);
+    await reload(selectedId);
+    if (alive.current) setBusy(false);
+  };
+
+  return {
+    busy,
+    commitName,
+    commitRoot,
+    commitDefault,
+    commitRules,
+    commitNotes,
+    addProject,
+    doRemove,
+    addGroup,
+    renameGroup,
+    removeGroup,
+    assignGroup,
+  };
 }

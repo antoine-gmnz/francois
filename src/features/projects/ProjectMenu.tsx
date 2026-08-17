@@ -20,6 +20,8 @@ import './projects.css';
 export default function ProjectMenu({ home, onClose }: { home: string; onClose: () => void }) {
   const projects = useStore((s) => s.projects);
   const setProjects = useStore((s) => s.setProjects);
+  // project-groups FR-11: kept current too, so the roster's group tier stays honest.
+  const setGroups = useStore((s) => s.setGroups);
   const activeProjectId = useStore((s) => s.activeProjectId);
   const switchProject = useStore((s) => s.switchProject);
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
@@ -30,7 +32,9 @@ export default function ProjectMenu({ home, onClose }: { home: string; onClose: 
   // derived per list).
   useEffect(() => {
     void safeCall(projectList()).then((res) => {
-      if (mounted.current && res.ok) setProjects(res.data);
+      if (!mounted.current || !res.ok) return;
+      setProjects(res.data.projects);
+      setGroups(res.data.groups);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

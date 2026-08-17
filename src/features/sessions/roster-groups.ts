@@ -3,16 +3,21 @@
 // segment of its cwd otherwise — which is what makes the grouping useful before
 // anything has been registered in the Projects modal. Pure + unit-tested; the
 // component (SessionListBody) only renders what these return.
+//
+// project-groups FR-11..FR-18: a SECOND, mixed-depth tier sits above the repo
+// tier — a `ProjectGroup` node holding project nodes as its only children.
+// `groupSessionsByRepo` stays exactly as it was (the repo-tier pass);
+// `buildRoster` is the new entry point that wraps its output with group nodes.
 
 import type { SessionMeta } from '../../../contract/common';
-import type { ProjectMeta } from '../../../contract/projects';
+import type { ProjectGroup, ProjectMeta } from '../../../contract/projects';
 
-export interface RosterGroup {
+export interface RosterProjectNode {
   /** Stable identity for React keys AND for the collapse record. */
   key: string;
   /** The heading — a project name, or the cwd's last segment. */
   label: string;
-  /** Set for project-backed groups only; `+` scopes a new session to it. */
+  /** Set for project-backed nodes only; `+` scopes a new session to it. */
   projectId: string | null;
   sessions: SessionMeta[];
 }
@@ -62,8 +67,8 @@ export function groupKeyFor(
 export function groupSessionsByRepo(
   sessions: readonly SessionMeta[],
   projects: readonly ProjectMeta[],
-): RosterGroup[] {
-  const byKey = new Map<string, RosterGroup>();
+): RosterProjectNode[] {
+  const byKey = new Map<string, RosterProjectNode>();
   const order: string[] = [];
   for (const session of sessions) {
     const { key, label, projectId } = groupKeyFor(session, projects);
@@ -78,16 +83,88 @@ export function groupSessionsByRepo(
   return order.map((key) => byKey.get(key)!);
 }
 
+// ---------- project-groups: the group tier (FR-11..FR-18) ----------
+
+/** A thin heading over one or more `RosterProjectNode`s — never nested (FR-11). */
+export interface RosterGroupNode {
+  /** `group:<groupId>` — its own slot in the collapse record (FR-15). */
+  key: string;
+  label: string;
+  groupId: string;
+  projects: RosterProjectNode[];
+  /** FR-14: sum over `projects`' session counts. */
+  sessionCount: number;
+}
+
+export type RosterNode = RosterGroupNode | RosterProjectNode;
+
+export function isGroupNode(n: RosterNode): n is RosterGroupNode {
+  return 'groupId' in n;
+}
+
+/**
+ * FR-11/12/13/14: the two-tier, mixed-depth roster. Starts from the repo-tier
+ * pass (`groupSessionsByRepo`, unchanged) and wraps each project node whose
+ * project names a KNOWN group (FR-18: a `groupId` the registry has not yet
+ * resolved leaves the project top-level, never in an anonymous group) into
+ * that group's node.
+ *
+ * A group node is emitted only once — at the position of its first member's
+ * project node (FR-13) — and never enumerated from the registry directly
+ * (FR-12): a group with no visible session simply has no project nodes to
+ * carry it into the output.
+ */
+export function buildRoster(
+  sessions: readonly SessionMeta[],
+  projects: readonly ProjectMeta[],
+  groups: readonly ProjectGroup[],
+): RosterNode[] {
+  const projectNodes = groupSessionsByRepo(sessions, projects);
+  const groupById = new Map(groups.map((g) => [g.id, g] as const));
+  const out: RosterNode[] = [];
+  const groupNodeByKey = new Map<string, RosterGroupNode>();
+
+  for (const node of projectNodes) {
+    const project = node.projectId !== null ? projects.find((p) => p.id === node.projectId) : undefined;
+    const group = project?.groupId !== undefined ? groupById.get(project.groupId) : undefined;
+    if (!group) {
+      out.push(node);
+      continue;
+    }
+    const gkey = `group:${group.id}`;
+    let gnode = groupNodeByKey.get(gkey);
+    if (!gnode) {
+      gnode = { key: gkey, label: group.name, groupId: group.id, projects: [], sessionCount: 0 };
+      groupNodeByKey.set(gkey, gnode);
+      out.push(gnode); // first appearance wins the position (FR-13)
+    }
+    gnode.projects.push(node);
+    gnode.sessionCount += node.sessions.length;
+  }
+  return out;
+}
+
 /**
  * The rendered order, flattened. The sidebar's keyboard cursor indexes into a
  * flat list, so it has to walk the sessions in the order the GROUPED roster
  * actually paints them — not the order they arrived in.
+ *
+ * FR-17: a collapsed group's whole subtree is skipped outright; inside an
+ * EXPANDED group, a project's own collapse state (FR-16) is honored
+ * independently — the two key spaces share one flat `collapsed` set (FR-15).
  */
-export function flattenGroups(groups: readonly RosterGroup[], collapsed: ReadonlySet<string> = new Set()): SessionMeta[] {
+export function flattenGroups(nodes: readonly RosterNode[], collapsed: ReadonlySet<string> = new Set()): SessionMeta[] {
   const out: SessionMeta[] = [];
-  for (const group of groups) {
-    if (collapsed.has(group.key)) continue; // a hidden row can't take the cursor
-    out.push(...group.sessions);
+  for (const node of nodes) {
+    if (collapsed.has(node.key)) continue; // a hidden row can't take the cursor
+    if (isGroupNode(node)) {
+      for (const p of node.projects) {
+        if (collapsed.has(p.key)) continue;
+        out.push(...p.sessions);
+      }
+      continue;
+    }
+    out.push(...node.sessions);
   }
   return out;
 }

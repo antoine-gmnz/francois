@@ -41,7 +41,23 @@ export interface ProjectMeta {
    * disabled (FR-38), and it cannot back a new session (FR-23).
    */
   rootExists: boolean;
+  /** project-groups FR-6: the group this project belongs to; absent ⇒ ungrouped. */
+  groupId?: GroupId;
 }
+
+// ---------- project-groups: the entity ----------
+
+export type GroupId = string; // uuid-v4
+
+export interface ProjectGroup {
+  id: GroupId;
+  /** Trimmed, 1–MAX_GROUP_NAME_LENGTH. NOT unique (project-groups FR-4). */
+  name: string;
+  createdAt: number; // epoch ms
+}
+
+/** Trimmed group name bounds (project-groups FR-4). */
+export const MAX_GROUP_NAME_LENGTH = 80;
 
 // ---------- standards ----------
 
@@ -95,10 +111,21 @@ export interface StandardsRead {
 
 /** No payload. */
 export type ProjectListRequest = void;
-/** Ordered by lastUsedAt desc, then name asc (case-insensitive) — FR-5. */
-export type ProjectListData = ProjectMeta[];
+
 /**
- * A missing/empty/corrupt projects.json yields [] and is NOT an error (FR-3).
+ * WAS `ProjectMeta[]` — rewritten in place per project-groups §5 (no new domain,
+ * no `contract/project-groups.ts`; every caller of project_list must be updated).
+ */
+export interface ProjectRegistrySnapshot {
+  /** Ordered by lastUsedAt desc, then name asc (FR-5) — unchanged. */
+  projects: ProjectMeta[];
+  /** Ordered by createdAt asc, then name asc, case-insensitive (project-groups FR-5). */
+  groups: ProjectGroup[];
+}
+export type ProjectListData = ProjectRegistrySnapshot;
+/**
+ * A missing/empty/corrupt projects.json yields { projects: [], groups: [] } and is
+ * NOT an error (FR-3 / project-groups FR-3).
  * ok:false error codes: 'INTERNAL'.
  */
 export type ProjectListResponse = Result<ProjectListData>;
@@ -154,6 +181,46 @@ export interface ProjectRemoveRequest {
  * ok:false error codes: 'PROJECT_NOT_FOUND' | 'INTERNAL'
  */
 export type ProjectRemoveResponse = Result<null>;
+
+// ---------- francois:project:createGroup — frontend -> core ----------
+
+export interface ProjectCreateGroupRequest {
+  /** Trimmed, 1–MAX_GROUP_NAME_LENGTH. */
+  name: string;
+}
+/** ok:false codes: 'INVALID_INPUT' | 'INTERNAL' */
+export type ProjectCreateGroupResponse = Result<ProjectGroup>;
+
+// ---------- francois:project:renameGroup — frontend -> core ----------
+
+export interface ProjectRenameGroupRequest {
+  groupId: GroupId;
+  name: string;
+}
+/** ok:false codes: 'GROUP_NOT_FOUND' | 'INVALID_INPUT' | 'INTERNAL' */
+export type ProjectRenameGroupResponse = Result<ProjectGroup>;
+
+// ---------- francois:project:removeGroup — frontend -> core ----------
+
+export interface ProjectRemoveGroupRequest {
+  groupId: GroupId;
+}
+/**
+ * Deletes the group, then clears groupId on every member — best-effort, AFTER the
+ * delete commits (project-groups FR-8). Emits nothing; touches no session (FR-9).
+ * ok:false codes: 'GROUP_NOT_FOUND' | 'INTERNAL'
+ */
+export type ProjectRemoveGroupResponse = Result<null>;
+
+// ---------- francois:project:assignGroup — frontend -> core ----------
+
+export interface ProjectAssignGroupRequest {
+  projectId: ProjectId;
+  /** null CLEARS the membership (must be explicit null, not an omitted key). */
+  groupId: GroupId | null;
+}
+/** ok:false codes: 'PROJECT_NOT_FOUND' | 'GROUP_NOT_FOUND' | 'INTERNAL' */
+export type ProjectAssignGroupResponse = Result<ProjectMeta>;
 
 // ---------- francois:project:getStandards — frontend -> core ----------
 
@@ -302,6 +369,13 @@ export interface ProjectSwitchRollback {
 export interface ProjectsState {
   projects: ProjectMeta[];
   setProjects: (p: ProjectMeta[]) => void;
+  /**
+   * project-groups §6: fed by the same `project_list` call that feeds `projects` —
+   * no new fetch site. Nothing about groups is persisted on the frontend except
+   * the collapse record (project-groups FR-15).
+   */
+  groups: ProjectGroup[];
+  setGroups: (g: ProjectGroup[]) => void;
   /** null = "All projects" (FR-26); persisted to localStorage 'francois.activeProjectId'. */
   activeProjectId: ProjectId | null;
   setActiveProjectId: (id: ProjectId | null) => void;

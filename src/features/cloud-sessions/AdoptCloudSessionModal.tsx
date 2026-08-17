@@ -87,7 +87,7 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
   // has nothing to offer, and the hint below says what to do about it.
   useEffect(() => {
     void safeCall(projectList()).then((res) => {
-      if (mounted.current && res.ok) setProjects(res.data);
+      if (mounted.current && res.ok) setProjects(res.data.projects);
     });
   }, [mounted]);
 
