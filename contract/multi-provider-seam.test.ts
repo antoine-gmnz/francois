@@ -10,6 +10,7 @@ const CAPABILITIES: RuntimeCapability[] = [
   'mcp',
   'subagents',
   'skills',
+  'skillsInstall',
   'workflows',
   'interactiveCommands',
   'remoteControl',
@@ -61,12 +62,16 @@ describe('runtimeCapabilities', () => {
   it('makes nothing available on the francois runtime yet, except skills', () => {
     // multi-provider-openai FR-23..FR-27: skills is the one capability that
     // ports across runtimes (markdown instructions, injected into the
-    // system message) — every other gap in the table still holds.
+    // system message) — every other gap in the table still holds. FR-26:
+    // `skillsInstall` stays a gap even though `skills` itself opened up —
+    // enabling a plugin writes Claude Code's own control surface, which
+    // this feature never touches.
     const caps = runtimeCapabilities('francois');
     for (const capability of CAPABILITIES) {
       const expected = capability === 'skills';
       expect(caps[capability].available).toBe(expected);
     }
+    expect(caps.skillsInstall.available).toBe(false);
   });
 
   // FR-14a: the table keys on the runtime alone. `protocol` is not a key here —

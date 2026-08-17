@@ -23,6 +23,10 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
   // least one skill (FR-26); this reads the table, never hardcodes around it.
   const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
   const capability = sessionCapability(meta, 'skills');
+  // FR-26: a separate gate from `skills` itself — enabling a plugin writes
+  // Claude Code's own `~/.claude/settings.json`, which stays out of reach
+  // regardless of whether the installed set is visible/injected.
+  const installCapability = sessionCapability(meta, 'skillsInstall');
 
   const [runModal, setRunModal] = useState<{ name: string } | null>(null);
   const [installModal, setInstallModal] = useState<{ name: string; description: string; pluginId?: string } | null>(null);
@@ -43,7 +47,10 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
 
   const activate = (row: SkillInfo) => {
     if (row.installed) setRunModal({ name: row.name });
-    else setInstallModal({ name: row.name, description: row.description, pluginId: row.pluginId });
+    else if (installCapability.available)
+      setInstallModal({ name: row.name, description: row.description, pluginId: row.pluginId });
+    // else: install is gated off for this session's runtime (FR-26) — the
+    // row's `enable` affordance already reads that reason, nothing to open.
   };
 
   const { visible, selected, setSelected, filterOpen, setFilterOpen, query, setQuery, filterRef } = useSkillsKeyboard({
@@ -62,6 +69,7 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
 
       <SkillsListBody
           capability={capability}
+          installCapability={installCapability}
           filterOpen={filterOpen}
           query={query}
           filterRef={filterRef}

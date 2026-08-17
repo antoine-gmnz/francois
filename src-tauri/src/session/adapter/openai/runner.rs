@@ -38,14 +38,6 @@ use tauri::{AppHandle, Manager};
 const FIRST_TURN_NOTICE: &str =
     "Francois runs its own agent loop on this provider — tool use and formatting differ from Claude Code.";
 
-/// FR-10's exact refusal string. Duplicated from `gate.rs`'s own private
-/// `DENY_MESSAGE` because that file is frozen for this dispatch and never
-/// exposes it — both copies implement the SAME spec'd literal (FR-10 quotes
-/// it verbatim), so this is two implementations of one contract, not a
-/// abstraction split in two. A `the_tool_enum_matches_the_contract_list`-style
-/// pinned test below guards against this copy drifting from FR-10's wording.
-const PERMISSION_DENIED_MSG: &str = "Permission denied by a Francois rule.";
-
 pub(crate) struct OpenAiAdapter;
 
 impl SessionAdapter for OpenAiAdapter {
@@ -248,7 +240,7 @@ impl FrancoisTurnHandle {
             gate::GateDecision::Deny(msg) => Some(msg),
             gate::GateDecision::Ask => match self.park(app, session_id, cwd, tool, input) {
                 Some(PermissionDecision::Allow) => Some(self.execute(tool, input, cwd)),
-                Some(PermissionDecision::Deny) => Some(PERMISSION_DENIED_MSG.to_string()),
+                Some(PermissionDecision::Deny) => Some(gate::DENY_MESSAGE.to_string()),
                 None => None,
             },
         }
@@ -430,15 +422,21 @@ fn build_request_messages(skill_text: &str, messages: &[thread::ThreadMessage]) 
 
 /// The path-shaped argument of a call, using the same key names `gate.rs`'s
 /// own (private, unreachable from here) `path_arg` reads — both built on the
-/// shared `permissions::path_key`.
-fn path_arg_of<'a>(tool: FrancoisTool, input: &'a Value) -> Option<&'a str> {
+/// shared `permissions::path_key`. `Grep`/`Glob` default an omitted/empty
+/// `path` to `cwd` itself (mirrors `gate::path_arg` exactly — `wire.rs`
+/// declares `path` optional on those two, "Defaults to the session's working
+/// directory."), so `resolved_path_for` below never comes back `None` for
+/// them and `tools::execute` never falls through to its internal-error
+/// string for a call the gate already approved.
+fn path_arg_of<'a>(tool: FrancoisTool, input: &'a Value, cwd: &'a str) -> Option<&'a str> {
     let keys = crate::permissions::path_key(tool.as_str())?;
-    keys.iter().find_map(|k| {
+    let found = keys.iter().find_map(|k| {
         input
             .get(*k)
             .and_then(|v| v.as_str())
             .filter(|p| !p.is_empty())
-    })
+    });
+    found.or_else(|| matches!(tool, FrancoisTool::Grep | FrancoisTool::Glob).then_some(cwd))
 }
 
 /// FR-13: resolve a path tool's argument against `cwd`, already validated by
@@ -449,7 +447,7 @@ fn resolved_path_for(tool: FrancoisTool, input: &Value, cwd: &str) -> Option<Pat
     if tool == FrancoisTool::Bash {
         return None;
     }
-    let raw = path_arg_of(tool, input)?;
+    let raw = path_arg_of(tool, input, cwd)?;
     gate::resolve_in_cwd(Path::new(cwd), raw).ok()
 }
 
@@ -978,6 +976,35 @@ mod tests {
         std::fs::remove_dir_all(&cwd).ok();
     }
 
+    #[test]
+    fn path_arg_of_defaults_grep_and_glob_to_cwd_when_omitted() {
+        let cwd = "/repo/session-cwd";
+        for tool in [FrancoisTool::Grep, FrancoisTool::Glob] {
+            assert_eq!(
+                path_arg_of(tool, &json!({}), cwd),
+                Some(cwd),
+                "{tool} with an omitted path must default to cwd"
+            );
+        }
+        // Read still gets no default — file_path is required for it.
+        assert_eq!(path_arg_of(FrancoisTool::Read, &json!({}), cwd), None);
+    }
+
+    #[test]
+    fn resolved_path_for_grep_and_glob_with_no_path_argument_resolves_to_cwd() {
+        // Before the fix this came back `None` for both tools, and
+        // `tools::execute` fell through to its own internal-error string
+        // instead of running the call.
+        let cwd = temp_cwd("resolve-default");
+        let cwd_str = cwd.to_string_lossy().to_string();
+        for tool in [FrancoisTool::Grep, FrancoisTool::Glob] {
+            let resolved = resolved_path_for(tool, &json!({}), &cwd_str)
+                .unwrap_or_else(|| panic!("{tool} with no path argument must resolve to cwd"));
+            assert!(resolved.starts_with(std::fs::canonicalize(&cwd).unwrap()));
+        }
+        std::fs::remove_dir_all(&cwd).ok();
+    }
+
     // ---------- resolve_models (FR-18) ----------
 
     #[test]
@@ -1011,16 +1038,6 @@ mod tests {
     #[test]
     fn the_adapter_reports_the_francois_runtime() {
         assert_eq!(OpenAiAdapter.agent_runtime(), AgentRuntime::Francois);
-    }
-
-    // ---------- FR-10's literal, pinned against drift ----------
-
-    #[test]
-    fn the_deny_message_matches_fr10s_exact_wording() {
-        assert_eq!(
-            PERMISSION_DENIED_MSG,
-            "Permission denied by a Francois rule."
-        );
     }
 
     #[test]

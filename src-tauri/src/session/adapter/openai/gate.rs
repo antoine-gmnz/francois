@@ -24,8 +24,10 @@ use crate::permissions::{path_key, path_relative_to_cwd, split_pattern, Permissi
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-/// FR-10's exact tool-result string for a `deny` rule.
-const DENY_MESSAGE: &str = "Permission denied by a Francois rule.";
+/// FR-10's exact tool-result string for a `deny` rule. `pub(crate)` so
+/// `runner.rs`'s park path (the same refusal, reached via a card rather than
+/// a rule match) reuses this literal instead of keeping its own copy.
+pub(crate) const DENY_MESSAGE: &str = "Permission denied by a Francois rule.";
 
 /// The outcome of evaluating one tool call against the gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +74,7 @@ pub(crate) fn evaluate(
     // escaping `cwd` is refused before the card AND before the mode branch, so
     // a card — or bypassPermissions — can never approve a path the tool would
     // then refuse.
-    if let Some(raw) = path_arg(tool, input) {
+    if let Some(raw) = path_arg(tool, input, cwd) {
         if let Err(msg) = resolve_in_cwd(Path::new(cwd), raw) {
             return GateDecision::Deny(msg);
         }
@@ -169,7 +171,7 @@ fn rule_matches(pattern: &str, tool: FrancoisTool, input: &Value, cwd: &str) -> 
         | FrancoisTool::Write
         | FrancoisTool::Edit
         | FrancoisTool::Grep
-        | FrancoisTool::Glob => match path_arg(tool, input) {
+        | FrancoisTool::Glob => match path_arg(tool, input, cwd) {
             Some(raw) => path_relative_to_cwd(raw, cwd) == arg,
             None => false,
         },
@@ -178,21 +180,35 @@ fn rule_matches(pattern: &str, tool: FrancoisTool, input: &Value, cwd: &str) -> 
 
 /// The path-shaped argument of a call, using the SAME key names
 /// `permissions/patterns.rs` keys on (`file_path`, `path`) — so the gate and the
-/// pattern builder always read the same request shape.
-fn path_arg<'a>(tool: FrancoisTool, input: &'a Value) -> Option<&'a str> {
+/// pattern builder always read the same request shape. `Grep`/`Glob` declare
+/// `path` optional ("Defaults to the session's working directory.",
+/// `wire.rs`); an absent or empty key defaults to `cwd` itself here, BEFORE
+/// `resolve_in_cwd` ever runs, so containment always has something to resolve
+/// and `tools::execute` never falls through to its own internal-error string
+/// for these two tools. `Read`/`Write`/`Edit` declare `file_path` required, so
+/// they get no default — an absent key stays `None` for them.
+fn path_arg<'a>(tool: FrancoisTool, input: &'a Value, cwd: &'a str) -> Option<&'a str> {
     let keys = path_key(tool.as_str())?;
-    keys.iter().find_map(|k| {
+    let found = keys.iter().find_map(|k| {
         input
             .get(*k)
             .and_then(|v| v.as_str())
             .filter(|p| !p.is_empty())
-    })
+    });
+    found.or_else(|| matches!(tool, FrancoisTool::Grep | FrancoisTool::Glob).then_some(cwd))
 }
 
 /// FR-13: resolve `raw` against `cwd` and reject anything escaping it after
-/// canonicalization, symlinks included. Handles the write-a-new-file case
-/// (parent exists, leaf does not) by canonicalizing the parent and rejoining
-/// the leaf — a `Write` to a new file inside `cwd` must be allowed.
+/// canonicalization, symlinks included. `raw`'s own `.`/`..` segments are
+/// collapsed lexically (`lexically_normalize`) BEFORE the existing-ancestor
+/// search below, so a not-yet-created tail can never itself smuggle a `..`
+/// escape past an existing prefix that happens to still be inside `cwd`.
+///
+/// Handles a write into a not-yet-created directory, any number of levels
+/// deep (`newdir/deeper/new.ts`, neither `newdir` nor `deeper` existing yet)
+/// by walking `joined`'s ancestors up to the first that exists on disk,
+/// canonicalizing THAT (so a symlink anywhere in the existing prefix still
+/// resolves and is still checked), then rejoining the still-missing tail.
 pub(crate) fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(raw);
     let joined = if candidate.is_absolute() {
@@ -200,6 +216,7 @@ pub(crate) fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
     } else {
         cwd.join(candidate)
     };
+    let joined = lexically_normalize(&joined);
 
     let canonical_cwd =
         std::fs::canonicalize(cwd).map_err(|e| format!("session cwd is not accessible: {e}"))?;
@@ -207,15 +224,16 @@ pub(crate) fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
     let canonical_target = match std::fs::canonicalize(&joined) {
         Ok(p) => p,
         Err(_) => {
-            let parent = joined
-                .parent()
+            let existing = joined
+                .ancestors()
+                .find(|p| p.exists())
                 .ok_or_else(|| format!("{raw} is outside the session directory."))?;
-            let leaf = joined
-                .file_name()
-                .ok_or_else(|| format!("{raw} is outside the session directory."))?;
-            let canonical_parent = std::fs::canonicalize(parent)
+            let canonical_existing = std::fs::canonicalize(existing)
                 .map_err(|_| format!("{raw} is outside the session directory."))?;
-            canonical_parent.join(leaf)
+            let remainder = joined
+                .strip_prefix(existing)
+                .map_err(|_| format!("{raw} is outside the session directory."))?;
+            canonical_existing.join(remainder)
         }
     };
 
@@ -224,6 +242,23 @@ pub(crate) fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
     } else {
         Err(format!("{raw} is outside the session directory."))
     }
+}
+
+/// Collapse `.`/`..` path components purely syntactically (no filesystem
+/// access) — see `resolve_in_cwd`'s doc for why this must run before the
+/// existing-ancestor search.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -330,6 +365,74 @@ mod tests {
             let decision = evaluate(tool, &input, &cwd_str, "default", &[]);
             assert_eq!(decision, GateDecision::Ask, "{tool} with no rules must ask");
         }
+        std::fs::remove_dir_all(&cwd).ok();
+    }
+
+    // ---------- FR-13/wire.rs: an omitted/empty `path` defaults to cwd ----------
+
+    #[test]
+    fn grep_and_glob_default_to_cwd_when_path_is_omitted_or_empty() {
+        let cwd = "/repo/session-cwd";
+        for tool in [FrancoisTool::Grep, FrancoisTool::Glob] {
+            assert_eq!(
+                path_arg(tool, &json!({}), cwd),
+                Some(cwd),
+                "{tool} with an omitted path must default to cwd"
+            );
+            assert_eq!(
+                path_arg(tool, &json!({ "path": "" }), cwd),
+                Some(cwd),
+                "{tool} with an empty path must default to cwd"
+            );
+        }
+    }
+
+    #[test]
+    fn read_write_and_edit_do_not_default_when_path_is_omitted() {
+        // file_path is REQUIRED for these three (wire.rs's own schema) — an
+        // absent key must stay None, not silently default to cwd.
+        let cwd = "/repo/session-cwd";
+        for tool in [FrancoisTool::Read, FrancoisTool::Write, FrancoisTool::Edit] {
+            assert_eq!(
+                path_arg(tool, &json!({}), cwd),
+                None,
+                "{tool} must not default an omitted file_path"
+            );
+        }
+    }
+
+    #[test]
+    fn grep_with_no_path_still_runs_containment_using_cwd_itself() {
+        // Before the fix, an omitted `path` made `path_arg` return `None`,
+        // which skipped `resolve_in_cwd` entirely. Proven here by pointing
+        // `cwd` at a directory that does not exist: the gate must now still
+        // try to resolve it (against the defaulted cwd) and refuse.
+        let missing_cwd =
+            std::env::temp_dir().join("francois-oai-gate-missing-cwd-does-not-exist");
+        std::fs::remove_dir_all(&missing_cwd).ok();
+        let cwd_str = missing_cwd.to_string_lossy().to_string();
+        let decision = evaluate(
+            FrancoisTool::Grep,
+            &json!({ "pattern": "x" }),
+            &cwd_str,
+            "default",
+            &[],
+        );
+        match decision {
+            GateDecision::Deny(msg) => assert!(
+                msg.contains("not accessible"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected containment to run for an omitted path, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn glob_with_no_path_resolves_and_asks_when_cwd_exists() {
+        let cwd = temp_cwd("glob-no-path");
+        let cwd_str = cwd.to_string_lossy().to_string();
+        let decision = evaluate(FrancoisTool::Glob, &json!({}), &cwd_str, "default", &[]);
+        assert_eq!(decision, GateDecision::Ask);
         std::fs::remove_dir_all(&cwd).ok();
     }
 
@@ -592,6 +695,83 @@ mod tests {
         let resolved = resolve_in_cwd(&cwd, &new_path).expect("new file inside cwd must resolve");
         assert!(resolved.starts_with(std::fs::canonicalize(&cwd).unwrap()));
         std::fs::remove_dir_all(&cwd).ok();
+    }
+
+    #[test]
+    fn a_write_into_a_not_yet_created_nested_directory_inside_cwd_is_allowed() {
+        // Neither `newdir` nor `deeper` exists yet — `tools::write` creates
+        // both via `create_dir_all`, so the gate must not reject this.
+        let cwd = temp_cwd("nested-newdir");
+        let nested = cwd
+            .join("newdir")
+            .join("deeper")
+            .join("brand-new.ts")
+            .to_string_lossy()
+            .to_string();
+        let resolved = resolve_in_cwd(&cwd, &nested)
+            .expect("a new file under a not-yet-created nested directory must resolve inside cwd");
+        assert!(resolved.starts_with(std::fs::canonicalize(&cwd).unwrap()));
+        std::fs::remove_dir_all(&cwd).ok();
+    }
+
+    #[test]
+    fn evaluate_allows_a_write_into_a_nested_not_yet_created_directory() {
+        let cwd = temp_cwd("nested-newdir-evaluate");
+        let cwd_str = cwd.to_string_lossy().to_string();
+        let file_path = cwd
+            .join("newdir")
+            .join("brand-new.ts")
+            .to_string_lossy()
+            .to_string();
+        let decision = evaluate(
+            FrancoisTool::Write,
+            &json!({ "file_path": file_path }),
+            &cwd_str,
+            "default",
+            &[],
+        );
+        // No rule matches -> Ask (not Deny) proves containment did not reject it.
+        assert_eq!(decision, GateDecision::Ask);
+        std::fs::remove_dir_all(&cwd).ok();
+    }
+
+    #[test]
+    fn a_dot_dot_escape_through_a_not_yet_created_nested_directory_is_still_denied() {
+        let cwd = temp_cwd("nested-dotdot");
+        let result = resolve_in_cwd(&cwd, "newdir/../../secret.txt");
+        assert!(
+            result.is_err(),
+            "escaping via .. through a nested new path must be denied"
+        );
+        std::fs::remove_dir_all(&cwd).ok();
+    }
+
+    #[test]
+    fn a_nested_not_yet_created_path_reached_through_a_symlinked_ancestor_is_still_denied() {
+        let cwd = temp_cwd("nested-symlink-cwd");
+        let outside = temp_cwd("nested-symlink-outside");
+        let link = cwd.join("escape-link");
+        if !link_dir(&outside, &link) {
+            // Host refuses unprivileged links — nothing to assert (same
+            // accommodation as `a_symlinked_directory_escape_is_refused`).
+            std::fs::remove_dir_all(&cwd).ok();
+            std::fs::remove_dir_all(&outside).ok();
+            return;
+        }
+        // `newsub` does not exist yet, on either side of the link.
+        let raw = cwd
+            .join("escape-link")
+            .join("newsub")
+            .join("new.ts")
+            .to_string_lossy()
+            .to_string();
+        let result = resolve_in_cwd(&cwd, &raw);
+        assert!(
+            result.is_err(),
+            "a nested new path reached through a symlinked ancestor must still be denied"
+        );
+        std::fs::remove_dir_all(&cwd).ok();
+        std::fs::remove_dir_all(&outside).ok();
     }
 
     // ---------- FR-11 (matcher correctness beyond the degenerate invariant case) ----------

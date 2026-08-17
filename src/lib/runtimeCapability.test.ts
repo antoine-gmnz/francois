@@ -44,6 +44,17 @@ describe('sessionCapability (FR-20)', () => {
     expect(sessionCapability(francois, 'mcp').available).toBe(false);
   });
 
+  it('gates skillsInstall separately from skills (FR-26)', () => {
+    const francois = meta({ agentRuntime: 'francois', protocol: 'openai' });
+    expect(sessionCapability(francois, 'skills')).toEqual({ available: true });
+    expect(sessionCapability(francois, 'skillsInstall')).toEqual({
+      available: false,
+      reason: "Installing skills isn't available on this provider yet.",
+    });
+    const claude = meta({ agentRuntime: 'claude-code' });
+    expect(sessionCapability(claude, 'skillsInstall')).toEqual({ available: true });
+  });
+
   it('reads available: true with no session to check — nothing to gate yet', () => {
     expect(sessionCapability(null, 'mcp')).toEqual({ available: true });
     expect(sessionCapability(undefined, 'workflows')).toEqual({ available: true });

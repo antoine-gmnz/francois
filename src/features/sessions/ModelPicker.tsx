@@ -20,7 +20,7 @@ export default function ModelPicker({
    * list — the selected account's own label (design brief §5: text only, no
    * chip, no accent, no icon). Empty renders no heading.
    */
-  providerHeading?: string;
+  providerHeading: string;
 }) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -71,7 +71,7 @@ export default function ModelPicker({
           className="model-picker__panel model-picker__popover"
           style={{ top: rect.top, left: rect.left, width: rect.width }}
         >
-          {providerHeading && <div className="model-picker__provider-heading">{providerHeading}</div>}
+          <div className="model-picker__provider-heading">{providerHeading}</div>
           {families.map(({ family, items }) => {
             const active = hovered === family;
             const familySelected = items.some((m) => m.id === modelId);

@@ -21,6 +21,7 @@ export type RuntimeCapability =
   | 'mcp'
   | 'subagents'
   | 'skills'
+  | 'skillsInstall'
   | 'workflows'
   | 'interactiveCommands'
   | 'remoteControl'
@@ -41,6 +42,7 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     mcp: { available: true },
     subagents: { available: true },
     skills: { available: true },
+    skillsInstall: { available: true },
     workflows: { available: true },
     interactiveCommands: { available: true },
     remoteControl: { available: true },
@@ -63,6 +65,14 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     // OpenAiAdapter's skills.rs for the injection and specs/multi-provider-
     // openai.md §4 "Core — skills" for why this is the sole exception.
     skills: { available: true },
+    // FR-26: install is a DIFFERENT capability from skills, and it does not
+    // open up with it. Enabling a plugin writes Claude Code's own
+    // `~/.claude/settings.json` — that runner's control surface, not ours —
+    // so this stays a gap even once the model can see and follow skills.
+    skillsInstall: {
+      available: false,
+      reason: "Installing skills isn't available on this provider yet.",
+    },
     workflows: { available: false, reason: "Workflows aren't available on this provider yet." },
     interactiveCommands: {
       available: false,
