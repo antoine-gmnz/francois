@@ -8,7 +8,8 @@ import {
   newSessionProfileOptions,
   profileArgDeniedDetail,
   profileChipTitle,
-  profileFormOverrides,
+  profileCountLabel,
+  profileRowSubtitle,
   projectDefaultProfileResolution,
   removeProfileConfirmText,
   resolveProfile,
@@ -53,41 +54,72 @@ describe('resolveProjectDefaultProfileId (FR-21)', () => {
   });
 });
 
-describe('profileFormOverrides (FR-15/FR-18)', () => {
-  it('is empty for no profile', () => {
-    expect(profileFormOverrides(null)).toEqual({});
+describe('profileCountLabel', () => {
+  it('singularizes exactly one', () => {
+    expect(profileCountLabel(1)).toBe('1 profile');
   });
 
-  it('carries only the fields the profile declares', () => {
-    const p = profile({ modelId: 'claude-sonnet-5', permissionMode: 'plan' });
-    expect(profileFormOverrides(p)).toEqual({ modelId: 'claude-sonnet-5', permissionMode: 'plan' });
+  it('pluralizes none and many', () => {
+    expect(profileCountLabel(0)).toBe('0 profiles');
+    expect(profileCountLabel(4)).toBe('4 profiles');
+  });
+});
+
+describe('profileRowSubtitle', () => {
+  it('previews the system prompt, collapsing newlines to single spaces', () => {
+    const p = profile({ systemPrompt: 'Read your role from\n\n  ROLE.md   now' });
+    expect(profileRowSubtitle(p)).toBe('Read your role from ROLE.md now');
   });
 
-  it('carries effort too when declared', () => {
-    const p = profile({ effort: 'high' });
-    expect(profileFormOverrides(p)).toEqual({ effort: 'high' });
+  it('elides a prompt past the preview cap', () => {
+    const out = profileRowSubtitle(profile({ systemPrompt: 'a'.repeat(200) }));
+    expect(out).toBe(`${'a'.repeat(80)}\u2026`);
+  });
+
+  // The cut can land right after a space; the ellipsis must not float off the
+  // last word ("… …").
+  it('drops a space the cut would have left dangling before the ellipsis', () => {
+    const p = profile({ systemPrompt: `${'a'.repeat(79)} ${'b'.repeat(40)}` });
+    expect(profileRowSubtitle(p)).toBe(`${'a'.repeat(79)}\u2026`);
+  });
+
+  it('keeps a prompt exactly at the cap intact', () => {
+    const p = profile({ systemPrompt: 'a'.repeat(80) });
+    expect(profileRowSubtitle(p)).toBe('a'.repeat(80));
+  });
+
+  it('falls back to the raw extra args when there is no prompt', () => {
+    expect(profileRowSubtitle(profile({ extraArgsRaw: '--add-dir /tmp' }))).toBe('--add-dir /tmp');
+  });
+
+  it('prefers the prompt over the extra args when both are set', () => {
+    const p = profile({ systemPrompt: 'be terse', extraArgsRaw: '--add-dir /tmp' });
+    expect(profileRowSubtitle(p)).toBe('be terse');
+  });
+
+  it('em-dashes a profile carrying neither, and treats whitespace-only as neither', () => {
+    expect(profileRowSubtitle(profile())).toBe('—');
+    expect(profileRowSubtitle(profile({ systemPrompt: '   ', extraArgsRaw: '  ' }))).toBe('—');
   });
 });
 
 describe('projectDefaultProfileResolution (FR-21 vs palette FR-24 story 4)', () => {
-  it('resolves the project default profile and its overrides when nothing is pending', () => {
-    const p = profile({ id: 'p1', modelId: 'claude-sonnet-5' });
-    expect(projectDefaultProfileResolution([p], 'p1', null)).toEqual({
-      profileId: 'p1',
-      overrides: { modelId: 'claude-sonnet-5' },
-    });
+  it('resolves the project default profile when nothing is pending', () => {
+    expect(projectDefaultProfileResolution([profile({ id: 'p1' })], 'p1', null)).toEqual({ profileId: 'p1' });
   });
 
   it('falls back to no profile ("") when the project default no longer resolves', () => {
-    expect(projectDefaultProfileResolution([profile({ id: 'p1' })], 'gone', null)).toEqual({
-      profileId: '',
-      overrides: {},
-    });
+    expect(projectDefaultProfileResolution([profile({ id: 'p1' })], 'gone', null)).toEqual({ profileId: '' });
   });
 
   it('is null (leave profileId alone) when a palette pick is pending, even with a project default', () => {
-    const p = profile({ id: 'p1', modelId: 'claude-sonnet-5' });
-    expect(projectDefaultProfileResolution([p], 'p1', 'p2')).toBeNull();
+    expect(projectDefaultProfileResolution([profile({ id: 'p1' })], 'p1', 'p2')).toBeNull();
+  });
+
+  // A profile carries no model/effort/permission mode, so resolving one can
+  // never override what the PROJECT's own session defaults set.
+  it('carries nothing but the profile id', () => {
+    expect(Object.keys(projectDefaultProfileResolution([profile({ id: 'p1' })], 'p1', null)!)).toEqual(['profileId']);
   });
 });
 

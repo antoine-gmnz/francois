@@ -9,6 +9,23 @@ design_files: ["https://claude.ai/design/p/a4b15728-147c-4932-b83c-f60a5fc60db7?
 
 # Multi-account (several Anthropic accounts)
 
+## Amendments
+
+Applied to this spec in place, after it shipped.
+
+### A1 — 2026-08-17 · removing an account clears it from every project that named it
+
+`account_remove` now also clears `defaults.accountId` on every project pointing at the removed
+account (`project::clear_default_account`), alongside the FR-9 session reassignment it already drove,
+so `projects.json` stops accumulating references to accounts that are gone. Best-effort and after the
+row is gone: a failed project write leaves a stale id, which FR-20's fallback to the `isDefault`
+account already absorbs. That fallback therefore stays, as the backstop for that case and for
+registries written before the sweep existed. Shares its implementation with the identical
+session-profiles sweep, including its boot-time reconcile and the empty-registry guard (see
+`specs/session-profiles.md` §A2). For accounts that guard requires at least one REGISTERED account:
+`known_ids` always contains the built-in `default` id, so its presence alone proves nothing about
+whether accounts.json was read.
+
 ## 1. Summary
 
 Francois can register several Anthropic accounts and run each session under the one the user picks.
@@ -132,8 +149,9 @@ after `MODEL`.
 - **FR-19** `Session` stores `account_id` verbatim at creation, persists it, and exposes it as
   `SessionMeta.accountId`. It is never re-derived and never changed afterwards (except FR-9/FR-10).
 - **FR-20** `ProjectDefaults.accountId` pre-fills the new-session modal, snapshot-style like every
-  other default (projects FR-24). A project default naming a removed account falls back to the
-  `isDefault` account in the modal.
+  other default (projects FR-24). Removing an account clears this field wherever it named that
+  account (amendment A1); the modal's fallback to the `isDefault` account remains for a clear that
+  could not be persisted, and for registries written before the sweep existed.
 - **FR-21** **Every** spawn made on behalf of a session sets `CLAUDE_CONFIG_DIR` to that session's
   account `configDir` when it is non-null, and sets nothing when it is null (`default`): the turn
   spawn (`session/turn.rs`), the `/usage`-`/cost` side-probe (`session/usage_probe.rs`), the
@@ -327,6 +345,7 @@ compact badge shown only for non-default accounts.
 - [ ] A session created on account B runs its turns, its `/usage` probe, its remote-control PTY and its SHELL tab under B's config dir (FR-21)
 - [ ] A `wsl`-runtime session on account B reaches B's config dir inside the distro via `WSLENV` (FR-24)
 - [ ] A project default pre-fills the account in the new-session modal and is snapshotted at creation (FR-20)
+- [x] Removing an account clears `defaults.accountId` on every project that named it, leaving each project's other defaults intact (amendment A1)
 - [ ] Removing an account deletes its directory and moves its sessions to `Default`, with the confirm dialog naming them (FR-8, FR-9, FR-35)
 - [ ] Deleting an account's config dir behind Francois' back makes its next turn fail `ACCOUNT_NOT_AUTHENTICATED`, and `Re-login` restores it (FR-17, FR-22)
 - [ ] The usage bar shows the selected session's account's meters, and the Accounts modal shows each account's own (FR-27, FR-30)

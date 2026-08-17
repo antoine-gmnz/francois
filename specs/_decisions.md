@@ -57,6 +57,8 @@
 - 2026-08-17 · surfaces · UI-authored registries persist as one JSON in the APP DATA DIR (projects/accounts/profiles); `~/.francois/` is for artifacts read FROM disk only — because a hand-editable file the app trusts re-opens the impersonation surface the extension-install consent gate was written to close · session-profiles
 - 2026-08-17 · ui · Acid marks the ONE focused/singular surface; the same state on a repeatable surface (list row, fleet card) renders neutral + a marker — because one-acid-per-view and "always show why this differs" only reconcile by splitting the treatment by surface cardinality · session-profiles
 - 2026-08-17 · security · A validation the core owns is re-run at every entry point that accepts the same value from the frontend, never trusted once — because the frontend is not the authority on the core's own parser/stream contract · session-profiles
+- 2026-08-17 · ui · When two registries can set the same value, exactly one owns it — a profile carries no model/effort/permission mode because the project it is paired with already does — because two owners for one value make precedence invisible at the point of use · session-profiles
+- 2026-08-17 · data · Deleting a row sweeps every cross-registry reference to it (project defaults naming a profile/account), best-effort AFTER the delete commits — because a resolve-time fallback hides dangling refs but lets them accumulate, and failing the delete to protect a harmless stale id refuses what the user asked for · session-profiles
 - 2026-08-17 · security · Drop empty and non-absolute entries from any PATH override on a child spawned in a repo-controlled cwd — because a bare argv0 would otherwise resolve inside a hostile clone · ext-path-resolution
 
 ## Superseded

@@ -1,8 +1,10 @@
 // profiles/mod.rs — the `profiles` domain (specs/session-profiles.md).
 //
-// A profile bundles a system prompt, model, effort, permission mode and raw
-// extra CLI args under a name — a reusable identity a session can be started
-// from. App-scoped and shared across every account (FR-2): profiles.json in
+// A profile bundles a system prompt and raw extra CLI args under a name — a
+// reusable identity a session can be started from. It deliberately carries NO
+// model / effort / permission mode: a profile is always paired with a project,
+// and the project's own session defaults own those three.
+// App-scoped and shared across every account (FR-2): profiles.json in
 // the app data dir, mirrored in memory, following the exact registry pattern
 // `project`/`account` use — Francois is its only writer, read-merge-write
 // discipline, memory-authoritative after the one load at startup.
@@ -52,16 +54,6 @@ pub struct SessionProfile {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) system_prompt: Option<String>,
-    #[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
-    pub(crate) model_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) effort: Option<String>,
-    #[serde(
-        rename = "permissionMode",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub(crate) permission_mode: Option<String>,
     /// Verbatim as typed, for round-tripping the editor (FR-8).
     #[serde(
         rename = "extraArgsRaw",
