@@ -8,7 +8,7 @@ depends_on: [multi-provider-seam, multi-provider-endpoint, permission-guardrails
 loop_pass: 2
 loop_phase: review
 reviewed_base: 9d471154a835f85ac1987132268dbe9b779da95e
-reviewed_digest: c213f10c6cf3f94b
+reviewed_digest: 8a2c160dcd4047ca
 design_files: []
 ---
 

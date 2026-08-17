@@ -175,7 +175,7 @@ planned — four reviewers at once (both features × both surfaces), one preflig
     `validate_model_ids_on_add`, `validate_model_ids_on_update` in `endpoint.rs`, a test each.
     Behaviour unchanged (same codes, messages, ordering) — **§9 is now verified by `cargo test`**.
 - [x] `status: in-review` → `shipped` — flipped with Phase F on 2026-08-17, along with its freshness
-      anchor (`reviewed_base 9d47115`, digest `c213f10c6cf3f94b`). All three specs in the arc carry
+      anchor (`reviewed_base 9d47115`, digest `8a2c160dcd4047ca`). All three specs in the arc carry
       the **same** anchor on purpose: they ship as one PR, so the digest that matters is the one
       covering the final tree, not each feature's own review-time snapshot (the seam's earlier
       `f94d48b5b2e3548a` was stale the moment Phase E landed a line of code).
@@ -359,6 +359,19 @@ a Claude Code session's behaviour moved.
       a covered *pure* half but no covered whole; ticking them on unit coverage that doesn't reach
       would be the weakened-test move FR-19 exists to forbid. The spec says so inline.
 - [x] All three specs flipped to `status: shipped` with a shared freshness anchor (see Phase C).
+- [x] **All three deferred LOWs closed too** — the backlog under `## deferred:multi-provider-openai`
+      is empty of open items. Two by code: `runner.rs` split into a sibling `blocks.rs` (1033 → 825 /
+      298, the nine helpers `pub(super)` because siblings cannot reach each other's privates, call
+      sites qualified `super::blocks::` to dodge an E0659 against the unrelated pre-existing
+      `session::blocks`), and `skills.rs`'s FR-27 test rebuilt over `build_skill_block`'s real output
+      — filter commented out ⇒ red, restored ⇒ green, which is the only proof that defect accepted.
+      One by **amending the design brief instead of the code**: middle-truncating at the *rendered*
+      two-line boundary needs the pane's live pixel width, so it is DOM measurement this project has
+      no renderer to test, and the `middleTruncate` character-count route is correct at exactly one
+      width. The brief was wrong, not `CapabilityNotice`.
+- [x] **`cargo fmt` applied.** `gate.rs` and `models.rs` had drifted; both were rustfmt-clean at the
+      merge base, so it arrived with this branch. `ci.yml` runs build + tests and **never checks
+      formatting**, so nothing downstream would have caught it.
 - [ ] `/cohorte-ship` — one PR, one release. **A plain push**: `origin/feat/multi-provider` is at
       `fe62665`, an ancestor of `HEAD`, so Phase A's `--force-with-lease` note is stale (corrected
       in place there). The branch is **16 commits behind `origin/main`** — fine for a PR, GitHub
@@ -367,7 +380,7 @@ a Claude Code session's behaviour moved.
       branch **committed**, not with new files still untracked: `git diff` does not see an untracked
       file, so the first stamp this phase wrote (`613128971e42…`) silently omitted
       `useModelCatalog.test.ts` and `useSessionMeta.ts` and would have failed `/cohorte-ship`'s own
-      check. The stamped value is `c213f10c6cf3f94b`, and it is a fixed point — re-stamping the
+      check. The stamped value is `8a2c160dcd4047ca`, and it is a fixed point — re-stamping the
       specs cannot move it, because `specs/` is excluded from the digest by construction.
 - [ ] Delete the `backup/pre-phase-a` tag once the PR is merged — it is Phase A's rollback handle and
       has no purpose after that.
