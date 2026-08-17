@@ -220,3 +220,10 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, qu
 - [ ] LOW · src/features/profiles/profiles.ts:96-99 · quality · exported `ProfileOptionSource` is dead code, duplicating the actually-used identical interface at `src/features/projects/projects.ts:317-320` — delete it, or have `projects.ts` import it · deferred:session-profiles
 - [ ] MEDIUM · src-tauri/src/session/persistence.rs:653-830 · quality · No unit test round-trips `systemPrompt`/`extraArgs`/`profile` through `persist`→`parse_session_record` (FR-19), only implicit coverage via unrelated pre-feature-record tests — add a test building a record with these fields set (and one with them omitted) asserting round-trip/default behavior, mirroring the worktree round-trip test · deferred:session-profiles
 - [ ] LOW · src/features/profiles/profiles.ts:75 · quality · `flagAdvisoryTokens` classifies via `t.startsWith('-')`, misreading a plain value beginning with `-` (e.g. a negative-number arg) as a flag needing the FR-10 advisory — track advisory tokens by index-following-a-flag instead of value shape · deferred:session-profiles
+
+## deferred:ext-path-resolution
+
+Logged per spec §2 non-goal (explicit — not a review finding). Marion's unresolved panel caveat: if
+filtering relative PATH entries is right for extension spawns, it is right everywhere.
+
+- [ ] MEDIUM · src-tauri/src/process_util.rs (`login_shell_path_env`) · security · the eight `claude` spawn sites take the login shell's PATH unfiltered, so an empty or relative entry (`.`, `node_modules/.bin`, the field a `PATH=$PATH:` leaves) is searched — same exposure `ext-path-resolution` FR-5 closed on the extensions side, deliberately not generalized inside that patch because it would change eight working call sites. → **Fix:** move the empty/non-absolute filter into `login_shell_path_env` itself, drop the extension-side copy, and re-run the `claude`-spawn battery · deferred:ext-path-resolution

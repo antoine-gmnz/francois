@@ -1,28 +1,32 @@
-// projects — ProjectsModal's REMOVE row (FR-36): a confirm-in-place control,
-// no separate dialog. Split out of ProjectsModal's `{selected && (...)}`
-// block per REFACTOR.md §6c.
+// The confirm-in-place Remove control: a quiet right-aligned "Remove" that
+// expands into its own confirmation (message + cancel + remove) rather than
+// opening a dialog. Destructive, so it never commits on the first click.
+//
+// Promoted here from src/features/projects/ once ProfilesModal needed the same
+// control. The only thing that varies between callers is the confirmation
+// sentence, which each feature owns as copy (`removeConfirmText` /
+// `removeProfileConfirmText`) and passes in.
 
 import { Action } from './Action';
-import { removeConfirmText } from './projects';
 
 export function RemoveControl({
-  name,
+  confirmText,
   confirming,
   onConfirm,
   onCancel,
   onRemove,
 }: {
-  name: string;
+  confirmText: string;
   confirming: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   onRemove: () => void;
 }) {
   return (
-    <div className="pj-remove-row">
+    <div className="remove-row">
       {confirming ? (
         <>
-          <span className="pj-remove-confirm">{removeConfirmText(name)}</span>
+          <span className="remove-confirm">{confirmText}</span>
           <Action color="var(--text-dim)" hoverColor="var(--text)" onClick={onCancel}>
             cancel
           </Action>

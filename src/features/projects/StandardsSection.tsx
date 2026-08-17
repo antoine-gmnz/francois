@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { MAX_RULES } from '../../../contract/projects';
-import { Action } from './Action';
+import { Action } from '../../ui/Action';
 import { InlineError } from './InlineError';
 import { STANDARDS_FOOTER_NOTE, addRule, dropRule, moveRule, replaceRule, standardsFooterPath } from './projects';
 
