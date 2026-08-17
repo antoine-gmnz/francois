@@ -8,7 +8,7 @@ depends_on: [session-engine, multi-account, durable-sessions, permission-guardra
 loop_pass: 4
 loop_phase: review
 reviewed_base: 9d471154a835f85ac1987132268dbe9b779da95e
-reviewed_digest: 613128971e423573
+reviewed_digest: c213f10c6cf3f94b
 ---
 
 # Session adapter seam

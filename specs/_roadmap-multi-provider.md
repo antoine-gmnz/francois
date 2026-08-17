@@ -94,6 +94,10 @@ existing in history too.
 **Still to do before the branch is pushable:** `origin/feat/multi-provider` still points at the old
 `14895a6`, so landing this needs a `git push --force-with-lease`. Not done here.
 
+> *Superseded 2026-08-17 (Phase F).* The force push already happened at some point between Phase B
+> and Phase E — `origin/feat/multi-provider` sits at `fe62665`, which **is an ancestor of `HEAD`**.
+> Phase F's push is an ordinary fast-forward; no `--force-with-lease`, no lease to lose.
+
 ## Phase B — the axis split · ~half a day — **DONE 2026-08-15**
 
 **Closes:** the seam's 2026-08-14 HIGH (and, unplanned, its deferred round-2 LOW — see below).
@@ -171,7 +175,7 @@ planned — four reviewers at once (both features × both surfaces), one preflig
     `validate_model_ids_on_add`, `validate_model_ids_on_update` in `endpoint.rs`, a test each.
     Behaviour unchanged (same codes, messages, ordering) — **§9 is now verified by `cargo test`**.
 - [x] `status: in-review` → `shipped` — flipped with Phase F on 2026-08-17, along with its freshness
-      anchor (`reviewed_base 9d47115`, digest `613128971e423573`). All three specs in the arc carry
+      anchor (`reviewed_base 9d47115`, digest `c213f10c6cf3f94b`). All three specs in the arc carry
       the **same** anchor on purpose: they ship as one PR, so the digest that matters is the one
       covering the final tree, not each feature's own review-time snapshot (the seam's earlier
       `f94d48b5b2e3548a` was stale the moment Phase E landed a line of code).
@@ -355,8 +359,16 @@ a Claude Code session's behaviour moved.
       a covered *pure* half but no covered whole; ticking them on unit coverage that doesn't reach
       would be the weakened-test move FR-19 exists to forbid. The spec says so inline.
 - [x] All three specs flipped to `status: shipped` with a shared freshness anchor (see Phase C).
-- [ ] `/cohorte-ship` — one PR, one release. Needs `git push --force-with-lease`:
-      `origin/feat/multi-provider` still points at the pre-Phase-A `14895a6` (Phase A §"Still to do").
+- [ ] `/cohorte-ship` — one PR, one release. **A plain push**: `origin/feat/multi-provider` is at
+      `fe62665`, an ancestor of `HEAD`, so Phase A's `--force-with-lease` note is stale (corrected
+      in place there). The branch is **16 commits behind `origin/main`** — fine for a PR, GitHub
+      merges it, but worth a rebase if the merge is not imminent.
+- [ ] **Freshness anchor caveat, learned the hard way here.** The digest must be computed with the
+      branch **committed**, not with new files still untracked: `git diff` does not see an untracked
+      file, so the first stamp this phase wrote (`613128971e42…`) silently omitted
+      `useModelCatalog.test.ts` and `useSessionMeta.ts` and would have failed `/cohorte-ship`'s own
+      check. The stamped value is `c213f10c6cf3f94b`, and it is a fixed point — re-stamping the
+      specs cannot move it, because `specs/` is excluded from the digest by construction.
 - [ ] Delete the `backup/pre-phase-a` tag once the PR is merged — it is Phase A's rollback handle and
       has no purpose after that.
 
