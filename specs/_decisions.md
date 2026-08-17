@@ -69,6 +69,9 @@
 - 2026-08-14 · ui · A capability that is merely not built yet says "yet"; only a genuine vendor service states what it is — because "X is a Claude Code feature" writes a v1 gap into the architecture and the next agent reads it as settled · multi-provider-seam
 - 2026-08-14 · api · Skills port across runtimes (name+description injected into the system prompt); MCP, subagents and workflows do not until they have a client/dispatcher — because a skill's whole mechanism is instructions, and the discovery already exists · multi-provider-openai
 - 2026-08-16 · stack · The Francois loop streams SSE over the crate's existing blocking `ureq` on a spawned thread — no `tokio`, no `reqwest`, no async runtime — because the core has zero async today and `begin_turn` already hands work to a reader thread, so an async runtime would be a larger change than the feature it serves · multi-provider-openai
+- 2026-08-17 · ui · When two registries can set the same value, exactly one owns it — a profile carries no model/effort/permission mode because the project it is paired with already does — because two owners for one value make precedence invisible at the point of use · session-profiles
+- 2026-08-17 · data · Deleting a row sweeps every cross-registry reference to it (project defaults naming a profile/account), best-effort AFTER the delete commits — because a resolve-time fallback hides dangling refs but lets them accumulate, and failing the delete to protect a harmless stale id refuses what the user asked for · session-profiles
+- 2026-08-17 · security · Drop empty and non-absolute entries from any PATH override on a child spawned in a repo-controlled cwd — because a bare argv0 would otherwise resolve inside a hostile clone · ext-path-resolution
 
 ## Superseded
 

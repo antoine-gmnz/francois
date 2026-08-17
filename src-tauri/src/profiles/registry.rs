@@ -64,14 +64,10 @@ pub(crate) enum ProfileError {
 /// `extraArgsRaw`, re-check the denylist — kept pure so it is unit-testable
 /// without a Tauri AppHandle. `id`/`created_at` are carried through unchanged
 /// by `:update` (FR-5); `:create` mints fresh ones at the call site.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_profile(
     id: String,
     name: &str,
     system_prompt: Option<String>,
-    model_id: Option<String>,
-    effort: Option<String>,
-    permission_mode: Option<String>,
     extra_args_raw: Option<String>,
     created_at: u64,
     updated_at: u64,
@@ -99,9 +95,6 @@ pub(crate) fn build_profile(
         id,
         name,
         system_prompt,
-        model_id: model_id.filter(|m| !m.trim().is_empty()),
-        effort: effort.filter(|e| !e.trim().is_empty()),
-        permission_mode: permission_mode.filter(|m| !m.trim().is_empty()),
         extra_args_raw,
         extra_args,
         created_at,
@@ -185,6 +178,23 @@ pub fn load_profiles(app: &AppHandle) {
     }
 }
 
+/// Every profile id currently in the registry. Mirrors `account::known_ids`.
+/// An EMPTY set is ambiguous — `parse_registry` also yields nothing for a
+/// corrupt or unreadable profiles.json — so callers that use this to invalidate
+/// references must treat empty as "unknown", never as "none exist".
+pub fn known_ids(app: &AppHandle) -> std::collections::HashSet<String> {
+    app.try_state::<ProfileRegistry>()
+        .map(|s| {
+            s.profiles
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|p| p.id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 // ---------- FR-15: session-create snapshot lookup ----------
 
 /// The profile a `session_create` `profileId` names, or `None` when it does
@@ -243,9 +253,6 @@ mod tests {
             "id1".into(),
             "role",
             None,
-            None,
-            None,
-            None,
             Some("--model opus".into()),
             0,
             0,
@@ -268,9 +275,6 @@ mod tests {
             "id1".into(),
             "role",
             None,
-            None,
-            None,
-            None,
             Some("--add-dir /tmp".into()),
             0,
             0,
@@ -291,9 +295,6 @@ mod tests {
             "id1".into(),
             "role",
             None,
-            None,
-            None,
-            None,
             Some(r#"--add-dir "/a b" --foo"#.into()),
             0,
             0,
@@ -313,9 +314,6 @@ mod tests {
             "id1".into(),
             "role",
             None,
-            None,
-            None,
-            None,
             Some(r#"--add-dir "/a b"#.into()),
             0,
             0,
@@ -328,7 +326,7 @@ mod tests {
     #[test]
     fn build_profile_rejects_bad_bounds_and_writes_nothing() {
         assert!(matches!(
-            build_profile("id1".into(), "   ", None, None, None, None, None, 0, 0).err(),
+            build_profile("id1".into(), "   ", None, None, 0, 0).err(),
             Some(ProfileError::InvalidInput(_))
         ));
     }
