@@ -12,12 +12,15 @@
 //! - `wire`   — FR-3..FR-7: request bodies, SSE decoding, tool-call accumulation
 //! - `thread` — FR-16/FR-17: the adapter-owned wire-message file
 //! - `skills` — FR-23..FR-27: the injected system block
+//! - `blocks` — pure round-trip decision helpers (FR-6/FR-7/§7) and the
+//!   transcript block-emission helpers `runner`'s loop drives them into
 //!
 //! **No async runtime.** This crate has none, and `ureq` (blocking) is its only
 //! HTTP client. The loop runs on a spawned thread, which is the shape
 //! `ClaudeCodeAdapter::begin_turn` already uses for its NDJSON reader.
 //! (Decision logged 2026-08-16 in specs/_decisions.md.)
 
+mod blocks;
 pub(crate) mod gate;
 mod runner;
 pub(crate) mod skills;

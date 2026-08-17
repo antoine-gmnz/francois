@@ -407,8 +407,7 @@ mod tests {
         // which skipped `resolve_in_cwd` entirely. Proven here by pointing
         // `cwd` at a directory that does not exist: the gate must now still
         // try to resolve it (against the defaulted cwd) and refuse.
-        let missing_cwd =
-            std::env::temp_dir().join("francois-oai-gate-missing-cwd-does-not-exist");
+        let missing_cwd = std::env::temp_dir().join("francois-oai-gate-missing-cwd-does-not-exist");
         std::fs::remove_dir_all(&missing_cwd).ok();
         let cwd_str = missing_cwd.to_string_lossy().to_string();
         let decision = evaluate(
@@ -419,10 +418,9 @@ mod tests {
             &[],
         );
         match decision {
-            GateDecision::Deny(msg) => assert!(
-                msg.contains("not accessible"),
-                "unexpected message: {msg}"
-            ),
+            GateDecision::Deny(msg) => {
+                assert!(msg.contains("not accessible"), "unexpected message: {msg}")
+            }
             other => panic!("expected containment to run for an omitted path, got {other:?}"),
         }
     }

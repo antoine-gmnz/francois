@@ -440,7 +440,10 @@ mod tests {
 
     #[test]
     fn no_account_id_is_unresolvable() {
-        assert_eq!(known_account_id(None, &known_set(&["default", "acct-1"])), None);
+        assert_eq!(
+            known_account_id(None, &known_set(&["default", "acct-1"])),
+            None
+        );
     }
 
     #[test]

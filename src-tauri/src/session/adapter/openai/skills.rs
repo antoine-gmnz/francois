@@ -200,17 +200,49 @@ mod tests {
         assert!(block.text.contains("seam-fixture-skill-two"));
         assert!(block.is_available());
 
-        // direct filter proof: a command-kind entry never survives the filter
-        let skills = vec![
+        // Runs build_skill_block itself (not a standalone .filter() call)
+        // against a mixed list, so removing the filter from build_skill_block
+        // would fail THIS assertion, not just a copy of the logic under test.
+        struct FixedEnv(Vec<SkillInfo>);
+        impl SessionEnv for FixedEnv {
+            fn engine(&self) -> &Engine {
+                unreachable!("not needed for this test")
+            }
+            fn emit_session(&self, _ev: SessionEvent) {}
+            fn emit_agent(&self, _ev: AgentEvent) {}
+            fn emit_workflow_detail(&self, _ev: WorkflowDetailEvent) {}
+            fn persist(&self) {}
+            fn append_transcript(&self, _session_id: &str, _block: &BufBlock) {}
+            fn note_file_diff(&self, _session_id: &str, _cwd: &str) {}
+            fn discover_commands(&self, _cwd: &str) -> Vec<SkillInfo> {
+                self.0
+                    .iter()
+                    .map(|s| SkillInfo {
+                        name: s.name.clone(),
+                        description: s.description.clone(),
+                        installed: s.installed,
+                        scope: s.scope.clone(),
+                        kind: s.kind.clone(),
+                        plugin_id: s.plugin_id.clone(),
+                    })
+                    .collect()
+            }
+        }
+
+        let mixed = FixedEnv(vec![
             skill("run-tests", "runs the test suite", true, "command"),
             skill("real-skill", "a real skill", true, "skill"),
-        ];
-        let filtered: Vec<&SkillInfo> = skills
-            .iter()
-            .filter(|s| s.installed && s.kind.as_deref() != Some("command"))
-            .collect();
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].name, "real-skill");
+        ]);
+        let block = build_skill_block(&mixed, "/repo");
+        assert!(
+            block.text.contains("real-skill"),
+            "the skill-kind entry must survive"
+        );
+        assert!(
+            !block.text.contains("run-tests"),
+            "the command-kind entry must be filtered out"
+        );
+        assert_eq!(block.injected, 1);
     }
 
     #[test]

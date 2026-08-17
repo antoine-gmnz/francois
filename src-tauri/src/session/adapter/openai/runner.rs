@@ -1,9 +1,10 @@
 //! The Francois agent loop's orchestration (specs/multi-provider-openai.md
 //! §3/§4/§6/§7/§9): `OpenAiAdapter`/`FrancoisTurnHandle` (the `SessionAdapter`/
 //! `TurnControl` implementations, seam FR-1..FR-10) and the round-trip loop
-//! that wires the four sibling modules together — `gate` (FR-9..FR-13),
-//! `tools` (FR-14/FR-15), `wire` (FR-3..FR-7), `thread` (FR-16/FR-17) and
-//! `skills` (FR-23..FR-27).
+//! that wires the sibling modules together — `gate` (FR-9..FR-13),
+//! `tools` (FR-14/FR-15), `wire` (FR-3..FR-7), `thread` (FR-16/FR-17),
+//! `skills` (FR-23..FR-27) and `blocks` (the loop's own pure decision +
+//! block-emission helpers).
 //!
 //! **The permission park.** The Claude path answers a gated call over a pipe;
 //! this runtime has no pipe, so the loop thread blocks on a `Condvar` per
@@ -330,9 +331,9 @@ impl FrancoisTurnHandle {
         call: &wire::ToolCall,
     ) -> Option<String> {
         let block_id = uuid();
-        if let Some(err) = tool_call_error(call) {
-            emit_tool_block(app, session_id, &block_id, &call.name, "");
-            finish_tool_block(app, session_id, &block_id, cwd, &call.name, "error");
+        if let Some(err) = super::blocks::tool_call_error(call) {
+            super::blocks::emit_tool_block(app, session_id, &block_id, &call.name, "");
+            super::blocks::finish_tool_block(app, session_id, &block_id, cwd, &call.name, "error");
             return Some(err);
         }
         // tool_call_error already proved both of these succeed.
@@ -344,15 +345,29 @@ impl FrancoisTurnHandle {
             .clone();
 
         let summary = tool_summary(tool.as_str(), &input, cwd);
-        emit_tool_block(app, session_id, &block_id, tool.as_str(), &summary);
+        super::blocks::emit_tool_block(app, session_id, &block_id, tool.as_str(), &summary);
         match self.resolve_and_run(app, session_id, cwd, permission_mode, tool, &input) {
             Some(result) => {
                 let meta = tool_meta(tool.as_str(), &input, &result);
-                finish_tool_block(app, session_id, &block_id, cwd, tool.as_str(), &meta);
+                super::blocks::finish_tool_block(
+                    app,
+                    session_id,
+                    &block_id,
+                    cwd,
+                    tool.as_str(),
+                    &meta,
+                );
                 Some(result)
             }
             None => {
-                finish_tool_block(app, session_id, &block_id, cwd, tool.as_str(), "cancelled");
+                super::blocks::finish_tool_block(
+                    app,
+                    session_id,
+                    &block_id,
+                    cwd,
+                    tool.as_str(),
+                    "cancelled",
+                );
                 None
             }
         }
@@ -360,65 +375,10 @@ impl FrancoisTurnHandle {
 }
 
 // ---------- pure decision helpers (unit-tested below) ----------
-
-/// FR-6: the round-trip cap — `attempted_rounds` is 1-based (the request
-/// about to be sent), so hitting `MAX_ROUND_TRIPS + 1` is what ends the turn.
-fn round_trip_cap_hit(attempted_rounds: u32) -> bool {
-    attempted_rounds > wire::MAX_ROUND_TRIPS
-}
-
-/// FR-7: refuse before the request when the PREVIOUS round's usage would
-/// exceed the window. `None` (no prior usage yet) never refuses.
-fn context_exceeded(prompt_tokens: Option<u64>, limit: u64) -> bool {
-    prompt_tokens.is_some_and(|t| t > limit)
-}
-
-/// §7: a tool name outside `FRANCOIS_TOOLS`, or malformed accumulated
-/// arguments — either is an error string back to the model, never a card,
-/// never an execution.
-fn tool_call_error(call: &wire::ToolCall) -> Option<String> {
-    if FrancoisTool::from_str(&call.name).is_err() {
-        return Some(format!("unknown tool \"{}\"", call.name));
-    }
-    match &call.arguments {
-        Err(e) => Some(e.clone()),
-        Ok(_) => None,
-    }
-}
-
-/// FR-16: the wire shape of one accumulated call. A call whose arguments
-/// failed to parse (FR-5) carries no recoverable raw JSON string (`wire.rs`
-/// exposes only the parse `Result`, not the original text) — `"{}"` keeps the
-/// persisted array syntactically valid for the next request rather than
-/// smuggling an error message into a JSON-arguments field.
-fn thread_tool_call(call: &wire::ToolCall) -> thread::ThreadToolCall {
-    let arguments = match &call.arguments {
-        Ok(v) => serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()),
-        Err(_) => "{}".to_string(),
-    };
-    thread::ThreadToolCall {
-        id: call.id.clone(),
-        kind: "function".to_string(),
-        function: thread::ThreadToolCallFunction {
-            name: call.name.clone(),
-            arguments,
-        },
-    }
-}
-
-/// FR-3/FR-23: the request's `messages` array — the persisted wire messages,
-/// with the (never-persisted, FR-25) skill system block prepended when one
-/// was injected.
-fn build_request_messages(skill_text: &str, messages: &[thread::ThreadMessage]) -> Vec<Value> {
-    let mut out = Vec::with_capacity(messages.len() + 1);
-    if !skill_text.is_empty() {
-        out.push(json!({ "role": "system", "content": skill_text }));
-    }
-    for m in messages {
-        out.push(serde_json::to_value(m).unwrap_or(Value::Null));
-    }
-    out
-}
+//
+// The round-trip cap / context refusal / tool-call-error / thread-shape /
+// request-message helpers live in `blocks.rs` alongside the transcript
+// block-emission helpers they pair with in the loop below.
 
 /// The path-shaped argument of a call, using the same key names `gate.rs`'s
 /// own (private, unreachable from here) `path_arg` reads — both built on the
@@ -462,89 +422,11 @@ fn current_rules(app: &AppHandle, session_id: &str) -> Vec<PermissionRule> {
     }
 }
 
-// ---------- transcript block helpers ----------
-
-fn emit_tool_block(app: &AppHandle, session_id: &str, block_id: &str, tool: &str, summary: &str) {
-    let block = app
-        .state::<Engine>()
-        .with_session_mut(session_id, |s| {
-            s.buf_tool(block_id, tool.to_string(), summary.to_string(), false, None);
-            s.block_buffer.last().cloned()
-        })
-        .flatten();
-    if let Some(b) = &block {
-        append_transcript(app, session_id, b);
-    }
-    emit(
-        app,
-        SessionEvent::ToolStart {
-            session_id: session_id.to_string(),
-            block_id: block_id.to_string(),
-            tool: tool.to_string(),
-            summary: summary.to_string(),
-            model: None,
-        },
-    );
-}
-
-fn finish_tool_block(
-    app: &AppHandle,
-    session_id: &str,
-    block_id: &str,
-    cwd: &str,
-    tool: &str,
-    meta: &str,
-) {
-    let block = app
-        .state::<Engine>()
-        .with_session_mut(session_id, |s| {
-            s.buf_tool_done(block_id, meta.to_string());
-            s.block_buffer
-                .iter()
-                .find(|b| b.block_id == block_id)
-                .cloned()
-        })
-        .flatten();
-    if let Some(b) = &block {
-        append_transcript(app, session_id, b);
-    }
-    // Same trigger tool_results.rs uses for the Claude path: a file-mutating
-    // tool finished, so the diff-view summary needs recomputing.
-    if matches!(tool, "Edit" | "Write") {
-        crate::diff::on_tool_done(app, session_id, cwd);
-    }
-    emit(
-        app,
-        SessionEvent::ToolDone {
-            session_id: session_id.to_string(),
-            block_id: block_id.to_string(),
-            meta: meta.to_string(),
-        },
-    );
-}
-
-fn buf_assistant_delta(app: &AppHandle, session_id: &str, block_id: &str, accumulated: &str) {
-    app.state::<Engine>().with_session_mut(session_id, |s| {
-        s.buf_assistant_streaming(block_id, accumulated);
-    });
-}
-
-/// Finalize whatever text was open when a round ended (`finish_reason:
-/// "stop"`, or text ahead of a tool call in the same response). Defensive
-/// fallback when no delta ever opened a block but the terminal text is
-/// non-empty regardless (not expected from the Chat Completions dialect,
-/// which always streams `delta.content` fragments, but never silently drops
-/// text from the transcript either way).
-fn finalize_open_text(app: &AppHandle, session_id: &str, block_id: &Option<String>, text: &str) {
-    if let Some(block_id) = block_id {
-        finalize_text_block(app, session_id, block_id, text.to_string());
-    } else if !text.is_empty() {
-        let block_id = uuid();
-        finalize_text_block(app, session_id, &block_id, text.to_string());
-    }
-}
-
 // ---------- the round-trip loop ----------
+//
+// Its transcript block-emission helpers (`emit_tool_block`,
+// `finish_tool_block`, `buf_assistant_delta`, `finalize_open_text`) live in
+// `blocks.rs`, called below as `super::blocks::…`.
 
 enum LoopOutcome {
     Success,
@@ -612,13 +494,13 @@ fn run_loop(
     let mut round: u32 = 0;
     let outcome = loop {
         round += 1;
-        if round_trip_cap_hit(round) {
+        if super::blocks::round_trip_cap_hit(round) {
             break LoopOutcome::CapHit;
         }
         if handle.interrupted.load(Ordering::SeqCst) {
             break LoopOutcome::Interrupted;
         }
-        if context_exceeded(last_prompt_tokens, ctx_limit) {
+        if super::blocks::context_exceeded(last_prompt_tokens, ctx_limit) {
             break LoopOutcome::ContextExceeded;
         }
 
@@ -627,7 +509,7 @@ fn run_loop(
         } else {
             ""
         };
-        let request_messages = build_request_messages(skill_text, &messages);
+        let request_messages = super::blocks::build_request_messages(skill_text, &messages);
         let body = wire::request_body(&model_id, &request_messages);
         // FR-3: read per request, never held in session state.
         let key = crate::account::read_key(&config_dir);
@@ -660,7 +542,7 @@ fn run_loop(
                 }
                 let block_id = text_block_id.clone().unwrap();
                 assistant_text.push_str(&text);
-                buf_assistant_delta(&app, &session_id, &block_id, &assistant_text);
+                super::blocks::buf_assistant_delta(&app, &session_id, &block_id, &assistant_text);
                 emit(
                     &app,
                     SessionEvent::AssistantDelta {
@@ -711,7 +593,7 @@ fn run_loop(
 
         if tool_calls.is_empty() {
             // finish_reason: "stop" — the turn is complete.
-            finalize_open_text(&app, &session_id, &text_block_id, &assistant_text);
+            super::blocks::finalize_open_text(&app, &session_id, &text_block_id, &assistant_text);
             messages.push(thread::ThreadMessage {
                 role: "assistant".into(),
                 content: Some(assistant_text),
@@ -723,7 +605,7 @@ fn run_loop(
 
         // FR-5: text ahead of a tool call in the same response still gets
         // its own finished block before the tool_calls round begins.
-        finalize_open_text(&app, &session_id, &text_block_id, &assistant_text);
+        super::blocks::finalize_open_text(&app, &session_id, &text_block_id, &assistant_text);
         messages.push(thread::ThreadMessage {
             role: "assistant".into(),
             content: if assistant_text.is_empty() {
@@ -731,7 +613,12 @@ fn run_loop(
             } else {
                 Some(assistant_text)
             },
-            tool_calls: Some(tool_calls.iter().map(thread_tool_call).collect()),
+            tool_calls: Some(
+                tool_calls
+                    .iter()
+                    .map(super::blocks::thread_tool_call)
+                    .collect(),
+            ),
             tool_call_id: None,
         });
 
@@ -813,123 +700,11 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering as TestOrdering};
 
-    // ---------- round-trip cap (FR-6) ----------
-
-    #[test]
-    fn the_cap_trips_one_past_max_round_trips() {
-        assert!(!round_trip_cap_hit(wire::MAX_ROUND_TRIPS));
-        assert!(round_trip_cap_hit(wire::MAX_ROUND_TRIPS + 1));
-        assert!(!round_trip_cap_hit(1));
-    }
-
-    // ---------- context refusal (FR-7) ----------
-
-    #[test]
-    fn context_exceeded_refuses_only_when_the_prior_usage_is_over_the_limit() {
-        assert!(!context_exceeded(None, 128_000)); // nothing seen yet — never refuses
-        assert!(!context_exceeded(Some(128_000), 128_000)); // exactly at the limit is fine
-        assert!(context_exceeded(Some(128_001), 128_000));
-    }
-
-    // ---------- §7: the unknown-tool / malformed-arguments path ----------
-
-    #[test]
-    fn an_unknown_tool_name_is_an_error_string_naming_it() {
-        let call = wire::ToolCall {
-            id: "c1".into(),
-            name: "RunShellCommand".into(),
-            arguments: Ok(json!({})),
-        };
-        assert_eq!(
-            tool_call_error(&call).as_deref(),
-            Some("unknown tool \"RunShellCommand\"")
-        );
-    }
-
-    #[test]
-    fn malformed_arguments_surface_their_own_parse_error() {
-        let call = wire::ToolCall {
-            id: "c1".into(),
-            name: "Bash".into(),
-            arguments: Err("malformed tool call arguments: EOF".into()),
-        };
-        assert_eq!(
-            tool_call_error(&call).as_deref(),
-            Some("malformed tool call arguments: EOF")
-        );
-    }
-
-    #[test]
-    fn a_known_tool_with_valid_arguments_has_no_call_error() {
-        let call = wire::ToolCall {
-            id: "c1".into(),
-            name: "Read".into(),
-            arguments: Ok(json!({ "file_path": "a.ts" })),
-        };
-        assert_eq!(tool_call_error(&call), None);
-    }
-
-    // ---------- thread_tool_call (FR-16) ----------
-
-    #[test]
-    fn thread_tool_call_reserializes_parsed_arguments() {
-        let call = wire::ToolCall {
-            id: "call_1".into(),
-            name: "Bash".into(),
-            arguments: Ok(json!({ "command": "echo hi" })),
-        };
-        let ttc = thread_tool_call(&call);
-        assert_eq!(ttc.id, "call_1");
-        assert_eq!(ttc.kind, "function");
-        assert_eq!(ttc.function.name, "Bash");
-        let parsed: Value = serde_json::from_str(&ttc.function.arguments).unwrap();
-        assert_eq!(parsed, json!({ "command": "echo hi" }));
-    }
-
-    #[test]
-    fn thread_tool_call_falls_back_to_an_empty_object_when_arguments_never_parsed() {
-        let call = wire::ToolCall {
-            id: "call_1".into(),
-            name: "Bash".into(),
-            arguments: Err("malformed tool call arguments: EOF".into()),
-        };
-        let ttc = thread_tool_call(&call);
-        assert_eq!(ttc.function.arguments, "{}");
-    }
-
-    // ---------- build_request_messages (FR-3/FR-23/FR-25) ----------
-
-    #[test]
-    fn no_skill_block_sends_the_persisted_messages_verbatim() {
-        let messages = vec![thread::ThreadMessage {
-            role: "user".into(),
-            content: Some("hi".into()),
-            tool_calls: None,
-            tool_call_id: None,
-        }];
-        let out = build_request_messages("", &messages);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0]["role"], "user");
-    }
-
-    #[test]
-    fn a_skill_block_is_prepended_as_a_system_message_and_never_mutates_the_thread() {
-        let messages = vec![thread::ThreadMessage {
-            role: "user".into(),
-            content: Some("hi".into()),
-            tool_calls: None,
-            tool_call_id: None,
-        }];
-        let out = build_request_messages("skill: do the thing\n", &messages);
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[0]["role"], "system");
-        assert_eq!(out[0]["content"], "skill: do the thing\n");
-        assert_eq!(out[1]["role"], "user");
-        // The caller's `messages` slice — what gets persisted — is untouched.
-        assert_eq!(messages.len(), 1);
-    }
-
     // ---------- resolved_path_for / path_arg_of (FR-13) ----------
+    //
+    // round_trip_cap_hit / context_exceeded / tool_call_error /
+    // thread_tool_call / build_request_messages moved to blocks.rs along
+    // with the tests that cover them.
 
     fn temp_cwd(label: &str) -> PathBuf {
         static SEQ: AtomicU64 = AtomicU64::new(0);

@@ -94,10 +94,26 @@ ordinary, fully selectable, keyboard-reachable rows with no reason line.
 
 ## Resize behaviour
 
-Desktop-only; no mobile breakpoint. The reason line wraps to at most two lines and then
-middle-truncates with a `title` tooltip carrying the full sentence. In a two-pane split, both panes'
+Desktop-only; no mobile breakpoint. The reason line wraps to at most two lines and then **end-clips**
+with a `title` tooltip carrying the full sentence. In a two-pane split, both panes'
 right columns render their own session's capability state independently — a Claude session and an
 endpoint session side by side must each show their own truth, which is the layout worth testing.
+
+> **Amended 2026-08-17 (review round 2, LOW).** This line originally said *middle-truncates*, and
+> the implementation end-clips via `-webkit-line-clamp: 2`. The brief loses, not the code. Middle
+> truncation at the **rendered** two-line boundary is a function of the container's live pixel width
+> and the sentence's word-break points — the pane is inside a resizable window with draggable split
+> dividers, so that width is a runtime value, not a constant. Reproducing it faithfully needs real
+> DOM measurement (hidden clone + `ResizeObserver` + a binary search on `scrollHeight`), which this
+> project cannot test: vitest runs `environment: 'node'` with no DOM renderer wired, so the logic
+> would ship with zero coverage. The character-count route — `middleTruncate(value, max)` from
+> `accounts.ts` with a guessed `max` — is worse than the gap it closes: tuned to one assumed width,
+> it truncates too early in a wide pane and overflows two lines in a narrow one.
+>
+> `-webkit-line-clamp` hands the decision to the layout engine, which is the only thing that knows
+> the answer, and the `title` tooltip keeps the full sentence reachable — so nothing is lost but the
+> ellipsis's position. Recorded here rather than left as a standing backlog item, because "the code
+> is wrong" was the wrong reading of it.
 
 ## Data shown
 
