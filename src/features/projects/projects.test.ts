@@ -38,6 +38,8 @@ import {
   projectCountLabel,
   reconcileActiveProjectId,
   removeConfirmText,
+  removeGroupConfirmText,
+  NO_GROUP_LABEL,
   replaceRule,
   safeCall,
   sanitizeRuleText,
@@ -367,6 +369,16 @@ describe('modal copy', () => {
     expect(removeConfirmText('francois')).toBe(
       'remove project "francois"? sessions are kept; CLAUDE.md is not touched',
     );
+  });
+
+  it('spells the group remove confirmation exactly, keeping members (project-groups FR-20)', () => {
+    expect(removeGroupConfirmText('ODO')).toBe(
+      'remove group "ODO"? member projects are kept — they are just ungrouped',
+    );
+  });
+
+  it('names the Identity Group select\'s unset option (project-groups FR-21)', () => {
+    expect(NO_GROUP_LABEL).toBe('— none —');
   });
 
   it('abbreviates a root under the home directory', () => {
