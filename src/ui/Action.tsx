@@ -1,6 +1,12 @@
-// projects — the small hover-colored action glyph shared by StandardsSection's
-// rule-row controls and RemoveControl. Split out of ProjectsModal per
-// REFACTOR.md §6c.
+// The small hover-coloured text action — a bare word ("Remove", "cancel") or
+// glyph that changes colour on hover, with no button chrome. Used where a
+// control must stay quiet enough to sit inside a form section without competing
+// with the real buttons: ProjectsModal's rule-row controls and both modals'
+// confirm-in-place Remove.
+//
+// Promoted here from src/features/projects/ once ProfilesModal needed it too —
+// a hover-colour span duplicated per feature is how two "identical" controls
+// drift apart.
 
 import { useState } from 'react';
 
@@ -27,7 +33,7 @@ export function Action({
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      className="pj-action-glyph"
+      className="action-glyph"
       style={{ fontSize: size, color: hover ? hoverColor : color }}
     >
       {children}

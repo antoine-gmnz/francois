@@ -862,6 +862,27 @@ a {
   padding: var(--space-8) var(--space-10);
 }
 
+/* ui/Action.tsx — quiet hover-coloured text action; the colours are the
+   caller's (they carry the meaning), only the affordance is shared. */
+.action-glyph {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ui/RemoveControl.tsx — the confirm-in-place destructive row, right-aligned so
+   it never sits where a primary action is expected. */
+.remove-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-12);
+  padding-top: var(--space-4);
+}
+.remove-confirm {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+
 /* Small pill-shaped counter badge (App.tsx:385-391, Sidebar.tsx:660-664). */
 .badge-pill {
   display: inline-block;

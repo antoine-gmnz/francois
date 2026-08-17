@@ -21,9 +21,9 @@ import { useDismiss } from '../../lib/hooks/useDismiss';
 import { ListRow } from '../../ui/ListRow';
 import { DefaultsSection } from './DefaultsSection';
 import { IdentitySection } from './IdentitySection';
-import { RemoveControl } from './RemoveControl';
+import { RemoveControl } from '../../ui/RemoveControl';
 import { StandardsSection } from './StandardsSection';
-import { abbreviateRoot, defaultFieldDefs, projectCountLabel } from './projects';
+import { abbreviateRoot, defaultFieldDefs, projectCountLabel, removeConfirmText } from './projects';
 import { useProjectMutations } from './useProjectMutations';
 import { useProjectRegistry } from './useProjectRegistry';
 import './projects.css';
@@ -162,7 +162,7 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
 
               {/* REMOVE (FR-36) */}
               <RemoveControl
-                name={selected.name}
+                confirmText={removeConfirmText(selected.name)}
                 confirming={registry.removeConfirm}
                 onConfirm={() => registry.setRemoveConfirm(true)}
                 onCancel={() => registry.setRemoveConfirm(false)}
