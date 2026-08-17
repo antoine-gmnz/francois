@@ -60,6 +60,8 @@
 - 2026-08-17 · ui · When two registries can set the same value, exactly one owns it — a profile carries no model/effort/permission mode because the project it is paired with already does — because two owners for one value make precedence invisible at the point of use · session-profiles
 - 2026-08-17 · data · Deleting a row sweeps every cross-registry reference to it (project defaults naming a profile/account), best-effort AFTER the delete commits — because a resolve-time fallback hides dangling refs but lets them accumulate, and failing the delete to protect a harmless stale id refuses what the user asked for · session-profiles
 - 2026-08-17 · security · Drop empty and non-absolute entries from any PATH override on a child spawned in a repo-controlled cwd — because a bare argv0 would otherwise resolve inside a hostile clone · ext-path-resolution
+- 2026-08-17 · api · An undocumented OS-state probe degrades to the PERMISSIVE answer (act as if the restriction is absent), never the restrictive one — because a moved OS surface must lose a convenience, never silently disable a feature · audio-cues
+- 2026-08-17 · surfaces · Session-event derivation lives in ONE trigger source that fans out to registered sinks; a new consumer registers a sink and never opens its own onSessionEvent — because a second copy of lastStatus/seenAsks drifts and double-fires · audio-cues
 
 ## Superseded
 

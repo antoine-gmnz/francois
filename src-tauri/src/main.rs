@@ -8,6 +8,7 @@
 mod account;
 mod diagnostics;
 mod diff;
+mod dnd;
 mod editor;
 mod extensions;
 mod fs_util;
@@ -182,6 +183,7 @@ fn main() {
             permissions::permissions_remove,
             permissions::permissions_set_tier,
             window::app_set_window_theme,
+            dnd::app_dnd_state,
             usage::app_get_usage,
             usage::app_refresh_usage,
             update::app_check_update,
