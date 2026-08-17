@@ -53,24 +53,11 @@ pub fn profiles_create(
     state: State<'_, ProfileRegistry>,
     name: String,
     system_prompt: Option<String>,
-    model_id: Option<String>,
-    effort: Option<String>,
-    permission_mode: Option<String>,
     extra_args_raw: Option<String>,
 ) -> IpcResult<SessionProfile> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = crate::session::now_ms();
-    let profile = match build_profile(
-        id,
-        &name,
-        system_prompt,
-        model_id,
-        effort,
-        permission_mode,
-        extra_args_raw,
-        now,
-        now,
-    ) {
+    let profile = match build_profile(id, &name, system_prompt, extra_args_raw, now, now) {
         Ok(p) => p,
         Err(e) => return into_ipc(e),
     };
@@ -92,9 +79,6 @@ pub fn profiles_update(
     id: String,
     name: String,
     system_prompt: Option<String>,
-    model_id: Option<String>,
-    effort: Option<String>,
-    permission_mode: Option<String>,
     extra_args_raw: Option<String>,
 ) -> IpcResult<SessionProfile> {
     let mut profiles = state.profiles.lock().unwrap();
@@ -103,17 +87,7 @@ pub fn profiles_update(
     };
     let created_at = profiles[idx].created_at;
     let now = crate::session::now_ms();
-    let patched = match build_profile(
-        id,
-        &name,
-        system_prompt,
-        model_id,
-        effort,
-        permission_mode,
-        extra_args_raw,
-        created_at,
-        now,
-    ) {
+    let patched = match build_profile(id, &name, system_prompt, extra_args_raw, created_at, now) {
         Ok(p) => p,
         Err(e) => return into_ipc(e),
     };
@@ -139,7 +113,15 @@ pub fn profiles_remove(
     }
     let next: Vec<SessionProfile> = profiles.iter().filter(|p| p.id != id).cloned().collect();
     match commit(&app, &mut profiles, next) {
-        Ok(()) => ok(None),
+        Ok(()) => {
+            // A deleted profile must not stay named as any project's default.
+            // Best-effort and AFTER the removal committed — see
+            // `project::clear_default_profile`. Sessions already created from the
+            // profile are untouched: they snapshot it (FR-16) and keep showing
+            // its name (FR-22).
+            crate::project::clear_default_profile(&app, &id);
+            ok(None)
+        }
         Err(msg) => err("INTERNAL", msg),
     }
 }

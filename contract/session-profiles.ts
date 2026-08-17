@@ -10,7 +10,7 @@
 // by this app's own frontend and resolves with the new state, so a push channel would carry
 // nothing the response does not (the projects §5 preamble reasoning, verbatim).
 
-import type { PermissionMode, ProfileId, Result, SessionProfileRef } from './common';
+import type { ProfileId, Result, SessionProfileRef } from './common';
 
 export type { ProfileId, SessionProfileRef };
 
@@ -24,9 +24,11 @@ export const MAX_EXTRA_ARGS_RAW = 4096;
 
 /**
  * FR-9. Refused at save time with a named reason. The first eight own the stream contract the
- * whole event pipeline parses; --permission-mode / --dangerously-skip-permissions are refused so
- * `permissionMode` stays the single source of truth; --append-system-prompt is a v1 non-goal that
- * would fight replace mode; --permission-prompt-tool owns the stdio control channel.
+ * whole event pipeline parses; --model / --permission-mode / --dangerously-skip-permissions are
+ * refused because a profile does not carry those any more — the PROJECT's session defaults own
+ * them, and a profile smuggling them back in as raw argv would silently outrank the project;
+ * --append-system-prompt is a v1 non-goal that would fight replace mode; --permission-prompt-tool
+ * owns the stdio control channel.
  */
 export const DENIED_ARG_FLAGS: readonly string[] = [
   '--output-format',
@@ -47,15 +49,16 @@ export const DENIED_ARG_FLAGS: readonly string[] = [
 
 // ---------- the entity ----------
 
+/**
+ * A profile carries only what is NOT already a property of the project it runs in: an identity, a
+ * role prompt, and raw passthrough argv. Model / effort / permission mode were removed — a profile
+ * is always paired with a project, and the project's own session defaults own those three.
+ */
 export interface SessionProfile {
   id: ProfileId;
   name: string; // trimmed, 1–MAX_PROFILE_NAME; NOT unique (FR-3)
   /** Inline text. Present and non-empty ⇒ REPLACE mode: it replaces Claude Code's own prompt. */
   systemPrompt?: string;
-  modelId?: string;
-  /** low | medium | high | xhigh | max */
-  effort?: string;
-  permissionMode?: PermissionMode;
   /** Verbatim as typed, for round-tripping the editor (FR-8). */
   extraArgsRaw?: string;
   /** Core-parsed tokens (FR-7); the argv actually appended. */
@@ -73,9 +76,6 @@ export interface SessionProfile {
 export interface ProfileCreateInput {
   name: string;
   systemPrompt?: string;
-  modelId?: string;
-  effort?: string;
-  permissionMode?: PermissionMode;
   extraArgsRaw?: string;
 }
 // invoke('profiles_create', req: ProfileCreateInput): Promise<Result<SessionProfile>>

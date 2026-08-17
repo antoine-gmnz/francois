@@ -4,11 +4,16 @@
 //
 // The registry itself (ordering, persistence, denylist enforcement) lives in
 // the core (FR-1..FR-11) — this module owns only what the frontend decides:
-// resolving a profile against the New Session form (FR-15/FR-18/FR-21), the
-// picker's option list, the non-blocking extra-args advisory (FR-10), and the
-// modal's small derived copy.
+// resolving a profile against the New Session form (FR-21), the picker's option
+// list, the non-blocking extra-args advisory (FR-10), and the modal's small
+// derived copy.
+//
+// A profile no longer pre-fills model / effort / permission mode: it carries
+// none of those, because it is always paired with a project and the project's
+// own session defaults own them. Selecting a profile therefore leaves every
+// other New Session control exactly as the project left it.
 
-import type { AppError, PermissionMode, ProfileId } from '../../../contract/common';
+import type { AppError, ProfileId } from '../../../contract/common';
 import { MAX_PROFILE_NAME, type SessionProfile } from '../../../contract/session-profiles';
 import { profilesList } from '../../lib/api';
 
@@ -33,39 +38,14 @@ export function resolveProjectDefaultProfileId(
   return profiles.some((p) => p.id === profileId) ? profileId : null;
 }
 
-// ---------- New Session pre-fill (FR-15/FR-18) ----------
-
-/** The three New Session controls a profile pre-fills; each stays editable after. */
-export interface ProfileFormOverrides {
-  modelId?: string;
-  effort?: string;
-  permissionMode?: PermissionMode;
-}
-
 /**
- * story 2: "the model / effort / permission-mode controls pre-fill and stay
- * editable" — only the fields the profile declares are overridden; a field the
- * profile leaves unset does not touch the form's current value.
- */
-export function profileFormOverrides(profile: SessionProfile | null): ProfileFormOverrides {
-  if (!profile) return {};
-  const overrides: ProfileFormOverrides = {};
-  if (profile.modelId !== undefined) overrides.modelId = profile.modelId;
-  if (profile.effort !== undefined) overrides.effort = profile.effort;
-  if (profile.permissionMode !== undefined) overrides.permissionMode = profile.permissionMode;
-  return overrides;
-}
-
-/**
- * The project's own default profile resolution, PLUS the overrides it would
- * apply — or null when a palette pick (FR-24 story 4, "New session with
- * profile…") is pending, meaning `profileId` is owned this mount by that
- * pending selection and useProjectDefaults must not touch it at all (not even
- * to reset it to '').
+ * The project's own default profile resolution — or null when a palette pick
+ * (FR-24 story 4, "New session with profile…") is pending, meaning `profileId`
+ * is owned this mount by that pending selection and useProjectDefaults must not
+ * touch it at all (not even to reset it to '').
  */
 export interface ProjectDefaultProfileResolution {
   profileId: ProfileId | '';
-  overrides: ProfileFormOverrides;
 }
 
 export function projectDefaultProfileResolution(
@@ -74,8 +54,7 @@ export function projectDefaultProfileResolution(
   pendingProfileId: ProfileId | null,
 ): ProjectDefaultProfileResolution | null {
   if (pendingProfileId) return null;
-  const profileId = resolveProjectDefaultProfileId(profiles, projectDefaultProfileId);
-  return { profileId: profileId ?? '', overrides: profileFormOverrides(resolveProfile(profiles, profileId)) };
+  return { profileId: resolveProjectDefaultProfileId(profiles, projectDefaultProfileId) ?? '' };
 }
 
 // ---------- picker (New Session + Profiles modal) ----------
@@ -172,8 +151,35 @@ export function canSaveProfileName(name: string): boolean {
   return trimmed.length > 0 && trimmed.length <= MAX_PROFILE_NAME;
 }
 
+/** The header count, mirroring projects' `projectCountLabel`. */
+export function profileCountLabel(n: number): string {
+  return `${n} profile${n === 1 ? '' : 's'}`;
+}
+
+/** How long a list row's prompt preview may run before it is elided. */
+export const PROMPT_PREVIEW_MAX = 80;
+
+/**
+ * The list row's second line: the profile's role, at a glance. Newlines and runs
+ * of whitespace collapse to single spaces — a prompt is usually multi-line, and
+ * the row is one line — then it is elided at `PROMPT_PREVIEW_MAX`. A profile
+ * with no prompt falls back to its raw extra args, and one with neither gets an
+ * em dash so the row keeps its two-line shape.
+ *
+ * Elision here is belt-and-braces: the row also clips with `.truncate`, but that
+ * would hand the layout a 16k-char string (`MAX_SYSTEM_PROMPT`) to measure.
+ */
+export function profileRowSubtitle(profile: SessionProfile): string {
+  const prompt = profile.systemPrompt?.replace(/\s+/g, ' ').trim();
+  if (prompt !== undefined && prompt !== '') {
+    return prompt.length > PROMPT_PREVIEW_MAX ? `${prompt.slice(0, PROMPT_PREVIEW_MAX).trimEnd()}…` : prompt;
+  }
+  const args = profile.extraArgsRaw?.trim();
+  return args !== undefined && args !== '' ? args : '—';
+}
+
 export function removeProfileConfirmText(name: string): string {
-  return `remove profile "${name}"? sessions created from it are kept, and keep showing its name`;
+  return `remove profile "${name}"? sessions are kept; they keep its name`;
 }
 
 // §2's accepted consequence, stated where the prompt is authored (FR-23).

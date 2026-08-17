@@ -110,17 +110,12 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     if (!nameTouched) setName(project ? basename(project.root) : '');
 
     // session-profiles FR-21 vs palette FR-24 story 4: the project's default
-    // profile, resolved against the live registry and applied AFTER the plain
-    // defaults above (a named profile is the more specific choice and its own
-    // model/effort/permission-mode win) — UNLESS a palette pick is pending,
-    // in which case profileId is left entirely alone this mount.
+    // profile, resolved against the live registry — UNLESS a palette pick is
+    // pending, in which case profileId is left entirely alone this mount. A
+    // profile carries no model/effort/permission mode any more, so resolving one
+    // never overrides the plain project defaults set above.
     const resolution = projectDefaultProfileResolution(profiles, project?.defaults.profileId, pendingProfileId);
-    if (resolution) {
-      setProfileId(resolution.profileId);
-      if (resolution.overrides.modelId !== undefined) setModelId(resolution.overrides.modelId);
-      if (resolution.overrides.effort !== undefined) setEffort(resolution.overrides.effort);
-      if (resolution.overrides.permissionMode !== undefined) setPermissionMode(resolution.overrides.permissionMode);
-    }
+    if (resolution) setProfileId(resolution.profileId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, project, models, modelsLoading]);
 
@@ -131,12 +126,7 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     if (profilesSeenRef.current || profiles.length === 0) return;
     profilesSeenRef.current = true;
     const resolution = projectDefaultProfileResolution(profiles, project?.defaults.profileId, pendingProfileId);
-    if (resolution) {
-      setProfileId(resolution.profileId);
-      if (resolution.overrides.modelId !== undefined) setModelId(resolution.overrides.modelId);
-      if (resolution.overrides.effort !== undefined) setEffort(resolution.overrides.effort);
-      if (resolution.overrides.permissionMode !== undefined) setPermissionMode(resolution.overrides.permissionMode);
-    }
+    if (resolution) setProfileId(resolution.profileId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profiles]);
 
