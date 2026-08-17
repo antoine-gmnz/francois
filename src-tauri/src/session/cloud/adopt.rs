@@ -399,6 +399,11 @@ fn create_adopted_session(
         // this thread over the ordinary `claude --resume` pipeline.
         Some(claude_session_id),
         Vec::new(),
+        // session-profiles: an adopted session has no New Session dialog to
+        // pick a profile from — it carries none.
+        None,
+        Vec::new(),
+        None,
     );
     // FR-10/FR-16: presence is the whole provenance signal. Set here rather than
     // through `Session::new` so no other creation path can accidentally carry it.

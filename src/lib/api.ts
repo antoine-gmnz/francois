@@ -33,6 +33,7 @@ import type {
   StandardsRead,
 } from '../../contract/projects';
 import type { RepoBrief } from '../../contract/session-welcome';
+import type { ProfileCreateInput, ProfileRemoveInput, ProfileUpdateInput, SessionProfile } from '../../contract/session-profiles';
 import type { PermissionDecision, PermissionRule, PermissionTier } from '../../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
 import type { SessionCreateInput } from '../../contract/session-engine';
@@ -124,8 +125,13 @@ export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
 // session-worktree: session_create also gained an optional `worktree` (spec §5),
 // sourced from the canonical SessionCreateInput field rather than re-declared here.
+// session-profiles FR-15: session_create also gained systemPrompt/extraArgs/profileId —
+// the frontend sends the RESOLVED (post-edit) values plus the profile id, and the core
+// snapshots the profile's name from the registry itself.
 export const sessionCreate = (
-  req: NewSessionRequest & Pick<ProjectAwareSessionCreateRequest, 'projectId'> & Pick<SessionCreateInput, 'worktree'>,
+  req: NewSessionRequest &
+    Pick<ProjectAwareSessionCreateRequest, 'projectId'> &
+    Pick<SessionCreateInput, 'worktree' | 'systemPrompt' | 'extraArgs' | 'profileId'>,
 ) => ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
 // session-rename §5: mutate a session's display name. The core validates/cleans it
@@ -214,6 +220,13 @@ export const projectSetStandards = (projectId: ProjectId, standards: ProjectStan
 // because the core owns the cwd (and the git routing that follows from it).
 export const projectRepoBrief = (sessionId: SessionId) =>
   ipc<Result<RepoBrief>>('project_repo_brief', { sessionId });
+
+// session-profiles (§5.2). Four commands, no event channel: every mutation is
+// initiated by this frontend and resolves with the new state (spec §5 preamble).
+export const profilesList = () => ipc<Result<SessionProfile[]>>('profiles_list');
+export const profilesCreate = (req: ProfileCreateInput) => ipc<Result<SessionProfile>>('profiles_create', req);
+export const profilesUpdate = (req: ProfileUpdateInput) => ipc<Result<SessionProfile>>('profiles_update', req);
+export const profilesRemove = (req: ProfileRemoveInput) => ipc<Result<null>>('profiles_remove', req);
 
 // slash-menu FR-1/4: merged per-session command registry (francois:session:listCommands)
 export const sessionListCommands = (sessionId: SessionId) =>

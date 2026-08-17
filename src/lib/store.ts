@@ -20,6 +20,7 @@ import { createExtensionsSlice, type ExtensionsSlice } from './extensionsStore';
 import { createLayoutSlice, type LayoutSlice, type Pane, type RightPane } from './layoutStore';
 import { createOverviewSlice, type OverviewSlice } from './overviewStore';
 import { createPanelCountsSlice, type PanelCountsSlice } from './panelCountsStore';
+import { createProfilesSlice, type ProfilesSlice } from './profilesStore';
 import { createProjectsSlice } from './projectsStore';
 import { createRemoteSlice, type RemoteSlice } from './remoteStore';
 import { createSessionsSlice, type SessionsSlice } from './sessionsStore';
@@ -42,6 +43,7 @@ export type AppState = SessionsSlice &
   UsageSlice &
   AccountsSlice &
   UpdateSlice &
+  ProfilesSlice &
   ProjectsState;
 
 export const useStore = create<AppState>((set, get, api) => ({
@@ -56,5 +58,6 @@ export const useStore = create<AppState>((set, get, api) => ({
   ...createUsageSlice(set, get, api),
   ...createAccountsSlice(set, get, api),
   ...createUpdateSlice(set, get, api),
+  ...createProfilesSlice(set, get, api),
   ...createProjectsSlice(set, get, api),
 }));

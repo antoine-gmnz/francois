@@ -143,6 +143,59 @@ pub(crate) fn probe_claude_binary(
     }
 }
 
+/// session-profiles FR-11/FR-15: the profile-resolution decision for
+/// `session_create` — pure so the `PROFILE_ARG_DENIED`/`PROFILE_NOT_FOUND`
+/// branches are testable without a Tauri `AppHandle`/`State`. `lookup` is
+/// `crate::profiles::find` at the call site (injected here so a test can stub
+/// the registry); it's asked only when a `profile_id` was actually given.
+#[derive(Debug)]
+pub(crate) enum ProfileResolveError {
+    ArgDenied { flag: String, reason: &'static str },
+    NotFound,
+}
+
+pub(crate) fn resolve_profile_ref(
+    extra_args: &[String],
+    profile_id: Option<&str>,
+    system_prompt_present: bool,
+    lookup: impl FnOnce(&str) -> Option<(String, String)>,
+) -> Result<Option<crate::profiles::SessionProfileRef>, ProfileResolveError> {
+    if let Some((flag, reason)) = crate::profiles::check_denied(extra_args) {
+        return Err(ProfileResolveError::ArgDenied { flag, reason });
+    }
+    match profile_id {
+        Some(pid) => match lookup(pid) {
+            Some((id, name)) => Ok(Some(crate::profiles::SessionProfileRef {
+                id,
+                name,
+                // FR-17/FR-18: computed from THIS session's resolved prompt,
+                // never the profile's own — editing a pre-filled field still
+                // snapshots the profile identity, but the resolved values
+                // are the truth.
+                replaces_system_prompt: system_prompt_present,
+            })),
+            None => Err(ProfileResolveError::NotFound),
+        },
+        None => Ok(None),
+    }
+}
+
+/// session-profiles FR-6 defense-in-depth: `session_create` receives the
+/// FRONTEND'S resolved `systemPrompt`, not the profile-editor path that
+/// `profiles::registry::normalize_prompt` bounds at save time — a
+/// non-standard caller (CLI, a future API) could hand this command an
+/// oversized prompt directly. Re-applying the same char-count bound here
+/// means that case surfaces as `INVALID_INPUT` at creation instead of a
+/// confusing `SPAWN_FAILED` once the CLI itself balks at the argv.
+pub(crate) fn check_system_prompt_bound(
+    system_prompt: &str,
+) -> Result<(), (&'static str, &'static str)> {
+    if system_prompt.chars().count() > crate::profiles::MAX_SYSTEM_PROMPT {
+        return Err(("INVALID_INPUT", crate::profiles::BAD_PROMPT_MSG));
+    }
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub fn session_create(
     app: AppHandle,
@@ -157,6 +210,12 @@ pub fn session_create(
     project_id: Option<String>,
     account_id: Option<String>,
     worktree: Option<WorktreeCreateInput>,
+    // session-profiles FR-15: the frontend sends the RESOLVED (post-edit)
+    // values plus the profile id; the core snapshots the profile's name from
+    // the registry itself, never trusting the caller for it.
+    system_prompt: Option<String>,
+    extra_args: Option<Vec<String>>,
+    profile_id: Option<String>,
 ) -> IpcResult<Value> {
     let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
     let (model_id, permission_mode, runtime) =
@@ -218,6 +277,42 @@ pub fn session_create(
         }
     }
 
+    // Edge case §7: a systemPrompt present but whitespace-only is treated as
+    // absent — no `--system-prompt`, `replacesSystemPrompt: false` (FR-17).
+    let system_prompt = system_prompt.filter(|s| !s.trim().is_empty());
+    // session-profiles FR-6 defense-in-depth: re-bound a systemPrompt that
+    // reached this command directly rather than through the profile editor
+    // (see `check_system_prompt_bound`).
+    if let Some(sp) = &system_prompt {
+        if let Err((code, msg)) = check_system_prompt_bound(sp) {
+            return err(code, msg);
+        }
+    }
+
+    // session-profiles FR-11: re-run the FR-9 denylist over the RESOLVED
+    // `extraArgs` this call received — the frontend is not trusted with the
+    // parser contract. FR-15: a profileId must resolve to a live registry
+    // entry; the core snapshots the NAME itself, never trusting the caller's
+    // copy — a deleted-then-recreated id would otherwise mismatch (FR-22).
+    let extra_args = extra_args.unwrap_or_default();
+    let profile_id = profile_id.filter(|p| !p.trim().is_empty());
+    let profile_ref = match resolve_profile_ref(
+        &extra_args,
+        profile_id.as_deref(),
+        system_prompt.is_some(),
+        |pid| crate::profiles::find(&app, pid).map(|p| (p.id, p.name)),
+    ) {
+        Ok(profile_ref) => profile_ref,
+        Err(ProfileResolveError::ArgDenied { flag, reason }) => {
+            return err_detail(
+                "PROFILE_ARG_DENIED",
+                format!("{flag} is not allowed in a session's extra args: {reason}"),
+                serde_json::json!({ "flag": flag, "reason": reason }),
+            )
+        }
+        Err(ProfileResolveError::NotFound) => return err("PROFILE_NOT_FOUND", "no such profile"),
+    };
+
     // session-worktree FR-5/FR-6/FR-11/FR-12: resolve LAST, only once every other
     // fallible validation (permission_mode, runtime, WSL availability, the FR-9
     // spawn probe, the project-link check) has passed. `resolve_worktree` is the
@@ -269,6 +364,9 @@ pub fn session_create(
         account_id, // multi-account FR-19: stored VERBATIM, never re-derived
         None,       // claude_session_id
         Vec::new(),
+        system_prompt,
+        extra_args,
+        profile_ref,
     );
     let meta_before = session.meta();
     engine.sessions.lock().unwrap().insert(id.clone(), session);
@@ -542,6 +640,72 @@ mod tests {
                 Some(true)
             );
         }
+    }
+
+    // ---------- session-profiles: session_create's profile resolution ----------
+
+    #[test]
+    fn resolve_profile_ref_denies_a_flag_in_the_resolved_extra_args() {
+        // FR-11: re-run the denylist over what `session_create` actually
+        // received, regardless of any profile_id.
+        let err = resolve_profile_ref(
+            &["--model".to_string(), "opus".to_string()],
+            None,
+            false,
+            |_| panic!("lookup must not run once the denylist has already failed"),
+        )
+        .err()
+        .expect("denied");
+        match err {
+            ProfileResolveError::ArgDenied { flag, reason } => {
+                assert_eq!(flag, "--model");
+                assert!(!reason.is_empty());
+            }
+            ProfileResolveError::NotFound => panic!("expected ArgDenied"),
+        }
+    }
+
+    #[test]
+    fn resolve_profile_ref_reports_not_found_for_an_unresolved_profile_id() {
+        // FR-15: an unresolved profileId refuses creation entirely.
+        let err = resolve_profile_ref(&[], Some("ghost"), false, |_| None)
+            .err()
+            .expect("not found");
+        assert!(matches!(err, ProfileResolveError::NotFound));
+    }
+
+    #[test]
+    fn resolve_profile_ref_snapshots_the_looked_up_identity() {
+        // FR-15/FR-17: the id/name come from the registry lookup, never the
+        // caller; replaces_system_prompt mirrors THIS session's resolved prompt.
+        let profile_ref = resolve_profile_ref(&[], Some("p1"), true, |pid| {
+            assert_eq!(pid, "p1");
+            Some(("p1".to_string(), "role-architect".to_string()))
+        })
+        .unwrap()
+        .expect("resolved");
+        assert_eq!(profile_ref.id, "p1");
+        assert_eq!(profile_ref.name, "role-architect");
+        assert!(profile_ref.replaces_system_prompt);
+    }
+
+    #[test]
+    fn resolve_profile_ref_is_none_without_a_profile_id() {
+        let profile_ref = resolve_profile_ref(&[], None, false, |_| {
+            panic!("lookup must not run without a profile_id")
+        })
+        .unwrap();
+        assert!(profile_ref.is_none());
+    }
+
+    #[test]
+    fn check_system_prompt_bound_rejects_an_oversized_prompt() {
+        // session-profiles FR-6 defense-in-depth: session_create bounds a
+        // systemPrompt directly, matching profiles::registry::normalize_prompt.
+        assert!(check_system_prompt_bound(&"x".repeat(crate::profiles::MAX_SYSTEM_PROMPT)).is_ok());
+        let err = check_system_prompt_bound(&"x".repeat(crate::profiles::MAX_SYSTEM_PROMPT + 1))
+            .unwrap_err();
+        assert_eq!(err.0, "INVALID_INPUT");
     }
 
     #[test]

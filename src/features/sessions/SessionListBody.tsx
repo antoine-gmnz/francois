@@ -20,6 +20,7 @@ import { StatusDot } from '../../ui/StatusDot';
 import { sessionAccountBadge } from '../accounts/accounts';
 import { CloudChip } from '../cloud-sessions/CloudChip';
 import { filteredEmptyLabel } from '../projects/projects';
+import { ProfileChip } from '../profiles/ProfileChip';
 import type { RosterGroup } from './roster-groups';
 import { truncateBranchLeft, worktreeChipLabel } from './worktree';
 import '../accounts/accounts.css';
@@ -275,6 +276,9 @@ function SessionCard({
         {/* cloud-sessions FR-16: where this session came FROM. Neutral, never
             accent — provenance is a fact, not a live state. */}
         {session.cloud && <CloudChip cloud={session.cloud} size="sm" />}
+        {/* session-profiles FR-22: NEUTRAL here — the acid accent is reserved
+            for the focused session's own welcome header (one accent per view). */}
+        {session.profile && <ProfileChip profile={session.profile} size="sm" />}
         {/* split-by-4 FR-22: which pane is showing this session. */}
         {paneLabel && (
           <span className={paneAccent ? 'sidebar-card__pane sidebar-card__pane--accent' : 'sidebar-card__pane'}>

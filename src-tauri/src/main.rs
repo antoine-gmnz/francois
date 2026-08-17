@@ -14,6 +14,7 @@ mod fs_util;
 mod ipc;
 mod permissions;
 mod process_util;
+mod profiles;
 mod project;
 mod session;
 mod shell;
@@ -43,6 +44,10 @@ fn main() {
         // projects §6: the registry is loaded once at startup (see setup below)
         // and is memory-authoritative thereafter — Francois is its only writer.
         .manage(project::ProjectRegistry::default())
+        // session-profiles §6: the profile registry, app-scoped and shared
+        // across every account (FR-2) — same load-once-at-startup discipline
+        // as projects/accounts.
+        .manage(profiles::ProfileRegistry::default())
         .manage(session::RemoteRegistry::default())
         // cloud-sessions §6: `ref → { killer, phase, … }` for the at-most-one
         // adoption per cloud session (§7 #9). Process-lifetime only — nothing
@@ -77,6 +82,10 @@ fn main() {
             // BEFORE sessions, so load_persisted can fall an accountId that no
             // longer resolves back to `default` (FR-10).
             account::load_accounts(app.handle());
+            // session-profiles: no ordering dependency on session load — a
+            // session's profile ref is snapshotted verbatim and never
+            // re-resolved (FR-16) — loaded here alongside its registry peers.
+            profiles::load_profiles(app.handle());
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
             // extension-install FR-1/FR-13: load the manifest registry from
@@ -121,6 +130,10 @@ fn main() {
             project::project_get_standards,
             project::project_set_standards,
             project::project_repo_brief,
+            profiles::profiles_list,
+            profiles::profiles_create,
+            profiles::profiles_update,
+            profiles::profiles_remove,
             session::conversation_get_transcript,
             session::agents_list,
             session::agents_dispatch,

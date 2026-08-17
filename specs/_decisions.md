@@ -54,6 +54,9 @@
 - 2026-08-13 · surfaces · Extension manifests are read from `~/.francois/extensions/` ONLY, never from a repo or any project-relative path — because the impersonation threat was always repo-scoped, and a user directory a clone cannot write to does not carry it · supersedes 2026-08-04 surfaces · extension-install
 - 2026-08-13 · surfaces · A disk-loaded artifact's id is its DIRECTORY NAME, never a field it declares — because a name it cannot forge makes impersonation and id collision structurally impossible instead of validated against · extension-install
 - 2026-08-13 · security · Discovery is not authorization: anything loaded from disk arrives disabled and executes nothing — not even its own detection probe — until the user consents to its declared argv, and the consent is bound to the artifact's content hash — because otherwise the mechanism that precedes the gate walks around it, and trusted-then-mutated is free · extension-install
+- 2026-08-17 · surfaces · UI-authored registries persist as one JSON in the APP DATA DIR (projects/accounts/profiles); `~/.francois/` is for artifacts read FROM disk only — because a hand-editable file the app trusts re-opens the impersonation surface the extension-install consent gate was written to close · session-profiles
+- 2026-08-17 · ui · Acid marks the ONE focused/singular surface; the same state on a repeatable surface (list row, fleet card) renders neutral + a marker — because one-acid-per-view and "always show why this differs" only reconcile by splitting the treatment by surface cardinality · session-profiles
+- 2026-08-17 · security · A validation the core owns is re-run at every entry point that accepts the same value from the frontend, never trusted once — because the frontend is not the authority on the core's own parser/stream contract · session-profiles
 
 ## Superseded
 

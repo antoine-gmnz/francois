@@ -12,6 +12,8 @@ import { initNotifications } from '../features/notifications/notifications';
 import PaletteRoot from '../features/palette/PaletteView';
 import { registerBuiltinCommands } from '../features/palette/paletteCommands';
 import PermissionsModal from '../features/permissions/PermissionsModal';
+import ProfilesModal from '../features/profiles/ProfilesModal';
+import { loadProfiles } from '../features/profiles/profiles';
 import ProjectsModal from '../features/projects/ProjectsModal';
 import NewSessionModal from '../features/sessions/NewSessionModal';
 import RenameSessionModal from '../features/sessions/RenameSessionModal';
@@ -85,6 +87,9 @@ export default function App() {
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
   const accountsOpen = useStore((s) => s.accountsOpen);
   const setAccountsOpen = useStore((s) => s.setAccountsOpen);
+  const profilesOpen = useStore((s) => s.profilesOpen);
+  const setProfilesOpen = useStore((s) => s.setProfilesOpen);
+  const setProfiles = useStore((s) => s.setProfiles);
   const updateModalOpen = useStore((s) => s.updateModalOpen);
   const setUpdateModalOpen = useStore((s) => s.setUpdateModalOpen);
   const setAccounts = useStore((s) => s.setAccounts);
@@ -149,6 +154,13 @@ export default function App() {
   // field, the sidebar badge, the app-row chip, the Accounts modal) reads the
   // store this writes, so no surface ever fetches the registry itself.
   useEffect(() => startAccountFeed(setAccounts), [setAccounts]);
+
+  // session-profiles: app-scoped registry (FR-2 — shared across every
+  // account), hydrated once at boot. No event channel (spec §5 preamble) — the
+  // Profiles modal re-reads after every mutation of its own.
+  useEffect(() => {
+    void loadProfiles(setProfiles);
+  }, [setProfiles]);
 
   // self-update FR-7: ONE check when the shell mounts, and it is SILENT on
   // failure — a launch-time network blip must not shout. The helper itself is
@@ -457,6 +469,10 @@ export default function App() {
       {/* multi-account FR-34: the Accounts modal. Like Projects it needs NO
           session — an account is registered whether or not anything is running. */}
       {accountsOpen && <AccountsModal onClose={() => setAccountsOpen(false)} />}
+
+      {/* session-profiles: the Profiles modal, sibling to Projects. Needs NO
+          session — a profile is authored whether or not anything is running. */}
+      {profilesOpen && <ProfilesModal onClose={() => setProfilesOpen(false)} />}
 
       {/* extensions FR-56: the Extensions modal, from ⌘K and the app row. Needs
           NO session — every registry entry is listed either way, undetected ones
