@@ -10,15 +10,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // rather than reimplemented from the `files` globs — the point of this file is
 // to catch a mismatch between what npm packs and what the CLI needs, so
 // deriving one from the other would be circular.
-// On Windows npm is a `.cmd` shim, which execFileSync cannot spawn by bare
-// name — it looks for an executable called exactly `npm` and gets ENOENT.
-const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+// On Windows npm is a `npm.cmd` shim: a bare `npm` resolves to no executable
+// (ENOENT), and since Node's CVE-2024-27980 fix a `.cmd` cannot be spawned
+// without a shell either (EINVAL). Every argument here is a literal, so the
+// shell has nothing to interpolate.
+const WIN = process.platform === 'win32';
 
 function packedFiles() {
-  const out = execFileSync(NPM, ['pack', '--dry-run', '--json'], {
+  const out = execFileSync(WIN ? 'npm.cmd' : 'npm', ['pack', '--dry-run', '--json'], {
     cwd: __dirname,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
+    shell: WIN,
   });
   return JSON.parse(out)[0].files.map((f) => f.path);
 }
