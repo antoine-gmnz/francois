@@ -353,4 +353,43 @@ line inside the pane's normal frame), the **provider grouping** in the model pic
 
 ## Remediation
 
-(Empty until a review returns findings.)
+### Round 1 — 2026-08-16 · verdict REVISE · blocking 3
+
+Full report: `specs/reports/multi-provider-openai.md`. The three LOWs are **not** listed here — they
+are parked in `specs/refactor-backlog.md` under `## deferred:multi-provider-openai`, so this list
+carries only what a fix round must close.
+
+**core**
+
+- [ ] **CRITICAL** `gate.rs:182` (`path_arg`) + `runner.rs` (`path_arg_of`) — `Grep`/`Glob` declare
+      `path` optional with *"Defaults to the session's working directory"* (`wire.rs:99,113`), but
+      an absent key yields `None`, so `tools::execute` returns `missing_path()`'s
+      *"Internal error: no resolved path was supplied for this tool."* (`tools.rs:527`). Every call
+      taking the documented default errors. Substitute `cwd` for `Grep`/`Glob` when `path` is
+      absent or empty, before containment resolution, in **both** helpers. Cover the omitted-`path`
+      case for each of the two tools — no test does today.
+- [ ] **CRITICAL** `gate.rs:196-227` (`resolve_in_cwd`) — only the *immediate* parent is
+      canonicalized for a not-yet-existing target, so a `Write` to a nested new directory inside
+      `cwd` (`newdir/newfile.ts`, `newdir` absent) is rejected as *"… is outside the session
+      directory."* even though `tools::write` calls `create_dir_all` for exactly that case
+      (`tools.rs:120-121`). Walk `joined`'s ancestors to the first that exists, canonicalize it,
+      assert `starts_with(canonical_cwd)`, then rejoin the remaining segments. **Containment must
+      not weaken:** a nested path escaping `cwd` via `..` or a symlinked ancestor still denies.
+- [ ] **MEDIUM** `runner.rs:1354` — `PERMISSION_DENIED_MSG` duplicates `gate.rs`'s private
+      `DENY_MESSAGE` plus a drift-guard test. Export `DENY_MESSAGE` as `pub(crate)`, import it,
+      delete the copy and the now-redundant guard.
+
+**frontend**
+
+- [ ] **CRITICAL** `SkillsPanel.tsx:44-47` — FR-26's *"Install stays disabled on these sessions with
+      `Installing skills isn't available on this provider yet.`"* is unimplemented; that string
+      appears nowhere in `src/`. `activate()` opens `InstallModal` unconditionally, and confirming
+      it writes Claude Code's global `settings.json` — the control-surface write §2 declares a
+      non-goal. Add a `skillsInstall` member to `RuntimeCapability`
+      (`contract/multi-provider-seam.ts`): `{available: true}` for `claude-code`,
+      `{available: false, reason: "Installing skills isn't available on this provider yet."}` for
+      `francois`. Gate `activate()`'s install branch and `SkillsListBody.tsx:105`'s `enable`
+      affordance through the existing `sessionCapability` chokepoint — **FR-20's grep gate must
+      stay clean** (no component may compare `agentRuntime`/`protocol` to a literal).
+- [ ] **MEDIUM** `ModelPicker.tsx:16-25` — `providerHeading?: string` is optional though its sole
+      caller always supplies a required non-optional string. Make it required; drop the `&&` guard.

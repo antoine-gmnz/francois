@@ -251,7 +251,7 @@ endpoint probe (`account/endpoint.rs:300`) and the update checker. The Francois 
 streams SSE over blocking `ureq` on a spawned thread, which is the shape `begin_turn` already uses
 (`claude_code.rs:323-339` hands stdout to a reader thread). Pulling an async runtime into a
 zero-async crate would be a larger change than the feature it serves.
-- [~] **3. The loop.** Components **done**, orchestration in flight.
+- [x] **3. The loop.** Components and orchestration **done** — shipped in `f48a019`.
   - [x] `openai/wire.rs` (22 tests) — FR-3 request envelope + the six JSON-schema tool declarations,
         FR-4 incremental SSE decode (safe across a chunk boundary mid-line), FR-5 accumulation **by
         `index`** with malformed JSON degrading to an error string, `MAX_ROUND_TRIPS = 50` (FR-6),
@@ -278,13 +278,17 @@ zero-async crate would be a larger change than the feature it serves.
       assembly (skill block prepended, never mutating the persisted array), path resolution, and
       `resolve_models`. **Integration-only** (this crate has no `AppHandle` harness — its documented
       convention): `begin_turn`/`run_loop` itself, the park/wake race, and `interrupt`/`kill`.
-- [x] **FR-18's wire gap, closed.** `session_models` took no account or session, so
-      `models(account_id)` could never be reached with an endpoint account and FR-18 could not
-      function. It now takes `session_id: Option<String>`, resolves `(agentRuntime, accountId)` off
-      the session and routes through `adapter_for(runtime).models(...)`; an omitted or unknown id
-      falls back to `(ClaudeCode, "default")`, **byte-identical to the old behaviour**. The decision
-      is a pure `resolve_models_target`, unit-tested. `contract/session-engine.ts` gained
-      `SessionModelsInput`; every existing call site still passes nothing.
+- [x] **FR-18's wire gap, closed.** `session_models` took no account, so `models(account_id)` could
+      never be reached with an endpoint account and FR-18 could not function. It now takes
+      `account_id: Option<String>` (`session/models.rs:394`), derives the runtime from that
+      account's `AccountKind` via `AgentRuntime::from_account_kind` and routes through
+      `adapter_for(runtime).models(...)`; an omitted or unknown id falls back to
+      `(ClaudeCode, DEFAULT_ACCOUNT_ID)`, **byte-identical to the old behaviour**. The decision is a
+      pure `resolve_models_target`, unit-tested. `contract/session-engine.ts` gained
+      `SessionModelsInput { accountId? }`; every existing call site still passes nothing.
+      *(Corrected 2026-08-17: this entry previously said `session_id: Option<String>` resolved off
+      the session. It is **account**-scoped — the picker's only mount is the New Session modal,
+      which has no session yet. `models.rs:384-393` documents the choice.)*
 - [x] **4. Skill injection** (FR-23..FR-27) — `openai/skills.rs`, 8 tests.
       `build_skill_block(env, cwd) -> SkillBlock`, 8_000-char cap (Unicode scalars, not bytes),
       deterministic across turns. **No second filesystem walk and no `SessionEnv` change was needed**
@@ -298,12 +302,16 @@ zero-async crate would be a larger change than the feature it serves.
       `AccountField`, `DefaultsSection`, `projects.ts` and `AccountRow` + css. **FR-20's grep gate is
       clean — zero direct `agentRuntime`/`protocol` branches in `src/`.** FR-19 is core-emitted (its
       renderer already existed at `CommandCard.tsx:48`), so it moved to the runner.
-  - [ ] **FR-21's provider heading is blocked, not skipped.** The grouping logic is extracted and
-        tested (`features/sessions/model-picker.ts`), but `session_models` carries **no account or
-        session on the wire** (`claude_code.rs:344-352` documents it), so FR-18's endpoint catalog
-        can never reach the picker and there is nothing to group by provider. Widening that command
-        is folded into the runner's dispatch; the heading follows it, sourced from the session's
-        **account label** — never from `agentRuntime`/`protocol`, which FR-20 forbids.
+  - [x] **FR-21's provider heading — landed, not blocked.** *(Corrected 2026-08-17: this item was
+        left open describing a blocker that the FR-18 fix above had already removed. Verified
+        implemented end to end.)* `ModelPicker.tsx:74` renders the heading; `ModelField.tsx:11`
+        threads it; `NewSessionModal.tsx:92` computes it through
+        `modelPickerProviderHeading(accounts, accountId)` (`accounts.ts:164`), which returns the
+        selected account's **own display label** — never `agentRuntime`/`protocol`, which FR-20
+        forbids. `groupByFamily` (`model-picker.ts:14`) groups *within* an already account-scoped
+        catalog, which is why it needs no provider knowledge of its own. Covered by
+        `accounts.test.ts:471` (Claude account, endpoint account, built-in default, pre-hydration
+        empty) and `model-picker.test.ts:21`.
 
 **Two lead decisions taken during the build, both now pinned by tests.** `Grep` became a real regex
 tool (`regex` 1.13.1 added) rather than the literal-substring matcher it was first built as — it
