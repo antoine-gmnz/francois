@@ -57,6 +57,8 @@
 - 2026-08-17 · surfaces · UI-authored registries persist as one JSON in the APP DATA DIR (projects/accounts/profiles); `~/.francois/` is for artifacts read FROM disk only — because a hand-editable file the app trusts re-opens the impersonation surface the extension-install consent gate was written to close · session-profiles
 - 2026-08-17 · ui · Acid marks the ONE focused/singular surface; the same state on a repeatable surface (list row, fleet card) renders neutral + a marker — because one-acid-per-view and "always show why this differs" only reconcile by splitting the treatment by surface cardinality · session-profiles
 - 2026-08-17 · security · A validation the core owns is re-run at every entry point that accepts the same value from the frontend, never trusted once — because the frontend is not the authority on the core's own parser/stream contract · session-profiles
+- 2026-08-17 · api · An undocumented OS-state probe degrades to the PERMISSIVE answer (act as if the restriction is absent), never the restrictive one — because a moved OS surface must lose a convenience, never silently disable a feature · audio-cues
+- 2026-08-17 · surfaces · Session-event derivation lives in ONE trigger source that fans out to registered sinks; a new consumer registers a sink and never opens its own onSessionEvent — because a second copy of lastStatus/seenAsks drifts and double-fires · audio-cues
 
 ## Superseded
 

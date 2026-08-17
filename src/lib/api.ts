@@ -77,6 +77,7 @@ import type {
   CloudResolveRequest,
 } from '../../contract/cloud-sessions';
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
+import type { DndState } from '../../contract/audio-cues';
 import type {
   CloseStreamRequest,
   CloseStreamResponse,
@@ -118,6 +119,11 @@ function stream<T>(channel: string, cb: (payload: T) => void): Promise<UnlistenF
 // francois:app:setWindowTheme — repaint the native caption bar to match the theme.
 export const appSetWindowTheme = (theme: 'light' | 'dark') =>
   ipc<Result<null>>('app_set_window_theme', { theme });
+
+// audio-cues FR-14/FR-20 — OS Do Not Disturb probe. Never rejects on a domain
+// failure per FR-15; the frontend TTL cache (sound.ts) treats a transport
+// error the same as `Ok`.
+export const appDndState = () => ipc<Result<DndState>>('app_dnd_state');
 
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
 export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');

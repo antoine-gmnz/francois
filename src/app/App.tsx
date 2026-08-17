@@ -9,6 +9,7 @@ import { visibleExtensions } from '../features/extensions/extensions';
 import { detectionRoot, initExtensionEvents, refreshExtensions } from '../features/extensions/extensionsFeed';
 import McpPanel from '../features/mcp/McpPanel';
 import { initNotifications } from '../features/notifications/notifications';
+import { initAudioCues } from '../features/notifications/sound';
 import PaletteRoot from '../features/palette/PaletteView';
 import { registerBuiltinCommands } from '../features/palette/paletteCommands';
 import PermissionsModal from '../features/permissions/PermissionsModal';
@@ -147,6 +148,10 @@ export default function App() {
     // notifications FR-5: one app-wide subscription to francois://session/event
     // (idempotent — a second mount effect never double-registers).
     initNotifications();
+    // audio-cues FR-5: the audio sink registers as a second consumer of the
+    // same shared trigger source (trigger.ts) — no gesture needed to init,
+    // only to actually hear the first tone (FR-10).
+    initAudioCues();
   }, []);
 
   // multi-account §6: ONE app-wide registry feed — account_list at boot, then

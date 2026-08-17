@@ -179,3 +179,38 @@ describe('notifications palette toggles (FR-18)', () => {
     expect(useNotificationsStore.getState().enabled.turnDone).toBe(true);
   });
 });
+
+describe('audio-cues palette toggle (FR-12)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('registers "Sound: audio cues" directly after the two notification commands', async () => {
+    const { byId, paletteCommands } = await freshModules();
+    const sound = byId('toggle-sound');
+    expect(sound.name).toBe('Sound: audio cues');
+
+    const ids = paletteCommands().map((c) => c.id);
+    expect(ids.indexOf('toggle-notify-turn-done')).toBeLessThan(ids.indexOf('toggle-sound'));
+  });
+
+  it('hint reads "on"/"off" from the live toggle, defaulting to on', async () => {
+    const { byId } = await freshModules();
+    expect(byId('toggle-sound').hint?.()).toBe('on');
+  });
+
+  it('running the row flips the master toggle without touching the notification classes', async () => {
+    const { byId, useNotificationsStore } = await freshModules();
+
+    byId('toggle-sound').run(ctx);
+    expect(useNotificationsStore.getState().soundEnabled).toBe(false);
+    expect(useNotificationsStore.getState().enabled).toEqual({ attention: true, turnDone: true });
+    expect(byId('toggle-sound').hint?.()).toBe('off');
+
+    byId('toggle-sound').run(ctx);
+    expect(useNotificationsStore.getState().soundEnabled).toBe(true);
+  });
+});
