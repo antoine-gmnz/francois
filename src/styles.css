@@ -214,6 +214,11 @@ html[data-hidden='1'] [style*='animation'] {
   --hue-teal: #8fbab8;
   --hue-blue: #6f9fd8;
   --hue-slate: #7c8aa0;
+  /* The warm hue redesign 8b gives the Anthropic provider tile. It sits in the
+     NEUTRAL ramp on purpose: a provider tile carries identity, so it may not
+     borrow --error-bright (which the mock's own #e0918a happens to be) — a
+     vendor mark that reads as a failure state is worse than an off-brand one. */
+  --hue-clay: #cf9d86;
   /* dimming layer shared by every modal/overlay backdrop */
   --backdrop: rgba(6, 7, 9, 0.62);
 
@@ -373,6 +378,7 @@ html[data-hidden='1'] [style*='animation'] {
   --hue-teal: #3f8582;
   --hue-blue: #416b8f;
   --hue-slate: #566480;
+  --hue-clay: #8d5340;
   --backdrop: rgba(6, 7, 9, 0.62);
 
   --shadow-card: 0 0px 13px rgba(0, 0, 0, 0.25);

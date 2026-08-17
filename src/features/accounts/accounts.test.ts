@@ -34,14 +34,10 @@ import {
 } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import {
-  ACCOUNTS_ISOLATION_NOTE,
   LOGIN_CANCEL_HINT,
   LOGIN_TITLE,
-  accountAvatarHue,
-  accountAvatarLetter,
   accountBadgeText,
   accountIsEndpoint,
-  accountMetaLine,
   accountSessionCounts,
   accountDisplayLabel,
   accountFieldOptions,
@@ -58,7 +54,6 @@ import {
   defaultAccount,
   endpointAddPayload,
   endpointBaseUrlHasError,
-  endpointBaseUrlLine,
   endpointErrorLine,
   endpointKeyPlaceholder,
   endpointProbeSuccessLine,
@@ -582,21 +577,6 @@ describe('display helpers (FR-32/FR-33, design brief)', () => {
     expect(statusChipMaxChars(1200)).toBe(18);
   });
 
-  it('mints a stable single-letter avatar per account (redesign 4a visual reference)', () => {
-    expect(accountAvatarLetter(account({ id: 'a1', label: 'perso' }))).toBe('P');
-    expect(accountAvatarLetter(account({ id: 'a1', label: 'antoine@x.example', email: 'antoine@x.example' }))).toBe('A');
-    expect(accountAvatarLetter({ ...BUILT_IN, label: '', email: undefined })).toBe('D');
-  });
-
-  it('keeps an account on one hue, never the accent, and turns it red when it needs re-login (4a)', () => {
-    const a = account({ id: 'a1' });
-    expect(accountAvatarHue(a)).toBe(accountAvatarHue(account({ id: 'a1', label: 'renamed' })));
-    for (const id of ['a1', 'b2', 'c3', 'd4', 'e5', 'f6', 'g7']) {
-      expect(accountAvatarHue(account({ id }))).not.toBe('var(--accent)');
-    }
-    expect(accountAvatarHue({ ...a, authFailedAt: 5 })).toBe('var(--error)');
-  });
-
   it('counts the sessions each account carries, defaulting the unresolvable ones (4a meta line)', () => {
     const accounts = [BUILT_IN, account({ id: 'a1' })];
     const counts = accountSessionCounts(accounts, [
@@ -606,17 +586,6 @@ describe('display helpers (FR-32/FR-33, design brief)', () => {
       session({ id: 's4', accountId: 'ghost' }), // FR-10: resolves to the default
     ]);
     expect(counts).toEqual({ [DEFAULT_ACCOUNT_ID]: 2, a1: 2 });
-  });
-
-  it('builds the row meta line from email and session count, dropping either half (4a)', () => {
-    const a1 = account({ id: 'a1', label: 'perso', email: 'p@x.example' });
-    expect(accountMetaLine(a1, 0)).toBe('p@x.example');
-    expect(accountMetaLine(a1, 1)).toBe('p@x.example · 1 session');
-    expect(accountMetaLine(a1, 3)).toBe('p@x.example · 3 sessions');
-    // label IS the email → the email is already the row's title, so only the count
-    const same = account({ id: 'a2', label: 'p@x.example', email: 'p@x.example' });
-    expect(accountMetaLine(same, 2)).toBe('2 sessions');
-    expect(accountMetaLine(same, 0)).toBeNull();
   });
 });
 
@@ -685,10 +654,9 @@ describe('which account the bar and chip describe (FR-30)', () => {
 describe('modal copy (FR-35/FR-36, §7)', () => {
   const a1 = account({ id: 'a1', label: 'perso', email: 'p@x.example' });
 
-  it('states the isolation cost exactly once, in prose (FR-36)', () => {
-    expect(ACCOUNTS_ISOLATION_NOTE).toMatch(/own Claude Code configuration/i);
-    expect(ACCOUNTS_ISOLATION_NOTE).toMatch(/settings, skills, agents and MCP servers are not shared/i);
-  });
+  // FR-36's isolation note moved to providers.ts (`providerIsolationNote`) with
+  // redesign 8b — one global "Claude Code configuration" sentence could not
+  // stay true across three kinds of credential. Covered in providers.test.ts.
 
   it('names the account, its credentials and the sessions that fall back (FR-35)', () => {
     const sessions = [
@@ -848,13 +816,6 @@ describe('endpoint accounts (multi-provider-endpoint FR-13..FR-16)', () => {
     expect(truncated).toContain('…');
     expect(truncated.startsWith('https://a')).toBe(true);
     expect(long.endsWith(truncated.slice(truncated.indexOf('…') + 1))).toBe(true);
-  });
-
-  it('reads the endpoint row subtitle: base URL, or base URL + no key (design brief §1 Keyless)', () => {
-    expect(endpointBaseUrlLine(endpointAccount)).toBe('https://api.openai.com/v1');
-    const keyless = account({ id: 'e2', kind: 'openai-compatible', endpoint: { ...ENDPOINT, hasKey: false } });
-    expect(endpointBaseUrlLine(keyless)).toBe('https://api.openai.com/v1 · no key');
-    expect(endpointBaseUrlLine(BUILT_IN)).toBeNull();
   });
 
   it('placeholders the key field per FR-15', () => {

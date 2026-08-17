@@ -42,14 +42,29 @@ type ProbeState =
 export interface EndpointFormProps {
   /** Present ⇒ editing that account; absent ⇒ adding a new endpoint account. */
   account?: Account;
+  /**
+   * Redesign 8b: the form now opens from a PROVIDER's pane, so it starts on
+   * that provider's own base URL and name instead of an empty pair the user
+   * would have to look up. Prefill only — both fields stay fully editable, and
+   * the `custom` row hands in empty strings, which is the old behaviour intact.
+   * Ignored while editing: an existing account's own values always win.
+   */
+  presetBaseUrl?: string;
+  presetLabel?: string;
   onCancel: () => void;
   /** The FRESH full list account_add_endpoint/account_update_endpoint resolved. */
   onSaved: (accounts: Account[]) => void;
 }
 
-export function EndpointForm({ account, onCancel, onSaved }: EndpointFormProps): JSX.Element {
-  const [label, setLabel] = useState(account?.label ?? '');
-  const [baseUrl, setBaseUrl] = useState(account?.endpoint?.baseUrl ?? '');
+export function EndpointForm({
+  account,
+  presetBaseUrl,
+  presetLabel,
+  onCancel,
+  onSaved,
+}: EndpointFormProps): JSX.Element {
+  const [label, setLabel] = useState(account?.label ?? presetLabel ?? '');
+  const [baseUrl, setBaseUrl] = useState(account?.endpoint?.baseUrl ?? presetBaseUrl ?? '');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [clearKey, setClearKey] = useState(false);
   const [models, setModels] = useState(formatModelIds(account?.endpoint?.modelIds));

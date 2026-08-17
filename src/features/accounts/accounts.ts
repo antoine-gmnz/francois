@@ -217,28 +217,6 @@ export function accountBadgeText(account: Account): string {
   return label.slice(0, 2).toUpperCase();
 }
 
-/** Redesign-4a visual reference: the colored initial tile on each account row. */
-export function accountAvatarLetter(account: Account): string {
-  return accountDisplayLabel(account).slice(0, 1).toUpperCase();
-}
-
-/**
- * A deterministic hue token per account, so a row's tile never shifts colour.
- * `--accent` is deliberately NOT in the ramp: design system v2 gives the acid
- * to the ONE live thing per view, and three accounts sitting in a list are not
- * that. An account that needs re-login takes the red family instead of its own
- * hue — redesign 4a paints the troubled account's tile in the error family, so
- * the row reads as wrong from the tile alone, not just from the pill.
- */
-const AVATAR_HUES = ['--hue-blue', '--hue-teal', '--hue-purple', '--hue-slate'] as const;
-
-export function accountAvatarHue(account: Account): string {
-  if (accountNeedsLogin(account)) return 'var(--error)';
-  let sum = 0;
-  for (let i = 0; i < account.id.length; i++) sum = (sum + account.id.charCodeAt(i)) % 9973;
-  return `var(${AVATAR_HUES[sum % AVATAR_HUES.length]})`;
-}
-
 /**
  * How many sessions each account is currently carrying, keyed by account id.
  * A session whose `accountId` no longer resolves counts toward the isDefault
@@ -253,19 +231,6 @@ export function accountSessionCounts(accounts: Account[], sessions: SessionMeta[
     if (counts[id] !== undefined) counts[id] += 1;
   }
   return counts;
-}
-
-/**
- * Redesign 4a: the dim second line under an account's name — `email · N
- * sessions`, either half optional. Null when there is nothing to say, so the
- * row collapses to one line rather than reserving a blank one.
- */
-export function accountMetaLine(account: Account, sessionCount: number): string | null {
-  const parts: string[] = [];
-  const email = accountSecondaryEmail(account);
-  if (email) parts.push(email);
-  if (sessionCount > 0) parts.push(`${sessionCount} session${sessionCount === 1 ? '' : 's'}`);
-  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 export interface AccountBadge {
@@ -441,19 +406,31 @@ export function accountMetersView(snapshot: UsageSnapshot | undefined, now?: num
 
 // ------------------------------------------------------------- modal copy
 
-/** FR-36 — the one line of prose the modal carries, stated exactly once. */
-export const ACCOUNTS_ISOLATION_NOTE =
-  'Each added account keeps its own Claude Code configuration: settings, skills, agents and MCP servers are not shared.';
+// FR-36's isolation note used to live here as one global sentence — "Each added
+// account keeps its own Claude Code configuration". Redesign 8b retires it: the
+// sentence stopped being true the moment an account could be a Codex login or a
+// bare API key, so the note is now derived PER PROVIDER by
+// `providerIsolationNote` in providers.ts and printed in that provider's pane.
+
+// `accountAvatarLetter`/`accountAvatarHue`/`accountMetaLine`/`endpointBaseUrlLine`
+// used to feed the flat account row's tile and second line. Redesign 8b's
+// CredentialCard replaced that row outright, with its own layout for identity
+// and the base-URL line — so these derivations went with it.
 
 /**
  * §3's keyboard model, said out loud. The modal has always been fully
  * keyboard-driven and has never named a single key on screen, so every shortcut
- * had to be guessed; redesign 4a's footer idiom (quiet actions left, dim hint
- * right) is where they belong. Key first, verb after — the same order the
- * shell's own hint bars use.
+ * had to be guessed; the redesign's footer idiom (dim hints on one line) is
+ * where they belong. Key first, verb after — the same order the shell's own
+ * hint bars use.
+ *
+ * `←→ provider` is redesign 8b's second axis: the vault has two lists on
+ * screen, and a keyboard model that could only walk one of them would leave the
+ * rail reachable by mouse alone.
  */
 export const ACCOUNTS_KEY_HINTS: ReadonlyArray<{ key: string; label: string }> = [
   { key: '↑↓', label: 'move' },
+  { key: '←→', label: 'provider' },
   { key: '⏎', label: 'default' },
   { key: 'r', label: 'rename' },
   { key: 'del', label: 'remove' },
@@ -546,13 +523,6 @@ export function middleTruncate(value: string, max: number): string {
   const head = Math.ceil(keep / 2);
   const tail = Math.floor(keep / 2);
   return `${value.slice(0, head)}…${value.slice(value.length - tail)}`;
-}
-
-/** Design brief §1: the row's dim `<baseUrl>` line, `no key` marker when keyless. */
-export function endpointBaseUrlLine(account: Account): string | null {
-  if (!account.endpoint) return null;
-  const truncated = middleTruncate(account.endpoint.baseUrl, 40);
-  return account.endpoint.hasKey ? truncated : `${truncated} · no key`;
 }
 
 /** FR-15: the key field's placeholder — never a hint of the real key. */
