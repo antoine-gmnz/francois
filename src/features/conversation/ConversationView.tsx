@@ -22,6 +22,7 @@ import {
 } from './message-history';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { composerPlaceholder, hasPendingQuestionBlock } from '../questions/question-card';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import {
   completionText,
@@ -33,7 +34,6 @@ import {
   refreshSelection,
   slashToken,
 } from '../commands/slash-menu';
-import { useStore } from '../../lib/store';
 import './conversation.css';
 import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
 import WorktreeNotice from './WorktreeNotice';
@@ -65,7 +65,7 @@ export interface ConversationViewProps {
 }
 
 export default function ConversationView({ sessionId, inert = false, onFocusRequest, inertFooter }: ConversationViewProps) {
-  const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId) ?? null);
+  const meta = useSessionMeta(sessionId);
   const {
     state,
     dispatch,

@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import type { WorkflowRun } from '../../../contract/common';
 import { formatElapsed } from '../../../contract/conversation-view';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
@@ -47,7 +48,7 @@ export default function WorkflowsPanel({ sessionId }: { sessionId: string | null
   );
 
   // multi-provider-openai FR-20: workflows' capability for this session's runtime.
-  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
+  const meta = useSessionMeta(sessionId);
   const capability = sessionCapability(meta, 'workflows');
 
   const [clockNow, setClockNow] = useState(() => Date.now());

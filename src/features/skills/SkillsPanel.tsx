@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SkillInfo } from '../../../contract/common';
 import { skillsInstall, skillsRun } from '../../lib/api';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { HintBar } from '../../ui/HintBar';
@@ -21,7 +22,7 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
   // multi-provider-openai FR-20/FR-26: skills' capability for this session's
   // runtime — currently false for `francois` until a core agent injects at
   // least one skill (FR-26); this reads the table, never hardcodes around it.
-  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
+  const meta = useSessionMeta(sessionId);
   const capability = sessionCapability(meta, 'skills');
   // FR-26: a separate gate from `skills` itself — enabling a plugin writes
   // Claude Code's own `~/.claude/settings.json`, which stays out of reach

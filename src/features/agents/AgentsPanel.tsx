@@ -3,6 +3,7 @@ import type { AgentInfo, AppError } from '../../../contract/common';
 import { agentsActivity, agentsDispatch, agentsKill } from '../../lib/api';
 import { agentIdToDropForTrailError, collapseTrail, receiveTrailActivity, toggleTrail } from './agent-trail';
 import { setPaletteAgents } from '../palette/paletteData';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { HintBar } from '../../ui/HintBar';
@@ -36,7 +37,7 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
     useAgentsFeed({ sessionId, syncAgentTab });
 
   // multi-provider-openai FR-20: subagents' capability for this session's runtime.
-  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
+  const meta = useSessionMeta(sessionId);
   const capability = sessionCapability(meta, 'subagents');
 
   const [hoverId, setHoverId] = useState<string | null>(null);

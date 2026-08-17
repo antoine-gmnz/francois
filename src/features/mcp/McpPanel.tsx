@@ -5,6 +5,7 @@ import { mcpApprovals, mcpDecide, mcpDetach, mcpDetail, mcpList, mcpReconnect, o
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { useDismiss } from '../../lib/hooks/useDismiss';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { HintBar } from '../../ui/HintBar';
 import { StatusDot } from '../../ui/StatusDot';
@@ -118,7 +119,7 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
   const { servers, setServers, listError, reload } = useMcpServers(sessionId);
   const { approvals, decide, deciding, decideError } = useApprovals(sessionId, reload);
   // multi-provider-openai FR-20: mcp's capability for this session's runtime.
-  const meta = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
+  const meta = useSessionMeta(sessionId);
   const capability = sessionCapability(meta, 'mcp');
   const [selected, setSelected] = useState(0);
   const [popover, setPopover] = useState<{ name: string; top: number; left: number } | null>(null);
