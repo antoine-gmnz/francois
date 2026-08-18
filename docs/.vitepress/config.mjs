@@ -38,6 +38,7 @@ export default defineConfig({
             { text: 'Sessions & projects', link: '/guide/sessions-and-projects' },
             { text: 'Conversation & permissions', link: '/guide/conversation-and-permissions' },
             { text: 'Diff & shell', link: '/guide/diff-and-shell' },
+            { text: 'Notifications & sound', link: '/guide/notifications' },
           ],
         },
         {

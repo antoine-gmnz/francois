@@ -76,12 +76,12 @@ unauthenticated row. The built-in `default` account cannot be removed.
 
 ## Usage per account
 
-Plan limits are an account-level fact, so the title bar's meters track the account the *selected
+Plan limits are an account-level fact, so the app row's meters track the account the *selected
 session* runs on — switching between two sessions on the same account changes nothing, switching
 to a session on another account swaps the figures. Each account is probed and cached separately, a
 failed probe for one never disturbs another, and the meters' tooltip names the account the figures
-belong to. The status bar shows the same thing as a chip, which is the quick answer to "which
-account is this session actually burning?"
+belong to. The account chip beside the meters shows the same thing, which is the quick answer to
+"which account is this session actually burning?"
 
 The mechanics of the meters themselves — refresh cadence, the reset countdown, error degradation —
 are in [Command palette → The usage bar](/guide/command-palette#the-usage-bar).

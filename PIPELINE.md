@@ -191,7 +191,7 @@ gate:
   - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`). Commands never reject for domain failures — every fallible call resolves to `Result`.
   - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in `contract/common.ts`).
   - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and reads as: the Tauri mapping above / "Rust core".
-- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `remote` · `account` · `cloud` · `extensions`
+- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `standards` · `profiles` · `permissions` · `remote` · `account` · `cloud` · `extensions`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
@@ -203,9 +203,11 @@ Both surfaces group by **feature**, not by technical kind. New code goes in the 
 that owns the feature — never in a new top-level file.
 
 - **frontend** (`src/`): `src/features/<feature>/` holds that feature's components, its
-  pure helpers, its tests, **and its stylesheet** together (`agents`, `commands`,
-  `conversation`, `diff`, `mcp`, `overview`, `palette`, `permissions`, `projects`,
-  `questions`, `remote`, `sessions`, `shell`, `skills`, `usage`).
+  pure helpers, its tests, **and its stylesheet** together (`accounts`, `agents`,
+  `cloud-sessions`, `commands`, `conversation`, `diff`, `extensions`, `mcp`,
+  `notifications`, `overview`, `palette`, `permissions`, `profiles`, `projects`,
+  `questions`, `remote`, `sessions`, `shell`, `skills`, `update`, `usage`,
+  `workflows`).
   - **Styling is per-feature CSS + classNames, never inline `style={{}}`.** Each feature
     owns `<feature>.css` next to its components, and every component that renders those
     classes imports it directly (`import './conversation.css'`). Class names are BEM-lite:
@@ -218,26 +220,36 @@ that owns the feature — never in a new top-level file.
     *typography* rather than iconography: keycaps (`⌘K`, `⏎`), disclosure carets
     (`▸`/`▾`), and the `☑`/`☐` in question options.
   - **`src/ui/`** is the shared UI kit — the primitives every feature composes with
-    (`Button`, `Chip`, `ChipGroup`, `ListRow`, `Modal`, `PanelHeader`, `StatusDot`,
-    `BadgePill`, `EmptyPane`, `HintBar`, …). **Look here before building a component**;
-    add to it only when a primitive is genuinely reusable across features.
+    (`Action`, `BadgePill`, `Button`, `Chip`, `ChipGroup`, `EmptyPane`, `HintBar`,
+    `ListRow`, `Logo`, `Modal`, `PanelHeader`, `RemoveControl`, `StatusDot`, …).
+    **Look here before building a component**; add to it only when a primitive is
+    genuinely reusable across features — a component that outgrows one feature moves
+    here rather than being imported across feature folders (`Action` and
+    `RemoveControl` came out of `features/projects/` that way).
   - **`src/lib/`** holds what every feature imports: `api.ts` (the contract-typed `invoke`
     wrappers), the zustand stores split per domain (`sessionsStore`, `projectsStore`,
-    `overviewStore`, `remoteStore`, `usageStore`, `layoutStore`, `agentTabStore`, plus
-    `store.ts`), shared helpers, and `src/lib/hooks/` for cross-feature hooks
+    `profilesStore`, `overviewStore`, `remoteStore`, `usageStore`, `accountsStore`,
+    `extensionsStore`, `notificationsStore`, `updateStore`, `panelCountsStore`,
+    `layoutStore`, `agentTabStore`, plus `store.ts`), shared helpers, and
+    `src/lib/hooks/` for cross-feature hooks
     (`useDismiss`, `useTimedError`, `useElapsedClock`, …). Reach for an existing hook
     before writing a new one.
   - `src/app/` holds the shell; `main.tsx` and `styles.css` stay at the root. No barrel
     files anywhere — import the module directly.
 - **core** (`src-tauri/src/`): each large domain is a module directory (`session/`,
-  `diff/`, `permissions/`). Its `mod.rs` owns the **shared data model** — the types whose
+  `diff/`, `permissions/`, `project/`, `profiles/`, `extensions/`, `account/`,
+  `shell/`, `editor/`, `update/`). Its `mod.rs` owns the **shared data model** — the types whose
   fields the whole domain touches — and declares the child modules; each child owns one
   concern plus its own `#[cfg(test)] mod tests`. Keeping the model in `mod.rs` is
   deliberate: Rust lets a child read an ancestor's private fields, so children need no
   widened visibility. Shared test fixtures live in a `#[cfg(test)] mod testutil`.
   Cross-cutting helpers that belong to no single domain are small top-level modules
-  (`fs_util.rs`, `process_util.rs`, `wsl.rs`, `window.rs`, `diagnostics.rs`) — check
-  these before adding a private copy inside a domain.
+  (`fs_util.rs`, `process_util.rs`, `wsl.rs`, `window.rs`, `diagnostics.rs`,
+  `usage.rs`, `dnd.rs`, `ipc.rs`) — check these before adding a private copy inside a
+  domain. In particular **every child spawn goes through `process_util`'s login-shell
+  PATH helper**: a GUI app inherits launchd's minimal `PATH`, so a bare `argv0`
+  (`claude`, an extension provider) otherwise fails to resolve for anyone whose binary
+  lives in nvm/Homebrew/pnpm/cargo/`~/.local/bin` (`ext-path-resolution`).
 - **packaging** (`packaging/npm/`): the `francois` npm package — **not a surface**, so no
   agent owns it and it is not part of the contract. Plain CommonJS with **zero
   dependencies**, because it runs inside `npm install` before anything else exists;
@@ -272,6 +284,13 @@ that owns the feature — never in a new top-level file.
 
 ## Feature map
 
+> **Read the pane numbers through design turn 7a** (commit `0f502c5`, `Francois Redesign.dc.html`):
+> the right column is gone. Panes `[3]`–`[6]` (agents · mcp · skills · workflows) dissolved into the
+> roster's own rows and open as **main-pane tabs** — `3`–`6` open one and toggle back to SESSION.
+> Chrome is two full-bleed tiers (app row + session row); the status bar and the tab strip inside the
+> main card are gone, and with the right column went `]` and `c`. Rows below keep their original
+> pane wording because that is how each spec is written.
+
 | id | scope | depends on |
 |---|---|---|
 | `app-shell` | window chrome, grid layout, status bar, focus model, global keys, tokens | session-engine |
@@ -305,11 +324,25 @@ that owns the feature — never in a new top-level file.
 | `session-rename` | rename a session's display name from the sidebar context menu or the palette; propagates over `session.meta` | session-engine, sessions-sidebar, command-palette |
 | `usage-bar` | account plan limits under the system title bar — app-scoped probe + cache, reset clock | multi-account, app-shell |
 | `wsl-filesystem` | Windows: git follows the filesystem, shell and `claude` follow the WSL runtime — path translation across the boundary | session-engine, shell-terminal, diff-view |
-| `collapse-right-column` | per-card collapse/expand for panes [3]–[6] (click, `c`, palette), persisted | app-shell, agents-panel, mcp-panel, skills-panel |
+| `collapse-right-column` *(superseded by design 7a)* | per-card collapse/expand for panes [3]–[6] (click, `c`, palette), persisted — the right column it acted on no longer exists | app-shell, agents-panel, mcp-panel, skills-panel |
 | `mac-text-selection` | macOS: text selection + copy in the SESSION transcript | conversation-view |
-| `notifications` *(frozen)* | desktop notification when a session is blocked on an approval/question, or its turn finished/errored | session-engine, app-shell, session-questions, permission-guardrails, command-palette |
+| `notifications` | desktop notification when a session is blocked on an approval/question, or its turn finished/errored | session-engine, app-shell, session-questions, permission-guardrails, command-palette |
 | `session-brake` *(frozen)* | stop a running turn mid-flight | session-engine, conversation-view |
 | `design-refresh` | redesign to variant 3a — Console chrome + Focus reading treatment + agent tabs | app-shell, conversation-view, agent-tab |
 | `extensions` | main-pane `ext:` tabs fed by out-of-process providers under hard caps — four declarative primitives (`key-value`, `table`, `stat-row`, `log-tail`), per-project detection with caching, per-extension toggles | app-shell, agent-tab, workflow-details, projects, command-palette, session-engine |
 | `extension-install` | plugins loaded from `~/.francois/extensions/*/extension.json` instead of a compiled registry — closed detection-predicate set, consent bound to the manifest sha256, `francois ext install\|list\|remove`; amends `extensions` | extensions, cli-companion, app-shell, projects |
 | `fix-agent-view` | dynamic tabs keyed by session instead of one global list — the single pane and both panes of a two-pane split render their own session's agent/workflow tabs after SHELL (the grid stays flat), and a spawned subagent adds its own chip on its first `agent.update`; supersedes agent-tab FR-14 + split-by-4 FR-20 | agent-tab, workflow-details, split-by-4, design-refresh, async-agents, agents-panel, workflow-panel, app-shell |
+| `workflow-details` | main-pane tab for one `Workflow` run — its agents, phase timeline and per-agent transcripts | workflow-panel, agent-tab, async-agents, conversation-view, app-shell |
+| `titlebar-project-switcher` | the project switcher lives in the system title bar, beside the plan meters | projects, design-refresh, usage-bar, overview, agent-tab, app-shell |
+| `multiple-shells` | several PTY terminals per session, tabbed inside the SHELL tab | shell-terminal, session-engine, app-shell, wsl-filesystem, command-palette |
+| `attach-to-worktree` | point a new session at a worktree that already exists instead of creating one | session-worktree, session-engine, sessions-sidebar, projects, app-shell |
+| `open-in-vscode` | open a session's directory (or its worktree) in VS Code from the sidebar/palette | session-engine, sessions-sidebar, session-worktree, wsl-filesystem |
+| `cloud-sessions` | adopt a Claude Code on the web session into the local fleet and keep the thread going | session-engine, durable-sessions, session-worktree, projects, multi-account, sessions-sidebar, command-palette |
+| `self-update` | in-app update check + install, surfaced in the title bar and the palette | app-shell, command-palette, session-engine |
+| `webview-hardening` | self-hosted fonts + a Content-Security-Policy on the webview — no network fetch at runtime | app-shell, shell-terminal, session-attachments, multi-account |
+| `split-by-4` *(frozen)* | up to four main panes side by side, each on its own session | split-session, app-shell, sessions-sidebar, conversation-view, diff-view, shell-terminal, collapse-right-column, agent-tab, workflow-details, fleet-board |
+| `session-profiles` | named, project-paired session profiles (a system prompt in replace mode + vetted raw `claude` argv) picked at spawn and snapshotted onto the session; Profiles modal as a Projects sibling (`francois:profiles:*`) | session-engine, sessions-sidebar, projects, session-welcome, command-palette, durable-sessions, multi-account |
+| `ext-path-resolution` | extension providers resolve bare `argv0` against the **login-shell** PATH (`process_util`), not launchd's minimal one; relative/empty entries filtered out | extensions, extension-install |
+| `project-groups` | a named parent over projects — a second tier in the pane [1] roster and the Projects modal; organising only, carries no defaults, standards or scope | projects, sessions-sidebar, session-engine, app-shell |
+| `audio-cues` | short synthesized tones (Web Audio, no asset) for the two notification classes — no focus gate, one master toggle, 1.5s throttle, silent under OS Do Not Disturb (`francois:app:dndState`) | notifications, session-engine, app-shell, command-palette |
+| `diff-navigator` | DIFF tab: collapsible folder tree + filter box replacing the flat file list, plus dependency-free word-level intraline emphasis; amends `diff-view` (no contract, no Rust) | diff-view, app-shell |
