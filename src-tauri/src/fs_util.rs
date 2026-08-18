@@ -54,9 +54,14 @@ pub(crate) fn unique_temp_path(path: &Path, ext: &str) -> PathBuf {
 
 /// Write `bytes` to `path` (creating parent directories as needed) with
 /// permissions restricted to the current user only: `0600` on unix, an ACL
-/// granting solely the current user Full Control on Windows (inheritance from
-/// the parent directory is explicitly stripped — a key file must not inherit
-/// a looser ACL from `<app_data>/accounts/<id>/`).
+/// granting the current user Full Control on Windows with inheritance from the
+/// parent directory explicitly stripped — a key file must not inherit a looser
+/// ACL from `<app_data>/accounts/<id>/`.
+///
+/// "Restricted" means the unix `0600` boundary on both platforms: no other
+/// UNPRIVILEGED account can read the key. On Windows the machine's own
+/// `SYSTEM` and `Administrators` may still appear in the ACL, which is not a
+/// leak — see `BROAD_SIDS`.
 pub(crate) fn write_user_only_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -109,6 +114,24 @@ fn write_user_only_file_platform(path: &Path, bytes: &[u8]) -> std::io::Result<(
     std::fs::rename(&tmp, path)
 }
 
+/// The broad principals that must never hold a grant on a key file, named by
+/// SID rather than by name because `icacls` prints and accepts LOCALIZED names
+/// (`BUILTIN\Users` is `BUILTIN\Utilisateurs` on a French Windows) while SIDs
+/// are invariant everywhere.
+///
+/// `SYSTEM` (`S-1-5-18`) and `Administrators` (`S-1-5-32-544`) are deliberately
+/// NOT here. An administrator can take ownership of any file and read it
+/// regardless of the DACL, so removing their ACE buys no confidentiality — it
+/// only breaks backup, AV and indexing. The boundary this file actually
+/// enforces is the same one `0600` enforces on unix: no OTHER unprivileged
+/// account can read the key.
+#[cfg(windows)]
+const BROAD_SIDS: [&str; 3] = [
+    "*S-1-1-0",      // Everyone
+    "*S-1-5-11",     // Authenticated Users
+    "*S-1-5-32-545", // BUILTIN\Users
+];
+
 #[cfg(windows)]
 fn restrict_to_current_user_only(path: &Path) -> std::io::Result<()> {
     let user = std::env::var("USERNAME")
@@ -117,18 +140,37 @@ fn restrict_to_current_user_only(path: &Path) -> std::io::Result<()> {
         Ok(domain) if !domain.trim().is_empty() => format!("{domain}\\{user}"),
         _ => user,
     };
-    // /inheritance:r strips whatever the parent directory would otherwise
-    // hand down; /grant:r <spec>:F REPLACES (not adds to) that user's explicit
-    // permissions with Full control — the combination leaves exactly one ACE.
+    // Two invocations rather than one, so the sequence is OURS rather than
+    // icacls's internal option ordering: strip + grant, then prune.
+    //
+    // /inheritance:r strips whatever the parent directory would otherwise hand
+    // down; /grant:r <spec>:F REPLACES (not adds to) that user's explicit
+    // permissions with Full control.
+    icacls(path, &["/inheritance:r", "/grant:r", &format!("{spec}:F")])?;
+    // ...but NEITHER of those touches an EXPLICIT ACE belonging to a third
+    // principal: `/inheritance:r` removes only INHERITED entries, and
+    // `/grant:r` replaces only the named user's own. A parent directory that
+    // hands its children explicit (not inherited) ACEs therefore leaves them
+    // standing on the key file — observed on Windows CI runners, where a
+    // process holding an admin token creates files carrying explicit
+    // SYSTEM/Administrators entries instead of inherited ones. Harmless for
+    // those two (see BROAD_SIDS), a real leak for `Users`/`Everyone`, so the
+    // broad principals are pruned by SID explicitly.
+    let mut prune = vec!["/remove:g"];
+    prune.extend(BROAD_SIDS);
+    icacls(path, &prune)
+}
+
+#[cfg(windows)]
+fn icacls(path: &Path, args: &[&str]) -> std::io::Result<()> {
     let output = std::process::Command::new("icacls")
         .arg(path)
-        .arg("/inheritance:r")
-        .arg("/grant:r")
-        .arg(format!("{spec}:F"))
+        .args(args)
         .output()?;
     if !output.status.success() {
         return Err(std::io::Error::other(format!(
-            "icacls could not restrict {}: {}",
+            "icacls {} could not restrict {}: {}",
+            args.join(" "),
             path.display(),
             String::from_utf8_lossy(&output.stderr)
         )));
@@ -206,35 +248,150 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// The file's DACL in SDDL form — the ground truth for these assertions,
+    /// because SDDL names principals by SID and by INVARIANT two-letter alias
+    /// (`BU` = BUILTIN\Users, `WD` = Everyone, `AU` = Authenticated Users,
+    /// `SY` = SYSTEM, `BA` = Administrators) whereas `icacls`' human report
+    /// prints LOCALIZED names — `BUILTIN\Utilisateurs`, `AUTORITE NT\Système`
+    /// on a French Windows. An English-name assertion would silently pass on a
+    /// localized machine, which is the class of machine-dependence that broke
+    /// this test in the first place.
+    ///
+    /// Read through `Get-Acl` rather than `icacls /save` only because `/save`
+    /// writes UTF-16 to a temp file, where this returns the same SDDL on
+    /// stdout. `icacls /findsid` is deliberately NOT used: it fails to match
+    /// well-known SIDs (verified — a file explicitly granted `BU` is not
+    /// found), so an assertion built on it can never fail.
+    #[cfg(windows)]
+    fn dacl_sddl(path: &Path) -> String {
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(format!(
+                "(Get-Acl -LiteralPath '{}').Sddl",
+                path.display().to_string().replace('\'', "''")
+            ))
+            .output()
+            .unwrap();
+        let sddl = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert!(!sddl.is_empty(), "could not read the SDDL for {path:?}");
+        sddl
+    }
+
+    /// Every ACE in `sddl`'s DACL as `(flags, trustee)`. SDDL ACE layout is
+    /// `(type;flags;rights;object_guid;inherit_guid;trustee)`.
+    #[cfg(windows)]
+    fn dacl_aces(sddl: &str) -> Vec<(String, String)> {
+        let dacl = sddl.split("D:").nth(1).expect("a DACL");
+        dacl.split('(')
+            .skip(1)
+            .filter_map(|ace| ace.split(')').next())
+            .filter_map(|ace| {
+                let f: Vec<&str> = ace.split(';').collect();
+                (f.len() >= 6).then(|| (f[1].to_string(), f[5].to_string()))
+            })
+            .collect()
+    }
+
+    /// The broad principals as SDDL trustees, matching `BROAD_SIDS`. Both the
+    /// alias and the raw SID are rejected, since SDDL emits whichever it likes.
+    #[cfg(windows)]
+    const BROAD_TRUSTEES: [&str; 6] = ["BU", "WD", "AU", "S-1-5-32-545", "S-1-1-0", "S-1-5-11"];
+
+    /// The ACL this file must land with, asserted as the properties that
+    /// actually matter rather than as an ACE count.
+    ///
+    /// An earlier version of this test demanded EXACTLY one ACE. That holds on
+    /// an ordinary user profile, where the parent hands its children INHERITED
+    /// entries that `/inheritance:r` then wipes — but not on a Windows CI
+    /// runner, where a process holding an admin token creates files carrying
+    /// EXPLICIT `SYSTEM`/`Administrators` entries that no amount of inheritance
+    /// stripping removes. The count was therefore an artifact of the machine,
+    /// not the guarantee; those two principals are not a leak (see
+    /// `BROAD_SIDS`) and the code now prunes the ones that are.
     #[cfg(windows)]
     #[test]
-    fn write_user_only_file_leaves_exactly_one_ace_on_windows() {
+    fn write_user_only_file_restricts_the_acl_on_windows() {
         let dir = tmp_path("win-acl");
         let path = dir.join("endpoint-key");
         write_user_only_file(&path, b"sk-test").unwrap();
 
-        // icacls's own report is the ground truth for what got applied —
-        // inheritance stripped, a single explicit grant for the current user.
-        let out = std::process::Command::new("icacls")
+        let sddl = dacl_sddl(&path);
+        let aces = dacl_aces(&sddl);
+
+        // 1. The DACL is PROTECTED — `/inheritance:r` landed, so a looser
+        //    parent ACL cannot flow into the key file. This is the FR-2
+        //    requirement and is invariant across machines.
+        let dacl_flags = sddl.split("D:").nth(1).unwrap();
+        let dacl_flags = &dacl_flags[..dacl_flags.find('(').unwrap_or(0)];
+        assert!(
+            dacl_flags.contains('P'),
+            "expected a protected (inheritance-stripped) DACL, got D:{dacl_flags} in {sddl}"
+        );
+        // 2. and no ACE survived as inherited.
+        assert!(
+            !aces.iter().any(|(flags, _)| flags.contains("ID")),
+            "expected no inherited ACE, got {aces:?}"
+        );
+        // 3. No broad principal holds a grant — the actual confidentiality
+        //    boundary. SYSTEM/Administrators may remain; see BROAD_SIDS.
+        for (_, trustee) in &aces {
+            assert!(
+                !BROAD_TRUSTEES.contains(&trustee.as_str()),
+                "a broad principal ({trustee}) holds a grant on the key file: {sddl}"
+            );
+        }
+        // 4. The current user can still read its own key.
+        assert!(!aces.is_empty(), "expected at least one ACE: {sddl}");
+        let report = std::process::Command::new("icacls")
             .arg(&path)
             .output()
             .unwrap();
-        let report = String::from_utf8_lossy(&out.stdout);
+        let report = String::from_utf8_lossy(&report.stdout);
         let user = std::env::var("USERNAME").unwrap();
         assert!(
             report.contains(&user),
             "expected the current user in the ACL report:\n{report}"
         );
-        // Exactly one ACE line naming the target file (icacls lists the path
-        // once, then one line per grantee for a single-file query).
-        let ace_lines = report
-            .lines()
-            .filter(|l| l.contains(":(") || l.trim_start().starts_with(&user))
-            .count();
-        assert_eq!(
-            ace_lines, 1,
-            "expected a single restricted ACE, got:\n{report}"
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The regression test for the CI failure this pair of changes fixes:
+    /// `/inheritance:r` removes only INHERITED entries and `/grant:r` replaces
+    /// only the named user's own, so an EXPLICIT ACE belonging to a third
+    /// principal survives both. Granting `BU` explicitly up front reproduces
+    /// exactly the shape a Windows runner produced on its own, and pins that
+    /// `restrict_to_current_user_only` now prunes it.
+    #[cfg(windows)]
+    #[test]
+    fn restrict_prunes_an_explicit_broad_grant_inheritance_stripping_would_leave() {
+        let dir = tmp_path("win-acl-broad");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("endpoint-key");
+        std::fs::write(&path, b"sk-test").unwrap();
+
+        // Explicit, not inherited — the case /inheritance:r cannot reach.
+        let granted = std::process::Command::new("icacls")
+            .arg(&path)
+            .args(["/grant", "*S-1-5-32-545:R"])
+            .output()
+            .unwrap();
+        assert!(granted.status.success(), "could not seed the broad grant");
+        assert!(
+            dacl_aces(&dacl_sddl(&path))
+                .iter()
+                .any(|(_, t)| t == "BU" || t == "S-1-5-32-545"),
+            "the fixture must actually start with a broad grant, or this test proves nothing"
         );
+
+        restrict_to_current_user_only(&path).unwrap();
+
+        for (_, trustee) in dacl_aces(&dacl_sddl(&path)) {
+            assert!(
+                !BROAD_TRUSTEES.contains(&trustee.as_str()),
+                "the broad grant survived: {}",
+                dacl_sddl(&path)
+            );
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 }
