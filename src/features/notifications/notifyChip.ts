@@ -1,28 +1,23 @@
-// notifications FR-19 — pure derivation for the status-bar "muted" chip: what
-// it reads is `enabled` alone (no counts, no session names — design brief
-// "Data shown"). Split out from the component so the rule is unit-testable
-// with no DOM.
+// notifications FR-19 / audio-cues FR-13 — pure derivation for the status-bar
+// "muted" chip: what it reads is the list of OFF channels (attention,
+// turnDone, sound) — no counts, no session names (design brief "Data
+// shown"). Split out from the component so the rule is unit-testable with no
+// DOM.
 
-import type { NotifyClass } from '../../../contract/notifications';
-import { NOTIFY_CLASS_LABEL } from '../../../contract/notifications';
+import type { MutedChannel } from '../../../contract/audio-cues';
+import { MUTED_ALL_TITLE, MUTED_CHANNEL_LABEL } from '../../../contract/audio-cues';
 
-const CLASSES: readonly NotifyClass[] = ['attention', 'turnDone'];
+const ALL_CHANNELS: readonly MutedChannel[] = ['attention', 'turnDone', 'sound'];
 
-function mutedClasses(enabled: Record<NotifyClass, boolean>): NotifyClass[] {
-  return CLASSES.filter((c) => !enabled[c]);
-}
-
-/** FR-19: `null` ⇒ render nothing (both classes on, the default state). */
-export function mutedChipLabel(enabled: Record<NotifyClass, boolean>): string | null {
-  const off = mutedClasses(enabled);
+/** `null` ⇒ render nothing (all three channels on, the default state). */
+export function mutedChipLabel(off: readonly MutedChannel[]): string | null {
   if (off.length === 0) return null;
-  return off.length === 2 ? 'muted (all)' : 'muted';
+  return off.length === ALL_CHANNELS.length ? 'muted (all)' : 'muted';
 }
 
-/** FR-19: native `title` naming exactly what is silenced. '' when nothing is. */
-export function mutedChipTitle(enabled: Record<NotifyClass, boolean>): string {
-  const off = mutedClasses(enabled);
+/** Native `title` naming exactly what is silenced. '' when nothing is. */
+export function mutedChipTitle(off: readonly MutedChannel[]): string {
   if (off.length === 0) return '';
-  if (off.length === 2) return 'all notifications are off';
-  return `${NOTIFY_CLASS_LABEL[off[0]]} notifications are off`;
+  if (off.length === ALL_CHANNELS.length) return MUTED_ALL_TITLE;
+  return `${off.map((c) => MUTED_CHANNEL_LABEL[c]).join(', ')} are off`;
 }

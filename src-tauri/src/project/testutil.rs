@@ -34,6 +34,15 @@ pub(crate) fn project_fixture(id: &str, name: &str, root: &str, last_used: u64) 
         defaults: ProjectDefaults::default(),
         created_at: 1_000,
         last_used_at: last_used,
+        group_id: None,
+    }
+}
+
+pub(crate) fn group_fixture(id: &str, name: &str, created_at: u64) -> ProjectGroup {
+    ProjectGroup {
+        id: id.into(),
+        name: name.into(),
+        created_at,
     }
 }
 

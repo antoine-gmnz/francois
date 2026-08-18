@@ -44,6 +44,7 @@ export type ErrorCode =
   | 'PROJECT_DUPLICATE_ROOT' // projects: another project already owns that normalized root
   | 'PROJECT_ROOT_MISSING' // projects: the project's root no longer exists on disk
   | 'STANDARDS_WRITE_FAILED' // projects: CLAUDE.md could not be read-merged-written
+  | 'GROUP_NOT_FOUND' // project-groups: a groupId that is not in the registry
   | 'REMOTE_CONTROL_FAILED' // remote-control: the host process died, or published no URL before the deadline
   | 'WORKTREE_BRANCH_IN_USE' // session-worktree: the branch is already checked out at another path (detail: { path })
   | 'WORKTREE_CREATE_FAILED' // session-worktree: prune/add failed; the core reversed what it did (FR-11)

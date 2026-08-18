@@ -1,6 +1,6 @@
 // notifications: OS desktop notifications for a blocked turn (attention) or a
 // settled turn (turnDone). specs/notifications.md §5/§6. Almost entirely
-// frontend — subscribes to the existing francois://session/event stream and
+// frontend — reacts to the shared trigger source (audio-cues FR-1..FR-4) and
 // calls the official tauri-plugin-notification JS API. No IPC of our own.
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -10,22 +10,13 @@ import {
   requestPermission,
   sendNotification,
 } from '@tauri-apps/plugin-notification';
-import type { BlockId, SessionEvent, SessionId, SessionStatus } from '../../../contract/common';
-import { isBusyStatus } from '../../../contract/fleet-board';
+import type { SessionId } from '../../../contract/common';
 import type { NotifyClass, NotifyTrigger } from '../../../contract/notifications';
-import { NOTIFICATION_TITLE, isSettleStatus, notificationBody } from '../../../contract/notifications';
-import { onSessionEvent } from '../../lib/api';
+import { NOTIFICATION_TITLE, notificationBody } from '../../../contract/notifications';
 import { visibleSessionIds } from '../../lib/layoutStore';
 import { useNotificationsStore } from '../../lib/notificationsStore';
 import { useStore } from '../../lib/store';
-
-// ---------- pure derivation + gating (FR-6/FR-7/FR-8/FR-14, unit tested with
-// no DOM and no Tauri) ----------
-
-export interface DeriveState {
-  lastStatus: Map<SessionId, SessionStatus>;
-  seenAsks: Set<BlockId>;
-}
+import { registerTriggerSink } from './trigger';
 
 export interface GateContext {
   enabled: Record<NotifyClass, boolean>;
@@ -38,49 +29,6 @@ export interface GateContext {
   windowFocused: boolean;
 }
 
-/** Shared by the three settle sources (§5): one map, so an ask-then-error pair fires at most once. */
-function settleTrigger(sessionId: SessionId, nextStatus: SessionStatus, state: DeriveState): NotifyTrigger | null {
-  const previous = state.lastStatus.get(sessionId);
-  state.lastStatus.set(sessionId, nextStatus);
-  // isBusyStatus, not `=== 'running'`: a turn can settle out of any in-flight
-  // status. Interrupting an approval card goes awaiting_approval → idle, and a
-  // spawn failure goes starting → error — both are turns the user was waiting
-  // on, and both fired no notification while this only recognised `running`.
-  if (previous !== undefined && isBusyStatus(previous) && isSettleStatus(nextStatus)) {
-    return { class: 'turnDone', kind: 'settle', sessionId, status: nextStatus };
-  }
-  return null;
-}
-
-/**
- * FR-6/FR-14 — maps an event to a trigger, mutating `state`. Pure otherwise:
- * gating (whether it actually fires) is `shouldFire`'s job, not this one — a
- * muted class must still update `lastStatus`/`seenAsks` so re-enabling it
- * later sees the correct baseline (§7 "A class is toggled off").
- */
-export function deriveTrigger(e: SessionEvent, state: DeriveState): NotifyTrigger | null {
-  switch (e.type) {
-    case 'permission.asked': {
-      if (state.seenAsks.has(e.blockId)) return null; // FR-14: never re-fire a resolved/replayed ask
-      state.seenAsks.add(e.blockId);
-      return { class: 'attention', kind: 'approval', sessionId: e.sessionId, toolName: e.ask.toolName };
-    }
-    case 'question.asked': {
-      if (state.seenAsks.has(e.blockId)) return null;
-      state.seenAsks.add(e.blockId);
-      return { class: 'attention', kind: 'question', sessionId: e.sessionId };
-    }
-    case 'session.status':
-      return settleTrigger(e.sessionId, e.status, state);
-    case 'session.meta':
-      return settleTrigger(e.meta.id, e.meta.status, state);
-    case 'session.error':
-      return settleTrigger(e.sessionId, 'error', state);
-    default:
-      return null;
-  }
-}
-
 /** FR-7/FR-8 — the complete gating rule. */
 export function shouldFire(t: NotifyTrigger, ctx: GateContext): boolean {
   if (t.class === 'attention') return ctx.enabled.attention; // FR-7: unconditional beyond the toggle
@@ -88,8 +36,6 @@ export function shouldFire(t: NotifyTrigger, ctx: GateContext): boolean {
 }
 
 // ---------- runtime wiring (FR-5/FR-9..FR-13) ----------
-
-const deriveState: DeriveState = { lastStatus: new Map(), seenAsks: new Set() };
 
 let windowFocused = true; // FR-9: conservative default until isFocused() resolves
 let permission: 'unknown' | 'granted' | 'denied' = 'unknown';
@@ -131,9 +77,8 @@ async function fire(trigger: NotifyTrigger): Promise<void> {
   }
 }
 
-function handleSessionEvent(e: SessionEvent): void {
-  const trigger = deriveTrigger(e, deriveState);
-  if (!trigger) return;
+/** audio-cues FR-4: registered as a sink instead of subscribing directly. */
+function handleTrigger(trigger: NotifyTrigger): void {
   const ctx: GateContext = {
     enabled: useNotificationsStore.getState().enabled,
     visibleSessionIds: visibleSessionIds(useStore.getState()),
@@ -166,7 +111,7 @@ export function initNotifications(): void {
   if (initialized) return;
   initialized = true;
 
-  void onSessionEvent(handleSessionEvent);
+  registerTriggerSink(handleTrigger);
 
   // FR-9: seed once, then track live changes; either rejecting leaves the
   // conservative `true` default rather than over-notifying.

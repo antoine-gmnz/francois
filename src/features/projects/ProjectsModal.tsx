@@ -20,6 +20,7 @@ import { useStore } from '../../lib/store';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { ListRow } from '../../ui/ListRow';
 import { DefaultsSection } from './DefaultsSection';
+import { GroupsSection } from './GroupsSection';
 import { IdentitySection } from './IdentitySection';
 import { RemoveControl } from '../../ui/RemoveControl';
 import { StandardsSection } from './StandardsSection';
@@ -47,6 +48,8 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
     setNotes: registry.setNotes,
     setError: registry.setError,
     setRemoveConfirm: registry.setRemoveConfirm,
+    setGroupError: registry.setGroupError,
+    setNewGroupDraft: registry.setNewGroupDraft,
   });
   const dismissRef = useRef<HTMLDivElement>(null);
 
@@ -109,6 +112,17 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
             </div>
             {registry.errors.list !== null && <div className="pj-list-error">{registry.errors.list}</div>}
             <NewProjectControl onClick={() => void mutations.addProject()} />
+            {/* project-groups FR-19/FR-20: a second block, below the project
+                list — group rows are NOT selectable into the config pane. */}
+            <GroupsSection
+              groups={registry.groups}
+              onAdd={(name) => void mutations.addGroup(name)}
+              onRename={(groupId, name) => void mutations.renameGroup(groupId, name)}
+              onRemove={(groupId) => void mutations.removeGroup(groupId)}
+              error={registry.groupError}
+              newGroupDraft={registry.newGroupDraft}
+              setNewGroupDraft={registry.setNewGroupDraft}
+            />
           </div>
 
           {/* right: the config form (FR-34) */}
@@ -127,6 +141,9 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
                 onRootCommit={mutations.commitRoot}
                 error={registry.errors.identity}
                 rootMissing={rootMissing}
+                groups={registry.groups}
+                groupId={selected.groupId ?? ''}
+                onGroupChange={(groupId) => void mutations.assignGroup(groupId)}
               />
 
               {/* SESSION DEFAULTS — disabled while the root is missing (FR-38) */}

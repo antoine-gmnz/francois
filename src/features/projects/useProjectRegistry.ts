@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ModelInfo } from '../../../contract/common';
-import type { ProjectMeta, StandardsRead } from '../../../contract/projects';
+import type { ProjectGroup, ProjectMeta, StandardsRead } from '../../../contract/projects';
 import { projectGetStandards, projectList, sessionModels } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { useMounted } from '../../lib/hooks/useMounted';
@@ -21,6 +21,14 @@ const EMPTY_READ: StandardsRead = {
 
 export interface ProjectRegistry {
   projects: ProjectMeta[];
+  // project-groups FR-19..FR-22: the groups block + Identity's Group selector.
+  groups: ProjectGroup[];
+  setGroups: (g: ProjectGroup[]) => void;
+  groupError: string | null;
+  setGroupError: (message: string | null) => void;
+  /** non-null while the inline "+ New group" field is open; '' just after opening. */
+  newGroupDraft: string | null;
+  setNewGroupDraft: (v: string | null) => void;
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
   models: ModelInfo[];
@@ -56,8 +64,11 @@ export interface ProjectRegistry {
 
 export function useProjectRegistry(): ProjectRegistry {
   const setStoreProjects = useStore((s) => s.setProjects);
+  // project-groups FR-11: keeps the store's roster-facing copy current too.
+  const setStoreGroups = useStore((s) => s.setGroups);
 
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [groups, setGroups] = useState<ProjectGroup[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [standards, setStandards] = useState<StandardsRead | null>(null);
@@ -72,6 +83,10 @@ export function useProjectRegistry(): ProjectRegistry {
   const [draftOwner, setDraftOwner] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<ProjectSection, string | null>>(EMPTY_SECTION_ERRORS);
   const [removeConfirm, setRemoveConfirm] = useState(false);
+  // project-groups FR-19/FR-20: the groups block's own inline errors + the
+  // new-group inline field, kept alongside the rest of the modal's UI state.
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [newGroupDraft, setNewGroupDraft] = useState<string | null>(null);
   const alive = useMounted();
 
   const setError = (section: ProjectSection, message: string | null) => {
@@ -93,10 +108,12 @@ export function useProjectRegistry(): ProjectRegistry {
       return;
     }
     setError('list', null);
-    setProjects(res.data);
-    setStoreProjects(res.data); // keeps the switcher (and FR-26's fallback) honest
+    setProjects(res.data.projects);
+    setGroups(res.data.groups);
+    setStoreProjects(res.data.projects); // keeps the switcher (and FR-26's fallback) honest
+    setStoreGroups(res.data.groups); // project-groups: keeps the roster's tree honest
     const want = preferId !== undefined ? preferId : selectedId;
-    const next = want && res.data.some((p) => p.id === want) ? want : (res.data[0]?.id ?? null);
+    const next = want && res.data.projects.some((p) => p.id === want) ? want : (res.data.projects[0]?.id ?? null);
     setSelectedId(next);
     // Drafts are NOT reseeded here. A selection change is handled by the effect
     // below (which also covers the list-row click, that never calls reload()), and
@@ -199,6 +216,8 @@ export function useProjectRegistry(): ProjectRegistry {
 
   return {
     projects,
+    groups,
+    setGroups,
     selectedId,
     setSelectedId,
     models,
@@ -227,5 +246,9 @@ export function useProjectRegistry(): ProjectRegistry {
     setNewRule,
     removeConfirm,
     setRemoveConfirm,
+    groupError,
+    setGroupError,
+    newGroupDraft,
+    setNewGroupDraft,
   };
 }

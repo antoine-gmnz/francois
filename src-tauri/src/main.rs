@@ -8,6 +8,7 @@
 mod account;
 mod diagnostics;
 mod diff;
+mod dnd;
 mod editor;
 mod extensions;
 mod fs_util;
@@ -134,6 +135,10 @@ fn main() {
             project::project_create,
             project::project_update,
             project::project_remove,
+            project::project_create_group,
+            project::project_rename_group,
+            project::project_remove_group,
+            project::project_assign_group,
             project::project_get_standards,
             project::project_set_standards,
             project::project_repo_brief,
@@ -182,6 +187,7 @@ fn main() {
             permissions::permissions_remove,
             permissions::permissions_set_tier,
             window::app_set_window_theme,
+            dnd::app_dnd_state,
             usage::app_get_usage,
             usage::app_refresh_usage,
             update::app_check_update,

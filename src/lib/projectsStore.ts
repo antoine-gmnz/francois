@@ -3,6 +3,10 @@
 //
 // `INITIAL_ACTIVE_PROJECT` is exported because agentTabStore.ts's initial
 // `mainTab` depends on it (agent-tab/overview FR-3: which tab the app opens on).
+//
+// project-groups §6: `groups` is fed by the same `project_list` call that
+// already feeds `projects` — no new fetch site. Both fields live on the
+// contract's `ProjectsState` (contract/projects.ts).
 
 import type { StateCreator } from 'zustand';
 import type { ProjectsState } from '../../contract/projects';
@@ -25,6 +29,9 @@ export const createProjectsSlice: StateCreator<AppState, [], [], ProjectsState> 
   // launch and reconciled against the fetched list on every write (FR-26, §7
   // case 16).
   projects: [],
+  // project-groups FR-11: fed by the same project_list read as `projects`.
+  groups: [],
+  setGroups: (groups) => set({ groups }),
   setProjects: (projects) =>
     set((s) => {
       const activeProjectId = reconcileActiveProjectId(s.activeProjectId, projects);

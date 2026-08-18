@@ -163,8 +163,11 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
     // default, so the projects registry we hold is now stale — re-read it rather
     // than leaving the switcher and the Projects modal describing a default that
     // no longer exists.
-    const projects = await projectList();
-    if (projects.ok) useStore.getState().setProjects(projects.data);
+    const projectsRes = await projectList();
+    if (projectsRes.ok) {
+      useStore.getState().setProjects(projectsRes.data.projects);
+      useStore.getState().setGroups(projectsRes.data.groups);
+    }
   };
 
   return (
