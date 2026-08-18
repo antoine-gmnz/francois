@@ -34,15 +34,17 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 
 **§ Structured transcripts** — not scraped terminal output. Francois drives Claude Code's `stream-json` interface, so user blocks, assistant text, tool calls (`⧉ Read`, `⌕ Grep`, `✎ Edit · +34 −19`), and subagent dispatches render as first-class blocks, streaming live.
 
-**≡ A diff tab that commits** — per-session working-tree view: file selector with status glyphs and ±counts, windowed unified diff that stays snappy on 5k-line changes, stage-all and commit without leaving the app.
+**≡ A diff tab that commits** — per-session working-tree view: a collapsible **folder tree** with status glyphs, ±counts and a `/` filter box, word-level intraline emphasis so a one-character rename doesn't read as a whole red line beside a whole green one, a windowed unified diff that stays snappy on 5k-line changes, stage-all and commit without leaving the app.
 
 **❯ A real shell** — PTY-backed terminal per session (xterm.js + `portable-pty`), in the session's working directory. Not a toy console — your actual shell.
 
-**⇉ The right rail** — four stacked cards, per session: live subagent progress `[3]`, MCP server health (tool counts, handshakes, timeouts) `[4]`, installed skills `[5]`, and running `Workflow` scripts — declared phases, live elapsed, completion `[6]`. Click an agent card to open its own transcript in a tab. Fold the agents, MCP or skills card down to its header with `c`; the collapsed set persists.
+**⇉ Agents, MCP, skills, workflows** — four views per session, opened from the roster's own rows or with `3`–`6`: live subagent progress `[3]`, MCP server health (tool counts, handshakes, timeouts) `[4]`, installed skills `[5]`, and running `Workflow` scripts — declared phases, live elapsed, completion `[6]`. Click an agent card, or a workflow run, to open its own transcript as its own tab.
 
 **⌘K everything** — command palette with fuzzy matching: new session, switch model, run skill, attach MCP server, compact context, kill agent, rename a session, toggle layout…
 
-**⌂ Projects & the OVERVIEW tab** — register your repos once, get per-project session defaults, and a cross-project dashboard: fleet totals, what needs attention, per-project rollup, activity feed.
+**⌂ Projects, groups & the OVERVIEW tab** — register your repos once, get per-project session defaults, and a cross-project dashboard: fleet totals, what needs attention, per-project rollup, activity feed. Group several checkouts of the same product under one name and the sidebar roster gains a tier: group → project → session cards.
+
+**◈ Session profiles** — save a way of working (system prompt, allowed tools, MCP set) as a named profile paired to a project, pick it when you spawn a session, and it's snapshotted onto that session for good. Manage them in a Profiles modal beside Projects, or from `⌘K`.
 
 **⚇ Several accounts at once** — run more than one Anthropic account side by side, each with its own `CLAUDE_CONFIG_DIR`, logged in from inside the app through a real `claude` TUI. Pick one per session, or a default per project; the titlebar carries that account's plan meters and reset clock, and the status bar says which account the selected session runs on.
 
@@ -54,21 +56,24 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 
 **⟳ Durable sessions** — quit, reopen, and your fleet is still there: transcripts, status, model, context usage. Sessions are resumable, not disposable. Optionally run one in its own `git worktree`.
 
-**▯ A layout that gets out of the way** — `[` and `]` collapse the side columns; `c` collapses an individual right-rail card. A segmented tab strip, a measured ~680px reading column in the transcript, and a titlebar that carries the project switcher and your plan meters. Theme and layout preferences persist.
+**♪ Notifications you'll actually notice** — a desktop banner when a session is blocked on an approval or a question, or its turn lands — plus a short synthesized **tone** for the same two moments, so the cue reaches you when your eyes are on an editor and not on the corner of the screen. One toggle (`⌘K` → sound), throttled, silent under OS Do Not Disturb.
+
+**▯ A layout that gets out of the way** — two chrome tiers do the talking (one for the app, one for the selected session), so the pane below is a bare surface; `[` folds the roster to a 46px rail. Up to four resizable session panes side by side, a measured ~680px reading column in the transcript, and a titlebar carrying the project switcher, your plan meters and the account. Theme and layout preferences persist.
 
 ## Keyboard
 
 | Key | Action |
 |---|---|
-| `1`–`6` | Focus sessions / main / agents / mcp / skills / workflows |
+| `1` / `2` | Focus the roster / the main pane |
+| `3`–`6` | Open agents / mcp / skills / workflows (again returns to SESSION) |
 | `↑` `↓` `⏎` | Navigate the focused pane · commit selection |
 | `d` / `t` / `o` | Toggle DIFF / SHELL / OVERVIEW tab |
 | `w` | Close the active agent tab |
 | `n` / `a` | New session / new agent |
 | `x` | Kill the selected agent (in AGENTS) |
-| `/` | Filter sessions (or skills, in SKILLS) |
-| `[` / `]` | Show/hide left / right column |
-| `c` | Collapse the focused right-rail card |
+| `/` | Filter sessions (or skills in SKILLS, files in DIFF) |
+| `←` `→` | Collapse / expand a folder in the DIFF tree |
+| `[` | Fold the roster to its rail |
 | `⌘K` / `Ctrl+K` | Command palette |
 | `↑` `↓` | Recall previously sent messages (in the composer) |
 | `s` / `c` | Stage all / commit (in DIFF) |
@@ -134,7 +139,6 @@ separate data directories — run both at once, sessions never collide.
 
 ## Roadmap
 
-- **Desktop notifications** — get pinged when a *background* session finishes, errors, or needs you ([spec](specs/notifications.md))
 - **Session brake** — stop a running turn mid-flight ([spec](specs/session-brake.md))
 - **`francois` CLI** — talk to the running app from any terminal ([spec](specs/cli-companion.md))
 

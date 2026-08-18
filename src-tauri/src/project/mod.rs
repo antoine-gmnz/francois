@@ -96,6 +96,11 @@ pub struct Project {
     created_at: u64,
     #[serde(rename = "lastUsedAt", default)]
     last_used_at: u64,
+    /// project-groups FR-6: the group this project belongs to; absent ⇒
+    /// ungrouped. Must serialize as an OMITTED key, never `null` — same
+    /// discipline as every `ProjectDefaults` field.
+    #[serde(rename = "groupId", default, skip_serializing_if = "Option::is_none")]
+    group_id: Option<String>,
 }
 
 /// Mirrors `ProjectMeta` in contract/projects.ts — a `Project` plus the derived
@@ -112,6 +117,20 @@ pub struct ProjectMeta {
     last_used_at: u64,
     #[serde(rename = "rootExists")]
     root_exists: bool,
+    #[serde(rename = "groupId", skip_serializing_if = "Option::is_none")]
+    group_id: Option<String>,
+}
+
+// ---------- project-groups: the entity ----------
+
+/// Mirrors `ProjectGroup` in contract/projects.ts (project-groups FR-1).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ProjectGroup {
+    id: String,
+    /// Trimmed, 1–MAX_GROUP_NAME_LENGTH. NOT unique (FR-4).
+    name: String,
+    #[serde(rename = "createdAt", default)]
+    created_at: u64,
 }
 
 /// Mirrors `ProjectStandards` in contract/projects.ts — the structured content of
@@ -136,14 +155,37 @@ pub struct StandardsRead {
     block_present: bool,
 }
 
+/// Mirrors `ProjectRegistrySnapshot` in contract/projects.ts — the
+/// `project_list` response shape (project-groups §5, WAS `ProjectMeta[]`).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct ProjectRegistrySnapshot {
+    projects: Vec<ProjectMeta>,
+    groups: Vec<ProjectGroup>,
+}
+
 // ---------- managed state ----------
+
+/// The two arrays persisted together in projects.json (FR-1, project-groups
+/// FR-2). Held behind ONE mutex (below) rather than one-per-array: every
+/// mutation — project or group — touches the SAME document on disk, so a single
+/// lock is what makes "memory and disk always agree" (FR-10) actually true.
+/// Two independent locks let a project write and a group write interleave and
+/// each clobber the other's half of the document with a stale snapshot, and
+/// project mutations acquiring the groups lock (or vice versa) from inside their
+/// own persist step is a lock-order inversion waiting to deadlock — seen in
+/// earlier revisions of this file.
+#[derive(Default)]
+pub(crate) struct RegistryDocument {
+    pub(crate) projects: Vec<Project>,
+    pub(crate) groups: Vec<ProjectGroup>,
+}
 
 /// The whole registry, held in memory and mirrored to projects.json on every
 /// mutation. Francois is the only writer, so memory is the source of truth after
 /// the one load at startup (`load_projects`).
 #[derive(Default)]
 pub struct ProjectRegistry {
-    projects: Mutex<Vec<Project>>,
+    doc: Mutex<RegistryDocument>,
 }
 
 // ---------- shared messages ----------
@@ -152,3 +194,5 @@ pub(crate) const NOT_FOUND_MSG: &str = "no such project";
 pub(crate) const ROOT_MISSING_MSG: &str = "the project's root directory no longer exists";
 pub(crate) const BAD_ROOT_MSG: &str = "project root does not exist or is not a directory";
 pub(crate) const DUPLICATE_ROOT_MSG: &str = "another project already owns that directory";
+pub(crate) const GROUP_NOT_FOUND_MSG: &str = "no such project group";
+pub(crate) const BAD_GROUP_NAME_MSG: &str = "a group name must be 1–80 characters";

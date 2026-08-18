@@ -1,22 +1,30 @@
-// contract/shell-terminal.ts — the `shell` domain, re-keyed by ShellId (multiple-shells).
-// Authored from specs/shell-terminal.md §5 and specs/multiple-shells.md §5, which rewrites
-// this file in place — the domain keeps its name, but every channel now addresses a
-// ShellId rather than a SessionId. Imports shared vocabulary from common.ts; never
-// redefines it.
+// contract/shell-terminal.ts — the `shell` domain, re-keyed by ShellId (multiple-shells),
+// then re-owned by ShellOwner (unbound-panes). Authored from specs/shell-terminal.md §5,
+// specs/multiple-shells.md §5 and specs/unbound-panes.md §5, which rewrite this file in
+// place each time — the domain keeps its name, but a shell's owner is now a union rather
+// than a bare SessionId (live decision, 2026-08-18: a resource that can belong to two kinds
+// of parent gets a discriminated union on the entity and every event, never an optional id
+// per parent kind). Imports shared vocabulary from common.ts; never redefines it.
 //
 // Physical Tauri binding (see PIPELINE.md): logical channel
 // `francois:shell:<verb>` → Tauri command `shell_<verb>`; the event stream
 // `francois:shell:event` → Tauri event `francois://shell/event`. Every command
 // RESOLVES a `Result<T>` (never rejects across the bridge).
 
-import type { SessionId, Result } from './common';
+import type { SessionId, ProjectId, Result } from './common';
 
-/** uuid-v4. A shell belongs to exactly one session for its whole life (FR-1). */
+/** uuid-v4. A shell belongs to exactly one owner for its whole life (FR-1, unbound-panes FR-6). */
 export type ShellId = string;
+
+/** Who a shell belongs to for its whole life. A project-owned shell is rooted at
+ *  that project's `root` and has no session (unbound-panes FR-6). */
+export type ShellOwner =
+  | { kind: 'session'; sessionId: SessionId }
+  | { kind: 'project'; projectId: ProjectId };
 
 export interface ShellInfo {
   id: ShellId;
-  sessionId: SessionId;
+  owner: ShellOwner;
   /** Display label: auto `<shellName> <n>` (FR-3) or the custom name (FR-4). */
   name: string;
   /** Resolved executable basename, e.g. 'zsh', 'pwsh' (shell-terminal FR-6). */
@@ -30,15 +38,16 @@ export interface ShellInfo {
 // ---------- francois:shell:ensure ----------
 
 export interface ShellEnsurePayload {
-  sessionId: SessionId;
-  /** Omit to attach to the session's first shell, creating one if none (FR-5). */
+  owner: ShellOwner;
+  /** Omit to attach to the owner's first shell, creating one if none (FR-5). */
   shellId?: ShellId;
 }
 
 export interface ShellEnsureData {
   /** The shell actually attached to — echoed because `shellId` may be omitted. */
   shellId: ShellId;
-  /** The session's whole strip, in creation order (FR-1). */
+  /** The OWNER's whole strip, in creation order (FR-1) — a project owner's strip is its
+   *  own project-owned shells only, never a session's. */
   shells: ShellInfo[];
   cols: number;
   rows: number;
@@ -52,9 +61,13 @@ export interface ShellEnsureData {
 // ---------- francois:shell:create ----------
 
 export interface ShellCreatePayload {
-  sessionId: SessionId;
+  owner: ShellOwner;
 }
 // invoke('shell_create', req: ShellCreatePayload): Promise<Result<ShellInfo>>
+// A `project` owner: cwd is the project's `root` (PROJECT_NOT_FOUND if the id is not in the
+// registry; PROJECT_ROOT_MISSING if the root is gone or is not a directory — both checked
+// BEFORE spawning). The runtime (native | wsl) resolves from that root exactly as
+// `engine.cwd_of` does for a session. SHELL_CAP (6) applies per owner (unbound-panes §5).
 
 // ---------- francois:shell:restart ----------
 
@@ -103,12 +116,12 @@ export interface ShellResizePayload {
 // invoke('shell_resize', req: ShellResizePayload): Promise<Result<void>>
 
 // ---------- francois:shell:event (core -> frontend) ----------
-// `sessionId` rides along so the frontend can route unread marks (FR-14)
-// without a shellId → session lookup.
+// `owner` rides along so the frontend can route unread marks (FR-14) without a
+// shellId → owner lookup.
 
 export type ShellEvent =
-  | { type: 'shell.data'; shellId: ShellId; sessionId: SessionId; data: string }
-  | { type: 'shell.exit'; shellId: ShellId; sessionId: SessionId; exitCode: number };
+  | { type: 'shell.data'; shellId: ShellId; owner: ShellOwner; data: string }
+  | { type: 'shell.exit'; shellId: ShellId; owner: ShellOwner; exitCode: number };
 
 // Re-export the Result envelope for convenience at the call sites.
 export type { Result };

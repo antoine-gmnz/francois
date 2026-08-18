@@ -3,6 +3,10 @@
 //
 // `INITIAL_ACTIVE_PROJECT` is exported because agentTabStore.ts's initial
 // `mainTab` depends on it (agent-tab/overview FR-3: which tab the app opens on).
+//
+// project-groups §6: `groups` is fed by the same `project_list` call that
+// already feeds `projects` — no new fetch site. Both fields live on the
+// contract's `ProjectsState` (contract/projects.ts).
 
 import type { StateCreator } from 'zustand';
 import type { ProjectsState } from '../../contract/projects';
@@ -12,6 +16,7 @@ import {
   persistActiveProjectId,
   reconcileActiveProjectId,
 } from '../features/projects/projects';
+import { clampPaneIndex, layoutRegime, panesWithoutStaleProjects, persistedLeftPane, persistedRightPane, persistSplitState } from './layoutStore';
 import type { AppState } from './store';
 
 // Restored once, before the store exists, because the initial main tab
@@ -25,11 +30,28 @@ export const createProjectsSlice: StateCreator<AppState, [], [], ProjectsState> 
   // launch and reconciled against the fetched list on every write (FR-26, §7
   // case 16).
   projects: [],
+  // project-groups FR-11: fed by the same project_list read as `projects`.
+  groups: [],
+  setGroups: (groups) => set({ groups }),
   setProjects: (projects) =>
     set((s) => {
       const activeProjectId = reconcileActiveProjectId(s.activeProjectId, projects);
       if (activeProjectId !== s.activeProjectId) persistActiveProjectId(activeProjectId);
-      return { projects, activeProjectId };
+      const patch: Partial<AppState> = { projects, activeProjectId };
+      // unbound-panes FR-17: a shell pane whose project is no longer registered
+      // is dropped on hydration, like a stale session pane (split-by-4 FR-24).
+      const validProjectIds = new Set(projects.map((p) => p.id));
+      const extraPanes = panesWithoutStaleProjects(s.extraPanes, validProjectIds);
+      if (extraPanes.length !== s.extraPanes.length) {
+        const focusedPaneIndex = clampPaneIndex(s.focusedPaneIndex, extraPanes.length + 1);
+        persistSplitState({ extraPanes, focusedPaneIndex });
+        patch.extraPanes = extraPanes;
+        patch.focusedPaneIndex = focusedPaneIndex;
+        const regime = layoutRegime(extraPanes.length + 1);
+        patch.showLeftPane = regime === 'grid' ? false : persistedLeftPane();
+        patch.showRightPane = regime === 'single' ? persistedRightPane() : false;
+      }
+      return patch;
     }),
   activeProjectId: INITIAL_ACTIVE_PROJECT,
   setActiveProjectId: (activeProjectId) => {

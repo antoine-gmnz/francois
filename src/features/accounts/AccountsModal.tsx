@@ -409,8 +409,10 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         // stream, which pane [1] already owns — nothing to apply here.
         // The core also cleared this account from every project that named it as
         // its default, so the projects registry we hold is stale — re-read it.
-        void projectList().then((projects) => {
-          if (alive.current && projects.ok) useStore.getState().setProjects(projects.data);
+        void projectList().then((res) => {
+          if (!alive.current || !res.ok) return;
+          useStore.getState().setProjects(res.data.projects);
+          useStore.getState().setGroups(res.data.groups);
         });
       })
       .catch(onIpcRejected);

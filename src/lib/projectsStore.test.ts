@@ -136,6 +136,15 @@ describe('projects store slice (FR-26)', () => {
     expect(useStore.getState().activeProjectId).toBe('p1');
   });
 
+  it('setGroups replaces the group list — project-groups §6, fed by the same project_list read', async () => {
+    mockStorage();
+    const useStore = await freshStore();
+
+    expect(useStore.getState().groups).toEqual([]);
+    useStore.getState().setGroups([{ id: 'g1', name: 'ODO', createdAt: 0 }]);
+    expect(useStore.getState().groups).toEqual([{ id: 'g1', name: 'ODO', createdAt: 0 }]);
+  });
+
   it('setProjectsOpen toggles the modal flag without touching the registry', async () => {
     mockStorage();
     const useStore = await freshStore();

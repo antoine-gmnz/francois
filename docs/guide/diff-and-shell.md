@@ -1,7 +1,7 @@
 # Diff & shell
 
-Every session's main pane has three tabs: SESSION, DIFF, and SHELL. This page
-covers the last two — the git review surface and the real terminal — plus how
+Every session has three views of its own: SESSION, DIFF, and SHELL. This page
+covers the last two — the git review surface and the real terminals — plus how
 both adapt when a session's working directory lives inside WSL.
 
 ## The DIFF tab
@@ -13,10 +13,11 @@ summaries, per-file diffs, staging, and commits, then pushes change
 notifications to the frontend so the tab (and the DIFF tab's badge in the tab
 bar) stay live without polling.
 
-### File selector
+### The navigator
 
-Changed files are shown as a horizontal strip of chips above the diff body,
-one chip per changed file, sorted by path. Each chip carries:
+Changed files live in a **collapsible folder tree** down the left of the tab,
+so three files called `mod.rs` are three distinguishable rows and a 30-file
+changeset has a shape. Each file row carries:
 
 - the file's name,
 - a status glyph derived from `git status --porcelain` — `modified`,
@@ -25,8 +26,20 @@ one chip per changed file, sorted by path. Each chip carries:
 - a green `+N` addition count and a red `−N` deletion count, each only shown
   when non-zero.
 
-The first file is selected by default; `←`/`→` cycle chips (wrapping), and
-clicking a chip selects it directly. Selecting a chip loads that file's diff.
+Folders start expanded and remember what you fold. Keyboard traversal walks the
+visible rows: `↑`/`↓` move the cursor, `→` expands a collapsed folder or steps
+into an expanded one, `←` collapses or jumps to the parent, and `⏎` selects the
+file under the cursor (or folds the folder under it). The cursor may sit on a
+folder — the diff body keeps showing the last file you actually selected.
+
+A **filter box** sits above the tree; `/` focuses it and `esc` clears it and
+returns focus to the tree. While a query is active, fold state is ignored and
+every matching path renders expanded; a query matching nothing renders an
+inline `no file matches "<query>"` row and leaves the body untouched. Filtering
+only changes visibility — it never changes what's checked, what's selected, or
+your fold state — and if a filter is hiding checked files, the footer says how
+many, so committing never quietly takes more than you can see.
+
 Counts for untracked files come from diffing against `/dev/null` rather than
 `git add -N`, so simply opening the DIFF tab never mutates the git index.
 
@@ -35,9 +48,16 @@ Counts for untracked files come from diffing against `/dev/null` rather than
 The body renders one file's unified diff at a time: hunk headers, then
 add/delete/context lines with a fixed-width line-number gutter (old line
 number for deletions, new line number for additions and context) and a sign
-column (`+`/`-`/space). There's no side-by-side view, no intraline
-highlighting, and no syntax highlighting inside diff lines in v1 — colors are
-per line-kind only (hunk, add, del, ctx).
+column (`+`/`-`/space).
+
+Paired lines get **word-level intraline emphasis**, computed in-app with no
+dependency: within a hunk, a run of deleted lines immediately followed by an
+equal-length run of added lines is paired line by line, and the changed span
+inside each pair is emphasized so a one-character rename stops reading as a
+whole red line beside a whole green one. Pairs that are too dissimilar (less
+than half the line in common) get no emphasis at all — that's what stops two
+unrelated rewritten lines from being confetti'd. There's still no side-by-side
+view and no syntax highlighting inside diff lines.
 
 Two files render specially:
 
@@ -103,12 +123,16 @@ directory — "the normal terminal option," so there's no need to leave
 Francois to run a command by hand. It's built on `xterm.js` in the frontend
 and `portable-pty` (Rust) in the core.
 
-### One PTY per session
+### Several PTYs per session
 
-A session's shell process is spawned lazily — the first time that session's
-SHELL tab is opened — and then stays alive and buffering output for the life
-of the session, independent of which tab or which session is currently
-visible. Switching away from SHELL only tears down the frontend's `xterm.js`
+The SHELL tab holds **more than one terminal per session**, tabbed inside the
+tab: create, cycle, rename and close them from the command palette (or the
+tab's own controls). One long-running `npm run dev` and one shell you actually
+type in is the common shape.
+
+Each shell process is spawned lazily — the first time it is opened — and then
+stays alive and buffering output for the life of the session, independent of
+which tab or which session is currently visible. Switching away from SHELL only tears down the frontend's `xterm.js`
 instance; the process itself keeps running headless. Switching back replays
 the core's buffered output into a freshly mounted terminal so the screen
 looks exactly like it was left. The process is only killed when its session

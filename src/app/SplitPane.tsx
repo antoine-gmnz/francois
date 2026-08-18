@@ -1,26 +1,32 @@
-import { Maximize2, Plus, X } from 'lucide-react';
-import type { SessionId } from '../../contract/common';
+import { Maximize2, Plus, Terminal as TerminalIcon, X } from 'lucide-react';
+import { useState } from 'react';
+import type { ProjectId, SessionId } from '../../contract/common';
+import type { ShellId } from '../../contract/shell-terminal';
 import { formatContextTokens } from '../../contract/conversation-view';
 import { isBusyStatus, STATUS_COLOR, STATUS_LABEL, statusPulses } from '../../contract/fleet-board';
 import AgentView from '../features/agents/AgentView';
 import { agentIdFromTab, tabIdFor, tabsForSession, workflowIdFromTab } from '../features/agents/agent-tab';
 import ConversationView from '../features/conversation/ConversationView';
 import DiffView from '../features/diff/DiffView';
+import ProjectPickerPopover from '../features/projects/ProjectPickerPopover';
+import { projectMarker } from '../features/projects/projectMarker';
 import WorkflowView from '../features/workflows/WorkflowView';
-import type { PaneTab } from '../lib/layoutStore';
+import { shellPaneEligibleProjects, type PaneSlot, type PaneTab } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import { toneVar } from '../lib/tone';
 import { BadgePill } from '../ui/BadgePill';
 import { StatusDot } from '../ui/StatusDot';
 import AgentTabChip from './AgentTabChip';
 import EmptyPaneMessage from './EmptyPaneMessage';
+import PaneHeaderMenu from './PaneHeaderMenu';
+import ProjectShellPane from './ProjectShellPane';
 import ShellTabView from './ShellTabView';
 
 export interface SplitPaneProps {
   /** 0-based. Rendered 1-based in the grid chrome (FR-7) and named by ⌘<n>. */
   index: number;
-  sessionId: SessionId | null;
-  tab: PaneTab;
+  /** unbound-panes FR-4/§5: the pane's whole content, in place of sessionId/tab. */
+  slot: PaneSlot;
   focused: boolean;
   /**
    * split-by-4 FR-9: the turn-5d chrome. At three panes and up a pane is ONE
@@ -37,6 +43,10 @@ export interface SplitPaneProps {
   onClose?: () => void;
   /** FR-11: promote this pane onto DIFF. Only offered on a settled pane. */
   onReviewDiff?: () => void;
+  /** unbound-panes FR-9: turn THIS pane into a shell pane rooted at `projectId`. */
+  onConvertToShell?: (projectId: ProjectId) => void;
+  /** unbound-panes FR-7: record the shell spawned for THIS pane, in memory only. */
+  onShellSpawned?: (shellId: ShellId) => void;
   /**
    * Explicit grid placement. The resizable grid interleaves gutter tracks with
    * the pane tracks, which defeats auto-placement above two panes — see
@@ -52,20 +62,46 @@ const TABS: readonly { id: PaneTab; label: string }[] = [
 ];
 
 /**
- * split-by-4 FR-7..FR-11 — one main pane: its own header (index, status dot,
- * name, `focus` chip or status label, context tokens, ⤢ and ✕), and either the
- * turn-5b Session/Diff/Shell strip (`dense: false`) or the turn-5d single
- * surface (`dense: true`).
+ * split-by-4 FR-7..FR-11 / unbound-panes FR-6 — one main pane. A `session`
+ * slot keeps split-by-4's own header (index, status dot, name, `focus` chip or
+ * status label, context tokens, ⤢ and ✕) plus either the turn-5b Session/Diff/
+ * Shell strip (`dense: false`) or the turn-5d single surface (`dense: true`).
+ * A `shell` slot (unbound-panes FR-6) renders a DIFFERENT header — terminal
+ * glyph, project marker, project name, ✕ only, no `⤢`, no tab strip in either
+ * regime — and `ProjectShellPane`'s body.
  *
  * Deliberately NOT `MainTabStrip` + `MainPaneBody`: a pane carries a *sub*-level
  * strip (sentence-case text tabs, no segmented track) and only the three tabs
  * FR-20 allows, so reusing the shell's own strip would read as two competing
  * top-level chromes.
  */
-export default function SplitPane({
+export default function SplitPane(props: SplitPaneProps) {
+  // The two slot kinds are two DIFFERENT components, never two branches of one:
+  // each calls its own hooks, and a pane that flips kind (convert to shell, or
+  // pane 0's promotion) must unmount one and mount the other. Branching inside a
+  // single component would change the hook count between renders.
+  const { slot } = props;
+  if (slot.kind === 'shell') {
+    return (
+      <ShellPaneSection
+        index={props.index}
+        projectId={slot.projectId}
+        shellId={slot.shellId}
+        focused={props.focused}
+        home={props.home}
+        onFocus={props.onFocus}
+        onClose={props.onClose}
+        onShellSpawned={props.onShellSpawned}
+        area={props.area}
+      />
+    );
+  }
+  return <SessionPaneSection {...props} slot={slot} />;
+}
+
+function SessionPaneSection({
   index,
-  sessionId,
-  tab,
+  slot,
   focused,
   dense,
   home,
@@ -74,9 +110,14 @@ export default function SplitPane({
   onPromote,
   onClose,
   onReviewDiff,
+  onConvertToShell,
+  onShellSpawned: _onShellSpawned,
   area,
-}: SplitPaneProps) {
+}: Omit<SplitPaneProps, 'slot'> & { slot: Extract<PaneSlot, { kind: 'session' }> }) {
+  const sessionId = slot.sessionId;
+  const tab = slot.tab;
   const session = useStore((s) => s.sessions.find((x) => x.id === sessionId) ?? null);
+  const project = useStore((s) => (session?.projectId ? s.projects.find((p) => p.id === session.projectId) : undefined));
   // The per-session diff file count fleet-board already keeps for EVERY session
   // (seeded once, then diff.changed) — the same number MainTabStrip shows, with
   // no second subscription per pane.
@@ -122,6 +163,13 @@ export default function SplitPane({
             positions themselves are the names (left / right). */}
         {dense && <span className="split-pane__index">{index + 1}</span>}
         <StatusDot color={statusColor} size={6} pulsing={!!session && statusPulses(session.status)} />
+        {/* unbound-panes FR-14: the neutral project marker, immediately left of
+            the session name — `‹repo› name`. Never accent. */}
+        {project && (
+          <span className="split-pane__marker" title={project.name}>
+            {projectMarker(project.name)}
+          </span>
+        )}
         <span className="split-pane__name truncate" title={session?.name}>
           {session?.name ?? 'no session'}
         </span>
@@ -156,6 +204,9 @@ export default function SplitPane({
             <X size={12} strokeWidth={1.75} />
           </button>
         )}
+        {/* unbound-panes FR-9 / design brief flow 4 — the `⋯` menu. Before ⤢
+            so the two irreversible-ish actions (promote, close) stay rightmost. */}
+        <PaneHeaderMenu index={index} kind="session" onConvertToShell={onConvertToShell} />
         <button
           type="button"
           className="split-pane__promote"
@@ -205,7 +256,7 @@ export default function SplitPane({
       {/* body */}
       <div className="split-pane__body">
         {!session ? (
-          <EmptyPaneBody index={index} />
+          <EmptyPaneBody index={index} onConvertToShell={onConvertToShell} />
         ) : agentId !== null ? (
           // fix-agent-view FR-16: the SAME AgentView the single pane renders,
           // keyed by agent so switching tabs remounts rather than leaking the
@@ -248,27 +299,69 @@ export default function SplitPane({
 }
 
 /**
- * FR-15 — a pane with no session yet. This is what splitting a project that
- * holds a single session gives you, so it has to say what to do about it rather
- * than reading as a pane that failed to load: pick a session on the left, or
- * start one here.
+ * FR-15 — a session pane with no session yet. unbound-panes FR-9: now a
+ * TWO-choice affordance — pick a session on the left, or open a shell here —
+ * rather than the single "New session" prompt.
  */
-function EmptyPaneBody({ index }: { index: number }) {
+function EmptyPaneBody({
+  index,
+  onConvertToShell,
+}: {
+  index: number;
+  onConvertToShell?: (projectId: ProjectId) => void;
+}) {
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
+  const [picking, setPicking] = useState(false);
+  const allProjects = useStore((s) => s.projects);
+  const extraPanes = useStore((s) => s.extraPanes);
+  // Derived in render, never inside the selector: zustand v5 compares the
+  // selector result by reference, and `.filter` hands back a fresh array on
+  // every call — which is an infinite re-render, not a stale read.
+  const projects = shellPaneEligibleProjects(allProjects, extraPanes);
+
   return (
     <EmptyPaneMessage>
       {/* `.empty-pane` centers a single ROW; this stacks inside it. */}
       <div className="split-pane__empty">
         pane {index + 1} is empty
-        <div className="split-pane__empty-hint">pick a session on the left, or</div>
-        {/* Deliberately NOT stopPropagation, unlike ⤢/✕/Review diff: the click
-            must also reach the pane's own handler so this pane takes focus,
-            which is what routes the created session here (App's onCreated →
-            FR-19). */}
-        <button type="button" className="split-pane__empty-new" onClick={() => setNewSessionOpen(true)}>
-          <Plus size={12} strokeWidth={2} />
-          New session
-        </button>
+        <div className="split-pane__empty-hint">start a new session, or</div>
+        <div className="split-pane__empty-choices">
+          {/* Deliberately NOT stopPropagation, unlike ⤢/✕/Review diff: the click
+              must also reach the pane's own handler so this pane takes focus,
+              which is what routes the created session here (App's onCreated →
+              FR-19). */}
+          {/* Labeled for what the click actually does — opens the NEW session
+              modal, not a picker over existing sessions (no such picker
+              exists; fix loop round 4). */}
+          <button type="button" className="split-pane__empty-choice" onClick={() => setNewSessionOpen(true)}>
+            <Plus size={12} strokeWidth={2} />
+            New session
+          </button>
+          {/* FR-8: pane 0 is always a session pane — `convertPaneToShell` is a
+              no-op there, mirroring `paneMenuEntries`'s own index-0 exclusion. */}
+          {index !== 0 && onConvertToShell && (
+            <span className="split-pane__empty-choice-anchor">
+              <button
+                type="button"
+                className="split-pane__empty-choice"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (projects.length === 1) onConvertToShell(projects[0].id);
+                  else setPicking(true);
+                }}
+              >
+                <TerminalIcon size={12} strokeWidth={2} />
+                Open a shell here
+              </button>
+              {picking && (
+                <ProjectPickerPopover
+                  onPick={(projectId) => onConvertToShell(projectId)}
+                  onClose={() => setPicking(false)}
+                />
+              )}
+            </span>
+          )}
+        </div>
       </div>
     </EmptyPaneMessage>
   );
@@ -320,5 +413,88 @@ function PaneFooter({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * unbound-panes FR-6/FR-11 — a `kind: 'shell'` pane's whole chrome: header
+ * (index, terminal glyph, project marker, project name, ✕ — no `⤢`, no status
+ * dot, no context tokens, no tab strip in either regime) plus `ProjectShellPane`'s
+ * body. Rendered identically in `split` and `grid`.
+ */
+function ShellPaneSection({
+  index,
+  projectId,
+  shellId,
+  focused,
+  home,
+  onFocus,
+  onClose,
+  onShellSpawned,
+  area,
+}: {
+  index: number;
+  projectId: ProjectId;
+  shellId: ShellId | null;
+  focused: boolean;
+  home: string;
+  onFocus: () => void;
+  onClose?: () => void;
+  onShellSpawned?: (shellId: ShellId) => void;
+  area?: { gridColumn: string; gridRow: string };
+}) {
+  const project = useStore((s) => s.projects.find((p) => p.id === projectId));
+
+  return (
+    <section
+      onClick={onFocus}
+      style={area}
+      className={['split-pane', focused ? 'split-pane--focused' : null].filter(Boolean).join(' ')}
+      data-pane={index}
+    >
+      <div className="split-pane__header">
+        {/* dense/split share the same header for a shell pane — no dense-only branch. */}
+        <span className="split-pane__index">{index + 1}</span>
+        <TerminalIcon size={12} strokeWidth={1.75} className="split-pane__shell-glyph" />
+        {project && (
+          <span className="split-pane__marker" title={project.name}>
+            {projectMarker(project.name)}
+          </span>
+        )}
+        <span className="split-pane__name truncate" title={project?.name}>
+          {project?.name ?? 'shell'}
+        </span>
+        {focused && <span className="split-pane__focus-chip">focus</span>}
+        <span className="app-flex-spacer" />
+        {/* FR-9: `Open a shell pane beside…` only — a shell pane has nothing to
+            convert, which `paneMenuEntries` already drops. */}
+        <PaneHeaderMenu index={index} kind="shell" />
+        {onClose && (
+          <button
+            type="button"
+            className="split-pane__promote"
+            title="Close this pane"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+          >
+            <X size={12} strokeWidth={1.75} />
+          </button>
+        )}
+        {/* unbound-panes FR-6: no `⤢` on a shell pane — promoting to a
+            sessionless full-width app is out of scope. */}
+      </div>
+      <div className="split-pane__body">
+        <ProjectShellPane
+          projectId={projectId}
+          shellId={shellId}
+          focused={focused}
+          home={home}
+          onSpawned={(id) => onShellSpawned?.(id)}
+          onClose={onClose}
+        />
+      </div>
+    </section>
   );
 }

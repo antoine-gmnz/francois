@@ -1,20 +1,18 @@
 # Agents, MCP & skills
 
-The right column of Francois's main window carries four panes that describe what the active
-session's Claude Code process is doing and what it can reach: **AGENTS** (pane `[3]`), **MCP
-SERVERS** (pane `[4]`), **SKILLS** (pane `[5]`), and **WORKFLOWS** (pane `[6]`). All four are
-scoped to whichever session is currently active — switching sessions in the sidebar clears and
-re-hydrates all of them.
+Four views describe what the active session's Claude Code process is doing and what it can reach:
+**AGENTS** (`[3]`), **MCP SERVERS** (`[4]`), **SKILLS** (`[5]`), and **WORKFLOWS** (`[6]`). All four
+are scoped to whichever session is currently active — switching sessions clears and re-hydrates all
+of them.
 
-The AGENTS, MCP and SKILLS cards can each be **collapsed to their header strip**, so a long agent
-trail doesn't have to share the column with panels you aren't reading: click the header, or focus
-the card and press `c`. There's a palette entry per card too ("Toggle agents panel", and so on),
-which also reveals the column if it's hidden. A collapsed card keeps its live count and its `[n]`
-hotkey visible, the still-expanded cards take the freed height in their usual ratios, and the
-collapsed set is remembered across restarts. (WORKFLOWS is not collapsible.) `]` still hides the
-whole column at once.
+They used to be four stacked cards in a right-hand column. They are **main-pane tabs** now: each has
+a quiet row in the roster carrying its live count, and clicking that row — or pressing `3`–`6`, or
+running its palette entry — opens it over the main pane. Pressing the same key again returns you to
+SESSION, so a panel row is never a one-way door. Their feeds stay mounted whichever tab is showing,
+which is what keeps those roster counts live. (With the column went `]` and the per-card `c`
+collapse.)
 
-## AGENTS (pane [3])
+## AGENTS `[3]`
 
 The AGENTS panel lists the active session's subagents as a scrollable stack of cards. Each card
 shows a status dot, the agent's name, a right-aligned status label, a one-line task description,
@@ -71,8 +69,8 @@ tab's own transcript — they belong to the agent, not the parent turn.
 ### Opening an agent's own conversation as a tab
 
 Clicking a card (as opposed to selecting it with the keyboard) does more than select it: it opens —
-or, if already open, focuses — a dedicated tab for that agent in the main pane's tab strip, after
-SHELL. The tab shows `⇉ {name}`, a status dot, and a `✕` on hover to close it.
+or, if already open, focuses — a dedicated tab for that agent in the session row, after SHELL. A
+subagent also gets its chip there on its first update, without you opening anything. The tab shows `⇉ {name}`, a status dot, and a `✕` on hover to close it.
 
 That tab renders the subagent's **own transcript**: the same assistant text and tool cards the
 SESSION tab uses for the parent turn, but built from the very lines the activity trail summarizes —
@@ -81,18 +79,20 @@ agent's name, its `async` marker if applicable, status, live elapsed time, and t
 append and auto-scroll the same way the trail does; a truncation row appears if the transcript
 window (400 blocks) has dropped older content.
 
-A few rules govern the tab strip:
+A few rules govern these tabs:
 
 - Up to **6** agent tabs can be open at once; opening a 7th closes the oldest tab that isn't the one
   being activated.
 - Closing the active agent tab falls back to SESSION; closing an inactive one leaves the current tab
   alone. The `w` key closes the active agent tab the same way.
-- Switching the active session closes every agent tab (agent ids are session-scoped).
-- `↑`/`↓` and `⏎` in pane `[3]` still drive the in-place trail expansion — only a *click* opens a tab.
+- Agent tabs are **keyed to their session**, so each pane of a split renders its own session's
+  tabs; switching a pane's session swaps which set is shown.
+- `↑`/`↓` and `⏎` in the AGENTS tab still drive the in-place trail expansion — only a *click* opens
+  a tab of its own.
   A subagent that itself dispatches a subagent gets no tab of its own; that nested call shows up as
   one tool card inside its parent's tab.
 
-## MCP SERVERS (pane [4])
+## MCP SERVERS `[4]`
 
 The MCP panel reflects the active session's configured MCP servers as status rows: a colored dot,
 the server name, and a right-aligned detail — a tool count when `connected`, `handshake…` while
@@ -130,7 +130,7 @@ secret values are collected separately and applied as env vars or headers, never
 command/URL text itself. A successful attach closes the flow — the new server typically appears
 moments later via a `connecting` row as the connection comes up.
 
-## SKILLS (pane [5])
+## SKILLS `[5]`
 
 The SKILLS panel lists everything the active session's Claude Code process can actually invoke —
 not a static catalog. **Installed** rows (`✦`) are the union of SKILL.md skills and slash-command
@@ -164,13 +164,13 @@ example — the panel shows a single dim, error-colored row with the failure mes
 normal list; pressing `⏎` on it retries. A clean scan that simply finds nothing shows
 `no skills or commands found`, not an error.
 
-## WORKFLOWS (pane [6])
+## WORKFLOWS `[6]`
 
 Claude Code's harness ships a `Workflow` tool: the assistant hands it a script that orchestrates
 many subagents deterministically — phases, fan-out, pipelines — and the tool returns immediately
 while the run proceeds in the background. Without this pane that dispatch is one anonymous tool
 block in the transcript and then silence. Pane `[6]` gives workflow runs the standing subagents
-already have in pane `[3]`.
+already have in AGENTS `[3]`.
 
 Cards list the session's runs in first-seen order with running ones on top, and each shows a
 status dot (pulsing while running), the run's **name** from the script's `meta`, a phase-count
@@ -184,15 +184,21 @@ Two things the panel deliberately does not do:
   session's stream, so the panel reports which phases were declared and says so on the expanded
   card. Watching a run tick phase by phase is still `/workflows` in the CLI.
 - **It never dispatches or stops a run.** A run starts because the assistant called the tool
-  during a turn, so unlike pane `[3]` there is no `+` affordance and no kill action. A session
+  during a turn, so unlike AGENTS there is no `+` affordance and no kill action. A session
   with no runs shows an empty label rather than a card list.
 
-## How the four panes relate
+### Opening a run as its own tab
 
-All four panes are read-only reflections of state the core (session-engine) owns — none of them
+Like an agent card, a workflow run opens a dedicated main-pane tab — its agents, the phase
+timeline, and the per-agent transcripts the run produced, rather than the card's one-line summary.
+`w` closes it, exactly like an agent tab.
+
+## How the four views relate
+
+All four are read-only reflections of state the core (session-engine) owns — none of them
 run an agent, an MCP client, a skill loader, or a workflow themselves. They share a common shape:
 hydrate once via an IPC snapshot when a session becomes active, then stay live off the same
-session event stream, discard everything on session switch, and persist nothing to disk (the
-collapsed/expanded state is the one exception, and it's a frontend preference, not session
-state). The AGENTS panel is the only one with a second, deeper surface — the agent tab — because
-a subagent's own conversation is worth reading in full, not just summarized as a card.
+session event stream, discard everything on session switch, and persist nothing to disk . Two of them have a second, deeper surface: an
+agent's own conversation opens as its own tab, and so does a single workflow run — because a
+subagent's transcript and a run's phase timeline are worth reading in full, not just summarized as a
+card.

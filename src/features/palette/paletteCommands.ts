@@ -15,6 +15,7 @@ import { checkUpdateManually } from '../update/update';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
+import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../lib/layoutStore';
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
 
@@ -46,6 +47,19 @@ function delegate(p: Promise<Result<unknown>>): void {
 function clearAttachmentsProjectId(activeSessionId: string | null): string | null {
   const st = useStore.getState();
   return resolveClearProjectId(st.activeProjectId, activeSessionId, st.sessions);
+}
+
+/**
+ * unbound-panes FR-9: the projects a shell pane can be rooted at — registered,
+ * with a root that still exists (`PROJECT_ROOT_MISSING` is refused before any
+ * PTY is spawned, so offering a dead root would only ever produce an error
+ * pane), and under the per-owner shell cap (edge case 4) — a project already
+ * showing `SHELL_LIMIT_REACHED` stays off the palette until one of its shell
+ * panes closes.
+ */
+function shellPaneProjects() {
+  const st = useStore.getState();
+  return shellPaneEligibleProjects(st.projects, st.extraPanes);
 }
 
 let registered = false;
@@ -481,6 +495,19 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // audio-cues FR-12: sits directly after the two `Notifications:` commands so
+  // the three mute controls read as one group.
+  registerPaletteCommand({
+    id: 'toggle-sound',
+    glyph: '◈',
+    name: 'Sound: audio cues',
+    hint: () => (useNotificationsStore.getState().soundEnabled ? 'on' : 'off'),
+    run: () => {
+      const st = useNotificationsStore.getState();
+      st.setSoundEnabled(!st.soundEnabled);
+    },
+  });
+
   // 14 — Toggle theme (app-shell): flip light/dark, same action as the status-bar glyph.
   registerPaletteCommand({
     id: 'toggle-theme',
@@ -530,6 +557,34 @@ export function registerBuiltinCommands(): void {
       if (ctx.activeSessionId) cycleShell(ctx.activeSessionId, 1);
     },
   });
+  // 15e — Open shell pane… (unbound-panes FR-9): the palette's own entry point
+  // for a project-rooted shell pane. It names no pane and no project, so it
+  // resolves both itself — `openShellPane` fills the first empty pane (else
+  // appends), and the project comes from the SecondaryStep below. Needs NO
+  // session: a shell pane is rooted at a project, not at a session.
+  registerPaletteCommand({
+    id: 'open-shell-pane',
+    glyph: '❯',
+    name: 'Open shell pane…',
+    hint: () => 'terminal at a project root',
+    enabled: () => shellPaneProjects().length > 0 && canOpenShellPane(paneCount(useStore.getState()), 1),
+    run: () => {
+      const projects = shellPaneProjects();
+      if (projects.length === 0) return;
+      // Design brief: the picker is skipped when there is exactly one project
+      // to pick — a one-item list is a question with one answer.
+      if (projects.length === 1) {
+        useStore.getState().openShellPane(projects[0].id);
+        return;
+      }
+      return {
+        placeholder: 'pick a project',
+        items: projects.map((p) => ({ id: p.id, label: p.name, hint: p.root })),
+        onPick: (projectId) => useStore.getState().openShellPane(projectId),
+      };
+    },
+  });
+
   // No free-text SecondaryStep exists (contract/command-palette.ts), so this
   // flags the session's displayed chip for inline rename instead — see
   // shellActions.ts's requestActiveShellRename for the assumption this rests on.

@@ -74,15 +74,23 @@ if you're testing a change while the installed version keeps running your real s
 1. Open Francois. If you haven't added a [project](/guide/sessions-and-projects#what-a-project-is) yet,
    you'll be prompted to pick one — a working directory Francois remembers, with its own session
    defaults.
-2. Press `n` (or the **+ new session** action in the sidebar) to open the **New Session** modal.
+2. Press `n` (or the **+ new session** action in the roster) to open the **New Session** modal.
 3. Pick the project, name the session, choose a model and effort level, and a permission mode.
-   Leave **Isolate in worktree** unchecked for now — that's covered separately in
-   [Worktree isolation](/guide/worktree-isolation). If you've registered more than one
+   Leave the **worktree** options alone for now — that's covered separately in
+   [Worktree isolation](/guide/worktree-isolation), as is the optional
+   [profile](/guide/sessions-and-projects#session-profiles). If you've registered more than one
    [account](/guide/accounts), pick which one this session runs under while you're here — it's
    fixed once the session exists.
 4. **Create session** — the SESSION tab opens with an empty transcript and a composer at the
    bottom. Type a prompt and go.
 
-From here, `1`–`6` moves focus between panes, `⌘K`/`Ctrl+K` opens the command palette for
-everything else, and the [Interface tour](/guide/interface-tour) walks through what every part of
-the window does.
+From here, `1` and `2` move focus between the roster and the main pane, `3`–`6` open the agents,
+MCP, skills and workflows views, `⌘K`/`Ctrl+K` opens the command palette for everything else, and
+the [Interface tour](/guide/interface-tour) walks through what every part of the window does.
+
+## Staying up to date
+
+Every push to `main` cuts a release, and Francois checks for one itself: when a newer version is
+available an **update chip** appears in the app row, and `⌘K` → **Check for updates** probes on
+demand. Installing from the chip replaces the app in place. `npm update -g francois` does the same
+thing from a terminal.

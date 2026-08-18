@@ -17,140 +17,166 @@ The name **Francois** is a nod to Claude François, the French singer. (The desi
 
 ## Concept
 
-Claude Code is a CLI you normally babysit one terminal tab at a time. Francois turns that into an orchestrator: it spawns and manages multiple Claude Code sessions across different project directories, renders their activity in a structured UI, and gives each project a plain shell for manual work. The aesthetic is a TUI — monospace, dark, keyboard-first — but with full mouse support.
+Claude Code is a CLI you normally babysit one terminal tab at a time. Francois turns that into an orchestrator: it spawns and manages multiple Claude Code sessions across different project directories, renders their activity in a structured UI, and gives each session a plain shell for manual work. The aesthetic is a console — keyboard-first, one accent for the live thing — but with full mouse support.
 
 ## Layout
 
-A single window (design reference: 1360×864) with a title bar, a three-column grid, and a status bar:
+A single window with the native caption, **two full-bleed chrome tiers** under it, and a two-track
+grid below that (design turn 7a — the earlier three-column grid with a right rail is gone):
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│  ● ● ●     francois · session orchestrator — <project>   ◉ N agents running │
-├────────────┬──────────────────────────────────┬────────────────┤
-│ SESSIONS   │  SESSION │ DIFF (7) │ SHELL      │ AGENTS         │
-│  [1]       │                                  │  [3]           │
-│            │   (active tab content)           ├────────────────┤
-│            │                                  │ MCP SERVERS    │
-│            │                                  │  [4]           │
-│            │                                  ├────────────────┤
-│ + new [n]  │  › input / prompt                │ SKILLS  [5]    │
-├────────────┴──────────────────────────────────┴────────────────┤
-│ 1-5 switch pane  ⏎ open  / search  ⌘K commands  a  d  t   focus: … │
-└────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ ● ● ●   ◤ francois   Overview │ Sessions │ Agents   + │ 2 waiting · ▮▮▮ plan · account · ⌘K · ☾ · v0.23.0 │
+├──────────────────────────────────────────────────────────────────────┤
+│ ‹ ODO › acme-api · feat/auth   ● running · opus · 48.2K/200K   ▣ ◫ ❯ │ ⊞ ⧉ │ Stop │
+├────────────┬─────────────────────────────────────────────────────────┤
+│ ROSTER [1] │                                                          │
+│  ODO       │   the main pane — one bare surface, no card              │
+│   acme-api │   (SESSION · DIFF · SHELL · OVERVIEW · AGENTS · MCP ·    │
+│    ⋯ cards │    SKILLS · WORKFLOWS · agent: · workflow: · ext: tabs)  │
+│   agents 3 │                                                          │
+│   mcp   2  │                                                          │
+│ + new [n]  │   › composer                                             │
+└────────────┴─────────────────────────────────────────────────────────┘
 ```
 
-Every pane is focusable (keys `1`–`5` or click). The focused pane gets an accent ring and accent title. The title bar shows the app name, the active project, and a live pulsing indicator with the number of running agents.
+- **App row** — app-scoped and never animated: the mark, three view pills (Overview / Sessions /
+  Agents), `+`, how many sessions are parked on you, the plan meters, the account chip, `⌘K`, the
+  theme toggle, the update chip, the version.
+- **Session row** — scoped to the one session the main pane shows: project breadcrumb + switcher,
+  status dot, model, context usage, elapsed, its view icons, any `ext:` tabs, and `Stop`.
+- **Roster `[1]`** — groups → projects → session cards, plus the quiet rows that open the dissolved
+  panels (agents, mcp, skills, workflows) as main tabs. It folds to a 46px rail with `[`; folded is
+  never *gone*.
+- **Main pane `[2]`** — a bare surface, since the tabs moved into the session row. Up to **four**
+  panes side by side in a resizable grid, each on its own session.
 
-> **This document describes the design mock, not the shipped app.** It stays as the reference
-> for layout, colors, glyphs, and micro-interactions. The app has grown past it — a WORKFLOWS
-> pane `[6]`, an OVERVIEW tab, projects, multi-account + usage bar, permission cards, agent
-> tabs, remote control. The **shipped** feature set is the feature map in
-> [`PIPELINE.md`](PIPELINE.md), and each feature's behavior is its frozen spec in `specs/`.
+> **The design mocks are the reference for layout, colors, glyphs and micro-interactions — this
+> section describes what ships.** The authoritative **feature** list is the feature map in
+> [`PIPELINE.md`](PIPELINE.md); each feature's behavior is its frozen spec in `specs/`.
 
 ## Features
 
-### 1. Sessions sidebar `[1]`
+### 1. Roster `[1]`
 
-- Lists all Claude Code sessions. Each entry shows:
-  - **Name** and **working directory** (e.g. `acme-api` / `~/projects/acme-api`)
-  - **Model** the session runs on (e.g. Sonnet, Opus, Haiku)
-  - **Status** with a colored dot: `running` (pulsing amber), `idle` (gray), `done` (green), `error` (red)
-- Click or navigate to select; the selected session drives the main pane.
-- Footer action: **+ new session** (`n`) — spawns a new Claude Code session in a chosen directory.
-- Header shows the session count and the pane hotkey.
+- Three tiers: **group** (a named parent over projects — organising only) → **project** → **session
+  cards**. Headings are collapsible; each carries a `+`.
+- Each session card is a fleet-board readout: status dot (pulsing while a turn runs), name, model,
+  live context usage, an uncommitted-diff badge, running-agent count, last-activity clock, and chips
+  for a worktree, a cloud-adopted session or an active remote control.
+- `/` filters by name and path; the project switcher in the session row scopes the roster.
+- Footer: **+ new session** (`n`) — directory, model, account, profile, and optionally its own
+  `git worktree` (new or existing). A **profile** bundles a system prompt and vetted extra `claude`
+  args under a name, paired to a project.
+- Context menu / palette: rename, open in VS Code, remote control, kill.
 
-### 2. Main pane `[2]` — three tabs
+### 2. Main pane `[2]` — the tabs
 
-Tab header also shows session metadata when relevant: current model, **context usage** (e.g. `48.2K/200K`), and elapsed time.
+Fixed tabs: **SESSION · DIFF · SHELL · OVERVIEW**, plus the dissolved panels **AGENTS · MCP ·
+SKILLS · WORKFLOWS**, plus dynamic **`agent:` / `workflow:` / `ext:`** tabs. Every tab is keyed to
+its own session, so each pane of a split renders its own.
 
 #### SESSION tab — the conversation
 
-Structured rendering of the Claude Code transcript:
+Structured rendering of the Claude Code `stream-json` transcript, in a measured reading column:
 
 - **User messages**: distinct "YOU" block (accent left border).
 - **Assistant status/thinking lines**: `●` glyph, plain text.
-- **Tool calls**, compact one-liners with a glyph and metadata:
-  - `⧉ Read src/auth/middleware.ts · 128 lines`
-  - `⌕ Grep verifyToken( · 14 matches · 6 files`
-  - `✎ Edit src/auth/middleware.ts · +34 −19`
+- **Tool calls**, compact one-liners with a glyph and metadata (`⧉ Read … · 128 lines`,
+  `⌕ Grep … · 14 matches`, `✎ Edit … · +34 −19`).
 - **Subagent dispatch**: `⇉ Dispatched subagent test-writer · writing tests`.
-- **Streaming**: the in-progress assistant line ends with a blinking block cursor.
-- **Input bar** at the bottom: send a follow-up or run a command; hints at the ⌘K palette.
+- **Cards that ask for something**: `AskUserQuestion` options and permission approvals for gated
+  tool calls (with a rules editor over Claude Code's own `settings.json`).
+- **Welcome header** on an empty transcript: identity column + repo column (CLAUDE.md, branch/ahead,
+  sessions that finished here).
+- **Composer**: `/` slash-command autocomplete, `↑`/`↓` message recall, file and clipboard
+  attachments (drop, paste a screenshot, or pick), interrupt via `Stop`.
 
 #### DIFF tab — review the session's changes
 
-The tab label carries a badge with the number of changed files.
-
-- **File strip**: horizontally scrollable chips, one per changed file, each with `+added` / `−deleted` counts; selectable.
-- **Diff view**: unified diff with line numbers, `+`/`−` gutter signs, hunk headers, and tinted add/delete backgrounds.
-- **Footer**: aggregate stats (`+185 −21 across 4 files`) and actions — `[s]` stage all, `[c]` commit….
+- **Navigator**: a collapsible **folder tree** with status glyphs and ±counts, a `/` filter box, and
+  `↑↓←→` traversal (`←`/`→` fold and unfold).
+- **Diff body**: windowed unified diff with line numbers, `+`/`−` gutter signs, hunk headers, tinted
+  add/delete backgrounds, and **word-level intraline emphasis** on paired lines.
+- **Footer**: aggregate stats and actions — `[s]` stage all, `[c]` commit.
 
 #### SHELL tab — the regular terminal
 
-A real, PTY-backed shell in the session's working directory. This is the "normal terminal" option: everything a standalone terminal does, inside the app.
+Real PTY-backed shells in the session's working directory — **several per session**, tabbed inside
+the tab (new / next / close / rename from `⌘K`). ANSI colour, interrupt, scrollback. On Windows the
+shell and `claude` follow the WSL runtime while git follows the filesystem.
 
-- Prompt shows project + `❯`; full command history above.
-- Color-coded output (success green, errors red, git-modified amber, untracked green — the design shows `git status`, test runs, `francois agents --status`, and a failing `docker compose` as examples).
-- Blinking cursor at the active prompt.
-- Footer: shell indicator (`● bash · ~/projects/acme-api`) and hints — `⌃C` interrupt, `⌃L` clear.
+#### OVERVIEW tab — the fleet
 
-### 3. Agents panel `[3]`
+Cross-project dashboard, auto-selected on "All projects": fleet totals, what needs attention,
+per-project rollup, activity feed.
 
-Live view of the selected session's subagents:
+### 3. Agents
 
-- Each agent card: status dot (pulsing when running), **name**, status label, one-line **task description** (e.g. `auth.middleware.test.ts · 12 cases`), and a **progress bar**.
-- Statuses: `running`, `idle` (queued), `done` (e.g. `0 vulnerabilities found`).
-- New agent via the `a` shortcut; kill agent via the command palette.
+- Cards for the selected session's subagents: status dot, name, status label, task line, real
+  elapsed time, and a per-agent activity trail derived from `parent_tool_use_id`.
+- Click a card to open **that agent's own transcript** as its own main tab; a spawned subagent adds
+  its chip on its first update. `w` closes the active dynamic tab, `x` kills the selected agent.
 
-### 4. MCP servers panel `[4]`
+### 4. MCP servers
 
-Connection status of the session's MCP servers:
+Per server: status dot, name, and a detail column — tool count when connected (`github · 21 tools`),
+the error when failed (`puppeteer · timeout`), or progress when connecting (`linear · handshake…`).
+Attach a server from the palette.
 
-- Per server: status dot, name, and a detail column — tool count when connected (`github · 21 tools`), the error when failed (`puppeteer · timeout`, red), or progress when connecting (`linear · handshake…`, pulsing).
-- Attach a new server from a registry via the command palette.
+### 5. Skills
 
-### 5. Skills panel `[5]`
+Per skill: glyph (`✦` installed, `◇` available), name, one-line purpose, status label. `/` filters;
+run from the palette.
 
-Skills available to the session:
+### 6. Workflows
 
-- Per skill: glyph (`✦` installed, `◇` available), name, one-line purpose (e.g. `pdf-extract · read & parse PDFs`), and status label (`installed` / `available`).
-- Run a skill via the command palette.
+`Workflow` tool runs read off the session stream — name, description and phases from the script's
+`meta`, live elapsed, ack and completion. Open a run to get its own tab: its agents, the phase
+timeline, and per-agent transcripts.
 
-### 6. Command palette (⌘K / Ctrl+K)
+### 7. Command palette (⌘K / Ctrl+K)
 
-Modal overlay with a text input and a filterable command list. Commands shown in the design:
+Modal overlay with a text input and a fuzzy-filtered command list — around three dozen commands:
+new session (plain, with a profile, in a worktree, or adopting a cloud session), rename session,
+switch model, compact context, attach MCP server, run skill, kill agent, new agent, open any of the
+four panel tabs, view diff / overview, manage projects · profiles · permissions · accounts ·
+extensions, refresh usage, check for updates, toggle theme, notifications and sound, and the shell
+verbs. `↑↓` moves, `⏎` runs, `esc` dismisses.
 
-| Command | Hint |
-|---|---|
-| New session | spin up in cwd |
-| Switch model | sonnet · opus · haiku |
-| Attach MCP server | from registry |
-| Run skill | browse installed |
-| View diff | 7 files changed |
-| Compact context | 48.2K → summary |
-| Kill agent | select running |
+### 8. Extensions
 
-Navigation: `↑↓` to move, `⏎` to run, `esc` to dismiss. Clicking the backdrop also dismisses.
+Main-pane `ext:` tabs fed by out-of-process providers under hard caps, rendered with four
+declarative primitives (`key-value`, `table`, `stat-row`, `log-tail`). Plugins load from
+`~/.francois/extensions/*/extension.json` (`francois ext install|list|remove`) — a manifest declares
+commands, nothing runs until you consent, and consent is bound to the manifest's sha256.
 
-### 7. Status bar
+### 9. Notifications
 
-Always-visible keymap and app state: `1-5` switch pane · `⏎` open · `/` search · `⌘K` commands · `a` new agent · `d` diff · `t` shell — plus the current **focus** label and the app version.
+A desktop banner when a session is blocked on an approval or a question, or its turn finishes or
+errors — plus a short synthesized tone for the same two classes (Web Audio, no asset), with no focus
+gate, one master toggle, a 1.5s throttle, and silence under OS Do Not Disturb.
 
 ## Keyboard model
 
-Keyboard-first throughout. Bindings from the design:
+Keyboard-first throughout. Single-key bindings stand down while a text input or the SHELL terminal
+has focus; `⌘K` always works.
 
 | Key | Action |
 |---|---|
-| `1`–`5` | Focus sidebar / main / agents / mcp / skills |
-| `⏎` | Open the selected item |
-| `/` | Search |
-| `n` | New session |
-| `a` | New agent |
-| `d` | Toggle DIFF tab (focuses main pane) |
-| `t` | Toggle SHELL tab (focuses main pane) |
-| `⌘K` / `Ctrl+K` | Toggle command palette |
-| `esc` | Dismiss palette |
+| `1` / `2` | Focus roster / main pane |
+| `3`–`6` | Open (and toggle back from) AGENTS / MCP / SKILLS / WORKFLOWS |
+| `d` / `t` / `o` | Toggle DIFF / SHELL / OVERVIEW |
+| `w` | Close the active agent or workflow tab |
+| `n` / `a` | New session / new agent |
+| `x` | Kill the selected agent (in AGENTS) |
+| `/` | Filter — sessions, skills, or DIFF files |
+| `↑` `↓` `⏎` | Navigate the focused pane · commit the selection |
+| `←` `→` | Fold / unfold a folder in the DIFF tree |
+| `s` / `c` | Stage all / commit (in DIFF) |
+| `[` | Fold the roster to its rail |
+| `⌘K` / `Ctrl+K` | Toggle the command palette |
+| `esc` | Dismiss the palette |
 | `⌃C` / `⌃L` | Interrupt / clear (inside SHELL) |
 
 ## Visual design system
@@ -187,17 +213,34 @@ token override of the same system (geometry, type and spacing do not change).
 
 ## Under the hood (implementation notes)
 
-What the UI implies the backend must do:
+1. **Session management** — spawn/stop Claude Code per project directory (optionally in its own
+   `git worktree`), track status, model, context usage and elapsed time, and **persist** all of it so
+   a session survives quit/reopen and resumes over `claude --resume`. Driven through
+   `claude -p --output-format stream-json --include-partial-messages`, so the transcript arrives as
+   structured events rather than scraped terminal output; interactive slash commands and approvals go
+   over the stdio control channel.
+2. **Event rendering** — map streamed events (assistant text, tool calls, tool results, subagent and
+   workflow lifecycle, questions, permission asks) to block types; support streaming partials.
+3. **PTY terminals** — several real pseudo-terminals per session for the SHELL tab, with ANSI colour,
+   interrupt and scrollback; WSL-aware on Windows.
+4. **Git integration** — per-session working-tree diff (tree with counts, unified hunks), stage-all
+   and commit, worktree create/attach.
+5. **Agent/MCP/skill/workflow state** — subagent progress and per-agent transcripts, MCP connection
+   status and tool counts, installed/available skills, and `Workflow` runs with their phases.
+6. **Accounts & usage** — several Anthropic accounts side by side, each with its own
+   `CLAUDE_CONFIG_DIR`, logged in through a real `claude` TUI inside the app; plan meters and reset
+   clock in the app row.
+7. **Beyond the app window** — remote control (hand a session to Claude Code's native Remote Control),
+   cloud-session adoption, out-of-process extension providers, desktop notifications + audio cues, an
+   in-app self-update, and the `francois` CLI companion.
 
-1. **Session management** — spawn/stop Claude Code per project directory, track status, model, context usage, and elapsed time. Integration via Claude Code's programmatic interface (headless `claude -p --output-format stream-json` or the Claude Agent SDK) so the transcript arrives as structured events, not scraped terminal output.
-2. **Event rendering** — map streamed events (assistant text, tool calls, tool results, subagent lifecycle) to the SESSION tab's block types; support streaming partials.
-3. **PTY terminals** — one real pseudo-terminal per session for the SHELL tab (bash/zsh/PowerShell per platform), with ANSI color rendering, interrupt, and scrollback.
-4. **Git integration** — per-session working-tree diff (file list with counts, unified hunks), stage-all and commit actions.
-5. **Agent/MCP/skill state** — surface subagent progress, MCP server connection status and tool counts, and installed/available skills from the session's configuration.
-6. **CLI companion** — the mock shows a `francois agents --status` command, implying a small CLI that talks to the running app.
+Every frontend↔core payload shape lives in [`contract/`](contract/); the Rust core mirrors it with
+serde. Spawned children resolve their binaries against the **login-shell** PATH, not launchd's.
 
 ## Open decisions
 
 - ~~**Delivery target**~~: resolved — a **native desktop app, not a web app**: Tauri 2 with a Rust core and a React + TypeScript frontend; xterm.js + `portable-pty` for the terminal panes; Claude Code driven through its headless `stream-json` interface. Details in PIPELINE.md.
 - ~~**Name**~~: resolved — **Francois** (after Claude François, the French singer).
-- **Scope of v1**: the mock shows one active session's detail at a time; multi-session split views, session persistence/restore, and remote sessions are not in the design and are out of scope until decided.
+- ~~**Scope of v1**~~: resolved — multi-pane split views (up to four), session persistence/restore and
+  remote sessions all shipped. What is still open is tracked as specs in `specs/`, not here:
+  `session-brake` (stop a turn mid-flight) and `cli-companion` are frozen but not built.

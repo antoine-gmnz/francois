@@ -19,9 +19,6 @@ import type { MainTab } from './agentTabStore';
 import { closeStreamsForRemovedPanels } from './extensionsStore';
 import {
   clampPaneIndex,
-  clampToPaneTab,
-  paneCount,
-  paneIndexOf,
   panesWithout,
   persistedLeftPane,
   persistedRightPane,
@@ -52,14 +49,11 @@ export interface SessionsSlice {
   activeSessionId: SessionId | null;
   setActiveSessionId: (id: SessionId | null) => void;
   /**
-   * split-by-4 FR-27: the post-REMOVAL fallback — a plain reassignment that
-   * never swaps panes. `setActiveSessionId` reads "assign another pane's session
-   * to pane 0" as a user pick and SWAPS the two (FR-19), which is wrong here:
-   * the session being replaced has just been removed, so there is nothing to
-   * swap it with, and the swap branch would both skip the agent-tab reset and
-   * transiently put the removed id back into a pane. The nearest remaining
-   * session is very often a paned one, so this is reachable, not theoretical —
-   * that pane is DROPPED instead, and the grid compacts.
+   * split-by-4 FR-27: the post-REMOVAL fallback — a plain reassignment.
+   * unbound-panes FR-5 deletes FR-27's own de-duplication half (a session may
+   * now legitimately sit in more than one pane), so this is now IDENTICAL to
+   * `setActiveSessionId` — kept as its own action because callers reach for it
+   * by name after a removal (fleet-board's reassignAfterRemoval).
    */
   reassignActiveSessionId: (id: SessionId | null) => void;
   sidebarFilter: string | null;
@@ -67,8 +61,11 @@ export interface SessionsSlice {
 }
 
 /**
- * The plain session switch, shared by `setActiveSessionId`'s non-swap branch
- * and `reassignActiveSessionId`.
+ * The plain session switch — pane 0's ONLY assignment path.
+ *
+ * unbound-panes FR-5: split-by-4 FR-19's swap-on-reassign is gone. A session
+ * already showing in another pane is simply duplicated onto pane 0 rather than
+ * swapped out of that pane, exactly like `assignToFocusedPane` (layoutStore.ts).
  *
  * fix-agent-view FR-8 (supersedes agent-tab FR-14): a switch no longer CLOSES
  * anything. Tabs are keyed by session, so the outgoing session keeps its own and
@@ -140,8 +137,9 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
   removeSession: (id) =>
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id);
-      // split-by-4 FR-27: the session is gone from every pane it sat in and the
-      // grid compacts. (Pane 0's own removal is handled by fleet-board's
+      // split-by-4 FR-27: the session is gone from every SESSION pane it sat in
+      // (shell panes never match — panesWithout is union-aware) and the grid
+      // compacts. (Pane 0's own removal is handled by fleet-board's
       // reassignAfterRemoval below, which reassigns first — pane 1 is never
       // silently promoted into pane 0 by a removal that has a fallback.)
       const extraPanes = panesWithout(s.extraPanes, id);
@@ -155,45 +153,10 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
 
   activeSessionId: null,
   // The USER's pick of the left pane's session (agent-tab FR-14's tab reset
-  // lives in switchTo above). The post-removal fallback is
-  // `reassignActiveSessionId` — it must not take the swap branch below.
-  setActiveSessionId: (activeSessionId) =>
-    set((s) => {
-      // split-by-4 FR-19: assigning another pane's session to pane 0 SWAPS the
-      // two rather than showing it twice. No tab reset is owed: each pane's tab
-      // travels with the session it belongs to (fix-agent-view §7 case 4), and
-      // the map is keyed by session, so nothing has to be re-homed.
-      const j = activeSessionId === null ? null : paneIndexOf(s, activeSessionId);
-      if (j !== null && j > 0) {
-        const extraPanes = s.extraPanes.slice();
-        const displaced = extraPanes[j - 1];
-        if (s.activeSessionId === null) {
-          // Nothing to swap WITH — pane 0 was empty, so the pane just gives up
-          // its session rather than showing it in two places.
-          return {
-            activeSessionId,
-            mainTab: displaced.tab as MainTab,
-            extStreams: closedProjectStreams(s),
-            ...compact(s, panesWithout(s.extraPanes, activeSessionId!)),
-          };
-        }
-        extraPanes[j - 1] = { sessionId: s.activeSessionId, tab: clampToPaneTab(s.mainTab) };
-        persistSplitState({ extraPanes, focusedPaneIndex: s.focusedPaneIndex });
-        // FR-12 applies to the swap too — pane 0's session really does change.
-        return { activeSessionId, extraPanes, mainTab: displaced.tab as MainTab, extStreams: closedProjectStreams(s) };
-      }
-      return switchTo(s, activeSessionId);
-    }),
-  reassignActiveSessionId: (activeSessionId) =>
-    set((s) => {
-      const patch = switchTo(s, activeSessionId);
-      // FR-27: the fallback may well land on a session another pane is already
-      // showing — drop that pane rather than duplicate it.
-      if (activeSessionId === null || paneCount(s) === 1) return patch;
-      const extraPanes = panesWithout(s.extraPanes, activeSessionId);
-      if (extraPanes.length === s.extraPanes.length) return patch;
-      return { ...patch, ...compact(s, extraPanes) };
-    }),
+  // lives in switchTo above). unbound-panes FR-5: a PLAIN assign — no swap, no
+  // duplicate check. `reassignActiveSessionId` below is now identical.
+  setActiveSessionId: (activeSessionId) => set((s) => switchTo(s, activeSessionId)),
+  reassignActiveSessionId: (activeSessionId) => set((s) => switchTo(s, activeSessionId)),
   sidebarFilter: null,
   setSidebarFilter: (sidebarFilter) => set({ sidebarFilter }),
 });

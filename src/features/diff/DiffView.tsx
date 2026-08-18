@@ -7,6 +7,7 @@ import { siblingWorktreeSummaryLine } from '../sessions/worktree';
 import { DiffListBody } from './DiffListBody';
 import { useDiffFeed } from './useDiffFeed';
 import { useDiffKeyboard } from './useDiffKeyboard';
+import { useDiffNavigator } from './useDiffNavigator';
 import './diff.css';
 
 interface CommitState {
@@ -40,13 +41,16 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
     selectedPaths,
     selectedCount,
     allSelected,
-    cycle,
     fileDiff,
     fileDiffError,
     fileDiffLoading,
     loadSummary,
     mountedRef,
   } = feed;
+
+  // diff-navigator FR-4/5/9/17/18/19: tree fold state, filter and the keyboard
+  // cursor, replacing the flat file cycle.
+  const navigator = useDiffNavigator({ files, deselected, selectedPath, setSelectedPath });
 
   const [commit, setCommit] = useState<CommitState>({ open: false, message: '', error: null, success: null });
   const [busy, setBusy] = useState(false);
@@ -58,7 +62,12 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const selectedPathsRef = useRef<string[]>([]);
   selectedPathsRef.current = selectedPaths; // read by doCommit without re-creating it
 
-  const requestBusy = busy || summaryLoading || fileDiffLoading; // any request in flight (FR-22/23)
+  // Only a mutation (stage/commit) or a summary reload gates the footer actions. The
+  // per-file diff fetch deliberately does NOT: it fires on every file click, and
+  // including it made [s]/[c] go inert (and stay inert if that fetch never settled)
+  // just from clicking through the file list — staging and committing are unaffected
+  // by which file's diff is on screen.
+  const requestBusy = busy || summaryLoading;
 
   const stageAll = useCallback(() => {
     if (requestBusy || notRepo || files.length === 0) return; // FR-22 inert
@@ -103,7 +112,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
       });
   }, [busy, sessionId, loadSummary, mountedRef]);
 
-  // Keyboard (FR-21/22/23/24). Active only while the DIFF tab is visible.
+  // Keyboard (FR-10/17/18/19). Active only while the DIFF tab is visible.
   useDiffKeyboard({
     mainTab,
     focusedPane,
@@ -112,7 +121,13 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
     closeCommit,
     stageAll,
     openCommit,
-    cycle,
+    setFilter: navigator.setFilter,
+    filterInputRef: navigator.filterInputRef,
+    onCursorUp: navigator.onCursorUp,
+    onCursorDown: navigator.onCursorDown,
+    onCursorRight: navigator.onCursorRight,
+    onCursorLeft: navigator.onCursorLeft,
+    onCursorEnter: navigator.onCursorEnter,
   });
 
   // ---------- render ----------
@@ -139,6 +154,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
         fileDiffError={fileDiffError}
         fileDiffLoading={fileDiffLoading}
         bodyScrollRef={bodyScrollRef}
+        navigator={navigator}
         onSelectPath={setSelectedPath}
         onToggleFile={toggleFile}
         onToggleAll={toggleAll}
@@ -158,6 +174,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
           stageInert={requestBusy || files.length === 0}
           commitInert={requestBusy || selectedCount === 0}
           selectedCount={selectedCount}
+          hiddenChecked={navigator.hiddenChecked}
         />
       )}
     </div>
@@ -176,6 +193,7 @@ function Footer({
   stageInert,
   commitInert,
   selectedCount,
+  hiddenChecked,
 }: {
   summary: DiffSummary | null;
   commit: CommitState;
@@ -188,6 +206,7 @@ function Footer({
   stageInert: boolean;
   commitInert: boolean;
   selectedCount: number;
+  hiddenChecked: number;
 }) {
   const totalAdd = summary?.totalAdd ?? 0;
   const totalDel = summary?.totalDel ?? 0;
@@ -230,6 +249,8 @@ function Footer({
           <span onClick={() => !commitInert && onOpenCommit()} className={`diff-footer__hint${commitInert ? ' diff-footer__hint--inert' : ''}`}>
             [c] commit {selectedCount > 0 ? `${selectedCount} ` : ''}…
           </span>
+          {/* diff-navigator FR-26: a statement, not an alarm — nothing is blocked. */}
+          {hiddenChecked > 0 && <span className="diff-footer__hidden-warn">· {hiddenChecked} hidden by filter</span>}
         </>
       )}
     </div>

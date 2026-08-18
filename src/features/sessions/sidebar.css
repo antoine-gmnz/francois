@@ -120,6 +120,24 @@
   color: var(--accent);
 }
 
+/* ── project-groups: the second tier ────────────────────────────────────────
+   A group heading is thinner still than a project heading — no `+`, a smaller
+   uppercase label, no acid: a repeatable roster row reads neutral. Project
+   headings + cards nested under it indent one step each (FR-24), depth-capped
+   at three levels (group → project → card). */
+.roster-group__head--group {
+  padding: var(--space-5) var(--space-6) var(--space-4);
+}
+.roster-group__label--group {
+  font-size: var(--font-size-9-5);
+}
+.roster-group--nested {
+  margin-left: var(--space-10);
+}
+.sidebar-card--nested {
+  margin-left: var(--space-10);
+}
+
 /* ── design 7a: the dissolved right column ──────────────────────────────────
    Agents / MCP / Skills / Workflows, ruled off under the cards. Deliberately
    NOT card-shaped: they are an index at the foot of a list, and giving them the
@@ -540,6 +558,21 @@
 .context-menu__action--danger:hover {
   color: var(--error-bright);
   border-color: var(--error-dim);
+}
+
+/* unbound-panes FR-14 / design brief §Project marker: same neutral treatment
+   as the pane header's `.split-pane__marker` — never `--accent`, a
+   repeatable surface stays neutral. */
+.sidebar-card__marker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-app);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xs);
+  padding: 0 var(--space-4);
+  flex-shrink: 0;
 }
 
 /* ── split-by-4 FR-22 ────────────────────────────────────────────────────────

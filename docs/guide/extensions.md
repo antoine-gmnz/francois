@@ -121,7 +121,10 @@ Every provider process Francois spawns runs under fixed, non-negotiable caps:
   array. `sh`, `bash`, `cmd`, `powershell`, `env` and absolute paths are refused when the manifest
   is loaded, not filtered when it runs.
 - **Scrubbed environment**, a **10 second** timeout, **4 MiB** of output, at most **4** running at
-  once, and a kill that takes the whole process group.
+  once, and a kill that takes the whole process group. The scrubbed `PATH` is the **login shell's**,
+  not the one a GUI app inherits — so a provider whose binary lives in nvm, Homebrew, pnpm, cargo or
+  `~/.local/bin` resolves the same way it does in your terminal. (Relative and empty `PATH` entries
+  are dropped, so a repo can never make a bare name resolve inside itself.)
 - Output is sanitized in the Rust core before it ever reaches the window — a provider cannot emit
   terminal escapes or markup that renders.
 - A `log-tail` stream is capped at 2000 lines / 1 MiB and drops its oldest lines past that.

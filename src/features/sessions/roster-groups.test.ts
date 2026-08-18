@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionMeta } from '../../../contract/common';
-import type { ProjectMeta } from '../../../contract/projects';
+import type { ProjectGroup, ProjectMeta } from '../../../contract/projects';
 import {
+  buildRoster,
   flattenGroups,
   groupKeyFor,
   groupSessionsByRepo,
+  isGroupNode,
   parseCollapsedGroups,
   pathLeaf,
+  type RosterNode,
 } from './roster-groups';
 
 function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
@@ -28,7 +31,7 @@ function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
   };
 }
 
-function project(id: string, name: string, root = `/src/${name}`): ProjectMeta {
+function project(id: string, name: string, root = `/src/${name}`, groupId?: string): ProjectMeta {
   return {
     id,
     name,
@@ -37,7 +40,12 @@ function project(id: string, name: string, root = `/src/${name}`): ProjectMeta {
     createdAt: 0,
     lastUsedAt: 0,
     rootExists: true,
+    ...(groupId !== undefined ? { groupId } : {}),
   };
+}
+
+function group(id: string, name: string): ProjectGroup {
+  return { id, name, createdAt: 0 };
 }
 
 describe('pathLeaf', () => {
@@ -124,6 +132,86 @@ describe('flattenGroups', () => {
 
   it('skips a collapsed group — a hidden row cannot take the cursor', () => {
     expect(flattenGroups(groups, new Set(['project:p1'])).map((s) => s.id)).toEqual(['b']);
+  });
+});
+
+describe('buildRoster (project-groups FR-11..FR-18)', () => {
+  it('promotes a grouped project into its group node at the group\'s first-session position', () => {
+    const projects = [project('p1', 'ODO - Frontend', '/src/odo-fe', 'g1'), project('p2', 'ODO - Databases', '/src/odo-db', 'g1')];
+    const groups = [group('g1', 'ODO')];
+    const nodes = buildRoster(
+      [session({ id: 'a', projectId: 'p1' }), session({ id: 'b', cwd: '/w/loose' }), session({ id: 'c', projectId: 'p2' })],
+      projects,
+      groups,
+    );
+    // group appears where its FIRST member's first session did — before 'loose'
+    expect(nodes.map((n) => n.key)).toEqual(['group:g1', 'path:loose']);
+    const g = nodes[0];
+    if (!isGroupNode(g)) throw new Error('expected a group node');
+    expect(g.label).toBe('ODO');
+    expect(g.sessionCount).toBe(2); // FR-14: sum over member projects
+    expect(g.projects.map((p) => p.key)).toEqual(['project:p1', 'project:p2']);
+  });
+
+  it('a group whose members are interleaved with ungrouped projects stays at its own first position', () => {
+    const projects = [project('p1', 'acme', '/src/acme', 'g1')];
+    const groups = [group('g1', 'Acme co')];
+    const nodes = buildRoster(
+      [session({ id: 'x', cwd: '/w/loose1' }), session({ id: 'a', projectId: 'p1' }), session({ id: 'y', cwd: '/w/loose2' })],
+      projects,
+      groups,
+    );
+    expect(nodes.map((n) => n.key)).toEqual(['path:loose1', 'group:g1', 'path:loose2']);
+  });
+
+  it('a project whose groupId names a group not yet resolved stays top-level (FR-18)', () => {
+    const projects = [project('p1', 'acme', '/src/acme', 'ghost')];
+    const nodes = buildRoster([session({ id: 'a', projectId: 'p1' })], projects, []); // registry in flight
+    expect(nodes).toHaveLength(1);
+    expect(isGroupNode(nodes[0])).toBe(false);
+    expect(nodes[0].key).toBe('project:p1');
+  });
+
+  it('emits no group node when every member has no visible session (FR-12)', () => {
+    const projects = [project('p1', 'acme', '/src/acme', 'g1')];
+    const groups = [group('g1', 'Acme co')];
+    const nodes = buildRoster([], projects, groups);
+    expect(nodes).toEqual([]);
+  });
+});
+
+describe('isGroupNode', () => {
+  it('distinguishes a group node from a project node', () => {
+    const groupNode: RosterNode = { key: 'group:g1', label: 'ODO', groupId: 'g1', projects: [], sessionCount: 0 };
+    const projectNode: RosterNode = { key: 'project:p1', label: 'acme', projectId: 'p1', sessions: [] };
+    expect(isGroupNode(groupNode)).toBe(true);
+    expect(isGroupNode(projectNode)).toBe(false);
+  });
+});
+
+describe('flattenGroups over a mixed-depth tree (FR-17)', () => {
+  const projects = [project('p1', 'ODO - Frontend', '/src/odo-fe', 'g1'), project('p2', 'ODO - Databases', '/src/odo-db', 'g1')];
+  const groups = [group('g1', 'ODO')];
+  const nodes = buildRoster(
+    [session({ id: 'a', projectId: 'p1' }), session({ id: 'b', projectId: 'p2' }), session({ id: 'c', cwd: '/w/loose' })],
+    projects,
+    groups,
+  );
+
+  it('walks a mixed-depth tree in painted order regardless of depth', () => {
+    expect(flattenGroups(nodes).map((s) => s.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('skips a collapsed group\'s entire subtree', () => {
+    expect(flattenGroups(nodes, new Set(['group:g1'])).map((s) => s.id)).toEqual(['c']);
+  });
+
+  it('a group all of whose members are collapsed yields no sessions from it', () => {
+    expect(flattenGroups(nodes, new Set(['project:p1', 'project:p2'])).map((s) => s.id)).toEqual(['c']);
+  });
+
+  it('an expanded group still honors an individual project\'s own collapse', () => {
+    expect(flattenGroups(nodes, new Set(['project:p1'])).map((s) => s.id)).toEqual(['b', 'c']);
   });
 });
 

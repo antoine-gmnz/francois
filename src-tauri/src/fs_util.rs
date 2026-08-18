@@ -56,7 +56,8 @@ pub(crate) fn unique_temp_path(path: &Path, ext: &str) -> PathBuf {
 /// permissions restricted to the current user only: `0600` on unix, an ACL
 /// granting the current user Full Control on Windows with inheritance from the
 /// parent directory explicitly stripped — a key file must not inherit a looser
-/// ACL from `<app_data>/accounts/<id>/`.
+/// ACL from `<app_data>/accounts/<id>/`. That parent also gains an inheritable
+/// user-only ACE, for the reason spelled out at the write site.
 ///
 /// "Restricted" means the unix `0600` boundary on both platforms: no other
 /// UNPRIVILEGED account can read the key. On Windows the machine's own
@@ -95,6 +96,31 @@ fn write_user_only_file_platform(path: &Path, bytes: &[u8]) -> std::io::Result<(
 /// shelling out to the tool built for exactly this.
 #[cfg(windows)]
 fn write_user_only_file_platform(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    // A directory that hands down NO inheritable ACE does not give its new files
+    // an empty ACL: Windows stamps them with the creating process token's DEFAULT
+    // DACL, and those ACEs are EXPLICIT. `/inheritance:r` removes only INHERITED
+    // ACEs, so they survive the restriction below untouched — the file keeps
+    // whatever the token default names (on a GitHub Windows runner: SYSTEM,
+    // Administrators and the user; on a local box: the user, SYSTEM and the
+    // logon-session SID with read access).
+    //
+    // So guarantee that something IS inherited: give the parent an inheritable
+    // user-only ACE first. The token default DACL then never applies and the temp
+    // file below is created carrying that single inherited ACE, which the
+    // file-level `/inheritance:r` turns into one explicit ACE. The grant is
+    // ADDITIVE — the parent's own ACL is left alone, and anything else it hands
+    // down is wiped at the file level anyway.
+    //
+    // This is belt AND braces with `BROAD_SIDS`: this stops a broad principal
+    // ever landing on a NEW key file, the prune removes one that is already
+    // there. Neither subsumes the other — `/inheritance:r` cannot reach an
+    // explicit ACE, and a prune cannot enumerate a principal it does not name.
+    if let Some(dir) = path.parent() {
+        icacls(
+            dir,
+            &["/grant:r", &format!("{}:(OI)(CI)F", current_user_spec()?)],
+        )?;
+    }
     // Write to a sibling temp file and restrict ITS acl BEFORE the file ever
     // lands at `path`, then rename it into place. Restricting `path` in place
     // (write then `icacls`) would leave a window — and, worse, a permanent
@@ -132,14 +158,21 @@ const BROAD_SIDS: [&str; 3] = [
     "*S-1-5-32-545", // BUILTIN\Users
 ];
 
+/// `DOMAIN\user` (or a bare `user` off a domainless machine) — the principal
+/// every grant in this module names.
 #[cfg(windows)]
-fn restrict_to_current_user_only(path: &Path) -> std::io::Result<()> {
+fn current_user_spec() -> std::io::Result<String> {
     let user = std::env::var("USERNAME")
         .map_err(|_| std::io::Error::other("could not resolve the current Windows user"))?;
-    let spec = match std::env::var("USERDOMAIN") {
+    Ok(match std::env::var("USERDOMAIN") {
         Ok(domain) if !domain.trim().is_empty() => format!("{domain}\\{user}"),
         _ => user,
-    };
+    })
+}
+
+#[cfg(windows)]
+fn restrict_to_current_user_only(path: &Path) -> std::io::Result<()> {
+    let spec = current_user_spec()?;
     // Two invocations rather than one, so the sequence is OURS rather than
     // icacls's internal option ordering: strip + grant, then prune.
     //
@@ -163,10 +196,10 @@ fn restrict_to_current_user_only(path: &Path) -> std::io::Result<()> {
 
 #[cfg(windows)]
 fn icacls(path: &Path, args: &[&str]) -> std::io::Result<()> {
-    let output = std::process::Command::new("icacls")
-        .arg(path)
-        .args(args)
-        .output()?;
+    let mut cmd = std::process::Command::new("icacls");
+    cmd.arg(path).args(args);
+    crate::process_util::no_window(&mut cmd); // no console flash
+    let output = cmd.output()?;
     if !output.status.success() {
         return Err(std::io::Error::other(format!(
             "icacls {} could not restrict {}: {}",
@@ -331,14 +364,21 @@ mod tests {
     /// The ACL this file must land with, asserted as the properties that
     /// actually matter rather than as an ACE count.
     ///
-    /// An earlier version of this test demanded EXACTLY one ACE. That holds on
+    /// An earlier version of this test demanded EXACTLY one ACE. That held on
     /// an ordinary user profile, where the parent hands its children INHERITED
     /// entries that `/inheritance:r` then wipes — but not on a Windows CI
     /// runner, where a process holding an admin token creates files carrying
     /// EXPLICIT `SYSTEM`/`Administrators` entries that no amount of inheritance
-    /// stripping removes. The count was therefore an artifact of the machine,
-    /// not the guarantee; those two principals are not a leak (see
-    /// `BROAD_SIDS`) and the code now prunes the ones that are.
+    /// stripping removes. The count was an artifact of the machine, not the
+    /// guarantee; those two principals are not a leak (see `BROAD_SIDS`) and the
+    /// code prunes the ones that are.
+    ///
+    /// The parent grant added since then does make the count deterministic
+    /// (`write_user_only_file_is_user_only_even_when_the_parent_inherits_nothing`
+    /// asserts it on exactly the topology that used to break it). This test
+    /// stays property-based regardless: it is the one that runs against whatever
+    /// ACL the real `%TEMP%` happens to hand down, and a property holds there
+    /// whether or not the count does.
     #[cfg(windows)]
     #[test]
     fn write_user_only_file_restricts_the_acl_on_windows() {
@@ -424,6 +464,50 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The other half of the CI failure: a parent that hands down NO inheritable
+    /// ACE makes Windows stamp a new file with the process token's DEFAULT DACL,
+    /// whose ACEs are EXPLICIT and so survive `/inheritance:r`. That is the
+    /// topology of `%TEMP%` on a GitHub Windows runner. Built here deliberately
+    /// (strip the outer directory's inheritance and grant only a NON-inheritable
+    /// ACE) so it reproduces on any Windows machine rather than only there.
+    ///
+    /// Asserted as an exact count, which the parent grant is precisely what makes
+    /// machine-independent: with something inheritable to strip, the token default
+    /// never applies, so the file cannot pick up the SYSTEM/Administrators pair
+    /// that made a bare count an artifact before. Verified red without the parent
+    /// grant (3 ACEs, matching the runner exactly) and green with it, on the
+    /// runner as well as locally.
+    #[cfg(windows)]
+    #[test]
+    fn write_user_only_file_is_user_only_even_when_the_parent_inherits_nothing() {
+        let outer = tmp_path("win-acl-noinherit");
+        std::fs::create_dir_all(&outer).unwrap();
+        let spec = current_user_spec().unwrap();
+        icacls(
+            &outer,
+            &["/inheritance:r", "/grant:r", &format!("{spec}:F")],
+        )
+        .unwrap();
+
+        // `nested` is created by write_user_only_file itself and inherits
+        // nothing, so without the parent grant the key file below picks up the
+        // token default DACL.
+        let path = outer.join("nested").join("endpoint-key");
+        write_user_only_file(&path, b"sk-test").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"sk-test");
+
+        let sddl = dacl_sddl(&path);
+        let aces = dacl_aces(&sddl);
+        assert_eq!(aces.len(), 1, "expected the current user alone, got {sddl}");
+        for (_, trustee) in &aces {
+            assert!(
+                !BROAD_TRUSTEES.contains(&trustee.as_str()),
+                "a broad principal ({trustee}) holds a grant: {sddl}"
+            );
+        }
+        std::fs::remove_dir_all(&outer).ok();
     }
 }
 

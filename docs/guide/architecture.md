@@ -10,14 +10,16 @@ Rust core and a React + TypeScript frontend rendered in the system webview (no E
 | **core** | `src-tauri/` (Rust) | Session lifecycle, spawning `claude -p --output-format stream-json --include-partial-messages` per session and parsing its NDJSON event stream, PTY management (`portable-pty`) for the SHELL tab, and git operations via the system `git` CLI. |
 | **frontend** | `src/` (React 18 + TypeScript, `strict: true`) | Every pane, tab, and modal in the window. State lives in [zustand](https://github.com/pmndrs/zustand) stores; the terminal panes render with [xterm.js](https://xtermjs.org/); styling is plain CSS with design tokens — no component framework, no Tailwind. |
 
-Each domain on the core side is a module directory (`session/`, `diff/`, `permissions/`) whose
+Each domain on the core side is a module directory (`session/`, `diff/`, `permissions/`,
+`project/`, `profiles/`, `extensions/`, `account/`, `shell/`, `editor/`, `update/`) whose
 `mod.rs` owns the shared data model and declares child modules; each child owns one concern plus
 its own tests. The frontend groups by **feature**, not technical kind — `src/features/<feature>/`
 holds a feature's panel, its pure helper functions, its tests **and its stylesheet** together
-(`accounts`, `agents`, `commands`, `conversation`, `diff`, `mcp`, `overview`, `palette`,
-`permissions`, `projects`, `questions`, `remote`, `sessions`, `shell`, `skills`, `usage`,
-`workflows`). `src/ui/` is the shared UI kit every feature composes with (`Button`, `Chip`,
-`ListRow`, `Modal`, `PanelHeader`, `StatusDot`, …), and `src/lib/` holds only what every feature
+(`accounts`, `agents`, `cloud-sessions`, `commands`, `conversation`, `diff`, `extensions`, `mcp`,
+`notifications`, `overview`, `palette`, `permissions`, `profiles`, `projects`, `questions`,
+`remote`, `sessions`, `shell`, `skills`, `update`, `usage`, `workflows`). `src/ui/` is the shared UI
+kit every feature composes with (`Action`, `Button`, `Chip`, `ListRow`, `Logo`, `Modal`,
+`PanelHeader`, `StatusDot`, …), and `src/lib/` holds only what every feature
 imports — the contract-typed `invoke` wrappers, the per-domain zustand stores, and shared hooks.
 Styling is per-feature CSS plus class names, never inline styles; only design tokens live in
 `src/styles.css`.
@@ -39,7 +41,15 @@ The binding on top of Tauri is a fixed naming convention:
   subscribed via `listen(...)`, with a tagged-union payload (a `type` discriminator).
 
 Domains: `app`, `session`, `conversation`, `diff`, `shell`, `agents`, `workflows`, `mcp`,
-`skills`, `palette`, `cli`, `project`, `remote`, `account`.
+`skills`, `palette`, `cli`, `project`, `standards`, `profiles`, `permissions`, `remote`, `account`,
+`cloud`, `extensions`.
+
+One core-side rule worth knowing because it bites otherwise: **every child process is spawned
+against the login-shell `PATH`**, not the one the app inherited. A GUI app launched from the Dock or
+Start Menu inherits a minimal `PATH`, so a bare binary name — `claude`, or an extension provider —
+would fail to resolve for anyone whose tools live in nvm, Homebrew, pnpm, cargo or `~/.local/bin`.
+The core resolves the login shell's `PATH` once per run and prefixes it, dropping any relative or
+empty entries so a repo can never make a bare name resolve inside itself.
 
 ## How a feature gets built
 
@@ -73,8 +83,9 @@ commits, a three-platform build (Windows, macOS universal, Linux), and a republi
 
 - **`PROJECT.md`** — the original product/design description, including the full visual design
   system (colors, glyphs, motion). The reference mocks live at the repo root:
-  `Francois Redesign.dc.html` is the current system (variant 3a — Console chrome, the Focus
-  reading treatment, agent tabs); `Claude Terminal.dc.html` is the original.
+  `Francois Redesign.dc.html` is the current system (through turn 7a — two chrome tiers, the
+  panels dissolved into the roster, agent tabs); `Francois Design System v2.dc.html` is the
+  extracted system; `Claude Terminal.dc.html` is the original.
 - **`PIPELINE.md`** — the complete build pipeline: stack decisions, contract conventions, code
   layout rules, testing philosophy, and CI/release mechanics.
 - **`specs/`** — one frozen spec per shipped feature; the closest thing to a living functional
