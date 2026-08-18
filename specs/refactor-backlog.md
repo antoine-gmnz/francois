@@ -231,3 +231,7 @@ filtering relative PATH entries is right for extension spawns, it is right every
 ## deferred:project-groups
 
 - [ ] MEDIUM · src-tauri/src/project/registry.rs:522 · complexity · `load_from` and `load_groups_from` each read `projects.json` off disk independently; add a single `load_document(path) -> (Vec<Project>, Vec<ProjectGroup>)` that reads the bytes once and calls `parse_registry`/`parse_groups` on the same buffer · deferred:project-groups
+
+## deferred:diff-navigator — SHIP-round leftovers (review round 2)
+
+- [ ] LOW · src/features/diff/DiffTree.tsx:85 · quality · the `role="tree"` container carries `aria-activedescendant` but has no `tabIndex`, so it is never focusable — either make it focusable or drop the decorative ARIA · deferred:diff-navigator

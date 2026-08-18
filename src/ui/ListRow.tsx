@@ -11,6 +11,7 @@
 // shown with a left accent border instead of a raised fill — a different
 // visual contract, not a degenerate case of this one. See the handoff.
 
+import { forwardRef } from 'react';
 import type { HTMLAttributes, ReactNode } from 'react';
 
 export interface ListRowProps extends Omit<HTMLAttributes<HTMLDivElement>, 'className'> {
@@ -28,10 +29,10 @@ export function listRowClassName(selected: boolean, hovered: boolean, className?
   return parts.join(' ');
 }
 
-export function ListRow({ selected = false, hovered = false, className, children, ...rest }: ListRowProps): JSX.Element {
+export const ListRow = forwardRef<HTMLDivElement, ListRowProps>(function ListRow({ selected = false, hovered = false, className, children, ...rest }, ref) {
   return (
-    <div className={listRowClassName(selected, hovered, className)} {...rest}>
+    <div ref={ref} className={listRowClassName(selected, hovered, className)} {...rest}>
       {children}
     </div>
   );
-}
+});

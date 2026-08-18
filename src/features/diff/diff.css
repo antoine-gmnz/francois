@@ -51,6 +51,93 @@
   letter-spacing: 0.4px;
 }
 
+/* diff-navigator: filter box — pinned above the header row (design brief §Left column) */
+.diff-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-4) var(--space-8);
+  margin-bottom: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  background: var(--bg-elevated);
+}
+.diff-filter:focus-within {
+  border-color: var(--accent-soft-edge);
+  background: var(--accent-soft-bg);
+}
+.diff-filter__icon {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.diff-filter__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--font-size-12);
+  color: var(--text-2);
+}
+.diff-filter__input::placeholder {
+  color: var(--text-faint);
+}
+.diff-filter__hint {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: var(--font-size-10);
+}
+
+/* diff-navigator: folder tree */
+.diff-tree {
+  display: flex;
+  flex-direction: column;
+}
+.diff-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  padding: var(--space-5) var(--space-8);
+  border-radius: var(--radius-base);
+  margin-bottom: var(--space-1);
+  cursor: pointer;
+}
+.diff-tree-row--folder:hover {
+  background: var(--bg-hover);
+}
+.diff-tree-row--cursor {
+  outline: 1px solid var(--border-emphasis);
+  outline-offset: -1px;
+}
+.diff-tree-row__caret {
+  flex-shrink: 0;
+  width: var(--space-9);
+  text-align: center;
+  color: var(--text-faint);
+  user-select: none;
+}
+.diff-tree-row__label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-12);
+  color: var(--text-muted);
+}
+.diff-checkbox--dim {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+}
+.diff-tree__no-match {
+  padding: var(--space-6) var(--space-8);
+  font-size: var(--font-size-12);
+  color: var(--text-faint);
+}
+.diff-file-name__match {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
 .diff-body {
   flex: 1;
   overflow: auto;
@@ -183,6 +270,10 @@
 .diff-footer__hint--inert {
   color: var(--text-disabled);
   cursor: default;
+}
+/* diff-navigator FR-26: a statement, not an alarm — plain text, no icon, no badge */
+.diff-footer__hidden-warn {
+  color: var(--warn);
 }
 
 .diff-commit-form {
