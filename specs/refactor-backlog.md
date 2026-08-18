@@ -227,3 +227,7 @@ Logged per spec §2 non-goal (explicit — not a review finding). Marion's unres
 filtering relative PATH entries is right for extension spawns, it is right everywhere.
 
 - [ ] MEDIUM · src-tauri/src/process_util.rs (`login_shell_path_env`) · security · the eight `claude` spawn sites take the login shell's PATH unfiltered, so an empty or relative entry (`.`, `node_modules/.bin`, the field a `PATH=$PATH:` leaves) is searched — same exposure `ext-path-resolution` FR-5 closed on the extensions side, deliberately not generalized inside that patch because it would change eight working call sites. → **Fix:** move the empty/non-absolute filter into `login_shell_path_env` itself, drop the extension-side copy, and re-run the `claude`-spawn battery · deferred:ext-path-resolution
+
+## deferred:diff-navigator — SHIP-round leftovers (review round 2)
+
+- [ ] LOW · src/features/diff/DiffTree.tsx:85 · quality · the `role="tree"` container carries `aria-activedescendant` but has no `tabIndex`, so it is never focusable — either make it focusable or drop the decorative ARIA · deferred:diff-navigator

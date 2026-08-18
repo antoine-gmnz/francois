@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, RefObject } from 'react';
 import type { AppError } from '../../../contract/common';
-import type { DiffFileStatus, DiffFileSummary, DiffHunk, DiffLine, DiffSummary, FileDiff } from '../../../contract/diff-view';
-import { ListRow } from '../../ui/ListRow';
+import type { DiffFileSummary, DiffHunk, DiffLine, DiffSummary, FileDiff } from '../../../contract/diff-view';
+import { DiffTree } from './DiffTree';
+import { computeIntralineSpans, type IntralineSpan } from './intraline';
+import type { DiffNavigator } from './useDiffNavigator';
 
 // per-kind diff-row tokens (spec §8 dstyle table)
 const KIND: Record<string, { bg: string; fg: string; sign: string; signFg: string; noFg: string }> = {
@@ -12,18 +14,10 @@ const KIND: Record<string, { bg: string; fg: string; sign: string; signFg: strin
   ctx: { bg: 'transparent', fg: 'var(--text-dim)', sign: ' ', signFg: 'var(--text-faint)', noFg: 'var(--text-faint)' },
 };
 
-// per-status glyph + color for the vertical file list (spec §8 status set).
-const STATUS: Record<DiffFileStatus, { ch: string; color: string }> = {
-  modified: { ch: 'M', color: 'var(--accent)' },
-  added: { ch: 'A', color: 'var(--success)' },
-  deleted: { ch: 'D', color: 'var(--error)' },
-  untracked: { ch: 'U', color: 'var(--hue-blue)' },
-  renamed: { ch: 'R', color: 'var(--hue-purple)' },
-};
-
 // Diff rows are single-line (white-space: pre, no wrap), so each is a fixed height:
 // fontSize 12 × lineHeight 1.75 = 21px. That lets us window the body — mount only the
 // rows in view — so a 5k-line diff stays as snappy to scroll/switch as a 50-line one.
+// diff-navigator FR-24: this must stay exactly correct with intraline spans present.
 const ROW_H = 21;
 const OVERSCAN = 12; // rows rendered beyond each edge, to hide scroll blanking
 const WINDOW_INITIAL = 80; // rows to render on first paint, before the scroll box is measured
@@ -41,12 +35,13 @@ export interface DiffListBodyProps {
   fileDiffError: AppError | null;
   fileDiffLoading: boolean;
   bodyScrollRef: RefObject<HTMLDivElement>;
+  navigator: DiffNavigator;
   onSelectPath: (path: string) => void;
   onToggleFile: (path: string) => void;
   onToggleAll: () => void;
 }
 
-/** DIFF tab's main area: the vertical file selector (left) + the windowed diff body
+/** DIFF tab's main area: the navigator tree (left) + the windowed diff body
  *  (right), plus their empty/error/loading states. */
 export function DiffListBody({
   files,
@@ -61,31 +56,33 @@ export function DiffListBody({
   fileDiffError,
   fileDiffLoading,
   bodyScrollRef,
+  navigator,
   onSelectPath,
   onToggleFile,
   onToggleAll,
 }: DiffListBodyProps): JSX.Element {
   return (
     <div className="diff-main">
-      {/* file list — a vertical selector (replaces the horizontal chip strip, which
-          became unusable with many files). Renders nothing when empty (spec §8). */}
+      {/* navigator — a folder tree with a filter box (replaces the flat vertical
+          list). Renders nothing when empty (spec §8). */}
       {files.length > 0 && (
-        <div className="scz diff-filelist">
-          <div onClick={onToggleAll} title={allSelected ? 'deselect all' : 'select all'} className="diff-filelist__header">
-            <Checkbox checked={allSelected} indeterminate={selectedCount > 0 && !allSelected} />
-            <span>{selectedCount} of {files.length} selected</span>
-          </div>
-          {files.map((file) => (
-            <FileRow
-              key={file.path}
-              file={file}
-              selected={file.path === selectedPath}
-              checked={!deselected.has(file.path)}
-              onClick={() => onSelectPath(file.path)}
-              onToggle={() => onToggleFile(file.path)}
-            />
-          ))}
-        </div>
+        <DiffTree
+          visibleRows={navigator.visibleRows}
+          filter={navigator.filter}
+          onFilterChange={navigator.setFilter}
+          filterInputRef={navigator.filterInputRef}
+          selectedPath={selectedPath}
+          cursorKey={navigator.cursorKey}
+          deselected={deselected}
+          allSelected={allSelected}
+          selectedCount={selectedCount}
+          totalFiles={files.length}
+          rollup={navigator.rollup}
+          onSelectPath={onSelectPath}
+          onToggleFile={onToggleFile}
+          onToggleAll={onToggleAll}
+          onToggleFold={navigator.toggleFold}
+        />
       )}
 
       {/* body */}
@@ -104,47 +101,6 @@ export function DiffListBody({
   );
 }
 
-// A small terminal-styled checkbox: an accent-filled box with a ✓ when checked, a
-// hollow box when unchecked, and a dash when indeterminate (the header's mixed state).
-function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?: boolean }) {
-  const on = checked || indeterminate;
-  return (
-    <span
-      className="diff-checkbox"
-      style={{ border: `1px solid ${on ? 'var(--accent)' : 'var(--text-muted)'}`, background: checked ? 'var(--accent)' : 'transparent' }}
-    >
-      {checked ? '✓' : indeterminate ? <span className="diff-checkbox-dash" /> : ''}
-    </span>
-  );
-}
-
-// One row in the vertical file selector: [✓] · status glyph · filename · +add/−del.
-// The checkbox toggles whether the file is committed; clicking elsewhere views its
-// diff. Full repo-relative path shows on hover (title); the dir is elided to keep
-// rows dense.
-function FileRow({ file, selected, checked, onClick, onToggle }: { file: DiffFileSummary; selected: boolean; checked: boolean; onClick: () => void; onToggle: () => void }) {
-  const st = STATUS[file.status] ?? STATUS.modified;
-  return (
-    <ListRow onClick={onClick} title={file.path} selected={selected} className="diff-file-row">
-      <span
-        onClick={(e) => {
-          e.stopPropagation(); // toggle selection without changing which diff is shown
-          onToggle();
-        }}
-        className="diff-checkbox-wrap"
-      >
-        <Checkbox checked={checked} />
-      </span>
-      <span className="diff-file-status" style={{ color: st.color }}>{st.ch}</span>
-      <span className="diff-file-name truncate" style={{ color: selected ? 'var(--text-bright)' : 'var(--text)' }}>
-        {file.name}
-      </span>
-      {file.additions > 0 && <span className="diff-file-stat diff-color-add">+{file.additions}</span>}
-      {file.deletions > 0 && <span className="diff-file-stat diff-color-del">−{file.deletions}</span>}
-    </ListRow>
-  );
-}
-
 function EmptyState({ text, color }: { text: string; color?: string }) {
   return (
     <div className="diff-empty-state" style={color ? { color } : undefined}>
@@ -157,6 +113,7 @@ interface FlatRow {
   kind: string;
   no: string;
   text: string;
+  spans: IntralineSpan[];
 }
 
 function DiffBody({
@@ -171,15 +128,22 @@ function DiffBody({
   scrollRef: RefObject<HTMLDivElement>;
 }) {
   // Flatten hunks (header + lines) into one fixed-height row list so the body can be
-  // windowed. Cheap for small diffs, essential for huge ones.
+  // windowed. Cheap for small diffs, essential for huge ones. Intraline spans
+  // (diff-navigator FR-20..24) are computed per hunk, in the view layer only.
   const rows = useMemo<FlatRow[]>(() => {
     if (!diff || diff.binary) return [];
     const out: FlatRow[] = [];
     for (const hunk of diff.hunks as DiffHunk[]) {
-      out.push({ kind: 'hunk', no: '', text: hunk.header });
-      for (const line of hunk.lines as DiffLine[]) {
-        out.push({ kind: line.kind, no: line.kind === 'del' ? String(line.oldNo ?? '') : String(line.newNo ?? ''), text: line.text });
-      }
+      out.push({ kind: 'hunk', no: '', text: hunk.header, spans: [] });
+      const spansByIndex = computeIntralineSpans(hunk.lines);
+      (hunk.lines as DiffLine[]).forEach((line, idx) => {
+        out.push({
+          kind: line.kind,
+          no: line.kind === 'del' ? String(line.oldNo ?? '') : String(line.newNo ?? ''),
+          text: line.text,
+          spans: spansByIndex.get(idx) ?? [],
+        });
+      });
     }
     return out;
   }, [diff]);
@@ -226,20 +190,38 @@ function DiffBody({
   return (
     <div className="diff-rows" style={{ paddingTop: 8 + start * ROW_H, paddingBottom: 8 + (rows.length - end) * ROW_H }}>
       {rows.slice(start, end).map((r, i) => (
-        <Row key={start + i} kind={r.kind} no={r.no} text={r.text} />
+        <Row key={start + i} kind={r.kind} no={r.no} text={r.text} spans={r.spans} />
       ))}
     </div>
   );
 }
 
-function Row({ kind, no, text }: { kind: string; no: string; text: string }) {
+function Row({ kind, no, text, spans }: { kind: string; no: string; text: string; spans: IntralineSpan[] }) {
   const k = KIND[kind] ?? KIND.ctx;
   return (
     <div className="diff-row" style={{ '--row-bg': k.bg } as CSSProperties}>
       <span className="diff-row__no" style={{ color: k.noFg }}>{no}</span>
       <span className="diff-row__sign" style={{ color: k.signFg }}>{k.sign}</span>
-      <span className="diff-row__text" style={{ color: k.fg }}>{text}</span>
+      <span className="diff-row__text" style={{ color: k.fg }}>
+        {spans.length > 0 ? <IntralineText text={text} spans={spans} kind={kind} /> : text}
+      </span>
     </div>
+  );
+}
+
+// diff-navigator FR-24: background-colour and colour only — no padding, border,
+// margin, font-size or font-family change, so ROW_H stays exact.
+function IntralineText({ text, spans, kind }: { text: string; spans: IntralineSpan[]; kind: string }) {
+  const bg = kind === 'del' ? 'color-mix(in srgb, var(--error) 22%, transparent)' : 'color-mix(in srgb, var(--success) 22%, transparent)';
+  const fg = kind === 'del' ? 'var(--error-bright)' : 'var(--success-bright)';
+  return (
+    <>
+      {spans.map((span, i) => (
+        <span key={i} style={span.emphasis ? { background: bg, color: fg } : undefined}>
+          {text.slice(span.start, span.end)}
+        </span>
+      ))}
+    </>
   );
 }
 

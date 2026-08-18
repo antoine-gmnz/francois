@@ -4,6 +4,7 @@ import type { AppError } from '../../../contract/common';
 import type { DiffFileSummary, DiffSummary, FileDiff } from '../../../contract/diff-view';
 import { diffGetFileDiff, diffGetSummary, onDiffEvent } from '../../lib/api';
 import { nextDiffEventAction } from './diff-events';
+import { firstFilePathInTreeOrder } from './diff-tree';
 
 export interface DiffFeed {
   summary: DiffSummary | null;
@@ -20,7 +21,6 @@ export interface DiffFeed {
   selectedPaths: string[];
   selectedCount: number;
   allSelected: boolean;
-  cycle: (dir: 1 | -1) => void;
 
   fileDiff: FileDiff | null;
   fileDiffError: AppError | null;
@@ -110,7 +110,9 @@ export function useDiffFeed(sessionId: string): DiffFeed {
             setSummaryError(null);
             const prev = selectedRef.current;
             const keep = prev && res.data.files.some((file) => file.path === prev);
-            setSelectedPath(keep ? prev : (res.data.files[0]?.path ?? null));
+            // Tree order, not path order: subfolders render before same-level files, so
+            // files[0] is not the first row the user sees (spec §3 story 1).
+            setSelectedPath(keep ? prev : firstFilePathInTreeOrder(res.data.files));
           } else {
             setSummary(null);
             setSummaryError(res.error);
@@ -171,6 +173,7 @@ export function useDiffFeed(sessionId: string): DiffFeed {
     if (!selectedPath) {
       setFileDiff(null);
       setFileDiffError(null);
+      setFileDiffLoading(false); // a fetch in flight when the selection cleared would otherwise leave this stuck true
       return;
     }
     const mounted = { current: true };
@@ -187,21 +190,15 @@ export function useDiffFeed(sessionId: string): DiffFeed {
         setFileDiffError(res.error);
         if (res.error.code === 'INVALID_INPUT') loadSummary(sessionId); // stale path → refresh
       }
+    }).catch(() => {
+      // A transport-level rejection (as opposed to a Result error) must still clear the
+      // in-flight flag — without this the loader stuck true forever.
+      if (mounted.current) setFileDiffLoading(false);
     });
     return () => {
       mounted.current = false;
     };
   }, [sessionId, selectedPath, loadSummary]);
-
-  const cycle = useCallback(
-    (dir: 1 | -1) => {
-      if (files.length === 0) return;
-      const i = files.findIndex((file) => file.path === selectedPath);
-      const next = (i === -1 ? 0 : i + dir + files.length) % files.length;
-      setSelectedPath(files[next].path);
-    },
-    [files, selectedPath],
-  );
 
   return {
     summary,
@@ -217,7 +214,6 @@ export function useDiffFeed(sessionId: string): DiffFeed {
     selectedPaths,
     selectedCount,
     allSelected,
-    cycle,
     fileDiff,
     fileDiffError,
     fileDiffLoading,

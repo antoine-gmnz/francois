@@ -60,6 +60,9 @@
 - 2026-08-17 · ui · When two registries can set the same value, exactly one owns it — a profile carries no model/effort/permission mode because the project it is paired with already does — because two owners for one value make precedence invisible at the point of use · session-profiles
 - 2026-08-17 · data · Deleting a row sweeps every cross-registry reference to it (project defaults naming a profile/account), best-effort AFTER the delete commits — because a resolve-time fallback hides dangling refs but lets them accumulate, and failing the delete to protect a harmless stale id refuses what the user asked for · session-profiles
 - 2026-08-17 · security · Drop empty and non-absolute entries from any PATH override on a child spawned in a repo-controlled cwd — because a bare argv0 would otherwise resolve inside a hostile clone · ext-path-resolution
+- 2026-08-18 · deps · No third-party grammar/parser engine may run over repo or transcript content in the webview, and no dependency added for a display nicety — because the npm-first install sells on bundle size and the engine parses untrusted input inside the IPC-authoritative webview · diff-navigator
+- 2026-08-18 · ui · In a navigator whose rows are not all selectable, the keyboard CURSOR is separate state from the SELECTION and the detail pane never blanks on a non-selectable row — because collapsing them makes traversal destroy what the user was reading · diff-navigator
+- 2026-08-18 · ui · A filter is a view, never a mutation: it changes visibility only, and any action whose scope exceeds what is visible must state the hidden count rather than be blocked or silently narrowed — because a filter that edits selection loses hand-built state on every keystroke · diff-navigator
 
 ## Superseded
 
