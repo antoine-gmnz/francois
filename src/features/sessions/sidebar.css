@@ -120,6 +120,24 @@
   color: var(--accent);
 }
 
+/* ── project-groups: the second tier ────────────────────────────────────────
+   A group heading is thinner still than a project heading — no `+`, a smaller
+   uppercase label, no acid: a repeatable roster row reads neutral. Project
+   headings + cards nested under it indent one step each (FR-24), depth-capped
+   at three levels (group → project → card). */
+.roster-group__head--group {
+  padding: var(--space-5) var(--space-6) var(--space-4);
+}
+.roster-group__label--group {
+  font-size: var(--font-size-9-5);
+}
+.roster-group--nested {
+  margin-left: var(--space-10);
+}
+.sidebar-card--nested {
+  margin-left: var(--space-10);
+}
+
 /* ── design 7a: the dissolved right column ──────────────────────────────────
    Agents / MCP / Skills / Workflows, ruled off under the cards. Deliberately
    NOT card-shaped: they are an index at the foot of a list, and giving them the

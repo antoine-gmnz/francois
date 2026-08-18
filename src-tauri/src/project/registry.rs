@@ -188,6 +188,7 @@ pub(crate) fn meta_of(p: &Project) -> ProjectMeta {
         last_used_at: p.last_used_at,
         // FR-2: derived on every read, never persisted.
         root_exists: root_exists(&p.root),
+        group_id: p.group_id.clone(),
     }
 }
 
@@ -201,6 +202,120 @@ pub(crate) fn list_metas(projects: &[Project]) -> Vec<ProjectMeta> {
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     metas
+}
+
+// ---------- project-groups FR-1/FR-4/FR-5: group entity ----------
+
+/// FR-4: trimmed group name bounds (contract MAX_GROUP_NAME_LENGTH).
+const MAX_GROUP_NAME_LENGTH: usize = 80;
+
+/// FR-4: trimmed, 1–80 chars. Names are NOT unique — groups are keyed by id.
+pub(crate) fn resolve_group_name(name: &str) -> Result<String, &'static str> {
+    let candidate = name.trim().to_string();
+    if candidate.is_empty() || candidate.chars().count() > MAX_GROUP_NAME_LENGTH {
+        return Err(BAD_GROUP_NAME_MSG);
+    }
+    Ok(candidate)
+}
+
+/// FR-5: `createdAt` ascending, ties broken by `name` ascending (case-insensitive,
+/// plain lowercase — matching the projects tie-break byte-for-byte).
+pub(crate) fn list_groups(groups: &[ProjectGroup]) -> Vec<ProjectGroup> {
+    let mut out = groups.to_vec();
+    out.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    out
+}
+
+/// FR-1: name validation + entry construction. Not unique (FR-4).
+pub(crate) fn create_group_entry(
+    name: &str,
+    id: String,
+    now: u64,
+) -> Result<ProjectGroup, (&'static str, &'static str)> {
+    let name = resolve_group_name(name).map_err(|m| ("INVALID_INPUT", m))?;
+    Ok(ProjectGroup {
+        id,
+        name,
+        created_at: now,
+    })
+}
+
+/// Rename: returns `(index, patched)`, mirroring `patch_entry`'s shape.
+pub(crate) fn rename_group_entry(
+    groups: &[ProjectGroup],
+    group_id: &str,
+    name: &str,
+) -> Result<(usize, ProjectGroup), (&'static str, &'static str)> {
+    let idx = groups
+        .iter()
+        .position(|g| g.id == group_id)
+        .ok_or(("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG))?;
+    let mut patched = groups[idx].clone();
+    patched.name = resolve_group_name(name).map_err(|m| ("INVALID_INPUT", m))?;
+    Ok((idx, patched))
+}
+
+pub(crate) fn group_exists(groups: &[ProjectGroup], group_id: &str) -> bool {
+    groups.iter().any(|g| g.id == group_id)
+}
+
+/// FR-7: sets or clears a project's `groupId`. A `groupId` naming an unknown
+/// group is rejected — the core re-validates against the live registry rather
+/// than trusting the frontend's list.
+pub(crate) fn assign_group_entry(
+    projects: &[Project],
+    groups: &[ProjectGroup],
+    project_id: &str,
+    group_id: Option<&str>,
+) -> Result<(usize, Project), (&'static str, &'static str)> {
+    let idx = projects
+        .iter()
+        .position(|p| p.id == project_id)
+        .ok_or(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))?;
+    if let Some(gid) = group_id {
+        if !group_exists(groups, gid) {
+            return Err(("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG));
+        }
+    }
+    let mut patched = projects[idx].clone();
+    patched.group_id = group_id.map(str::to_string);
+    Ok((idx, patched))
+}
+
+/// FR-8: the delete sweep — clears `groupId` on every member. Pure half, so it
+/// is unit-testable without an AppHandle (mirrors `clear_default_from`).
+pub(crate) fn clear_group_from(projects: &mut [Project], group_id: &str) -> usize {
+    let mut cleared = 0;
+    for p in projects.iter_mut() {
+        if p.group_id.as_deref() == Some(group_id) {
+            p.group_id = None;
+            cleared += 1;
+        }
+    }
+    cleared
+}
+
+/// I/O half of FR-8 — best-effort, run AFTER the group's own removal has
+/// committed (mirrors `clear_default`'s "memory and disk agree" contract). A
+/// persist failure here is logged and rolled back in memory; the group's
+/// removal already stands regardless (FR-8 applies verbatim).
+pub(crate) fn clear_group(app: &AppHandle, group_id: &str) {
+    let Some(state) = app.try_state::<ProjectRegistry>() else {
+        return;
+    };
+    let mut doc = state.doc.lock().unwrap();
+    let snapshot = doc.projects.clone();
+    if clear_group_from(&mut doc.projects, group_id) == 0 {
+        return; // no project referenced it — do not rewrite the file
+    }
+    if let Err(msg) = persist(app, &doc.projects, &doc.groups) {
+        eprintln!("projects: could not persist group-removal sweep: {msg}");
+        doc.projects = snapshot;
+    }
 }
 
 // ---------- FR-6/FR-7: pure decision functions behind the command glue ----------
@@ -233,6 +348,7 @@ pub(crate) fn create_entry(
         defaults: defaults.unwrap_or_default(),
         created_at: now,
         last_used_at: now, // FR-4: set on creation, then only FR-20 touches it
+        group_id: None,    // FR-6: a new project is always created ungrouped
     })
 }
 
@@ -335,17 +451,68 @@ pub(crate) fn load_from(path: &Path) -> Vec<Project> {
         .unwrap_or_default()
 }
 
-/// FR-1: `{ "version": 1, "projects": [ … ] }`, written atomically through the
-/// same helper permission-guardrails uses.
-pub(crate) fn save_to(path: &Path, projects: &[Project]) -> Result<(), String> {
-    let doc = serde_json::json!({ "version": 1, "projects": projects });
+/// project-groups FR-3: a document with no `groups` key loads as an empty list
+/// and is not an error; a single undeserializable entry is skipped, not fatal —
+/// mirroring `parse_registry` byte-for-byte.
+pub(crate) fn parse_groups(bytes: &[u8]) -> Vec<ProjectGroup> {
+    let Ok(doc) = serde_json::from_slice::<Value>(bytes) else {
+        return Vec::new();
+    };
+    let Some(list) = doc.get("groups").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|entry| serde_json::from_value::<ProjectGroup>(entry.clone()).ok())
+        .collect()
+}
+
+pub(crate) fn load_groups_from(path: &Path) -> Vec<ProjectGroup> {
+    std::fs::read(path)
+        .map(|b| parse_groups(&b))
+        .unwrap_or_default()
+}
+
+/// FR-1/project-groups FR-2: `{ "version": 1, "projects": [ … ], "groups": [ … ] }`,
+/// written atomically through the same helper permission-guardrails uses — one
+/// document, one writer, one whole-document save for both arrays.
+pub(crate) fn save_to(
+    path: &Path,
+    projects: &[Project],
+    groups: &[ProjectGroup],
+) -> Result<(), String> {
+    let doc = serde_json::json!({ "version": 1, "projects": projects, "groups": groups });
     crate::permissions::write_json_atomic(path, &doc)
 }
 
-pub(crate) fn persist_registry(app: &AppHandle, projects: &[Project]) -> Result<(), String> {
+/// Writes the WHOLE registry atomically (FR-10) — the only I/O half every
+/// mutation, project or group, funnels through.
+pub(crate) fn persist(
+    app: &AppHandle,
+    projects: &[Project],
+    groups: &[ProjectGroup],
+) -> Result<(), String> {
     let path = projects_json_path(app)
         .ok_or_else(|| "could not resolve the app data directory".to_string())?;
-    save_to(&path, projects)
+    save_to(&path, projects, groups)
+}
+
+/// FR-10: the shared "swap the slot for `next`, persist, roll back on failure"
+/// shape every mutation commit uses — factored out ONCE so the discipline cannot
+/// drift between call sites (project and group commits, plus the cross-domain
+/// sweeps below), and so it is unit-testable with a real, failing `write` without
+/// needing a Tauri AppHandle (see the tests module).
+pub(crate) fn commit_with<T, F>(slot: &mut Vec<T>, next: Vec<T>, write: F) -> Result<(), String>
+where
+    F: FnOnce(&[T]) -> Result<(), String>,
+{
+    let previous = std::mem::replace(slot, next);
+    match write(slot) {
+        Ok(()) => Ok(()),
+        Err(msg) => {
+            *slot = previous;
+            Err(msg)
+        }
+    }
 }
 
 /// Load the registry once, at startup. Must run BEFORE `session::load_persisted`,
@@ -355,8 +522,11 @@ pub fn load_projects(app: &AppHandle) {
         return;
     };
     let loaded = load_from(&path);
+    let loaded_groups = load_groups_from(&path);
     if let Some(state) = app.try_state::<ProjectRegistry>() {
-        *state.projects.lock().unwrap() = loaded;
+        let mut doc = state.doc.lock().unwrap();
+        doc.projects = loaded;
+        doc.groups = loaded_groups;
     }
 }
 
@@ -364,9 +534,10 @@ pub fn load_projects(app: &AppHandle) {
 pub fn known_ids(app: &AppHandle) -> HashSet<String> {
     app.try_state::<ProjectRegistry>()
         .map(|s| {
-            s.projects
+            s.doc
                 .lock()
                 .unwrap()
+                .projects
                 .iter()
                 .map(|p| p.id.clone())
                 .collect()
@@ -380,19 +551,20 @@ pub fn touch_last_used(app: &AppHandle, project_id: &str) {
     let Some(state) = app.try_state::<ProjectRegistry>() else {
         return;
     };
-    let mut projects = state.projects.lock().unwrap();
-    let Some(p) = projects.iter_mut().find(|p| p.id == project_id) else {
+    let mut doc = state.doc.lock().unwrap();
+    let Some(p) = doc.projects.iter_mut().find(|p| p.id == project_id) else {
         return;
     };
-    // Roll back on a persist failure, matching commit()'s "memory and disk agree"
-    // contract. FR-20 requires the CALL not to fail, not that the bump be kept —
-    // keeping it would silently reorder project_list (FR-5) against a disk that
-    // never recorded it.
+    // Roll back on a persist failure, matching commit_with's "memory and disk
+    // agree" contract. FR-20 requires the CALL not to fail, not that the bump be
+    // kept — keeping it would silently reorder project_list (FR-5) against a disk
+    // that never recorded it.
     let previous = p.last_used_at;
     p.last_used_at = crate::session::now_ms();
-    if let Err(msg) = persist_registry(app, &projects) {
+    let groups = doc.groups.clone();
+    if let Err(msg) = persist(app, &doc.projects, &groups) {
         eprintln!("projects: could not persist lastUsedAt: {msg}");
-        if let Some(p) = projects.iter_mut().find(|p| p.id == project_id) {
+        if let Some(p) = doc.projects.iter_mut().find(|p| p.id == project_id) {
             p.last_used_at = previous;
         }
     }
@@ -446,17 +618,17 @@ where
     let Some(state) = app.try_state::<ProjectRegistry>() else {
         return;
     };
-    let mut projects = state.projects.lock().unwrap();
-    let snapshot = projects.clone();
-    if clear_default_from(&mut projects, id, field) == 0 {
+    let mut doc = state.doc.lock().unwrap();
+    let snapshot = doc.projects.clone();
+    if clear_default_from(&mut doc.projects, id, field) == 0 {
         return; // no project referenced it — do not rewrite the file
     }
-    // Roll memory back on a persist failure, matching commit()'s "memory and
+    // Roll memory back on a persist failure, matching commit_with's "memory and
     // disk agree" contract: a cleared default that never reached disk would
     // reappear on the next launch and disagree with what the UI just showed.
-    if let Err(msg) = persist_registry(app, &projects) {
+    if let Err(msg) = persist(app, &doc.projects, &doc.groups) {
         eprintln!("projects: could not persist cleared default {what}: {msg}");
-        *projects = snapshot;
+        doc.projects = snapshot;
     }
 }
 
@@ -526,14 +698,14 @@ pub fn reconcile_defaults(app: &AppHandle) {
         return;
     }
 
-    let mut projects = state.projects.lock().unwrap();
-    let snapshot = projects.clone();
-    if reconcile_defaults_in(&mut projects, trusted_profiles, trusted_accounts) == 0 {
+    let mut doc = state.doc.lock().unwrap();
+    let snapshot = doc.projects.clone();
+    if reconcile_defaults_in(&mut doc.projects, trusted_profiles, trusted_accounts) == 0 {
         return; // nothing stale — do not rewrite the file at every launch
     }
-    if let Err(msg) = persist_registry(app, &projects) {
+    if let Err(msg) = persist(app, &doc.projects, &doc.groups) {
         eprintln!("projects: could not persist reconciled defaults: {msg}");
-        *projects = snapshot;
+        doc.projects = snapshot;
     }
 }
 
@@ -575,8 +747,8 @@ pub(crate) fn seed_of(projects: &[Project], project_id: &str) -> Option<SessionS
 
 pub fn session_seed(app: &AppHandle, project_id: &str) -> Option<SessionSeed> {
     let state = app.try_state::<ProjectRegistry>()?;
-    let projects = state.projects.lock().ok()?;
-    seed_of(&projects, project_id)
+    let doc = state.doc.lock().ok()?;
+    seed_of(&doc.projects, project_id)
 }
 
 /// `(id, root)` for every registered project, in registry order.
@@ -591,7 +763,7 @@ pub(crate) fn roots_of(projects: &[Project]) -> Vec<(String, String)> {
 /// to find the checkout of the repository a cloud session names.
 pub fn project_roots(app: &AppHandle) -> Vec<(String, String)> {
     app.try_state::<ProjectRegistry>()
-        .map(|s| roots_of(&s.projects.lock().unwrap()))
+        .map(|s| roots_of(&s.doc.lock().unwrap().projects))
         .unwrap_or_default()
 }
 
@@ -601,7 +773,7 @@ pub fn check_session_link(
     project_id: &str,
 ) -> Result<(), (&'static str, &'static str)> {
     match app.try_state::<ProjectRegistry>() {
-        Some(state) => validate_link(&state.projects.lock().unwrap(), project_id),
+        Some(state) => validate_link(&state.doc.lock().unwrap().projects, project_id),
         None => Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG)),
     }
 }
@@ -777,7 +949,7 @@ mod tests {
             project_fixture("p1", "francois", &dir.to_string_lossy(), 40),
             project_fixture("p2", "api", &dir.to_string_lossy(), 10),
         ];
-        save_to(&path, &projects).unwrap();
+        save_to(&path, &projects, &[]).unwrap();
 
         let raw = std::fs::read_to_string(&path).unwrap();
         let doc: Value = serde_json::from_str(&raw).unwrap();
@@ -1003,6 +1175,103 @@ mod tests {
                 ("p1".to_string(), normalize_root(a)),
                 ("p2".to_string(), normalize_root(b)),
             ]
+        );
+    }
+
+    // ---- project-groups FR-2/FR-3: persistence ----
+
+    #[test]
+    fn a_document_with_no_groups_key_loads_as_an_empty_group_list() {
+        // FR-3: not an error, and does not affect the projects it loads alongside.
+        assert!(parse_groups(b"").is_empty());
+        assert!(parse_groups(b"{ not json").is_empty());
+        assert!(parse_groups(br#"{"version":1}"#).is_empty());
+        assert!(parse_groups(br#"{"version":1,"projects":[]}"#).is_empty());
+
+        let good = if cfg!(windows) { "D:\\a" } else { "/a" };
+        let doc = json!({
+            "version": 1,
+            "projects": [{ "id": "p1", "name": "keep", "root": good, "createdAt": 1, "lastUsedAt": 2 }],
+        });
+        assert!(parse_registry(doc.to_string().as_bytes()).len() == 1);
+        assert!(parse_groups(doc.to_string().as_bytes()).is_empty());
+    }
+
+    #[test]
+    fn one_undeserializable_group_entry_is_skipped_not_fatal() {
+        let doc = json!({
+            "version": 1,
+            "groups": [
+                { "id": "g1", "name": "keep", "createdAt": 1 },
+                { "name": "no id at all" },
+                "not even an object",
+                { "id": "g2", "name": "also keep" },
+            ]
+        });
+        let loaded = parse_groups(doc.to_string().as_bytes());
+        assert_eq!(
+            loaded.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+            vec!["g1", "g2"]
+        );
+        // a missing createdAt degrades to 0 rather than dropping the entry
+        assert_eq!(loaded[1].created_at, 0);
+    }
+
+    #[test]
+    fn groups_round_trip_alongside_projects_in_one_document() {
+        let dir = tmp_root("groups-roundtrip");
+        let path = dir.join("projects.json");
+        let projects = vec![project_fixture(
+            "p1",
+            "francois",
+            &dir.to_string_lossy(),
+            40,
+        )];
+        let groups = vec![
+            group_fixture("g1", "ODO", 5),
+            group_fixture("g2", "Other", 10),
+        ];
+        save_to(&path, &projects, &groups).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let doc: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(doc["version"], 1);
+        assert_eq!(doc["groups"].as_array().unwrap().len(), 2);
+        assert_eq!(load_from(&path), projects);
+        assert_eq!(load_groups_from(&path), groups);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_project_meta_carries_group_id_as_an_omitted_key_when_ungrouped() {
+        let dir = tmp_root("meta-group");
+        let mut p = project_fixture("p1", "francois", &dir.to_string_lossy(), 40);
+        let v = serde_json::to_value(meta_of(&p)).unwrap();
+        assert!(
+            v.get("groupId").is_none(),
+            "ungrouped must OMIT groupId, never null"
+        );
+
+        p.group_id = Some("g1".into());
+        let v = serde_json::to_value(meta_of(&p)).unwrap();
+        assert_eq!(v["groupId"], "g1");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- project-groups FR-5: group ordering ----
+
+    #[test]
+    fn groups_list_orders_by_created_at_asc_then_name_asc_case_insensitively() {
+        let groups = vec![
+            group_fixture("g1", "zulu", 100),
+            group_fixture("g2", "Bravo", 50),
+            group_fixture("g3", "alpha", 50),
+        ];
+        let ordered = list_groups(&groups);
+        assert_eq!(
+            ordered.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+            vec!["g3", "g2", "g1"],
+            "createdAt asc, then name asc case-insensitively"
         );
     }
 }
@@ -1445,11 +1714,159 @@ mod decision_tests {
             with_profile("p2", Some("pr2")),
         ];
         clear_profile_from(&mut projects, "pr1");
-        save_to(&path, &projects).unwrap();
+        save_to(&path, &projects, &[]).unwrap();
 
         let reloaded = load_from(&path);
         assert_eq!(reloaded[0].defaults.profile_id, None);
         assert_eq!(reloaded[1].defaults.profile_id.as_deref(), Some("pr2"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---------- project-groups: group decisions ----------
+
+    // ---- FR-1/FR-4: create ----
+
+    #[test]
+    fn create_group_trims_and_bounds_the_name_and_is_not_unique() {
+        let g = create_group_entry("  ODO  ", "g1".into(), 5).unwrap();
+        assert_eq!(g.name, "ODO");
+        assert_eq!(g.id, "g1");
+        assert_eq!(g.created_at, 5);
+
+        // names are NOT unique — two groups may share a name
+        assert!(create_group_entry("ODO", "g2".into(), 6).is_ok());
+
+        assert_eq!(
+            create_group_entry("   ", "g3".into(), 0).unwrap_err(),
+            ("INVALID_INPUT", BAD_GROUP_NAME_MSG)
+        );
+        assert!(create_group_entry(&"x".repeat(80), "g4".into(), 0).is_ok());
+        assert!(create_group_entry(&"x".repeat(81), "g5".into(), 0).is_err());
+    }
+
+    // ---- FR-4: rename ----
+
+    #[test]
+    fn rename_group_patches_only_the_name_and_reports_not_found() {
+        let groups = vec![
+            group_fixture("g1", "old", 1),
+            group_fixture("g2", "other", 2),
+        ];
+        let (idx, patched) = rename_group_entry(&groups, "g1", "  new  ").unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(patched.name, "new");
+        assert_eq!(patched.created_at, 1, "createdAt is never restamped");
+
+        assert_eq!(
+            rename_group_entry(&groups, "g1", "   ").unwrap_err(),
+            ("INVALID_INPUT", BAD_GROUP_NAME_MSG)
+        );
+        assert_eq!(
+            rename_group_entry(&groups, "nope", "x").unwrap_err(),
+            ("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG)
+        );
+    }
+
+    // ---- FR-7: assign / unassign ----
+
+    #[test]
+    fn assign_group_sets_clears_and_revalidates_against_the_live_registry() {
+        let groups = vec![group_fixture("g1", "ODO", 1)];
+        let projects = vec![project_fixture("p1", "frontend", "/a", 1)];
+
+        // set
+        let (idx, patched) = assign_group_entry(&projects, &groups, "p1", Some("g1")).unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(patched.group_id.as_deref(), Some("g1"));
+
+        // an unknown groupId is rejected even though the caller believed it existed
+        // (2026-08-17 · security — the core re-validates, never trusts the frontend)
+        assert_eq!(
+            assign_group_entry(&projects, &groups, "p1", Some("ghost")).unwrap_err(),
+            ("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG)
+        );
+
+        // clear (explicit None)
+        let mut grouped = projects.clone();
+        grouped[0].group_id = Some("g1".into());
+        let (_, cleared) = assign_group_entry(&grouped, &groups, "p1", None).unwrap();
+        assert_eq!(cleared.group_id, None);
+
+        // unknown project
+        assert_eq!(
+            assign_group_entry(&projects, &groups, "nope", Some("g1")).unwrap_err(),
+            ("PROJECT_NOT_FOUND", NOT_FOUND_MSG)
+        );
+    }
+
+    // ---- FR-8: the delete sweep ----
+
+    #[test]
+    fn clearing_a_group_only_touches_the_projects_naming_it() {
+        let mut projects = vec![
+            project_fixture("p1", "a", "/a", 1),
+            project_fixture("p2", "b", "/b", 1),
+            project_fixture("p3", "c", "/c", 1),
+        ];
+        projects[0].group_id = Some("g1".into());
+        projects[1].group_id = Some("g2".into());
+        projects[2].group_id = Some("g1".into());
+
+        assert_eq!(clear_group_from(&mut projects, "g1"), 2);
+        assert_eq!(projects[0].group_id, None);
+        assert_eq!(projects[1].group_id.as_deref(), Some("g2"));
+        assert_eq!(projects[2].group_id, None);
+    }
+
+    #[test]
+    fn clearing_an_unreferenced_group_reports_no_change() {
+        let mut projects = vec![project_fixture("p1", "a", "/a", 1)];
+        projects[0].group_id = Some("g2".into());
+        assert_eq!(clear_group_from(&mut projects, "g1"), 0);
+        assert_eq!(projects[0].group_id.as_deref(), Some("g2"));
+    }
+
+    #[test]
+    fn clearing_a_group_leaves_every_other_field_intact() {
+        let mut projects = vec![project_fixture("p1", "a", "/a", 1)];
+        projects[0].group_id = Some("g1".into());
+        projects[0].defaults.model_id = Some("opus".into());
+
+        assert_eq!(clear_group_from(&mut projects, "g1"), 1);
+        assert_eq!(projects[0].group_id, None);
+        assert_eq!(projects[0].defaults.model_id.as_deref(), Some("opus"));
+    }
+
+    // ---- FR-10 (mirrored for groups): commit_with rolls back on a real,
+    // failing persist ----
+
+    #[test]
+    fn commit_with_rolls_back_groups_on_a_persist_failure() {
+        // project-groups FR-10, HIGH remediation: the exact rollback shape
+        // `commit_groups`/`persist` use in commands.rs, exercised here with a
+        // REAL failing write (an unwritable directory) rather than a mock, and
+        // asserted to restore the pre-mutation `groups` slot — not just report
+        // an error.
+        let mut slot = vec![group_fixture("g1", "Alpha", 1)];
+        let snapshot = slot.clone();
+        let next = vec![
+            group_fixture("g1", "Alpha", 1),
+            group_fixture("g2", "Beta", 2),
+        ];
+        // A REAL, unwritable target: `save_to` mkdir -p's a missing PARENT, so a
+        // bare missing directory would not fail — but a path component that is
+        // itself a plain FILE can never become a directory, which is exactly the
+        // failure `create_dir_all` (and thus `persist`) reports for a genuinely
+        // broken app data directory.
+        let blocker = tmp_root("commit-with-rollback").join("blocker-file");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let unwritable_file = blocker.join("sub").join("projects.json");
+
+        let result = commit_with(&mut slot, next, |groups| {
+            save_to(&unwritable_file, &[], groups)
+        });
+
+        assert!(result.is_err());
+        assert_eq!(slot, snapshot);
     }
 }

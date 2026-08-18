@@ -2,37 +2,61 @@
 //!
 //! Every handler is glue: it takes the registry lock, delegates to the pure
 //! helpers in registry.rs / standards.rs, and maps their failures onto the
-//! contract's error codes. The registry lock is ALWAYS released before touching
-//! the session engine (`project_remove`), so the two mutexes can never deadlock.
+//! contract's error codes. Projects and groups share ONE `RegistryDocument`
+//! mutex (see `mod.rs`) — a single lock per command, never nested — so a
+//! project mutation and a group mutation can neither deadlock against each
+//! other nor race to clobber each other's half of projects.json. The registry
+//! lock is ALWAYS released before touching the session engine
+//! (`project_remove`), so the two subsystems' locks can never deadlock either.
 
 use super::*;
 
 use crate::ipc::{err, ok, IpcResult};
 use tauri::{AppHandle, State};
 
-/// Snapshot the registry, mutate the clone, persist, and only then commit — a
-/// projects.json write failure must leave memory and disk agreeing (INTERNAL).
-fn commit(app: &AppHandle, slot: &mut Vec<Project>, next: Vec<Project>) -> Result<(), String> {
-    let previous = std::mem::replace(slot, next);
-    match persist_registry(app, slot) {
-        Ok(()) => Ok(()),
-        Err(msg) => {
-            *slot = previous;
-            Err(msg)
-        }
-    }
+/// Snapshot the projects slot, mutate the clone, persist the whole document, and
+/// only then commit — a projects.json write failure must leave memory and disk
+/// agreeing (INTERNAL). Delegates the actual swap/rollback to `commit_with` so
+/// this and `commit_groups` share one tested rollback shape.
+fn commit_projects(
+    app: &AppHandle,
+    doc: &mut RegistryDocument,
+    next: Vec<Project>,
+) -> Result<(), String> {
+    let groups = doc.groups.clone();
+    commit_with(&mut doc.projects, next, |projects| {
+        persist(app, projects, &groups)
+    })
 }
 
-/// francois:project:list (FR-2/FR-5). Never fails for registry reasons (FR-3) —
-/// the registry is already in memory.
+/// project-groups FR-10: the same commit shape, for the groups array.
+fn commit_groups(
+    app: &AppHandle,
+    doc: &mut RegistryDocument,
+    next: Vec<ProjectGroup>,
+) -> Result<(), String> {
+    let projects = doc.projects.clone();
+    commit_with(&mut doc.groups, next, |groups| {
+        persist(app, &projects, groups)
+    })
+}
+
+/// francois:project:list (FR-2/FR-5, project-groups FR-5). Never fails for
+/// registry reasons (FR-3) — the registry is already in memory.
 #[tauri::command(async)]
-pub fn project_list(state: State<'_, ProjectRegistry>) -> IpcResult<Vec<ProjectMeta>> {
+pub fn project_list(state: State<'_, ProjectRegistry>) -> IpcResult<ProjectRegistrySnapshot> {
     // Snapshot under the lock, derive rootExists OUTSIDE it: list_metas stats every
     // root, and this app supports WSL/UNC roots where a dead share can block for
     // seconds. Holding the mutex across that stalls every project command and
     // session_create's link check along with it.
-    let snapshot = { state.projects.lock().unwrap().clone() };
-    ok(list_metas(&snapshot))
+    let (projects_snapshot, groups_snapshot) = {
+        let doc = state.doc.lock().unwrap();
+        (doc.projects.clone(), doc.groups.clone())
+    };
+    ok(ProjectRegistrySnapshot {
+        projects: list_metas(&projects_snapshot),
+        groups: list_groups(&groups_snapshot),
+    })
 }
 
 /// francois:project:create (FR-6).
@@ -54,14 +78,14 @@ pub fn project_create(
     let id = uuid::Uuid::new_v4().to_string();
     let now = crate::session::now_ms();
 
-    let mut projects = state.projects.lock().unwrap();
-    let project = match create_entry(&projects, &root, name.as_deref(), defaults, id, now) {
+    let mut doc = state.doc.lock().unwrap();
+    let project = match create_entry(&doc.projects, &root, name.as_deref(), defaults, id, now) {
         Ok(p) => p,
         Err((code, msg)) => return err(code, msg),
     };
-    let mut next = projects.clone();
+    let mut next = doc.projects.clone();
     next.push(project.clone());
-    match commit(&app, &mut projects, next) {
+    match commit_projects(&app, &mut doc, next) {
         Ok(()) => ok(meta_of(&project)),
         Err(msg) => err("INTERNAL", msg),
     }
@@ -88,9 +112,9 @@ pub fn project_update(
         None => None,
     };
 
-    let mut projects = state.projects.lock().unwrap();
+    let mut doc = state.doc.lock().unwrap();
     let (idx, patched) = match patch_entry(
-        &projects,
+        &doc.projects,
         &project_id,
         name.as_deref(),
         normalized.as_deref(),
@@ -99,9 +123,9 @@ pub fn project_update(
         Ok(v) => v,
         Err((code, msg)) => return err(code, msg),
     };
-    let mut next = projects.clone();
+    let mut next = doc.projects.clone();
     next[idx] = patched.clone();
-    match commit(&app, &mut projects, next) {
+    match commit_projects(&app, &mut doc, next) {
         Ok(()) => ok(meta_of(&patched)),
         Err(msg) => err("INTERNAL", msg),
     }
@@ -117,21 +141,120 @@ pub fn project_remove(
     project_id: String,
 ) -> IpcResult<Option<()>> {
     {
-        let mut projects = state.projects.lock().unwrap();
-        if !projects.iter().any(|p| p.id == project_id) {
+        let mut doc = state.doc.lock().unwrap();
+        if !doc.projects.iter().any(|p| p.id == project_id) {
             return err("PROJECT_NOT_FOUND", NOT_FOUND_MSG);
         }
-        let next: Vec<Project> = projects
+        let next: Vec<Project> = doc
+            .projects
             .iter()
             .filter(|p| p.id != project_id)
             .cloned()
             .collect();
-        if let Err(msg) = commit(&app, &mut projects, next) {
+        if let Err(msg) = commit_projects(&app, &mut doc, next) {
             return err("INTERNAL", msg);
         }
     } // the registry lock is released BEFORE the engine lock is taken
     crate::session::unlink_project_sessions(&app, &project_id);
     ok(None)
+}
+
+/// francois:project:createGroup (FR-1).
+#[tauri::command(async)]
+pub fn project_create_group(
+    app: AppHandle,
+    state: State<'_, ProjectRegistry>,
+    name: String,
+) -> IpcResult<ProjectGroup> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = crate::session::now_ms();
+
+    let mut doc = state.doc.lock().unwrap();
+    let group = match create_group_entry(&name, id, now) {
+        Ok(g) => g,
+        Err((code, msg)) => return err(code, msg),
+    };
+    let mut next = doc.groups.clone();
+    next.push(group.clone());
+    match commit_groups(&app, &mut doc, next) {
+        Ok(()) => ok(group),
+        Err(msg) => err("INTERNAL", msg),
+    }
+}
+
+/// francois:project:renameGroup (FR-4).
+#[tauri::command(async)]
+pub fn project_rename_group(
+    app: AppHandle,
+    state: State<'_, ProjectRegistry>,
+    group_id: String,
+    name: String,
+) -> IpcResult<ProjectGroup> {
+    let mut doc = state.doc.lock().unwrap();
+    let (idx, patched) = match rename_group_entry(&doc.groups, &group_id, &name) {
+        Ok(v) => v,
+        Err((code, msg)) => return err(code, msg),
+    };
+    let mut next = doc.groups.clone();
+    next[idx] = patched.clone();
+    match commit_groups(&app, &mut doc, next) {
+        Ok(()) => ok(patched),
+        Err(msg) => err("INTERNAL", msg),
+    }
+}
+
+/// francois:project:removeGroup (FR-8/FR-9): deletes the group, then clears
+/// `groupId` on every member — best-effort, AFTER the delete commits. Touches
+/// no session state and emits nothing (FR-9).
+#[tauri::command(async)]
+pub fn project_remove_group(
+    app: AppHandle,
+    state: State<'_, ProjectRegistry>,
+    group_id: String,
+) -> IpcResult<Option<()>> {
+    {
+        let mut doc = state.doc.lock().unwrap();
+        if !group_exists(&doc.groups, &group_id) {
+            return err("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG);
+        }
+        let next: Vec<ProjectGroup> = doc
+            .groups
+            .iter()
+            .filter(|g| g.id != group_id)
+            .cloned()
+            .collect();
+        if let Err(msg) = commit_groups(&app, &mut doc, next) {
+            return err("INTERNAL", msg);
+        }
+    } // the registry lock is released BEFORE clear_group re-acquires it (FR-8)
+    clear_group(&app, &group_id);
+    ok(None)
+}
+
+/// francois:project:assignGroup (FR-7): sets or clears a project's `groupId`,
+/// re-validating an incoming `groupId` against the LIVE registry rather than
+/// trusting the frontend's list.
+#[tauri::command(async)]
+pub fn project_assign_group(
+    app: AppHandle,
+    state: State<'_, ProjectRegistry>,
+    project_id: String,
+    group_id: Option<String>,
+) -> IpcResult<ProjectMeta> {
+    // ONE lock covers both arrays, so reading groups and patching projects can
+    // never race a concurrent group mutation the way two separate locks could.
+    let mut doc = state.doc.lock().unwrap();
+    let (idx, patched) =
+        match assign_group_entry(&doc.projects, &doc.groups, &project_id, group_id.as_deref()) {
+            Ok(v) => v,
+            Err((code, msg)) => return err(code, msg),
+        };
+    let mut next = doc.projects.clone();
+    next[idx] = patched.clone();
+    match commit_projects(&app, &mut doc, next) {
+        Ok(()) => ok(meta_of(&patched)),
+        Err(msg) => err("INTERNAL", msg),
+    }
 }
 
 /// The project's root, ready for a standards read/write.
@@ -141,7 +264,7 @@ fn root_for(
 ) -> Result<String, (&'static str, &'static str)> {
     // Snapshot under the lock; root_of stats the root, so it runs outside it
     // (a dead UNC share must not stall the registry — see project_list).
-    let snapshot = { state.projects.lock().unwrap().clone() };
+    let snapshot = { state.doc.lock().unwrap().projects.clone() };
     root_of(&snapshot, project_id)
 }
 
@@ -172,8 +295,8 @@ pub fn project_set_standards(
     // Resolve the project first (an unknown id is not an INVALID_INPUT), but
     // validate before the root stat and before any file handle exists.
     let known = {
-        let projects = state.projects.lock().unwrap();
-        projects.iter().find(|p| p.id == project_id).cloned()
+        let doc = state.doc.lock().unwrap();
+        doc.projects.iter().find(|p| p.id == project_id).cloned()
     };
     let Some(project) = known else {
         return err("PROJECT_NOT_FOUND", NOT_FOUND_MSG);

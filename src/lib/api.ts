@@ -35,9 +35,15 @@ import type {
   AccountUpdateEndpointResponse,
 } from '../../contract/multi-account';
 import type {
+  GroupId,
   ProjectAwareSessionCreateRequest,
+  ProjectAssignGroupResponse,
+  ProjectCreateGroupResponse,
   ProjectCreateRequest,
+  ProjectListResponse,
   ProjectMeta,
+  ProjectRemoveGroupResponse,
+  ProjectRenameGroupResponse,
   ProjectStandards,
   ProjectUpdateRequest,
   StandardsRead,
@@ -87,6 +93,7 @@ import type {
   CloudResolveRequest,
 } from '../../contract/cloud-sessions';
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
+import type { DndState } from '../../contract/audio-cues';
 import type {
   CloseStreamRequest,
   CloseStreamResponse,
@@ -128,6 +135,11 @@ function stream<T>(channel: string, cb: (payload: T) => void): Promise<UnlistenF
 // francois:app:setWindowTheme — repaint the native caption bar to match the theme.
 export const appSetWindowTheme = (theme: 'light' | 'dark') =>
   ipc<Result<null>>('app_set_window_theme', { theme });
+
+// audio-cues FR-14/FR-20 — OS Do Not Disturb probe. Never rejects on a domain
+// failure per FR-15; the frontend TTL cache (sound.ts) treats a transport
+// error the same as `Ok`.
+export const appDndState = () => ipc<Result<DndState>>('app_dnd_state');
 
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
 // multi-provider-openai FR-18/FR-21: keyed on `accountId`, not `sessionId` —
@@ -224,7 +236,9 @@ export const permissionsSetTier = (sessionId: SessionId, ruleId: string, tier: P
 // the new state. getStandards/setStandards read and write the managed block in
 // <root>/CLAUDE.md; setStandards resolves a FRESH RE-READ of the file (FR-16),
 // never the payload it was given.
-export const projectList = () => ipc<Result<ProjectMeta[]>>('project_list');
+// project-groups §5: project_list's response shape changed from ProjectMeta[]
+// to { projects, groups } (ProjectRegistrySnapshot) — every caller updated.
+export const projectList = () => ipc<ProjectListResponse>('project_list');
 export const projectCreate = (req: ProjectCreateRequest) => ipc<Result<ProjectMeta>>('project_create', req);
 export const projectUpdate = (req: ProjectUpdateRequest) => ipc<Result<ProjectMeta>>('project_update', req);
 export const projectRemove = (projectId: ProjectId) => ipc<Result<null>>('project_remove', { projectId });
@@ -236,6 +250,17 @@ export const projectSetStandards = (projectId: ProjectId, standards: ProjectStan
 // because the core owns the cwd (and the git routing that follows from it).
 export const projectRepoBrief = (sessionId: SessionId) =>
   ipc<Result<RepoBrief>>('project_repo_brief', { sessionId });
+
+// project-groups (§5). Four commands, no event channel: every mutation
+// resolves with the new state, same pattern as the rest of the project domain.
+export const projectCreateGroup = (name: string) =>
+  ipc<ProjectCreateGroupResponse>('project_create_group', { name });
+export const projectRenameGroup = (groupId: GroupId, name: string) =>
+  ipc<ProjectRenameGroupResponse>('project_rename_group', { groupId, name });
+export const projectRemoveGroup = (groupId: GroupId) =>
+  ipc<ProjectRemoveGroupResponse>('project_remove_group', { groupId });
+export const projectAssignGroup = (projectId: ProjectId, groupId: GroupId | null) =>
+  ipc<ProjectAssignGroupResponse>('project_assign_group', { projectId, groupId });
 
 // session-profiles (§5.2). Four commands, no event channel: every mutation is
 // initiated by this frontend and resolves with the new state (spec §5 preamble).

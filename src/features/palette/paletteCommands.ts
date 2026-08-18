@@ -481,6 +481,19 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // audio-cues FR-12: sits directly after the two `Notifications:` commands so
+  // the three mute controls read as one group.
+  registerPaletteCommand({
+    id: 'toggle-sound',
+    glyph: '◈',
+    name: 'Sound: audio cues',
+    hint: () => (useNotificationsStore.getState().soundEnabled ? 'on' : 'off'),
+    run: () => {
+      const st = useNotificationsStore.getState();
+      st.setSoundEnabled(!st.soundEnabled);
+    },
+  });
+
   // 14 — Toggle theme (app-shell): flip light/dark, same action as the status-bar glyph.
   registerPaletteCommand({
     id: 'toggle-theme',

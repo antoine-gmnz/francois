@@ -16,6 +16,8 @@ import { safeCall } from './projects';
 
 export function useProjectRegistrySync(): void {
   const setProjects = useStore((s) => s.setProjects);
+  // project-groups FR-11: the roster's second tier, fed by the same read.
+  const setGroups = useStore((s) => s.setGroups);
   const projectsOpen = useStore((s) => s.projectsOpen);
   const mounted = useMounted();
 
@@ -27,7 +29,9 @@ export function useProjectRegistrySync(): void {
     // StrictMode: four project_list calls per app start.
     if (projectsOpen) return;
     void safeCall(projectList()).then((res) => {
-      if (mounted.current && res.ok) setProjects(res.data);
+      if (!mounted.current || !res.ok) return;
+      setProjects(res.data.projects);
+      setGroups(res.data.groups);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectsOpen]);

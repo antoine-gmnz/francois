@@ -237,6 +237,14 @@ export function removeConfirmText(name: string): string {
   return `remove project "${name}"? sessions are kept; CLAUDE.md is not touched`;
 }
 
+/** project-groups FR-20: member projects are kept, only ungrouped. */
+export function removeGroupConfirmText(name: string): string {
+  return `remove group "${name}"? member projects are kept — they are just ungrouped`;
+}
+
+/** project-groups FR-21: the Identity Group <select>'s "unset" option. */
+export const NO_GROUP_LABEL = '— none —';
+
 /** Abbreviated root for the switcher dropdown and the modal's left list (§8 B/C). */
 export function abbreviateRoot(root: string, home: string): string {
   if (home && (root === home || root.startsWith(home + '/') || root.startsWith(home + '\\'))) {

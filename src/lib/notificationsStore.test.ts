@@ -1,7 +1,8 @@
-// notifications FR-17: covers the `useNotificationsStore` persistence contract
-// — default on when storage is empty/malformed, setNotifyEnabled sets state
-// AND persists, and a restricted storage environment degrades silently (same
-// shape as theme.test.ts / layoutStore.test.ts).
+// notifications FR-17 / audio-cues FR-11: covers the `useNotificationsStore`
+// persistence contract — default on when storage is empty/malformed,
+// setNotifyEnabled/setSoundEnabled set state AND persist, and a restricted
+// storage environment degrades silently (same shape as theme.test.ts /
+// layoutStore.test.ts).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -88,5 +89,59 @@ describe('useNotificationsStore (FR-17)', () => {
     // in-memory toggle still works for the session even though persistence is impossible
     expect(() => useNotificationsStore.getState().setNotifyEnabled('attention', false)).not.toThrow();
     expect(useNotificationsStore.getState().enabled.attention).toBe(false);
+  });
+});
+
+describe('useNotificationsStore.soundEnabled (audio-cues FR-11)', () => {
+  let storage: { store: Record<string, string> };
+
+  beforeEach(() => {
+    storage = mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('defaults to on when storage is empty', async () => {
+    const useNotificationsStore = await freshStore();
+    expect(useNotificationsStore.getState().soundEnabled).toBe(true);
+  });
+
+  it('defaults to on when the key is malformed (not exactly "0")', async () => {
+    storage.store['francois.sound.enabled'] = 'bogus';
+    const useNotificationsStore = await freshStore();
+    expect(useNotificationsStore.getState().soundEnabled).toBe(true);
+  });
+
+  it('initializes off from a persisted "0"', async () => {
+    storage.store['francois.sound.enabled'] = '0';
+    const useNotificationsStore = await freshStore();
+    expect(useNotificationsStore.getState().soundEnabled).toBe(false);
+  });
+
+  it('setSoundEnabled sets state and persists', async () => {
+    const useNotificationsStore = await freshStore();
+    useNotificationsStore.getState().setSoundEnabled(false);
+    expect(useNotificationsStore.getState().soundEnabled).toBe(false);
+    expect(storage.store['francois.sound.enabled']).toBe('0');
+
+    useNotificationsStore.getState().setSoundEnabled(true);
+    expect(useNotificationsStore.getState().soundEnabled).toBe(true);
+    expect(storage.store['francois.sound.enabled']).toBe('1');
+  });
+
+  it('degrades silently to on when localStorage throws on read, and the in-memory toggle still works', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('denied');
+      },
+      setItem: () => {
+        throw new Error('denied');
+      },
+    });
+    const useNotificationsStore = await freshStore();
+    expect(useNotificationsStore.getState().soundEnabled).toBe(true);
+    expect(() => useNotificationsStore.getState().setSoundEnabled(false)).not.toThrow();
+    expect(useNotificationsStore.getState().soundEnabled).toBe(false);
   });
 });

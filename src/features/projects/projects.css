@@ -119,6 +119,61 @@
   color: var(--accent);
 }
 
+/* ── project-groups: the left-column GROUPS block (FR-19/FR-20) ────────────
+   Below the project list, styled after it — rows are not selectable into the
+   config pane (a group has no config), so they never carry the selected-row
+   treatment `.pj-project-row` does. */
+.pj-groups {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.pj-groups-label {
+  padding: var(--space-10) var(--space-12) var(--space-4);
+}
+.pj-group-row {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: 0 var(--space-12);
+}
+.pj-group-row:hover {
+  background: var(--bg-hover);
+}
+.pj-group-name {
+  font-size: var(--font-size-11);
+  color: var(--text);
+  cursor: text;
+  min-width: 0;
+}
+.pj-group-edit-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-app);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--font-size-11);
+  color: var(--text-bright);
+  font-family: inherit;
+  outline: none;
+}
+.pj-new-group {
+  padding: var(--space-8) var(--space-12) var(--space-10);
+  font-size: var(--font-size-11);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.pj-new-group:hover {
+  color: var(--accent);
+}
+.pj-new-group-input {
+  margin: var(--space-6) var(--space-12) var(--space-10);
+  width: auto;
+}
+
 /* right: the config form (FR-34) */
 .pj-config {
   flex: 1;
@@ -161,6 +216,9 @@
   color: var(--text);
   font-family: inherit;
   outline: none;
+}
+.pj-input--unset {
+  color: var(--text-faint);
 }
 .pj-textarea {
   flex: none;

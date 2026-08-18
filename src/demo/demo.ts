@@ -187,7 +187,10 @@ function route(cmd: string, a: Args): unknown {
     case 'account_list':
       return ok(ACCOUNTS);
     case 'project_list':
-      return ok(PROJECTS);
+      // project-groups §5: the response shape is now { projects, groups } — the
+      // demo fixture has no groups of its own, so the roster's second tier
+      // simply never appears here.
+      return ok({ projects: PROJECTS, groups: [] });
     // The SESSION welcome header's repo facts — a plausible repo, so the capture
     // shows the header populated rather than half-empty.
     case 'project_repo_brief':

@@ -21,7 +21,7 @@ import { sessionAccountBadge } from '../accounts/accounts';
 import { CloudChip } from '../cloud-sessions/CloudChip';
 import { filteredEmptyLabel } from '../projects/projects';
 import { ProfileChip } from '../profiles/ProfileChip';
-import type { RosterGroup } from './roster-groups';
+import { isGroupNode, type RosterNode, type RosterProjectNode } from './roster-groups';
 import { truncateBranchLeft, worktreeChipLabel } from './worktree';
 import '../accounts/accounts.css';
 import './sidebar.css';
@@ -44,15 +44,17 @@ export interface SessionListBodyProps {
   inProjectCount: number;
   activeProject: ProjectMeta | null;
   /**
-   * design 7a: the roster's rows, grouped by repo. `rowCursor` indexes the same
-   * sessions FLATTENED in painted order (see flattenGroups) — the walk below
-   * reproduces that order with a running counter.
+   * design 7a: the roster's rows, grouped by repo. project-groups FR-11 adds a
+   * second, mixed-depth tier above it. `rowCursor` indexes the same sessions
+   * FLATTENED in painted order (see flattenGroups) — the walk below reproduces
+   * that order with a running counter.
    */
-  groups: RosterGroup[];
+  groups: RosterNode[];
   collapsedGroups: ReadonlySet<string>;
   onToggleGroup: (key: string) => void;
-  /** A group heading's `+` — scopes a new session to that repo. */
-  onNewInGroup: (group: RosterGroup) => void;
+  /** A project heading's `+` — scopes a new session to that repo. project-groups
+   * FR-25: never offered on a group heading. */
+  onNewInGroup: (group: RosterProjectNode) => void;
   home: string;
   activeSessionId: string | null;
   focused: boolean;
@@ -105,6 +107,57 @@ export function SessionListBody({
   // it sits in that walk. Tracked as a running counter rather than an indexOf per
   // card — the roster re-renders on every session event.
   let flatIndex = -1;
+
+  // project-groups FR-19..FR-25: a project row, identical whether it sits at the
+  // roster's top level or nested one step under a group heading (FR-24: the
+  // group heading + this row + its cards is the depth ceiling — three levels).
+  const renderProjectNode = (node: RosterProjectNode, nested: boolean) => {
+    const collapsed = collapsedGroups.has(node.key);
+    return (
+      <div key={node.key} className={nested ? 'roster-group roster-group--nested' : 'roster-group'}>
+        <div className="roster-group__head" onClick={() => onToggleGroup(node.key)}>
+          <span className="roster-group__caret">{collapsed ? '▸' : '▾'}</span>
+          <span className="roster-group__label truncate">{node.label}</span>
+          <span className="roster-group__count">{node.sessions.length}</span>
+          <span className="app-flex-spacer" />
+          <span
+            className="roster-group__new"
+            title={`new session in ${node.label} · n`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onNewInGroup(node);
+            }}
+          >
+            +
+          </span>
+        </div>
+        {!collapsed &&
+          node.sessions.map((session) => {
+            flatIndex += 1;
+            // FR-22: every paned row renders the selected treatment; only
+            // the FOCUSED pane's row carries the accent left rail.
+            const pane = paneCount > 1 && paneIndexOf ? paneIndexOf(session.id) : null;
+            return (
+              <SessionCard
+                key={session.id}
+                session={session}
+                home={home}
+                selected={pane !== null || session.id === activeSessionId}
+                cursor={focused && flatIndex === rowCursor}
+                derived={derived.get(session.id)}
+                paneLabel={pane === null ? null : paneBadgeLabel(pane, paneCount)}
+                paneAccent={pane !== null && pane > 0}
+                paneFocused={pane !== null && pane === focusedPaneIndex}
+                nested={nested}
+                onClick={() => onSelect(session.id)}
+                onContext={(x, y) => onContext(session.id, x, y)}
+              />
+            );
+          })}
+      </div>
+    );
+  };
+
   return (
     <div className="scz sidebar-list">
       {hydrationError ? (
@@ -132,52 +185,28 @@ export function SessionListBody({
       ) : groups.length === 0 ? (
         <EmptyPane className="sidebar-empty">no matches · esc to clear</EmptyPane>
       ) : (
-        // design 7a: grouped by repo. A group with a single session still gets a
-        // heading — the roster's shape must not change as sessions come and go.
-        groups.map((group) => {
-          const collapsed = collapsedGroups.has(group.key);
-          return (
-            <div key={group.key} className="roster-group">
-              <div className="roster-group__head" onClick={() => onToggleGroup(group.key)}>
-                <span className="roster-group__caret">{collapsed ? '▸' : '▾'}</span>
-                <span className="roster-group__label truncate">{group.label}</span>
-                <span className="roster-group__count">{group.sessions.length}</span>
-                <span className="app-flex-spacer" />
-                <span
-                  className="roster-group__new"
-                  title={`new session in ${group.label} · n`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNewInGroup(group);
-                  }}
-                >
-                  +
-                </span>
+        // design 7a: grouped by repo. project-groups FR-11: a second, mixed-depth
+        // tier sits above it — a group node holds only project nodes, never
+        // another group (FR-11 "groups never nest"). A row with a single session
+        // still gets a heading — the roster's shape must not change as sessions
+        // come and go.
+        groups.map((node) => {
+          if (isGroupNode(node)) {
+            const collapsed = collapsedGroups.has(node.key);
+            return (
+              <div key={node.key} className="roster-group">
+                {/* project-groups FR-23: a thin heading — no card surface, no
+                    status dot, no acid. FR-25: no `+` at this tier. */}
+                <div className="roster-group__head roster-group__head--group" onClick={() => onToggleGroup(node.key)}>
+                  <span className="roster-group__caret">{collapsed ? '▸' : '▾'}</span>
+                  <span className="roster-group__label roster-group__label--group truncate">{node.label}</span>
+                  <span className="roster-group__count">{node.sessionCount}</span>
+                </div>
+                {!collapsed && node.projects.map((project) => renderProjectNode(project, true))}
               </div>
-              {!collapsed &&
-                group.sessions.map((session) => {
-                  flatIndex += 1;
-                  // FR-22: every paned row renders the selected treatment; only
-                  // the FOCUSED pane's row carries the accent left rail.
-                  const pane = paneCount > 1 && paneIndexOf ? paneIndexOf(session.id) : null;
-                  return (
-                    <SessionCard
-                      key={session.id}
-                      session={session}
-                      home={home}
-                      selected={pane !== null || session.id === activeSessionId}
-                      cursor={focused && flatIndex === rowCursor}
-                      derived={derived.get(session.id)}
-                      paneLabel={pane === null ? null : paneBadgeLabel(pane, paneCount)}
-                      paneAccent={pane !== null && pane > 0}
-                      paneFocused={pane !== null && pane === focusedPaneIndex}
-                      onClick={() => onSelect(session.id)}
-                      onContext={(x, y) => onContext(session.id, x, y)}
-                    />
-                  );
-                })}
-            </div>
-          );
+            );
+          }
+          return renderProjectNode(node, false);
         })
       )}
     </div>
@@ -208,6 +237,7 @@ function SessionCard({
   paneLabel,
   paneAccent,
   paneFocused,
+  nested,
   onClick,
   onContext,
 }: {
@@ -221,6 +251,8 @@ function SessionCard({
   /** Accent treatment — every pane past pane 0, whose badge stays neutral. */
   paneAccent: boolean;
   paneFocused: boolean;
+  /** project-groups FR-24: one further indent step under a nested project row. */
+  nested: boolean;
   onClick: () => void;
   onContext: (x: number, y: number) => void;
 }) {
@@ -249,6 +281,8 @@ function SessionCard({
   // FR-22: the accent left rail marks the FOCUSED pane only — one accent per
   // view, and in split it belongs to whichever pane owns the keyboard.
   if (paneFocused) classNames.push('sidebar-card--pane-focus');
+  // project-groups FR-24: one further indent step than the project row it sits under.
+  if (nested) classNames.push('sidebar-card--nested');
 
   return (
     <div
