@@ -7,10 +7,9 @@ use crate::session::*;
 
 use serde_json::Value;
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager};
 
 pub(crate) fn handle_tool_results(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
     tools: &mut HashMap<String, ToolRec>,
@@ -52,14 +51,13 @@ pub(crate) fn handle_tool_results(
         if rec.is_task {
             if let Some(aid) = rec.input.get("__agentId").and_then(|val| val.as_str()) {
                 let ems = {
-                    let engine = app.state::<Engine>();
-                    let mut map = engine.sessions.lock().unwrap();
+                    let mut map = env.engine().sessions.lock().unwrap();
                     match map.get_mut(session_id) {
                         Some(s) => apply_dispatch_result(s, aid, &result_text, is_error, now_ms()),
                         None => Vec::new(),
                     }
                 };
-                emit_agent_emissions(app, session_id, ems);
+                emit_agent_emissions(env, session_id, ems);
             }
         }
 
@@ -68,13 +66,12 @@ pub(crate) fn handle_tool_results(
         // only an error result ends the run here.
         if rec.is_workflow {
             if let Some(run_uuid) = rec.input.get("__workflowId").and_then(|val| val.as_str()) {
-                on_workflow_dispatch_result(app, session_id, run_uuid, &result_text, is_error);
+                on_workflow_dispatch_result(env, session_id, run_uuid, &result_text, is_error);
             }
         }
 
         let done_block = {
-            let engine = app.state::<Engine>();
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = env.engine().sessions.lock().unwrap();
             match map.get_mut(session_id) {
                 Some(s) => {
                     s.buf_tool_done(&block_id, meta.clone());
@@ -87,25 +84,22 @@ pub(crate) fn handle_tool_results(
             }
         };
         if let Some(buf_block) = &done_block {
-            append_transcript(app, session_id, buf_block); // durable-sessions FR-2
+            env.append_transcript(session_id, buf_block); // durable-sessions FR-2
         }
         if matches!(open_block, Some((bid, _)) if *bid == block_id) {
             *open_block = None;
         }
         // FR-16: a file-mutating tool finished → recompute the diff summary now.
         if rec.tool == "Edit" || rec.tool == "Write" {
-            if let Some(cwd) = app.state::<Engine>().cwd_of(session_id) {
-                crate::diff::on_tool_done(app, session_id, &cwd);
+            if let Some(cwd) = env.engine().cwd_of(session_id) {
+                env.note_file_diff(session_id, &cwd);
             }
         }
-        emit(
-            app,
-            SessionEvent::ToolDone {
-                session_id: session_id.into(),
-                block_id,
-                meta,
-            },
-        );
+        env.emit_session(SessionEvent::ToolDone {
+            session_id: session_id.into(),
+            block_id,
+            meta,
+        });
     }
 }
 

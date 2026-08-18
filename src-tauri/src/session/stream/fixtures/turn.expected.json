@@ -1,0 +1,590 @@
+[
+  {
+    "type": "mcp.update",
+    "sessionId": "s1",
+    "server": {
+      "name": "cartograph",
+      "status": "connected",
+      "toolCount": 9
+    }
+  },
+  {
+    "type": "session.commands",
+    "sessionId": "s1",
+    "commands": [
+      {
+        "name": "usage",
+        "description": "plan usage limits (session + weekly)",
+        "source": "builtin"
+      },
+      {
+        "name": "cost",
+        "description": "alias of /usage",
+        "source": "builtin"
+      },
+      {
+        "name": "context",
+        "description": "context window breakdown (runs on the session thread)",
+        "source": "builtin"
+      },
+      {
+        "name": "model",
+        "description": "show or switch the session model",
+        "source": "builtin"
+      },
+      {
+        "name": "status",
+        "description": "session snapshot (cwd, model, runtime, context)",
+        "source": "builtin"
+      },
+      {
+        "name": "help",
+        "description": "this list",
+        "source": "builtin"
+      },
+      {
+        "name": "clear",
+        "description": "clear this session's transcript and reset context",
+        "source": "builtin"
+      },
+      {
+        "name": "seam-fixture-skill-one",
+        "description": "fixed inventory injected via SessionEnv::discover_commands, not the live disk (multi-provider-seam FR-6)",
+        "source": "skill",
+        "scope": "user"
+      },
+      {
+        "name": "seam-fixture-skill-two",
+        "description": "second fixed entry, same reason",
+        "source": "skill",
+        "scope": "user"
+      },
+      {
+        "name": "cohorte-align-ds",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-audit",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-brainstorm",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-build",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-doctor",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-fix",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-init-pipeline",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-loop",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-refactor",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-review",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-ship",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-spec",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "cohorte-update-pipeline",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "deep-research",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "design-sync",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "dataviz",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "update-config",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "verify",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "debug",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "code-review",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "simplify",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "batch",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "fewer-permission-prompts",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "doctor",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "loop",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "schedule",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "claude-api",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "run",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "run-skill-generator",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "agents",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "autocompact",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "color",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "compact",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "config",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "effort",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "fast",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "heapdump",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "init",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "mcp",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "import",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "__remote-workflow",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "workflow-launch-exec",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "reload-skills",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "rename",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "ultrareview",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "security-review",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "usage-credits",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "extra-usage",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "insights",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "recap",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "goal",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "design",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "design-consent",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "design-revoke",
+        "description": "",
+        "source": "cli"
+      },
+      {
+        "name": "team-onboarding",
+        "description": "",
+        "source": "cli"
+      }
+    ]
+  },
+  {
+    "type": "session.status",
+    "sessionId": "s1",
+    "status": "running"
+  },
+  {
+    "type": "assistant.delta",
+    "sessionId": "s1",
+    "blockId": "id-1",
+    "text": "I'll read the README, then run a subagent to list directory contents, create a build folder, and ask which",
+    "offset": 0
+  },
+  {
+    "type": "assistant.delta",
+    "sessionId": "s1",
+    "blockId": "id-1",
+    "text": " environment to target.",
+    "offset": 106
+  },
+  {
+    "type": "assistant.done",
+    "sessionId": "s1",
+    "blockId": "id-1",
+    "text": "I'll read the README, then run a subagent to list directory contents, create a build folder, and ask which environment to target."
+  },
+  {
+    "type": "tool.start",
+    "sessionId": "s1",
+    "blockId": "id-2",
+    "tool": "Read",
+    "summary": "C:\\work\\widget-demo\\proj\\README.md"
+  },
+  {
+    "type": "tool.done",
+    "sessionId": "s1",
+    "blockId": "id-2",
+    "meta": "7 lines"
+  },
+  {
+    "type": "agent.update",
+    "agent": {
+      "id": "id-3",
+      "sessionId": "s1",
+      "name": "subagent",
+      "task": "subagent",
+      "status": "running",
+      "startedAt": 0,
+      "background": false,
+      "stepCount": 0
+    }
+  },
+  {
+    "type": "agent.update",
+    "agent": {
+      "id": "id-3",
+      "sessionId": "s1",
+      "name": "general-purpose",
+      "task": "List files in directory",
+      "status": "running",
+      "startedAt": 0,
+      "background": false,
+      "stepCount": 0
+    }
+  },
+  {
+    "type": "tool.start",
+    "sessionId": "s1",
+    "blockId": "id-4",
+    "tool": "Agent",
+    "summary": "general-purpose"
+  },
+  {
+    "type": "agent.step",
+    "sessionId": "s1",
+    "agentId": "id-3",
+    "step": {
+      "seq": 1,
+      "kind": "tool",
+      "at": 0,
+      "tool": "Glob",
+      "label": "*"
+    }
+  },
+  {
+    "type": "agent.update",
+    "agent": {
+      "id": "id-3",
+      "sessionId": "s1",
+      "name": "general-purpose",
+      "task": "List files in directory",
+      "status": "running",
+      "startedAt": 0,
+      "background": false,
+      "lastActivity": "*",
+      "stepCount": 1
+    }
+  },
+  {
+    "type": "agent.step",
+    "sessionId": "s1",
+    "agentId": "id-3",
+    "step": {
+      "seq": 1,
+      "kind": "tool",
+      "at": 0,
+      "tool": "Glob",
+      "label": "*",
+      "meta": "5 files"
+    }
+  },
+  {
+    "type": "agent.update",
+    "agent": {
+      "id": "id-3",
+      "sessionId": "s1",
+      "name": "general-purpose",
+      "task": "The current directory contains README.md, notes.txt, and a .cartograph folder ho",
+      "status": "done",
+      "startedAt": 0,
+      "endedAt": 0,
+      "background": false,
+      "lastActivity": "*",
+      "stepCount": 1
+    }
+  },
+  {
+    "type": "tool.done",
+    "sessionId": "s1",
+    "blockId": "id-4",
+    "meta": "The current directory contains README.md, notes.txt, and a .cartograph folder ho"
+  },
+  {
+    "type": "assistant.delta",
+    "sessionId": "s1",
+    "blockId": "id-5",
+    "text": "The",
+    "offset": 0
+  },
+  {
+    "type": "assistant.delta",
+    "sessionId": "s1",
+    "blockId": "id-5",
+    "text": " subagent finished. Now creating the build directory.",
+    "offset": 3
+  },
+  {
+    "type": "assistant.done",
+    "sessionId": "s1",
+    "blockId": "id-5",
+    "text": "The subagent finished. Now creating the build directory."
+  },
+  {
+    "type": "tool.start",
+    "sessionId": "s1",
+    "blockId": "id-6",
+    "tool": "Bash",
+    "summary": "mkdir build"
+  },
+  {
+    "type": "permission.asked",
+    "sessionId": "s1",
+    "blockId": "id-7",
+    "ask": {
+      "toolName": "Bash",
+      "summary": "mkdir build",
+      "inputJson": "{\n  \"command\": \"mkdir build\",\n  \"description\": \"Create a build directory\"\n}",
+      "cwd": "/x",
+      "pattern": "Bash(mkdir:*)",
+      "patternLabel": "mkdir (any arguments)"
+    }
+  },
+  {
+    "type": "tool.done",
+    "sessionId": "s1",
+    "blockId": "id-6",
+    "meta": "1 lines"
+  },
+  {
+    "type": "question.asked",
+    "sessionId": "s1",
+    "blockId": "id-8",
+    "questions": [
+      {
+        "question": "Which environment do you want me to target?",
+        "header": "Environment",
+        "options": [
+          {
+            "label": "staging",
+            "description": "the staging environment"
+          },
+          {
+            "label": "production",
+            "description": "the production environment"
+          }
+        ],
+        "multiSelect": false
+      }
+    ]
+  },
+  {
+    "type": "tool.start",
+    "sessionId": "s1",
+    "blockId": "id-9",
+    "tool": "AskUserQuestion",
+    "summary": "{\"questions\":[{\"question\":\"Which environment do you want me "
+  },
+  {
+    "type": "tool.done",
+    "sessionId": "s1",
+    "blockId": "id-9",
+    "meta": "done"
+  },
+  {
+    "type": "assistant.delta",
+    "sessionId": "s1",
+    "blockId": "id-10",
+    "text": "README",
+    "offset": 0
+  },
+  {
+    "type": "assistant.delta",
+    "sessionId": "s1",
+    "blockId": "id-10",
+    "text": ".md describes a scratch project with README.md and notes.txt (confirmed by the subagent, which also found a .cartograph folder), the",
+    "offset": 6
+  },
+  {
+    "type": "assistant.delta",
+    "sessionId": "s1",
+    "blockId": "id-10",
+    "text": " build directory was created, and you picked **staging** as the target environment.",
+    "offset": 138
+  },
+  {
+    "type": "assistant.done",
+    "sessionId": "s1",
+    "blockId": "id-10",
+    "text": "README.md describes a scratch project with README.md and notes.txt (confirmed by the subagent, which also found a .cartograph folder), the build directory was created, and you picked **staging** as the target environment."
+  },
+  {
+    "type": "question.resolved",
+    "sessionId": "s1",
+    "blockId": "id-8",
+    "state": "cancelled"
+  },
+  {
+    "type": "permission.resolved",
+    "sessionId": "s1",
+    "blockId": "id-7",
+    "state": "cancelled"
+  }
+]

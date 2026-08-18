@@ -59,6 +59,9 @@ export type ErrorCode =
   | 'ACCOUNT_DUPLICATE' // multi-account: login identity matches an already-registered account (FR-14)
   | 'ACCOUNT_LOGIN_FAILED' // multi-account: login timed out or the PTY exited without an identity (FR-15)
   | 'ACCOUNT_NOT_AUTHENTICATED' // multi-account: a turn's account has no credentials on disk (FR-22)
+  | 'ACCOUNT_ENDPOINT_UNREACHABLE' // multi-provider-endpoint: the base URL did not answer a usable /models
+  | 'ACCOUNT_ENDPOINT_UNAUTHORIZED' // multi-provider-endpoint: the endpoint rejected the key (401/403)
+  | 'ACCOUNT_KEY_WRITE_FAILED' // multi-provider-endpoint: the key file could not be written or removed
   | 'WORKFLOW_NOT_FOUND' // workflow-details: runId matches no run this session has seen
   | 'WORKFLOW_NO_TRANSCRIPT' // workflow-details FR-2/FR-7: the run has no usable transcriptDir
   | 'WORKFLOW_AGENT_NOT_FOUND' // workflow-details FR-8: agentId matches no agent the scan has seen
@@ -84,6 +87,8 @@ export type ErrorCode =
   | 'CLOUD_REPO_MISMATCH' // cloud-sessions FR-8: teleport's mismatch/not_in_repo/host_unverified (detail: { sessionRepo, currentRepo })
   | 'CLOUD_ADOPT_STALLED' // cloud-sessions FR-8/FR-9: a blocking dialog or the deadline (detail: { phase, logPath? })
   | 'CLOUD_ADOPT_FAILED' // cloud-sessions FR-6: the PTY exited without a usable local session (detail: { logPath? })
+  | 'PROVIDER_REQUEST_FAILED' // multi-provider-openai: the endpoint errored, or the tool loop hit its cap
+  | 'PROVIDER_CONTEXT_EXCEEDED' // multi-provider-openai: the next request would exceed the model's window
   | 'EXT_NOT_ENABLED' // extensions FR-7: the extension is toggled off; nothing was spawned
   | 'EXT_NOT_DETECTED' // extension-install FR-1: the extension's predicate does not hold for that root; when raised because no home directory could be resolved (fleet-scoped panels), detail: { command } per FR-49
   | 'EXT_PANEL_NOT_FOUND' // extension-install FR-12: a panelId that is not in the manifest-derived registry
@@ -144,6 +149,32 @@ export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermiss
 /** Where the claude CLI runs for a session: natively, or inside WSL (Windows only). */
 export type ClaudeRuntime = 'native' | 'wsl';
 
+/**
+ * Who owns the agent loop (multi-provider-seam FR-11a). Renames SessionProvider —
+ * honest name: 'claude-code' is the Claude Code CLI harness driving its own loop,
+ * 'francois' is our loop in the Rust core, 'codex' is OpenAI's codex CLI driving
+ * its own (multi-provider-codex FR-1). It answers "who decides what happens
+ * next", NOT "which vendor's API" — that is ProviderProtocol plus the session's
+ * account, which together name the wire and the credential.
+ *
+ * 'codex' is what makes the two axes load-bearing rather than tidy: it pairs with
+ * protocol 'openai' exactly as 'francois' does, and the two differ ONLY in who
+ * owns the loop. A single collapsed enum could not tell them apart.
+ *
+ * NOT called `runtime`: SessionMeta.runtime is taken by wsl-filesystem and means
+ * native-vs-WSL. NOT called 'native' for the second member, for the same reason.
+ */
+export type AgentRuntime = 'claude-code' | 'francois' | 'codex';
+
+/**
+ * Which wire dialect the session's endpoint speaks (multi-provider-seam FR-11a).
+ * Orthogonal to AgentRuntime: the Claude Code CLI honours ANTHROPIC_BASE_URL, so
+ * ('claude-code','anthropic') against a third-party endpoint is a real cell — one
+ * a single collapsed enum could not name. Vendor IDENTITY is neither of these
+ * two; it is the session's account and its endpoint baseUrl.
+ */
+export type ProviderProtocol = 'anthropic' | 'openai';
+
 export interface ModelInfo {
   id: string; // e.g. 'claude-sonnet-5'
   label: string; // display label, e.g. 'Sonnet 5'
@@ -197,6 +228,18 @@ export interface SessionMeta {
    * user's work. Nothing here implies a live link back to claude.ai.
    */
   cloud?: CloudProvenance;
+  /**
+   * Who owns this session's agent loop (multi-provider-seam FR-11a). DERIVED
+   * from the account's kind at creation and never re-derived. Absent ⇒
+   * 'claude-code'; a record carrying the superseded `provider` key maps
+   * 'claude-code' → 'claude-code', 'openai-compatible' → 'francois'.
+   */
+  agentRuntime: AgentRuntime;
+  /**
+   * The wire dialect this session's endpoint speaks (multi-provider-seam FR-11a).
+   * Absent ⇒ 'anthropic'; superseded `provider: 'openai-compatible'` ⇒ 'openai'.
+   */
+  protocol: ProviderProtocol;
   /** Present ⇔ created from a profile; snapshot-only (session-profiles FR-16). */
   profile?: SessionProfileRef;
 }

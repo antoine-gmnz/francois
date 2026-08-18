@@ -10,7 +10,26 @@ use super::*;
 use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
-use tauri::State;
+use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
+use tauri::{Runtime, State};
+
+/// multi-provider-endpoint FR-7: a hand-written `CommandArg` — see
+/// `ModelIdsUpdate`'s doc comment (endpoint.rs) for why Tauri's automatic
+/// `Option<Option<Vec<String>>>` handling can't tell "the key was absent"
+/// apart from "the key was explicitly `null`".
+impl<'de, R: Runtime> CommandArg<'de, R> for ModelIdsUpdate {
+    fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
+        match command.message.payload() {
+            InvokeBody::Json(args) => {
+                model_ids_update_from(args, command.key).map_err(InvokeError::from)
+            }
+            // Every Francois command sends a JSON object; a raw-bytes payload
+            // here would mean the call bypassed `invoke`'s normal JSON path —
+            // reads as the key being absent rather than erroring.
+            InvokeBody::Raw(_) => Ok(ModelIdsUpdate::Unset),
+        }
+    }
+}
 
 /// Mirrors `AccountLoginStarted` (§5) — what the modal needs to size its xterm.
 #[derive(Serialize)]
@@ -299,8 +318,13 @@ pub fn account_remove(
         (build_list(&inner), removed.config_dir)
     };
 
-    // FR-8: the directory goes with the row — credentials included.
-    let _ = std::fs::remove_dir_all(&config_dir);
+    // FR-8: the directory goes with the row — credentials included. A delete
+    // failure is never fatal to the removal itself (the row is already gone
+    // from the registry), but it is logged rather than silently discarded, so
+    // a leftover credential directory is at least visible somewhere.
+    if let Err(e) = std::fs::remove_dir_all(&config_dir) {
+        eprintln!("accounts: could not remove {config_dir}: {e}");
+    }
     // FR-9: driven from here, never from under the account lock.
     let reassigned_sessions = crate::session::reassign_account_sessions(&app, &account_id);
     // Same discipline one registry over: a removed account must not stay named as
@@ -318,6 +342,213 @@ pub fn account_remove(
         accounts,
         reassigned_sessions,
     })
+}
+
+// ---------- multi-provider-endpoint FR-6..FR-10 ----------
+
+/// francois:account:addEndpoint (FR-6). Validates (FR-4), mints an id, creates
+/// the config dir, writes the key when one was supplied, appends the record
+/// and returns the freshly-read list.
+#[tauri::command(async)]
+pub fn account_add_endpoint(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    label: String,
+    base_url: String,
+    api_key: Option<String>,
+    model_ids: Option<Vec<String>>,
+) -> IpcResult<Vec<Account>> {
+    let label = match validate_label(&label) {
+        Ok(l) => l,
+        Err(msg) => return err("INVALID_INPUT", msg),
+    };
+    let base_url = match validate_base_url(&base_url) {
+        Ok(u) => u,
+        Err(msg) => return err("INVALID_INPUT", msg),
+    };
+    if let Err((code, msg)) = validate_model_ids_on_add(&model_ids) {
+        return err(code, msg);
+    }
+
+    let id = crate::session::uuid();
+    let Some(config_dir) = accounts_dir(&app).map(|d| d.join(&id)) else {
+        return err("INTERNAL", "could not resolve the app data directory");
+    };
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        return err(
+            "INTERNAL",
+            format!("could not create {}: {e}", config_dir.display()),
+        );
+    }
+    // §7: a key that cannot be written must leave no keyless row behind — the
+    // dir goes with it, and the registry is never touched.
+    if let Some(key) = api_key.as_deref().filter(|k| !k.is_empty()) {
+        if let Err(msg) = write_key(&config_dir.to_string_lossy(), key) {
+            let _ = std::fs::remove_dir_all(&config_dir);
+            return err("ACCOUNT_KEY_WRITE_FAILED", msg);
+        }
+    }
+
+    let accounts = {
+        let Ok(mut inner) = state.0.lock() else {
+            let _ = std::fs::remove_dir_all(&config_dir);
+            return err("INTERNAL", "account state is unavailable");
+        };
+        apply_add_endpoint(
+            &mut inner,
+            id,
+            config_dir.to_string_lossy().into_owned(),
+            label,
+            base_url,
+            model_ids,
+        );
+        // FR-1 of the ORIGINAL multi-account spec: a write failure is never
+        // fatal — the row lives for this run and the next successful write
+        // records it (same as every other mutation here).
+        if let Err(msg) = persist(&app, &inner) {
+            eprintln!("accounts: could not persist accounts.json: {msg}");
+        }
+        build_list(&inner)
+    };
+    emit(
+        &app,
+        AccountEvent::List {
+            accounts: accounts.clone(),
+        },
+    ); // FR-7 (of multi-account) / present on every add-endpoint too
+    ok(accounts)
+}
+
+/// francois:account:updateEndpoint (FR-7): a partial update. `apiKey` +
+/// `clearKey` together is refused before anything else runs.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command(async)]
+pub fn account_update_endpoint(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    account_id: String,
+    label: Option<String>,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    clear_key: Option<bool>,
+    model_ids: ModelIdsUpdate,
+) -> IpcResult<Vec<Account>> {
+    let clear_key = clear_key.unwrap_or(false);
+    if let Err((code, msg)) = validate_key_clear_conflict(&api_key, clear_key) {
+        return err(code, msg);
+    }
+    let label = match label.as_deref().map(validate_label) {
+        Some(Err(msg)) => return err("INVALID_INPUT", msg),
+        Some(Ok(l)) => Some(l),
+        None => None,
+    };
+    let base_url = match base_url.as_deref().map(validate_base_url) {
+        Some(Err(msg)) => return err("INVALID_INPUT", msg),
+        Some(Ok(u)) => Some(u),
+        None => None,
+    };
+    if let Err((code, msg)) = validate_model_ids_on_update(&model_ids) {
+        return err(code, msg);
+    }
+
+    let config_dir = {
+        let Ok(inner) = state.0.lock() else {
+            return err("INTERNAL", "account state is unavailable");
+        };
+        match inner.records.iter().find(|r| r.id == account_id) {
+            None => return err("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG),
+            Some(r) if r.kind != AccountKind::OpenAiCompatible => {
+                return err("INVALID_INPUT", NOT_AN_ENDPOINT_MSG)
+            }
+            Some(r) => r.config_dir.clone(),
+        }
+    };
+
+    // Key-file I/O runs BEFORE the registry mutation, same ordering as
+    // account_add_endpoint — a failure here leaves the row entirely untouched,
+    // no rollback needed.
+    // §7: an empty `apiKey` reads the same as an absent one — "leaving it
+    // empty keeps the stored key" (design brief §2) — same filter
+    // `account_add_endpoint` applies, so `apiKey: ""` never writes a 0-byte
+    // key file that would make `hasKey` lie.
+    if let Some(key) = api_key.as_deref().filter(|k| !k.is_empty()) {
+        if let Err(msg) = write_key(&config_dir, key) {
+            return err("ACCOUNT_KEY_WRITE_FAILED", msg);
+        }
+    } else if clear_key {
+        if let Err(msg) = remove_key(&config_dir) {
+            return err("ACCOUNT_KEY_WRITE_FAILED", msg);
+        }
+    }
+
+    let accounts = {
+        let Ok(mut inner) = state.0.lock() else {
+            return err("INTERNAL", "account state is unavailable");
+        };
+        if let Err((code, msg)) =
+            apply_update_endpoint(&mut inner, &account_id, label, base_url, model_ids)
+        {
+            return err(code, msg);
+        }
+        if let Err(msg) = persist(&app, &inner) {
+            eprintln!("accounts: could not persist accounts.json: {msg}");
+        }
+        build_list(&inner)
+    };
+    emit(
+        &app,
+        AccountEvent::List {
+            accounts: accounts.clone(),
+        },
+    );
+    ok(accounts)
+}
+
+/// francois:account:testEndpoint (FR-8/FR-9): stateless — writes nothing,
+/// never mutates the registry. `accountId` with no `apiKey` probes with that
+/// account's STORED key.
+#[tauri::command(async)]
+pub fn account_test_endpoint(
+    state: State<'_, AccountState>,
+    base_url: String,
+    api_key: Option<String>,
+    account_id: Option<String>,
+) -> IpcResult<EndpointProbe> {
+    let base_url = match validate_base_url(&base_url) {
+        Ok(u) => u,
+        Err(msg) => return err("INVALID_INPUT", msg),
+    };
+    let key = match api_key {
+        Some(k) => Some(k),
+        None => match account_id.as_deref() {
+            None => None,
+            Some(id) => {
+                let Ok(inner) = state.0.lock() else {
+                    return err("INTERNAL", "account state is unavailable");
+                };
+                // Mirrors `apply_update_endpoint`'s check: an `accountId` that
+                // does not resolve to an `openai-compatible` row (unknown id,
+                // OAuth row, or the built-in account) is `INVALID_INPUT`, not
+                // a silent "no stored key" — pointing Test at the wrong kind
+                // of account must not read as "this endpoint needs no key".
+                match inner.records.iter().find(|r| r.id == id) {
+                    None => return err("INVALID_INPUT", NOT_FOUND_MSG),
+                    Some(r) if r.kind != AccountKind::OpenAiCompatible => {
+                        return err("INVALID_INPUT", NOT_AN_ENDPOINT_MSG)
+                    }
+                    Some(r) => {
+                        let dir = r.config_dir.clone();
+                        drop(inner);
+                        read_key(&dir)
+                    }
+                }
+            }
+        },
+    };
+    match probe(&base_url, key.as_deref()) {
+        Ok(p) => ok(p),
+        Err((code, msg)) => err(code, msg),
+    }
 }
 
 #[cfg(test)]
@@ -364,4 +595,118 @@ mod tests {
         assert_eq!(inner.records.len(), 1);
         assert_eq!(inner.default_account_id, "a1");
     }
+}
+
+// ---------------------------------------------------------------- codex-cli
+
+/// francois:account:addCodex (multi-provider-codex FR-18/FR-24): create a
+/// `codex-cli` account.
+///
+/// Deliberately much thinner than `account_add_endpoint`: there is nothing to
+/// validate but the label, and nothing to write into the directory. The dir is
+/// created empty and `account_codex_login` fills it (FR-19).
+///
+/// It is also thinner than `account_add` (the Claude path), which spawns an
+/// interactive login as part of adding, because `codex login` is a separate,
+/// re-runnable action here — the row is useful the moment it exists, and a
+/// failed browser round-trip should not cost the user the account they just
+/// named.
+#[tauri::command]
+pub fn account_add_codex(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    label: String,
+) -> IpcResult<Vec<Account>> {
+    let label = match validate_label(&label) {
+        Ok(l) => l,
+        Err(msg) => return err("INVALID_INPUT", msg),
+    };
+
+    let id = crate::session::uuid();
+    let Some(config_dir) = accounts_dir(&app).map(|d| d.join(&id)) else {
+        return err("INTERNAL", "could not resolve the app data directory");
+    };
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        return err(
+            "INTERNAL",
+            format!("could not create {}: {e}", config_dir.display()),
+        );
+    }
+
+    let accounts = {
+        let Ok(mut inner) = state.0.lock() else {
+            // Same cleanup discipline as add-endpoint: a row that never reached
+            // the registry must not leave a directory behind.
+            let _ = std::fs::remove_dir_all(&config_dir);
+            return err("INTERNAL", "account state is unavailable");
+        };
+        apply_add_codex(
+            &mut inner,
+            id,
+            config_dir.to_string_lossy().into_owned(),
+            label,
+        );
+        // A write failure is never fatal — the row lives for this run and the
+        // next successful write records it.
+        if let Err(msg) = persist(&app, &inner) {
+            eprintln!("accounts: could not persist accounts.json: {msg}");
+        }
+        build_list(&inner)
+    };
+    emit(
+        &app,
+        AccountEvent::List {
+            accounts: accounts.clone(),
+        },
+    );
+    ok(accounts)
+}
+
+/// francois:account:codexLogin (FR-25): run `codex login` against one account's
+/// `CODEX_HOME`.
+///
+/// Returns as soon as the browser round-trip has been started. The row's
+/// `signedIn` flips when `auth.json` lands, published by the poller — the
+/// command does not block on it, because the user may take minutes in the
+/// browser and the modal must stay usable throughout.
+#[tauri::command]
+pub fn account_codex_login(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    account_id: String,
+) -> IpcResult<()> {
+    // FR-16 (multi-account): one interactive login at a time, shared with the
+    // Claude path — two browser tabs racing for one credential store is the same
+    // hazard whichever CLI opened them.
+    if codex_login_in_flight(&state) {
+        return err("INVALID_INPUT", MSG_IN_FLIGHT);
+    }
+
+    let config_dir = {
+        let Ok(inner) = state.0.lock() else {
+            return err("INTERNAL", "account state is unavailable");
+        };
+        match inner.records.iter().find(|r| r.id == account_id) {
+            Some(r) if r.kind == AccountKind::CodexCli => r.config_dir.clone(),
+            // The built-in row and Claude/endpoint rows have no `codex login`.
+            Some(_) => return err("INVALID_INPUT", "this account is not a Codex account"),
+            None => return err("INVALID_INPUT", NOT_FOUND_MSG),
+        }
+    };
+
+    // The dir can have been removed under us (a synced app-data folder, a manual
+    // clean) — recreate rather than fail, since an empty CODEX_HOME is exactly
+    // what a fresh login expects anyway.
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        return err("INTERNAL", format!("could not create {config_dir}: {e}"));
+    }
+
+    // The child is handed to the poller rather than dropped here: dropping it
+    // leaves a zombie, and the poller uses its liveness to stop early.
+    let child = match spawn_codex_login(&config_dir) {
+        Ok(child) => child,
+        Err((code, msg)) => return err(code, msg),
+    };
+    start_codex_login_poller(&app, config_dir, child);
+    ok(())
 }

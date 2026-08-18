@@ -12,9 +12,15 @@ import type {
   WorkflowScript,
 } from '../../contract/workflow-details';
 import type {
+  AccountAddEndpointPayload,
+  AccountAddEndpointResponse,
   AccountAddPayload,
   AccountAddResponse,
   AccountEvent,
+  AccountAddCodexPayload,
+  AccountAddCodexResponse,
+  AccountCodexLoginPayload,
+  AccountCodexLoginResponse,
   AccountListResponse,
   AccountLoginAck,
   AccountLoginCancelPayload,
@@ -23,6 +29,10 @@ import type {
   AccountRemoveResponse,
   AccountRenameResponse,
   AccountSetDefaultResponse,
+  AccountTestEndpointPayload,
+  AccountTestEndpointResponse,
+  AccountUpdateEndpointPayload,
+  AccountUpdateEndpointResponse,
 } from '../../contract/multi-account';
 import type {
   GroupId,
@@ -133,7 +143,13 @@ export const appSetWindowTheme = (theme: 'light' | 'dark') =>
 export const appDndState = () => ipc<Result<DndState>>('app_dnd_state');
 
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
-export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
+// multi-provider-openai FR-18/FR-21: keyed on `accountId`, not `sessionId` —
+// the model picker's only mount (the New Session modal) has no session yet.
+// Every existing call site (no account context) keeps invoking with no
+// payload and the core keeps answering with the default account's Claude
+// Code catalog unchanged.
+export const sessionModels = (accountId?: AccountId) =>
+  ipc<Result<ModelInfo[]>>('session_models', accountId ? { accountId } : undefined);
 // projects FR-19: session_create gained an optional projectId, stored verbatim —
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
 // session-worktree: session_create also gained an optional `worktree` (spec §5),
@@ -372,6 +388,22 @@ export const accountRename = (accountId: AccountId, label: string) =>
 export const accountSetDefault = (accountId: AccountId) =>
   ipc<AccountSetDefaultResponse>('account_set_default', { accountId });
 export const accountRemove = (accountId: AccountId) => ipc<AccountRemoveResponse>('account_remove', { accountId });
+// multi-provider-endpoint (§5). Endpoint accounts add/update resolve the same
+// FRESH re-read list every other mutation does; test is stateless (FR-9) and
+// never touches the registry, so it carries no such list.
+export const accountAddEndpoint = (payload: AccountAddEndpointPayload) =>
+  ipc<AccountAddEndpointResponse>('account_add_endpoint', payload);
+export const accountUpdateEndpoint = (payload: AccountUpdateEndpointPayload) =>
+  ipc<AccountUpdateEndpointResponse>('account_update_endpoint', payload);
+export const accountTestEndpoint = (payload: AccountTestEndpointPayload) =>
+  ipc<AccountTestEndpointResponse>('account_test_endpoint', payload);
+// multi-provider-codex (§5). `addCodex` resolves the same fresh list every other
+// mutation does; `codexLogin` resolves as soon as the browser round-trip starts
+// and the row's `signedIn` arrives later on account.list.
+export const accountAddCodex = (payload: AccountAddCodexPayload) =>
+  ipc<AccountAddCodexResponse>('account_add_codex', payload);
+export const accountCodexLogin = (payload: AccountCodexLoginPayload) =>
+  ipc<AccountCodexLoginResponse>('account_codex_login', payload);
 
 /** Subscribe to francois://account/event (account.list + the login sub-stream). */
 export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {

@@ -214,6 +214,11 @@ html[data-hidden='1'] [style*='animation'] {
   --hue-teal: #8fbab8;
   --hue-blue: #6f9fd8;
   --hue-slate: #7c8aa0;
+  /* The warm hue redesign 8b gives the Anthropic provider tile. It sits in the
+     NEUTRAL ramp on purpose: a provider tile carries identity, so it may not
+     borrow --error-bright (which the mock's own #e0918a happens to be) — a
+     vendor mark that reads as a failure state is worse than an off-brand one. */
+  --hue-clay: #cf9d86;
   /* dimming layer shared by every modal/overlay backdrop */
   --backdrop: rgba(6, 7, 9, 0.62);
 
@@ -373,6 +378,7 @@ html[data-hidden='1'] [style*='animation'] {
   --hue-teal: #3f8582;
   --hue-blue: #416b8f;
   --hue-slate: #566480;
+  --hue-clay: #8d5340;
   --backdrop: rgba(6, 7, 9, 0.62);
 
   --shadow-card: 0 0px 13px rgba(0, 0, 0, 0.25);
@@ -903,6 +909,26 @@ a {
   justify-content: center;
   font-size: var(--font-size-12-5);
   color: var(--text-faint);
+}
+
+/* The disabled-pane treatment (multi-provider-openai FR-20, design brief §1):
+   left-aligned, vertically centered, wraps to at most two lines then clips —
+   src/ui/CapabilityNotice.tsx. Deliberately NOT .empty-pane: that primitive
+   centers both axes and reads "nothing here yet, something may arrive"; this
+   is permanent for the session and left-aligned per the brief. */
+.capability-notice {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: var(--space-8) var(--space-10);
+}
+.capability-notice__text {
+  color: var(--text-faint);
+  font-size: var(--font-size-12-5);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Selectable option pill (NewSessionModal.tsx:388-407, 415-435, 445-458,

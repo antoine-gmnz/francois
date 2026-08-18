@@ -8,13 +8,21 @@ export interface ModelFieldProps {
   modelId: string;
   loading: boolean;
   onChange: (modelId: string) => void;
+  /** multi-provider-openai FR-21: the selected account's own label. */
+  providerHeading: string;
 }
 
-export function ModelField({ models, modelId, loading, onChange }: ModelFieldProps): JSX.Element {
+export function ModelField({ models, modelId, loading, onChange, providerHeading }: ModelFieldProps): JSX.Element {
   return (
     <div>
       <label className="new-session-modal__label">MODEL</label>
-      <ModelPicker models={models} modelId={modelId} loading={loading} onChange={onChange} />
+      <ModelPicker
+        models={models}
+        modelId={modelId}
+        loading={loading}
+        onChange={onChange}
+        providerHeading={providerHeading}
+      />
     </div>
   );
 }

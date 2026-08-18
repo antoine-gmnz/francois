@@ -247,9 +247,14 @@ fn resolve_owner_target(
             let runtime = engine
                 .runtime_of(session_id)
                 .unwrap_or_else(|| "native".to_string());
+            // multi-account FR-21 / multi-provider-codex FR-18: the session's
+            // account, resolved to its *Claude* config dir — `None` for the
+            // built-in `default` account AND for a codex/openai one, since this
+            // becomes `CLAUDE_CONFIG_DIR` and `claude` initializes whatever
+            // directory it is handed.
             let account_config_dir = engine
                 .account_of(session_id)
-                .and_then(|id| crate::account::config_dir_of(app, &id));
+                .and_then(|id| crate::account::claude_config_dir_of(app, &id));
             Ok(OwnerTarget {
                 cwd,
                 runtime,
@@ -442,7 +447,7 @@ pub fn shell_restart(
                 .unwrap_or_else(|| "native".to_string()),
             engine
                 .account_of(session_id)
-                .and_then(|id| crate::account::config_dir_of(&app, &id)),
+                .and_then(|id| crate::account::claude_config_dir_of(&app, &id)),
         ),
         ShellOwner::Project { .. } => (
             if crate::wsl::is_wsl_unc_path(&info.cwd) {

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SkillInfo } from '../../../contract/common';
 import { skillsInstall, skillsRun } from '../../lib/api';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
+import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { HintBar } from '../../ui/HintBar';
 import { Modal, ModalHeader } from '../../ui/Modal';
@@ -17,6 +19,15 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
   const focused = focusedPane === 'skills';
 
   const { skills, status, listError, refetch } = useSkillsFeed(sessionId);
+  // multi-provider-openai FR-20/FR-26: skills' capability for this session's
+  // runtime — currently false for `francois` until a core agent injects at
+  // least one skill (FR-26); this reads the table, never hardcodes around it.
+  const meta = useSessionMeta(sessionId);
+  const capability = sessionCapability(meta, 'skills');
+  // FR-26: a separate gate from `skills` itself — enabling a plugin writes
+  // Claude Code's own `~/.claude/settings.json`, which stays out of reach
+  // regardless of whether the installed set is visible/injected.
+  const installCapability = sessionCapability(meta, 'skillsInstall');
 
   const [runModal, setRunModal] = useState<{ name: string } | null>(null);
   const [installModal, setInstallModal] = useState<{ name: string; description: string; pluginId?: string } | null>(null);
@@ -37,7 +48,10 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
 
   const activate = (row: SkillInfo) => {
     if (row.installed) setRunModal({ name: row.name });
-    else setInstallModal({ name: row.name, description: row.description, pluginId: row.pluginId });
+    else if (installCapability.available)
+      setInstallModal({ name: row.name, description: row.description, pluginId: row.pluginId });
+    // else: install is gated off for this session's runtime (FR-26) — the
+    // row's `enable` affordance already reads that reason, nothing to open.
   };
 
   const { visible, selected, setSelected, filterOpen, setFilterOpen, query, setQuery, filterRef } = useSkillsKeyboard({
@@ -55,6 +69,8 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
       <PanelHeader title="SKILLS" count={skills.length} paneKey={5} focused={focused} />
 
       <SkillsListBody
+          capability={capability}
+          installCapability={installCapability}
           filterOpen={filterOpen}
           query={query}
           filterRef={filterRef}

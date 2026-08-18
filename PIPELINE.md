@@ -22,6 +22,7 @@ vcs:
   remote: antoine-gmnz/francois
   default_branch: main
   feature_branch_prefix: feat/
+  patch_branch_prefix: fix/                  # same, for /cohorte-patch specs (kind: patch)
 
 # ── repo shape ──────────────────────────────────────────────────────────────
 repo:
@@ -72,6 +73,12 @@ contract:
   ext: ts
   index: ""                                   # no barrel — one file per feature + common.ts
   authored_by: lead
+
+# ── release notes (optional) ────────────────────────────────────────────────
+# No per-feature note-consuming tool detected (no changesets, no note-enforcing
+# CI job) — release.yml derives versions from conventional commits automatically.
+release_notes:
+  enabled: false                              # /cohorte-ship §2b is a no-op
 
 # ── repo-wide commands ──────────────────────────────────────────────────────
 commands:
@@ -346,3 +353,8 @@ that owns the feature — never in a new top-level file.
 | `project-groups` | a named parent over projects — a second tier in the pane [1] roster and the Projects modal; organising only, carries no defaults, standards or scope | projects, sessions-sidebar, session-engine, app-shell |
 | `audio-cues` | short synthesized tones (Web Audio, no asset) for the two notification classes — no focus gate, one master toggle, 1.5s throttle, silent under OS Do Not Disturb (`francois:app:dndState`) | notifications, session-engine, app-shell, command-palette |
 | `diff-navigator` | DIFF tab: collapsible folder tree + filter box replacing the flat file list, plus dependency-free word-level intraline emphasis; amends `diff-view` (no contract, no Rust) | diff-view, app-shell |
+| `multi-provider-seam` *(in-review)* | the `SessionAdapter`/`TurnControl` trait seam between the session engine and whatever drives a turn, `ClaudeCodeAdapter` as its only implementation, the `AgentRuntime`/`ProviderProtocol`/`AccountKind` discriminators, and the `runtimeCapabilities()` table. Zero user-visible change | session-engine, multi-account, durable-sessions, permission-guardrails |
+| `multi-provider-endpoint` *(in-review)* | `Account.kind: 'openai-compatible'` — endpoint accounts (label, base URL, key file, model override) added, tested, edited and removed from the Accounts modal; listable but not yet session-selectable | multi-account, multi-provider-seam, projects |
+| `multi-provider-openai` *(frozen)* | `OpenAiAdapter` — a Rust-native agent loop over `POST /chat/completions` + SSE, six tools carrying Claude Code's names, every call through the existing permission gate, adapter-owned thread persistence, skill injection, and the disabled-pane treatment | multi-provider-seam, multi-provider-endpoint, permission-guardrails, durable-sessions, conversation-view |
+| `multi-provider-codex` *(in-progress)* | a third `AgentRuntime` — OpenAI's `codex` CLI driving its own loop over `codex exec --json`, `codex-cli` accounts authenticated by `codex login` into a per-account `CODEX_HOME` (ChatGPT plan, no API key), permissionMode mapped onto Codex's sandbox | multi-provider-seam, multi-account, durable-sessions, session-engine, conversation-view, projects |
+| `capability-registry` *(draft)* | invert skills/MCP/agents from Claude Code control surfaces into discovery adapters feeding an internal registry both runtimes read + translate; compatibility verdicts derived rather than hand-maintained | multi-provider-seam, multi-provider-openai, skills-panel, mcp-panel, agents-panel, projects, session-engine |

@@ -7,7 +7,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, SessionMeta } from '../../../contract/common';
-import type { Account, AccountEvent } from '../../../contract/multi-account';
+import type { Account, AccountEvent, EndpointConfig } from '../../../contract/multi-account';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 
@@ -17,6 +18,9 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 
 import {
   accountAdd,
+  accountAddCodex,
+  accountAddEndpoint,
+  accountCodexLogin,
   accountList,
   accountLoginCancel,
   accountLoginResize,
@@ -24,29 +28,49 @@ import {
   accountRemove,
   accountRename,
   accountSetDefault,
+  accountTestEndpoint,
+  accountUpdateEndpoint,
   onAccountEvent,
 } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import {
-  ACCOUNTS_ISOLATION_NOTE,
   LOGIN_CANCEL_HINT,
   LOGIN_TITLE,
-  accountAvatarHue,
-  accountAvatarLetter,
   accountBadgeText,
-  accountMetaLine,
+  accountIsEndpoint,
   accountSessionCounts,
   accountDisplayLabel,
   accountFieldOptions,
+  accountIsCodex,
+  accountUsageProbeable,
+  codexAddPayload,
+  codexLoginActionLabel,
+  codexNeedsFirstLogin,
+  codexSaveDisabled,
   accountMetersView,
   accountNeedsLogin,
   accountSecondaryEmail,
   clampCursor,
   defaultAccount,
+  endpointAddPayload,
+  endpointBaseUrlHasError,
+  endpointErrorLine,
+  endpointKeyPlaceholder,
+  endpointProbeSuccessLine,
+  endpointSaveDisabled,
+  endpointTestPayload,
+  endpointUpdatePayload,
   findAccount,
+  formatModelIds,
+  modelPickerProviderHeading,
   loginErrorMessage,
+  middleTruncate,
+  modelIdsForAdd,
+  modelIdsForUpdate,
   moveCursor,
   accountIdForSessionCreate,
+  newlyAddedAccountId,
+  parseModelIdsList,
   removeConfirmView,
   resolveNewSessionAccountId,
   sessionAccountBadge,
@@ -67,6 +91,7 @@ const BUILT_IN: Account = {
   builtIn: true,
   isDefault: true,
   createdAt: 0,
+  kind: 'claude-code-oauth',
 };
 
 function account(over: Partial<Account> & { id: string }): Account {
@@ -76,6 +101,7 @@ function account(over: Partial<Account> & { id: string }): Account {
     builtIn: false,
     isDefault: false,
     createdAt: 1_000,
+    kind: 'claude-code-oauth',
     ...over,
   };
 }
@@ -93,6 +119,8 @@ function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
     permissionMode: 'default',
     runtime: 'native',
     accountId: DEFAULT_ACCOUNT_ID,
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
     ...over,
   };
 }
@@ -210,6 +238,26 @@ describe('api wrappers (§5 physical binding)', () => {
       data: { accounts: [BUILT_IN], reassignedSessions: ['s1'] },
     });
     expect(invokeMock).toHaveBeenCalledWith('account_remove', { accountId: 'a1' });
+  });
+
+  it('maps the three endpoint verbs onto account_<verb> (multi-provider-endpoint §5)', async () => {
+    invokeMock.mockResolvedValue({ ok: true, data: [BUILT_IN] });
+    await accountAddEndpoint({ label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-1' });
+    expect(invokeMock).toHaveBeenCalledWith('account_add_endpoint', {
+      label: 'OpenAI',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-1',
+    });
+
+    await accountUpdateEndpoint({ accountId: 'e1', label: 'OpenAI', clearKey: true });
+    expect(invokeMock).toHaveBeenCalledWith('account_update_endpoint', { accountId: 'e1', label: 'OpenAI', clearKey: true });
+
+    invokeMock.mockResolvedValue({ ok: true, data: { models: [{ id: 'gpt-4o', label: 'gpt-4o' }], modelCount: 1 } });
+    await expect(accountTestEndpoint({ baseUrl: 'https://api.openai.com/v1', accountId: 'e1' })).resolves.toEqual({
+      ok: true,
+      data: { models: [{ id: 'gpt-4o', label: 'gpt-4o' }], modelCount: 1 },
+    });
+    expect(invokeMock).toHaveBeenCalledWith('account_test_endpoint', { baseUrl: 'https://api.openai.com/v1', accountId: 'e1' });
   });
 
   it('surfaces an ok:false Result rather than throwing (ACCOUNT_NOT_REMOVABLE)', async () => {
@@ -424,6 +472,17 @@ describe('registry resolution (FR-2/FR-4/FR-18/FR-20)', () => {
     expect(resolveNewSessionAccountId([], 'a1')).toBe(DEFAULT_ACCOUNT_ID);
   });
 
+  it('modelPickerProviderHeading (FR-21) is the SELECTED account\'s own label', () => {
+    const endpoint = account({ id: 'e1', label: 'My Endpoint', kind: 'openai-compatible' });
+    expect(modelPickerProviderHeading([BUILT_IN, a1, endpoint], 'a1')).toBe('perso');
+    expect(modelPickerProviderHeading([BUILT_IN, a1, endpoint], 'e1')).toBe('My Endpoint');
+    expect(modelPickerProviderHeading([BUILT_IN, a1, endpoint], BUILT_IN.id)).toBe('Default');
+  });
+
+  it('modelPickerProviderHeading is empty before the registry hydrates — never a fabricated label', () => {
+    expect(modelPickerProviderHeading([], 'a1')).toBe('');
+  });
+
   it('accountIdForSessionCreate always sends the selection verbatim (CRITICAL fix)', () => {
     // Explicitly picking the built-in Default account must be sent as-is, even
     // when a DIFFERENT account carries isDefault — omitting it here would have
@@ -434,8 +493,20 @@ describe('registry resolution (FR-2/FR-4/FR-18/FR-20)', () => {
 
   it('accountFieldOptions lists every account with its email as secondary text (FR-31)', () => {
     expect(accountFieldOptions([BUILT_IN, a1])).toEqual([
-      { value: DEFAULT_ACCOUNT_ID, label: 'Default', email: 'me@work.example', isDefault: true, needsLogin: false },
-      { value: 'a1', label: 'perso', email: 'p@x.example', isDefault: false, needsLogin: false },
+      {
+        value: DEFAULT_ACCOUNT_ID,
+        label: 'Default',
+        email: 'me@work.example',
+        isDefault: true,
+        needsLogin: false,
+      },
+      {
+        value: 'a1',
+        label: 'perso',
+        email: 'p@x.example',
+        isDefault: false,
+        needsLogin: false,
+      },
     ]);
   });
 
@@ -506,21 +577,6 @@ describe('display helpers (FR-32/FR-33, design brief)', () => {
     expect(statusChipMaxChars(1200)).toBe(18);
   });
 
-  it('mints a stable single-letter avatar per account (redesign 4a visual reference)', () => {
-    expect(accountAvatarLetter(account({ id: 'a1', label: 'perso' }))).toBe('P');
-    expect(accountAvatarLetter(account({ id: 'a1', label: 'antoine@x.example', email: 'antoine@x.example' }))).toBe('A');
-    expect(accountAvatarLetter({ ...BUILT_IN, label: '', email: undefined })).toBe('D');
-  });
-
-  it('keeps an account on one hue, never the accent, and turns it red when it needs re-login (4a)', () => {
-    const a = account({ id: 'a1' });
-    expect(accountAvatarHue(a)).toBe(accountAvatarHue(account({ id: 'a1', label: 'renamed' })));
-    for (const id of ['a1', 'b2', 'c3', 'd4', 'e5', 'f6', 'g7']) {
-      expect(accountAvatarHue(account({ id }))).not.toBe('var(--accent)');
-    }
-    expect(accountAvatarHue({ ...a, authFailedAt: 5 })).toBe('var(--error)');
-  });
-
   it('counts the sessions each account carries, defaulting the unresolvable ones (4a meta line)', () => {
     const accounts = [BUILT_IN, account({ id: 'a1' })];
     const counts = accountSessionCounts(accounts, [
@@ -530,17 +586,6 @@ describe('display helpers (FR-32/FR-33, design brief)', () => {
       session({ id: 's4', accountId: 'ghost' }), // FR-10: resolves to the default
     ]);
     expect(counts).toEqual({ [DEFAULT_ACCOUNT_ID]: 2, a1: 2 });
-  });
-
-  it('builds the row meta line from email and session count, dropping either half (4a)', () => {
-    const a1 = account({ id: 'a1', label: 'perso', email: 'p@x.example' });
-    expect(accountMetaLine(a1, 0)).toBe('p@x.example');
-    expect(accountMetaLine(a1, 1)).toBe('p@x.example · 1 session');
-    expect(accountMetaLine(a1, 3)).toBe('p@x.example · 3 sessions');
-    // label IS the email → the email is already the row's title, so only the count
-    const same = account({ id: 'a2', label: 'p@x.example', email: 'p@x.example' });
-    expect(accountMetaLine(same, 2)).toBe('2 sessions');
-    expect(accountMetaLine(same, 0)).toBeNull();
   });
 });
 
@@ -609,10 +654,9 @@ describe('which account the bar and chip describe (FR-30)', () => {
 describe('modal copy (FR-35/FR-36, §7)', () => {
   const a1 = account({ id: 'a1', label: 'perso', email: 'p@x.example' });
 
-  it('states the isolation cost exactly once, in prose (FR-36)', () => {
-    expect(ACCOUNTS_ISOLATION_NOTE).toMatch(/own Claude Code configuration/i);
-    expect(ACCOUNTS_ISOLATION_NOTE).toMatch(/settings, skills, agents and MCP servers are not shared/i);
-  });
+  // FR-36's isolation note moved to providers.ts (`providerIsolationNote`) with
+  // redesign 8b — one global "Claude Code configuration" sentence could not
+  // stay true across three kinds of credential. Covered in providers.test.ts.
 
   it('names the account, its credentials and the sessions that fall back (FR-35)', () => {
     const sessions = [
@@ -688,5 +732,315 @@ describe('list keyboard (§3 Keyboard)', () => {
     expect(clampCursor(4, 3)).toBe(2);
     expect(clampCursor(-1, 3)).toBe(0);
     expect(clampCursor(1, 3)).toBe(1);
+  });
+});
+
+// ------------------------------------------------------ endpoint accounts
+
+// multi-provider-seam FR-12/FR-16: `kind` is a CARRIED discriminator. The core
+// sets it (an older registry's rows default to 'claude-code-oauth') and the
+// frontend never derives it — nothing here reads the capability table. So the
+// only way it breaks on this surface is a feed or a resolution helper rebuilding
+// an Account field-by-field instead of handing the core's own object on.
+describe('Account.kind is carried, never re-derived (multi-provider-seam FR-12)', () => {
+  const endpointish = account({ id: 'e1', label: 'OpenAI', kind: 'openai-compatible' });
+
+  it('the account.list feed applies the list verbatim, both kinds intact', async () => {
+    let handler: ((e: { payload: AccountEvent }) => void) | undefined;
+    let resolveListen: ((u: () => void) => void) | undefined;
+    listenMock.mockImplementation((_n: string, cb: (e: { payload: AccountEvent }) => void) => {
+      handler = cb;
+      return new Promise<() => void>((r) => {
+        resolveListen = r;
+      });
+    });
+    invokeMock.mockResolvedValue({ ok: true, data: [BUILT_IN] });
+
+    const applied: Account[][] = [];
+    const stop = startAccountFeed((a) => applied.push(a));
+    resolveListen?.(() => {});
+    await tick();
+    handler?.({ payload: { type: 'account.list', accounts: [BUILT_IN, endpointish] } });
+
+    expect(applied).toEqual([[BUILT_IN], [BUILT_IN, endpointish]]);
+    expect(applied[0][0].kind).toBe('claude-code-oauth');
+    expect(applied[1][1].kind).toBe('openai-compatible');
+    stop();
+  });
+
+  it('the store and the resolution helpers hand back the SAME object, so no field can be dropped', () => {
+    const list = [BUILT_IN, endpointish];
+    expect(findAccount(list, 'e1')).toBe(endpointish);
+    expect(defaultAccount(list)).toBe(BUILT_IN);
+    useStore.getState().setAccounts(list);
+    expect(useStore.getState().accounts[1]).toBe(endpointish);
+  });
+});
+
+describe('endpoint accounts (multi-provider-endpoint FR-13..FR-16)', () => {
+  const ENDPOINT: EndpointConfig = { baseUrl: 'https://api.openai.com/v1', hasKey: true, modelIds: ['gpt-4o'] };
+  const endpointAccount = account({ id: 'e1', label: 'OpenAI', kind: 'openai-compatible', endpoint: ENDPOINT });
+
+  it('accountIsEndpoint is true only for openai-compatible accounts', () => {
+    expect(accountIsEndpoint(endpointAccount)).toBe(true);
+    expect(accountIsEndpoint(BUILT_IN)).toBe(false);
+  });
+
+  // multi-provider-openai FR-22: multi-provider-endpoint FR-14's disabled
+  // block is deleted — an openai-compatible option is now as plain as an
+  // oauth one, with no reason line and no `disabled` flag anywhere.
+  it('keeps an openai-compatible field option fully selectable, same shape as an oauth one (FR-22)', () => {
+    const opts = accountFieldOptions([BUILT_IN, endpointAccount]);
+    expect(opts[0]).toEqual({
+      value: DEFAULT_ACCOUNT_ID,
+      label: 'Default',
+      email: 'me@work.example',
+      isDefault: true,
+      needsLogin: false,
+    });
+    expect(opts[1]).toEqual({
+      value: 'e1',
+      label: 'OpenAI',
+      email: null,
+      isDefault: false,
+      needsLogin: false,
+    });
+  });
+
+  it('middle-truncates a long base URL, keeping both ends readable', () => {
+    const short = 'https://api.openai.com/v1';
+    expect(middleTruncate(short, 40)).toBe(short);
+    const long = 'https://a-very-long-hostname.example.com/some/very/deep/path/v1';
+    const truncated = middleTruncate(long, 30);
+    expect(truncated.length).toBe(30);
+    expect(truncated).toContain('…');
+    expect(truncated.startsWith('https://a')).toBe(true);
+    expect(long.endsWith(truncated.slice(truncated.indexOf('…') + 1))).toBe(true);
+  });
+
+  it('placeholders the key field per FR-15', () => {
+    expect(endpointKeyPlaceholder(true)).toBe('•••••••• stored');
+    expect(endpointKeyPlaceholder(false)).toBe('sk-…');
+  });
+
+  it('parses a comma-separated model list, trimming and dropping blanks', () => {
+    expect(parseModelIdsList('gpt-4o, gpt-4o-mini ,  ,')).toEqual(['gpt-4o', 'gpt-4o-mini']);
+    expect(parseModelIdsList('')).toEqual([]);
+    expect(parseModelIdsList('   ')).toEqual([]);
+  });
+
+  it('omits modelIds on add when the field is empty — discover from /models (FR-6)', () => {
+    expect(modelIdsForAdd('gpt-4o, gpt-4o-mini')).toEqual(['gpt-4o', 'gpt-4o-mini']);
+    expect(modelIdsForAdd('')).toBeUndefined();
+    expect(modelIdsForAdd('  ,  ')).toBeUndefined();
+  });
+
+  it('clears the override (null) on update rather than leaving it unchanged (FR-7)', () => {
+    expect(modelIdsForUpdate('gpt-4o')).toEqual(['gpt-4o']);
+    expect(modelIdsForUpdate('')).toBeNull();
+    expect(modelIdsForUpdate('  ,  ')).toBeNull();
+  });
+
+  it('formats a stored model list back into the comma-separated field', () => {
+    expect(formatModelIds(['gpt-4o', 'gpt-4o-mini'])).toBe('gpt-4o, gpt-4o-mini');
+    expect(formatModelIds(undefined)).toBe('');
+  });
+
+  it('disables Save until Label and Base URL are both non-empty, or while busy', () => {
+    expect(endpointSaveDisabled('', '', false)).toBe(true);
+    expect(endpointSaveDisabled('OpenAI', '', false)).toBe(true);
+    expect(endpointSaveDisabled('', 'https://x', false)).toBe(true);
+    expect(endpointSaveDisabled('OpenAI', 'https://x', false)).toBe(false);
+    expect(endpointSaveDisabled('OpenAI', 'https://x', true)).toBe(true);
+  });
+
+  it('highlights Base URL on an INVALID_INPUT from either Save or Test (design brief §2 Validation error, round-2 MEDIUM)', () => {
+    const invalidInput: AppError = { code: 'INVALID_INPUT', message: 'base URL must be https' };
+    const unreachable: AppError = { code: 'ACCOUNT_ENDPOINT_UNREACHABLE', message: 'timed out' };
+    // Save path (already covered pre-fix).
+    expect(endpointBaseUrlHasError(invalidInput, null)).toBe(true);
+    // Test path — the gap this fix closes: a probe's own INVALID_INPUT must
+    // highlight the field exactly like a save-triggered one does.
+    expect(endpointBaseUrlHasError(null, invalidInput)).toBe(true);
+    // Neither error, or a non-INVALID_INPUT error on either path — no border.
+    expect(endpointBaseUrlHasError(null, null)).toBe(false);
+    expect(endpointBaseUrlHasError(null, unreachable)).toBe(false);
+    expect(endpointBaseUrlHasError(unreachable, null)).toBe(false);
+  });
+
+  it('reads the probe success line — zero models is success, not an error (design brief §2)', () => {
+    expect(endpointProbeSuccessLine({ models: [], modelCount: 12 })).toBe('reachable · 12 models');
+    expect(endpointProbeSuccessLine({ models: [], modelCount: 0 })).toBe('reachable · 0 models');
+    expect(endpointProbeSuccessLine({ models: [], modelCount: 1 })).toBe('reachable · 1 model');
+  });
+
+  it("maps each failure code to the brief's one-sentence copy (§2 Test failed)", () => {
+    expect(endpointErrorLine({ code: 'ACCOUNT_ENDPOINT_UNAUTHORIZED', message: 'nope' })).toBe(
+      "the endpoint rejected that key",
+    );
+    expect(endpointErrorLine({ code: 'ACCOUNT_ENDPOINT_UNREACHABLE', message: 'connect ECONNREFUSED' })).toBe(
+      "couldn't reach that URL",
+    );
+    // core message shape (src-tauri/src/account/endpoint.rs::probe): the only
+    // case that legitimately carries a status is "the endpoint returned HTTP {code}".
+    expect(
+      endpointErrorLine({ code: 'ACCOUNT_ENDPOINT_UNREACHABLE', message: 'the endpoint returned HTTP 500' }),
+    ).toBe('endpoint answered 500');
+    expect(
+      endpointErrorLine({ code: 'INVALID_INPUT', message: 'base URL must be https (http is allowed on localhost only)' }),
+    ).toBe('base URL must be https (http is allowed on localhost only)');
+  });
+
+  it('never misreports a transport error as a status when it merely embeds a bare 3-digit token (frontend quality fix)', () => {
+    // e.g. a connect-refused message naming a port, not an HTTP status.
+    expect(
+      endpointErrorLine({
+        code: 'ACCOUNT_ENDPOINT_UNREACHABLE',
+        message: 'could not reach the endpoint: tcp connect error: 127.0.0.1:8080 connection refused',
+      }),
+    ).toBe("couldn't reach that URL");
+    // a DNS/timeout message with a bare 3-digit number elsewhere in the text.
+    expect(
+      endpointErrorLine({
+        code: 'ACCOUNT_ENDPOINT_UNREACHABLE',
+        message: 'could not reach the endpoint: operation timed out after 10000ms (attempt 302)',
+      }),
+    ).toBe("couldn't reach that URL");
+  });
+
+  it('builds the Test payload, using the stored key on an untouched edit form (FR-9)', () => {
+    expect(endpointTestPayload('https://x/v1', 'sk-live', 'e1')).toEqual({ baseUrl: 'https://x/v1', apiKey: 'sk-live' });
+    expect(endpointTestPayload('https://x/v1', '', 'e1')).toEqual({ baseUrl: 'https://x/v1', accountId: 'e1' });
+    expect(endpointTestPayload('https://x/v1', '', undefined)).toEqual({ baseUrl: 'https://x/v1' });
+  });
+
+  it('builds the add payload — apiKey/modelIds absent when their fields are empty', () => {
+    expect(endpointAddPayload(' OpenAI ', ' https://x/v1 ', '', '')).toEqual({
+      label: 'OpenAI',
+      baseUrl: 'https://x/v1',
+      apiKey: undefined,
+      modelIds: undefined,
+    });
+    expect(endpointAddPayload('OpenAI', 'https://x/v1', 'sk-1', 'gpt-4o, gpt-4o-mini')).toEqual({
+      label: 'OpenAI',
+      baseUrl: 'https://x/v1',
+      apiKey: 'sk-1',
+      modelIds: ['gpt-4o', 'gpt-4o-mini'],
+    });
+  });
+
+  it('builds the update payload — clearKey and apiKey never both present (FR-7)', () => {
+    expect(endpointUpdatePayload('e1', 'OpenAI', 'https://x/v1', '', false, '')).toEqual({
+      accountId: 'e1',
+      label: 'OpenAI',
+      baseUrl: 'https://x/v1',
+      apiKey: undefined,
+      clearKey: undefined,
+      modelIds: null,
+    });
+    expect(endpointUpdatePayload('e1', 'OpenAI', 'https://x/v1', 'sk-new', false, 'gpt-4o')).toEqual({
+      accountId: 'e1',
+      label: 'OpenAI',
+      baseUrl: 'https://x/v1',
+      apiKey: 'sk-new',
+      clearKey: undefined,
+      modelIds: ['gpt-4o'],
+    });
+    expect(endpointUpdatePayload('e1', 'OpenAI', 'https://x/v1', '', true, '')).toEqual({
+      accountId: 'e1',
+      label: 'OpenAI',
+      baseUrl: 'https://x/v1',
+      apiKey: undefined,
+      clearKey: true,
+      modelIds: null,
+    });
+  });
+
+  it('names the newly added account by diffing the list the core returned (fresh-flash parity with login)', () => {
+    expect(newlyAddedAccountId([BUILT_IN], [BUILT_IN, endpointAccount])).toBe('e1');
+    expect(newlyAddedAccountId([BUILT_IN, endpointAccount], [BUILT_IN, endpointAccount])).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// multi-provider-codex — the 'codex-cli' account kind (FR-21a/FR-24/FR-25).
+
+describe('codex accounts', () => {
+  const codex = (over: Partial<Account> = {}) =>
+    account({ id: 'cx', kind: 'codex-cli', signedIn: false, ...over });
+
+  it('recognises a codex account and does not confuse it with an endpoint one', () => {
+    expect(accountIsCodex(codex())).toBe(true);
+    expect(accountIsEndpoint(codex())).toBe(false);
+    expect(accountIsCodex(account({ id: 'a' }))).toBe(false);
+    expect(accountIsCodex(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
+  });
+
+  // FR-21a: the whole reason `signedIn` exists — `authFailedAt` cannot answer
+  // this, because it is only ever set BY a failed turn.
+  it('says Sign in before there is any credential and Re-login after', () => {
+    expect(codexLoginActionLabel(codex({ signedIn: false }))).toBe('Sign in');
+    expect(codexLoginActionLabel(codex({ signedIn: true }))).toBe('Re-login');
+  });
+
+  it('never claims a non-codex row needs a first sign-in', () => {
+    // A Claude row has no `signedIn` at all; asking must not read `undefined`
+    // as "not signed in" and offer a Codex login on the wrong runtime.
+    expect(codexNeedsFirstLogin(account({ id: 'a' }))).toBe(false);
+    expect(codexNeedsFirstLogin(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
+    expect(codexNeedsFirstLogin(codex({ signedIn: true }))).toBe(false);
+    expect(codexNeedsFirstLogin(codex({ signedIn: false }))).toBe(true);
+  });
+
+  // FR-24: a Codex account is a label and nothing else.
+  it('disables Save until the label has real content', () => {
+    expect(codexSaveDisabled('', false)).toBe(true);
+    expect(codexSaveDisabled('   ', false)).toBe(true);
+    expect(codexSaveDisabled('Work', true)).toBe(true); // busy
+    expect(codexSaveDisabled('Work', false)).toBe(false);
+  });
+
+  it('trims the label into the add payload', () => {
+    expect(codexAddPayload('  Work ChatGPT  ')).toEqual({ label: 'Work ChatGPT' });
+  });
+
+  it('sends account_add_codex and account_codex_login on the right channels', async () => {
+    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
+    await accountAddCodex({ label: 'Work' });
+    expect(invokeMock).toHaveBeenCalledWith('account_add_codex', { label: 'Work' });
+
+    invokeMock.mockResolvedValueOnce({ ok: true, data: undefined });
+    await accountCodexLogin({ accountId: 'cx' });
+    expect(invokeMock).toHaveBeenCalledWith('account_codex_login', { accountId: 'cx' });
+  });
+
+  // FR-21: no account kind is disabled in the picker — the endpoint block
+  // multi-provider-openai FR-22 deleted stayed deleted, and Codex never had one.
+  it('is selectable in the account picker', () => {
+    const options = accountFieldOptions([account({ id: 'a' }), codex()]);
+    expect(options.map((o) => o.value)).toEqual(['a', 'cx']);
+    expect(options).toHaveLength(2);
+  });
+
+  // The bug this guards: a freshly added Codex account came back carrying a full
+  // Claude profile (.claude.json, projects/, sessions/) because the usage seed
+  // spawned `claude` with that account's dir as CLAUDE_CONFIG_DIR — and `claude`
+  // initializes whatever dir it is pointed at. The filter used to be
+  // `!accountIsEndpoint(a)`, which admitted every kind that was not an endpoint.
+  it('never probes plan limits for an account whose runtime has no plan', () => {
+    expect(accountUsageProbeable(account({ id: 'a' }))).toBe(true);
+    expect(accountUsageProbeable(codex())).toBe(false);
+    expect(accountUsageProbeable(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
+  });
+
+  it('derives probeability from the capability table, not from a list of kinds', () => {
+    // The guarantee that matters for the NEXT runtime: whatever the table says
+    // about usageBar is what the seed does, with nothing to remember to update.
+    for (const kind of ['claude-code-oauth', 'openai-compatible', 'codex-cli'] as const) {
+      const runtime = { 'claude-code-oauth': 'claude-code', 'openai-compatible': 'francois', 'codex-cli': 'codex' } as const;
+      expect(accountUsageProbeable(account({ id: 'x', kind }))).toBe(
+        runtimeCapabilities(runtime[kind]).usageBar.available,
+      );
+    }
   });
 });

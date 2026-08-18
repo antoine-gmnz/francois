@@ -344,16 +344,15 @@ pub(crate) fn snapshot_from_cache(cached: Vec<ModelInfo>) -> (Vec<ModelInfo>, bo
 /// Upsert + persist a finalized command block and emit its command.output
 /// (FR-9/10/12–18, FR-24). No-op if the session is gone (session-engine FR-14).
 pub(crate) fn finalize_command_block(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     block_id: &str,
     command: &str,
     card: &CommandCard,
 ) {
     let card_json = serde_json::to_value(card).unwrap_or(Value::Null);
-    let engine = app.state::<Engine>();
     let block = {
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         let Some(s) = map.get_mut(session_id) else {
             return;
         };
@@ -365,16 +364,13 @@ pub(crate) fn finalize_command_block(
             .cloned()
     };
     if let Some(b) = &block {
-        append_transcript(app, session_id, b);
+        env.append_transcript(session_id, b);
     }
-    emit(
-        app,
-        SessionEvent::CommandOutput {
-            session_id: session_id.into(),
-            block_id: block_id.into(),
-            card: card_json,
-        },
-    );
+    env.emit_session(SessionEvent::CommandOutput {
+        session_id: session_id.into(),
+        block_id: block_id.into(),
+        card: card_json,
+    });
 }
 
 /// Per-command flow for an intercepted command (FR-5..FR-15). The user block is

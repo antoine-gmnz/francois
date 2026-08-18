@@ -358,7 +358,7 @@ pub(crate) fn humanize(id: &str) -> String {
 
 // ---------- serialized public shapes (contract/common.ts) ----------
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct ModelInfo {
     pub id: String,
     pub label: String,
@@ -381,14 +381,115 @@ pub(crate) fn model(id: &str, label: &str) -> ModelInfo {
     }
 }
 
+/// multi-provider-openai FR-18/FR-21's account-keyed wire fix: `accountId` is
+/// OPTIONAL, not `sessionId` — the model picker's only mount is the New
+/// Session modal (`useModelCatalog`), where there is no session yet, only the
+/// account the user is about to create one on. Every pre-existing call site
+/// (the palette prefetch, the project registry warm-up) keeps invoking with
+/// no payload and gets EXACTLY the pre-existing behavior — the default
+/// account's Claude Code catalog. A resolvable account routes through ITS OWN
+/// `AgentRuntime` (derived from `AccountKind` via `from_account_kind`), which
+/// is what makes an endpoint account's `models()` reachable at all — the
+/// account is what `OpenAiAdapter::models` (FR-18) actually needs.
 #[tauri::command(async)]
-pub fn session_models() -> IpcResult<Vec<ModelInfo>> {
-    ok(refresh_models())
+pub fn session_models(app: AppHandle, account_id: Option<String>) -> IpcResult<Vec<ModelInfo>> {
+    let known = crate::account::known_ids(&app);
+    let found = known_account_id(account_id.as_deref(), &known).map(|id| {
+        let kind = crate::account::kind_of(&app, id);
+        (AgentRuntime::from_account_kind(kind).0, id.to_string())
+    });
+    let (runtime, account_id) = resolve_models_target(found);
+    ok(adapter_for(runtime).models(&app, &account_id))
+}
+
+/// Pure: trims `account_id` and, when it names an account the registry
+/// actually knows (per `crate::account::known_ids`), hands back the trimmed
+/// id — extracted so "omitted, blank, or unknown falls back to the default"
+/// is covered without a `tauri::AppHandle` (`known_ids`/`kind_of` both need
+/// one). `known` already contains `DEFAULT_ACCOUNT_ID`, so an explicit
+/// `"default"` resolves identically to an omitted payload.
+fn known_account_id<'a>(
+    account_id: Option<&'a str>,
+    known: &std::collections::HashSet<String>,
+) -> Option<&'a str> {
+    account_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && known.contains(*id))
+}
+
+/// The pure half of the account-keyed `session_models`: an unresolvable
+/// account (omitted `accountId`, or an id the registry no longer knows) falls
+/// back to the pre-existing default, byte for byte.
+fn resolve_models_target(found: Option<(AgentRuntime, String)>) -> (AgentRuntime, String) {
+    found.unwrap_or((
+        AgentRuntime::ClaudeCode,
+        crate::account::DEFAULT_ACCOUNT_ID.to_string(),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    // ---------- known_account_id (session_models FR-18/FR-21 account rekey) ----------
+
+    fn known_set(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn no_account_id_is_unresolvable() {
+        assert_eq!(
+            known_account_id(None, &known_set(&["default", "acct-1"])),
+            None
+        );
+    }
+
+    #[test]
+    fn a_blank_or_whitespace_account_id_is_unresolvable() {
+        let known = known_set(&["default", "acct-1"]);
+        assert_eq!(known_account_id(Some(""), &known), None);
+        assert_eq!(known_account_id(Some("   "), &known), None);
+    }
+
+    #[test]
+    fn an_id_the_registry_does_not_know_is_unresolvable() {
+        assert_eq!(
+            known_account_id(Some("removed-acct"), &known_set(&["default", "acct-1"])),
+            None
+        );
+    }
+
+    #[test]
+    fn a_known_id_resolves_trimmed() {
+        let known = known_set(&["default", "acct-1"]);
+        assert_eq!(known_account_id(Some("acct-1"), &known), Some("acct-1"));
+        assert_eq!(known_account_id(Some("  acct-1  "), &known), Some("acct-1"));
+        assert_eq!(known_account_id(Some("default"), &known), Some("default"));
+    }
+
+    // ---------- resolve_models_target (session_models FR-18 wire fix) ----------
+
+    #[test]
+    fn no_account_falls_back_to_the_default_claude_code_catalog() {
+        assert_eq!(
+            resolve_models_target(None),
+            (AgentRuntime::ClaudeCode, "default".to_string())
+        );
+    }
+
+    #[test]
+    fn a_resolved_account_routes_by_its_own_runtime_and_id() {
+        assert_eq!(
+            resolve_models_target(Some((AgentRuntime::Francois, "acct-1".to_string()))),
+            (AgentRuntime::Francois, "acct-1".to_string())
+        );
+        assert_eq!(
+            resolve_models_target(Some((AgentRuntime::ClaudeCode, "acct-2".to_string()))),
+            (AgentRuntime::ClaudeCode, "acct-2".to_string())
+        );
+    }
 
     #[test]
     fn catalog_fallback_contains_default() {

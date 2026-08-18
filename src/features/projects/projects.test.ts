@@ -70,6 +70,8 @@ function sess(id: string, projectId?: string): SessionMeta {
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
     ...(projectId ? { projectId } : {}),
   };
 }
@@ -460,6 +462,22 @@ describe('project defaults form (FR-34)', () => {
       { value: '', label: 'inherit' },
       { value: 'default', label: 'Default' },
       { value: 'a1', label: 'perso' },
+    ]);
+  });
+
+  // multi-provider-openai FR-22: multi-provider-endpoint FR-14's disabled
+  // block is deleted — an openai-compatible account is as plain an option as
+  // any other, with no `disabled`/`disabledReason` at all.
+  it('keeps an openai-compatible account fully selectable (FR-22)', () => {
+    const defs = defaultFieldDefs(MODELS, {}, true, [
+      { id: 'default', label: 'Default' },
+      { id: 'e1', label: 'OpenAI' },
+    ]);
+    expect(defs[0].key).toBe('accountId');
+    expect(defs[0].options).toEqual([
+      { value: '', label: 'inherit' },
+      { value: 'default', label: 'Default' },
+      { value: 'e1', label: 'OpenAI' },
     ]);
   });
 

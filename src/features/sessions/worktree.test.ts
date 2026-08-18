@@ -64,6 +64,8 @@ function session(over: Partial<SessionMeta> = {}): SessionMeta {
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
     ...over,
   };
 }

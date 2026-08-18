@@ -26,6 +26,8 @@ function session(over: Partial<SessionMeta> & { id: string; cwd: string }): Sess
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
     ...over,
   };
 }

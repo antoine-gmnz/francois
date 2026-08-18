@@ -59,6 +59,8 @@ function sess(id: string, projectId?: string): SessionMeta {
     permissionMode: 'default',
     runtime: 'native',
     accountId: 'default',
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
     ...(projectId ? { projectId } : {}),
   };
 }

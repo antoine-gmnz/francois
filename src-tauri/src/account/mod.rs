@@ -26,12 +26,21 @@
 // was removed) is driven from commands.rs AFTER the registry write returns,
 // by calling into `session::reassign_account_sessions` with no account lock held.
 
+mod codex;
 mod commands;
+/// multi-provider-endpoint FR-1..FR-10: the `openai-compatible` account's
+/// storage half — base-URL validation, the sidecar key file, and the
+/// stateless connection probe. A CHILD of this module, not a sibling of
+/// registry.rs's OAuth-focused FRs, even though both touch `AccountRecord` —
+/// same "one concern per child" shape as `cloud` inside `session`.
+mod endpoint;
 mod login;
 mod mirror;
 mod registry;
 
+pub(crate) use codex::*;
 pub(crate) use commands::*;
+pub(crate) use endpoint::*;
 pub(crate) use login::*;
 pub(crate) use mirror::*;
 pub(crate) use registry::*;
@@ -40,7 +49,7 @@ pub(crate) use registry::*;
 mod testutil;
 
 use portable_pty::{ChildKiller, MasterPty};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -55,6 +64,44 @@ pub(crate) const DEFAULT_ACCOUNT_ID: &str = "default";
 const EVENT_CHANNEL: &str = "francois://account/event";
 
 // ---------- contract shapes (contract/multi-account.ts, mirrored) ----------
+
+/// Mirrors `AccountKind` (contract/multi-account.ts). 'claude-code-oauth' is the
+/// only kind an account can carry today — the interactive Claude Code login this
+/// whole module drives; 'openai-compatible' is added by multi-provider-openai.
+/// multi-provider-seam FR-12: a persisted record without a `kind` key loads as
+/// `ClaudeCodeOauth`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AccountKind {
+    #[default]
+    #[serde(rename = "claude-code-oauth")]
+    ClaudeCodeOauth,
+    #[serde(rename = "openai-compatible")]
+    OpenAiCompatible,
+    /// multi-provider-codex FR-2: an interactive `codex login` with its own
+    /// `CODEX_HOME`. Structurally the same trade as `ClaudeCodeOauth` — a
+    /// per-account config dir the vendor's own CLI fills in — differing only in
+    /// which CLI and which env var (FR-18).
+    #[serde(rename = "codex-cli")]
+    CodexCli,
+}
+
+impl AccountKind {
+    /// multi-provider-codex FR-18: the environment variable that points this
+    /// kind's CLI at an account's own config dir. `None` for kinds whose
+    /// credential is not a config dir at all (`OpenAiCompatible` keys off a
+    /// sidecar key file instead).
+    ///
+    /// This exists so `account_env` stops hard-coding `CLAUDE_CONFIG_DIR`: the
+    /// variable is a property OF THE KIND, and putting it here keeps the
+    /// `match` exhaustive so a fourth kind cannot silently inherit Claude's.
+    pub(crate) fn config_dir_env_var(self) -> Option<&'static str> {
+        match self {
+            AccountKind::ClaudeCodeOauth => Some("CLAUDE_CONFIG_DIR"),
+            AccountKind::CodexCli => Some("CODEX_HOME"),
+            AccountKind::OpenAiCompatible => None,
+        }
+    }
+}
 
 /// Mirrors `Account`. `configDir`/`builtIn`/`isDefault` distinguish the
 /// synthesized built-in row (never persisted, FR-2) from an added one.
@@ -76,6 +123,33 @@ pub struct Account {
     created_at: u64,
     #[serde(rename = "authFailedAt", skip_serializing_if = "Option::is_none")]
     auth_failed_at: Option<u64>,
+    /// multi-provider-seam FR-12. Required on the wire — every account has a kind.
+    kind: AccountKind,
+    /// multi-provider-endpoint FR-1. Present iff `kind == OpenAiCompatible`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    endpoint: Option<AccountEndpoint>,
+    /// multi-provider-codex FR-21a. Present iff `kind == CodexCli`, and
+    /// **derived** on every list from `auth.json`'s existence (FR-20) — the same
+    /// shape and the same reasoning as `AccountEndpoint::has_key`.
+    ///
+    /// It exists because `authFailedAt` cannot answer this: that flag is only
+    /// ever set BY a failed turn, so a freshly added Codex account would look
+    /// healthy right up until the first message bounced.
+    #[serde(rename = "signedIn", skip_serializing_if = "Option::is_none")]
+    signed_in: Option<bool>,
+}
+
+/// Mirrors `EndpointConfig` (contract/multi-account.ts). Carries NO key
+/// material — `has_key` is DERIVED from the key file's existence (FR-3), never
+/// read off anything persisted.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct AccountEndpoint {
+    #[serde(rename = "baseUrl")]
+    base_url: String,
+    #[serde(rename = "hasKey")]
+    has_key: bool,
+    #[serde(rename = "modelIds", skip_serializing_if = "Option::is_none")]
+    model_ids: Option<Vec<String>>,
 }
 
 /// francois:account:remove data (§5).
@@ -132,6 +206,27 @@ pub(crate) struct AccountRecord {
     config_dir: String,
     #[serde(rename = "createdAt", default)]
     created_at: u64,
+    /// multi-provider-seam FR-12: absent on every pre-feature record, which
+    /// loads as `ClaudeCodeOauth` via `AccountKind`'s `Default`.
+    #[serde(default)]
+    kind: AccountKind,
+    /// multi-provider-endpoint FR-1: present iff `kind == OpenAiCompatible` —
+    /// enforced on load by `registry::account_record_invariant_holds`, which
+    /// drops any record that violates it rather than repairing it. The key
+    /// itself is NEVER here (FR-2): only `base_url`/`model_ids` ride the JSON;
+    /// the sidecar `<configDir>/endpoint-key` file is the key's only home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    endpoint: Option<EndpointRecord>,
+}
+
+/// The persisted half of an `openai-compatible` account (multi-provider-endpoint
+/// FR-1). `base_url` is already normalized (FR-4) by the time it lands here.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct EndpointRecord {
+    #[serde(rename = "baseUrl")]
+    pub(crate) base_url: String,
+    #[serde(rename = "modelIds", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model_ids: Option<Vec<String>>,
 }
 
 /// The single in-flight login (FR-16). Lives in mod.rs because both login.rs
@@ -216,6 +311,89 @@ pub fn config_dir_of(app: &AppHandle, account_id: &str) -> Option<String> {
     })
 }
 
+/// multi-provider-codex FR-18: `config_dir_of`, but **only for accounts whose
+/// config dir is a Claude one** — `None` for a `codex-cli` or
+/// `openai-compatible` account.
+///
+/// Every spawn of `claude` on behalf of a session goes through a
+/// `CLAUDE_CONFIG_DIR` derived from `config_dir_of`, which returns a directory
+/// for ANY kind. Pointing `claude` at a Codex account's `CODEX_HOME` does not
+/// fail quietly: `claude` INITIALIZES whatever directory it is given, so the
+/// account came back carrying `.claude.json`, `projects/`, `sessions/` and
+/// `session-env/` — observed in the dev build the first time a Codex account
+/// was created.
+///
+/// `None` is the right answer rather than the Codex dir, because the caller's
+/// question is specifically "which Claude config should this spawn use", and
+/// for a non-Claude account there is none. `None` already means "no override"
+/// at every call site (the built-in `default` account's answer).
+pub fn claude_config_dir_of(app: &AppHandle, account_id: &str) -> Option<String> {
+    if kind_of(app, account_id) != AccountKind::ClaudeCodeOauth {
+        return None;
+    }
+    config_dir_of(app, account_id)
+}
+
+/// multi-provider-seam FR-13: the kind of an account, for deriving a new
+/// session's `provider` at creation. The built-in `default` account and any
+/// id the registry no longer knows are `ClaudeCodeOauth` (`AccountKind`'s
+/// `Default`) — the same "falls back to default" path FR-13 names.
+pub fn kind_of(app: &AppHandle, account_id: &str) -> AccountKind {
+    if account_id == DEFAULT_ACCOUNT_ID {
+        return AccountKind::ClaudeCodeOauth;
+    }
+    app.try_state::<AccountState>()
+        .and_then(|s| {
+            let Ok(inner) = s.0.lock() else {
+                return None;
+            };
+            inner
+                .records
+                .iter()
+                .find(|r| r.id == account_id)
+                .map(|r| r.kind)
+        })
+        .unwrap_or_default()
+}
+
+/// What an `openai-compatible` account needs to issue a request
+/// (multi-provider-openai FR-2/FR-3/FR-18): the normalized base URL, the
+/// `modelIds` override if the account carries one, and the config dir the key
+/// sidecar lives in.
+///
+/// `None` for the built-in `default` account, for an unknown id, and for any
+/// account whose kind is not `OpenAiCompatible` — FR-2's preflight turns each of
+/// those into `INVALID_INPUT` before any I/O.
+///
+/// **The key is deliberately not returned.** It is read from
+/// `<configDir>/endpoint-key` per request (`endpoint::read_key`, FR-3) and never
+/// held in session state — the write-only boundary the 2026-08-12 `auth`
+/// decision draws. Handing back a config dir keeps that read at the call site,
+/// where it is one line and cannot be accidentally cloned into a struct that
+/// outlives the request.
+/// `pub(crate)` rather than `pub` like its two neighbours: it hands back
+/// `EndpointRecord`, which is itself `pub(crate)`, and a `pub` fn leaking a
+/// private type is a `private_interfaces` warning.
+pub(crate) fn endpoint_of(app: &AppHandle, account_id: &str) -> Option<(EndpointRecord, String)> {
+    if account_id == DEFAULT_ACCOUNT_ID {
+        return None;
+    }
+    app.try_state::<AccountState>().and_then(|s| {
+        let Ok(inner) = s.0.lock() else {
+            return None;
+        };
+        let record = inner.records.iter().find(|r| r.id == account_id)?;
+        if record.kind != AccountKind::OpenAiCompatible {
+            return None;
+        }
+        // `account_record_invariant_holds` drops any OpenAiCompatible record
+        // with no endpoint at load, so `None` here means the registry was
+        // mutated out from under us — still not a panic.
+        let endpoint = record.endpoint.clone()?;
+        Some((endpoint, record.config_dir.clone()))
+    })
+}
+
 /// FR-10: every account id a persisted `SessionMeta.accountId` may resolve
 /// against — the built-in id plus every registered one.
 pub fn known_ids(app: &AppHandle) -> std::collections::HashSet<String> {
@@ -275,6 +453,17 @@ pub(crate) fn wsl_translatable_config_dir(path: &str) -> bool {
 /// FR-22: does this account's config dir report an identity on disk?
 pub fn identity_file_exists(config_dir: &str) -> bool {
     Path::new(config_dir).join(".claude.json").is_file()
+}
+
+/// multi-provider-codex FR-20: the same question for a `codex-cli` account —
+/// signed in iff `codex login` has written an `auth.json` into its `CODEX_HOME`.
+///
+/// **Derived, never persisted**, exactly like `identity_file_exists`: an auth
+/// flag stored in `accounts.json` would go stale the moment the user ran
+/// `codex logout` in a terminal, and would then block turns on an account that
+/// is actually fine (or, worse, wave through one that is not).
+pub fn codex_auth_file_exists(config_dir: &str) -> bool {
+    Path::new(config_dir).join("auth.json").is_file()
 }
 
 /// FR-22/23: flag an account's credential failure (in-memory only) and publish

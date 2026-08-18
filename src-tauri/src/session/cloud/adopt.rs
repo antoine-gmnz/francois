@@ -378,6 +378,11 @@ fn create_adopted_session(
         .clone()
         .filter(|m| valid_permission_mode(m))
         .unwrap_or_else(|| "default".to_string());
+    // multi-provider-seam FR-13a: adoption is no exception — both axes are
+    // DERIVED from the resolved account's kind here too, never assumed from
+    // the fact that the thread came from Claude Code on the web.
+    let (agent_runtime, protocol) =
+        AgentRuntime::from_account_kind(crate::account::kind_of(app, &account_id));
     let mut session = Session::new(
         id.clone(),
         adopt_name(title, &landing.dir),
@@ -395,6 +400,8 @@ fn create_adopted_session(
         landing.worktree.clone(),
         landing.distro.clone(),
         account_id,
+        agent_runtime,
+        protocol,
         // FR-10: the LOCAL session teleport hydrated — every later turn resumes
         // this thread over the ordinary `claude --resume` pipeline.
         Some(claude_session_id),
@@ -521,7 +528,7 @@ fn run_adoption(
     // account before the app-wide one — the adopt modal has no account picker,
     // so the project's own default is what the user configured for this repo.
     let account_id = cloud_account_id(app, input.account_id.or(seed.account_id.as_deref()));
-    let config_dir = crate::account::config_dir_of(app, &account_id);
+    let config_dir = crate::account::claude_config_dir_of(app, &account_id);
     let token = cloud_access_token(config_dir.as_deref())
         .map_err(|(code, message)| AdoptError::new(code, message))?;
 

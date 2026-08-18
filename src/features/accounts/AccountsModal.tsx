@@ -1,44 +1,97 @@
-// multi-account FR-34..FR-36 — the Accounts modal, dressed as redesign 4a:
-// a centred panel over the dimmed shell, a titled header with a count pill and
-// the add affordance, a list of account CARDS, and a footer carrying both the
-// isolation note and the keyboard model (see accounts.css). Four states:
+// multi-account FR-34..FR-36 — the Accounts modal, rebuilt as redesign turn 8b
+// ("Credential vault"):
 //
-//   list           the registry, one AccountRow each + [+ ADD ACCOUNT]
-//   login          AccountLoginView replaces the body while a login runs
-//   rename         the label becomes an inline input on its row
-//   remove-confirm the compact confirm dialog above the list
+//   ┌ PROVIDERS & ACCOUNTS                                          n ┐
+//   │ ┌ rail ────────┐ ┌ detail ─────────────────────────────────────┐│
+//   │ │ CONNECTED    │ │ ▣ Anthropic  · 2 logins    [+ Add login]    ││
+//   │ │  ▣ Anthropic │ │ CLI LOGINS ─────────────────────────────    ││
+//   │ │  ▣ OpenAI    │ │  ┌ card · pills · gauges · sessions ┐        ││
+//   │ │ AVAILABLE    │ │ API KEYS ──────────────── [+ Add key]       ││
+//   │ │  ▣ Google …  │ │  ┌ dashed key row ┐                         ││
+//   │ └──────────────┘ └─────────────────────────────────────────────┘│
+//   └ ↑↓ move · ←→ provider · ⏎ default · r rename · del remove · a add┘
 //
-// It does NOT re-read the registry itself: FR-7 makes every mutation emit
-// account.list with the full list, and App.tsx's feed writes that into the
-// store — so the store IS the modal's source of truth, and a change made
-// anywhere (including by the core, e.g. FR-23's authFailedAt) shows up here
-// with no extra read. The mutations still resolve the fresh list; that is used
-// only to keep the cursor honest across a removal.
+// Why the shape changed: the shipped modal was a flat list of Claude logins.
+// With `codex` and OpenAI-compatible endpoints in play, the list gained two
+// axes it never had — which PROVIDER, and whether the credential is a CLI
+// login (a config dir, a plan, a quota that resets) or an API key (a secret, a
+// base URL, no ceiling). A quota bar and a key are not the same object and no
+// longer share a column.
 //
-// Keyboard (§3): ↑/↓ move · Enter set default · r rename · Del remove ·
-// a add · Esc close (or cancel the login / the confirm).
+// Every provider in the catalog is a row, connected or not, and a provider we
+// cannot authenticate yet says so in its own pane rather than being hidden —
+// see providers.ts, which owns all of that as pure, vitest-covered functions.
+//
+// Unchanged from before: it does NOT re-read the registry. FR-7 makes every
+// mutation emit account.list with the full list and App.tsx's feed writes that
+// into the store, so the store IS this modal's source of truth. The mutations
+// still resolve the fresh list; that is used only to keep the cursor honest
+// across a removal.
+//
+// Four states, now scoped to the RIGHT PANE instead of the whole modal (the
+// designer's note: "the login terminal takes over this pane rather than the
+// whole modal"):
+//
+//   list           the selected provider's credentials
+//   login          AccountLoginView takes over the pane while a login runs
+//   rename         the label becomes an inline input on its card
+//   remove-confirm the compact confirm banner above the two panes
+//
+// Keyboard (§3): ↑/↓ move within a provider · ←/→ change provider ·
+// Enter set default · r rename · Del remove · a add · Esc close (or cancel the
+// login / the form / the confirm).
 
-import { useEffect, useRef, useState } from 'react';
-import type { AppError } from '../../../contract/common';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { AccountId, AppError } from '../../../contract/common';
 import type { Account } from '../../../contract/multi-account';
-import { accountLoginCancel, accountRemove, accountRename, accountSetDefault, projectList } from '../../lib/api';
+import {
+  accountCodexLogin,
+  accountLoginCancel,
+  accountRemove,
+  accountRename,
+  accountSetDefault,
+  projectList,
+} from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
 import { seedAccountUsage } from '../usage/usage';
-import { AccountRow } from './AccountRow';
 import AccountLoginView from './AccountLoginView';
+import { CodexForm } from './CodexForm';
+import { EndpointForm } from './EndpointForm';
+import { ProviderDetail } from './ProviderDetail';
+import { ProviderRail } from './ProviderRail';
 import { RemoveAccountConfirm } from './RemoveAccountConfirm';
 import {
-  ACCOUNTS_ISOLATION_NOTE,
   ACCOUNTS_KEY_HINTS,
+  accountIsCodex,
+  accountIsEndpoint,
   accountSessionCounts,
-  clampCursor,
+  accountUsageProbeable,
   moveCursor,
+  newlyAddedAccountId,
 } from './accounts';
+import {
+  accountSessionNames,
+  cliSectionState,
+  findGroup,
+  keySectionState,
+  providerGroups,
+  providerIdForAccount,
+  resolveSelectedProvider,
+  splitRail,
+  type ProviderId,
+} from './providers';
 import './accounts.css';
 
 /** Which login this is: a brand-new account, or FR-17's re-login into a row. */
 type LoginTarget = { accountId?: string } | null;
+
+/**
+ * The endpoint form's target. `account` present ⇒ editing it; otherwise the
+ * provider prefill redesign 8b's "+ Add key" hands in (providers.ts owns the
+ * URLs, so this carries values, never a ProviderId to look up again).
+ */
+type EndpointTarget = { account?: Account; baseUrl?: string; label?: string } | null;
 
 export default function AccountsModal({ onClose }: { onClose: () => void }): JSX.Element {
   const accounts = useStore((s) => s.accounts);
@@ -49,13 +102,26 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   const autoAdd = useStore((s) => s.accountsAutoAdd);
   const setAutoAdd = useStore((s) => s.setAccountsAutoAdd);
 
-  const [cursor, setCursor] = useState(0);
+  // The provider the rail is pointed at. A PREFERENCE, not the answer:
+  // resolveSelectedProvider re-derives the live value every render, so a
+  // provider that empties out mid-session can never leave the pane orphaned.
+  const [providerPref, setProviderPref] = useState<ProviderId | null>(null);
+  // Keyed by account id rather than by index: the pane draws two lists (logins,
+  // then keys) and an index into "whichever list this row was in" breaks the
+  // moment a credential moves between them.
+  const [cursorId, setCursorId] = useState<AccountId | null>(null);
   const [login, setLogin] = useState<LoginTarget>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   const [freshId, setFreshId] = useState<string | null>(null);
+  // multi-provider-endpoint FR-13: the inline add/edit endpoint form.
+  const [endpointForm, setEndpointForm] = useState<EndpointTarget>(null);
+  // multi-provider-codex FR-24: the third add form. Separate state rather than a
+  // discriminated `addForm` union, so the two existing forms keep their exact
+  // open/close conditions and nothing about the endpoint flow moves.
+  const [codexForm, setCodexForm] = useState(false);
   const alive = useMounted();
   // The live login's id, so cancel can address it from anywhere — including the
   // unmount cleanup, which must fire even when the modal is torn down by a
@@ -72,11 +138,28 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // instead of firing accountRename twice.
   const renameHandledRef = useRef(false);
 
-  const selected = accounts[clampCursor(cursor, accounts.length)] ?? null;
+  // Memoized, and it matters: `groups` is a dependency of the keydown effect
+  // below, so a fresh object every render would re-attach the window listener
+  // on every keystroke of a rename draft — exactly what that effect's dep list
+  // exists to avoid.
+  const sessionCounts = useMemo(() => accountSessionCounts(accounts, sessions), [accounts, sessions]);
+  const sessionNames = useMemo(() => accountSessionNames(accounts, sessions), [accounts, sessions]);
+  const groups = useMemo(() => providerGroups(accounts, sessionCounts), [accounts, sessionCounts]);
+  const providerId = resolveSelectedProvider(groups, providerPref);
+  const group = findGroup(groups, providerId);
+  // Visual order within a pane: logins, then keys — what ↑/↓ walks.
+  const paneAccounts = useMemo(
+    () => [...group.cliAccounts, ...group.keyAccounts],
+    [group.cliAccounts, group.keyAccounts],
+  );
+  // Same defensive shape the provider selection uses: an id left over from a
+  // removed row (or from another provider's pane) resolves to the first card.
+  const selected =
+    paneAccounts.find((a) => a.id === cursorId) ?? paneAccounts[0] ?? null;
   const confirming = confirmId ? (accounts.find((a) => a.id === confirmId) ?? null) : null;
-  const sessionCounts = accountSessionCounts(accounts, sessions);
+  const busy = login !== null || endpointForm !== null || codexForm;
 
-  // Redesign 4a hangs a reset countdown off every account bar. Same granularity
+  // Redesign hangs a reset countdown off every quota gauge. Same granularity
   // rule the usage bar follows: one text tick a minute, not motion — the
   // countdown's finest unit IS the minute, so a faster clock buys nothing.
   const [now, setNow] = useState(() => Date.now());
@@ -85,18 +168,37 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     return () => window.clearInterval(id);
   }, []);
 
-  // FR-34: each row shows its OWN meters, so every listed account needs a seed.
+  // FR-34: each card shows its OWN meters, so every listed account needs a seed.
   // Cheap and idempotent — app_get_usage never probes (usage-bar FR-22), and a
   // seed for an account the live channel already covered is dropped.
+  // The filter is the CAPABILITY, not a list of kinds: the seed spawns `claude`
+  // with that account's dir as CLAUDE_CONFIG_DIR, which `claude` then
+  // initializes — so seeding a Codex CODEX_HOME would plant a Claude profile in
+  // it. Asking the table means a fourth runtime is covered the day its row is
+  // added, instead of the day someone remembers to extend a negation.
   useEffect(() => {
     const stops = accounts
-      .filter((a) => usageByAccount[a.id] === undefined)
+      .filter((a) => usageByAccount[a.id] === undefined && accountUsageProbeable(a))
       .map((a) => seedAccountUsage(a.id, setAccountUsage));
     return () => stops.forEach((stop) => stop());
     // Keyed on the ids alone: re-running on every snapshot write would restart
     // the seeds the writes are the result of.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts.map((a) => a.id).join(','), setAccountUsage]);
+
+  // multi-provider-codex FR-25: `codex login` for one card. Nothing to render
+  // and nothing to cancel — the browser is the UI, and the card's `signedIn`
+  // flips when the refreshed account.list arrives (FR-21a). Only a failure to
+  // START it is worth surfacing here.
+  const doCodexLogin = async (account: Account) => {
+    setError(null);
+    try {
+      const res = await accountCodexLogin({ accountId: account.id });
+      if (alive.current && !res.ok) setError(res.error);
+    } catch {
+      if (alive.current) setError({ code: 'INTERNAL', message: 'Could not reach the core' });
+    }
+  };
 
   // FR-16: whatever ends the login — Esc, CLOSE, the modal unmounting — kills
   // the PTY and deletes the half-written dir through this ONE path.
@@ -110,9 +212,13 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
 
   // The palette's "Add account" opens the modal straight into the login view.
   // One-shot: cleared here so re-opening the modal normally lands on the list.
+  // It means the CLAUDE login specifically, so it also points the rail at
+  // Anthropic — otherwise the terminal would take over some other provider's
+  // pane and read as that provider's sign-in.
   useEffect(() => {
     if (!autoAdd) return;
     setAutoAdd(false);
+    setProviderPref('anthropic');
     setLogin({});
   }, [autoAdd, setAutoAdd]);
 
@@ -189,7 +295,9 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         }
         setError(null);
         setAccounts(res.data.accounts);
-        setCursor((c) => clampCursor(c, res.data.accounts.length));
+        // The cursor is by id, so a removal just stops resolving and `selected`
+        // falls back to the pane's first card. Clearing it keeps that explicit.
+        setCursorId(null);
         // FR-9's repointed sessions arrive as session.meta events on the session
         // stream, which pane [1] already owns — nothing to apply here.
         // The core also cleared this account from every project that named it as
@@ -203,6 +311,42 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
       .catch(onIpcRejected);
   };
 
+  /** Flash the row a save just minted, the way a fresh login already does. */
+  const flash = (id: AccountId | null) => {
+    if (!id) return;
+    setFreshId(id);
+    window.setTimeout(() => alive.current && setFreshId(null), 1200);
+  };
+
+  // Redesign 8b: the provider's own add affordances. Which one "+ Add login"
+  // means is the provider's business, not the modal's — the catalog says
+  // whether this vendor is driven by `claude` or by `codex`.
+  const addLogin = () => {
+    if (group.spec.cliLogin === 'codex') setCodexForm(true);
+    else if (group.spec.cliLogin === 'claude') setLogin({});
+  };
+
+  const addKey = () => {
+    // `custom` is the catch-all row: it has a route but no URL of its own, and
+    // borrowing its display name as a label would be worse than an empty field.
+    const isCustom = group.spec.id === 'custom';
+    setEndpointForm({ baseUrl: group.spec.apiBaseUrl ?? '', label: isCustom ? '' : group.spec.name });
+  };
+
+  /** `a`, and the fallback for a provider that can only be reached by key. */
+  const addPrimary = () => {
+    if (cliSectionState(group.spec).available) addLogin();
+    else if (keySectionState(group.spec).available) addKey();
+  };
+
+  // FR-25: a Codex card MUST NOT reach the Claude PTY login — that would run
+  // `claude` against a CODEX_HOME. Routing lives here rather than in the card
+  // so the card stays a renderer with one `onLogin`.
+  const doLogin = (account: Account) => {
+    if (accountIsCodex(account)) void doCodexLogin(account);
+    else setLogin({ accountId: account.id });
+  };
+
   // §3 Keyboard. Capture phase, like every other modal in the shell, so the
   // app-wide single-letter globals never see these keys.
   useEffect(() => {
@@ -213,19 +357,41 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         if (login) closeLogin();
         else if (renamingId) cancelRename();
         else if (confirmId) setConfirmId(null);
+        else if (endpointForm) setEndpointForm(null);
+        else if (codexForm) setCodexForm(false);
         else onClose();
         return;
       }
       // Everything below is list-state only: while the login TUI is up every
-      // other key belongs to it, and while renaming they belong to the input.
-      if (login || renamingId) return;
+      // other key belongs to it, while renaming they belong to the input, and
+      // while a form is open every key belongs to its own fields.
+      if (login || renamingId || endpointForm || codexForm) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         e.stopPropagation();
-        setCursor((c) => moveCursor(c, e.key === 'ArrowDown' ? 1 : -1, accounts.length));
+        const at = paneAccounts.findIndex((a) => a.id === selected?.id);
+        const next = moveCursor(at < 0 ? 0 : at, e.key === 'ArrowDown' ? 1 : -1, paneAccounts.length);
+        setCursorId(paneAccounts[next]?.id ?? null);
+        return;
+      }
+      // Redesign 8b's second axis. The rail reads CONNECTED then AVAILABLE, so
+      // ←/→ walks that same order — never the raw catalog order, which would
+      // jump between the two groups on screen.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        e.stopPropagation();
+        const rail = splitRail(groups);
+        const order = [...rail.connected, ...rail.available];
+        const at = order.findIndex((g) => g.spec.id === providerId);
+        const next = moveCursor(at < 0 ? 0 : at, e.key === 'ArrowRight' ? 1 : -1, order.length);
+        const target = order[next];
+        if (target) {
+          setProviderPref(target.spec.id);
+          setCursorId(null);
+        }
         return;
       }
       if (confirmId) {
@@ -244,7 +410,10 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
       } else if ((e.key === 'r' || e.key === 'R') && selected) {
         e.preventDefault();
         e.stopPropagation();
-        startRename(selected);
+        // An endpoint account's label is one field of a form, not a standalone
+        // rename — the same split its pencil affordance already makes.
+        if (accountIsEndpoint(selected)) setEndpointForm({ account: selected });
+        else startRename(selected);
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !selected.builtIn) {
         e.preventDefault();
         e.stopPropagation();
@@ -252,7 +421,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
       } else if (e.key === 'a' || e.key === 'A') {
         e.preventDefault();
         e.stopPropagation();
-        setLogin({});
+        addPrimary();
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -260,10 +429,10 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     // Re-attaches only when the state the handler branches on actually
     // changes — not on every render (e.g. each keystroke of a rename draft),
     // like the effects above. The closures it calls (closeLogin, doRemove,
-    // setDefault, startRename, onClose) read only refs/setters/these same
-    // deps, so a version captured at that point stays correct.
+    // setDefault, startRename, addPrimary, onClose) read only refs/setters/
+    // these same deps, so a version captured at that point stays correct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [login, renamingId, confirmId, selected, accounts, onClose]);
+  }, [login, renamingId, confirmId, endpointForm, codexForm, selected, paneAccounts, groups, providerId, accounts, onClose]);
 
   return (
     <div
@@ -273,95 +442,125 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         else onClose();
       }}
     >
-      <div className="acc-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="acc-panel acc-panel--vault" onClick={(e) => e.stopPropagation()}>
         <div className="acc-header">
-          <span className="acc-title">Accounts</span>
-          {/* The count pill redesign 4a puts beside every panel title — it also
-              answers "did the new one land?" without counting rows. */}
+          <span className="acc-title">Providers &amp; accounts</span>
+          {/* The count pill beside every panel title — it also answers "did the
+              new one land?" without counting cards across two panes. */}
           <span className="acc-count">{accounts.length}</span>
           <span className="acc-header-spacer" />
-          <button
-            type="button"
-            className="acc-add"
-            disabled={login !== null}
-            onClick={() => setLogin({})}
-            title="Add an Anthropic account by signing in here"
-          >
-            <span className="acc-add-plus" aria-hidden="true">
-              +
-            </span>
-            Add account
-          </button>
         </div>
 
-        {login ? (
-          <AccountLoginView
-            accountId={login.accountId}
-            onLoginId={(id) => {
-              loginIdRef.current = id;
-            }}
-            onClose={closeLogin}
-            onDone={(account) => {
-              loginIdRef.current = null;
-              if (!alive.current) return;
-              setLogin(null);
-              setError(null);
-              // The registry itself arrives as the account.list that FR-13
-              // emits right after; all this does is point the cursor at the new
-              // row and flash it (design brief: success).
-              setFreshId(account.id);
-              window.setTimeout(() => alive.current && setFreshId(null), 1200);
+        {error && <div className="acc-error">{error.message}</div>}
+        {confirming && (
+          <RemoveAccountConfirm
+            account={confirming}
+            sessions={sessions}
+            onCancel={() => setConfirmId(null)}
+            onConfirm={() => doRemove(confirming)}
+          />
+        )}
+
+        <div className="acc-vault">
+          <ProviderRail
+            groups={groups}
+            selected={providerId}
+            onSelect={(id) => {
+              setProviderPref(id);
+              setCursorId(null);
             }}
           />
-        ) : (
-          <>
-            {error && <div className="acc-error">{error.message}</div>}
-            {confirming && (
-              <RemoveAccountConfirm
-                account={confirming}
-                sessions={sessions}
-                onCancel={() => setConfirmId(null)}
-                onConfirm={() => doRemove(confirming)}
-              />
-            )}
-            <div className="scz acc-body">
-              {accounts.map((account, i) => (
-                <AccountRow
-                  key={account.id}
-                  account={account}
-                  snapshot={usageByAccount[account.id]}
-                  sessionCount={sessionCounts[account.id] ?? 0}
-                  now={now}
-                  cursor={i === clampCursor(cursor, accounts.length)}
-                  fresh={account.id === freshId}
-                  renaming={renamingId === account.id}
-                  renameDraft={renameDraft}
-                  onRenameDraft={setRenameDraft}
-                  onRenameCommit={commitRename}
-                  onRenameCancel={cancelRename}
-                  onFocus={() => setCursor(i)}
-                  onSetDefault={() => setDefault(account)}
-                  onStartRename={() => startRename(account)}
-                  onRelogin={() => setLogin({ accountId: account.id })}
-                  onRemove={() => setConfirmId(account.id)}
+          <ProviderDetail
+            group={group}
+            usageByAccount={usageByAccount}
+            sessionNames={sessionNames}
+            now={now}
+            cursorId={selected?.id ?? null}
+            freshId={freshId}
+            renamingId={renamingId}
+            renameDraft={renameDraft}
+            busy={busy}
+            takeover={
+              login ? (
+                <AccountLoginView
+                  accountId={login.accountId}
+                  onLoginId={(id) => {
+                    loginIdRef.current = id;
+                  }}
+                  onClose={closeLogin}
+                  onDone={(account) => {
+                    loginIdRef.current = null;
+                    if (!alive.current) return;
+                    setLogin(null);
+                    setError(null);
+                    // The registry itself arrives as the account.list that FR-13
+                    // emits right after; all this does is point the rail and the
+                    // cursor at the new credential and flash it.
+                    setProviderPref(providerIdForAccount(account));
+                    setCursorId(account.id);
+                    flash(account.id);
+                  }}
                 />
-              ))}
-            </div>
-            {/* FR-36 — the isolation cost, stated once, in prose — over the
-                keyboard model this modal has always had and never named. */}
-            <div className="acc-footer">
-              <span className="acc-footer-note">{ACCOUNTS_ISOLATION_NOTE}</span>
-              <div className="acc-hints">
-                {ACCOUNTS_KEY_HINTS.map((h) => (
-                  <span key={h.key} className="acc-hint">
-                    <span className="acc-hint-key">{h.key}</span>
-                    {h.label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+              ) : undefined
+            }
+            form={
+              endpointForm ? (
+                <EndpointForm
+                  key={endpointForm.account?.id ?? `add:${endpointForm.baseUrl ?? ''}`}
+                  account={endpointForm.account}
+                  presetBaseUrl={endpointForm.baseUrl}
+                  presetLabel={endpointForm.label}
+                  onCancel={() => setEndpointForm(null)}
+                  onSaved={(fresh) => {
+                    const addedId = newlyAddedAccountId(accounts, fresh);
+                    setAccounts(fresh);
+                    setEndpointForm(null);
+                    setError(null);
+                    if (addedId) setCursorId(addedId);
+                    flash(addedId);
+                  }}
+                />
+              ) : codexForm ? (
+                <CodexForm
+                  onCancel={() => setCodexForm(false)}
+                  onSaved={() => {
+                    // Unlike EndpointForm this does not thread the fresh list
+                    // through: `account_add_codex` emits account.list, which this
+                    // modal already subscribes to.
+                    setCodexForm(false);
+                    setError(null);
+                  }}
+                />
+              ) : undefined
+            }
+            onRenameDraft={setRenameDraft}
+            onRenameCommit={commitRename}
+            onRenameCancel={cancelRename}
+            onFocusAccount={setCursorId}
+            onSetDefault={setDefault}
+            onStartRename={startRename}
+            onLogin={doLogin}
+            onRemove={(account) => setConfirmId(account.id)}
+            onEditEndpoint={(account) => setEndpointForm({ account })}
+            onAddLogin={addLogin}
+            onAddKey={addKey}
+          />
+        </div>
+
+        {/* The keyboard model this modal has always had and never named —
+            redesign's footer idiom, dim hints on one line. The isolation cost
+            moved INTO the pane, where it can be said per provider (FR-36's
+            single sentence was only ever true of Claude Code logins). */}
+        <div className="acc-footer">
+          <div className="acc-hints">
+            {ACCOUNTS_KEY_HINTS.map((h) => (
+              <span key={h.key} className="acc-hint">
+                <span className="acc-hint-key">{h.key}</span>
+                {h.label}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

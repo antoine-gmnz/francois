@@ -56,6 +56,7 @@ pub(crate) fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String
         .iter()
         .filter_map(|e| serde_json::from_value::<AccountRecord>(e.clone()).ok())
         .filter(|r| valid_account_id(&r.id))
+        .filter(account_record_invariant_holds)
         .collect();
     let default_id = doc
         .get("defaultAccountId")
@@ -63,6 +64,22 @@ pub(crate) fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String
         .filter(|s| !s.trim().is_empty())
         .map(String::from);
     (records, default_id)
+}
+
+/// multi-provider-endpoint FR-1: `endpoint` is present IFF `kind ==
+/// OpenAiCompatible` — a record violating that invariant (hand-edited JSON,
+/// or a kind flip that left the sidecar field behind) is dropped rather than
+/// repaired into a half-account.
+fn account_record_invariant_holds(r: &AccountRecord) -> bool {
+    let ok = matches!(r.kind, AccountKind::OpenAiCompatible) == r.endpoint.is_some();
+    if !ok {
+        eprintln!(
+            "accounts: dropping record {} on load — endpoint/kind mismatch \
+             (multi-provider-endpoint FR-1)",
+            r.id
+        );
+    }
+    ok
 }
 
 /// FR-4: exactly one account is `isDefault`. A persisted id that no longer
@@ -111,17 +128,36 @@ pub(crate) fn build_list(inner: &AccountInner) -> Vec<Account> {
         is_default: inner.default_account_id == DEFAULT_ACCOUNT_ID,
         created_at: 0,
         auth_failed_at: inner.auth_failed_at.get(DEFAULT_ACCOUNT_ID).copied(),
+        // multi-provider-seam FR-12: the built-in account is a Claude Code
+        // OAuth login, like every account today.
+        kind: AccountKind::ClaudeCodeOauth,
+        endpoint: None,
+        signed_in: None,
     }];
-    out.extend(inner.records.iter().map(|r| Account {
-        id: r.id.clone(),
-        label: r.label.clone(),
-        email: r.email.clone(),
-        organization: r.organization.clone(),
-        config_dir: Some(r.config_dir.clone()),
-        built_in: false,
-        is_default: inner.default_account_id == r.id,
-        created_at: r.created_at,
-        auth_failed_at: inner.auth_failed_at.get(&r.id).copied(),
+    out.extend(inner.records.iter().map(|r| {
+        Account {
+            id: r.id.clone(),
+            label: r.label.clone(),
+            email: r.email.clone(),
+            organization: r.organization.clone(),
+            config_dir: Some(r.config_dir.clone()),
+            built_in: false,
+            is_default: inner.default_account_id == r.id,
+            created_at: r.created_at,
+            auth_failed_at: inner.auth_failed_at.get(&r.id).copied(),
+            kind: r.kind,
+            // multi-provider-endpoint FR-1/FR-3: `hasKey` is derived live from the
+            // sidecar file's existence, never from anything persisted.
+            endpoint: r
+                .endpoint
+                .as_ref()
+                .map(|e| account_endpoint(e, &r.config_dir)),
+            // multi-provider-codex FR-20/FR-21a: derived live from `auth.json`,
+            // never persisted — a stored flag would go stale the moment the user
+            // ran `codex logout` in a terminal.
+            signed_in: (r.kind == AccountKind::CodexCli)
+                .then(|| crate::account::codex_auth_file_exists(&r.config_dir)),
+        }
     }));
     out
 }
@@ -461,7 +497,8 @@ mod tests {
         assert_eq!(
             built_in,
             json!({ "id": "default", "label": "Default", "configDir": null,
-                    "builtIn": true, "isDefault": true, "createdAt": 0 })
+                    "builtIn": true, "isDefault": true, "createdAt": 0,
+                    "kind": "claude-code-oauth" })
         );
 
         let added = serde_json::to_value(&list[1]).unwrap();
@@ -470,8 +507,21 @@ mod tests {
             json!({ "id": "a1", "label": "work", "email": "dev@acme.io",
                     "organization": "Acme", "configDir": "/tmp/accounts/a1",
                     "builtIn": false, "isDefault": false, "createdAt": 1_000,
-                    "authFailedAt": 4_242 })
+                    "authFailedAt": 4_242, "kind": "claude-code-oauth" })
         );
+    }
+
+    #[test]
+    fn a_persisted_record_without_a_kind_key_loads_as_claude_code_oauth() {
+        // multi-provider-seam FR-12.
+        let (records, _) = parse_registry(
+            json!({ "version": 1, "accounts": [
+                { "id": "a1", "label": "work", "configDir": "/x/a1", "createdAt": 1 }
+            ] })
+            .to_string()
+            .as_bytes(),
+        );
+        assert_eq!(records[0].kind, AccountKind::ClaudeCodeOauth);
     }
 
     #[test]

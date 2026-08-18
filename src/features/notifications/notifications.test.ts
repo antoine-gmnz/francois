@@ -9,7 +9,7 @@
 // re-imported `notifications` module under test.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionEvent, SessionMeta } from '../../../contract/common';
+import type { SessionEvent, SessionMeta, SessionStatus } from '../../../contract/common';
 import { NOTIFICATION_TITLE } from '../../../contract/notifications';
 import type { NotifyTrigger } from '../../../contract/notifications';
 import { shouldFire } from './notifications';
@@ -40,6 +40,27 @@ vi.mock('@tauri-apps/plugin-notification', () => ({
 }));
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/// A fully-populated SessionMeta, so a new required contract field fails this
+/// file loudly instead of slipping through a bypass cast (refactor-backlog
+/// `deferred:multi-provider-seam`). trigger.test.ts owns its own copy — the
+/// derivation cases moved there with audio-cues FR-1.
+const metaOf = (id: string, s: SessionStatus, name = 'x'): SessionMeta => ({
+  id,
+  name,
+  cwd: '/repo',
+  model: { id: 'm', label: 'M' },
+  status: s,
+  contextUsedTokens: 0,
+  contextLimitTokens: 0,
+  startedAt: 0,
+  lastActivityAt: 0,
+  permissionMode: 'default',
+  runtime: 'native',
+  accountId: 'default',
+  agentRuntime: 'claude-code',
+  protocol: 'anthropic',
+});
 
 describe('shouldFire (FR-7/FR-8)', () => {
   const approval: NotifyTrigger = { class: 'attention', kind: 'approval', sessionId: 's1', toolName: 'Bash' };
@@ -151,7 +172,7 @@ describe('initNotifications runtime wiring', () => {
   it('fires a granted notification with title/body/extra for an attention trigger', async () => {
     notifications.initNotifications();
     await tick();
-    store.useStore.setState({ sessions: [{ id: 's1', name: 'api-refactor' } as unknown as SessionMeta] });
+    store.useStore.setState({ sessions: [metaOf('s1', 'idle', 'api-refactor')] });
     sessionHandler?.({ payload: { type: 'question.asked', sessionId: 's1', blockId: 'b1', questions: [] } });
     await tick();
 
@@ -264,7 +285,7 @@ describe('initNotifications runtime wiring', () => {
     notifications.initNotifications();
     await tick();
     store.useStore.setState({
-      sessions: [{ id: 's9', name: 's9' } as unknown as SessionMeta],
+      sessions: [metaOf('s9', 'idle', 's9')],
       activeSessionId: null,
       mainTab: 'diff',
       focusedPane: 'agents',
@@ -281,7 +302,7 @@ describe('initNotifications runtime wiring', () => {
   it('FR-13: clicking without extra falls back to lastNotifiedSessionId', async () => {
     notifications.initNotifications();
     await tick();
-    store.useStore.setState({ sessions: [{ id: 's7', name: 's7' } as unknown as SessionMeta], activeSessionId: null });
+    store.useStore.setState({ sessions: [metaOf('s7', 'idle', 's7')], activeSessionId: null });
     sessionHandler?.({ payload: { type: 'question.asked', sessionId: 's7', blockId: 'b1', questions: [] } });
     await tick();
 

@@ -349,6 +349,9 @@ export function defaultFieldDefs(
           {
             key: 'accountId',
             label: 'account',
+            // multi-provider-openai FR-22: every account, endpoint included, is
+            // a plain option — multi-provider-endpoint FR-14's disabled block
+            // is deleted, not just relaxed.
             options: [INHERIT, ...accounts.map((a) => ({ value: a.id, label: a.label }))],
           },
         ]

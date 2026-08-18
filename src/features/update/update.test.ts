@@ -54,6 +54,8 @@ const session = (id: string, status: SessionMeta['status']): SessionMeta => ({
   permissionMode: 'default',
   runtime: 'native',
   accountId: 'default',
+  agentRuntime: 'claude-code',
+  protocol: 'anthropic',
 });
 
 /** Flush the microtask queue so promise chains inside the actions settle. */

@@ -1,11 +1,21 @@
 import { useState } from 'react';
 import type { RefObject } from 'react';
 import type { AppError, SkillInfo } from '../../../contract/common';
+import type { CapabilityState } from '../../../contract/multi-provider-seam';
+import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { ListRow } from '../../ui/ListRow';
 
 const scopeTag: Record<string, string> = { project: 'proj', user: 'user', plugin: 'plugin' };
 
 export interface SkillsListBodyProps {
+  /** multi-provider-openai FR-20: skills' capability state for this session. */
+  capability: CapabilityState;
+  /** multi-provider-openai FR-26: a SEPARATE capability from `capability` —
+   *  `skills` can be available (the installed set is visible, injected into
+   *  the model's system message) while `skillsInstall` stays a gap, because
+   *  enabling a plugin writes Claude Code's own control surface. Gates the
+   *  `enable` affordance on each uninstalled row. */
+  installCapability: CapabilityState;
   filterOpen: boolean;
   query: string;
   filterRef: RefObject<HTMLInputElement>;
@@ -21,6 +31,8 @@ export interface SkillsListBodyProps {
 /** Pane [5]'s scrollable skill/command list: the "/" filter row, its
  *  error/loading/empty states, and the row list itself. */
 export function SkillsListBody({
+  capability,
+  installCapability,
   filterOpen,
   query,
   filterRef,
@@ -48,7 +60,9 @@ export function SkillsListBody({
         </div>
       )}
 
-      {status === 'error' ? (
+      {!capability.available ? (
+        <CapabilityNotice reason={capability.reason ?? ''} />
+      ) : status === 'error' ? (
         <div className="skills-error-row">
           <span className="skills-error-icon">⚠</span>
           <span className="skills-error-msg">{listError?.message ?? 'failed to load skills'} · ⏎ retry</span>
@@ -60,14 +74,32 @@ export function SkillsListBody({
       ) : (
         visible.map((skill, i) => {
           const sel = i === selected;
-          return <Row key={skill.name} skill={skill} selected={sel} onClick={() => onRowClick(i, skill)} />;
+          return (
+            <Row
+              key={skill.name}
+              skill={skill}
+              selected={sel}
+              installCapability={installCapability}
+              onClick={() => onRowClick(i, skill)}
+            />
+          );
         })
       )}
     </div>
   );
 }
 
-function Row({ skill, selected, onClick }: { skill: SkillInfo; selected: boolean; onClick: () => void }) {
+function Row({
+  skill,
+  selected,
+  installCapability,
+  onClick,
+}: {
+  skill: SkillInfo;
+  selected: boolean;
+  installCapability: CapabilityState;
+  onClick: () => void;
+}) {
   const [hover, setHover] = useState(false);
   return (
     <ListRow
@@ -95,7 +127,15 @@ function Row({ skill, selected, onClick }: { skill: SkillInfo; selected: boolean
       <div className="skills-row-tags">
         {skill.kind === 'command' && <span className="skills-tag skills-tag--cmd">cmd</span>}
         {skill.scope && <span className="skills-tag">{scopeTag[skill.scope] ?? skill.scope}</span>}
-        {!skill.installed && <span className="skills-row-enable">enable</span>}
+        {!skill.installed && installCapability.available && <span className="skills-row-enable">enable</span>}
+        {!skill.installed && !installCapability.available && (
+          <span
+            className="skills-row-enable skills-row-enable--disabled"
+            title={installCapability.reason}
+          >
+            enable
+          </span>
+        )}
       </div>
     </ListRow>
   );

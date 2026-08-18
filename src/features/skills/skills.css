@@ -134,6 +134,13 @@
   letter-spacing: 0.04em;
   color: var(--accent);
 }
+/* multi-provider-openai FR-26: install is gated off for this session's
+   runtime — dim the affordance and drop the "clickable" color; the reason
+   rides on `title`, same pattern as CapabilityNotice. */
+.skills-row-enable--disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
 
 /* Outline scope/kind tag — no shared OutlineTag primitive on purpose (see
    REFACTOR-CONVENTIONS.md "Known gaps"); this replaces the local

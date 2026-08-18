@@ -25,6 +25,10 @@ serde = { version = "1", features = ["derive"] }
 # breaks that promise. Also stabilizes sessions.json and the transcript writes.
 serde_json = { version = "1", features = ["preserve_order"] }
 portable-pty = "0.8"
+# multi-provider-openai FR-14: the Francois agent loop's `Grep` tool carries
+# Claude Code's own tool name, so it must accept the regex syntax Claude
+# Code's Grep accepts rather than only literal substrings.
+regex = "1"
 dirs = "5"
 uuid = { version = "1", features = ["v4"] }
 ureq = { version = "2", features = ["json"] }

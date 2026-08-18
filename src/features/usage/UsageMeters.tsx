@@ -15,6 +15,7 @@
 
 import { useEffect, useState } from 'react';
 import { focusedSessionId } from '../../lib/layoutStore';
+import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { accountDisplayLabel, findAccount, usageAccountId } from '../accounts/accounts';
 import { EMPTY_USAGE } from '../../lib/usageStore';
@@ -47,6 +48,9 @@ export default function UsageMeters() {
   const activeSessionId = useStore((s) => focusedSessionId(s));
   const split = useStore((s) => s.extraPanes.length > 0);
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+  // multi-provider-openai FR-20 design brief §2: the focused session's own
+  // usageBar capability — replaces the meters with the reason at dim, same height.
+  const usageCapability = sessionCapability(activeSession, 'usageBar');
 
   // multi-account FR-30: the bar renders the SELECTED session's account —
   // derived, never stored, so it can never drift from the session cache.
@@ -76,6 +80,19 @@ export default function UsageMeters() {
   const view = usageBarView(snapshot, now, accountLabel ?? undefined);
   const fullError = view.error && !view.error.compact ? view.error : null;
   const refresh = () => requestUsageRefresh(accountId);
+
+  if (!usageCapability.available) {
+    // multi-provider-openai FR-20 design brief §2: same height, no refresh
+    // affordance (there is nothing to probe), no layout shift on focus change.
+    return (
+      <div onMouseDown={(e) => e.preventDefault()} className="usage-meters">
+        {split && activeSession && <span className="usage-focused-label truncate">focused · {activeSession.name}</span>}
+        <span title={usageCapability.reason} className="usage-unavailable">
+          {usageCapability.reason}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div

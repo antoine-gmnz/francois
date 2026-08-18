@@ -64,7 +64,7 @@ pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str
     );
     // multi-account FR-21: the side-probe reports THIS session's account's usage,
     // so it spawns under that account's config dir.
-    let account_config_dir = crate::account::config_dir_of(app, &account_id);
+    let account_config_dir = crate::account::claude_config_dir_of(app, &account_id);
     let app = app.clone();
     let sid = session_id.to_string();
     let command = command.to_string();

@@ -22,6 +22,8 @@ import {
 } from './message-history';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { composerPlaceholder, hasPendingQuestionBlock } from '../questions/question-card';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
+import { sessionCapability } from '../../lib/runtimeCapability';
 import {
   completionText,
   filterCommands,
@@ -32,7 +34,6 @@ import {
   refreshSelection,
   slashToken,
 } from '../commands/slash-menu';
-import { useStore } from '../../lib/store';
 import './conversation.css';
 import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
 import WorktreeNotice from './WorktreeNotice';
@@ -64,7 +65,7 @@ export interface ConversationViewProps {
 }
 
 export default function ConversationView({ sessionId, inert = false, onFocusRequest, inertFooter }: ConversationViewProps) {
-  const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId) ?? null);
+  const meta = useSessionMeta(sessionId);
   const {
     state,
     dispatch,
@@ -160,7 +161,15 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
 
   const token = slashToken(input);
   const filtered = useMemo(() => filterCommands(commands, token ?? ''), [commands, token]);
-  const popupOpen = popupVisible({ token, matchCount: filtered.length, dismissedToken, disabled });
+  // multi-provider-openai FR-20: interactiveCommands' capability for this session.
+  const interactiveCommandsCapability = sessionCapability(meta, 'interactiveCommands');
+  const popupOpen = popupVisible({
+    token,
+    matchCount: filtered.length,
+    dismissedToken,
+    disabled,
+    available: interactiveCommandsCapability.available,
+  });
 
   // FR-9: dismissal holds only while the token stays the dismissed one.
   useEffect(() => {
@@ -440,6 +449,7 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
         onHover={setSelIdx}
         onRun={runCommand}
         onDismiss={dismissPopup}
+        popupUnavailableReason={interactiveCommandsCapability.available ? null : (interactiveCommandsCapability.reason ?? null)}
       />
       )}
     </div>

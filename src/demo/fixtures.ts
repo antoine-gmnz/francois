@@ -76,6 +76,7 @@ export const ACCOUNTS: Account[] = [
     builtIn: true,
     isDefault: true,
     createdAt: 0,
+    kind: 'claude-code-oauth',
   },
   {
     id: 'acct-work',
@@ -86,6 +87,19 @@ export const ACCOUNTS: Account[] = [
     builtIn: false,
     isDefault: false,
     createdAt: T0 - (60 * 24 * 40) * MIN,
+    kind: 'claude-code-oauth',
+  },
+  // multi-provider-endpoint FR-13: a demo row so the kind chip and base-URL
+  // line are visible in the demo fleet — fully selectable per FR-22.
+  {
+    id: 'acct-openai',
+    label: 'OpenAI',
+    configDir: '~/.francois/accounts/acct-openai',
+    builtIn: false,
+    isDefault: false,
+    createdAt: T0 - (60 * 24 * 10) * MIN,
+    kind: 'openai-compatible',
+    endpoint: { baseUrl: 'https://api.openai.com/v1', hasKey: true },
   },
 ];
 
@@ -148,6 +162,8 @@ const BASE: Omit<SessionMeta, 'id' | 'name' | 'cwd'> = {
   permissionMode: 'acceptEdits',
   runtime: 'native',
   accountId: 'acct-work',
+  agentRuntime: 'claude-code',
+  protocol: 'anthropic',
 };
 
 export const SESSIONS: SessionMeta[] = [

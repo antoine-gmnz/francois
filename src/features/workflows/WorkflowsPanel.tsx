@@ -10,7 +10,10 @@
 import { useEffect, useState } from 'react';
 import type { WorkflowRun } from '../../../contract/common';
 import { formatElapsed } from '../../../contract/conversation-view';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
+import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
+import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { PanelHeader } from '../../ui/PanelHeader';
 import { StatusDot } from '../../ui/StatusDot';
 import { useWorkflowsFeed } from './useWorkflowsFeed';
@@ -43,6 +46,10 @@ export default function WorkflowsPanel({ sessionId }: { sessionId: string | null
     sessionId,
     syncAgentTab,
   );
+
+  // multi-provider-openai FR-20: workflows' capability for this session's runtime.
+  const meta = useSessionMeta(sessionId);
+  const capability = sessionCapability(meta, 'workflows');
 
   const [clockNow, setClockNow] = useState(() => Date.now());
 
@@ -90,7 +97,9 @@ export default function WorkflowsPanel({ sessionId }: { sessionId: string | null
       <PanelHeader title="WORKFLOWS" count={runs.size} paneKey={6} focused={focused} />
 
       <div className="scz workflows-body">
-        {listError ? (
+        {!capability.available ? (
+          <CapabilityNotice reason={capability.reason ?? ''} />
+        ) : listError ? (
           <div className="workflows-error-text">{listError.message}</div>
         ) : loading ? null : list.length === 0 ? (
           <div className="workflows-empty">{EMPTY_LABEL}</div>

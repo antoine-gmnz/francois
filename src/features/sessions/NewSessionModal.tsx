@@ -10,7 +10,7 @@ import { Button } from '../../ui/Button';
 import { Chip } from '../../ui/Chip';
 import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
-import { accountIdForSessionCreate } from '../accounts/accounts';
+import { accountIdForSessionCreate, modelPickerProviderHeading } from '../accounts/accounts';
 import { AccountField } from './AccountField';
 import { ProfileField } from './ProfileField';
 import { ProjectField } from './ProjectField';
@@ -84,7 +84,17 @@ export default function NewSessionModal({
   // nothing (this is exactly what swallowed the project list).
   const openRef = useMounted();
 
-  const { models, modelsLoading, modelId, setModelId } = useModelCatalog();
+  // multi-account: hydrated app-wide by App.tsx's account feed — the modal
+  // never reads the registry itself.
+  const accounts = useStore((s) => s.accounts);
+
+  // multi-provider-openai FR-18/FR-21: the catalog is keyed on the selected
+  // account, not a session (there is none yet) — switching accounts here
+  // refetches and repopulates it with that account's own models.
+  const { models, modelsLoading, modelId, setModelId } = useModelCatalog(accountId);
+  // FR-21: the picker's neutral group heading — the selected account's own
+  // label, never `agentRuntime`/`protocol` (see modelPickerProviderHeading).
+  const providerHeading = modelPickerProviderHeading(accounts, accountId);
 
   // projects FR-30: opening the modal while the board is scoped to a project
   // starts in that project — "inside a project, a new session belongs to it".
@@ -94,9 +104,6 @@ export default function NewSessionModal({
   const project = projects.find((p) => p.id === projectId) ?? null;
   const projectRootMissing = project !== null && !project.rootExists;
 
-  // multi-account: hydrated app-wide by App.tsx's account feed — the modal
-  // never reads the registry itself.
-  const accounts = useStore((s) => s.accounts);
   // session-profiles: hydrated app-wide by App.tsx at boot — same pattern.
   const profiles = useStore((s) => s.profiles);
 
@@ -319,7 +326,13 @@ export default function NewSessionModal({
           }}
         />
 
-        <ModelField models={models} modelId={modelId} loading={modelsLoading} onChange={setModelId} />
+        <ModelField
+          models={models}
+          modelId={modelId}
+          loading={modelsLoading}
+          onChange={setModelId}
+          providerHeading={providerHeading}
+        />
 
         {/* multi-account FR-31: directly after MODEL, joining the tab order there */}
         <AccountField

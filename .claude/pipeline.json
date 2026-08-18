@@ -1,6 +1,6 @@
 {
   "pipeline": "cohorte",
   "mode": "global",
-  "core_version": "2.0.1",
+  "core_version": "2.4.0",
   "install": "npx cohorte install --global (without npm: curl -fsSL https://raw.githubusercontent.com/TheBidouilleAgency/cohorte/main/install.sh | sh -s -- --global)"
 }

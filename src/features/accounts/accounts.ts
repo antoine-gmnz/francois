@@ -11,8 +11,15 @@
 // session's accountId (§6) — never stored separately, so it can never drift.
 
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { AccountId, AppError, SessionId, SessionMeta } from '../../../contract/common';
-import type { Account } from '../../../contract/multi-account';
+import type { AccountId, AgentRuntime, AppError, SessionId, SessionMeta } from '../../../contract/common';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
+import type {
+  Account,
+  AccountAddEndpointPayload,
+  AccountTestEndpointPayload,
+  AccountUpdateEndpointPayload,
+  EndpointProbe,
+} from '../../../contract/multi-account';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 import { accountList, onAccountEvent } from '../../lib/api';
@@ -146,6 +153,21 @@ export function accountIdForSessionCreate(accountId: AccountId): AccountId {
 }
 
 /**
+ * multi-provider-openai FR-21: the model picker's neutral group heading —
+ * the SELECTED account's own label, sourced here (not from `agentRuntime`/
+ * `protocol`, which FR-20's grep gate forbids any component from branching
+ * on). "Provider is metadata, not identity" (design brief §Rule 1): this is
+ * deliberately the account's label, not a vendor name — a GPT session and a
+ * Claude session read as the same kind of object, just under a different
+ * account. Empty before the registry hydrates (or for an id it never knew),
+ * so the picker simply renders no heading yet rather than a fabricated one.
+ */
+export function modelPickerProviderHeading(accounts: Account[], accountId: AccountId): string {
+  const account = findAccount(accounts, accountId);
+  return account ? accountDisplayLabel(account) : '';
+}
+
+/**
  * FR-30: which account's snapshot the usage bar renders and the status-bar chip
  * names — the SELECTED session's, or the isDefault account with no session
  * selected. An accountId that no longer resolves reads as the default (FR-10).
@@ -195,28 +217,6 @@ export function accountBadgeText(account: Account): string {
   return label.slice(0, 2).toUpperCase();
 }
 
-/** Redesign-4a visual reference: the colored initial tile on each account row. */
-export function accountAvatarLetter(account: Account): string {
-  return accountDisplayLabel(account).slice(0, 1).toUpperCase();
-}
-
-/**
- * A deterministic hue token per account, so a row's tile never shifts colour.
- * `--accent` is deliberately NOT in the ramp: design system v2 gives the acid
- * to the ONE live thing per view, and three accounts sitting in a list are not
- * that. An account that needs re-login takes the red family instead of its own
- * hue — redesign 4a paints the troubled account's tile in the error family, so
- * the row reads as wrong from the tile alone, not just from the pill.
- */
-const AVATAR_HUES = ['--hue-blue', '--hue-teal', '--hue-purple', '--hue-slate'] as const;
-
-export function accountAvatarHue(account: Account): string {
-  if (accountNeedsLogin(account)) return 'var(--error)';
-  let sum = 0;
-  for (let i = 0; i < account.id.length; i++) sum = (sum + account.id.charCodeAt(i)) % 9973;
-  return `var(${AVATAR_HUES[sum % AVATAR_HUES.length]})`;
-}
-
 /**
  * How many sessions each account is currently carrying, keyed by account id.
  * A session whose `accountId` no longer resolves counts toward the isDefault
@@ -231,19 +231,6 @@ export function accountSessionCounts(accounts: Account[], sessions: SessionMeta[
     if (counts[id] !== undefined) counts[id] += 1;
   }
   return counts;
-}
-
-/**
- * Redesign 4a: the dim second line under an account's name — `email · N
- * sessions`, either half optional. Null when there is nothing to say, so the
- * row collapses to one line rather than reserving a blank one.
- */
-export function accountMetaLine(account: Account, sessionCount: number): string | null {
-  const parts: string[] = [];
-  const email = accountSecondaryEmail(account);
-  if (email) parts.push(email);
-  if (sessionCount > 0) parts.push(`${sessionCount} session${sessionCount === 1 ? '' : 's'}`);
-  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 export interface AccountBadge {
@@ -290,7 +277,88 @@ export interface AccountOption {
   needsLogin: boolean;
 }
 
-/** FR-31: every account, in core order (FR-2 puts the built-in first). */
+/** multi-provider-endpoint FR-1: an 'openai-compatible' account, not (yet) a claude-code-oauth one. */
+export function accountIsEndpoint(account: Account): boolean {
+  return account.kind === 'openai-compatible';
+}
+
+/** multi-provider-codex FR-24: a 'codex-cli' account. */
+export function accountIsCodex(account: Account): boolean {
+  return account.kind === 'codex-cli';
+}
+
+/**
+ * Does a plan-limit probe make sense for this account?
+ *
+ * Derived from the capability table via the account's own runtime, so it is the
+ * SAME source of truth the disabled usage bar reads — rather than a hand-kept
+ * list of kinds to exclude. That distinction is not cosmetic: the previous
+ * `!accountIsEndpoint(a)` negation silently admitted `codex-cli` the day that
+ * kind was added, and the probe spawns `claude` pointed at the account's config
+ * dir, which `claude` then initializes as its own.
+ */
+export function accountUsageProbeable(account: Account): boolean {
+  return runtimeCapabilities(accountRuntime(account)).usageBar.available;
+}
+
+/**
+ * The `AgentRuntime` an account's sessions run on — the frontend mirror of the
+ * core's `AgentRuntime::from_account_kind` (multi-provider-seam FR-13a).
+ *
+ * The one place in `src/` allowed to map a kind to a runtime, for the same
+ * reason `runtimeCapability.ts` is the one place allowed to read the table: FR-23
+ * forbids components branching on the runtime, not helpers deriving it. Total
+ * over `AccountKind`, so a fourth kind fails to typecheck here.
+ */
+function accountRuntime(account: Account): AgentRuntime {
+  switch (account.kind) {
+    case 'claude-code-oauth':
+      return 'claude-code';
+    case 'openai-compatible':
+      return 'francois';
+    case 'codex-cli':
+      return 'codex';
+  }
+}
+
+/**
+ * multi-provider-codex FR-25: does this row's action say *Sign in* (never
+ * authenticated) rather than *Re-login* (was, isn't now)?
+ *
+ * Only ever true for a Codex row: `signedIn` is the one field that can say
+ * "no credential yet" BEFORE a turn has failed, and it is present iff the kind
+ * is 'codex-cli' (FR-21a). Claude rows keep answering this through
+ * `accountNeedsLogin`, which reads `authFailedAt`.
+ */
+export function codexNeedsFirstLogin(account: Account): boolean {
+  return accountIsCodex(account) && account.signedIn === false;
+}
+
+/**
+ * FR-25: the label on a Codex row's login action. `Sign in` before there is any
+ * credential, `Re-login` once there was one — the same two words the Claude
+ * rows use, chosen off `signedIn` rather than off a failure flag.
+ */
+export function codexLoginActionLabel(account: Account): string {
+  return codexNeedsFirstLogin(account) ? 'Sign in' : 'Re-login';
+}
+
+/** FR-24: Save is disabled until the label has non-whitespace content. */
+export function codexSaveDisabled(label: string, busy: boolean): boolean {
+  return busy || label.trim() === '';
+}
+
+/** FR-24: the `account_add_codex` payload — label only, trimmed. */
+export function codexAddPayload(label: string): { label: string } {
+  return { label: label.trim() };
+}
+
+/**
+ * FR-31: every account, in core order (FR-2 puts the built-in first).
+ * multi-provider-openai FR-22: an endpoint row is fully selectable now — the
+ * `disabled`/`disabledReason` block multi-provider-endpoint FR-14 shipped is
+ * deleted, not just relaxed.
+ */
 export function accountFieldOptions(accounts: Account[]): AccountOption[] {
   return accounts.map((a) => ({
     value: a.id,
@@ -338,19 +406,31 @@ export function accountMetersView(snapshot: UsageSnapshot | undefined, now?: num
 
 // ------------------------------------------------------------- modal copy
 
-/** FR-36 — the one line of prose the modal carries, stated exactly once. */
-export const ACCOUNTS_ISOLATION_NOTE =
-  'Each added account keeps its own Claude Code configuration: settings, skills, agents and MCP servers are not shared.';
+// FR-36's isolation note used to live here as one global sentence — "Each added
+// account keeps its own Claude Code configuration". Redesign 8b retires it: the
+// sentence stopped being true the moment an account could be a Codex login or a
+// bare API key, so the note is now derived PER PROVIDER by
+// `providerIsolationNote` in providers.ts and printed in that provider's pane.
+
+// `accountAvatarLetter`/`accountAvatarHue`/`accountMetaLine`/`endpointBaseUrlLine`
+// used to feed the flat account row's tile and second line. Redesign 8b's
+// CredentialCard replaced that row outright, with its own layout for identity
+// and the base-URL line — so these derivations went with it.
 
 /**
  * §3's keyboard model, said out loud. The modal has always been fully
  * keyboard-driven and has never named a single key on screen, so every shortcut
- * had to be guessed; redesign 4a's footer idiom (quiet actions left, dim hint
- * right) is where they belong. Key first, verb after — the same order the
- * shell's own hint bars use.
+ * had to be guessed; the redesign's footer idiom (dim hints on one line) is
+ * where they belong. Key first, verb after — the same order the shell's own
+ * hint bars use.
+ *
+ * `←→ provider` is redesign 8b's second axis: the vault has two lists on
+ * screen, and a keyboard model that could only walk one of them would leave the
+ * rail reachable by mouse alone.
  */
 export const ACCOUNTS_KEY_HINTS: ReadonlyArray<{ key: string; label: string }> = [
   { key: '↑↓', label: 'move' },
+  { key: '←→', label: 'provider' },
   { key: '⏎', label: 'default' },
   { key: 'r', label: 'rename' },
   { key: 'del', label: 'remove' },
@@ -426,4 +506,165 @@ export function moveCursor(cursor: number, delta: number, length: number): numbe
 export function clampCursor(cursor: number, length: number): number {
   if (length <= 0) return 0;
   return Math.min(length - 1, Math.max(0, cursor));
+}
+
+// ------------------------------------------------------ endpoint accounts
+// multi-provider-endpoint FR-13..FR-16 — the Accounts modal's endpoint row
+// extras (kind chip, base URL line — the not-yet note FR-14 shipped is
+// deleted by multi-provider-openai FR-22) and the EndpointForm's pure logic
+// (payload construction, probe/error copy, Save-disabled). The key itself
+// never appears here: only `hasKey` crosses the boundary (FR-3), and the
+// drafted key lives in the form component's own state, never a store.
+
+/** Keeps both ends of a long value readable instead of clipping the tail. */
+export function middleTruncate(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const keep = max - 1; // room for the ellipsis character
+  const head = Math.ceil(keep / 2);
+  const tail = Math.floor(keep / 2);
+  return `${value.slice(0, head)}…${value.slice(value.length - tail)}`;
+}
+
+/** FR-15: the key field's placeholder — never a hint of the real key. */
+export function endpointKeyPlaceholder(hasKey: boolean): string {
+  return hasKey ? '•••••••• stored' : 'sk-…';
+}
+
+/** Splits the Models field, trimming each id and dropping blanks (stray commas). */
+export function parseModelIdsList(text: string): string[] {
+  return text
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+}
+
+/** FR-6: an empty Models field omits the field — the core discovers from /models. */
+export function modelIdsForAdd(text: string): string[] | undefined {
+  const ids = parseModelIdsList(text);
+  return ids.length > 0 ? ids : undefined;
+}
+
+/** FR-7: an empty Models field on an EDIT form clears the override (null), not a no-op. */
+export function modelIdsForUpdate(text: string): string[] | null {
+  const ids = parseModelIdsList(text);
+  return ids.length > 0 ? ids : null;
+}
+
+/** The inverse of modelIdsForAdd/Update — what the form's Models field shows on open. */
+export function formatModelIds(modelIds: string[] | undefined): string {
+  return modelIds ? modelIds.join(', ') : '';
+}
+
+/** Design brief §2 "Empty / adding": Save stays disabled until both are filled, or while busy. */
+export function endpointSaveDisabled(label: string, baseUrl: string, busy: boolean): boolean {
+  return busy || label.trim() === '' || baseUrl.trim() === '';
+}
+
+/**
+ * Design brief §2 "Validation error" — the offending field takes the error
+ * border. `INVALID_INPUT` is FR-4's Base-URL rule, and per FR-8 the contract
+ * `account_test_endpoint` can return that same code (round-2 review MEDIUM) —
+ * so the border must fire on either the Save error or the Test probe's error,
+ * not Save alone.
+ */
+export function endpointBaseUrlHasError(saveError: AppError | null, probeError: AppError | null): boolean {
+  return saveError?.code === 'INVALID_INPUT' || probeError?.code === 'INVALID_INPUT';
+}
+
+/** Design brief §2 "Test OK" — zero models is still success, never an error. */
+export function endpointProbeSuccessLine(probe: EndpointProbe): string {
+  return `reachable · ${probe.modelCount} model${probe.modelCount === 1 ? '' : 's'}`;
+}
+
+/**
+ * A 3-digit HTTP status embedded in the core's UNREACHABLE message (FR-8's
+ * "status in the message"). Anchored to the ONE core-guaranteed phrase that
+ * actually carries a status — `format!("the endpoint returned HTTP {code}")`
+ * in src-tauri/src/account/endpoint.rs::probe — rather than a bare
+ * word-boundary scan: the other UNREACHABLE messages (connect refused, DNS,
+ * timeout, transport errors) are free text that can embed an unrelated
+ * 3-digit token (a port, a millisecond count, an attempt counter) which a
+ * bare scan would misreport as a successful-looking status.
+ */
+const STATUS_IN_MESSAGE = /\breturned HTTP ([1-5]\d{2})\b/;
+
+/** Design brief §2 "Test failed" / "Validation error" — one sentence, no stack, no URL echo. */
+export function endpointErrorLine(error: AppError): string {
+  switch (error.code) {
+    case 'ACCOUNT_ENDPOINT_UNAUTHORIZED':
+      return "the endpoint rejected that key";
+    case 'ACCOUNT_ENDPOINT_UNREACHABLE': {
+      const m = error.message.match(STATUS_IN_MESSAGE);
+      return m ? `endpoint answered ${m[1]}` : "couldn't reach that URL";
+    }
+    default:
+      // INVALID_INPUT (and everything else) — the core's message IS the rule.
+      return error.message.trim() === '' ? 'could not save' : error.message;
+  }
+}
+
+/**
+ * FR-9: the probe is stateless and takes unsaved form values. An untouched
+ * key field on an edit form sends `accountId` instead — the core probes with
+ * that account's STORED key, never re-asking for it.
+ */
+export function endpointTestPayload(
+  baseUrl: string,
+  apiKeyDraft: string,
+  accountId: AccountId | undefined,
+): AccountTestEndpointPayload {
+  const apiKey = apiKeyDraft.trim();
+  if (apiKey !== '') return { baseUrl, apiKey };
+  return accountId ? { baseUrl, accountId } : { baseUrl };
+}
+
+/** FR-6: builds account_add_endpoint's payload from the form's draft fields. */
+export function endpointAddPayload(
+  label: string,
+  baseUrl: string,
+  apiKeyDraft: string,
+  modelsDraft: string,
+): AccountAddEndpointPayload {
+  const apiKey = apiKeyDraft.trim();
+  return {
+    label: label.trim(),
+    baseUrl: baseUrl.trim(),
+    apiKey: apiKey !== '' ? apiKey : undefined,
+    modelIds: modelIdsForAdd(modelsDraft),
+  };
+}
+
+/**
+ * FR-7: builds account_update_endpoint's payload. `clearKey` and `apiKey` are
+ * mutually exclusive BY CONSTRUCTION — the form clears one the moment the
+ * other is touched (EndpointForm), so this never has to choose between them.
+ */
+export function endpointUpdatePayload(
+  accountId: AccountId,
+  label: string,
+  baseUrl: string,
+  apiKeyDraft: string,
+  clearKey: boolean,
+  modelsDraft: string,
+): AccountUpdateEndpointPayload {
+  const apiKey = apiKeyDraft.trim();
+  return {
+    accountId,
+    label: label.trim(),
+    baseUrl: baseUrl.trim(),
+    apiKey: !clearKey && apiKey !== '' ? apiKey : undefined,
+    clearKey: clearKey ? true : undefined,
+    modelIds: modelIdsForUpdate(modelsDraft),
+  };
+}
+
+/**
+ * Design brief §1 "Default account" flash parity: which id in `after` was not
+ * in `before` — what a just-saved endpoint row is, so the modal can flash it
+ * the same way a fresh login does. Null when nothing was added (an edit, or a
+ * removal).
+ */
+export function newlyAddedAccountId(before: Account[], after: Account[]): AccountId | null {
+  const beforeIds = new Set(before.map((a) => a.id));
+  return after.find((a) => !beforeIds.has(a.id))?.id ?? null;
 }

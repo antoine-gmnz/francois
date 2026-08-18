@@ -15,6 +15,7 @@
 //    auth failure surfaces on the first `send` as a turn error (session.error),
 //    matching FR-19's lazy-error path rather than failing `create`.
 
+mod adapter;
 mod agent_transcript;
 mod agents;
 mod attachments;
@@ -25,6 +26,7 @@ mod blocks;
 mod cloud;
 mod commands;
 mod control;
+mod env;
 mod events;
 mod interactive;
 mod mcp;
@@ -50,6 +52,7 @@ mod workflow_watch;
 mod workflows;
 mod worktree;
 
+pub(crate) use adapter::*;
 pub(crate) use agent_transcript::*;
 pub(crate) use agents::*;
 pub(crate) use attachments::*;
@@ -61,6 +64,7 @@ pub(crate) use blocks::*;
 pub(crate) use cloud::*;
 pub(crate) use commands::*;
 pub(crate) use control::*;
+pub(crate) use env::*;
 pub(crate) use events::*;
 pub(crate) use interactive::*;
 pub(crate) use mcp::*;
@@ -85,10 +89,6 @@ pub(crate) use worktree::*;
 #[cfg(test)]
 mod testutil;
 
-// permission-guardrails: the settings.json / rule-pattern half of the feature
-// lives in permissions.rs; this file owns only the control-channel wiring
-// (parking an ask, writing the control_response) — spec §6.
-use crate::permissions::PermissionAsk;
 // session-profiles §6: the snapshot-at-creation profile identity SessionMeta
 // carries (FR-16) — defined in the `profiles` domain, the same cross-domain
 // pattern `project::SessionSeed` follows.
@@ -101,8 +101,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::Child;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
@@ -165,6 +164,16 @@ pub(crate) struct SessionMeta {
     /// pre-feature frontend reads an ordinary session.
     #[serde(skip_serializing_if = "Option::is_none")]
     cloud: Option<CloudProvenance>,
+    /// multi-provider-seam FR-11a: who owns this session's agent loop.
+    /// DERIVED from the session's account kind at creation and never
+    /// re-derived. Required on the wire (never omitted): a persisted record
+    /// without it loads as `AgentRuntime::ClaudeCode` (`AgentRuntime`'s
+    /// `Default`).
+    #[serde(rename = "agentRuntime")]
+    agent_runtime: AgentRuntime,
+    /// multi-provider-seam FR-11a: the wire dialect this session's endpoint
+    /// speaks. Same derivation/persistence discipline as `agent_runtime`.
+    protocol: ProviderProtocol,
     /// session-profiles FR-16: present ⇔ created from a profile; snapshot-only.
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<SessionProfileRef>,
@@ -320,7 +329,12 @@ pub(crate) struct PendingQuestion {
 pub(crate) struct PendingPermission {
     request_id: String,
     input: Value,
-    ask: PermissionAsk,
+    /// permission-guardrails FR-7: the rule pattern this ask was parked with —
+    /// what an `*Always` decision writes into settings.json. It lives HERE,
+    /// with the pending entry, because being pending is what AUTHORIZES that
+    /// write: this entry disappears the instant the ask is claimed, whereas the
+    /// resolved transcript card keeps its `ask` (pattern included) forever.
+    pattern: String,
 }
 
 // ---------- internal registry ----------
@@ -376,23 +390,6 @@ impl BufBlock {
             streaming: false,
         }
     }
-}
-
-pub(crate) struct TurnHandle {
-    child: Arc<Mutex<Child>>,
-    interrupted: Arc<AtomicBool>,
-    /// session-questions FR-2: the turn's stdin writer. Lives for the whole turn;
-    /// None once the turn ends (closing it is what lets the CLI exit). ALL writes
-    /// go through this mutex — never while holding Engine.sessions (a blocking
-    /// pipe write must not stall every command).
-    stdin: Arc<Mutex<Option<ChildStdin>>>,
-    /// session-questions FR-6: blockId → parked AskUserQuestion. Removing an entry
-    /// CLAIMS it — that atomic claim is what makes resolution exactly-once (FR-13).
-    pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
-    /// permission-guardrails FR-2: blockId → parked tool call awaiting approval.
-    /// A sibling of `pending_questions` with the SAME claim-to-resolve discipline
-    /// (FR-10) — kept separate because the two resolve to different events.
-    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
 }
 
 /// The single in-flight /usage-/cost side-spawn of a session (interactive-commands
@@ -454,6 +451,14 @@ pub(crate) struct Session {
     /// `Session::new` parameter on purpose — `cloud/adopt.rs` is the single
     /// writer, so no other creation path can accidentally claim provenance.
     cloud: Option<CloudProvenance>,
+    /// multi-provider-seam FR-11a: DERIVED from the account's kind at creation
+    /// (FR-13a) and never re-derived afterward — see
+    /// `AgentRuntime::from_account_kind`.
+    agent_runtime: AgentRuntime,
+    /// multi-provider-seam FR-11a: the wire dialect, derived alongside
+    /// `agent_runtime` from the same `from_account_kind` call and never
+    /// re-derived afterward.
+    protocol: ProviderProtocol,
     /// session-profiles FR-12/FR-13: REPLACE-mode prompt, snapshotted at
     /// creation and threaded through every turn's `turn_args` — never
     /// re-read from the profile (FR-16).
@@ -466,7 +471,13 @@ pub(crate) struct Session {
     profile: Option<SessionProfileRef>,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
-    current: Option<TurnHandle>,
+    /// multi-provider-seam FR-2: the live turn, reached only through
+    /// `TurnControl` — no field here ever names a `Child`, a `ChildStdin`, or
+    /// a pending map. `Arc` (not `Box`, per the letter of the spec) because
+    /// answering/deciding a parked ask must clone the handle out from under
+    /// `Engine.sessions` BEFORE writing to the control channel — a blocking
+    /// pipe write must never happen while the sessions lock is held.
+    current: Option<Arc<dyn TurnControl>>,
     pending_probe: Option<ProbeHandle>, // interactive-commands FR-11: single in-flight side-spawn
     agents: HashMap<String, AgentInfo>,
     agent_order: Vec<String>, // first-seen order for agents_list (FR-7)
@@ -546,6 +557,8 @@ impl Session {
         worktree: Option<SessionWorktree>,
         worktree_distro: Option<String>,
         account_id: String,
+        agent_runtime: AgentRuntime,
+        protocol: ProviderProtocol,
         claude_session_id: Option<String>,
         block_buffer: Vec<BufBlock>,
         system_prompt: Option<String>,
@@ -572,6 +585,8 @@ impl Session {
             worktree_distro,
             account_id,
             cloud: None,
+            agent_runtime,
+            protocol,
             system_prompt,
             extra_args,
             profile,
@@ -619,6 +634,8 @@ impl Session {
             worktree: self.worktree.clone(),
             account_id: self.account_id.clone(),
             cloud: self.cloud.clone(),
+            agent_runtime: self.agent_runtime,
+            protocol: self.protocol,
             profile: self.profile.clone(),
         }
     }
@@ -1011,22 +1028,15 @@ pub fn kill_all(app: &AppHandle) {
         let map = engine.sessions.lock().unwrap();
         for s in map.values() {
             if let Some(turn) = &s.current {
-                turn.interrupted.store(true, Ordering::SeqCst);
-                {
-                    let mut p = turn.pending_questions.lock().unwrap();
-                    for (bid, _) in p.drain() {
-                        orphaned.push((s.id.clone(), bid));
-                    }
-                }
-                {
-                    // permission-guardrails FR-10 (§7 #8): the same synchronous
-                    // drain for parked approval cards.
-                    let mut p = turn.pending_permissions.lock().unwrap();
-                    for (bid, _) in p.drain() {
-                        orphaned_perms.push((s.id.clone(), bid));
-                    }
-                }
-                let _ = turn.child.lock().unwrap().kill();
+                // multi-provider-seam FR-2/FR-8: reached only through
+                // TurnControl — `drain_pending` is the exactly-once claim,
+                // synchronous and under this same lock, exactly as the direct
+                // map drains used to be.
+                turn.interrupt();
+                let (qs, perms) = turn.drain_pending();
+                orphaned.extend(qs.into_iter().map(|bid| (s.id.clone(), bid)));
+                orphaned_perms.extend(perms.into_iter().map(|bid| (s.id.clone(), bid)));
+                turn.kill();
             }
             if let Some(p) = &s.pending_probe {
                 p.kill(); // interactive-commands: probes die with the app
