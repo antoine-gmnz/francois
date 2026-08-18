@@ -5,8 +5,10 @@ import {
   dividerGridArea,
   mainPaneBranch,
   paneGridArea,
+  paneMenuEntries,
   shellColumns,
   shellFooterPath,
+  showsPanes,
   splitCandidate,
   type ShortcutActionsContext,
 } from './appShell';
@@ -254,5 +256,61 @@ describe('split-session re-exports (§5)', () => {
   it('exposes clampToPaneTab and splitCandidate from appShell', () => {
     expect(clampToPaneTab('overview')).toBe('session');
     expect(splitCandidate([], null)).toBeNull();
+  });
+});
+
+// ── unbound-panes FR-9/FR-8 — the pane header's `⋯` hover menu ───────────────
+
+describe('paneMenuEntries (unbound-panes FR-9)', () => {
+  const ids = (...args: Parameters<typeof paneMenuEntries>) => paneMenuEntries(...args).map((e) => e.id);
+
+  it('offers both entries on a non-zero SESSION pane with room and a project', () => {
+    expect(ids(1, 'session', 2, 1)).toEqual(['convert-to-shell', 'open-shell-beside']);
+  });
+
+  it('FR-8: never offers `convert` on pane 0 — pane 0 is always a session pane', () => {
+    expect(ids(0, 'session', 2, 1)).toEqual(['open-shell-beside']);
+  });
+
+  it('never offers `convert` on a pane that is ALREADY a shell', () => {
+    expect(ids(1, 'shell', 2, 1)).toEqual(['open-shell-beside']);
+  });
+
+  it('drops `open beside` once the grid is full — there is no slot to open into', () => {
+    expect(ids(1, 'session', 4, 1)).toEqual(['convert-to-shell']);
+  });
+
+  it('is EMPTY with no registered project — nothing could root a shell', () => {
+    expect(ids(1, 'session', 2, 0)).toEqual([]);
+    expect(ids(0, 'session', 1, 0)).toEqual([]);
+  });
+
+  it('labels each entry in ui_language, with the picker ellipsis', () => {
+    const entries = paneMenuEntries(1, 'session', 2, 3);
+    expect(entries.map((e) => e.label)).toEqual(['Convert to shell…', 'Open a shell pane beside…']);
+  });
+});
+
+// ── unbound-panes FR-1 — OVERVIEW while split ────────────────────────────────
+// split-by-4 FR-21 used to `unsplit()` before selecting OVERVIEW. FR-1 deletes
+// that, which left OVERVIEW unreachable while split: the main view rendered the
+// panes, and pane 0's tab clamps 'overview' to 'session'. OVERVIEW takes the
+// view over instead, and the panes survive underneath.
+describe('showsPanes (FR-1)', () => {
+  it('shows the panes when split on any pane-scoped tab', () => {
+    expect(showsPanes(2, 'session')).toBe(true);
+    expect(showsPanes(3, 'diff')).toBe(true);
+    expect(showsPanes(4, 'shell')).toBe(true);
+  });
+
+  it('yields the view to OVERVIEW at every split count', () => {
+    expect(showsPanes(2, 'overview')).toBe(false);
+    expect(showsPanes(3, 'overview')).toBe(false);
+    expect(showsPanes(4, 'overview')).toBe(false);
+  });
+
+  it('never shows panes at one pane', () => {
+    expect(showsPanes(1, 'session')).toBe(false);
+    expect(showsPanes(1, 'overview')).toBe(false);
   });
 });

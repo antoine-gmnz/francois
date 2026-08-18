@@ -12,7 +12,7 @@ import {
 } from './shell';
 
 function shell(id: string, name = id): ShellInfo {
-  return { id, sessionId: 's1', name, shellName: 'zsh', cwd: '/tmp', alive: true };
+  return { id, owner: { kind: 'session', sessionId: 's1' }, name, shellName: 'zsh', cwd: '/tmp', alive: true };
 }
 
 describe('atShellCap', () => {

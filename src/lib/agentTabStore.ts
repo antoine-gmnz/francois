@@ -26,7 +26,7 @@ import {
   type AgentTabMap,
   type AgentTabRef,
 } from '../features/agents/agent-tab';
-import { clampToPaneTab, layoutRegime, paneCount, paneIndexOf, persistSplitState, type PaneTab } from './layoutStore';
+import { clampToPaneTab, layoutRegime, paneCount, paneIndicesOf, persistSplitState, type PaneTab } from './layoutStore';
 import { INITIAL_ACTIVE_PROJECT } from './projectsStore';
 import type { AppState } from './store';
 
@@ -94,6 +94,7 @@ function foldPanesBack(s: AppState, closedIds: string[] | null): Partial<AppStat
 
   let moved = false;
   const extraPanes = s.extraPanes.map((p) => {
+    if (p.kind !== 'session') return p; // shell panes carry no PaneTab
     const tab = mainTabAfterClose(p.tab, closedIds) as PaneTab;
     if (tab === p.tab) return p;
     moved = true;
@@ -113,7 +114,8 @@ function foldPanesBack(s: AppState, closedIds: string[] | null): Partial<AppStat
  */
 function displayedTabIds(s: AppState): ReadonlySet<string> {
   const ids = new Set<string>();
-  for (const tab of [s.mainTab as string, ...s.extraPanes.map((p) => p.tab as string)]) {
+  const tabs = [s.mainTab as string, ...s.extraPanes.filter((p) => p.kind === 'session').map((p) => p.tab as string)];
+  for (const tab of tabs) {
     const id = agentIdFromTab(tab) ?? workflowIdFromTab(tab);
     if (id !== null) ids.add(id);
   }
@@ -140,15 +142,19 @@ export const createAgentTabSlice: StateCreator<AppState, [], [], AgentTabSlice> 
       // here rather than at each card, so every entry point — AgentsPanel,
       // WorkflowsPanel, the palette — is covered by one rule.
       if (layoutRegime(paneCount(s)) === 'grid') return {};
-      const i = paneIndexOf(s, sessionId);
-      if (i === null) return {}; // §7 case 1: a session on no pane opens nothing
+      // unbound-panes FR-5: a session may sit in several panes now — the tab
+      // lands in the FIRST one (lowest index), preferring pane 0.
+      const i = paneIndicesOf(s, sessionId)[0];
+      if (i === undefined) return {}; // §7 case 1: a session on no pane opens nothing
       const agentTabs = openTabIn(s.agentTabs, sessionId, ref, displayedTabIds(s));
       const tab = tabIdFor(ref) as PaneTab;
 
       if (i === 0) return { agentTabs, mainTab: tab as MainTab, focusedPane: 'main' };
 
+      const cur = s.extraPanes[i - 1];
+      if (!cur || cur.kind !== 'session') return {}; // defensive: never a shell pane here
       const extraPanes = s.extraPanes.slice();
-      extraPanes[i - 1] = { ...extraPanes[i - 1], tab };
+      extraPanes[i - 1] = { ...cur, tab };
       persistSplitState({ extraPanes, focusedPaneIndex: s.focusedPaneIndex });
       const patch: Partial<AppState> = { agentTabs, extraPanes, focusedPane: 'main' };
       // `mainTab` doubles as "which dissolved panel overlays the cell" (design

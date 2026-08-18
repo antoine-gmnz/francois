@@ -21,7 +21,7 @@ import {
 import { useShellStore } from './shellStore';
 
 function shell(id: string, patch: Partial<ShellInfo> = {}): ShellInfo {
-  return { id, sessionId: 's1', name: `zsh ${id}`, shellName: 'zsh', cwd: '/tmp', alive: true, ...patch };
+  return { id, owner: { kind: 'session', sessionId: 's1' }, name: `zsh ${id}`, shellName: 'zsh', cwd: '/tmp', alive: true, ...patch };
 }
 
 beforeEach(() => {
@@ -38,7 +38,7 @@ describe('newShell', () => {
 
     await newShell('s1');
 
-    expect(invokeMock).toHaveBeenCalledWith('shell_create', { sessionId: 's1' });
+    expect(invokeMock).toHaveBeenCalledWith('shell_create', { owner: { kind: 'session', sessionId: 's1' } });
     expect(useShellStore.getState().shells.s1.map((s) => s.id)).toEqual(['a', 'b']);
     expect(useShellStore.getState().activeShellId.s1).toBe('b');
     expect(useShellStore.getState().unread.b).toBeUndefined();
@@ -176,7 +176,7 @@ describe('dispatchShellShortcut', () => {
     dispatchShellShortcut('new', 's1');
     await Promise.resolve();
     await Promise.resolve();
-    expect(invokeMock).toHaveBeenCalledWith('shell_create', { sessionId: 's1' });
+    expect(invokeMock).toHaveBeenCalledWith('shell_create', { owner: { kind: 'session', sessionId: 's1' } });
 
     useShellStore.getState().setActiveShellId('s1', 'a');
     dispatchShellShortcut('close', 's1');

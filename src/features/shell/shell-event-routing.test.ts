@@ -30,7 +30,7 @@ describe('initShellEvents (FR-14)', () => {
 
   function seedShell(sessionId: string, shellId: string) {
     shellStore.useShellStore.getState().setShells(sessionId, [
-      { id: shellId, sessionId, name: 'zsh 1', shellName: 'zsh', cwd: '/tmp', alive: true },
+      { id: shellId, owner: { kind: 'session', sessionId }, name: 'zsh 1', shellName: 'zsh', cwd: '/tmp', alive: true },
     ]);
   }
 
@@ -44,7 +44,7 @@ describe('initShellEvents (FR-14)', () => {
     shellStore.initShellEvents();
     seedShell('s1', 'sh1');
     appStore.useStore.setState({ mainTab: 'shell', activeSessionId: 's2' });
-    shellHandler?.({ payload: { type: 'shell.data', shellId: 'sh1', sessionId: 's1', data: 'hi' } });
+    shellHandler?.({ payload: { type: 'shell.data', shellId: 'sh1', owner: { kind: 'session', sessionId: 's1' }, data: 'hi' } });
     expect(shellStore.useShellStore.getState().unread.sh1).toBe(true);
   });
 
@@ -52,19 +52,19 @@ describe('initShellEvents (FR-14)', () => {
     shellStore.initShellEvents();
     seedShell('s1', 'sh1');
     appStore.useStore.setState({ mainTab: 'session', activeSessionId: 's1' });
-    shellHandler?.({ payload: { type: 'shell.data', shellId: 'sh1', sessionId: 's1', data: 'hi' } });
+    shellHandler?.({ payload: { type: 'shell.data', shellId: 'sh1', owner: { kind: 'session', sessionId: 's1' }, data: 'hi' } });
     expect(shellStore.useShellStore.getState().unread.sh1).toBe(true);
   });
 
   it('marks a shell unread on shell.data when it is not the session-active chip', () => {
     shellStore.initShellEvents();
     shellStore.useShellStore.getState().setShells('s1', [
-      { id: 'sh1', sessionId: 's1', name: 'zsh 1', shellName: 'zsh', cwd: '/tmp', alive: true },
-      { id: 'sh2', sessionId: 's1', name: 'zsh 2', shellName: 'zsh', cwd: '/tmp', alive: true },
+      { id: 'sh1', owner: { kind: 'session', sessionId: 's1' }, name: 'zsh 1', shellName: 'zsh', cwd: '/tmp', alive: true },
+      { id: 'sh2', owner: { kind: 'session', sessionId: 's1' }, name: 'zsh 2', shellName: 'zsh', cwd: '/tmp', alive: true },
     ]);
     shellStore.useShellStore.getState().setActiveShellId('s1', 'sh2');
     appStore.useStore.setState({ mainTab: 'shell', activeSessionId: 's1' });
-    shellHandler?.({ payload: { type: 'shell.data', shellId: 'sh1', sessionId: 's1', data: 'hi' } });
+    shellHandler?.({ payload: { type: 'shell.data', shellId: 'sh1', owner: { kind: 'session', sessionId: 's1' }, data: 'hi' } });
     expect(shellStore.useShellStore.getState().unread.sh1).toBe(true);
     expect(shellStore.useShellStore.getState().unread.sh2).toBeUndefined();
   });
@@ -74,7 +74,7 @@ describe('initShellEvents (FR-14)', () => {
     seedShell('s1', 'sh1');
     shellStore.useShellStore.getState().setActiveShellId('s1', 'sh1');
     appStore.useStore.setState({ mainTab: 'shell', activeSessionId: 's1' });
-    shellHandler?.({ payload: { type: 'shell.data', shellId: 'sh1', sessionId: 's1', data: 'hi' } });
+    shellHandler?.({ payload: { type: 'shell.data', shellId: 'sh1', owner: { kind: 'session', sessionId: 's1' }, data: 'hi' } });
     expect(shellStore.useShellStore.getState().unread.sh1).toBeUndefined();
   });
 
@@ -82,7 +82,7 @@ describe('initShellEvents (FR-14)', () => {
     shellStore.initShellEvents();
     seedShell('s1', 'sh1');
     appStore.useStore.setState({ mainTab: 'session', activeSessionId: 's1' });
-    shellHandler?.({ payload: { type: 'shell.exit', shellId: 'sh1', sessionId: 's1', exitCode: 3 } });
+    shellHandler?.({ payload: { type: 'shell.exit', shellId: 'sh1', owner: { kind: 'session', sessionId: 's1' }, exitCode: 3 } });
     const shell = shellStore.useShellStore.getState().shells.s1[0];
     expect(shell.alive).toBe(false);
     expect(shell.exitCode).toBe(3);
@@ -94,7 +94,7 @@ describe('initShellEvents (FR-14)', () => {
     seedShell('s1', 'sh1');
     shellStore.useShellStore.getState().setActiveShellId('s1', 'sh1');
     appStore.useStore.setState({ mainTab: 'shell', activeSessionId: 's1' });
-    shellHandler?.({ payload: { type: 'shell.exit', shellId: 'sh1', sessionId: 's1', exitCode: 0 } });
+    shellHandler?.({ payload: { type: 'shell.exit', shellId: 'sh1', owner: { kind: 'session', sessionId: 's1' }, exitCode: 0 } });
     expect(shellStore.useShellStore.getState().shells.s1[0].alive).toBe(false);
     expect(shellStore.useShellStore.getState().unread.sh1).toBeUndefined();
   });

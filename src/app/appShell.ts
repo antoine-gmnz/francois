@@ -92,6 +92,47 @@ export function dividerGridArea(axis: 'x' | 'y', panes: number): GridArea | unde
 // spec's import path resolves.
 export { clampToPaneTab, splitCandidate, splitCandidates } from '../lib/layoutStore';
 
+// unbound-panes FR-9: the same two-fact gate every shell-pane entry point uses.
+import { canOpenShellPane } from '../lib/layoutStore';
+export { canOpenShellPane } from '../lib/layoutStore';
+
+// ---------- unbound-panes: the pane header's `⋯` hover menu (FR-9) ----------
+
+/** One row of the pane header menu. `id` is what the caller dispatches on. */
+export interface PaneMenuEntry {
+  id: 'convert-to-shell' | 'open-shell-beside';
+  label: string;
+}
+
+/**
+ * unbound-panes FR-9 / design brief flow 4 — what the pane header's `⋯` menu
+ * offers, given the pane and the state around it. Both entries route through
+ * the same project picker, hence the trailing ellipsis on each label.
+ *
+ * Two suppressions, both structural rather than cosmetic:
+ *  - **convert** is absent on pane 0 (FR-8: pane 0 is ALWAYS a session pane)
+ *    and on a pane that is already a shell (there is nothing to convert).
+ *  - **open beside** is absent once the grid is full — there is no slot for it.
+ *
+ * With no registered project the menu is empty outright (`canOpenShellPane`),
+ * which is the caller's cue not to render the `⋯` affordance at all: a menu
+ * that opens onto nothing is worse than no menu.
+ */
+export function paneMenuEntries(
+  index: number,
+  kind: 'session' | 'shell',
+  panes: number,
+  registeredProjectCount: number,
+): PaneMenuEntry[] {
+  if (registeredProjectCount === 0) return [];
+  const entries: PaneMenuEntry[] = [];
+  if (index !== 0 && kind === 'session') entries.push({ id: 'convert-to-shell', label: 'Convert to shell…' });
+  if (canOpenShellPane(panes, registeredProjectCount)) {
+    entries.push({ id: 'open-shell-beside', label: 'Open a shell pane beside…' });
+  }
+  return entries;
+}
+
 // ---------- shell tab footer ----------
 
 // Shell footer path (spec §8): WSL cwds render as '<distro>:/path'; when the
@@ -148,6 +189,22 @@ export function isPanelTab(tab: MainTab): tab is PanelTab {
  */
 export function isSessionScopedTab(tab: MainTab): boolean {
   return tab !== 'overview' && !isPanelTab(tab);
+}
+
+/**
+ * unbound-panes FR-1 — whether the main view shows the PANES or one full-width
+ * body. OVERVIEW is app-scoped rather than pane-scoped (`clampToPaneTab` maps
+ * it to 'session'), so it takes the view over while `extraPanes` is left
+ * untouched underneath: leaving OVERVIEW brings the same split straight back.
+ *
+ * It deliberately does NOT unsplit to get there. Widening the scope to All
+ * projects auto-selects OVERVIEW, and FR-1 is exactly that a scope change
+ * leaves every pane, its focus and its tab alone — so unsplitting here would
+ * destroy the panes on every widen (the behaviour split-by-4 FR-21 had, which
+ * FR-1 deletes).
+ */
+export function showsPanes(paneCount: number, mainTab: MainTab): boolean {
+  return paneCount > 1 && mainTab !== 'overview';
 }
 
 // ---------- global shortcuts (Phase 5 dispatch table) ----------
