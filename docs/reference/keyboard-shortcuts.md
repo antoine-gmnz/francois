@@ -3,29 +3,34 @@
 Francois is keyboard-first throughout, with full mouse support alongside every binding below.
 
 ::: info When single-key shortcuts are suspended
-All single-key shortcuts (`1`–`6`, `c`, `d`, `t`, `o`, `w`, `n`, `a`, `/`, `⏎`, `[`, `]`) are
+All single-key shortcuts (`1`–`6`, `d`, `t`, `o`, `w`, `n`, `a`, `x`, `s`, `c`, `/`, `⏎`, `[`) are
 suspended while you're typing in any text input, while the SHELL terminal has focus, or while a
 modal is open — so typing "not" into the composer never opens tabs. `⌘K`/`Ctrl+K` always works,
 everywhere.
+:::
+
+::: tip Two bindings that no longer exist
+`]` and `c`-to-collapse belonged to the right column, which design turn 7a dissolved into the
+roster. The four panels are main-pane tabs now — `3`–`6` open them. In DIFF, `c` still commits.
 :::
 
 ## Global
 
 | Key | Action |
 | --- | --- |
-| `1`–`6` | Focus sessions sidebar / main pane / agents / MCP servers / skills / workflows |
+| `1` / `2` | Focus the roster / the main pane |
+| `3`–`6` | Open the agents / MCP servers / skills / workflows tab (press again to return to SESSION) |
 | `d` | Toggle the DIFF tab (press again to return to SESSION) |
 | `t` | Toggle the SHELL tab (press again to return to SESSION) |
 | `o` | Toggle the OVERVIEW tab (press again to return to SESSION) |
 | `w` | Close the active agent tab (no-op on the built-in tabs) |
 | `n` | New session |
 | `a` | New agent (when a session is active) |
-| `c` | Collapse / expand the focused right-column card — `[3]`, `[4]` or `[5]` (no-op elsewhere) |
-| `[` / `]` | Show / hide the left / right column |
+| `[` | Fold the roster to its 46px rail, or unfold it |
 | `⌘K` / `Ctrl+K` | Toggle the command palette |
 | `esc` | Dismiss the command palette or an open modal |
 
-## In the sessions sidebar (pane `[1]` focused)
+## In the roster (pane `[1]` focused)
 
 | Key | Action |
 | --- | --- |
@@ -59,7 +64,7 @@ everywhere.
 | `⏎` | Run the highlighted command |
 | `esc` | From a secondary step (e.g. Switch model), go back to the top level; from the top level, dismiss — clicking the backdrop also dismisses |
 
-## In the agents panel (pane `[3]` focused)
+## In the AGENTS tab
 
 | Key | Action |
 | --- | --- |
@@ -67,13 +72,13 @@ everywhere.
 | `⏎` | Expand / collapse the selected card's activity trail |
 | `x` | Kill the selected running agent |
 
-## In the skills panel (pane `[5]` focused)
+## In the SKILLS tab
 
 | Key | Action |
 | --- | --- |
 | `/` | Filter the skills list |
 
-## In the workflows panel (pane `[6]` focused)
+## In the WORKFLOWS tab
 
 | Key | Action |
 | --- | --- |
@@ -94,7 +99,11 @@ receive it — including `esc`, which the terminal swallows.
 
 | Key | Action |
 | --- | --- |
-| `←` `→` | Cycle through the changed-file chips |
+| `/` | Focus the file filter (`esc` clears it and returns to the tree) |
+| `↑` `↓` | Move the cursor one visible row in the folder tree |
+| `→` | Expand a collapsed folder, or step into an expanded one |
+| `←` | Collapse an expanded folder, or jump to the parent folder |
+| `⏎` | Select the file under the cursor, or fold/unfold the folder under it |
 | `s` | Stage all |
 | `c` | Commit |
 

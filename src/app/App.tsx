@@ -26,12 +26,12 @@ import { checkUpdateOnLaunch } from '../features/update/update';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { isBusyStatus } from '../../contract/fleet-board';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
-import { focusedSessionId, layoutRegime, paneCount, paneSessionIdAt, paneTabAt } from '../lib/layoutStore';
+import { focusedSessionId, layoutRegime, paneCount, paneSlotAt } from '../lib/layoutStore';
 import { basename } from '../lib/path';
 import { useStore } from '../lib/store';
 import './app.css';
 import AppRow from './AppRow';
-import { dividerGridArea, isPanelTab, PANEL_TABS, paneGridArea, shellColumns } from './appShell';
+import { dividerGridArea, isPanelTab, PANEL_TABS, paneGridArea, shellColumns, showsPanes } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import SessionRail from './SessionRail';
 import SessionRow from './SessionRow';
@@ -114,9 +114,18 @@ export default function App() {
   // so nothing below this line remounts when focus moves.
   const extraPanes = useStore((s) => s.extraPanes);
   const focusedPaneIndex = useStore((s) => s.focusedPaneIndex);
+  const lastFocusedSessionId = useStore((s) => s.lastFocusedSessionId);
   const setPaneTab = useStore((s) => s.setPaneTab);
   const setFocusedPaneIndex = useStore((s) => s.setFocusedPaneIndex);
   const assignToFocusedPane = useStore((s) => s.assignToFocusedPane);
+  // unbound-panes FR-9: the four entry points split by whether they name a
+  // pane. The empty pane's affordance and the header menu's `Convert to shell…`
+  // both act on a KNOWN index, so they go through `convertPaneToShell` here;
+  // the palette command, the roster's project row and the header menu's `Open a
+  // shell pane beside…` name none, so they call `openShellPane` themselves
+  // (paletteCommands.ts / Sidebar.tsx / PaneHeaderMenu.tsx).
+  const convertPaneToShell = useStore((s) => s.convertPaneToShell);
+  const setPaneShellId = useStore((s) => s.setPaneShellId);
   // How the panes share the cell, dragged from the dividers between them: the
   // columns everywhere, the rows in the 2×2 regimes.
   const splitRatio = useStore((s) => s.splitRatio);
@@ -125,12 +134,22 @@ export default function App() {
   const closePane = useStore((s) => s.closePane);
   const panes = paneCount({ extraPanes });
   const regime = layoutRegime(panes);
-  const split = regime !== 'single';
+  // unbound-panes FR-1 — see `showsPanes`: OVERVIEW takes the main view over
+  // full-width, and the panes wait underneath rather than being unsplit.
+  const split = showsPanes(panes, mainTab);
   // The two shell tracks + whether the roster is folded to its rail.
   const columns = shellColumns(regime, showLeftPane);
   // FR-13: the session every pane-scoped consumer reads. Equals activeSessionId
   // whenever not split, so each of them is behaviour-identical outside split.
-  const paneSessionId = focusedSessionId({ activeSessionId, mainTab, extraPanes, focusedPaneIndex });
+  // unbound-panes FR-12: falls back to `lastFocusedSessionId` while a shell
+  // pane has focus, so nothing here blanks.
+  const paneSessionId = focusedSessionId({
+    activeSessionId,
+    mainTab,
+    extraPanes,
+    focusedPaneIndex,
+    lastFocusedSessionId,
+  });
 
   // design 7a: the session row describes what you are LOOKING at, so it follows
   // the focused pane rather than the left one.
@@ -260,12 +279,12 @@ export default function App() {
       // their agentIds are scoped to whichever session was active, and none of
       // that is still in view once the board zooms out.
       clearAgentTabs();
-      // split-session FR-14: and it leaves split — OVERVIEW is a single-pane
-      // view, and `▯▯` is disabled at All-projects scope anyway (FR-9).
-      unsplit();
-      setMainTab('overview'); // last: wins over clearAgentTabs'/unsplit's own fallbacks
+      // unbound-panes FR-1 (supersedes split-by-4 FR-21, deleted): widening to
+      // All projects no longer leaves split — the panes, their focus and their
+      // tabs are untouched; only the roster and OVERVIEW re-filter.
+      setMainTab('overview'); // wins over clearAgentTabs' own fallback
     }
-  }, [activeProjectId, setMainTab, clearAgentTabs, unsplit]);
+  }, [activeProjectId, setMainTab, clearAgentTabs]);
 
   // permission-guardrails: the rules editor needs a session (the local tier is
   // its cwd). If the last session is removed while it is open the modal unmounts
@@ -372,8 +391,7 @@ export default function App() {
                     <SplitPane
                       index={i}
                       area={paneGridArea(i, panes)}
-                      sessionId={paneSessionIdAt({ activeSessionId, mainTab, extraPanes }, i)}
-                      tab={paneTabAt({ activeSessionId, mainTab, extraPanes }, i)}
+                      slot={paneSlotAt({ activeSessionId, mainTab, extraPanes }, i)}
                       focused={focusedPaneIndex === i}
                       dense={regime === 'grid'}
                       home={home}
@@ -387,6 +405,14 @@ export default function App() {
                       onPromote={() => unsplit(i, regime === 'grid' ? 'session' : undefined)}
                       onClose={() => closePane(i)}
                       onReviewDiff={() => unsplit(i, 'diff')}
+                      // unbound-panes FR-9: the empty pane's "open a shell here"
+                      // and the pane header menu's "convert to shell" both turn
+                      // THIS pane into a shell pane directly — it is already the
+                      // slot the user picked, so there is no "fill the first
+                      // empty pane" ambiguity here (that's `openShellPane`'s job
+                      // for the palette/roster entry points, which name no pane).
+                      onConvertToShell={(projectId) => convertPaneToShell(i, projectId)}
+                      onShellSpawned={(shellId) => setPaneShellId(i, shellId)}
                     />
                   </Fragment>
                 ))}

@@ -20,6 +20,7 @@ import { StatusDot } from '../../ui/StatusDot';
 import { sessionAccountBadge } from '../accounts/accounts';
 import { CloudChip } from '../cloud-sessions/CloudChip';
 import { filteredEmptyLabel } from '../projects/projects';
+import { projectMarker } from '../projects/projectMarker';
 import { ProfileChip } from '../profiles/ProfileChip';
 import { isGroupNode, type RosterNode, type RosterProjectNode } from './roster-groups';
 import { truncateBranchLeft, worktreeChipLabel } from './worktree';
@@ -55,6 +56,13 @@ export interface SessionListBodyProps {
   /** A project heading's `+` — scopes a new session to that repo. project-groups
    * FR-25: never offered on a group heading. */
   onNewInGroup: (group: RosterProjectNode) => void;
+  /**
+   * unbound-panes FR-9: right-click on a REGISTERED project heading — the
+   * fourth shell-pane entry point. The row already names the project, so this
+   * one never opens a picker. Absent ⇒ no menu (which is also how a heading
+   * with no registered project behind it, and a full grid, are expressed).
+   */
+  onProjectContext?: (projectId: string, label: string, x: number, y: number) => void;
   home: string;
   activeSessionId: string | null;
   focused: boolean;
@@ -62,8 +70,10 @@ export interface SessionListBodyProps {
   derived: ReadonlyMap<string, SessionDerived>;
   onSelect: (id: string) => void;
   onContext: (sessionId: string, x: number, y: number) => void;
-  /** split-by-4 FR-22: which pane shows a session, or null — drives the badges. */
-  paneIndexOf?: (sessionId: string) => number | null;
+  /** split-by-4 FR-22 / unbound-panes FR-16: every pane index showing a
+   *  session — drives the badges. A session badged in two panes renders both
+   *  indices ('1·3'). */
+  paneIndicesOf?: (sessionId: string) => number[];
   /** 1 ⇒ not split, so no badges at all. */
   paneCount?: number;
   focusedPaneIndex?: number;
@@ -92,6 +102,7 @@ export function SessionListBody({
   collapsedGroups,
   onToggleGroup,
   onNewInGroup,
+  onProjectContext,
   home,
   activeSessionId,
   focused,
@@ -99,7 +110,7 @@ export function SessionListBody({
   derived,
   onSelect,
   onContext,
-  paneIndexOf,
+  paneIndicesOf,
   paneCount = 1,
   focusedPaneIndex = 0,
 }: SessionListBodyProps): JSX.Element {
@@ -115,7 +126,22 @@ export function SessionListBody({
     const collapsed = collapsedGroups.has(node.key);
     return (
       <div key={node.key} className={nested ? 'roster-group roster-group--nested' : 'roster-group'}>
-        <div className="roster-group__head" onClick={() => onToggleGroup(node.key)}>
+        <div
+          className="roster-group__head"
+          onClick={() => onToggleGroup(node.key)}
+          // A path-derived heading (projectId === null) backs no registered
+          // project, so there is nothing to root a shell at — it keeps the
+          // browser's own menu rather than offering an entry that cannot run.
+          onContextMenu={
+            onProjectContext && node.projectId !== null
+              ? (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onProjectContext(node.projectId!, node.label, e.clientX, e.clientY);
+                }
+              : undefined
+          }
+        >
           <span className="roster-group__caret">{collapsed ? '▸' : '▾'}</span>
           <span className="roster-group__label truncate">{node.label}</span>
           <span className="roster-group__count">{node.sessions.length}</span>
@@ -135,19 +161,21 @@ export function SessionListBody({
           node.sessions.map((session) => {
             flatIndex += 1;
             // FR-22: every paned row renders the selected treatment; only
-            // the FOCUSED pane's row carries the accent left rail.
-            const pane = paneCount > 1 && paneIndexOf ? paneIndexOf(session.id) : null;
+            // the FOCUSED pane's row carries the accent left rail. unbound-panes
+            // FR-16: a session badged in two panes renders both indices ('1·3').
+            const panes = paneCount > 1 && paneIndicesOf ? paneIndicesOf(session.id) : [];
             return (
               <SessionCard
                 key={session.id}
                 session={session}
                 home={home}
-                selected={pane !== null || session.id === activeSessionId}
+                selected={panes.length > 0 || session.id === activeSessionId}
                 cursor={focused && flatIndex === rowCursor}
                 derived={derived.get(session.id)}
-                paneLabel={pane === null ? null : paneBadgeLabel(pane, paneCount)}
-                paneAccent={pane !== null && pane > 0}
-                paneFocused={pane !== null && pane === focusedPaneIndex}
+                projectName={node.label}
+                paneLabel={panes.length === 0 ? null : panes.map((p) => paneBadgeLabel(p, paneCount)).join('·')}
+                paneAccent={panes.some((p) => p > 0)}
+                paneFocused={panes.includes(focusedPaneIndex)}
                 nested={nested}
                 onClick={() => onSelect(session.id)}
                 onContext={(x, y) => onContext(session.id, x, y)}
@@ -234,6 +262,7 @@ function SessionCard({
   selected,
   cursor,
   derived,
+  projectName,
   paneLabel,
   paneAccent,
   paneFocused,
@@ -246,6 +275,10 @@ function SessionCard({
   selected: boolean;
   cursor: boolean;
   derived: SessionDerived | undefined;
+  /** unbound-panes FR-14: the repo/project this row belongs to — the roster
+   *  group's own label, reused so a session badged into a pane can still be
+   *  told apart from a same-named session in a different repo. */
+  projectName: string | null;
   /** split-by-4 FR-22: the badge text (`left`/`right`/`1`…`4`), or null. */
   paneLabel: string | null;
   /** Accent treatment — every pane past pane 0, whose badge stays neutral. */
@@ -313,6 +346,14 @@ function SessionCard({
         {/* session-profiles FR-22: NEUTRAL here — the acid accent is reserved
             for the focused session's own welcome header (one accent per view). */}
         {session.profile && <ProfileChip profile={session.profile} size="sm" />}
+        {/* unbound-panes FR-14 / design brief §Project marker: neutral, never
+            accent — disambiguates two same-named sessions from different
+            repos in the roster's pane badge row. */}
+        {projectName && (
+          <span className="sidebar-card__marker" title={projectName}>
+            {projectMarker(projectName)}
+          </span>
+        )}
         {/* split-by-4 FR-22: which pane is showing this session. */}
         {paneLabel && (
           <span className={paneAccent ? 'sidebar-card__pane sidebar-card__pane--accent' : 'sidebar-card__pane'}>

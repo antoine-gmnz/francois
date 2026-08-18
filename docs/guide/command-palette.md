@@ -12,7 +12,7 @@ feature's own channel, or opening that feature's own overlay.
 including while the SHELL tab's terminal has focus — app-shell owns the single global,
 capture-phase keydown listener for this chord and dispatches into the palette's
 `togglePalette()`. The palette itself installs no competing listener. The same
-`togglePalette()` function backs the status bar's "⌘K commands" hint.
+`togglePalette()` function backs the app row's `⌘K` hint.
 
 On open, the palette:
 
@@ -74,15 +74,22 @@ The commands that ship in the app, in registration order (the order an empty que
 | Kill agent | agents-panel | secondary step over running agents, then `agents:kill` |
 | New agent | agents-panel | opens the new-agent modal |
 | Toggle sessions column | app-shell | the `[` binding |
-| Toggle side panels | app-shell | the `]` binding |
-| Toggle agents / MCP / skills panel | collapse-right-column | collapses or expands that right-column card — the `c` binding, one entry per card |
+| Open agents / MCP / skills / workflows | app-shell | opens that panel as a main tab — the `3`–`6` bindings, one entry each, toggling back to SESSION |
 | Refresh usage limits | usage-bar | drives the same `app:refreshUsage` channel as clicking the meters |
 | Manage permissions | permission-guardrails | opens the rules editor over Claude Code's `settings.json` |
-| Manage projects | projects | opens the Projects modal |
+| Manage projects | projects | opens the Projects modal (projects, groups and standards) |
+| Manage profiles | session-profiles | opens the Profiles modal |
+| New session with profile… | session-profiles | secondary step over your profiles, then the new-session modal pre-set to it |
 | Accounts | multi-account | opens the Accounts modal |
 | Add account | multi-account | starts an in-app `claude` login for a new account |
+| Manage extensions | extensions | opens the Extensions modal |
 | New session in worktree… | session-worktree | new session isolated in its own `git worktree` |
+| Adopt cloud session… | cloud-sessions | pulls a Claude Code on the web session into the local fleet |
+| New / next / close / rename shell | multiple-shells | the shell-tab verbs for the active session |
 | Clear project attachments | session-attachments | sweeps staged attachments across the active project, after a confirm |
+| Check for updates | self-update | probes for a newer release and offers to install it |
+| Toggle attention / turn-done notifications | notifications | mutes or unmutes each banner class |
+| Toggle sound | audio-cues | mutes or unmutes the notification tones |
 | Toggle theme | app-shell | switches between the dark and light themes |
 
 Most commands carry a live hint alongside the name — "View diff" reads `{n} files changed`,
@@ -129,9 +136,9 @@ instead of an empty list.
 
 ## The usage bar
 
-Directly under the native window caption sits Francois's own title bar. Its left half carries
-the brand and the project switcher; its right half is the usage bar, showing the same
-plan-limit meters the Claude Code CLI reports for `/usage`. Usage is an **account-level** fact,
+The meters live in the **app row**, the outer of the two chrome tiers under the native window
+caption, beside the account chip. (The project switcher sits one tier down, in the session row.)
+They show the same plan-limit meters the Claude Code CLI reports for `/usage`. Usage is an **account-level** fact,
 not a session-level one, so the meters track whichever [account](/guide/accounts) the selected
 session runs on — switching between two sessions on the same account changes nothing, and the
 strip never disappears when no session exists.
@@ -166,5 +173,5 @@ is a no-op, and the meters stay visibly dimmed to make that honest rather than a
 If the CLI is missing, unauthenticated, or its output format drifts so nothing parses, the bar
 degrades to an error affordance (`⚠ usage unavailable`, or just the glyph if stale meters are
 still on screen) instead of blanking, throwing, or popping a modal — clicking it retries. The
-usage bar is chrome, not a focusable pane: it never appears in the `1`–`6` pane cycle and takes
+usage bar is chrome, not a focusable pane: it never appears in the pane cycle and takes
 no focus ring.

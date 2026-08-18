@@ -74,6 +74,7 @@ import type {
   ShellEvent,
   ShellId,
   ShellInfo,
+  ShellOwner,
   ShellRenamePayload,
   ShellResizePayload,
   ShellRestartData,
@@ -444,8 +445,9 @@ export function onCloudEvent(cb: (e: CloudEvent) => void): Promise<UnlistenFn> {
 // multiple-shells (§5). The domain is keyed by ShellId end to end — every
 // call below addresses a shell directly, never a session's "the" shell.
 export const shellEnsure = (payload: ShellEnsurePayload) => ipc<Result<ShellEnsureData>>('shell_ensure', payload);
-export const shellCreate = (sessionId: SessionId) =>
-  ipc<Result<ShellInfo>>('shell_create', { sessionId } satisfies ShellCreatePayload);
+// unbound-panes FR-6: a shell's owner is a union now — `shellCreate` takes it
+// directly rather than assuming a session.
+export const shellCreate = (owner: ShellOwner) => ipc<Result<ShellInfo>>('shell_create', { owner } satisfies ShellCreatePayload);
 export const shellRestart = (shellId: ShellId) =>
   ipc<Result<ShellRestartData>>('shell_restart', { shellId } satisfies ShellRestartPayload);
 export const shellRename = (shellId: ShellId, name: string) =>

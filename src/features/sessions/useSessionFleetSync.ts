@@ -136,7 +136,7 @@ export function useSessionFleetSync(): SessionFleetSync {
     // opens single-pane. An EMPTY pane is not stale — it is a layout the user
     // chose, and it survives the reload waiting for its session.
     for (const pane of useStore.getState().extraPanes) {
-      if (pane.sessionId !== null && !data.some((s) => s.id === pane.sessionId)) {
+      if (pane.kind === 'session' && pane.sessionId !== null && !data.some((s) => s.id === pane.sessionId)) {
         useStore.getState().removeSession(pane.sessionId);
       }
     }

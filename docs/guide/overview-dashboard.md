@@ -144,7 +144,7 @@ Each card shows, top to bottom:
 
 | Backend status | Card label | Colour | Pulses? |
 |---|---|---|---|
-| `running` | active | amber | yes |
+| `running` | active | the acid accent | yes |
 | `idle` | ready | grey | no |
 | `done` | done | green | no |
 | `error` | error | red | no |

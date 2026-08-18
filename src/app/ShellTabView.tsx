@@ -62,7 +62,7 @@ export default function ShellTabView({ sessionId, home, paneFocused = true }: Sh
 
     const attach = async (shellId: string | undefined): Promise<void> => {
       try {
-        const res = await shellEnsure({ sessionId, shellId });
+        const res = await shellEnsure({ owner: { kind: 'session', sessionId }, shellId });
         if (cancelled) return;
         if (!res.ok) {
           // §7: a stale remembered shellId (another session's, or long gone) —
@@ -120,7 +120,7 @@ export default function ShellTabView({ sessionId, home, paneFocused = true }: Sh
         {shells.map((s) => (
           <ShellTerminal
             key={s.id}
-            sessionId={sessionId}
+            owner={{ kind: 'session', sessionId }}
             shellId={s.id}
             visible={s.id === activeShellId}
             canFocus={paneFocused}

@@ -3,9 +3,7 @@
 // This and the sidebar context menu's "Open in … pane" are the feature's ONLY
 // two entry points for CHANGING the layout (⌘1–⌘4 and ⌥⇥ only move focus).
 
-import { useMemo } from 'react';
 import { Columns2, Grid2x2, Square } from 'lucide-react';
-import { filterSessionsByProject } from '../../../contract/projects';
 import { MAX_PANES, layoutModeState, paneCount } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
 
@@ -24,16 +22,14 @@ const MODES: readonly { count: number; label: string; glyph: JSX.Element }[] = [
 
 export default function LayoutToggle(): JSX.Element {
   const sessions = useStore((s) => s.sessions);
-  const activeProjectId = useStore((s) => s.activeProjectId);
   const extraPanes = useStore((s) => s.extraPanes);
   const setPaneCount = useStore((s) => s.setPaneCount);
 
   const panes = paneCount({ extraPanes });
 
-  // FR-15: at All-projects scope there is no "in scope" to split within — the
-  // main pane belongs to OVERVIEW there (FR-21).
-  const inScope = useMemo(() => filterSessionsByProject(sessions, activeProjectId), [sessions, activeProjectId]);
-  const canSplit = activeProjectId !== null && inScope.length > 0;
+  // unbound-panes FR-2: `splitCandidates` reads the WHOLE FLEET now — the
+  // activeProjectId===null clause that used to gate this is deleted.
+  const canSplit = sessions.length > 0;
 
   return (
     <>
@@ -41,11 +37,7 @@ export default function LayoutToggle(): JSX.Element {
       <div className="layout-toggle">
         {MODES.map((mode) => {
           const { on, disabled, actionable } = layoutModeState(mode.count, panes, canSplit);
-          const title = disabled
-            ? activeProjectId === null
-              ? `${mode.label} needs a project in scope — pick one first`
-              : `${mode.label} needs a session in this project — press n to start one`
-            : mode.label;
+          const title = disabled ? `${mode.label} needs a session in the fleet — press n to start one` : mode.label;
           return (
             <button
               key={mode.count}

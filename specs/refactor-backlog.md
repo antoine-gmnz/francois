@@ -251,3 +251,15 @@ filtering relative PATH entries is right for extension spawns, it is right every
 ## deferred:project-groups
 
 - [ ] MEDIUM · src-tauri/src/project/registry.rs:522 · complexity · `load_from` and `load_groups_from` each read `projects.json` off disk independently; add a single `load_document(path) -> (Vec<Project>, Vec<ProjectGroup>)` that reads the bytes once and calls `parse_registry`/`parse_groups` on the same buffer · deferred:project-groups
+
+## deferred:diff-navigator — SHIP-round leftovers (review round 2)
+
+- [ ] LOW · src/features/diff/DiffTree.tsx:85 · quality · the `role="tree"` container carries `aria-activedescendant` but has no `tabIndex`, so it is never focusable — either make it focusable or drop the decorative ARIA · deferred:diff-navigator
+
+## frontend
+- [ ] LOW · src/app/app.css:963-969 · quality · pane header ⋯ button is opacity:0 until .split-pane:hover/:focus-within — add :focus-visible on the button itself as a redundant reveal trigger · deferred:unbound-panes
+- [ ] MEDIUM · src/lib/layoutStore.ts:1012-1013,1169-1174 · quality · closePane disposes the dropped shell then unsplitPatch re-disposes s.extraPanes — pass the filtered pane list into unsplitPatch (or skip the early dispose when keep.length===1) · deferred:unbound-panes
+
+## core
+- [ ] LOW · src-tauri/src/shell/commands.rs:536 · quality · section comment for project-owner target resolution sits above mod tests instead of above struct OwnerTarget — move or drop it · deferred:unbound-panes
+- [ ] LOW · src-tauri/src/shell/commands.rs:447-454 · complexity · shell_restart re-implements the is_wsl_unc_path runtime branch already in project_owner_target — extract a shared runtime_of_root helper · deferred:unbound-panes
