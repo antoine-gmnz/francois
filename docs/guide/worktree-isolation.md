@@ -46,7 +46,7 @@ Two cases the form handles inline, never as a hard error:
 
 ## What the session card shows
 
-A worktree session's card in the sidebar, and the app-shell status bar, show a small branch
+A worktree session's card in the roster, and the session row, show a small branch
 glyph and the branch name (truncated, full value on hover). On a **main-checkout** session's DIFF
 tab, a dim single line lists any live sibling worktree sessions spawned from the same repo — e.g.
 `2 worktree sessions · feat/auth, feat/parser` — read-only, just so you know they exist.

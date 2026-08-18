@@ -1,9 +1,10 @@
 # Configuration
 
-Francois configures a session at four levels: the **account** it runs under (which Claude Code
+Francois configures a session at five levels: the **account** it runs under (which Claude Code
 config directory it uses), a **permission mode** picked when the session is created, a per-tool
-**rules editor** that writes directly into Claude Code's own `settings.json`, and
-**project-level** defaults and standards that apply to every session started under a project.
+**rules editor** that writes directly into Claude Code's own `settings.json`, **project-level**
+defaults and standards that apply to every session started under a project, and an optional
+**profile** carrying a system prompt and extra `claude` arguments.
 None of this is a Francois-specific settings format — with the exception of two small
 Francois-owned sidecar files noted below, everything is either a Claude Code file Francois reads
 and writes, or an in-app registry that only pre-fills Claude Code fields.
@@ -101,13 +102,34 @@ only), hand-authoring an arbitrary glob pattern outside of a real approved call,
 other `settings.json` key such as `permissions.defaultMode` or `additionalDirectories` —
 those are read never, written never.
 
+## Session profiles
+
+A **profile** is a Francois-owned registry entry, stored in `profiles.json` in the application data
+directory beside `projects.json` and `sessions.json`. It carries an id, a name (1–60 characters, not
+required to be unique), an optional **system prompt**, and optional **extra args**:
+
+| Field | Effect |
+|---|---|
+| `systemPrompt` | Up to 16384 characters. When present and non-empty, it is passed as `--system-prompt` — *replacing* Claude Code's own prompt for that session, not appending to it. |
+| `extraArgsRaw` | Raw argv, stored verbatim so the editor round-trips exactly what you typed, and parsed into tokens the core appends to the `claude` command line (up to 4096 characters). |
+
+Extra args are validated at **save** time, not at spawn time, and a denied flag is refused with a
+named reason. The denied set is the flags that would break the stream contract the event pipeline
+parses (`--output-format`, `--input-format`, `-p`/`--print`, `--include-partial-messages`,
+`--resume`, `-c`/`--continue`, `--permission-prompt-tool`) plus the ones a project's session
+defaults already own and a profile must not silently outrank (`--model`, `--permission-mode`,
+`--dangerously-skip-permissions`, `--system-prompt`, `--append-system-prompt`).
+
+Choosing a profile in the New Session flow **snapshots** it onto the session, exactly like project
+defaults: editing or deleting the profile afterward never changes a session that already exists.
+
 ## Project-level configuration
 
 A **project** is a named, persisted workspace rooted at a directory. It exists so that a
 session doesn't have to be configured from scratch every time — a project remembers a set
 of session defaults and a set of coding standards, and both are available from the New
 Session flow once the project has been created (via the command palette's **Manage
-projects** command, or the title bar's project switcher).
+projects** command, or the session row's project switcher).
 
 ### The project registry
 
@@ -170,6 +192,14 @@ removes the block entirely rather than leaving an empty one behind, and if the f
 had a block, clearing is a no-op. A `CLAUDE.md` with a malformed marker pair (an
 unterminated start, or more than one) is left untouched and the write is refused, rather
 than guessing at how to repair it.
+
+### Groups
+
+A project may belong to a **group** — a named parent stored in the same `projects.json` (a `groups`
+array, plus a `groupId` on each project that has one). A group carries a name and nothing else: no
+defaults, no standards, no scope. It exists so the roster and the Projects modal can nest several
+checkouts of one product under one heading. Removing a group clears the `groupId` on its projects
+and touches nothing else.
 
 ### What a project does not configure
 
