@@ -257,23 +257,54 @@ mod tests {
     /// localized machine, which is the class of machine-dependence that broke
     /// this test in the first place.
     ///
-    /// Read through `Get-Acl` rather than `icacls /save` only because `/save`
-    /// writes UTF-16 to a temp file, where this returns the same SDDL on
-    /// stdout. `icacls /findsid` is deliberately NOT used: it fails to match
-    /// well-known SIDs (verified — a file explicitly granted `BU` is not
-    /// found), so an assertion built on it can never fail.
+    /// Read through `icacls /save` — the same tool the implementation already
+    /// requires — rather than PowerShell's `Get-Acl`, which returned EMPTY
+    /// stdout on a Windows CI runner and turned this helper into the failure
+    /// instead of the check. `icacls /findsid` is deliberately NOT used
+    /// either: it fails to match well-known SIDs (verified — a file explicitly
+    /// granted `BU` is not found), so an assertion built on it can never fail.
+    ///
+    /// `/save` writes `<relative path>` and `<sddl>` on alternating lines, as
+    /// UTF-16 — hence the manual decode.
     #[cfg(windows)]
     fn dacl_sddl(path: &Path) -> String {
-        let out = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command"])
-            .arg(format!(
-                "(Get-Acl -LiteralPath '{}').Sddl",
-                path.display().to_string().replace('\'', "''")
-            ))
+        let dir = path.parent().expect("a parent directory");
+        let save = tmp_path("sddl-save");
+        let out = std::process::Command::new("icacls")
+            .arg(dir)
+            .arg("/save")
+            .arg(&save)
+            .arg("/t")
             .output()
             .unwrap();
-        let sddl = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        assert!(!sddl.is_empty(), "could not read the SDDL for {path:?}");
+        assert!(
+            out.status.success(),
+            "icacls /save failed for {dir:?}: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let bytes = std::fs::read(&save).expect("the saved ACL file");
+        std::fs::remove_file(&save).ok();
+        let utf16: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let text = String::from_utf16_lossy(&utf16);
+        // The entry for our file is the line NAMING it, followed by its SDDL.
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let lines: Vec<&str> = text.lines().map(|l| l.trim_end_matches('\r')).collect();
+        let idx = lines
+            .iter()
+            .position(|l| l.trim_start_matches('\u{feff}').ends_with(&name))
+            .unwrap_or_else(|| panic!("no /save entry for {name} in:\n{text}"));
+        let sddl = lines
+            .get(idx + 1)
+            .unwrap_or_else(|| panic!("no SDDL after the entry for {name} in:\n{text}"))
+            .to_string();
+        assert!(
+            sddl.contains("D:"),
+            "expected a DACL for {name}, got {sddl:?} in:\n{text}"
+        );
         sddl
     }
 
