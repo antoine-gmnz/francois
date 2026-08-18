@@ -1,8 +1,9 @@
-// ---------- shell commands (contract/shell-terminal.ts, multiple-shells §5) ----------
+// ---------- shell commands (contract/shell-terminal.ts, multiple-shells §5,
+// unbound-panes FR-6..FR-11/§5) ----------
 
 use super::{
     shell_spawn_target, PtyHandles, Registry, Ring, Shared, ShellEnsureData, ShellEvent, ShellInfo,
-    ShellRestartData, WriteOutcome, EVENT_CHANNEL,
+    ShellOwner, ShellRestartData, WriteOutcome, EVENT_CHANNEL,
 };
 use crate::ipc::{err, ok, IpcResult};
 use crate::session;
@@ -58,7 +59,9 @@ fn spawn_shell_child(
     cmd.env("TERM", "xterm-256color");
     // multi-account FR-21: every shell of a session must match that session's
     // account. FR-14 (unchanged): forward TERM into the distro — `account_env`
-    // merges both entries into the one WSLENV list (multi-account FR-24).
+    // merges both entries into the one WSLENV list (multi-account FR-24). A
+    // project-owned shell (unbound-panes FR-6) has no account of its own, so
+    // `account_config_dir` is None and this runs on the default account.
     for (k, v) in session::account_env(account_config_dir, runtime, &["TERM/u"]) {
         cmd.env(k, v);
     }
@@ -142,11 +145,11 @@ fn fresh_shared() -> Arc<Mutex<Shared>> {
 
 /// The shell reader thread's body: pump PTY output into the ring buffer + emit
 /// `shell.data` events until the child's side closes, then emit `shell.exit`.
-/// Both events carry `shellId` and `sessionId` (FR-10, FR-14).
+/// Both events carry `shellId` and `owner` (FR-10, FR-14, unbound-panes §5).
 fn run_shell_reader(
     app: AppHandle,
     shell_id: String,
-    session_id: String,
+    owner: ShellOwner,
     mut reader: Box<dyn Read + Send>,
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     shared: Arc<Mutex<Shared>>,
@@ -168,7 +171,7 @@ fn run_shell_reader(
                     EVENT_CHANNEL,
                     ShellEvent::Data {
                         shell_id: shell_id.clone(),
-                        session_id: session_id.clone(),
+                        owner: owner.clone(),
                         data: chunk,
                     },
                 );
@@ -187,63 +190,122 @@ fn run_shell_reader(
         EVENT_CHANNEL,
         ShellEvent::Exit {
             shell_id,
-            session_id,
+            owner,
             exit_code: code,
         },
     );
 }
 
-/// Open + spawn + start the reader thread for a brand-new shell of
-/// `session_id`, at the fixed 80x24 initial size every freshly created shell
-/// gets. Returns what the registry needs to install it — doesn't touch the
-/// registry itself, so callers control exactly when/how the entry lands
-/// (`shell_create` inserts directly; `shell_ensure`'s create-if-none path
-/// hands this to `Registry::ensure_first` so a racing concurrent
-/// `shell_ensure` attaches instead of spawning a duplicate, §multiple-shells
-/// FR-5).
-fn spawn_shell(
+/// What a shell owner resolves to before it can spawn: the cwd, the claude
+/// runtime, and (for a session owner) its account's config dir override.
+#[cfg_attr(test, derive(Debug))]
+struct OwnerTarget {
+    cwd: String,
+    runtime: String,
+    account_config_dir: Option<String>,
+}
+
+/// Pure decision logic for a project owner once its root lookup is known
+/// (success or failure) — split out of `resolve_owner_target` so the
+/// `PROJECT_NOT_FOUND`/`PROJECT_ROOT_MISSING` precedence (owned by
+/// `project::root_of`, surfaced here via `root_for_shell`) and the
+/// WSL-vs-native runtime pick are unit-testable without an `AppHandle` or a
+/// `ProjectRegistry` fixture.
+fn project_owner_target(
+    root_lookup: Result<String, (&'static str, &'static str)>,
+) -> Result<OwnerTarget, (&'static str, String)> {
+    let root = root_lookup.map_err(|(code, msg)| (code, msg.to_string()))?;
+    let runtime = if crate::wsl::is_wsl_unc_path(&root) {
+        "wsl".to_string()
+    } else {
+        "native".to_string()
+    };
+    Ok(OwnerTarget {
+        cwd: root,
+        runtime,
+        account_config_dir: None,
+    })
+}
+
+/// unbound-panes §5: resolve `owner` to where/how its shell spawns. A session
+/// owner reads its live cwd/runtime/account off the engine exactly as before
+/// (`SESSION_NOT_FOUND` if unknown). A project owner resolves to the
+/// project's `root` (`PROJECT_NOT_FOUND`/`PROJECT_ROOT_MISSING`, checked
+/// BEFORE spawning) with no account override, and a runtime derived from the
+/// root's own shape — a WSL UNC root resolves to `"wsl"`, exactly how a
+/// session's runtime reads off a WSL UNC cwd (wsl-filesystem).
+fn resolve_owner_target(
     app: &AppHandle,
     engine: &session::Engine,
-    session_id: &str,
+    owner: &ShellOwner,
+) -> Result<OwnerTarget, (&'static str, String)> {
+    match owner {
+        ShellOwner::Session { session_id } => {
+            let cwd = engine
+                .cwd_of(session_id)
+                .ok_or(("SESSION_NOT_FOUND", "no such session".to_string()))?;
+            let runtime = engine
+                .runtime_of(session_id)
+                .unwrap_or_else(|| "native".to_string());
+            let account_config_dir = engine
+                .account_of(session_id)
+                .and_then(|id| crate::account::config_dir_of(app, &id));
+            Ok(OwnerTarget {
+                cwd,
+                runtime,
+                account_config_dir,
+            })
+        }
+        ShellOwner::Project { project_id } => {
+            project_owner_target(crate::project::root_for_shell(app, project_id))
+        }
+    }
+}
+
+/// Open + spawn + start the reader thread for a brand-new shell of `owner`, at
+/// the fixed 80x24 initial size every freshly created shell gets. Returns
+/// what the registry needs to install it — doesn't touch the registry itself,
+/// so callers control exactly when/how the entry lands (`shell_create` inserts
+/// directly; `shell_ensure`'s create-if-none path hands this to
+/// `Registry::ensure_first` so a racing concurrent `shell_ensure` attaches
+/// instead of spawning a duplicate, §multiple-shells FR-5).
+fn spawn_shell(
+    app: &AppHandle,
+    owner: ShellOwner,
     cwd: &str,
+    runtime: &str,
+    account_config_dir: Option<&str>,
 ) -> Result<(String, PtyHandles, Arc<Mutex<Shared>>), String> {
-    let runtime = engine
-        .runtime_of(session_id)
-        .unwrap_or_else(|| "native".to_string());
-    // multi-account FR-21: the session's account, resolved to its config dir
-    // (None for the built-in `default` account — no override).
-    let account_config_dir = engine
-        .account_of(session_id)
-        .and_then(|id| crate::account::config_dir_of(app, &id));
     let (cols, rows) = (80u16, 24u16);
-    let (pty, reader, child) =
-        open_and_spawn(cwd, &runtime, account_config_dir.as_deref(), cols, rows)?;
+    let (pty, reader, child) = open_and_spawn(cwd, runtime, account_config_dir, cols, rows)?;
 
     let shell_id = uuid::Uuid::new_v4().to_string();
     let shared = fresh_shared();
     {
         let app = app.clone();
         let sid = shell_id.clone();
-        let session_id = session_id.to_string();
+        let owner = owner.clone();
         let shared = shared.clone();
-        std::thread::spawn(move || run_shell_reader(app, sid, session_id, reader, child, shared));
+        std::thread::spawn(move || run_shell_reader(app, sid, owner, reader, child, shared));
     }
     Ok((shell_id, pty, shared))
 }
 
-/// Spawn a brand-new shell for `session_id` and register it under a fresh
+/// Spawn a brand-new shell for `owner` and register it under a fresh
 /// `ShellId`. Used by `shell_create` (the cap check runs first, in the
 /// caller); `shell_ensure`'s create-if-none path goes through `spawn_shell` +
 /// `Registry::ensure_first` instead, never this.
 fn spawn_and_register(
     app: &AppHandle,
     reg: &Registry,
-    engine: &session::Engine,
-    session_id: &str,
+    owner: ShellOwner,
     cwd: &str,
+    runtime: &str,
+    account_config_dir: Option<&str>,
 ) -> Result<ShellInfo, String> {
-    let (shell_id, pty, shared) = spawn_shell(app, engine, session_id, cwd)?;
-    Ok(reg.insert(shell_id, session_id.to_string(), pty, shared))
+    let (shell_id, pty, shared) =
+        spawn_shell(app, owner.clone(), cwd, runtime, account_config_dir)?;
+    Ok(reg.insert(shell_id, owner, pty, shared))
 }
 
 #[tauri::command(async)]
@@ -251,12 +313,12 @@ pub fn shell_ensure(
     app: AppHandle,
     reg: State<'_, Registry>,
     engine: State<'_, session::Engine>,
-    session_id: String,
+    owner: ShellOwner,
     shell_id: Option<String>,
 ) -> IpcResult<ShellEnsureData> {
     // FR-5: an explicit shellId attaches, never spawns.
     if let Some(sid) = &shell_id {
-        return match reg.belongs_to_session(sid, &session_id) {
+        return match reg.belongs_to(sid, &owner) {
             Some(true) => {
                 let Some((cols, rows)) = reg.size(sid) else {
                     return err("SHELL_NOT_FOUND", "no such shell");
@@ -264,7 +326,7 @@ pub fn shell_ensure(
                 let (replay, exit_code) = reg.replay(sid).unwrap_or_default();
                 ok(ShellEnsureData {
                     shell_id: sid.clone(),
-                    shells: reg.shells_of_session(&session_id),
+                    shells: reg.shells_of_owner(&owner),
                     cols,
                     rows,
                     scrollback_replay: replay,
@@ -275,15 +337,15 @@ pub fn shell_ensure(
         };
     }
 
-    // No shellId: attach to the session's first shell, in creation order.
-    if let Some(first) = reg.first_of_session(&session_id) {
+    // No shellId: attach to the owner's first shell, in creation order.
+    if let Some(first) = reg.first_of_owner(&owner) {
         let Some((cols, rows)) = reg.size(&first) else {
             return err("SHELL_NOT_FOUND", "no such shell");
         };
         let (replay, exit_code) = reg.replay(&first).unwrap_or_default();
         return ok(ShellEnsureData {
             shell_id: first,
-            shells: reg.shells_of_session(&session_id),
+            shells: reg.shells_of_owner(&owner),
             cols,
             rows,
             scrollback_replay: replay,
@@ -291,16 +353,23 @@ pub fn shell_ensure(
         });
     }
 
-    // The session has none (yet, as far as we've seen): create-if-none (FR-5),
+    // The owner has none (yet, as far as we've seen): create-if-none (FR-5),
     // never capped — it only ever goes 0 -> 1 (FR-2). `Registry::ensure_first`
-    // reserves the session's creation slot across the check+spawn+insert so a
-    // concurrent `shell_ensure({sessionId})` racing this one attaches to
+    // reserves the owner's creation slot across the check+spawn+insert so a
+    // concurrent `shell_ensure({owner})` racing this one attaches to
     // whichever call wins instead of both spawning a shell.
-    let Some(cwd) = engine.cwd_of(&session_id) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+    let target = match resolve_owner_target(&app, &engine, &owner) {
+        Ok(t) => t,
+        Err((code, msg)) => return err(code, msg),
     };
-    let shell_id = match reg.ensure_first(&session_id, || {
-        spawn_shell(&app, &engine, &session_id, &cwd)
+    let shell_id = match reg.ensure_first(&owner, || {
+        spawn_shell(
+            &app,
+            owner.clone(),
+            &target.cwd,
+            &target.runtime,
+            target.account_config_dir.as_deref(),
+        )
     }) {
         Ok(id) => id,
         Err(msg) => return err("PTY_ERROR", msg),
@@ -311,7 +380,7 @@ pub fn shell_ensure(
     let (replay, exit_code) = reg.replay(&shell_id).unwrap_or_default();
     ok(ShellEnsureData {
         shell_id,
-        shells: reg.shells_of_session(&session_id),
+        shells: reg.shells_of_owner(&owner),
         cols,
         rows,
         scrollback_replay: replay,
@@ -324,16 +393,27 @@ pub fn shell_create(
     app: AppHandle,
     reg: State<'_, Registry>,
     engine: State<'_, session::Engine>,
-    session_id: String,
+    owner: ShellOwner,
 ) -> IpcResult<ShellInfo> {
-    let Some(cwd) = engine.cwd_of(&session_id) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+    let target = match resolve_owner_target(&app, &engine, &owner) {
+        Ok(t) => t,
+        Err((code, msg)) => return err(code, msg),
     };
     // FR-2: checked BEFORE spawning — a refused create spawns nothing.
-    if reg.at_cap(&session_id) {
-        return err("SHELL_LIMIT_REACHED", "a session holds at most 6 shells");
+    if reg.at_cap(&owner) {
+        return err(
+            "SHELL_LIMIT_REACHED",
+            "at most 6 shells per session or project",
+        );
     }
-    match spawn_and_register(&app, &reg, &engine, &session_id, &cwd) {
+    match spawn_and_register(
+        &app,
+        &reg,
+        owner,
+        &target.cwd,
+        &target.runtime,
+        target.account_config_dir.as_deref(),
+    ) {
         Ok(info) => ok(info),
         Err(msg) => err("PTY_ERROR", msg),
     }
@@ -352,12 +432,27 @@ pub fn shell_restart(
     let Some((cols, rows)) = reg.size(&shell_id) else {
         return err("SHELL_NOT_FOUND", "no such shell");
     };
-    let runtime = engine
-        .runtime_of(&info.session_id)
-        .unwrap_or_else(|| "native".to_string());
-    let account_config_dir = engine
-        .account_of(&info.session_id)
-        .and_then(|id| crate::account::config_dir_of(&app, &id));
+    // The owner may have moved on (a project's root, an account) since this
+    // shell was first spawned — re-resolve rather than reuse stale values,
+    // same as the original spawn path.
+    let (runtime, account_config_dir) = match &info.owner {
+        ShellOwner::Session { session_id } => (
+            engine
+                .runtime_of(session_id)
+                .unwrap_or_else(|| "native".to_string()),
+            engine
+                .account_of(session_id)
+                .and_then(|id| crate::account::config_dir_of(&app, &id)),
+        ),
+        ShellOwner::Project { .. } => (
+            if crate::wsl::is_wsl_unc_path(&info.cwd) {
+                "wsl".to_string()
+            } else {
+                "native".to_string()
+            },
+            None,
+        ),
+    };
     let (pty, reader, mut child) = match open_and_spawn(
         &info.cwd,
         &runtime,
@@ -385,8 +480,8 @@ pub fn shell_restart(
     {
         let app = app.clone();
         let sid = shell_id.clone();
-        let session_id = info.session_id.clone();
-        std::thread::spawn(move || run_shell_reader(app, sid, session_id, reader, child, shared));
+        let owner = info.owner.clone();
+        std::thread::spawn(move || run_shell_reader(app, sid, owner, reader, child, shared));
     }
     ok(ShellRestartData { cols, rows })
 }
@@ -435,5 +530,43 @@ pub fn shell_resize(
         ok(())
     } else {
         err("SHELL_NOT_FOUND", "no such shell")
+    }
+}
+
+// ---------- project owner target resolution (unbound-panes FR-6/§5) ----------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_owner_target_resolves_native_root_and_no_account_override() {
+        let target = project_owner_target(Ok("/repo/acme".to_string())).unwrap();
+        assert_eq!(target.cwd, "/repo/acme");
+        assert_eq!(target.runtime, "native");
+        assert_eq!(target.account_config_dir, None);
+    }
+
+    #[test]
+    fn project_owner_target_resolves_wsl_unc_root_to_the_wsl_runtime() {
+        let target =
+            project_owner_target(Ok("\\\\wsl$\\Ubuntu\\home\\u\\api".to_string())).unwrap();
+        assert_eq!(target.cwd, "\\\\wsl$\\Ubuntu\\home\\u\\api");
+        assert_eq!(target.runtime, "wsl");
+        assert_eq!(target.account_config_dir, None);
+    }
+
+    #[test]
+    fn project_owner_target_propagates_project_not_found_before_any_spawn() {
+        let err = project_owner_target(Err(("PROJECT_NOT_FOUND", "no such project"))).unwrap_err();
+        assert_eq!(err.0, "PROJECT_NOT_FOUND");
+        assert_eq!(err.1, "no such project");
+    }
+
+    #[test]
+    fn project_owner_target_propagates_project_root_missing_before_any_spawn() {
+        let err = project_owner_target(Err(("PROJECT_ROOT_MISSING", "root not set"))).unwrap_err();
+        assert_eq!(err.0, "PROJECT_ROOT_MISSING");
+        assert_eq!(err.1, "root not set");
     }
 }

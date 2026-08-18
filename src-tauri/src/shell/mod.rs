@@ -1,10 +1,14 @@
-// shell-terminal / multiple-shells core — the `shell` domain: a ShellId-keyed
-// registry of real PTYs, up to 6 per session. `mod.rs` owns the shared data
-// model (ShellEvent, Ring, Shared, PtyHandles, ShellEntry, Registry, ShellInfo,
-// ShellEnsureData, ShellRestartData) plus the two cross-module entry points
-// other domains call into (`dispose_session_shells` from session::session_remove,
-// `kill_all_shells` from main's exit handler). Spawn resolution lives in
-// `spawn.rs`, the `#[tauri::command]` handlers in `commands.rs`.
+// shell-terminal / multiple-shells / unbound-panes core — the `shell` domain: a
+// ShellId-keyed registry of real PTYs, up to 6 per OWNER (unbound-panes §5). A
+// shell's owner is a `ShellOwner` union — a session, or (unbound-panes FR-6) a
+// registered project rooted at its `root`. `mod.rs` owns the shared data model
+// (ShellOwner, ShellEvent, Ring, Shared, PtyHandles, ShellEntry, Registry,
+// ShellInfo, ShellEnsureData, ShellRestartData) plus the two cross-module entry
+// points other domains call into (`dispose_session_shells` from
+// session::session_remove — SESSION-owned shells only, project shells are
+// untouched — and `kill_all_shells` from main's exit handler). Spawn
+// resolution lives in `spawn.rs`, the `#[tauri::command]` handlers in
+// `commands.rs`.
 
 // `commands` must stay a visible (not private) child: `tauri::generate_handler!`
 // in main.rs needs the literal `shell::commands::shell_ensure` path — the
@@ -17,7 +21,7 @@ mod spawn;
 pub(crate) use spawn::shell_spawn_target;
 
 use portable_pty::{ChildKiller, MasterPty, PtySize};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::Write;
@@ -27,8 +31,38 @@ use tauri::{AppHandle, Manager};
 const EVENT_CHANNEL: &str = "francois://shell/event";
 const RING_MAX_BYTES: usize = 1_048_576; // 1 MiB (shell-terminal FR-9)
 const RING_MAX_LINES: usize = 2000; // shell-terminal FR-9
-const SHELL_CAP: usize = 6; // FR-2
+const SHELL_CAP: usize = 6; // FR-2, per OWNER (unbound-panes §5)
 const MAX_NAME_LEN: usize = 40; // FR-4
+
+// ---------- ShellOwner (contract/shell-terminal.ts, unbound-panes FR-6/§5) ----------
+
+/// Who a shell belongs to for its whole life. A project-owned shell is rooted
+/// at that project's `root` and has no session. `rename_all = "camelCase"`
+/// lowercases the variant names too, so `Session`/`Project` serialize as the
+/// contract's `kind: 'session' | 'project'` tags.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ShellOwner {
+    Session {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+    },
+    Project {
+        #[serde(rename = "projectId")]
+        project_id: String,
+    },
+}
+
+impl ShellOwner {
+    /// `Some(id)` for a session owner, `None` for a project owner — what
+    /// `dispose_session_shells` filters on.
+    fn as_session_id(&self) -> Option<&str> {
+        match self {
+            ShellOwner::Session { session_id } => Some(session_id),
+            ShellOwner::Project { .. } => None,
+        }
+    }
+}
 
 // ---------- shell event payload (contract/shell-terminal.ts ShellEvent) ----------
 
@@ -39,16 +73,14 @@ enum ShellEvent {
     Data {
         #[serde(rename = "shellId")]
         shell_id: String,
-        #[serde(rename = "sessionId")]
-        session_id: String,
+        owner: ShellOwner,
         data: String,
     },
     #[serde(rename = "shell.exit")]
     Exit {
         #[serde(rename = "shellId")]
         shell_id: String,
-        #[serde(rename = "sessionId")]
-        session_id: String,
+        owner: ShellOwner,
         #[serde(rename = "exitCode")]
         exit_code: i32,
     },
@@ -109,8 +141,7 @@ pub(crate) struct Shared {
 #[derive(Serialize, Clone)]
 pub struct ShellInfo {
     id: String,
-    #[serde(rename = "sessionId")]
-    session_id: String,
+    pub(crate) owner: ShellOwner,
     name: String,
     #[serde(rename = "shellName")]
     shell_name: String,
@@ -155,8 +186,8 @@ pub(crate) struct PtyHandles {
 
 struct ShellEntry {
     id: String,
-    session_id: String,
-    /// Registry-wide monotonic counter — yields per-session creation order
+    owner: ShellOwner,
+    /// Registry-wide monotonic counter — yields per-owner creation order
     /// (FR-1), stable across renames and closes.
     seq: u64,
     /// Meaningful only while `custom_name` is None: the ordinal in `<shellName>
@@ -187,7 +218,7 @@ impl ShellEntry {
         let shared = self.shared.lock().unwrap();
         ShellInfo {
             id: self.id.clone(),
-            session_id: self.session_id.clone(),
+            owner: self.owner.clone(),
             name: self.display_name(),
             shell_name: self.shell_name.clone(),
             cwd: self.cwd.clone(),
@@ -236,14 +267,14 @@ struct RegistryState {
 #[derive(Default)]
 pub struct Registry {
     state: Mutex<RegistryState>,
-    /// Per-session locks serializing `shell_ensure`'s create-if-none path
-    /// (FR-5): `ensure_first` holds a session's lock across its
-    /// check-first/spawn/insert so concurrent `shell_ensure({sessionId})`
-    /// calls for a session with no shells yet attach to the first call's
+    /// Per-owner locks serializing `shell_ensure`'s create-if-none path
+    /// (FR-5, unbound-panes §5): `ensure_first` holds an owner's lock across
+    /// its check-first/spawn/insert so concurrent `shell_ensure({owner})`
+    /// calls for an owner with no shells yet attach to the first call's
     /// result instead of each spawning a shell. Entries are never removed —
-    /// one `Arc<Mutex<()>>` per session id seen is cheap for the app's
-    /// lifetime, and that's simpler than reclaiming them on session removal.
-    creation_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// one `Arc<Mutex<()>>` per owner seen is cheap for the app's lifetime,
+    /// and that's simpler than reclaiming them on session/pane removal.
+    creation_locks: Mutex<HashMap<ShellOwner, Arc<Mutex<()>>>>,
 }
 
 /// What `Registry::write` found — mirrors the pre-multiple-shells `shell_write`
@@ -262,73 +293,74 @@ impl Registry {
         self.state.lock().unwrap()
     }
 
-    /// The `Arc<Mutex<()>>` guarding `session_id`'s create-if-none slot,
-    /// creating it on first use.
-    fn creation_lock(&self, session_id: &str) -> Arc<Mutex<()>> {
+    /// The `Arc<Mutex<()>>` guarding `owner`'s create-if-none slot, creating it
+    /// on first use.
+    fn creation_lock(&self, owner: &ShellOwner) -> Arc<Mutex<()>> {
         let mut locks = self.creation_locks.lock().unwrap();
         locks
-            .entry(session_id.to_string())
+            .entry(owner.clone())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
 
-    /// `shell_ensure`'s create-if-none path (FR-5), race-free: if the session
+    /// `shell_ensure`'s create-if-none path (FR-5), race-free: if the owner
     /// already has a first shell, returns its id immediately. Otherwise
-    /// acquires the session's creation lock, re-checks (another caller may
-    /// have won the race while this one waited for the lock), and only then
-    /// runs `spawn` — so at most one shell is ever spawned per genuinely-empty
-    /// session no matter how many `shell_ensure` calls for it arrive
+    /// acquires the owner's creation lock, re-checks (another caller may have
+    /// won the race while this one waited for the lock), and only then runs
+    /// `spawn` — so at most one shell is ever spawned per genuinely-empty
+    /// owner no matter how many `shell_ensure` calls for it arrive
     /// concurrently; the rest attach to what the winner created instead of
     /// each spawning their own.
     pub(crate) fn ensure_first(
         &self,
-        session_id: &str,
+        owner: &ShellOwner,
         spawn: impl FnOnce() -> Result<(String, PtyHandles, Arc<Mutex<Shared>>), String>,
     ) -> Result<String, String> {
-        if let Some(first) = self.first_of_session(session_id) {
+        if let Some(first) = self.first_of_owner(owner) {
             return Ok(first);
         }
-        let lock = self.creation_lock(session_id);
+        let lock = self.creation_lock(owner);
         let _guard = lock.lock().unwrap();
-        if let Some(first) = self.first_of_session(session_id) {
+        if let Some(first) = self.first_of_owner(owner) {
             return Ok(first);
         }
         let (id, pty, shared) = spawn()?;
-        Ok(self.insert(id, session_id.to_string(), pty, shared).id)
+        Ok(self.insert(id, owner.clone(), pty, shared).id)
     }
 
-    /// A session's shells in creation order (FR-1).
-    pub(crate) fn shells_of_session(&self, session_id: &str) -> Vec<ShellInfo> {
+    /// An owner's shells in creation order (FR-1) — a project owner's strip is
+    /// its own project-owned shells only, never a session's (unbound-panes §5).
+    pub(crate) fn shells_of_owner(&self, owner: &ShellOwner) -> Vec<ShellInfo> {
         let state = self.lock();
         let mut entries: Vec<&ShellEntry> = state
             .shells
             .values()
-            .filter(|e| e.session_id == session_id)
+            .filter(|e| &e.owner == owner)
             .collect();
         entries.sort_by_key(|e| e.seq);
         entries.into_iter().map(|e| e.info()).collect()
     }
 
-    pub(crate) fn count_of_session(&self, session_id: &str) -> usize {
+    pub(crate) fn count_of_owner(&self, owner: &ShellOwner) -> usize {
         self.lock()
             .shells
             .values()
-            .filter(|e| e.session_id == session_id)
+            .filter(|e| &e.owner == owner)
             .count()
     }
 
-    pub(crate) fn at_cap(&self, session_id: &str) -> bool {
-        self.count_of_session(session_id) >= SHELL_CAP
+    pub(crate) fn at_cap(&self, owner: &ShellOwner) -> bool {
+        self.count_of_owner(owner) >= SHELL_CAP
     }
 
-    /// The id of the session's first shell in creation order (FR-5), None if it
+    /// The id of the owner's first shell in creation order (FR-5), None if it
     /// has none.
-    pub(crate) fn first_of_session(&self, session_id: &str) -> Option<String> {
+    pub(crate) fn first_of_owner(&self, owner: &ShellOwner) -> Option<String> {
         let state = self.lock();
         state
             .shells
             .values()
-            .filter(|e| e.session_id == session_id)
+            .filter(|e| &e.owner == owner)
             .min_by_key(|e| e.seq)
             .map(|e| e.id.clone())
     }
@@ -337,14 +369,11 @@ impl Registry {
         self.lock().shells.get(shell_id).map(|e| e.info())
     }
 
-    /// None: unknown id. Some(false): known but belongs to another session.
+    /// None: unknown id. Some(false): known but belongs to a different owner.
     /// Some(true): known and matches — both non-true cases are `SHELL_NOT_FOUND`
     /// at the API boundary (FR-5).
-    pub(crate) fn belongs_to_session(&self, shell_id: &str, session_id: &str) -> Option<bool> {
-        self.lock()
-            .shells
-            .get(shell_id)
-            .map(|e| e.session_id == session_id)
+    pub(crate) fn belongs_to(&self, shell_id: &str, owner: &ShellOwner) -> Option<bool> {
+        self.lock().shells.get(shell_id).map(|e| &e.owner == owner)
     }
 
     pub(crate) fn size(&self, shell_id: &str) -> Option<(u16, u16)> {
@@ -370,7 +399,7 @@ impl Registry {
     pub(crate) fn insert(
         &self,
         id: String,
-        session_id: String,
+        owner: ShellOwner,
         pty: PtyHandles,
         shared: Arc<Mutex<Shared>>,
     ) -> ShellInfo {
@@ -380,12 +409,12 @@ impl Registry {
         let used = state
             .shells
             .values()
-            .filter(|e| e.session_id == session_id && e.custom_name.is_none())
+            .filter(|e| e.owner == owner && e.custom_name.is_none())
             .map(|e| e.ordinal);
         let ordinal = smallest_unused_ordinal(used);
         let entry = ShellEntry {
             id: id.clone(),
-            session_id,
+            owner,
             seq,
             ordinal,
             custom_name: None,
@@ -407,7 +436,7 @@ impl Registry {
     /// None if the shell doesn't exist.
     pub(crate) fn rename(&self, shell_id: &str, name: &str) -> Option<ShellInfo> {
         let mut state = self.lock();
-        let session_id = state.shells.get(shell_id)?.session_id.clone();
+        let owner = state.shells.get(shell_id)?.owner.clone();
         match normalize_rename(name) {
             RenameOutcome::Custom(custom) => {
                 let entry = state.shells.get_mut(shell_id)?;
@@ -418,9 +447,7 @@ impl Registry {
                 let used = state
                     .shells
                     .values()
-                    .filter(|e| {
-                        e.session_id == session_id && e.id != shell_id && e.custom_name.is_none()
-                    })
+                    .filter(|e| e.owner == owner && e.id != shell_id && e.custom_name.is_none())
                     .map(|e| e.ordinal)
                     .collect::<Vec<_>>();
                 let ordinal = smallest_unused_ordinal(used);
@@ -512,12 +539,15 @@ impl Registry {
     }
 
     /// FR-9: kill + drop every shell of one session. Returns how many existed.
+    /// FR-9/unbound-panes §5: only `kind: 'session'` entries for `session_id` —
+    /// a project-owned shell is never touched by this, even one rooted at that
+    /// session's project.
     fn dispose_session(&self, session_id: &str) -> usize {
         let mut state = self.lock();
         let ids: Vec<String> = state
             .shells
             .values()
-            .filter(|e| e.session_id == session_id)
+            .filter(|e| e.owner.as_session_id() == Some(session_id))
             .map(|e| e.id.clone())
             .collect();
         for id in &ids {
@@ -616,397 +646,5 @@ mod testutil {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::testutil::*;
-    use super::*;
-    use serde_json::json;
-
-    // ---------- pure helpers ----------
-
-    #[test]
-    fn smallest_unused_ordinal_fills_gaps_before_extending() {
-        assert_eq!(smallest_unused_ordinal([]), 1);
-        assert_eq!(smallest_unused_ordinal([1, 2, 3]), 4);
-        assert_eq!(smallest_unused_ordinal([1, 3]), 2); // the FR-3 example
-        assert_eq!(smallest_unused_ordinal([2, 3]), 1);
-    }
-
-    #[test]
-    fn normalize_rename_trims_and_caps_at_40_chars() {
-        match normalize_rename("  build  ") {
-            RenameOutcome::Custom(n) => assert_eq!(n, "build"),
-            RenameOutcome::Reset => panic!("expected Custom"),
-        }
-        let long = "x".repeat(50);
-        match normalize_rename(&long) {
-            RenameOutcome::Custom(n) => assert_eq!(n.chars().count(), 40),
-            RenameOutcome::Reset => panic!("expected Custom"),
-        }
-    }
-
-    #[test]
-    fn normalize_rename_empty_or_whitespace_resets() {
-        assert!(matches!(normalize_rename(""), RenameOutcome::Reset));
-        assert!(matches!(normalize_rename("   "), RenameOutcome::Reset));
-    }
-
-    // ---------- serde shapes (contract/shell-terminal.ts) ----------
-
-    #[test]
-    fn shell_data_event_serializes_to_contract_shape() {
-        let ev = serde_json::to_value(ShellEvent::Data {
-            shell_id: "sh1".into(),
-            session_id: "s1".into(),
-            data: "hello".into(),
-        })
-        .unwrap();
-        assert_eq!(
-            ev,
-            json!({ "type": "shell.data", "shellId": "sh1", "sessionId": "s1", "data": "hello" })
-        );
-    }
-
-    #[test]
-    fn shell_exit_event_serializes_to_contract_shape() {
-        let ev = serde_json::to_value(ShellEvent::Exit {
-            shell_id: "sh1".into(),
-            session_id: "s1".into(),
-            exit_code: 2,
-        })
-        .unwrap();
-        assert_eq!(
-            ev,
-            json!({ "type": "shell.exit", "shellId": "sh1", "sessionId": "s1", "exitCode": 2 })
-        );
-    }
-
-    #[test]
-    fn shell_ensure_data_serializes_to_contract_shape() {
-        let data = ShellEnsureData {
-            shell_id: "sh1".into(),
-            shells: vec![],
-            cols: 80,
-            rows: 24,
-            scrollback_replay: "hi".into(),
-            exit_code: Some(2),
-        };
-        let v = serde_json::to_value(&data).unwrap();
-        assert_eq!(
-            v,
-            json!({
-                "shellId": "sh1",
-                "shells": [],
-                "cols": 80,
-                "rows": 24,
-                "scrollbackReplay": "hi",
-                "exitCode": 2
-            })
-        );
-    }
-
-    #[test]
-    fn shell_ensure_data_omits_exit_code_when_none() {
-        let data = ShellEnsureData {
-            shell_id: "sh1".into(),
-            shells: vec![],
-            cols: 80,
-            rows: 24,
-            scrollback_replay: String::new(),
-            exit_code: None,
-        };
-        let v = serde_json::to_value(&data).unwrap();
-        assert!(v.get("exitCode").is_none());
-    }
-
-    #[test]
-    fn shell_restart_data_serializes_to_contract_shape() {
-        let data = ShellRestartData {
-            cols: 120,
-            rows: 40,
-        };
-        let v = serde_json::to_value(&data).unwrap();
-        assert_eq!(v, json!({ "cols": 120, "rows": 40 }));
-    }
-
-    #[test]
-    fn shell_info_omits_exit_code_while_alive() {
-        let reg = Registry::default();
-        let (pty, shared) = spawn_test_pty("sh", "/tmp");
-        let info = reg.insert("sh1".into(), "s1".into(), pty, shared);
-        let v = serde_json::to_value(&info).unwrap();
-        assert_eq!(v["id"], "sh1");
-        assert_eq!(v["sessionId"], "s1");
-        assert_eq!(v["name"], "sh 1");
-        assert_eq!(v["shellName"], "sh");
-        assert_eq!(v["alive"], true);
-        assert!(v.get("exitCode").is_none());
-    }
-
-    // ---------- registry behaviour ----------
-
-    #[test]
-    fn insert_orders_by_creation_and_names_by_smallest_unused_ordinal() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        let (p2, s2) = spawn_test_pty("zsh", "/tmp");
-        let (p3, s3) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), p1, s1);
-        reg.insert("b".into(), "sess".into(), p2, s2);
-        reg.insert("c".into(), "sess".into(), p3, s3);
-
-        let shells = reg.shells_of_session("sess");
-        assert_eq!(
-            shells.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-            vec!["a", "b", "c"]
-        );
-        assert_eq!(
-            shells.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
-            vec!["zsh 1", "zsh 2", "zsh 3"]
-        );
-
-        // FR-3: disposing the middle one and creating a new one reuses ordinal 2,
-        // not 4 — and the new shell lands last in creation order (FR-1), not in
-        // the freed slot's old position.
-        assert!(reg.dispose("b"));
-        let (p4, s4) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("d".into(), "sess".into(), p4, s4);
-        let shells = reg.shells_of_session("sess");
-        assert_eq!(
-            shells.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-            vec!["a", "c", "d"]
-        );
-        assert_eq!(
-            shells.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
-            vec!["zsh 1", "zsh 3", "zsh 2"]
-        );
-    }
-
-    #[test]
-    fn cap_is_per_session_at_six() {
-        let reg = Registry::default();
-        for i in 0..6 {
-            let (p, s) = spawn_test_pty("zsh", "/tmp");
-            reg.insert(format!("s{i}"), "sess".into(), p, s);
-        }
-        assert!(reg.at_cap("sess"));
-        assert_eq!(reg.count_of_session("sess"), 6);
-        // A different session is unaffected (per-session cap, FR-2).
-        assert!(!reg.at_cap("other"));
-    }
-
-    #[test]
-    fn rename_sets_a_custom_name_and_frees_its_ordinal() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        let (p2, s2) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), p1, s1);
-        reg.insert("b".into(), "sess".into(), p2, s2);
-
-        let renamed = reg.rename("b", "  build  ").unwrap();
-        assert_eq!(renamed.name, "build");
-
-        // "b"'s ordinal (2) is now free — a new shell claims it, not 3.
-        let (p3, s3) = spawn_test_pty("zsh", "/tmp");
-        let info = reg.insert("c".into(), "sess".into(), p3, s3);
-        assert_eq!(info.name, "zsh 2");
-    }
-
-    #[test]
-    fn rename_to_empty_resets_to_the_auto_name() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), p1, s1);
-        let renamed = reg.rename("a", "custom").unwrap();
-        assert_eq!(renamed.name, "custom");
-        let reset = reg.rename("a", "   ").unwrap();
-        assert_eq!(reset.name, "zsh 1");
-    }
-
-    #[test]
-    fn rename_unknown_shell_returns_none() {
-        let reg = Registry::default();
-        assert!(reg.rename("nope", "x").is_none());
-    }
-
-    #[test]
-    fn restart_keeps_id_name_and_position_and_clears_the_ring() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        let (p2, s2) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), p1, s1.clone());
-        reg.insert("b".into(), "sess".into(), p2, s2);
-        reg.rename("a", "keep-me").unwrap();
-        s1.lock().unwrap().ring.push("stale output");
-
-        let (fresh_pty, fresh_shared) = spawn_test_pty("zsh", "/tmp");
-        let size = reg.restart("a", fresh_pty, fresh_shared).unwrap();
-        assert_eq!(size, (80, 24));
-
-        let shells = reg.shells_of_session("sess");
-        assert_eq!(
-            shells.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-            vec!["a", "b"]
-        ); // same position
-        assert_eq!(shells[0].name, "keep-me"); // same name
-        assert_eq!(reg.replay("a").unwrap().0, ""); // fresh ring
-    }
-
-    #[test]
-    fn restart_unknown_shell_returns_none() {
-        let reg = Registry::default();
-        let (pty, shared) = spawn_test_pty("zsh", "/tmp");
-        assert!(reg.restart("nope", pty, shared).is_none());
-    }
-
-    #[test]
-    fn restart_marks_the_outgoing_shared_disposed() {
-        // Same as dispose()/dispose_session()/kill_all(): the old reader
-        // thread checks `disposed` before emitting `shell.exit` — restart
-        // must flip it on the outgoing `Shared` or that thread's terminal
-        // emit races the fresh PTY's own events.
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), p1, s1.clone());
-        assert!(!s1.lock().unwrap().disposed);
-
-        let (fresh_pty, fresh_shared) = spawn_test_pty("zsh", "/tmp");
-        reg.restart("a", fresh_pty, fresh_shared).unwrap();
-
-        assert!(s1.lock().unwrap().disposed);
-    }
-
-    #[test]
-    fn ensure_first_serializes_concurrent_create_if_none_calls() {
-        // multiple-shells FR-5: N concurrent `shell_ensure({sessionId})` calls
-        // against a session with no shells yet must spawn exactly one shell —
-        // the rest attach to what the winner created.
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::sync::Barrier;
-
-        const CALLERS: usize = 8;
-        let reg = Arc::new(Registry::default());
-        let spawn_count = Arc::new(AtomicUsize::new(0));
-        let barrier = Arc::new(Barrier::new(CALLERS));
-
-        let handles: Vec<_> = (0..CALLERS)
-            .map(|_| {
-                let reg = reg.clone();
-                let spawn_count = spawn_count.clone();
-                let barrier = barrier.clone();
-                std::thread::spawn(move || {
-                    barrier.wait();
-                    reg.ensure_first("sess", || {
-                        spawn_count.fetch_add(1, Ordering::SeqCst);
-                        let (pty, shared) = spawn_test_pty("zsh", "/tmp");
-                        Ok(("only".to_string(), pty, shared))
-                    })
-                })
-            })
-            .collect();
-
-        let ids: Vec<String> = handles
-            .into_iter()
-            .map(|h| h.join().unwrap().unwrap())
-            .collect();
-
-        assert_eq!(spawn_count.load(Ordering::SeqCst), 1);
-        assert!(ids.iter().all(|id| id == "only"));
-        assert_eq!(reg.count_of_session("sess"), 1);
-    }
-
-    #[test]
-    fn ensure_first_attaches_immediately_when_a_shell_already_exists() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), p1, s1);
-
-        let id = reg
-            .ensure_first("sess", || {
-                panic!("must not spawn when a shell already exists")
-            })
-            .unwrap();
-        assert_eq!(id, "a");
-    }
-
-    #[test]
-    fn dispose_removes_the_entry_and_leaves_others_untouched() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        let (p2, s2) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), p1, s1);
-        reg.insert("b".into(), "sess".into(), p2, s2);
-
-        assert!(reg.dispose("a"));
-        assert!(!reg.dispose("a")); // already gone
-        assert_eq!(reg.count_of_session("sess"), 1);
-        assert_eq!(reg.first_of_session("sess"), Some("b".to_string()));
-    }
-
-    #[test]
-    fn dispose_session_kills_every_shell_of_that_session_only() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        let (p2, s2) = spawn_test_pty("zsh", "/tmp");
-        let (p3, s3) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess1".into(), p1, s1);
-        reg.insert("b".into(), "sess1".into(), p2, s2);
-        reg.insert("c".into(), "sess2".into(), p3, s3);
-
-        assert_eq!(reg.dispose_session("sess1"), 2);
-        assert_eq!(reg.count_of_session("sess1"), 0);
-        assert_eq!(reg.count_of_session("sess2"), 1); // untouched
-    }
-
-    #[test]
-    fn kill_all_drains_every_session() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        let (p2, s2) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess1".into(), p1, s1);
-        reg.insert("b".into(), "sess2".into(), p2, s2);
-        reg.kill_all();
-        assert_eq!(reg.count_of_session("sess1"), 0);
-        assert_eq!(reg.count_of_session("sess2"), 0);
-    }
-
-    #[test]
-    fn belongs_to_session_distinguishes_unknown_from_wrong_session() {
-        let reg = Registry::default();
-        let (p1, s1) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess1".into(), p1, s1);
-        assert_eq!(reg.belongs_to_session("a", "sess1"), Some(true));
-        assert_eq!(reg.belongs_to_session("a", "sess2"), Some(false));
-        assert_eq!(reg.belongs_to_session("nope", "sess1"), None);
-    }
-
-    #[test]
-    fn write_drops_bytes_silently_once_not_alive() {
-        let reg = Registry::default();
-        let (pty, shared) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), pty, shared.clone());
-        shared.lock().unwrap().alive = false;
-        assert!(matches!(reg.write("a", "x"), WriteOutcome::Dropped));
-    }
-
-    #[test]
-    fn write_unknown_shell_is_not_found() {
-        let reg = Registry::default();
-        assert!(matches!(reg.write("nope", "x"), WriteOutcome::NotFound));
-    }
-
-    #[test]
-    fn resize_updates_size_and_reports_unknown_shells() {
-        let reg = Registry::default();
-        let (pty, shared) = spawn_test_pty("zsh", "/tmp");
-        reg.insert("a".into(), "sess".into(), pty, shared);
-        assert!(reg.resize("a", 120, 40));
-        assert_eq!(reg.size("a"), Some((120, 40)));
-        assert!(!reg.resize("nope", 10, 10));
-    }
-
-    #[test]
-    fn first_of_session_is_none_when_empty() {
-        let reg = Registry::default();
-        assert_eq!(reg.first_of_session("sess"), None);
-    }
-}
+#[path = "registry_tests.rs"]
+mod tests;

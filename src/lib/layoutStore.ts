@@ -4,9 +4,11 @@
 // composition root.
 
 import type { StateCreator } from 'zustand';
-import type { SessionId, SessionMeta } from '../../contract/common';
+import type { ProjectId, SessionId, SessionMeta } from '../../contract/common';
+import type { ShellId } from '../../contract/shell-terminal';
 import { statusNeedsAttention } from '../../contract/fleet-board';
-import { filterSessionsByProject } from '../../contract/projects';
+import { SHELL_CAP } from '../features/shell/shell';
+import { shellDispose } from './api';
 import type { MainTab } from './agentTabStore';
 import type { AppState } from './store';
 
@@ -96,12 +98,11 @@ function persistCollapsedPanes(panes: CollapsedPanes): void {
   }
 }
 
-// ── split-by-4 (specs/split-by-4.md §5) ──────────────────────────────────────
-// Up to four live sessions at once. `activeSessionId` + `mainTab` keep their
-// exact current meaning — THEY ARE PANE 0 — so no existing consumer changes
-// semantics; panes 1..3 hang off `extraPanes`, persisted with the focused index
-// as one record. (This generalizes split-session's left/right pair: two panes is
-// simply `extraPanes.length === 1`.)
+// ── split-by-4 / unbound-panes (specs/split-by-4.md §5, specs/unbound-panes.md §5) ──
+// Up to four live panes at once. `activeSessionId` + `mainTab` keep their exact
+// current meaning — THEY ARE PANE 0, ALWAYS A SESSION PANE (unbound-panes FR-4)
+// — so no existing consumer changes semantics; panes 1..3 hang off `extraPanes`,
+// persisted with the focused index as one record.
 
 /**
  * What a pane can show. A strict subset of MainTab — everything except the
@@ -139,15 +140,20 @@ function clampCount(n: number): number {
 }
 
 /**
- * One pane AFTER pane 0. `sessionId: null` is an EMPTY pane — what splitting a
- * project that holds a single session gives you (FR-15). It is a real pane: it
- * takes focus, it persists, and the next session you pick or create lands in it.
- * Pane 0 has always been able to hold nothing (`activeSessionId: null`), so this
- * only makes the extras agree with it.
+ * One pane AFTER pane 0 — a discriminated union (unbound-panes FR-4). A
+ * `session` pane is what `split-by-4` always shipped: `sessionId: null` is
+ * still the EMPTY pane, a real pane that takes focus, persists, and waits for
+ * a session. A `shell` pane (unbound-panes FR-6) holds exactly one PTY rooted
+ * at a registered PROJECT's root — `shellId` is runtime-only (FR-7), never
+ * persisted (FR-17).
  */
-export interface PaneSlot {
-  sessionId: SessionId | null;
-  tab: PaneTab;
+export type PaneSlot =
+  | { kind: 'session'; sessionId: SessionId | null; tab: PaneTab }
+  | { kind: 'shell'; projectId: ProjectId; shellId: ShellId | null };
+
+/** FR-15/FR-4: a fresh, empty SESSION pane — what a new extra pane starts as. */
+function emptySessionSlot(): PaneSlot {
+  return { kind: 'session', sessionId: null, tab: 'session' };
 }
 
 export interface SplitState {
@@ -186,9 +192,9 @@ export interface LayoutModeState {
  * to add. What makes a click a no-op is the TARGET matching the current count,
  * nothing else.
  *
- * `canSplit` (a project in scope holding at least one session) gates only
- * ENTERING a split. Once split, every button stays live — otherwise a layout
- * you are already in can strand you in it.
+ * `canSplit` (unbound-panes FR-2: at least one session anywhere in the fleet)
+ * gates only ENTERING a split. Once split, every button stays live — otherwise
+ * a layout you are already in can strand you in it.
  */
 export function layoutModeState(target: number, panes: number, canSplit: boolean): LayoutModeState {
   const on = target === 1 ? panes === 1 : target === 2 ? panes === 2 : panes >= 3;
@@ -244,28 +250,48 @@ export function paneCount(s: Pick<AppState, 'extraPanes'>): number {
   return 1 + s.extraPanes.length;
 }
 
-/** Pane `i`'s session, or null (pane 0 with no session / an out-of-range index). */
+/** Pane `i` as a slot. Pane 0 is always coerced into a `session` slot
+ *  (unbound-panes FR-4) so callers never special-case it. */
+export function paneSlotAt(s: PaneReadable, i: number): PaneSlot {
+  if (i === 0) return { kind: 'session', sessionId: s.activeSessionId, tab: paneTabAt(s, 0) };
+  return s.extraPanes[i - 1] ?? emptySessionSlot();
+}
+
+/** Pane `i`'s session, or null (an out-of-range index, an empty session pane,
+ *  or a shell pane — unbound-panes FR-6: a shell pane holds no session). */
 export function paneSessionIdAt(s: PaneReadable, i: number): SessionId | null {
   if (i === 0) return s.activeSessionId;
-  return s.extraPanes[i - 1]?.sessionId ?? null;
+  const p = s.extraPanes[i - 1];
+  return p && p.kind === 'session' ? p.sessionId : null;
 }
 
 /**
  * Pane `i`'s tab. Pane 0's is `mainTab`, clamped — it may sit on OVERVIEW or on
  * one of the dissolved panel tabs. fix-agent-view FR-13: in the GRID regime the
  * result is additionally flattened by `denseTab`, since a dense pane has no
- * strip to carry a dynamic tab's chip.
+ * strip to carry a dynamic tab's chip. A shell pane has no PaneTab of its own
+ * (unbound-panes FR-6/FR-11: no tab strip at all) — reads as 'session', which
+ * is never actually rendered since callers check `paneSlotAt`'s `kind` first.
  */
 export function paneTabAt(s: PaneReadable, i: number): PaneTab {
-  const tab = i === 0 ? clampToPaneTab(s.mainTab) : (s.extraPanes[i - 1]?.tab ?? 'session');
-  return layoutRegime(paneCount(s)) === 'grid' ? denseTab(tab) : tab;
+  const raw = i === 0 ? clampToPaneTab(s.mainTab) : paneTabRaw(s.extraPanes[i - 1]);
+  return layoutRegime(paneCount(s)) === 'grid' ? denseTab(raw) : raw;
+}
+function paneTabRaw(p: PaneSlot | undefined): PaneTab {
+  if (!p) return 'session';
+  return p.kind === 'session' ? p.tab : 'session';
 }
 
-/** FR-19/FR-22: which pane shows `sessionId`, or null. */
-export function paneIndexOf(s: PaneReadable, sessionId: SessionId): number | null {
-  if (s.activeSessionId === sessionId) return 0;
-  const i = s.extraPanes.findIndex((p) => p.sessionId === sessionId);
-  return i === -1 ? null : i + 1;
+/** unbound-panes FR-5/FR-16: every pane index showing `sessionId` — a session
+ *  may occupy any number of panes now, so this replaces the old `paneIndexOf`
+ *  (which answered with the first/only one). */
+export function paneIndicesOf(s: PaneReadable, sessionId: SessionId): number[] {
+  const out: number[] = [];
+  if (s.activeSessionId === sessionId) out.push(0);
+  s.extraPanes.forEach((p, i) => {
+    if (p.kind === 'session' && p.sessionId === sessionId) out.push(i + 1);
+  });
+  return out;
 }
 
 /**
@@ -274,9 +300,21 @@ export function paneIndexOf(s: PaneReadable, sessionId: SessionId): number | nul
  * single-letter globals read. Derived, never stored. At one pane it equals
  * `activeSessionId`, so every existing consumer is behaviour-identical outside
  * split.
+ *
+ * unbound-panes FR-12: when the focused pane is a SHELL pane, this falls back
+ * to `lastFocusedSessionId` — the most recently focused session pane — so
+ * nothing blanks. It stays null only when no session pane has ever been
+ * focused this run (an empty focused SESSION pane still answers null: it
+ * genuinely shows nothing).
  */
-export function focusedSessionId(s: PaneReadable & Pick<AppState, 'focusedPaneIndex'>): SessionId | null {
-  return paneSessionIdAt(s, clampPaneIndex(s.focusedPaneIndex, paneCount(s)));
+export function focusedSessionId(
+  s: PaneReadable & Pick<AppState, 'focusedPaneIndex' | 'lastFocusedSessionId'>,
+): SessionId | null {
+  const i = clampPaneIndex(s.focusedPaneIndex, paneCount(s));
+  const id = paneSessionIdAt(s, i);
+  if (id !== null) return id;
+  const slot = paneSlotAt(s, i);
+  return slot.kind === 'shell' ? s.lastFocusedSessionId : null;
 }
 
 /**
@@ -291,7 +329,8 @@ export function focusedTab(s: PaneReadable & Pick<AppState, 'focusedPaneIndex'>)
 
 /**
  * FR-26: every session currently on screen — one when not split, one per pane
- * otherwise. The notification gate suppresses `turnDone` for all of them, not
+ * otherwise (a session in two panes counts once; a shell pane contributes
+ * nothing). The notification gate suppresses `turnDone` for all of them, not
  * just the focused one.
  */
 export function visibleSessionIds(s: PaneReadable): SessionId[] {
@@ -306,7 +345,8 @@ export function visibleSessionIds(s: PaneReadable): SessionId[] {
 /**
  * FR-25: is `sessionId`'s SHELL tab on screen? Tests EVERY pane, so a session's
  * PTY stays "displayed" wherever it sits — the global `activeSessionId`/
- * `mainTab` pair is no longer the whole answer.
+ * `mainTab` pair is no longer the whole answer. A `shell`-KIND pane never
+ * matches here — it is not a session's SHELL tab, it is its own PTY.
  */
 export function isShellVisible(s: PaneReadable, sessionId: SessionId): boolean {
   // FR-9: the grid chrome renders transcripts only, so a pane's remembered
@@ -320,8 +360,10 @@ export function isShellVisible(s: PaneReadable, sessionId: SessionId): boolean {
 }
 
 /**
- * FR-15: the `n` most recently active sessions in scope that no pane already
- * holds, by `lastActivityAt` desc. Re-exported by `src/app/appShell.ts` per §5.
+ * unbound-panes FR-3: the `n` most recently active sessions in the WHOLE
+ * FLEET that no pane already holds, by `lastActivityAt` desc — `splitCandidates`
+ * lost its scope argument (supersedes split-by-4 FR-15's project-scoped read).
+ * Re-exported by `src/app/appShell.ts` per §5.
  */
 export function splitCandidates(
   sessions: readonly SessionMeta[],
@@ -341,11 +383,95 @@ export function splitCandidate(sessions: readonly SessionMeta[], exclude: Sessio
   return splitCandidates(sessions, exclude === null ? [] : [exclude], 1)[0] ?? null;
 }
 
+/**
+ * unbound-panes FR-8: which of `panes` (the extras, 1..MAX_PANES-1) gets
+ * promoted into slot 0 when pane 0 closes — the first SESSION-kind pane, so a
+ * shell pane never leaps ahead of a session one. `null` ⇒ none of them is a
+ * session pane, so pane 0 clears instead (edge case 6).
+ */
+export function promotionTarget(panes: readonly PaneSlot[]): number | null {
+  const i = panes.findIndex((p) => p.kind === 'session');
+  return i === -1 ? null : i;
+}
+
+/**
+ * unbound-panes FR-15: the grid session rail's order — every session currently
+ * in a pane first (pinned, so a paned session is never scrolled out of reach),
+ * then the rest — both groups `lastActivityAt` desc, the same order
+ * `splitCandidates`/`⊞` uses, so the rail and the fill button never disagree.
+ */
+export function railOrder(sessions: readonly SessionMeta[], paned: readonly SessionId[]): SessionMeta[] {
+  const pinnedSet = new Set(paned);
+  const byRecency = (a: SessionMeta, b: SessionMeta) => b.lastActivityAt - a.lastActivityAt;
+  const pinned = sessions.filter((s) => pinnedSet.has(s.id)).sort(byRecency);
+  const rest = sessions.filter((s) => !pinnedSet.has(s.id)).sort(byRecency);
+  return [...pinned, ...rest];
+}
+
+/**
+ * unbound-panes FR-15 / design brief — how many tiles the rail pins to the top,
+ * which is exactly where the 1px hairline separating them from the rest goes.
+ * Zero when nothing is paned OR when EVERY tile is pinned: a hairline with no
+ * `rest` below it would read as a rule under the whole rail.
+ */
+export function railPinnedCount(sessions: readonly SessionMeta[], paned: readonly SessionId[]): number {
+  const pinnedSet = new Set(paned);
+  const n = sessions.filter((s) => pinnedSet.has(s.id)).length;
+  return n === sessions.length ? 0 : n;
+}
+
+/**
+ * unbound-panes FR-9: may an "open a shell here" entry point be offered at all?
+ * A shell pane needs a slot to live in AND a registered project to be rooted at
+ * — every one of the four entry points (empty pane, palette, pane header menu,
+ * roster project row) gates on the same two facts.
+ */
+export function canOpenShellPane(panes: number, registeredProjectCount: number): boolean {
+  return panes < MAX_PANES && registeredProjectCount > 0;
+}
+
+/**
+ * unbound-panes edge case 4: once a project's currently-open shell panes hit
+ * `SHELL_CAP` (mirrors `shell_create`'s `SHELL_LIMIT_REACHED`, per-owner), no
+ * further shell-pane entry point may offer it until one closes. A shell pane's
+ * `shellId` is never persisted (FR-17) and this is a single-window desktop app,
+ * so the currently-open `extraPanes` ARE the live count — no separate fetch.
+ */
+export function projectShellPaneCount(extraPanes: readonly PaneSlot[], projectId: ProjectId): number {
+  return extraPanes.filter((p) => p.kind === 'shell' && p.projectId === projectId).length;
+}
+
+/**
+ * unbound-panes edge case 4: the registered projects a shell pane may still be
+ * rooted at — a live root AND under the per-owner shell cap. Every shell-pane
+ * entry point (project picker, pane header menu, empty-pane "Open a shell
+ * here", the palette's "New shell pane") filters through this one function so
+ * they can never disagree.
+ */
+export function shellPaneEligibleProjects<T extends { id: ProjectId; rootExists: boolean }>(
+  projects: readonly T[],
+  extraPanes: readonly PaneSlot[],
+): T[] {
+  return projects.filter((p) => p.rootExists && projectShellPaneCount(extraPanes, p.id) < SHELL_CAP);
+}
+
 // ---------- persistence ----------
 
 function readPaneSlot(raw: unknown): PaneSlot | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const obj = raw as Record<string, unknown>;
+
+  // unbound-panes FR-17: the union shape's shell variant. `shellId` is never
+  // persisted (runtime-only, FR-7) — a hydrated shell pane always starts fresh.
+  if (obj.kind === 'shell') {
+    const projectId = obj.projectId;
+    if (typeof projectId !== 'string' || projectId.length === 0) return null;
+    return { kind: 'shell', projectId, shellId: null };
+  }
+
+  // The union shape's session variant AND the split-by-4 shape (no `kind` at
+  // all) both read as a session pane — a bare `{sessionId, tab}` record is
+  // exactly what split-by-4 persisted.
   const id = obj.sessionId;
   // An EMPTY pane round-trips: the split is the user's layout choice, and it
   // survives a reload whether or not a session has landed in it yet.
@@ -356,15 +482,21 @@ function readPaneSlot(raw: unknown): PaneSlot | null {
   // widened to carry `agent:<id>` / `workflow:<id>`, but those live in memory
   // only (FR-1) — a persisted one would index into an empty map and strand the
   // pane on a tab with no chip and no body, so it degrades to 'session' here.
-  return { sessionId, tab: tab === 'diff' || tab === 'shell' ? tab : 'session' };
+  return { kind: 'session', sessionId, tab: tab === 'diff' || tab === 'shell' ? tab : 'session' };
 }
 
 /**
- * Pure, exported for tests (FR-23): normalizes whatever came out of
- * localStorage. A malformed, non-object, array or partially-typed value returns
- * the not-split default rather than throwing, and a LEGACY split-session record
- * (`{ splitSessionId, splitTab, focusedSide }`) loads as one extra pane — an
- * upgrade must not silently drop the user's second pane.
+ * Pure, exported for tests (FR-23/unbound-panes FR-17): normalizes whatever
+ * came out of localStorage. A malformed, non-object, array or partially-typed
+ * value returns the not-split default rather than throwing. Three record
+ * generations load: the union shape (session AND shell panes), the plain
+ * split-by-4 shape (a bare `{sessionId, tab}` reads as `kind: 'session'`), and
+ * the legacy split-session shape (`{ splitSessionId, splitTab, focusedSide }`),
+ * which loads as one extra pane.
+ *
+ * unbound-panes FR-5 deletes split-by-4 FR-19's duplicate-drop: a session may
+ * legitimately sit in more than one persisted pane now, so no de-duplication
+ * happens here any more.
  */
 export function parseSplitState(raw: string | null): SplitState {
   if (raw === null) return { ...NOT_SPLIT };
@@ -381,7 +513,9 @@ export function parseSplitState(raw: string | null): SplitState {
   if (!Array.isArray(obj.extraPanes) && typeof obj.splitSessionId === 'string' && obj.splitSessionId.length > 0) {
     const tab = obj.splitTab;
     return {
-      extraPanes: [{ sessionId: obj.splitSessionId, tab: tab === 'diff' || tab === 'shell' ? tab : 'session' }],
+      extraPanes: [
+        { kind: 'session', sessionId: obj.splitSessionId, tab: tab === 'diff' || tab === 'shell' ? tab : 'session' },
+      ],
       focusedPaneIndex: obj.focusedSide === 'right' ? 1 : 0,
     };
   }
@@ -391,9 +525,6 @@ export function parseSplitState(raw: string | null): SplitState {
   for (const entry of obj.extraPanes) {
     const slot = readPaneSlot(entry);
     if (!slot) continue;
-    // A duplicate would show the same session twice (FR-19) — drop it. Empty
-    // panes are exempt: several of them is a legitimate layout.
-    if (slot.sessionId !== null && extraPanes.some((p) => p.sessionId === slot.sessionId)) continue;
     extraPanes.push(slot);
     if (extraPanes.length === MAX_PANES - 1) break;
   }
@@ -413,11 +544,18 @@ function loadSplitState(): SplitState {
   }
 }
 
+/** unbound-panes FR-17: a shell pane's `shellId` is runtime-only — stripped on write. */
+function serializePane(p: PaneSlot): unknown {
+  if (p.kind === 'shell') return { kind: 'shell', projectId: p.projectId };
+  return { kind: 'session', sessionId: p.sessionId, tab: p.tab };
+}
+
 /** FR-23: written on every change. Exported so sessionsStore's FR-27 removal
  *  path can record the compacted grid without duplicating the key. */
 export function persistSplitState(state: SplitState): void {
   try {
-    localStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify(state));
+    const record = { extraPanes: state.extraPanes.map(serializePane), focusedPaneIndex: state.focusedPaneIndex };
+    localStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify(record));
   } catch {
     /* ignore */
   }
@@ -509,9 +647,23 @@ export function persistedLeftPane(): boolean {
   return loadPane(LEFT_KEY);
 }
 
-/** FR-27: `extraPanes` with every pane on `sessionId` removed. */
+/** FR-27: `extraPanes` with every SESSION pane on `sessionId` removed — a shell
+ *  pane never matches (it carries no session). */
 export function panesWithout(extraPanes: readonly PaneSlot[], sessionId: SessionId): PaneSlot[] {
-  return extraPanes.filter((p) => p.sessionId !== sessionId);
+  return extraPanes.filter((p) => !(p.kind === 'session' && p.sessionId === sessionId));
+}
+
+/** unbound-panes FR-17: `extraPanes` with every SHELL pane whose project is no
+ *  longer registered dropped — like a stale session pane (split-by-4 FR-24). */
+export function panesWithoutStaleProjects(extraPanes: readonly PaneSlot[], validProjectIds: ReadonlySet<ProjectId>): PaneSlot[] {
+  return extraPanes.filter((p) => !(p.kind === 'shell' && !validProjectIds.has(p.projectId)));
+}
+
+/** Dispose the PTY behind every shell pane in `dropped` — FR-10. */
+function disposeShellPanes(dropped: readonly PaneSlot[]): void {
+  for (const p of dropped) {
+    if (p.kind === 'shell' && p.shellId) void shellDispose(p.shellId).catch(() => {});
+  }
 }
 
 export interface LayoutSlice {
@@ -560,6 +712,9 @@ export interface LayoutSlice {
   // pane 0 never remounts when focus moves.
   extraPanes: PaneSlot[];
   focusedPaneIndex: number;
+  /** unbound-panes FR-12: the session of the most recently focused SESSION
+   *  pane — what `focusedSessionId` falls back to while a shell pane has focus. */
+  lastFocusedSessionId: SessionId | null;
   /**
    * FR-18: append a pane holding `sessionId` and focus it. A session already on
    * screen is FOCUSED instead of duplicated; a full grid is a no-op. Also
@@ -568,9 +723,10 @@ export interface LayoutSlice {
    */
   openInNewPane: (sessionId: SessionId) => void;
   /**
-   * FR-19: put `sessionId` in the FOCUSED pane, swapping when it already sits
-   * in another one. No-op at pane 0 — that path is `setActiveSessionId`, which
-   * owns the agent-tab reset.
+   * unbound-panes FR-5: put `sessionId` in the FOCUSED pane. A PLAIN assign —
+   * split-by-4 FR-19's swap-on-reassign is gone, since a session may now sit in
+   * any number of panes at once. No-op at pane 0 — that path is
+   * `setActiveSessionId`, which owns the agent-tab reset.
    */
   assignToFocusedPane: (sessionId: SessionId) => void;
   /** FR-15: the titlebar control — grow to / shrink to `n` panes (1..MAX_PANES). */
@@ -578,16 +734,36 @@ export interface LayoutSlice {
   /**
    * FR-16: leave split, keeping pane `index`'s session and tab as the single
    * pane. Defaults to the focused pane; `tab` overrides the pane's own (Review
-   * diff). No-op when not split.
+   * diff). No-op when not split. unbound-panes FR-8/FR-10: every shell pane
+   * dropped by leaving split is disposed; a shell-kind promoted pane coerces to
+   * an empty session pane (pane 0 is always a session).
    */
   unsplit: (index?: number, tab?: PaneTab) => void;
-  /** FR-17: drop pane `index`; the grid compacts. No-op at one pane. */
+  /**
+   * FR-17: drop pane `index`; the grid compacts. No-op at one pane.
+   * unbound-panes FR-8: closing pane 0 promotes the next SESSION pane
+   * (`promotionTarget`), not simply pane 1; with none left, pane 0 clears
+   * instead and the shell panes keep their slots. FR-10: a closed shell pane's
+   * PTY is disposed.
+   */
   closePane: (index: number) => void;
   setPaneTab: (index: number, tab: PaneTab) => void;
   /** FR-12. Also sets focusedPane = 'main'. */
   setFocusedPaneIndex: (index: number) => void;
-  /** FR-14: `⌥⇥` — the next pane parked on an approval or a question. */
+  /** FR-14: `⌥⇥` — the next pane parked on an approval or a question. Skips
+   *  shell panes — they never wait on you (unbound-panes edge case 8). */
   focusNextWaitingPane: () => void;
+  /**
+   * unbound-panes FR-9/FR-7: append (or fill the first empty pane with) a
+   * SHELL pane rooted at `projectId`, and focus it. Its PTY is spawned by the
+   * pane component on mount (FR-7) — this only reserves the slot.
+   */
+  openShellPane: (projectId: ProjectId) => void;
+  /** unbound-panes FR-9: turn pane `index` into a shell pane. No-op at index 0
+   *  (FR-8). Disposes whatever shell used to be there (FR-10). */
+  convertPaneToShell: (index: number, projectId: ProjectId) => void;
+  /** unbound-panes FR-7: record the spawned shell for pane `index`, in memory only. */
+  setPaneShellId: (index: number, shellId: ShellId | null) => void;
   /**
    * The left column's share of the main cell's WIDTH, and — in the 2×2 regimes
    * — the top row's share of its HEIGHT. Both are dragged from the divider on
@@ -598,6 +774,30 @@ export interface LayoutSlice {
   setSplitRatio: (ratio: number) => void;
   splitRowRatio: number;
   setSplitRowRatio: (ratio: number) => void;
+}
+
+/**
+ * unbound-panes FR-12: what `lastFocusedSessionId` should read the instant the
+ * store exists — BEFORE the `useStore.subscribe` in store.ts ever runs. Pane 0
+ * (`activeSessionId`) is always null this early (sessions arrive later over the
+ * fleet sync), so this reads only the hydrated `SplitState`: the focused extra
+ * pane's session if it has one, else the first session-holding extra pane. A
+ * persisted `focusedPaneIndex` pointing at a SHELL pane (a normal quit/reopen —
+ * FR-17) must still resolve to a real session here, or every consumer of
+ * `focusedSessionId` (titlebar quota, [3]-[6], status bar, palette, AccountChip)
+ * blanks on load until the user manually refocuses a session pane.
+ */
+export function initialLastFocusedSessionId(split: SplitState): SessionId | null {
+  const readable: PaneReadable = { activeSessionId: null, mainTab: 'session', extraPanes: split.extraPanes };
+  const count = paneCount(readable);
+  const focused = clampPaneIndex(split.focusedPaneIndex, count);
+  const direct = paneSessionIdAt(readable, focused);
+  if (direct !== null) return direct;
+  for (let i = 0; i < count; i++) {
+    const id = paneSessionIdAt(readable, i);
+    if (id !== null) return id;
+  }
+  return null;
 }
 
 const INITIAL_SPLIT = loadSplitState();
@@ -688,24 +888,25 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       return { collapsedPanes, focusedPane };
     }),
 
-  // ---------- split-by-4 ----------
+  // ---------- split-by-4 / unbound-panes ----------
   extraPanes: INITIAL_SPLIT.extraPanes,
   focusedPaneIndex: INITIAL_SPLIT.focusedPaneIndex,
+  lastFocusedSessionId: initialLastFocusedSessionId(INITIAL_SPLIT),
 
   openInNewPane: (sessionId) =>
     set((s) => {
       // Already on screen (its roster row, its rail tile, its context menu):
       // this is a FOCUS, not an assignment — the pane keeps whichever tab it is
-      // on, and the session is never shown twice (FR-19).
-      const existing = paneIndexOf(s, sessionId);
-      if (existing !== null) return focusPanePatch(s, existing);
+      // on, and the session is never shown twice by THIS action (FR-19).
+      const existing = paneIndicesOf(s, sessionId)[0];
+      if (existing !== undefined) return focusPanePatch(s, existing);
 
-      // An EMPTY pane is already the room this was going to make — fill the
-      // first one rather than opening a second waiting pane beside it.
-      const empty = s.extraPanes.findIndex((p) => p.sessionId === null);
+      // An EMPTY session pane is already the room this was going to make — fill
+      // the first one rather than opening a second waiting pane beside it.
+      const empty = s.extraPanes.findIndex((p) => p.kind === 'session' && p.sessionId === null);
       if (empty !== -1) {
         const filled = s.extraPanes.slice();
-        filled[empty] = { sessionId, tab: 'session' };
+        filled[empty] = { kind: 'session', sessionId, tab: 'session' };
         persistSplitState({ extraPanes: filled, focusedPaneIndex: empty + 1 });
         return { extraPanes: filled, focusedPaneIndex: empty + 1, focusedPane: 'main' };
       }
@@ -713,7 +914,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       const count = paneCount(s);
       if (count >= MAX_PANES) return {}; // FR-18: no room
       // FR-18: a session landing in a new pane opens on SESSION.
-      const extraPanes = [...s.extraPanes, { sessionId, tab: 'session' as PaneTab }];
+      const extraPanes = [...s.extraPanes, { kind: 'session', sessionId, tab: 'session' } as PaneSlot];
       const next: SplitState = { extraPanes, focusedPaneIndex: extraPanes.length };
       persistSplitState(next);
       return { ...next, focusedPane: 'main', ...growPatch(s, count, count + 1) };
@@ -724,27 +925,15 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       const count = paneCount(s);
       const i = clampPaneIndex(s.focusedPaneIndex, count);
       if (i === 0) return {}; // caller uses setActiveSessionId — it owns the tab reset
-      const j = paneIndexOf(s, sessionId);
-      if (j === i) return focusPanePatch(s, i);
+      const cur = s.extraPanes[i - 1];
+      if (cur && cur.kind === 'session' && cur.sessionId === sessionId) return focusPanePatch(s, i);
 
+      // unbound-panes FR-5: a PLAIN assign — a session already sitting in
+      // another pane is simply duplicated, never swapped out of it.
       const extraPanes = s.extraPanes.slice();
-      if (j === null) {
-        // Plain assignment: the pane opens the new session on SESSION.
-        extraPanes[i - 1] = { sessionId, tab: 'session' };
-        persistSplitState({ extraPanes, focusedPaneIndex: i });
-        return { extraPanes, focusedPane: 'main' };
-      }
-      // FR-19: the session is in another pane — SWAP the two rather than
-      // showing it twice.
-      const here = paneAt(s, i);
-      const there = paneAt(s, j);
-      extraPanes[i - 1] = { sessionId: there.sessionId, tab: there.tab };
-      if (j === 0) {
-        persistSplitState({ extraPanes, focusedPaneIndex: i });
-        return { extraPanes, activeSessionId: here.sessionId, mainTab: here.tab as MainTab, focusedPane: 'main' };
-      }
-      extraPanes[j - 1] = { sessionId: here.sessionId, tab: here.tab };
-      persistSplitState({ extraPanes, focusedPaneIndex: i });
+      extraPanes[i - 1] = { kind: 'session', sessionId, tab: 'session' };
+      persistSplitState({ extraPanes, focusedPaneIndex: s.focusedPaneIndex });
+      if (cur?.kind === 'shell' && cur.shellId) void shellDispose(cur.shellId).catch(() => {});
       return { extraPanes, focusedPane: 'main' };
     }),
 
@@ -761,15 +950,19 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         const keep = [focused];
         for (let i = 0; i < count && keep.length < target; i++) if (i !== focused) keep.push(i);
         keep.sort((a, b) => a - b);
+        // unbound-panes FR-10: every shell pane being dropped is disposed.
+        const keptExtra = new Set(keep.filter((i) => i > 0).map((i) => i - 1));
+        disposeShellPanes(s.extraPanes.filter((_, idx) => !keptExtra.has(idx)));
         return rebuildPatch(s, keep, focused);
       }
 
-      // FR-15: grow with the most recently active in-scope sessions not already
-      // in a pane, and pad the rest with EMPTY panes — a project holding one
-      // session still splits, you just get a pane waiting for its second.
-      const inScope = filterSessionsByProject(s.sessions, s.activeProjectId);
-      const add = splitCandidates(inScope, visibleSessionIds(s), target - count);
+      // unbound-panes FR-3: grow with the most recently active sessions in the
+      // WHOLE FLEET not already in a pane, and pad the rest with EMPTY panes —
+      // a project holding one session still splits, you just get a pane
+      // waiting for its second.
+      const add = splitCandidates(s.sessions, visibleSessionIds(s), target - count);
       const slots: PaneSlot[] = Array.from({ length: target - count }, (_, k) => ({
+        kind: 'session',
         sessionId: add[k]?.id ?? null,
         tab: 'session',
       }));
@@ -794,6 +987,31 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       const count = paneCount(s);
       if (count <= 1) return {};
       const closed = clampPaneIndex(index, count);
+
+      if (closed === 0) {
+        // unbound-panes FR-8: promote the next SESSION pane, not simply pane 1.
+        const target = promotionTarget(s.extraPanes);
+        if (target === null) {
+          // No session pane left to promote — pane 0 clears; the shell panes
+          // keep their slots below it, and nothing is disposed.
+          return { activeSessionId: null, mainTab: 'session' as MainTab };
+        }
+        const promoted = s.extraPanes[target];
+        const extraPanes = s.extraPanes.filter((_, i) => i !== target);
+        const focused = clampPaneIndex(s.focusedPaneIndex, count);
+        const nextFocused = focused === 0 || focused === target + 1 ? 0 : focused < target + 1 ? focused : focused - 1;
+        const next: SplitState = { extraPanes, focusedPaneIndex: clampPaneIndex(nextFocused, extraPanes.length + 1) };
+        persistSplitState(next);
+        return {
+          ...next,
+          activeSessionId: promoted.kind === 'session' ? promoted.sessionId : null,
+          mainTab: (promoted.kind === 'session' ? promoted.tab : 'session') as MainTab,
+        };
+      }
+
+      const dropped = s.extraPanes[closed - 1];
+      if (dropped) disposeShellPanes([dropped]); // FR-10
+
       const keep: number[] = [];
       for (let i = 0; i < count; i++) if (i !== closed) keep.push(i);
       if (keep.length === 1) return unsplitPatch(s, keep[0]);
@@ -807,9 +1025,10 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
     set((s) => {
       const i = clampPaneIndex(index, paneCount(s));
       if (i === 0) return { mainTab: tab as MainTab };
+      const cur = s.extraPanes[i - 1];
+      if (!cur || cur.kind !== 'session' || cur.tab === tab) return {};
       const extraPanes = s.extraPanes.slice();
-      if (extraPanes[i - 1].tab === tab) return {};
-      extraPanes[i - 1] = { ...extraPanes[i - 1], tab };
+      extraPanes[i - 1] = { ...cur, tab };
       persistSplitState({ extraPanes, focusedPaneIndex: s.focusedPaneIndex });
       return { extraPanes };
     }),
@@ -828,6 +1047,48 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         if (meta && statusNeedsAttention(meta.status)) return focusPanePatch(s, i);
       }
       return {};
+    }),
+
+  openShellPane: (projectId) =>
+    set((s) => {
+      const empty = s.extraPanes.findIndex((p) => p.kind === 'session' && p.sessionId === null);
+      if (empty !== -1) {
+        const extraPanes = s.extraPanes.slice();
+        extraPanes[empty] = { kind: 'shell', projectId, shellId: null };
+        const next: SplitState = { extraPanes, focusedPaneIndex: empty + 1 };
+        persistSplitState(next);
+        return { ...next, focusedPane: 'main' };
+      }
+      const count = paneCount(s);
+      if (count >= MAX_PANES) return {};
+      const extraPanes = [...s.extraPanes, { kind: 'shell', projectId, shellId: null } as PaneSlot];
+      const next: SplitState = { extraPanes, focusedPaneIndex: extraPanes.length };
+      persistSplitState(next);
+      return { ...next, focusedPane: 'main', ...growPatch(s, count, extraPanes.length + 1) };
+    }),
+
+  convertPaneToShell: (index, projectId) =>
+    set((s) => {
+      const i = clampPaneIndex(index, paneCount(s));
+      if (i === 0) return {}; // FR-8: pane 0 is always a session pane
+      const old = s.extraPanes[i - 1];
+      const extraPanes = s.extraPanes.slice();
+      extraPanes[i - 1] = { kind: 'shell', projectId, shellId: null };
+      persistSplitState({ extraPanes, focusedPaneIndex: s.focusedPaneIndex });
+      if (old) disposeShellPanes([old]); // FR-10: dispose whatever used to be there
+      return { extraPanes };
+    }),
+
+  setPaneShellId: (index, shellId) =>
+    set((s) => {
+      const i = clampPaneIndex(index, paneCount(s));
+      if (i === 0) return {};
+      const p = s.extraPanes[i - 1];
+      if (!p || p.kind !== 'shell') return {};
+      const extraPanes = s.extraPanes.slice();
+      extraPanes[i - 1] = { ...p, shellId };
+      // FR-17: `shellId` is runtime-only — no persistSplitState call here.
+      return { extraPanes };
     }),
 
   splitRatio: loadRatio(SPLIT_RATIO_STORAGE_KEY),
@@ -853,11 +1114,6 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
 });
 
 // ---------- shared patch builders (pure, module-private) ----------
-
-/** Pane `i` as a slot — the shape rebuildPatch and the swap paths shuffle. */
-function paneAt(s: AppState, i: number): { sessionId: SessionId | null; tab: PaneTab } {
-  return { sessionId: paneSessionIdAt(s, i), tab: paneTabAt(s, i) };
-}
 
 /**
  * FR-12. Called on EVERY click inside a pane, so the no-op path must not touch
@@ -899,29 +1155,41 @@ function columnPatch(regime: LayoutRegime): Partial<AppState> {
   };
 }
 
-/** FR-16: pane `i` becomes the single main pane. */
+/** Pane `i` as a slot — the shape rebuildPatch and unsplitPatch shuffle. */
+function paneAt(s: AppState, i: number): PaneSlot {
+  return paneSlotAt(s, i);
+}
+
+/**
+ * FR-16: pane `i` becomes the single main pane. unbound-panes FR-8/FR-10: every
+ * extra pane is gone once this settles, so every shell among them is disposed;
+ * a shell-kind promoted slot (only reachable if `i` itself was a shell pane)
+ * coerces to an empty session pane, since pane 0 is always a session.
+ */
 function unsplitPatch(s: AppState, i: number, tab?: PaneTab): Partial<AppState> {
   const slot = paneAt(s, i);
+  disposeShellPanes(s.extraPanes);
   persistSplitState({ ...NOT_SPLIT });
   return {
     ...NOT_SPLIT,
-    activeSessionId: slot.sessionId,
-    mainTab: (tab ?? slot.tab) as MainTab,
+    activeSessionId: slot.kind === 'session' ? slot.sessionId : null,
+    mainTab: (tab ?? (slot.kind === 'session' ? slot.tab : 'session')) as MainTab,
     ...columnPatch('single'),
   };
 }
 
 /**
- * FR-15/FR-17: rebuild the pane list from the kept indices (ascending). The
- * lowest kept pane becomes pane 0, so `activeSessionId`/`mainTab` follow when
- * pane 0 itself was dropped.
+ * FR-15/FR-17: rebuild the pane list from the kept indices (ascending). Index 0
+ * is always kept by every caller of this function (only the dedicated
+ * `closePane(0)` branch above ever drops it), so `head` is always a session
+ * slot — no shell-at-pane-0 coercion is needed here.
  */
 function rebuildPatch(s: AppState, keepAsc: readonly number[], focusedBefore: number): Partial<AppState> {
   const slots = keepAsc.map((i) => paneAt(s, i));
   const head = slots[0];
   // Empty panes are KEPT: a pane the user deliberately opened does not vanish
   // because nothing has landed in it yet (FR-15).
-  const extraPanes: PaneSlot[] = slots.slice(1).map((x) => ({ sessionId: x.sessionId, tab: x.tab }));
+  const extraPanes: PaneSlot[] = slots.slice(1);
   const moved = keepAsc.indexOf(focusedBefore);
   const next: SplitState = {
     extraPanes,
@@ -930,8 +1198,8 @@ function rebuildPatch(s: AppState, keepAsc: readonly number[], focusedBefore: nu
   persistSplitState(next);
   return {
     ...next,
-    activeSessionId: head.sessionId,
-    mainTab: head.tab as MainTab,
+    activeSessionId: head.kind === 'session' ? head.sessionId : null,
+    mainTab: (head.kind === 'session' ? head.tab : 'session') as MainTab,
     ...columnPatch(layoutRegime(extraPanes.length + 1)),
   };
 }

@@ -14,7 +14,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { AgentInfo, AgentStep, Result, SessionEvent, SessionMeta } from '../../contract/common';
 import type { AgentBlock, AgentEvent } from '../../contract/agent-tab';
 import type { ConversationBlock } from '../../contract/conversation-view';
-import type { ShellEvent, ShellInfo } from '../../contract/shell-terminal';
+import type { ShellEvent, ShellInfo, ShellOwner } from '../../contract/shell-terminal';
 import { COLLAPSED_GROUPS_KEY } from '../features/sessions/roster-groups';
 import {
   ACCOUNTS,
@@ -128,26 +128,42 @@ function demoShellOrdinal(list: ShellInfo[]): number {
   return n;
 }
 
-function newDemoShell(sessionId: string): ShellInfo {
+// unbound-panes FR-6: a shell's owner is a union now — the demo fixture keys
+// its roster off a flat string derived from the owner, same as the real
+// core's Registry (`first_of_owner` etc.).
+function ownerKeyOf(owner: ShellOwner): string {
+  return owner.kind === 'session' ? `session:${owner.sessionId}` : `project:${owner.projectId}`;
+}
+function ownerCwd(owner: ShellOwner): string {
+  if (owner.kind === 'session') return find(owner.sessionId)?.cwd ?? '~';
+  return PROJECTS.find((p) => p.id === owner.projectId)?.root ?? '~';
+}
+function readOwner(a: Args): ShellOwner {
+  const owner = a?.owner as ShellOwner | undefined;
+  return owner ?? { kind: 'session', sessionId: sid(a) };
+}
+
+function newDemoShell(owner: ShellOwner): ShellInfo {
   demoShellSeq += 1;
-  const list = demoShells[sessionId] ?? [];
+  const key = ownerKeyOf(owner);
+  const list = demoShells[key] ?? [];
   const info: ShellInfo = {
     id: `demo-shell-${demoShellSeq}`,
-    sessionId,
+    owner,
     name: `zsh ${demoShellOrdinal(list)}`,
     shellName: 'zsh',
-    cwd: find(sessionId)?.cwd ?? '~',
+    cwd: ownerCwd(owner),
     alive: true,
   };
-  demoShells[sessionId] = [...list, info];
+  demoShells[key] = [...list, info];
   return info;
 }
 
-function findDemoShell(shellId: string): { sessionId: string; list: ShellInfo[]; index: number } | null {
-  for (const sessionId of Object.keys(demoShells)) {
-    const list = demoShells[sessionId];
+function findDemoShell(shellId: string): { key: string; owner: ShellOwner; list: ShellInfo[]; index: number } | null {
+  for (const key of Object.keys(demoShells)) {
+    const list = demoShells[key];
     const index = list.findIndex((s) => s.id === shellId);
-    if (index >= 0) return { sessionId, list, index };
+    if (index >= 0) return { key, owner: list[index].owner, list, index };
   }
   return null;
 }
@@ -308,16 +324,17 @@ function route(cmd: string, a: Args): unknown {
     case 'remote_stop':
       return ok({ sessionId: sid(a), state: { phase: 'off' } });
 
-    // ---- shell (multiple-shells: ShellId-keyed, up to 6 per session) ----
+    // ---- shell (multiple-shells: ShellId-keyed, up to 6 per owner; unbound-panes: owner is a union) ----
     case 'shell_ensure': {
-      const sessionId = sid(a);
+      const owner = readOwner(a);
+      const key = ownerKeyOf(owner);
       const requestedId = a?.shellId as string | undefined;
-      let list = demoShells[sessionId] ?? [];
+      let list = demoShells[key] ?? [];
       let target = requestedId ? list.find((s) => s.id === requestedId) : list[0];
       if (!target) {
         if (requestedId) return { ok: false, error: { code: 'SHELL_NOT_FOUND', message: 'shell not found' } };
-        target = newDemoShell(sessionId); // FR-5 create-if-none
-        list = demoShells[sessionId];
+        target = newDemoShell(owner); // FR-5 create-if-none
+        list = demoShells[key];
       }
       return ok({
         shellId: target.id,
@@ -329,40 +346,46 @@ function route(cmd: string, a: Args): unknown {
       });
     }
     case 'shell_create': {
-      const sessionId = sid(a);
-      const list = demoShells[sessionId] ?? [];
+      const owner = readOwner(a);
+      const key = ownerKeyOf(owner);
+      const list = demoShells[key] ?? [];
       if (list.length >= 6) return { ok: false, error: { code: 'SHELL_LIMIT_REACHED', message: '6 shells maximum' } };
-      return ok(newDemoShell(sessionId));
+      return ok(newDemoShell(owner));
     }
     case 'shell_restart': {
       const found = findDemoShell(String(a?.shellId ?? ''));
       if (!found) return { ok: false, error: { code: 'SHELL_NOT_FOUND', message: 'shell not found' } };
-      const { sessionId, list, index } = found;
-      demoShells[sessionId] = list.map((s, i) => (i === index ? { ...s, alive: true, exitCode: undefined } : s));
+      const { key, list, index } = found;
+      demoShells[key] = list.map((s, i) => (i === index ? { ...s, alive: true, exitCode: undefined } : s));
       return ok({ cols: 120, rows: 30 });
     }
     case 'shell_rename': {
       const found = findDemoShell(String(a?.shellId ?? ''));
       if (!found) return { ok: false, error: { code: 'SHELL_NOT_FOUND', message: 'shell not found' } };
-      const { sessionId, list, index } = found;
+      const { key, list, index } = found;
       const trimmed = String(a?.name ?? '').trim().slice(0, 40);
       const others = list.filter((_, i) => i !== index);
       const name = trimmed || `zsh ${demoShellOrdinal(others)}`;
       const next = list.map((s, i) => (i === index ? { ...s, name } : s));
-      demoShells[sessionId] = next;
+      demoShells[key] = next;
       return ok(next[index]);
     }
     case 'shell_dispose': {
       const shellId = String(a?.shellId ?? '');
       const found = findDemoShell(shellId);
-      if (found) demoShells[found.sessionId] = found.list.filter((s) => s.id !== shellId);
+      if (found) demoShells[found.key] = found.list.filter((s) => s.id !== shellId);
       return ok(null);
     }
     case 'shell_write': {
       const shellId = String(a?.shellId ?? '');
       const found = findDemoShell(shellId);
       const data = String(a?.data ?? '');
-      shell({ type: 'shell.data', shellId, sessionId: found?.sessionId ?? '', data: data === '\r' ? '\r\n❯ ' : data });
+      shell({
+        type: 'shell.data',
+        shellId,
+        owner: found?.owner ?? { kind: 'session', sessionId: '' },
+        data: data === '\r' ? '\r\n❯ ' : data,
+      });
       return ok(null);
     }
     case 'shell_resize':

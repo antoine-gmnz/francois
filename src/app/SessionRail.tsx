@@ -1,9 +1,9 @@
 import { ChevronsRight, Plus } from 'lucide-react';
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import type { SessionId } from '../../contract/common';
 import { STATUS_COLOR, statusPulses } from '../../contract/fleet-board';
-import { filterSessionsByProject } from '../../contract/projects';
-import { focusedSessionId, paneIndexOf } from '../lib/layoutStore';
+import { projectMarker } from '../features/projects/projectMarker';
+import { focusedSessionId, paneIndicesOf, railOrder, railPinnedCount } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
 import { toneVar } from '../lib/tone';
 
@@ -14,56 +14,76 @@ export interface SessionRailProps {
 
 /**
  * split-by-4 FR-6 / design turn 5d — the 46px rail the roster folds to in the
- * grid chrome. One 30px tile per in-scope session carrying its first two
- * characters and a status dot; the tiles a pane is showing are raised, and the
- * FOCUSED pane's carries the accent left rail (one accent per view).
+ * grid chrome. One 30px tile per FLEET session (unbound-panes FR-15: the rail
+ * is no longer project-scoped) carrying its first two characters, a status dot
+ * and its project's neutral marker; the tiles a pane is showing are pinned to
+ * the top behind a 1px hairline, and the FOCUSED pane's carries the accent rail.
  *
  * `»` reopens the full roster — the same thing `[` does, so the two agree.
  */
 export default function SessionRail({ onSelect }: SessionRailProps) {
   const sessions = useStore((s) => s.sessions);
-  const activeProjectId = useStore((s) => s.activeProjectId);
+  const projects = useStore((s) => s.projects);
   const focusedId = useStore((s) => focusedSessionId(s));
   // Subscribed as PRIMITIVES, not as a derived closure: a selector returning a
   // fresh function re-renders this rail on every unrelated store write.
   const activeSessionId = useStore((s) => s.activeSessionId);
   const extraPanes = useStore((s) => s.extraPanes);
-  const paneOf = (id: SessionId) => paneIndexOf({ activeSessionId, mainTab: 'session', extraPanes }, id);
+  const panesOf = (id: SessionId) => paneIndicesOf({ activeSessionId, mainTab: 'session', extraPanes }, id);
   const toggleLeftPane = useStore((s) => s.toggleLeftPane);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
 
-  const inScope = useMemo(
-    () => filterSessionsByProject(sessions, activeProjectId),
-    [sessions, activeProjectId],
+  // unbound-panes FR-15: the WHOLE fleet, paned sessions pinned to the top.
+  const paned = useMemo(
+    () => sessions.filter((s) => panesOf(s.id).length > 0).map((s) => s.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, activeSessionId, extraPanes],
   );
+  const ordered = useMemo(() => railOrder(sessions, paned), [sessions, paned]);
+  // design brief: the pinned block is separated from the rest by a 1px hairline.
+  // 0 ⇒ nothing pinned, or everything is — either way there is no seam to draw.
+  const pinnedCount = useMemo(() => railPinnedCount(sessions, paned), [sessions, paned]);
 
   return (
     <aside className="session-rail">
-      {inScope.map((session) => {
-        const pane = paneOf(session.id);
+      {ordered.map((session, i) => {
+        const panes = panesOf(session.id);
         const color = toneVar(STATUS_COLOR[session.status] ?? 'var(--text-dim)');
+        const project = session.projectId ? projects.find((p) => p.id === session.projectId) : undefined;
         return (
-          <button
-            key={session.id}
-            type="button"
-            className={
-              [
-                'session-rail__tile',
-                pane !== null ? 'session-rail__tile--paned' : null,
-                session.id === focusedId ? 'session-rail__tile--focused' : null,
-              ]
-                .filter(Boolean)
-                .join(' ')
-            }
-            title={pane === null ? session.name : `${session.name} · pane ${pane + 1}`}
-            onClick={() => onSelect(session.id)}
-          >
-            {session.name.slice(0, 2)}
-            <span
-              className={statusPulses(session.status) ? 'session-rail__dot session-rail__dot--live' : 'session-rail__dot'}
-              style={{ background: color }}
-            />
-          </button>
+          <Fragment key={session.id}>
+            {/* The seam sits BEFORE the first unpinned tile, as its own flex
+                item — never overlaid on a tile. */}
+            {pinnedCount > 0 && i === pinnedCount && <span className="session-rail__hairline" />}
+            <button
+              type="button"
+              className={
+                [
+                  'session-rail__tile',
+                  panes.length > 0 ? 'session-rail__tile--paned' : null,
+                  session.id === focusedId ? 'session-rail__tile--focused' : null,
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+              }
+              title={panes.length === 0 ? session.name : `${session.name} · pane ${panes.map((p) => p + 1).join('·')}`}
+              onClick={() => onSelect(session.id)}
+            >
+              {session.name.slice(0, 2)}
+              <span
+                className={
+                  statusPulses(session.status) ? 'session-rail__dot session-rail__dot--live' : 'session-rail__dot'
+                }
+                style={{ background: color }}
+              />
+              {/* unbound-panes FR-14: the neutral project marker, never accent. */}
+              {project && (
+                <span className="session-rail__marker" title={project.name}>
+                  {projectMarker(project.name)}
+                </span>
+              )}
+            </button>
+          </Fragment>
         );
       })}
       <span className="app-flex-spacer" />

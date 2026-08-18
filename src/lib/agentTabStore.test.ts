@@ -16,9 +16,15 @@ const A2: AgentTabRef = { id: 'a2', name: 'reviewer', status: 'running' };
 /** The tab ids open for `sessionId`, in strip order. */
 const idsFor = (sessionId: string) => tabsForSession(useStore.getState().agentTabs, sessionId).map((t) => t.id);
 
+/** Extra pane `i`'s tab — every pane in this file is `kind: 'session'`. */
+function extraPaneTab(i: number): string {
+  const p = useStore.getState().extraPanes[i];
+  return p.kind === 'session' ? p.tab : '(shell)';
+}
+
 /** Panes 1..n, each holding one session on SESSION. */
 const panes = (...sessionIds: (string | null)[]): PaneSlot[] =>
-  sessionIds.map((sessionId) => ({ sessionId, tab: 'session' as const }));
+  sessionIds.map((sessionId) => ({ kind: 'session' as const, sessionId, tab: 'session' as const }));
 
 beforeEach(() => {
   useStore.setState({
@@ -58,7 +64,7 @@ describe('agent tab store slice', () => {
   it('opens into pane 1 when THAT pane holds the session (FR-4)', () => {
     useStore.setState({ extraPanes: panes('s2'), focusedPaneIndex: 1 });
     useStore.getState().openAgentTab('s2', A1);
-    expect(useStore.getState().extraPanes[0].tab).toBe('agent:a1');
+    expect(extraPaneTab(0)).toBe('agent:a1');
     expect(useStore.getState().mainTab).toBe('session'); // pane 0 untouched (FR-5)
     expect(idsFor('s2')).toEqual(['a1']);
     expect(idsFor('s1')).toEqual([]);
@@ -72,7 +78,7 @@ describe('agent tab store slice', () => {
     useStore.setState({ extraPanes: panes('s2'), focusedPaneIndex: 1, mainTab: 'agents' });
     useStore.getState().openAgentTab('s2', A1);
     expect(useStore.getState().mainTab).toBe('session');
-    expect(useStore.getState().extraPanes[0].tab).toBe('agent:a1');
+    expect(extraPaneTab(0)).toBe('agent:a1');
   });
 
   it('leaves a real pane-0 tab alone when it opens in another pane', () => {
@@ -96,7 +102,7 @@ describe('agent tab store slice', () => {
     expect(idsFor('s1')).toEqual(['a1']);
     expect(idsFor('s2')).toEqual(['a2']);
     expect(useStore.getState().mainTab).toBe('agent:a1');
-    expect(useStore.getState().extraPanes[0].tab).toBe('agent:a2');
+    expect(extraPaneTab(0)).toBe('agent:a2');
   });
 
   it('closing the ACTIVE tab falls back to SESSION, an inactive one does not (FR-6)', () => {
@@ -116,7 +122,7 @@ describe('agent tab store slice', () => {
     useStore.getState().openAgentTab('s1', A1);
     useStore.getState().openAgentTab('s2', A2);
     useStore.getState().closeAgentTab('a2');
-    expect(useStore.getState().extraPanes[0].tab).toBe('session');
+    expect(extraPaneTab(0)).toBe('session');
     expect(useStore.getState().mainTab).toBe('agent:a1'); // untouched
     expect(idsFor('s1')).toEqual(['a1']);
   });
@@ -198,7 +204,7 @@ describe('agent tab store slice', () => {
     useStore.getState().clearAgentTabs();
     expect(useStore.getState().agentTabs.size).toBe(0);
     expect(useStore.getState().mainTab).toBe('session');
-    expect(useStore.getState().extraPanes[0].tab).toBe('session');
+    expect(extraPaneTab(0)).toBe('session');
   });
 
   it('clearAgentTabs is a no-op when nothing is open', () => {

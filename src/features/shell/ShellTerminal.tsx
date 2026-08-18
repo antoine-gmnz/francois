@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { SessionId } from '../../../contract/common';
-import type { ShellEnsureData, ShellId } from '../../../contract/shell-terminal';
+import type { ShellEnsureData, ShellId, ShellOwner } from '../../../contract/shell-terminal';
 import { onShellEvent, shellEnsure, shellResize, shellRestart, shellWrite } from '../../lib/api';
 import { controlCharFor, shellShortcutFor } from './shell';
 import { dispatchShellShortcut } from './shellActions';
@@ -19,7 +19,13 @@ const RESET = '\x1b[0m';
 // object — behavior here is unchanged.
 
 export interface ShellTerminalProps {
-  sessionId: SessionId;
+  /**
+   * unbound-panes FR-6: the shell's owner — a union now. Session-scoped
+   * bookkeeping (shellStore roster refresh, `⌘T`/`⌘W`/`⌃⇥` carve-outs) only
+   * ever runs for a `session` owner (FR-6: those combos are no-ops on a
+   * project-owned shell pane).
+   */
+  owner: ShellOwner;
   shellId: ShellId;
   /** FR-13: every shell of the active session stays mounted while the SHELL
    * tab is open; only the displayed one is visible (CSS, never unmount). */
@@ -43,9 +49,15 @@ export interface ShellTerminalProps {
   initialData?: ShellEnsureData;
 }
 
-// sessionId/shellId are REQUIRED — multiple-shells re-keys the whole domain
-// onto ShellId; a silent fallback here could attach the wrong shell.
-export default function ShellTerminal({ sessionId, shellId, visible, canFocus = true, initialData }: ShellTerminalProps) {
+// owner/shellId are REQUIRED — multiple-shells re-keys the whole domain onto
+// ShellId; a silent fallback here could attach the wrong shell.
+export default function ShellTerminal({ owner, shellId, visible, canFocus = true, initialData }: ShellTerminalProps) {
+  // Session-only bookkeeping (shellStore, the ⌘T/⌘W/⌃⇥ carve-outs) needs a
+  // SessionId — null for a project-owned shell pane.
+  const sessionId: SessionId | null = owner.kind === 'session' ? owner.sessionId : null;
+  // A stable primitive to key the mount effect on — `owner` itself is a fresh
+  // object literal on every render at most call sites.
+  const ownerKey = owner.kind === 'session' ? `session:${owner.sessionId}` : `project:${owner.projectId}`;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<() => void>(() => {});
@@ -122,16 +134,19 @@ export default function ShellTerminal({ sessionId, shellId, visible, canFocus = 
         // this exact shellId's attach (its own `shell_ensure`) before this
         // mount — `initialData` is read once, from this effect's closure, so
         // a later prop update (this component staying mounted) never re-reads it.
-        const res = initialData ? ({ ok: true, data: initialData } as const) : await shellEnsure({ sessionId, shellId });
+        const res = initialData
+          ? ({ ok: true, data: initialData } as const)
+          : await shellEnsure({ owner, shellId });
         if (!res.ok) {
-          useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
+          if (sessionId) useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
           enterExited(`${res.error.message} — press ⏎ to retry`);
           return;
         }
         const d = res.data;
         exitedRef.current = false;
-        // §6: every ensure refreshes the WHOLE roster, not just this shell.
-        useShellStore.getState().setShells(sessionId, d.shells);
+        // §6: every ensure refreshes the WHOLE roster, not just this shell — a
+        // project-owned shell pane has no roster to refresh (FR-6: no chip strip).
+        if (sessionId) useShellStore.getState().setShells(sessionId, d.shells);
         if (d.scrollbackReplay) term.write(d.scrollbackReplay);
         lastCols = -1;
         lastRows = -1;
@@ -144,7 +159,7 @@ export default function ShellTerminal({ sessionId, shellId, visible, canFocus = 
         // reading the `visible` prop here would close over its MOUNT-time
         // value forever, since this effect never reruns while mounted.
       } catch (e) {
-        useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
+        if (sessionId) useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
         enterExited(`failed to reach shell backend: ${String(e)} — press ⏎ to retry`);
       } finally {
         ensureSettledRef.current = true;
@@ -159,12 +174,12 @@ export default function ShellTerminal({ sessionId, shellId, visible, canFocus = 
         const res = await shellRestart(shellId);
         if (!res.ok) {
           enterExited(`${res.error.message} — press ⏎ to retry`);
-          useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
+          if (sessionId) useShellStore.getState().setShellStatus(sessionId, shellId, false, undefined);
           return;
         }
         exitedRef.current = false;
         term.reset();
-        useShellStore.getState().setShellStatus(sessionId, shellId, true, undefined);
+        if (sessionId) useShellStore.getState().setShellStatus(sessionId, shellId, true, undefined);
         lastCols = -1;
         lastRows = -1;
         fit();
@@ -188,8 +203,11 @@ export default function ShellTerminal({ sessionId, shellId, visible, canFocus = 
       // ⌘K / Ctrl+K carve-out: don't forward, don't stopPropagation → bubbles
       // to app-shell's global handler (command palette). shell-terminal FR-20.
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) return false;
-      const combo = shellShortcutFor(e.key, e.metaKey, e.ctrlKey, e.shiftKey);
-      if (combo) {
+      // unbound-panes FR-6: ⌘T/⌘W/⌃⇥/⌃⇧⇥ are no-ops on a project-owned shell
+      // pane — it has no chip strip to act on, and it keeps their single
+      // meaning (the SESSION tab's strip) rather than growing a carve-out here.
+      const combo = sessionId ? shellShortcutFor(e.key, e.metaKey, e.ctrlKey, e.shiftKey) : null;
+      if (combo && sessionId) {
         e.preventDefault();
         // FR-20/21: handled directly here — stop the bubble so the
         // document-level listener (useShellShortcuts) never double-fires it.
@@ -242,7 +260,8 @@ export default function ShellTerminal({ sessionId, shellId, visible, canFocus = 
     // this shell's own events — the roster-wide status update happens in the
     // single global listener (shellStore.ts's initShellEvents).
     const unlisten = onShellEvent((p) => {
-      if (p.sessionId !== sessionId || p.shellId !== shellId) return;
+      const eventOwnerKey = p.owner.kind === 'session' ? `session:${p.owner.sessionId}` : `project:${p.owner.projectId}`;
+      if (eventOwnerKey !== ownerKey || p.shellId !== shellId) return;
       if (p.type === 'shell.data') {
         term.write(p.data);
       } else {
@@ -270,7 +289,7 @@ export default function ShellTerminal({ sessionId, shellId, visible, canFocus = 
       term.dispose();
       termRef.current = null;
     };
-  }, [sessionId, shellId]);
+  }, [ownerKey, shellId]);
 
   // FR-13: a shell whose xterm has just become visible runs one immediate
   // fit + resize + focus — no new ensure call, so no new ring replay. FR-14:

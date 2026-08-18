@@ -1,0 +1,44 @@
+/* unbound-panes FR-9 — the small project-list popover an "open a shell here"
+   entry point offers. Minimal, self-contained: the shipped project MODAL
+   (projects.css) is a whole panel, not a lightweight anchor-menu. */
+.project-picker {
+  position: absolute;
+  /* Hangs from the anchor's RIGHT edge and grows leftward. Every anchor
+     (the pane header's `⋯`, the empty pane's choice) sits at or near the
+     pane's right side, and a pane can itself be flush with the window — so
+     growing rightward runs off-screen. Without these offsets the box falls at
+     its static inline position, which is exactly that overflow. */
+  top: calc(100% + var(--space-4));
+  right: 0;
+  z-index: 30;
+  min-width: 180px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-dropdown);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+  /* The empty-pane anchor sits inside `.split-pane__empty`, which centers its
+     text — a list of names must not inherit that. */
+  text-align: left;
+}
+.project-picker__item {
+  padding: var(--space-6) var(--space-8);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-picker__item:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+.project-picker__empty {
+  padding: var(--space-6) var(--space-8);
+  color: var(--text-faint);
+}
