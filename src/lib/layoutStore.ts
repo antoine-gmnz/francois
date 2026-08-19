@@ -8,6 +8,7 @@ import type { SessionId, SessionMeta } from '../../contract/common';
 import { statusNeedsAttention } from '../../contract/fleet-board';
 import { filterSessionsByProject } from '../../contract/projects';
 import type { MainTab } from './agentTabStore';
+import { DEFAULT_ROSTER_WIDTH, parseRosterWidth, ROSTER_WIDTH_STORAGE_KEY } from './rosterWidth';
 import type { AppState } from './store';
 
 export type Pane = 'sidebar' | 'main' | 'agents' | 'mcp' | 'skills' | 'workflows';
@@ -514,6 +515,39 @@ export function panesWithout(extraPanes: readonly PaneSlot[], sessionId: Session
   return extraPanes.filter((p) => p.sessionId !== sessionId);
 }
 
+// ── resizable sidebar ───────────────────────────────────────────────────────
+// The pure helpers (constants, cap, clamp, parse, drag math) live in
+// rosterWidth.ts — split out to keep this file under the ~1000-line guideline
+// — and are re-exported here so `import { ... } from '../lib/layoutStore'`
+// (spec §5) resolves. Only the store slice, which needs `set()`, stays local.
+export {
+  clampRosterWidth,
+  DEFAULT_ROSTER_WIDTH,
+  MAX_ROSTER_WIDTH,
+  MIN_ROSTER_WIDTH,
+  parseRosterWidth,
+  ROSTER_CAP_FRACTION,
+  ROSTER_KEY_STEP_PX,
+  ROSTER_WIDTH_STORAGE_KEY,
+  rosterCap,
+  rosterWidthFromDrag,
+} from './rosterWidth';
+
+function loadRosterWidth(): number {
+  try {
+    return parseRosterWidth(localStorage.getItem(ROSTER_WIDTH_STORAGE_KEY));
+  } catch {
+    return DEFAULT_ROSTER_WIDTH;
+  }
+}
+function persistRosterWidth(px: number): void {
+  try {
+    localStorage.setItem(ROSTER_WIDTH_STORAGE_KEY, String(px));
+  } catch {
+    /* ignore */
+  }
+}
+
 export interface LayoutSlice {
   // minimal app-shell state
   focusedPane: Pane;
@@ -598,6 +632,16 @@ export interface LayoutSlice {
   setSplitRatio: (ratio: number) => void;
   splitRowRatio: number;
   setSplitRowRatio: (ratio: number) => void;
+
+  /**
+   * resizable-sidebar: the roster's stored INTENT width, unclamped by the
+   * viewport — `clampRosterWidth` is applied only at render time.
+   */
+  rosterWidth: number;
+  /** Persists; does not touch `showLeftPane` (the snap-collapse owns that). */
+  setRosterWidth: (px: number) => void;
+  /** → DEFAULT_ROSTER_WIDTH, persists (double-click / `Home`, FR-9). */
+  resetRosterWidth: () => void;
 }
 
 const INITIAL_SPLIT = loadSplitState();
@@ -849,6 +893,24 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       if (splitRowRatio === s.splitRowRatio) return {};
       persistRatio(SPLIT_ROW_RATIO_STORAGE_KEY, splitRowRatio);
       return { splitRowRatio };
+    }),
+
+  rosterWidth: loadRosterWidth(),
+
+  // FR-8: the stored value is the raw intent — never clamped here, so a
+  // user-set 520px roster is untouched by entering split (clampRosterWidth
+  // does that work at render time only).
+  setRosterWidth: (px) =>
+    set((s) => {
+      if (px === s.rosterWidth) return {};
+      persistRosterWidth(px);
+      return { rosterWidth: px };
+    }),
+
+  resetRosterWidth: () =>
+    set(() => {
+      persistRosterWidth(DEFAULT_ROSTER_WIDTH);
+      return { rosterWidth: DEFAULT_ROSTER_WIDTH };
     }),
 });
 

@@ -235,3 +235,8 @@ filtering relative PATH entries is right for extension spawns, it is right every
 ## deferred:diff-navigator — SHIP-round leftovers (review round 2)
 
 - [ ] LOW · src/features/diff/DiffTree.tsx:85 · quality · the `role="tree"` container carries `aria-activedescendant` but has no `tabIndex`, so it is never focusable — either make it focusable or drop the decorative ARIA · deferred:diff-navigator
+
+## deferred:resizable-sidebar — SHIP-round leftovers (review round 1)
+
+- [ ] MEDIUM · src/app/RosterDivider.tsx:66-85 · quality · Base the arrow-key nudge on the stored `rosterWidth` intent (pass it alongside `renderedWidth`) instead of the clamped `renderedWidth`, so a nudge under a clamped viewport/regime cannot overwrite a wider stored width; clamp only for the `aria-valuenow` readout. · deferred:resizable-sidebar
+- [ ] LOW · src/lib/hooks/usePaneDrag.ts · quality · Add `usePaneDrag.test.ts` covering measure/onDrag/dragging-flag transitions once a DOM component testing framework is wired for this repo. · deferred:resizable-sidebar

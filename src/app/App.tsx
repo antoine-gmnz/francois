@@ -26,13 +26,16 @@ import { checkUpdateOnLaunch } from '../features/update/update';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
 import { isBusyStatus } from '../../contract/fleet-board';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
+import { useWindowWidth } from '../lib/hooks/useWindowWidth';
 import { focusedSessionId, layoutRegime, paneCount, paneSessionIdAt, paneTabAt } from '../lib/layoutStore';
 import { basename } from '../lib/path';
+import { clampRosterWidth } from '../lib/rosterWidth';
 import { useStore } from '../lib/store';
 import './app.css';
 import AppRow from './AppRow';
 import { dividerGridArea, isPanelTab, PANEL_TABS, paneGridArea, shellColumns } from './appShell';
 import MainPaneBody from './MainPaneBody';
+import RosterDivider from './RosterDivider';
 import SessionRail from './SessionRail';
 import SessionRow from './SessionRow';
 import SplitDivider from './SplitDivider';
@@ -62,6 +65,7 @@ export default function App() {
   const setMainTab = useStore((s) => s.setMainTab);
   const theme = useStore((s) => s.theme);
   const showLeftPane = useStore((s) => s.showLeftPane);
+  const toggleLeftPane = useStore((s) => s.toggleLeftPane);
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const newAgentOpen = useStore((s) => s.newAgentOpen);
@@ -126,8 +130,16 @@ export default function App() {
   const panes = paneCount({ extraPanes });
   const regime = layoutRegime(panes);
   const split = regime !== 'single';
-  // The two shell tracks + whether the roster is folded to its rail.
-  const columns = shellColumns(regime, showLeftPane);
+  // resizable-sidebar: the roster's stored width (the user's intent, never
+  // clamped by the viewport) and the viewport width the render clamp needs.
+  const rosterWidth = useStore((s) => s.rosterWidth);
+  const setRosterWidth = useStore((s) => s.setRosterWidth);
+  const resetRosterWidth = useStore((s) => s.resetRosterWidth);
+  const viewportWidth = useWindowWidth();
+  // The shell's tracks + whether the roster is folded to its rail + whether
+  // the handle renders at all (FR-11: not in the grid regime).
+  const columns = shellColumns(regime, showLeftPane, rosterWidth, viewportWidth);
+  const renderedRosterWidth = clampRosterWidth(rosterWidth, viewportWidth, regime);
   // FR-13: the session every pane-scoped consumer reads. Equals activeSessionId
   // whenever not split, so each of them is behaviour-identical outside split.
   const paneSessionId = focusedSessionId({ activeSessionId, mainTab, extraPanes, focusedPaneIndex });
@@ -322,6 +334,21 @@ export default function App() {
         <div className="app-col-left" style={{ display: showLeftPane ? undefined : 'none' }}>
           <Sidebar home={home} />
         </div>
+
+        {/* resizable-sidebar FR-11: no handle in the grid regime — split-by-4
+            already forces the roster to the rail there, and a handle fighting
+            that setter would be two owners of the same flag. */}
+        {columns.showHandle && (
+          <RosterDivider
+            regime={regime}
+            viewportWidth={viewportWidth}
+            renderedWidth={renderedRosterWidth}
+            showLeftPane={showLeftPane}
+            toggleLeftPane={toggleLeftPane}
+            setRosterWidth={setRosterWidth}
+            resetRosterWidth={resetRosterWidth}
+          />
+        )}
 
         <div className="app-main-cell">
           {/* The four dissolved panes. ALWAYS mounted — their feeds publish the

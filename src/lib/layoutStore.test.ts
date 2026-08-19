@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clampSplitRatio,
   COLLAPSED_PANES_STORAGE_KEY,
+  DEFAULT_ROSTER_WIDTH,
   DEFAULT_SPLIT_RATIO,
   MAX_SPLIT_RATIO,
   MIN_SPLIT_PANE_PX,
@@ -18,6 +19,7 @@ import {
   MIN_SPLIT_RATIO,
   parseCollapsedPanes,
   parseSplitRatio,
+  ROSTER_WIDTH_STORAGE_KEY,
   SESSION_META_KEY,
   SPLIT_RATIO_STORAGE_KEY,
   SPLIT_ROW_RATIO_STORAGE_KEY,
@@ -364,6 +366,84 @@ describe('splitRatio store slice', () => {
     expect(useStore.getState().splitRatio).toBe(DEFAULT_SPLIT_RATIO);
     expect(() => useStore.getState().setSplitRatio(0.7)).not.toThrow();
     expect(useStore.getState().splitRatio).toBe(0.7);
+  });
+});
+
+// resizable-sidebar: the roster-width slice — stores the raw INTENT (never
+// clamped here; clampRosterWidth is a render-time concern) and never rewrites
+// storage on a no-op set (FR-8).
+describe('rosterWidth store slice', () => {
+  let storage: { store: Record<string, string> };
+
+  beforeEach(() => {
+    storage = mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('defaults to 282 with empty storage', async () => {
+    const useStore = await freshStore();
+    expect(useStore.getState().rosterWidth).toBe(DEFAULT_ROSTER_WIDTH);
+  });
+
+  it('hydrates from its own key and persists on change', async () => {
+    storage.store[ROSTER_WIDTH_STORAGE_KEY] = '400';
+    const useStore = await freshStore();
+    expect(useStore.getState().rosterWidth).toBe(400);
+    useStore.getState().setRosterWidth(360);
+    expect(useStore.getState().rosterWidth).toBe(360);
+    expect(storage.store[ROSTER_WIDTH_STORAGE_KEY]).toBe('360');
+  });
+
+  it('stores the raw intent, unclamped — a 520px width survives being set outright', async () => {
+    const useStore = await freshStore();
+    useStore.getState().setRosterWidth(520);
+    expect(useStore.getState().rosterWidth).toBe(520);
+    expect(storage.store[ROSTER_WIDTH_STORAGE_KEY]).toBe('520');
+  });
+
+  it('a no-op set does not rewrite storage', async () => {
+    const useStore = await freshStore();
+    useStore.getState().setRosterWidth(DEFAULT_ROSTER_WIDTH);
+    delete storage.store[ROSTER_WIDTH_STORAGE_KEY];
+    useStore.getState().setRosterWidth(DEFAULT_ROSTER_WIDTH);
+    expect(storage.store[ROSTER_WIDTH_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it('never touches showLeftPane', async () => {
+    const useStore = await freshStore();
+    useStore.getState().setRosterWidth(220);
+    expect(useStore.getState().showLeftPane).toBe(true);
+  });
+
+  it('resetRosterWidth returns to the default and persists', async () => {
+    storage.store[ROSTER_WIDTH_STORAGE_KEY] = '520';
+    const useStore = await freshStore();
+    useStore.getState().resetRosterWidth();
+    expect(useStore.getState().rosterWidth).toBe(DEFAULT_ROSTER_WIDTH);
+    expect(storage.store[ROSTER_WIDTH_STORAGE_KEY]).toBe(String(DEFAULT_ROSTER_WIDTH));
+  });
+
+  it('degrades to the default when localStorage throws, and set never throws', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('denied');
+      },
+      setItem: () => {
+        throw new Error('denied');
+      },
+    });
+    const useStore = await freshStore();
+    expect(useStore.getState().rosterWidth).toBe(DEFAULT_ROSTER_WIDTH);
+    expect(() => useStore.getState().setRosterWidth(400)).not.toThrow();
+    expect(useStore.getState().rosterWidth).toBe(400);
+  });
+
+  it('a hand-edited garbage value normalizes without throwing', async () => {
+    storage.store[ROSTER_WIDTH_STORAGE_KEY] = 'abc';
+    const useStore = await freshStore();
+    expect(useStore.getState().rosterWidth).toBe(DEFAULT_ROSTER_WIDTH);
   });
 });
 

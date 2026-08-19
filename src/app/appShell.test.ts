@@ -12,21 +12,41 @@ import {
 } from './appShell';
 
 describe('shellColumns', () => {
-  // design 7a: two tracks, not three — [3]-[6] are roster rows now, so the
-  // roster is the only column left to size.
-  it('gives the roster its full width at one pane', () => {
-    expect(shellColumns('single', true)).toEqual({ template: '282px 1fr', leftRail: false });
+  // resizable-sidebar: THREE tracks now — <left> 12px 1fr — and the roster's
+  // width is the user's stored intent, clamped to what the viewport/regime
+  // allow; there is no more regime-picked ROSTER_SPLIT (238px).
+  it('gives the roster its stored width at one pane, with a handle', () => {
+    expect(shellColumns('single', true, 282, 2000)).toEqual({ template: '282px 12px 1fr', leftRail: false, showHandle: true });
   });
 
-  it('narrows the roster while split, and keeps 282px only at one pane', () => {
-    expect(shellColumns('split', true).template).toBe('238px 1fr');
-    expect(shellColumns('grid', true).template).toBe('238px 1fr');
+  it('clamps the stored width to the tighter split-regime cap rather than swapping in a fixed 238px', () => {
+    // 0.30 * 1000 = 300, under the 520 stored width.
+    expect(shellColumns('split', true, 520, 1000).template).toBe('300px 12px 1fr');
+    // A width that already fits the cap passes through unchanged.
+    expect(shellColumns('split', true, 238, 2000).template).toBe('238px 12px 1fr');
   });
 
   it('folds the roster to the 46px rail in EVERY regime — never to nothing', () => {
-    for (const regime of ['single', 'split', 'grid'] as const) {
-      expect(shellColumns(regime, false)).toEqual({ template: '46px 1fr', leftRail: true });
+    for (const regime of ['single', 'split'] as const) {
+      expect(shellColumns(regime, false, 282, 2000)).toEqual({
+        template: '46px 12px 1fr',
+        leftRail: true,
+        showHandle: true,
+      });
     }
+    // grid regime: no handle, so no gutter track either — the DOM only has
+    // two grid items (SessionRail + .app-main-cell), so the template must too.
+    expect(shellColumns('grid', false, 282, 2000)).toEqual({
+      template: '46px 1fr',
+      leftRail: true,
+      showHandle: false,
+    });
+  });
+
+  it('hides the handle only in the grid regime (FR-11)', () => {
+    expect(shellColumns('single', true, 282, 2000).showHandle).toBe(true);
+    expect(shellColumns('split', true, 282, 2000).showHandle).toBe(true);
+    expect(shellColumns('grid', false, 282, 2000).showHandle).toBe(false);
   });
 });
 

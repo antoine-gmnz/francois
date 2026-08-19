@@ -10,6 +10,7 @@ import { agentIdFromTab, workflowIdFromTab } from '../features/agents/agent-tab'
 import { extIdFromTab } from '../features/extensions/extensions';
 import type { LayoutRegime } from '../lib/layoutStore';
 import { abbreviate } from '../lib/path';
+import { clampRosterWidth } from '../lib/rosterWidth';
 import type { MainTab, Pane } from '../lib/store';
 
 // ---------- shell columns ----------
@@ -19,30 +20,52 @@ import type { MainTab, Pane } from '../lib/store';
  * this rail, so [1] and [3]–[6] stay one click away in every regime.
  */
 const RAIL = '46px';
-/** The roster at one pane; it narrows once a second pane wants the width. */
-const ROSTER = '282px';
-const ROSTER_SPLIT = '238px';
+/**
+ * The middle track's width — resizable-sidebar FR-1: this reproduces the 12px
+ * `gap` the grid used to have between its two tracks, and IS the drag handle's
+ * hit area (`RosterDivider` renders into it) rather than an overlay stealing
+ * clicks from the roster's edge.
+ */
+const GUTTER = '12px';
 
 export interface ShellColumns {
-  /** `grid-template-columns` for `.app-grid` — always two tracks. */
+  /**
+   * `grid-template-columns` for `.app-grid` — THREE tracks (left, the 12px
+   * gutter, 1fr) when `showHandle` is true, or TWO (left, 1fr) when it's
+   * false. The DOM must match: `App.tsx` renders `RosterDivider` into the
+   * gutter track only when `showHandle` is true, so the track count has to
+   * agree or CSS auto-placement drops `.app-main-cell` into the gutter track.
+   */
   template: string;
   /** Render `SessionRail` in the first track instead of the roster. */
   leftRail: boolean;
+  /** resizable-sidebar FR-11: false in the `grid` regime, where the roster is forced to the rail. */
+  showHandle: boolean;
 }
 
 /**
- * The shell's two tracks, given the pane regime and the roster toggle.
+ * The shell's tracks, given the pane regime, the roster toggle, and the
+ * roster's stored width.
  *
  * design 7a dissolved the right column into the roster's own rows, so the only
  * column left to size is the roster. Its rule survives 7a unchanged: **folded
  * means the 46px rail, not nothing**, at any pane count — the grid used to drop
- * it outright, which left `[` toggling something that looked like a crash — and
- * the regime only decides how wide it is when shown, since split pays ~340px
- * for its second pane by narrowing it.
+ * it outright, which left `[` toggling something that looked like a crash.
+ *
+ * resizable-sidebar: the roster's width is now user-set, not regime-picked.
+ * `rosterWidth` is the STORED intent; the regime only constrains what fits —
+ * `clampRosterWidth` applies the per-regime cap (tighter in `split`, since it
+ * pays ~340px for the second pane) without ever touching the stored value.
  */
-export function shellColumns(regime: LayoutRegime, showLeftPane: boolean): ShellColumns {
-  const left = showLeftPane ? (regime === 'single' ? ROSTER : ROSTER_SPLIT) : RAIL;
-  return { template: `${left} 1fr`, leftRail: !showLeftPane };
+export function shellColumns(
+  regime: LayoutRegime,
+  showLeftPane: boolean,
+  rosterWidth: number,
+  viewportWidth: number,
+): ShellColumns {
+  const left = showLeftPane ? `${clampRosterWidth(rosterWidth, viewportWidth, regime)}px` : RAIL;
+  const showHandle = regime !== 'grid';
+  return { template: showHandle ? `${left} ${GUTTER} 1fr` : `${left} 1fr`, leftRail: !showLeftPane, showHandle };
 }
 
 // ---------- resizable split grid ----------
