@@ -3,7 +3,7 @@
 use super::*;
 
 use crate::ipc::{ok, IpcResult};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
@@ -23,8 +23,27 @@ pub(crate) fn catalog() -> Vec<ModelInfo> {
     ]
 }
 
+/// What to SHOW when the catalog does not (yet) know a model's window. It is a
+/// display placeholder, never a ceiling — see `loaded_context`.
+pub(crate) const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
+
 pub(crate) fn context_limit(model_id: &str) -> u64 {
-    resolve_context_tokens(model_id).unwrap_or(200_000)
+    resolve_context_tokens(model_id).unwrap_or(DEFAULT_CONTEXT_LIMIT)
+}
+
+/// The `(limit, used)` a session adopts for a model whose window is `known` (or
+/// not). Pure so the load-time rule is testable without an `AppHandle`.
+///
+/// THE RULE: a window is a ceiling only when it is REAL. `context_limit` hands
+/// back the 200K placeholder for a model the catalog has not been fetched for
+/// yet, and clamping against that placeholder destroyed the figure permanently —
+/// the next persist wrote the clamped 200000 back over the true count, so an
+/// Opus 5 session that had used 340K reloaded as "200K/200K, full".
+pub(crate) fn loaded_context(known: Option<u64>, persisted_used: u64) -> (u64, u64) {
+    match known {
+        Some(limit) => (limit, persisted_used.min(limit)),
+        None => (DEFAULT_CONTEXT_LIMIT, persisted_used),
+    }
 }
 
 /// Context window for a model id. Matches the exact id first, then resolves CLI
@@ -257,13 +276,88 @@ pub(crate) fn refreshed_cache(
     }
 }
 
-/// Fetch the live list (updating the cache) or keep what we already know.
-pub(crate) fn refresh_models() -> Vec<ModelInfo> {
+// ---------- the on-disk catalog mirror ----------
+//
+// The live windows are the ONLY place the app learns that (say) Opus 5 holds 1M
+// rather than the 200K placeholder, and they arrive over the network — which
+// means a launch has none of them until a fetch lands, and a launch that is
+// offline (or whose OAuth token went stale between Claude Code runs) never gets
+// them at all. Mirroring the last successful fetch to disk makes the windows
+// survive the process: the second launch on a machine starts warm.
+
+pub(crate) fn models_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("models.json"))
+}
+
+/// Same temp+rename discipline as `sessions.json`: a crash mid-write must not
+/// leave a torn mirror that then fails to parse on every subsequent launch.
+fn save_model_cache(app: &AppHandle, models: &[ModelInfo]) {
+    let Some(path) = models_json_path(app) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(bytes) = serde_json::to_vec(models) else {
+        return;
+    };
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// Seed the cache from the mirror. `main.rs` runs this SYNCHRONOUSLY and BEFORE
+/// `load_persisted`, which is the whole point: a session must resolve its real
+/// window at the moment it loads, not a second later. Reading a small local file
+/// on the setup thread is cheap; the fetch it replaces was not.
+pub fn load_model_cache(app: &AppHandle) {
+    let Some(path) = models_json_path(app) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let Ok(models) = serde_json::from_slice::<Vec<ModelInfo>>(&bytes) else {
+        return;
+    };
+    if models.is_empty() {
+        return;
+    }
+    *model_cache().lock().unwrap() = models;
+}
+
+/// Adopt a successful fetch: cache it, mirror it, and heal every live session's
+/// window. Every path that reaches the network funnels through here so that ANY
+/// successful fetch reconciles — not only the startup warm-up, which gives up
+/// after five tries and left a run that started offline pinned at 200K forever.
+fn adopt_live(app: &AppHandle, live: Vec<ModelInfo>) {
+    // The cache lock is released before `reconcile_context_limits`, which takes
+    // `Engine.sessions` and re-reads the cache under it.
+    *model_cache().lock().unwrap() = live.clone();
+    save_model_cache(app, &live);
+    reconcile_context_limits(app);
+}
+
+/// Fetch the live list (updating the cache) or keep what we already know. With
+/// an `app` in hand a live fetch also mirrors + reconciles (`adopt_live`).
+pub(crate) fn refresh_models_for(app: Option<&AppHandle>) -> Vec<ModelInfo> {
     let fetched = fetch_live_models(); // network first — never under the cache lock
+    if let (Some(live), Some(app)) = (&fetched, app) {
+        adopt_live(app, live.clone());
+        return live.clone();
+    }
     let mut cache = model_cache().lock().unwrap();
     let next = refreshed_cache(fetched, &cache);
     *cache = next.clone();
     next
+}
+
+pub(crate) fn refresh_models() -> Vec<ModelInfo> {
+    refresh_models_for(None)
 }
 
 /// Warm the model cache in the background at startup (for nice model labels and
@@ -283,15 +377,15 @@ pub fn warm_model_cache(app: AppHandle) {
             }
             let Some(live) = fetch_live_models() else {
                 // Keep the picker populated while we retry, but never clobber a
-                // cache that already knows the real windows.
+                // cache that already knows the real windows — including the ones
+                // `load_model_cache` just restored from the disk mirror.
                 let mut cache = model_cache().lock().unwrap();
                 if cache.is_empty() {
                     *cache = catalog();
                 }
                 continue;
             };
-            *model_cache().lock().unwrap() = live;
-            reconcile_context_limits(&app);
+            adopt_live(&app, live);
             return;
         }
     });
@@ -358,16 +452,23 @@ pub(crate) fn humanize(id: &str) -> String {
 
 // ---------- serialized public shapes (contract/common.ts) ----------
 
-#[derive(Serialize, Clone, Debug)]
+/// `Deserialize` is not part of the wire contract — it exists so the catalog can
+/// round-trip through the on-disk mirror (`models.json`). Every field but `id`
+/// and `label` is `default`ed, so a mirror written by an older build still loads.
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ModelInfo {
     pub id: String,
     pub label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brief: Option<String>,
-    #[serde(rename = "contextTokens", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "contextTokens",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub context_tokens: Option<u64>,
     /// Effort levels this model supports (subset of low/medium/high/xhigh/max).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub efforts: Vec<String>,
 }
 
@@ -542,9 +643,13 @@ mod tests {
         // CLI alias resolves to the newest opus (flagship), not the 200K older one
         assert_eq!(context_limit("opus"), 1_000_000);
         assert_eq!(context_limit("haiku"), 200_000);
-        // unknown family → default
+        // A cold cache knows NOTHING — not even an id it would match exactly.
+        // `context_limit` still answers, with the placeholder, and that
+        // distinction is what `loaded_context` / `ContextTracker::finish` ride on.
         model_cache().lock().unwrap().clear();
-        assert_eq!(context_limit("opus"), 200_000);
+        assert_eq!(resolve_context_tokens("claude-opus-5"), None);
+        assert_eq!(context_limit("claude-opus-5"), DEFAULT_CONTEXT_LIMIT);
+        assert_eq!(context_limit("opus"), DEFAULT_CONTEXT_LIMIT);
     }
 
     #[test]
@@ -572,6 +677,48 @@ mod tests {
         // A live fetch always wins.
         let fresh = refreshed_cache(Some(catalog()), &live);
         assert_eq!(fresh.len(), catalog().len());
+    }
+
+    /// THE BUG: an Opus 5 session read "200K" — the placeholder — because the
+    /// window is only known once the live catalog has been fetched, and the
+    /// clamp then wrote that placeholder over the real used figure.
+    #[test]
+    fn an_unknown_window_is_a_placeholder_not_a_ceiling() {
+        // 340K used against an unknown window survives intact.
+        assert_eq!(
+            loaded_context(None, 340_000),
+            (DEFAULT_CONTEXT_LIMIT, 340_000)
+        );
+        // A known window IS a ceiling, both ways.
+        assert_eq!(
+            loaded_context(Some(1_000_000), 340_000),
+            (1_000_000, 340_000)
+        );
+        assert_eq!(loaded_context(Some(200_000), 340_000), (200_000, 200_000));
+    }
+
+    /// The disk mirror is what makes a launch start warm — it must round-trip,
+    /// and a mirror written by an older build (no `contextTokens`, no `efforts`)
+    /// must still load rather than poisoning every subsequent launch.
+    #[test]
+    fn the_catalog_round_trips_through_the_disk_mirror() {
+        let live = vec![ModelInfo {
+            id: "claude-opus-5".into(),
+            label: "Opus 5".into(),
+            brief: Some("1M context".into()),
+            context_tokens: Some(1_000_000),
+            efforts: vec!["high".into()],
+        }];
+        let bytes = serde_json::to_vec(&live).unwrap();
+        let back: Vec<ModelInfo> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back[0].id, "claude-opus-5");
+        assert_eq!(back[0].context_tokens, Some(1_000_000));
+        assert_eq!(back[0].efforts, vec!["high".to_string()]);
+
+        let older: Vec<ModelInfo> =
+            serde_json::from_str(r#"[{"id":"claude-opus-5","label":"Opus 5"}]"#).unwrap();
+        assert_eq!(older[0].context_tokens, None);
+        assert!(older[0].efforts.is_empty());
     }
 
     #[test]

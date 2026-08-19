@@ -280,8 +280,12 @@ pub(crate) fn finish_reader_turn(
     result_text: Option<String>,
     turn_cmd: Option<&str>,
 ) {
-    let limit = context_limit(model_id);
-    let pending_used = ctx_usage.finish(limit);
+    let known = resolve_context_tokens(model_id);
+    let limit = known.unwrap_or(DEFAULT_CONTEXT_LIMIT);
+    // `finish(0)` = do not clamp. Same rule as the load path: an unknown window
+    // is a display placeholder, not a ceiling, and clamping a turn's figure to
+    // it writes 200000 into `sessions.json` where the true count belonged.
+    let pending_used = ctx_usage.finish(known.unwrap_or(0));
     if got_result && result_error.is_none() {
         // interactive-commands FR-18 defensive fallback: a success turn with zero
         // assistant/tool blocks and no synthetic seen put its local answer only in
