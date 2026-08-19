@@ -106,7 +106,6 @@ export default function App() {
   const extStickyIds = useStore((s) => s.extStickyIds);
   const extensionsOpen = useStore((s) => s.extensionsOpen);
   const openExtTab = useStore((s) => s.openExtTab);
-  const closeExtTab = useStore((s) => s.closeExtTab);
   // agent-tab FR-9: the dynamic per-subagent tabs, after the view segment.
   // fix-agent-view FR-1/FR-11: keyed by session now, and the session row only
   // shows them unsplit — so PANE 0's session is the right list here. Each
@@ -326,9 +325,7 @@ export default function App() {
         diffCount={diffCount}
         agentTabs={agentTabs}
         closeAgentTab={closeAgentTab}
-        extTabs={extTabs}
         openExtTab={openExtTab}
-        closeExtTab={closeExtTab}
         elapsedMs={elapsedMs}
         home={home}
       />

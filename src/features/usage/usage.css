@@ -190,3 +190,73 @@
   color: var(--text-disabled);
   cursor: default;
 }
+
+/* design 10a — the layout control's step-down. Below ~1120px the three segments
+   collapse to the ACTIVE one plus a `▾`: a collapsed segmented control must still
+   say which segment is on, or collapsing it has cost a readout as well as width. */
+.layout-toggle-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.layout-toggle__one {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  height: 26px;
+  padding: 0 var(--space-8);
+  background: var(--bg-raised);
+  border-radius: var(--radius-base);
+  color: var(--text-2);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.layout-toggle__one:hover,
+.layout-toggle__one--on {
+  background: var(--bg-hover);
+}
+.layout-toggle__caret {
+  font-size: var(--font-size-9);
+  color: var(--text-muted);
+}
+/* Same panel shell as the `◈` and run-chip menus — one menu language, four
+   anchors. A floating layer is the one place 9a still allows a shadow: it has no
+   surface behind it to step against. */
+.layout-toggle__menu {
+  position: absolute;
+  top: calc(100% + var(--space-6));
+  right: 0;
+  z-index: 60;
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4) 0;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+}
+.layout-toggle__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  padding: var(--space-7) var(--space-11);
+  border: 0;
+  background: transparent;
+  color: var(--text-hint);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12-5);
+  text-align: left;
+  cursor: pointer;
+}
+.layout-toggle__row:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
+}
+.layout-toggle__row--on,
+.layout-toggle__row--on:hover {
+  color: var(--accent);
+}
+.layout-toggle__row-label {
+  white-space: nowrap;
+}

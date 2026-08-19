@@ -538,10 +538,77 @@ pub(crate) fn switch_permission_mode_in_engine(
     }
     engine
         .with_session_mut(session_id, |s| {
+            // rework-top-bar (design 11c): stamped on EVERY write, including the
+            // no-op re-pick FR-3 deliberately does not special-case. "On since"
+            // means "since you last said so", not "since it last changed" — a
+            // re-affirmed bypass is a fresh decision, and dating it from the
+            // original one would understate how long it has been live.
             s.permission_mode = mode.to_string();
+            s.permission_mode_since = now_ms();
             s.meta()
         })
         .ok_or(("SESSION_NOT_FOUND", "no such session"))
+}
+
+/// rework-top-bar (design 11c): the engine half of `session_switch_effort` — the
+/// twin of `switch_permission_mode_in_engine`, and pure for the same reason
+/// (testable without an `AppHandle`; persist + emit stay in the handler).
+///
+/// `None` clears the level, which is a real choice and not an error: it hands the
+/// model back its own default, which is exactly what a model advertising no effort
+/// levels runs at. The value is re-validated here rather than trusted from the
+/// frontend, mirroring `parse_permission_mode` — the same argument applies (an
+/// older frontend, the CLI, an extension), and an unknown level would otherwise
+/// reach the CLI as `--effort <garbage>` and fail the whole turn instead of one
+/// command.
+pub(crate) fn switch_effort_in_engine(
+    engine: &Engine,
+    session_id: &str,
+    effort: Option<&str>,
+) -> Result<SessionMeta, (&'static str, &'static str)> {
+    match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
+        None => return Err(("SESSION_NOT_FOUND", "no such session")),
+        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        Some(true) => {}
+    }
+    engine
+        .with_session_mut(session_id, |s| {
+            s.effort = effort.map(String::from);
+            s.meta()
+        })
+        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+}
+
+/// rework-top-bar (design 11c): `francois:session:switchEffort`. Same shape and
+/// same error ladder as `session_switch_permission_mode` — set the field, persist,
+/// emit one `session.meta`, resolve the snapshot that event carries. Like the
+/// permission mode it reaches only the NEXT turn: the in-flight turn already
+/// carries its own `effort` copy on its `TurnContext` snapshot (session/turn.rs),
+/// so nothing is signalled and no stdin is written.
+///
+/// An absent/blank `effort` clears the level. A non-blank one outside
+/// `valid_effort` is `INVALID_INPUT` — never a silent fall back to the default,
+/// which would look like the pick simply did not take.
+#[tauri::command(async)]
+pub fn session_switch_effort(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    effort: Option<String>,
+) -> IpcResult<Value> {
+    let level = effort.map(|e| e.trim().to_string()).filter(|e| !e.is_empty());
+    if let Some(e) = &level {
+        if !valid_effort(e) {
+            return err("INVALID_INPUT", "unknown effort level");
+        }
+    }
+    let meta = match switch_effort_in_engine(&engine, &session_id, level.as_deref()) {
+        Ok(meta) => meta,
+        Err((code, msg)) => return err(code, msg),
+    };
+    persist(&app, &engine);
+    emit(&app, SessionEvent::Meta { meta: meta.clone() });
+    ok(serde_json::to_value(meta).unwrap())
 }
 
 /// session-permission-mode FR-1: `francois:session:switchPermissionMode`.
@@ -721,6 +788,81 @@ mod tests {
             engine.with_session("s1", |s| s.permission_mode.clone()),
             Some("default".to_string())
         );
+    }
+
+    #[test]
+    fn switch_permission_mode_in_engine_stamps_the_since_clock() {
+        // rework-top-bar (design 11c): the `on since` line under `bypass` reads
+        // this. It moves forward on every write, including the FR-3 no-op re-pick.
+        let mut session = test_session();
+        session.permission_mode_since = 1;
+        let engine = test_engine_with(session);
+
+        let meta = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        assert!(meta.permission_mode_since > 1);
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["permissionModeSince"], meta.permission_mode_since);
+
+        let first = meta.permission_mode_since;
+        engine.with_session_mut("s1", |s| s.permission_mode_since = first - 5_000);
+        let again = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        assert!(again.permission_mode_since >= first);
+    }
+
+    // ---------- rework-top-bar: the effort switch (design 11c) ----------
+
+    #[test]
+    fn switch_effort_in_engine_sets_and_clears_the_level() {
+        let engine = test_engine_with(test_session());
+
+        let meta = switch_effort_in_engine(&engine, "s1", Some("high")).unwrap();
+        assert_eq!(meta.effort.as_deref(), Some("high"));
+        assert_eq!(
+            engine.with_session("s1", |s| s.effort.clone()),
+            Some(Some("high".to_string()))
+        );
+        // Absent (never null) on the wire when set, present when cleared — the
+        // same omit-not-null convention projectId uses.
+        assert_eq!(serde_json::to_value(&meta).unwrap()["effort"], "high");
+
+        let cleared = switch_effort_in_engine(&engine, "s1", None).unwrap();
+        assert_eq!(cleared.effort, None);
+        assert!(serde_json::to_value(&cleared)
+            .unwrap()
+            .get("effort")
+            .is_none());
+    }
+
+    #[test]
+    fn switch_effort_in_engine_rejects_an_unknown_or_terminal_session() {
+        let engine = test_engine_with(test_session());
+        let Err(unknown) = switch_effort_in_engine(&engine, "nope", Some("high")) else {
+            panic!("expected an error");
+        };
+        assert_eq!(unknown.0, "SESSION_NOT_FOUND");
+        assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
+
+        let mut done = test_session();
+        done.status = status::DONE.into();
+        let engine = test_engine_with(done);
+        let Err(terminal) = switch_effort_in_engine(&engine, "s1", Some("high")) else {
+            panic!("expected an error");
+        };
+        assert_eq!(terminal.0, "SESSION_NOT_RUNNING");
+        assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
+    }
+
+    #[test]
+    fn valid_effort_is_the_gate_the_switch_command_applies() {
+        // The handler answers INVALID_INPUT for anything outside this set rather
+        // than falling back to the model default — a silent fallback reads as
+        // "the pick did not take".
+        for level in ["low", "medium", "high", "xhigh", "max"] {
+            assert!(valid_effort(level));
+        }
+        assert!(!valid_effort("HIGH"));
+        assert!(!valid_effort("turbo"));
+        assert!(!valid_effort(""));
     }
 
     // ---------- session-rename ----------

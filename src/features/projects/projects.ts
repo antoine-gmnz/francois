@@ -201,8 +201,16 @@ export function switcherDotTone(project: ProjectMeta | null): SwitcherDotTone {
  * renders in its own compact form (`displayWslCwd`) rather than the raw UNC path.
  */
 export function switcherTooltip(project: ProjectMeta | null, sessionCwd: string | null, home: string): string {
-  const raw = project?.root ?? sessionCwd ?? home;
-  return displayWslCwd(raw) ?? raw;
+  const show = (raw: string) => displayWslCwd(raw) ?? raw;
+  const head = show(project?.root ?? sessionCwd ?? home);
+  // rework-top-bar (design 10a): the session's own path LEFT the bar — it is the
+  // least glanceable string in it — and landed here, on the one control it is
+  // already scoped by. Only when it differs from the head: a session sitting at
+  // the project root would otherwise print the same path twice, and a worktree,
+  // which is exactly when the two diverge, is exactly when you want to see both.
+  if (sessionCwd === null) return head;
+  const tail = show(sessionCwd);
+  return tail === head ? head : `${head}\n${tail}`;
 }
 
 /** FR-29: the filtered-empty board state names the project. */

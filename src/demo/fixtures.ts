@@ -160,6 +160,7 @@ const BASE: Omit<SessionMeta, 'id' | 'name' | 'cwd'> = {
   startedAt: T0 - (20) * MIN,
   lastActivityAt: T0 - (1) * MIN,
   permissionMode: 'acceptEdits',
+  permissionModeSince: 0,
   runtime: 'native',
   accountId: 'acct-work',
   agentRuntime: 'claude-code',

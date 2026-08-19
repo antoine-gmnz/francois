@@ -145,6 +145,7 @@ pub(crate) fn test_session() -> Session {
         error_message: None,
         effort: None,
         permission_mode: "default".into(),
+        permission_mode_since: 0,
         runtime: "native".into(),
         allow_git: false,
         project_id: None,

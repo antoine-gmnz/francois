@@ -18,6 +18,7 @@ function session(over: Partial<SessionMeta> & Pick<SessionMeta, 'id'>): SessionM
     startedAt: NOW - DAY,
     lastActivityAt: NOW - DAY,
     permissionMode: 'default',
+    permissionModeSince: 0,
     runtime: 'native',
     accountId: 'default',
     agentRuntime: 'claude-code',

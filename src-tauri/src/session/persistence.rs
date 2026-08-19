@@ -251,7 +251,12 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
         .map(|s| {
             let mut rec = serde_json::json!({
                 "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
-                "permissionMode": s.permission_mode, "runtime": s.runtime,
+                "permissionMode": s.permission_mode,
+                // rework-top-bar (design 11c): the `on since` line must survive a
+                // restart — a bypass left on last week is exactly the case the
+                // line exists for.
+                "permissionModeSince": s.permission_mode_since,
+                "runtime": s.runtime,
                 "allowGit": s.allow_git,
                 "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
                 "lastActivityAt": s.last_activity_at,
@@ -339,6 +344,10 @@ pub(crate) struct PersistedMeta {
     model_id: String,
     effort: Option<String>,
     permission_mode: String, // "default" when absent (pre-feature records)
+    /// rework-top-bar (design 11c): `None` on every pre-feature record — the load
+    /// path then falls back to the session's own `lastActivityAt`, which is the
+    /// closest instant we can honestly claim the mode has been in force since.
+    permission_mode_since: Option<u64>,
     runtime: String,         // "native" when absent, or when "wsl" off-Windows
     allow_git: bool,         // false when absent (pre-feature records)
     /// projects FR-18: None when absent (every pre-projects record). Whether the
@@ -449,6 +458,10 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .filter(|m| valid_permission_mode(m))
             .unwrap_or("default")
             .to_string(),
+        permission_mode_since: rec
+            .get("permissionModeSince")
+            .and_then(|v| v.as_u64())
+            .filter(|t| *t > 0),
         // A sessions.json copied to a non-Windows machine degrades wsl → native.
         runtime: rec
             .get("runtime")
@@ -653,6 +666,7 @@ pub fn load_persisted(app: &AppHandle) {
                 error_message: None,
                 effort: m.effort,
                 permission_mode: m.permission_mode,
+                permission_mode_since: m.permission_mode_since.unwrap_or(m.last_activity_at),
                 runtime: m.runtime,
                 allow_git: m.allow_git,
                 // projects FR-18: a link whose project is gone from the registry is

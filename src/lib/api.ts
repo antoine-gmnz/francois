@@ -290,6 +290,13 @@ export const sessionSwitchModel = (sessionId: SessionId, modelId: string) =>
 // to surface a failure (FR-13).
 export const sessionSwitchPermissionMode = (sessionId: SessionId, mode: PermissionMode) =>
   ipc<Result<SessionMeta>>('session_switch_permission_mode', { sessionId, mode });
+// rework-top-bar (design 11c): the third member of the switch family — the effort
+// level lives INSIDE the model row of the run chip's panel, because effort is a
+// property of the model rather than a setting beside it. `null` clears it and hands
+// the model back its own default. Same update path as its two siblings: the
+// accompanying session.meta event, never the Result.
+export const sessionSwitchEffort = (sessionId: SessionId, effort: string | null) =>
+  ipc<Result<SessionMeta>>('session_switch_effort', { sessionId, effort });
 export const sessionCompact = (sessionId: SessionId) => ipc<Result<null>>('session_compact', { sessionId });
 export const sessionClear = (sessionId: SessionId) => ipc<Result<null>>('session_clear', { sessionId });
 

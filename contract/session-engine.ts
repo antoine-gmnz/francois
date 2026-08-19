@@ -79,6 +79,28 @@ export interface SessionSwitchModelInput {
 }
 // invoke('session_switch_model', req: SessionSwitchModelInput): Promise<Result<SessionMeta>>
 
+// ---------- francois:session:switchEffort ----------
+
+/**
+ * rework-top-bar (design 11c) — the twin of switchModel above, for the property
+ * that lives INSIDE the model row in the run chip's panel. Like the permission
+ * mode it only ever reaches the NEXT turn.
+ */
+export interface SessionSwitchEffortInput {
+  sessionId: SessionId;
+  /**
+   * The level, or omitted/null to CLEAR it and hand the model back its own
+   * default — a real choice, not an error, and the only state available for a
+   * model whose ModelInfo advertises no `efforts`. The core re-validates a
+   * non-blank value against low|medium|high|xhigh|max and answers INVALID_INPUT
+   * rather than silently falling back, which would read as "the pick did not take".
+   */
+  effort?: string | null;
+}
+// invoke('session_switch_effort', req: SessionSwitchEffortInput): Promise<Result<SessionMeta>>
+//   ok:false — 'SESSION_NOT_FOUND' | 'SESSION_NOT_RUNNING' | 'INVALID_INPUT' | 'INTERNAL'
+//   Accompanied by exactly one `session.meta` emission carrying the same snapshot.
+
 // ---------- francois:session:compact ----------
 
 export interface SessionCompactInput {

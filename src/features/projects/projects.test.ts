@@ -68,6 +68,7 @@ function sess(id: string, projectId?: string): SessionMeta {
     startedAt: 0,
     lastActivityAt: 0,
     permissionMode: 'default',
+    permissionModeSince: 0,
     runtime: 'native',
     accountId: 'default',
     agentRuntime: 'claude-code',
@@ -326,8 +327,18 @@ describe('switcherDotTone (FR-5 — titlebar-project-switcher)', () => {
 describe('switcherTooltip (FR-6 — titlebar-project-switcher)', () => {
   const project: ProjectMeta = proj({ id: 'p1', name: 'francois', root: 'D:/francois' });
 
-  it('prefers the scoped project\'s root', () => {
-    expect(switcherTooltip(project, 'D:/other/session', 'D:/home')).toBe('D:/francois');
+  it('leads with the scoped project\'s root', () => {
+    expect(switcherTooltip(project, 'D:/francois', 'D:/home')).toBe('D:/francois');
+  });
+
+  // rework-top-bar (design 10a): the path the bar stopped rendering lives here now.
+  it('adds the session path under it when the two differ', () => {
+    expect(switcherTooltip(project, 'D:/other/session', 'D:/home')).toBe('D:/francois\nD:/other/session');
+  });
+
+  it('never prints the same path twice', () => {
+    expect(switcherTooltip(project, 'D:/francois', 'D:/home')).toBe('D:/francois');
+    expect(switcherTooltip(null, 'D:/session/cwd', 'D:/home')).toBe('D:/session/cwd');
   });
 
   it('falls back to the active session cwd when unscoped', () => {

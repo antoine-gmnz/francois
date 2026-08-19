@@ -778,6 +778,7 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
       lastActivityAt: 0,
       errorMessage: 'boom',
       permissionMode: 'default' as const,
+      permissionModeSince: 0 as const,
       runtime: 'native' as const,
       accountId: 'default',
       agentRuntime: 'claude-code' as const,

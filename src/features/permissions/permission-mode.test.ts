@@ -1,42 +1,31 @@
-// session-permission-mode §9 — badge + popover pure logic (FR-8, FR-9, FR-11).
+// session-permission-mode — what survives of the mode's pure presentation after
+// rework-top-bar (design 11c) folded the standalone badge into the run chip.
+// `permissionBadgeClass` and `permissionModeRunningNote` went with the badge and
+// the note they rendered; see permission-mode.ts's header for why.
 
 import { describe, expect, it } from 'vitest';
-import type { PermissionMode, SessionStatus } from '../../../contract/common';
+import type { PermissionMode } from '../../../contract/common';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
-import { permissionBadgeClass, permissionModeOption, permissionModeRunningNote } from './permission-mode';
+import { permissionModeOption } from './permission-mode';
 
 describe('permissionModeOption (FR-8)', () => {
-  it('resolves every PermissionMode member to its contract option row', () => {
+  it('resolves every PermissionMode to its contract row', () => {
     const modes: PermissionMode[] = ['default', 'plan', 'acceptEdits', 'bypassPermissions'];
     for (const mode of modes) {
       expect(permissionModeOption(mode)).toBe(PERMISSION_MODE_OPTIONS.find((o) => o.mode === mode));
     }
   });
-});
 
-describe('permissionBadgeClass (FR-9)', () => {
-  it('renders the plain badge class for every non-danger mode', () => {
-    expect(permissionBadgeClass('default')).toBe('session-row__mode');
-    expect(permissionBadgeClass('plan')).toBe('session-row__mode');
-    expect(permissionBadgeClass('acceptEdits')).toBe('session-row__mode');
+  it('falls back to the first option for a value outside the union', () => {
+    // A core that grew a mode this frontend has not been taught renders as
+    // `default` rather than blank — the chip must never lose its label.
+    expect(permissionModeOption('dontAsk' as PermissionMode)).toBe(PERMISSION_MODE_OPTIONS[0]);
   });
 
-  it('carries the danger modifier only for bypassPermissions', () => {
-    expect(permissionBadgeClass('bypassPermissions')).toBe('session-row__mode session-row__mode--danger');
-  });
-});
-
-describe('permissionModeRunningNote (FR-11)', () => {
-  it('shows the next-turn note for every busy status', () => {
-    const busy: SessionStatus[] = ['running', 'starting', 'awaiting_approval', 'awaiting_input'];
-    for (const status of busy) {
-      expect(permissionModeRunningNote(status)).toBe('turn running — applies to the next turn');
-    }
-  });
-
-  it('is null for terminal/idle statuses', () => {
-    expect(permissionModeRunningNote('idle')).toBeNull();
-    expect(permissionModeRunningNote('done')).toBeNull();
-    expect(permissionModeRunningNote('error')).toBeNull();
+  it('marks bypass, and only bypass, as dangerous', () => {
+    expect(permissionModeOption('bypassPermissions').danger).toBe(true);
+    expect(permissionModeOption('default').danger).toBeUndefined();
+    expect(permissionModeOption('plan').danger).toBeUndefined();
+    expect(permissionModeOption('acceptEdits').danger).toBeUndefined();
   });
 });
