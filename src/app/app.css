@@ -10,23 +10,34 @@
   background: var(--bg-app);
 }
 
-/* design 7a: the body is `<left> | 1fr` with a 12px gutter and 12px window
-   padding, per the mock's `grid-template-columns:282px 1fr; gap:12px;
-   padding:12px`. There is no status-bar row — [3]–[6] live in the roster's
-   footer and the chrome lives in the two rows above.
-   resizable-sidebar FR-1: THREE tracks now — `<left> 12px 1fr` — with
-   `column-gap: 0`, since the 12px middle track reproduces the old `gap`
-   exactly AND is the roster's drag handle's hit area (RosterDivider.tsx). The
-   left track's width is `282px` by default but is user-set from here on —
-   see appShell.ts `shellColumns`. */
+/* The body is `<left> 12px 1fr`. There is no status-bar row — [3]–[6] live in
+   the roster's footer and the chrome lives in the two rows above. The left
+   track is 282px by default but user-set from here on; see appShell.ts
+   `shellColumns`.
+
+   design 9a drops the 12px window PADDING: in 7a that padding was what made
+   each pane read as a card floating on the window, and with the strokes and
+   radii gone there are no cards left to float. The rail runs to the window
+   edge, the terminal runs to the other one, and the tonal step between them
+   does the separating.
+
+   The middle TRACK stays, against 9a's flush seam, because it is not
+   decoration: resizable-sidebar FR-1 makes it the roster drag handle's hit area
+   (RosterDivider renders into it), having deliberately chosen a real track over
+   an overlay that would steal clicks from the roster's right edge. So this is
+   the one place the window is still allowed to show through — the same
+   reasoning as .app-split-grid's gutter, where the window between two panes on
+   the SAME surface IS their separation. `column-gap: 0` because the track
+   already provides the spacing; a gap on top would double it.
+
+   (RosterDivider measures `.app-grid`'s content-box left as border-box left +
+   paddingLeft. That still holds with the padding gone — the term is just 0.) */
 .app-grid {
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr;
-  row-gap: var(--space-12);
   column-gap: 0;
-  padding: var(--space-12);
 }
 
 .app-col-left {
@@ -51,18 +62,14 @@
   flex-direction: column;
 }
 
-/* design-refresh: every pane is a card on the window, with the OUTER border
-   (--border-2) and the 8px panel radius; --border/--radius-md are the INNER
-   divider/chip scale and read as a hairline seam out here.
-   7a: the surface is --bg-app, not --bg-panel — the main pane is the TERMINAL,
-   the one recessed thing in a shell whose chrome is raised. */
+/* design 9a: the pane stops being a card. No border, no radius — it is the
+   TERMINAL, the deepest surface in the app (--bg-canvas), and the step down
+   from the rail beside it and the chrome above it is the whole separation. */
 .app-main-section {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--bg-app);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-xl);
+  background: var(--bg-canvas);
   overflow: hidden;
   min-height: 0;
   min-width: 0;
@@ -93,7 +100,9 @@
    (usage-bar FR-25): permanent chrome that animates repaints forever on a
    software-composited webview. */
 
-/* app row (42px) — what the whole app is doing. */
+/* app row (42px) — what the whole app is doing. 9a: the ONE raised tier in the
+   app (--bg-chrome), which is what lets its bottom rule go: it is lighter than
+   everything under it, so the edge draws itself. */
 .app-row {
   height: 42px;
   flex: 0 0 42px;
@@ -101,8 +110,7 @@
   align-items: center;
   gap: var(--space-10);
   padding: 0 var(--space-14);
-  background: var(--bg-deep);
-  border-bottom: 1px solid var(--border-2);
+  background: var(--bg-chrome);
   font-size: var(--font-size-11);
 }
 .app-row__wordmark {
@@ -150,7 +158,7 @@
   border: 0;
   border-radius: 50%;
   background: var(--accent);
-  color: var(--bg-app);
+  color: var(--bg-canvas);
   font-family: var(--font-ui);
   font-size: var(--font-size-15);
   line-height: 1;
@@ -177,25 +185,31 @@
   background: var(--attn);
   flex-shrink: 0;
 }
+/* 9a has no rules in the chrome, so the divider keeps its JOB — separating two
+   clusters in the row — and drops its line: it becomes the gap it was drawn in.
+   (Kept as an element rather than folded into `gap` so the two clusters stay
+   independently spaced and App.tsx's markup is unchanged.) */
 .app-row__divider {
-  width: 1px;
+  width: var(--space-6);
   height: 18px;
-  background: var(--border-2);
+  background: transparent;
   flex-shrink: 0;
 }
+/* 9a: a filled chip, not an outlined keycap. */
 .app-row__key {
   font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
-  color: var(--text-faint);
-  border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-base);
-  padding: var(--space-2) var(--space-6);
+  color: var(--text-dim);
+  background: var(--bg-hover);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-7);
   cursor: pointer;
   flex-shrink: 0;
 }
 .app-row__key:hover {
-  color: var(--text-2);
-  border-color: var(--border-focus);
+  color: var(--text-strong);
+  background: var(--bg-hover-2);
 }
 .app-row__icon {
   display: flex;
@@ -223,8 +237,10 @@
   align-items: center;
   gap: var(--space-10);
   padding: 0 var(--space-12);
-  background: var(--bg-app);
-  border-bottom: 1px solid var(--border-2);
+  /* 9a: the session row shares the RAIL surface with the roster beside it, so
+     the two read as one continuous L of chrome around the terminal — recessed
+     a step under the app row above, raised a step over the terminal below. */
+  background: var(--bg-panel);
   font-size: var(--font-size-11);
   /* NO overflow clip: the project switcher's dropdown is absolutely positioned
      inside the crumbs and drops BELOW this 36px strip — a clip here cuts it off
@@ -304,9 +320,9 @@
   display: flex;
   align-items: center;
   padding: 0 var(--space-8);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-10-5);
   color: var(--text-2);
   white-space: nowrap;
@@ -337,9 +353,9 @@
   gap: var(--space-1);
   flex-shrink: 0;
   padding: var(--space-2);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-base);
 }
 .session-row__view {
   position: relative;
@@ -370,7 +386,7 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-xl);
   background: var(--accent);
-  color: var(--bg-app);
+  color: var(--bg-canvas);
   font-family: var(--font-mono);
   font-size: var(--font-size-8-5);
   line-height: 12px;
@@ -388,20 +404,19 @@
   max-width: 140px;
   height: 21px;
   padding: 0 var(--space-6) 0 var(--space-8);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: var(--radius-base);
   font-size: var(--font-size-11);
   color: var(--text-hint);
   cursor: pointer;
 }
 .session-row__agent:hover {
-  border-color: var(--border-emphasis);
+  background: var(--bg-hover);
   color: var(--text-2);
 }
 .session-row__agent--on,
 .session-row__agent--on:hover {
   background: var(--bg-hover-2);
-  border-color: var(--border-focus);
   color: var(--text-bright);
   font-weight: 600;
 }
@@ -420,10 +435,11 @@
   flex-shrink: 0;
   white-space: nowrap;
 }
+/* Same treatment as .app-row__divider — the gap, not the line. */
 .session-row__divider {
-  width: 1px;
+  width: var(--space-5);
   height: 16px;
-  background: var(--border-2);
+  background: transparent;
   flex-shrink: 0;
 }
 /* The one destructive control in the chrome. Red-family at rest but unfilled —
@@ -436,16 +452,19 @@
   flex-shrink: 0;
   height: 23px;
   padding: 0 var(--space-9);
-  background: color-mix(in srgb, var(--error) 10%, transparent);
-  border: 1px solid var(--error-dim);
-  border-radius: var(--radius-md);
+  /* 9a draws this as a filled red-family chip (#2b1c1a) with no edge — the fill
+     alone is enough to read as destructive without it being a filled BUTTON,
+     which in permanent chrome would look like an error the app is stuck in. */
+  background: color-mix(in srgb, var(--error) 14%, var(--bg-panel));
+  border: 0;
+  border-radius: var(--radius-sm);
   font-family: var(--font-ui);
   font-size: var(--font-size-11);
   color: var(--error-bright);
   cursor: pointer;
 }
 .session-row__stop:hover {
-  background: color-mix(in srgb, var(--error) 18%, transparent);
+  background: color-mix(in srgb, var(--error) 24%, var(--bg-panel));
 }
 
 .app-shell-view {
@@ -453,22 +472,23 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg-app);
+  background: var(--bg-canvas);
 }
 .app-shell-terminal-wrap {
   flex: 1;
   position: relative;
   min-height: 0;
 }
+/* 9a: the strip under a reading surface is a RAIL, the same one the composer
+   sits in — which is what replaces its top rule. */
 .app-shell-footer {
   padding: var(--space-10) var(--space-14);
-  border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: var(--space-14);
   font-size: var(--font-size-11);
   color: var(--text-muted);
-  background: var(--bg-app);
+  background: var(--bg-panel);
   flex-shrink: 0;
 }
 
@@ -621,35 +641,34 @@ body.app-resizing-y * {
   cursor: row-resize !important;
 }
 
+/* design 9a: no radius, no stroke. A split pane is the terminal surface, same
+   as the single pane — the 12px window gutter between panes is what separates
+   them, and the FOCUS treatment is the only thing left to encode. */
 .split-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  border-radius: var(--radius-xl);
-  /* UNFOCUSED is the base: dimmer, never greyed out — the transcript keeps
-     streaming and must stay fully legible (design §States). */
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-2);
+  background: var(--bg-canvas);
 }
-/* FR-6: focus is carried by the lifted surface and the border alone — plus the
-   `focus` chip in the header, which states it in text. The 2px accent top rule
-   and the acid halo this used to stack on top of that are both gone: the pane is
-   already bordered, and a rule flush to that border only read as a thicker edge
-   on one side. */
-.split-pane--focused {
-  background: var(--bg-panel);
-  border-color: var(--border-focus);
-}
+/* FR-6: focus is carried by the `focus` CHIP and nothing else — the chrome is
+   identical in both states. Every pane wears the same header on the same
+   surface, the same tab strip and the same composer, so the eye is not asked to
+   re-read the layout each time focus moves; the one thing that changes is the
+   one thing that means focus, and it says so in text (design §Accessibility).
 
+   This is deliberately narrower than it used to be: the header used to lift to
+   the rail tone, the pane name used to gain weight, and every tab and chip used
+   to desaturate on the unfocused side. Four signals for one bit, and the churn
+   between them was louder than the bit. */
 .split-pane__header {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-9);
   padding: var(--space-10) var(--space-12);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
   flex-shrink: 0;
 }
 /* FR-7: the pane number — what `⌘<n>` in the footer and the status bar point
@@ -663,20 +682,16 @@ body.app-resizing-y * {
 
 .split-pane__name {
   font-size: var(--font-size-13);
-  font-weight: 500;
-  color: var(--text-2);
-  min-width: 0;
-}
-.split-pane--focused .split-pane__name {
   font-weight: 600;
   color: var(--text-bright);
+  min-width: 0;
 }
 
 /* The focus signal in TEXT as well as colour (design §Accessibility). */
 .split-pane__focus-chip {
   font-family: var(--font-mono);
   font-size: var(--font-size-10);
-  color: var(--bg-app);
+  color: var(--bg-canvas);
   background: var(--accent);
   border-radius: var(--radius-sm);
   padding: 1px var(--space-5);
@@ -736,13 +751,10 @@ body.app-resizing-y * {
   padding: var(--space-4) var(--space-9);
   border-radius: var(--radius-md);
   font-size: var(--font-size-11-5);
-  color: var(--text-muted);
+  color: var(--text-hint);
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-}
-.split-pane--focused .split-tab {
-  color: var(--text-hint);
 }
 .split-tab:hover {
   color: var(--text-2);
@@ -750,41 +762,32 @@ body.app-resizing-y * {
 .split-tab--on,
 .split-tab--on:hover {
   font-weight: 600;
-  color: var(--text-2);
-  background: var(--bg-raised);
-}
-.split-pane--focused .split-tab--on,
-.split-pane--focused .split-tab--on:hover {
   color: var(--text-bright);
   background: var(--bg-hover-2);
 }
-/* The diff count — the ONE place the unfocused pane may carry colour, and on
-   the focused pane it takes the accent like the main strip's own badge. */
+/* The diff count. Reads the same in both panes: it reports the SESSION's
+   uncommitted files, which do not become less true because you are looking
+   elsewhere. */
 .split-tab .badge-pill {
   font-family: var(--font-mono);
   font-size: var(--font-size-9-5);
   border-radius: var(--radius-xl);
   padding: 0 var(--space-5);
-  background: var(--bg-hover-2);
-  color: var(--text-hint);
-}
-.split-pane--focused .split-tab .badge-pill {
   background: var(--accent);
-  color: var(--bg-app);
+  color: var(--bg-canvas);
 }
 
 /* ── fix-agent-view: dynamic tabs in a pane's SUB-strip ──────────────────────
    Same anatomy as `.app-tab-chip` (dot · ⇉ · name · ✕), one register down: the
    sub-strip's 11.5px type, no pill border, and the active chip borrows
    `.split-tab--on`'s raised fill so a pane never shows two competing "active"
-   idioms. Like every other sub-strip element it desaturates on the UNFOCUSED
-   pane — only the status dot keeps its colour, since it reports the agent's
-   liveness rather than the pane's focus. */
+   idioms. Identical on both panes: the chip reports an AGENT's liveness, which
+   does not depend on which pane you are looking at. */
 .split-tab-divider {
-  width: 1px;
+  width: var(--space-4);
   align-self: stretch;
-  margin: var(--space-2) var(--space-6);
-  background: var(--border-2);
+  margin: var(--space-2) var(--space-4);
+  background: transparent;
   flex-shrink: 0;
 }
 .split-tab-chip {
@@ -794,7 +797,7 @@ body.app-resizing-y * {
   padding: var(--space-4) var(--space-7) var(--space-4) var(--space-8);
   border-radius: var(--radius-md);
   font-size: var(--font-size-11-5);
-  color: var(--text-muted);
+  color: var(--text-hint);
   cursor: pointer;
   white-space: nowrap;
   max-width: 150px;
@@ -806,14 +809,6 @@ body.app-resizing-y * {
 .split-tab-chip--active,
 .split-tab-chip--active:hover {
   font-weight: 600;
-  color: var(--text-2);
-  background: var(--bg-raised);
-}
-.split-pane--focused .split-tab-chip {
-  color: var(--text-hint);
-}
-.split-pane--focused .split-tab-chip--active,
-.split-pane--focused .split-tab-chip--active:hover {
   color: var(--text-bright);
   background: var(--bg-hover-2);
 }
@@ -859,15 +854,14 @@ body.app-resizing-y * {
   height: 26px;
   padding: 0 var(--space-11);
   background: var(--bg-hover);
-  border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: var(--radius-base);
   color: var(--accent);
   font-size: var(--font-size-11-5);
   cursor: pointer;
 }
 .split-pane__empty-new:hover {
   background: var(--bg-hover-2);
-  border-color: var(--border-focus);
 }
 /* unbound-panes FR-9 — the two-choice affordance (replaces the single "New
    session" prompt above): "pick a session" / "open a shell here", side by side. */
@@ -883,16 +877,16 @@ body.app-resizing-y * {
   gap: var(--space-5);
   height: 26px;
   padding: 0 var(--space-11);
-  background: transparent;
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-base);
   color: var(--text-2);
   font-size: var(--font-size-11-5);
   font-family: var(--font-mono);
   cursor: pointer;
 }
 .split-pane__empty-choice:hover {
-  border-color: var(--border-focus);
+  background: var(--bg-hover);
   color: var(--text-bright);
 }
 /* anchors the ProjectPickerPopover to the "Open a shell here" button. */
@@ -908,8 +902,8 @@ body.app-resizing-y * {
   font-size: 10px;
   font-weight: 600;
   color: var(--text-2);
-  background: var(--bg-app);
-  border: 1px solid var(--border-2);
+  background: var(--bg-hover);
+  border: 0;
   border-radius: var(--radius-xs);
   padding: 0 var(--space-4);
   flex-shrink: 0;
@@ -940,7 +934,7 @@ body.app-resizing-y * {
   flex-direction: column;
   padding: var(--space-4);
   background: var(--bg-elevated);
-  border: 1px solid var(--border-emphasis);
+  border: 0;
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-dropdown);
 }
@@ -984,8 +978,7 @@ body.app-resizing-y * {
   align-items: center;
   gap: var(--space-8);
   padding: var(--space-9) var(--space-11);
-  border-top: 1px solid var(--border);
-  background: var(--bg-app);
+  background: var(--bg-panel);
   flex-shrink: 0;
   cursor: pointer;
 }
@@ -1011,8 +1004,8 @@ body.app-resizing-y * {
   height: 24px;
   padding: 0 var(--space-10);
   background: var(--bg-raised);
-  border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: var(--radius-base);
   color: var(--success-bright);
   font-size: var(--font-size-11);
   cursor: pointer;
@@ -1049,8 +1042,7 @@ body.app-resizing-y * {
   gap: var(--space-7);
   padding: var(--space-8) 0;
   background: var(--bg-panel);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-xl);
+  border: 0;
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -1081,8 +1073,7 @@ body.app-resizing-y * {
 }
 /* Raised while a pane is showing it — the rail's job is "where is everything". */
 .session-rail__tile--paned {
-  background: var(--bg-hover);
-  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+  background: var(--bg-hover-2);
   color: var(--text-2);
 }
 /* One accent per view: the FOCUSED pane's session, and nothing else. */
@@ -1114,11 +1105,12 @@ body.app-resizing-y * {
 /* unbound-panes FR-15 / design brief — the 1px rule separating the PINNED
    (paned) tiles from the rest of the fleet. A plain flex item, so it takes its
    own slot in the column and never overlaps a tile. */
+/* 9a: the rule between the pinned tiles and the fleet becomes a gap. */
 .session-rail__hairline {
   width: 18px;
-  height: 1px;
+  height: var(--space-6);
   flex-shrink: 0;
-  background: var(--border-2);
+  background: transparent;
 }
 
 /* unbound-panes FR-14: the neutral project marker, bottom-left corner of the
@@ -1132,8 +1124,8 @@ body.app-resizing-y * {
   line-height: 1;
   padding: 1px 2px;
   border-radius: 2px;
-  background: var(--bg-app);
-  border: 1px solid var(--border-2);
+  background: var(--bg-hover);
+  border: 0;
   color: var(--text-2);
 }
 .session-rail__new,
@@ -1150,7 +1142,7 @@ body.app-resizing-y * {
 }
 .session-rail__new {
   background: var(--bg-hover);
-  border: 1px solid var(--border-emphasis);
+  border: 0;
   color: var(--accent);
 }
 .session-rail__new:hover {

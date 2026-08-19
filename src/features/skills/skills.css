@@ -6,16 +6,13 @@
 .skills-panel {
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-xl);
+  background: var(--bg-canvas);
+  border: 0;
   overflow: hidden;
   min-height: 0;
   height: 100%;
 }
-.skills-panel--focused {
-  border-color: var(--border-focus);
-}
+
 
 .skills-list {
   flex: 1;
@@ -29,8 +26,8 @@
   align-items: center;
   gap: var(--space-8);
   padding: var(--space-6) var(--space-8);
-  border-bottom: 1px solid var(--border);
-  margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-8)) var(--space-6);
+  background: var(--bg-deep);
+  margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-8)) var(--space-8);
 }
 .skills-filter-glyph {
   font-size: var(--font-size-12);
@@ -94,7 +91,7 @@
   border-left-color: var(--accent);
 }
 .skills-row--hovered {
-  background: var(--bg-panel);
+  background: var(--bg-elevated);
 }
 .skills-row-icon {
   width: var(--space-14);

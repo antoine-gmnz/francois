@@ -145,29 +145,31 @@
   padding: var(--space-24) var(--space-18) var(--space-18);
 }
 
-/* design 7a / "Francois Redesign.dc.html": the framed welcome block — a
-   legend-framed panel with the version tucked into its top rule, exactly like
-   the permission block. Two columns split by a hairline: who you are and what
-   this session runs on, then what the repo looks like. */
+/* design 9a: the FRAMED welcome block becomes a FILLED one. The frame and its
+   notched legend went together — a notch only exists to interrupt a border —
+   so with the border gone the block takes a surface (--bg-deep, the mock’s
+   #101319 against the terminal) and the legend becomes a plain uppercase label
+   in flow above the two columns. Two columns still: who you are and what this
+   session runs on, then what the repo looks like. */
 .welcome {
   position: relative;
   display: grid;
   grid-template-columns: 1fr 1px 1fr;
-  gap: var(--space-22);
-  padding: var(--space-20) var(--space-22);
-  border: 1px solid var(--accent-soft-edge);
-  border-radius: var(--radius-lg);
+  column-gap: var(--space-22);
+  row-gap: var(--space-14);
+  padding: var(--space-18) var(--space-22) var(--space-20);
+  background: var(--bg-deep);
+  border: 0;
+  border-radius: var(--radius-md);
 }
-/* The legend sits ON the top rule — a --bg-app pad is what cuts the border,
-   so it has to match the panel surface exactly. */
+/* In flow, spanning both columns — no absolute positioning and no surface pad,
+   because there is no longer a rule for it to cut. */
 .welcome__legend {
-  position: absolute;
-  top: -7px;
-  left: var(--space-14);
-  padding: 0 var(--space-7);
-  background: var(--bg-app);
+  grid-column: 1 / -1;
   font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--accent);
 }
 
@@ -206,8 +208,10 @@
   white-space: nowrap;
 }
 
+/* 9a: no hairline between the columns — the 22px gap does it. Kept as a
+   zero-width track so the grid template and WelcomeBlock.tsx are unchanged. */
 .welcome__rule {
-  background: var(--border-2);
+  background: transparent;
 }
 
 /* right column */
@@ -241,8 +245,8 @@
   color: var(--text);
 }
 .welcome__hr {
-  height: 1px;
-  background: var(--border-2);
+  height: var(--space-2);
+  background: transparent;
 }
 .welcome__recent {
   display: flex;
@@ -304,12 +308,14 @@
    terminal) under a sans-scale hint row (it annotates the field, it is not part
    of it). Its own --bg-deep band with a top rule, capped + centered on the same
    column as the transcript above. */
+/* 9a: the composer sits in its own RAIL band (--bg-panel, the mock's #12161c)
+   — a step up from the terminal above it, which is what replaces the top
+   rule. */
 .composer-wrap {
   position: relative;
   flex-shrink: 0;
   padding: var(--space-12) var(--space-14) var(--space-10);
-  border-top: 1px solid var(--border);
-  background: var(--bg-deep);
+  background: var(--bg-panel);
 }
 /* A column flex container ONLY so `order` can be used: the chips row sits AFTER
    the input bar in the DOM (design §Accessibility — tab reaches the textarea
@@ -348,12 +354,13 @@
   padding: var(--space-6) var(--space-10);
 }
 
+/* 9a: a filled field on the rail (#1c212a on #12161c), no edge. */
 .composer-bar {
   /* visual order — see .composer-col (chips 1, bar 2, hint 3) */
   order: 2;
-  background: var(--bg-hover);
-  border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-card);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-md);
   padding: var(--space-10) var(--space-13);
   display: flex;
   align-items: center;
@@ -395,7 +402,7 @@
   font-weight: 600;
   cursor: pointer;
   background: var(--accent);
-  color: var(--bg-app);
+  color: var(--bg-canvas);
 }
 .composer-send:hover {
   background: var(--accent-bright);
@@ -484,7 +491,7 @@
   max-width: 100%;
 }
 .attachment-chip:hover {
-  border-color: var(--border-2);
+  background: var(--bg-hover);
 }
 .attachment-chip__thumb {
   width: 22px;
@@ -632,9 +639,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-12);
-  background: color-mix(in srgb, var(--hue-purple) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--hue-purple) 30%, transparent);
-  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--hue-purple) 15%, var(--bg-canvas));
+  border: 0;
+  border-radius: var(--radius-md);
   padding: var(--space-13) var(--space-16);
 }
 .block-subagent__name {
@@ -646,7 +653,8 @@
 .block-subagent__model {
   margin-left: var(--space-6);
   padding: 1px var(--space-6);
-  border: 1px solid color-mix(in srgb, var(--hue-purple) 30%, transparent);
+  background: color-mix(in srgb, var(--hue-purple) 18%, var(--bg-canvas));
+  border: 0;
   border-radius: var(--radius-base);
   font-size: var(--font-size-11);
   color: var(--hue-purple-soft);
@@ -755,9 +763,12 @@
   line-height: 1.5;
   color: var(--text-bright);
 }
+/* Markdown is CONTENT, not chrome: a rule the author typed and a table's cell
+   grid are what the text means, so both keep a visible stroke where the app's
+   own chrome loses one. */
 .md-hr {
   margin-bottom: var(--space-4);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-emphasis);
 }
 .md-blockquote {
   border-left: 2px solid var(--text-disabled);
@@ -779,7 +790,7 @@
   font-size: var(--font-size-12);
 }
 .md-cell {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-emphasis);
   padding: var(--space-3) var(--space-8);
 }
 .md-cell--header {
@@ -788,25 +799,19 @@
   background: var(--bg-elevated);
 }
 
-/* split-session FR-6 / design §Composer: the UNFOCUSED pane's composer. It must
-   not read as a disabled input — it reads as an invitation: elevated surface,
-   quiet border, `cursor: text`, no ⏎ hint and no caret. Clicking it only moves
-   focus (ConversationView's InertComposer). */
-.composer-bar--inert {
-  background: var(--bg-elevated);
-  border-color: var(--border-2);
-  border-radius: var(--radius-card);
-  box-shadow: none;
-  padding: var(--space-9) var(--space-11);
-  gap: var(--space-9);
-  cursor: text;
+/* split-session FR-6 / design §Composer: the UNFOCUSED pane's composer has no
+   styling of its own any more. It used to be a shorter substitute bar on its own
+   surface, which made the footer change height with focus and reflowed the
+   transcript above it; now Composer renders the same markup in both states with
+   an `inert` prop that only takes the keyboard away. The pane header's focus
+   chip is the single focus signal.
+
+   The one thing left to say: the whole bar is the click target that focuses the
+   pane, and the readOnly textarea inside it would otherwise show a text caret
+   over a field that cannot be typed into. */
+.composer-bar:has(.composer-input[readonly]) {
+  cursor: pointer;
 }
-.composer-arrow--inert {
-  color: var(--text-disabled);
-  font-size: var(--font-size-12);
-}
-.composer-inert-label {
-  flex: 1;
-  font-size: var(--font-size-12-5);
-  color: var(--text-disabled);
+.composer-input[readonly] {
+  cursor: pointer;
 }

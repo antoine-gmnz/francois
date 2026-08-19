@@ -157,17 +157,44 @@ html[data-hidden='1'] [style*='animation'] {
   --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-  /* backgrounds */
+  /* ── surfaces (design 9a "flat") ──────────────────────────────────────────
+     9a rebuilds 7a with no strokes, no shadows: separation comes from tonal
+     steps in the surfaces alone. Four of these are the mock's named tiers and
+     carry its exact values — window --bg-app, chrome --bg-chrome, rails
+     --bg-panel, terminal --bg-canvas. The rest are the interaction ladder that
+     sits on top of a rail, retoned onto the same ramp.
+
+     The ramp reads DARKEST at the reading surface and lightest at the chrome:
+     the terminal is the recessed thing, the chrome is raised over it. Anything
+     that used to be told apart by a 1px rule is now told apart by one step on
+     this ladder — so when a border is removed, give the block a surface. */
+  /* the window itself — the frame the panes sit on, and the split gutter */
   --bg-app: #0d0f13;
-  --bg-deep: #11141a;
-  --bg-panel: #14171d;
-  --bg-elevated: #161a21;
+  /* the top app row: the one raised tier, above everything */
+  --bg-chrome: #171b22;
+  /* the reading surface — transcript, diff, terminal. The deepest step. */
+  --bg-canvas: #0a0b0e;
+  /* a recessed block INSIDE a rail or a panel (welcome header, context menus) */
+  --bg-deep: #101319;
+  /* rails: sidebar, session row, composer well, panel host, modal chrome */
+  --bg-panel: #12161c;
+  /* a row hovered on a rail */
+  --bg-elevated: #171c23;
+  /* a filled control (composer input, small chrome buttons) */
   --bg-raised: #1c212a;
-  --bg-hover: #1a1e26;
-  --bg-hover-2: #232833;
-  /* borders */
-  --border: #1f242d;
-  --border-2: #232833;
+  /* a chrome item hovered / a filled chip */
+  --bg-hover: #1f242d;
+  /* a chrome item active */
+  --bg-hover-2: #252b35;
+  /* borders — 9a has no strokes, so the two DECORATIVE border tokens resolve
+     to transparent app-wide. That is deliberately done at the token rather
+     than by deleting ~130 declarations: the 1px stays in the box model, so
+     nothing reflows, and a rule that wants its edge back only has to name a
+     different token. --border-emphasis and --border-focus are NOT decorative —
+     they are the scrollbar thumb, the drag handles and the keyboard focus
+     ring, which have to stay visible in a flat scheme too. */
+  --border: transparent;
+  --border-2: transparent;
   --border-emphasis: #2d333f;
   --border-focus: #3c4453;
   /* text */
@@ -180,25 +207,32 @@ html[data-hidden='1'] [style*='animation'] {
   --text-muted: #6b7385;
   --text-faint: #565e6e;
   --text-disabled: #3a4049;
-  /* accent — acid (Francois Design System v2 §Colour). Acid marks the live
-     thing and the recovering action: one acid per view. */
-  --accent: #c3f53f;
-  --accent-2: #c3f53f;
-  --accent-bright: #d6fa7e;
-  --accent-soft-bg: #1b240f;
-  --accent-soft-edge: #35401f;
-  /* muted acid — a session spawning its turn. Reads as the accent family without
+  /* accent — design 9a steps the acid back to an OLIVE. Same role (one per
+     view, the live thing and the recovering action), lower voltage: at #c3f53f
+     the accent out-shouted the amber that actually needs you, which is the one
+     colour in this app that means "come here". #9cb45f also sits closer to the
+     light theme's #4e6a14, so the two themes finally read as one hue. */
+  --accent: #9cb45f;
+  --accent-2: #9cb45f;
+  --accent-bright: #b5cb7c;
+  --accent-soft-bg: #191d10;
+  --accent-soft-edge: #303a1c;
+  /* muted olive — a session spawning its turn. Reads as the accent family without
      claiming the "one live thing per view" slot, which stays with --accent-2. */
-  --accent-dim: #8ea84a;
+  --accent-dim: #7f9542;
   --warn: #d4c46f;
-  /* attention — a session parked on the user (awaiting_approval). This is the v1
-     amber, free again since the accent moved to acid, and it is deliberately NOT
-     in the red family: a gate is not a failure. */
-  --attn: #e0a84e;
+  /* attention — a session parked on the user (awaiting_approval). Deliberately
+     NOT in the red family: a gate is not a failure. 9a desaturates it a step
+     (#e0a84e → #d0a45c) now that it, not the accent, is the loudest thing on
+     the page, and splits out the two tones it needs at that weight: a text
+     step legible on the fill, and the fill itself. */
+  --attn: #d0a45c;
+  --attn-text: #dcb673;
+  --attn-soft-bg: #231d12;
   /* logo (consumed by src/ui/Logo.tsx) — the dim slab is the idle session,
      not a shadow, so it never takes the accent. */
-  --logo-slab: #c3f53f;
-  --logo-slab-dim: #5f7a1e;
+  --logo-slab: #9cb45f;
+  --logo-slab-dim: #586c30;
   /* green — "ready" moved off #6fae7d once the accent became acid, so a status
      dot can never be mistaken for the accent. */
   --success: #4fae86;
@@ -294,19 +328,27 @@ html[data-hidden='1'] [style*='animation'] {
   --radius-xl: 8px;
   --radius-2xl: 12px;
 
-  /* Named by the kind of floating surface each dresses, not by size. */
+  /* Named by the kind of floating surface each dresses, not by size.
+
+     design 9a: "no shadows". Applied by the thing being dressed, not blanket —
+     a shadow in 9a's terms is a substitute for a tonal step, and only an
+     element that HAS a surface behind it can take a step instead. So:
+
+     · IN-FLOW elements (--shadow-card/-sm/-bar/-pill) drop to `none`. They sit
+       on a known surface and are now separated by their own tone.
+     · FLOATING layers (modal, popover, dropdown) keep theirs. A dropdown opens
+       over the transcript with no surface of its own to step against, and with
+       9a's strokes gone it would otherwise have nothing at all holding its
+       edge. This is the one place 9a's rule is not applied — the mock draws no
+       overlay, so it does not rule on the case. */
   --shadow-modal: 0 30px 70px -18px rgba(0, 0, 0, 0.9);
   --shadow-popover-lg: 0 20px 50px -18px rgba(0, 0, 0, 0.85);
   --shadow-popover: 0 20px 50px -15px rgba(0, 0, 0, 0.75);
   --shadow-dropdown: 0 12px 30px -10px rgba(0, 0, 0, 0.7);
-  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-card-sm: 0 6px 20px rgba(0, 0, 0, 0.45);
-  --shadow-bar: 0 -4px 16px rgba(0, 0, 0, 0.35);
-  /* design-refresh FR-5: the *lift* on a small active pill (segmented tab,
-     agent tab chip). The card shadows above are floating-surface scale — a
-     20px blur under a 26px-tall pill reads as a smudge, so the mock gives
-     these their own tight value. */
-  --shadow-pill: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-card: none;
+  --shadow-card-sm: none;
+  --shadow-bar: none;
+  --shadow-pill: none;
 
   /* Native UA-rendered chrome — the <select> option popup, scrollbars, the
      focus ring — is NOT reachable by the tokens above; it follows this
@@ -316,18 +358,31 @@ html[data-hidden='1'] [style*='animation'] {
 }
 :root[data-theme='light'] {
   color-scheme: light;
-  /* backgrounds — near-white layered surfaces, panels whitest */
-  --bg-app: #eef0f4;
-  --bg-deep: #f8f9fb;
-  --bg-panel: #ffffff;
-  --bg-elevated: #fbfcfd;
-  --bg-raised: #f2f4f7;
-  --bg-hover: #e9ebef;
-  --bg-hover-2: #dce0e6;
-  /* borders — light grays */
-  --border: #e2e5ea;
-  --border-2: #d7dbe2;
-  --border-emphasis: #c9cdd4;
+  /* ── surfaces (design 9a "flat", light) ───────────────────────────────────
+     9a only draws the dark theme, so this is the same RULE applied here rather
+     than a copy of its values: strokes gone, tonal steps do the separating.
+     That forced a retone — the old light ramp leaned on its borders and stepped
+     #ffffff → #fbfcfd → #f8f9fb, which is invisible without them. The steps
+     below are ~4x wider so each surface stands on its own.
+
+     The ORDER inverts against dark, as it already did: on light the reading
+     surface is the brightest thing (paper), and the chrome recedes. So
+     --bg-canvas is the whitest and --bg-app the greyest, the mirror of the
+     dark ramp rather than a re-mapping of the roles. */
+  --bg-app: #dfe3ea;
+  --bg-chrome: #f4f6f9;
+  --bg-canvas: #ffffff;
+  --bg-deep: #f1f3f7;
+  --bg-panel: #eaedf3;
+  --bg-elevated: #e2e6ed;
+  --bg-raised: #f7f8fa;
+  --bg-hover: #dde1e9;
+  --bg-hover-2: #ccd2dd;
+  /* borders — the two decorative tokens go transparent here too (see :root);
+     emphasis/focus stay real, darkened for a light surface. */
+  --border: transparent;
+  --border-2: transparent;
+  --border-emphasis: #b6bcc7;
   --border-focus: #14171c54;
   /* text — inverted ladder: bright is darkest, disabled lightest.
      Darkened for legibility on white (lighter steps carried too little contrast). */
@@ -357,8 +412,12 @@ html[data-hidden='1'] [style*='animation'] {
   --accent-soft-edge: #c9dca3;
   --accent-dim: #6d8a2a;
   --warn: #8f7f2e;
-  /* attention — darkened for contrast on a light surface, same step as --warn. */
+  /* attention — darkened for contrast on a light surface, same step as --warn.
+     The two 9a companions invert with it: on light "text on the fill" means
+     darker than the fill, and the fill is a pale wash rather than a deep one. */
   --attn: #9a6b12;
+  --attn-text: #7d560c;
+  --attn-soft-bg: #f6ecd8;
   /* logo (consumed by src/ui/Logo.tsx) */
   --logo-slab: #4e6a14;
   --logo-slab-dim: #a8b98a;
@@ -380,9 +439,8 @@ html[data-hidden='1'] [style*='animation'] {
   --hue-slate: #566480;
   --hue-clay: #8d5340;
   --backdrop: rgba(6, 7, 9, 0.62);
-
-  --shadow-card: 0 0px 13px rgba(0, 0, 0, 0.25);
-  --shadow-card: 0 0px 13px rgba(0, 0, 0, 0.25);
+  /* No light-theme --shadow-card override: it inherits :root's `none` with the
+     rest of the in-flow shadows (design 9a). */
 }
 * {
   box-sizing: border-box;
@@ -464,12 +522,14 @@ a {
   display: flex;
   min-height: 0;
 }
+/* design 9a: the divider between the list and the detail is a tonal step, not a
+   rule — the list rail recesses onto --bg-deep against the --bg-panel body. */
 .pj-list {
   width: 240px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
+  background: var(--bg-deep);
   min-height: 0;
 }
 @media (max-width: 740px) {
@@ -479,8 +539,6 @@ a {
   .pj-list {
     width: 100%;
     max-height: 160px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
   }
 }
 /* overview — the OVERVIEW dashboard's two-column split: the project rollup takes
@@ -549,9 +607,11 @@ a {
 /* session-questions §8 — question card. Motion: none — no @keyframes, no
    animation, no transition anywhere in these rules (state changes are instant
    swaps). Tokens pinned by specs/session-questions.md §8. */
+/* design 9a: a filled block, not a framed one — the fill IS the separation. The
+   pending rail survives the flattening: a 2px state bar is a signal, not a
+   frame (9a keeps exactly this on the parked roster row). */
 .qcard {
   background: var(--bg-deep);
-  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 10px 12px;
 }
@@ -585,7 +645,7 @@ a {
 }
 .qcard-chip {
   color: var(--accent);
-  border: 1px solid var(--accent-soft-bg);
+  background: var(--accent-soft-bg);
   border-radius: 3px;
   padding: 0 6px;
   font-size: 9.5px;
@@ -648,8 +708,8 @@ a {
   font-size: 12px;
 }
 .qother-input {
-  background: var(--bg-app);
-  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border: 0;
   color: var(--text-bright);
   padding: 2px 6px;
   width: 100%;
@@ -658,8 +718,7 @@ a {
   outline: none;
 }
 .qprev {
-  background: var(--bg-app);
-  border: 1px solid var(--border);
+  background: var(--bg-canvas);
   padding: 8px;
   white-space: pre;
   overflow-x: auto;
@@ -740,7 +799,7 @@ a {
 }
 .prule-tier {
   color: var(--text-faint);
-  border: 1px solid var(--border-2);
+  background: var(--bg-hover);
   border-radius: 3px;
   padding: 0 6px;
   font-size: 9.5px;
@@ -770,10 +829,11 @@ a {
   left: 0;
   right: 0;
   margin-bottom: 4px;
+  /* A floating layer: no surface behind it to step against, so it keeps a
+     shadow where the in-flow blocks lost theirs (see --shadow-* in :root). */
   background: var(--bg-deep);
-  border: 1px solid var(--border-emphasis);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-bar);
+  box-shadow: var(--shadow-dropdown);
   max-height: 224px;
   overflow-y: auto;
   padding: 4px 0;
@@ -935,23 +995,24 @@ a {
    469-491 — effort/permission/git/runtime chips). `chip--danger` only takes
    effect combined with `chip--selected`, matching the bypassPermissions
    chip, which is only recolored red once chosen. */
+/* design 9a: an unselected chip is a filled surface, not an outline, and
+   selection is carried by a stronger fill + the accent text rather than by an
+   accent EDGE — there are no edges left to colour. */
 .chip {
   font-size: var(--font-size-11);
   padding: var(--space-4) var(--space-9);
   border-radius: var(--radius-base);
   cursor: pointer;
-  border: 1px solid var(--border-2);
-  background: var(--bg-panel);
+  border: 0;
+  background: var(--bg-raised);
   color: var(--text-dim);
 }
 .chip--selected {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-raised));
   color: var(--accent);
 }
 .chip--danger.chip--selected {
-  border-color: var(--error);
-  background: color-mix(in srgb, var(--error) 12%, transparent);
+  background: color-mix(in srgb, var(--error) 18%, var(--bg-raised));
   color: var(--error);
 }
 
@@ -972,15 +1033,19 @@ a {
   cursor: pointer;
   padding: 0 var(--space-12);
 }
+/* 9a: the secondary action is a filled neutral, not an outlined one. */
 .btn--ghost {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
-  color: var(--text-dim);
+  background: var(--bg-raised);
+  border: 0;
+  color: var(--text-2);
+}
+.btn--ghost:hover {
+  background: var(--bg-hover);
 }
 .btn--primary {
   background: var(--accent);
   border: none;
-  color: var(--bg-panel);
+  color: var(--bg-canvas);
   font-weight: 600;
   padding: 0 var(--space-14);
 }
@@ -1016,9 +1081,13 @@ a {
      `padding-top` is set inline by `Modal`'s align prop. */
   padding-bottom: var(--space-24);
 }
+/* A modal floats over the app with only the backdrop behind it, so it keeps
+   its shadow (see --shadow-* in :root) — but loses its stroke. Its header and
+   footer stop being ruled off and become their own tier instead: the panel
+   body is --bg-panel, the chrome around it recesses onto --bg-deep. */
 .modal-panel {
   background: var(--bg-panel);
-  border: 1px solid var(--bg-hover-2);
+  border: 0;
   border-radius: var(--radius-xl);
   overflow: hidden;
   box-shadow: var(--shadow-modal);
@@ -1028,7 +1097,7 @@ a {
 }
 .modal-header {
   padding: var(--space-14) var(--space-16);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
   flex-shrink: 0;
 }
 .modal-body {
@@ -1048,7 +1117,7 @@ a {
   display: flex;
   gap: var(--space-16);
   padding: var(--space-9) var(--space-16);
-  border-top: 1px solid var(--border);
+  background: var(--bg-deep);
   font-size: var(--font-size-10);
   color: var(--text-faint);
   flex-shrink: 0;
@@ -1064,12 +1133,14 @@ a {
    than via a __title class). */
 /* design-refresh: the mock's panel header — uppercase 11.5px/600 at .09em in
    --text-hint, count/hotkey readout in --font-mono. */
+/* 9a: no bottom rule. The header is separated from the list under it by its
+   own padding and the weight of its label — which is what the mock's roster
+   header does, and the pane headers now match it. */
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: var(--space-11) var(--space-12);
-  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .panel-header > span:first-child {

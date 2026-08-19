@@ -190,14 +190,23 @@ token override of the same system (geometry, type and spacing do not change).
 - **Mark**: three slanted slabs, each stepping right of the one below. Slab height 27.5% of the mark
   height, gap 8.75%, step 10%, total width 110%. The bottom slab is always dim — it is the idle
   session, not a shadow, so it never takes the accent. Two-tone down to 16px; single-tone below.
-- **Surfaces** (three stacked steps + hover): app `#0d0f13` · deep `#11141a` (titlebar, status bar,
-  composer well) · panel `#14171d` · raised `#1c212a` · hover `#232833`.
-- **Lines**: inner hairline `#1f242d` · border `#232833` · strong `#2d333f` · active `#3c4453` ·
-  overlay edge `#303845`.
-- **Accent**: acid `#c3f53f`, hover `#d6fa7e`, soft bg `#1b240f`, soft edge `#35401f`. Acid marks the
-  live thing and the recovering action — **one acid per view**; two acid buttons means neither is the answer.
-- **Status hues** (each means exactly one thing, never decorative): working = the acid · ready `#4fae86` ·
-  error `#d1685e` (text `#e0918a`) · measurement/context `#6f9fd8`.
+- **Surfaces** — the whole separation system (design 9a, "flat"): window `#0d0f13` · chrome `#171b22`
+  (the app row, the one raised tier) · rails `#12161c` (roster, session row, composer well, panel
+  chrome) · canvas `#0a0b0e` (transcript, diff, terminal — the deepest step) · recessed block
+  `#101319` · filled control `#1c212a` · hover `#1f242d` · active `#252b35`. **Two adjacent regions
+  are told apart by a step on this ladder and nothing else.** When something loses a rule, it gains
+  a surface.
+- **Lines**: there are none. No 1px strokes, no shadows on anything in flow. Three exceptions, each
+  because it is not decoration: the scrollbar thumb `#2d333f`, the keyboard focus ring `#3c4453`,
+  and markdown's own `<hr>`/table grid (that is content, not chrome). Floating layers — modals,
+  popovers, dropdowns — keep a shadow, because they have no surface behind them to step against.
+- **Accent**: olive `#9cb45f`, hover `#b5cb7c`, soft bg `#191d10`, soft edge `#303a1c`. Marks the
+  live thing and the recovering action — **one accent per view**; two accent buttons means neither is
+  the answer. 9a stepped it back from acid `#c3f53f`, which out-shouted the amber that actually
+  needs you.
+- **Status hues** (each means exactly one thing, never decorative): working = the accent · ready
+  `#4fae86` · parked-on-you amber `#d0a45c` (text `#dcb673`, fill `#231d12`) — the loudest thing in
+  the app · error `#d1685e` (text `#e0918a`) · measurement/context `#6f9fd8`.
 - **Semantic**: tool glyph teal `#8fbab8` · subagent purple `#b39ede` (name `#cbb9ec`) · diff add
   `#9dbb98` · diff remove `#d68f86`.
 - **Account tints** (fixed per account): blue `#1b2836`/`#2e4a63`/`#9cc2e4` · teal `#18262a`/`#2c4a4a`/`#9fd0cd` ·
@@ -206,10 +215,15 @@ token override of the same system (geometry, type and spacing do not change).
   label `#9aa2b1` → meta `#8b93a3` → dim `#6b7385` → faint `#565e6e`.
 - **Radii**: 5 inner tab pill · 6 button/chip/row · 7 card/tab · 8 pane · 11 window/overlay/composer.
 - **Spacing**: 6 tab gap · 8 row · 10 panel · 12 pane gutter · 16 block · 22 transcript · 26 reading pad.
-- **Elevation**: panes are hairline + one luminance step, never shadowed. Shadow is reserved for the
-  composer (`0 8px 24px rgba(0,0,0,.4)`), popovers and the window itself.
+- **Elevation**: one luminance step, never a hairline and never a shadow. Panes are not cards — they
+  run flush to the window edge and to each other; only a split gutter (12px of window showing
+  through) separates two panes on the same surface. Shadow is reserved for floating layers.
+- **Full-bleed rule**: a row's fill runs to the edge of the panel that owns it. A hover or selected
+  state has to read as *that row*, not as a tile lighting up inside it — so list rows carry no
+  radius, no side margin, and indent with padding rather than margin.
 - **Motion**: 1.6s stepped pulse for running dots; 1s step blink for cursors.
-- **Light theme**: surfaces invert to near-white, the acid darkens to `#4e6a14`, status hues darken for contrast.
+- **Light theme**: surfaces invert to near-white (canvas whitest, window greyest) with ~4x the tonal
+  steps the bordered version needed, the accent darkens to `#4e6a14`, status hues darken for contrast.
 
 ## Under the hood (implementation notes)
 

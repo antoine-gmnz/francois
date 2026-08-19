@@ -8,16 +8,13 @@
 .agents-panel {
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-xl);
+  background: var(--bg-canvas);
+  border: 0;
   overflow: hidden;
   min-height: 0;
   height: 100%;
 }
-.agents-panel--focused {
-  border-color: var(--border-focus);
-}
+
 .agents-body {
   flex: 1;
   overflow: auto;
@@ -67,8 +64,8 @@
   padding: var(--space-11);
   border-radius: var(--radius-card);
   margin-bottom: var(--space-8);
-  background: var(--bg-hover);
-  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+  background: var(--bg-elevated);
+  box-shadow: none;
   border-left: 2px solid transparent;
   cursor: pointer;
 }
@@ -122,9 +119,8 @@
 
 .agent-trail {
   margin-left: var(--space-16);
-  margin-top: var(--space-6);
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-6);
+  margin-top: var(--space-10);
+  padding-top: 0;
   overflow-y: auto;
   /* overscroll-behavior — not a wheel handler — is what keeps the trail's
      scroll from bubbling to the pane: native scroll chaining ignores React's
@@ -222,7 +218,6 @@
   gap: var(--space-14);
   padding: var(--space-13) var(--space-18);
   background: var(--bg-deep);
-  border-bottom: 1px solid var(--border);
 }
 .agent-banner__id {
   min-width: 0;
@@ -240,8 +235,8 @@
 .agent-banner__pill {
   font-size: var(--font-size-11);
   color: var(--hue-purple);
-  background: color-mix(in srgb, var(--hue-purple) 10%, var(--bg-app));
-  border: 1px solid color-mix(in srgb, var(--hue-purple) 22%, var(--bg-app));
+  background: color-mix(in srgb, var(--hue-purple) 16%, var(--bg-panel));
+  border: 0;
   border-radius: var(--radius-xl);
   padding: var(--space-2) var(--space-8);
 }
@@ -309,8 +304,8 @@
   flex-direction: column;
   gap: var(--space-8);
   padding: var(--space-14) var(--space-16);
-  background: color-mix(in srgb, var(--hue-purple) 7%, var(--bg-app));
-  border: 1px solid color-mix(in srgb, var(--hue-purple) 22%, var(--bg-app));
+  background: color-mix(in srgb, var(--hue-purple) 11%, var(--bg-canvas));
+  border: 0;
   border-radius: var(--radius-card);
 }
 .agent-task__label {

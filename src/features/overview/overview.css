@@ -23,8 +23,7 @@
   align-items: baseline;
   flex-wrap: wrap;
   gap: var(--space-4) 22px;
-  padding: var(--space-2) 0 var(--space-14);
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-2) 0 var(--space-18);
 }
 
 .ov-totals-label {

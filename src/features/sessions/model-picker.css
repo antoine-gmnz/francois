@@ -5,8 +5,8 @@
    classes / :hover rules. */
 
 .model-picker__trigger {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
+  background: var(--bg-raised);
+  border: 0;
   border-radius: var(--radius-base);
   height: 32px;
   color: var(--text);

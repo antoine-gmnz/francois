@@ -8,8 +8,7 @@
   align-items: center;
   gap: var(--space-6);
   padding: var(--space-6) var(--space-14);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-app);
+  background: var(--bg-panel);
   overflow-x: auto;
   flex-shrink: 0;
   white-space: nowrap;
@@ -25,15 +24,14 @@
   padding: 0 var(--space-7) 0 var(--space-8);
   border-radius: var(--radius-card);
   color: var(--text-hint);
-  background: var(--bg-app);
-  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border: 0;
   max-width: 160px;
   min-width: 72px;
   flex: 0 0 auto;
 }
 .shell-chip:hover {
   background: var(--bg-hover);
-  border-color: var(--border-emphasis);
 }
 /* No lift: the strip only exists at 2+ shells, so these chips sit in a row of
    their own kind — the fill and the border already say which one is on, and a
@@ -43,7 +41,6 @@
   color: var(--text-bright);
   font-weight: 600;
   background: var(--bg-hover-2);
-  border-color: var(--border-focus);
 }
 .shell-chip-name {
   min-width: 0;
@@ -65,11 +62,13 @@
 .shell-chip-close:hover {
   color: var(--text-strong);
 }
+/* Editing in place: a fill marks the live field, matching the other two inline
+   rename inputs (project group, permission rule) — never an edge. */
 .shell-chip-rename-input {
   font: inherit;
   color: var(--text-bright);
-  background: transparent;
-  border: 1px solid var(--border-focus);
+  background: var(--accent-soft-bg);
+  border: 0;
   border-radius: var(--radius-xs);
   padding: 0 var(--space-3);
   min-width: 72px;

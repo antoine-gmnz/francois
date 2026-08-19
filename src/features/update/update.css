@@ -162,9 +162,8 @@
   padding: 0 var(--space-14);
   background: var(--accent);
   border: none;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pill);
-  color: var(--text-bright);
+  border-radius: var(--radius-base);
+  color: var(--bg-canvas);
   font-family: inherit;
   font-size: var(--font-size-11);
   font-weight: 600;

@@ -33,7 +33,7 @@
   align-items: center;
   gap: var(--space-11);
   padding: var(--space-14) var(--space-16);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
 }
 .palette-chevron {
   color: var(--accent);

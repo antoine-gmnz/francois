@@ -34,8 +34,8 @@
 }
 
 .cloud-modal__field {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
+  background: var(--bg-raised);
+  border: 0;
   border-radius: var(--radius-base);
   height: 32px;
   color: var(--text);
@@ -47,7 +47,7 @@
 }
 
 .cloud-modal__field:focus {
-  border-color: var(--border-focus);
+  background: var(--bg-hover);
 }
 
 /* A link or an id is something you would paste into a terminal — mono. */
@@ -74,13 +74,13 @@ input.cloud-modal__field {
 }
 
 .cloud-modal__field--select option {
-  background: var(--bg-panel);
+  background: var(--bg-raised);
   color: var(--text);
 }
 
 /* FR-14: promoted from quiet to required when the repo matched no project. */
 .cloud-modal__field--required {
-  border-color: var(--warn);
+  border-left: 2px solid var(--warn);
 }
 
 .cloud-modal__select-caret {

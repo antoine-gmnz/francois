@@ -16,7 +16,7 @@
   overflow-y: auto;
   padding: var(--space-4);
   background: var(--bg-elevated);
-  border: 1px solid var(--border-emphasis);
+  border: 0;
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-dropdown);
   font-family: var(--font-mono);
