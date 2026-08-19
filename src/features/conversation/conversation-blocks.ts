@@ -479,38 +479,6 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
   return out;
 }
 
-// ---------- render-time grouping of consecutive tool calls (design-refresh FR-7) ----------
-
-export type TranscriptRenderItem =
-  | { kind: 'single'; block: ConversationBlock }
-  | { kind: 'tool-group'; blockId: string; blocks: ToolConversationBlock[] };
-
-/**
- * Groups a run of consecutive `tool`-kind blocks (any tool/target — this runs
- * AFTER compactBlocks, which already merged identical repeats) into one
- * `tool-group` item so the view can render them inside a single hairline-
- * divided card (design-refresh FR-7 / the agent-tab trace, which shares this
- * same vocabulary). `subagent` blocks — a different glyph/color/banner
- * treatment — never join a tool run. A lone tool block still becomes a
- * one-item group, so every tool call gets the same card treatment.
- */
-export function groupToolRuns(blocks: ConversationBlock[]): TranscriptRenderItem[] {
-  const out: TranscriptRenderItem[] = [];
-  for (const b of blocks) {
-    if (b.kind === 'tool') {
-      const last = out[out.length - 1];
-      if (last && last.kind === 'tool-group') {
-        last.blocks.push(b);
-        continue;
-      }
-      out.push({ kind: 'tool-group', blockId: b.blockId, blocks: [b] });
-      continue;
-    }
-    out.push({ kind: 'single', block: b });
-  }
-  return out;
-}
-
 function mergeToolRun(acc: ToolConversationBlock, b: ToolConversationBlock): ToolConversationBlock {
   const am = acc.meta !== undefined ? LINE_CHANGE_META.exec(acc.meta) : null;
   const bm = b.meta !== undefined ? LINE_CHANGE_META.exec(b.meta) : null;

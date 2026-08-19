@@ -79,9 +79,12 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
             return o;
         }
     };
+    // design 9a: `at` rides the line so a reopened session states when each turn
+    // actually happened. Only the four base kinds carry it — the card kinds
+    // (command/question/permission) render their own chrome and never a clock.
     serde_json::json!({
         "blockId": b.block_id, "kind": kind, "text": b.text,
-        "tool": b.tool, "summary": b.summary, "meta": b.meta,
+        "tool": b.tool, "summary": b.summary, "meta": b.meta, "at": b.at,
     })
 }
 
@@ -187,6 +190,10 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
     };
     let block_id = v.get("blockId").and_then(|b| b.as_str())?.to_string();
     Some(BufBlock {
+        // design 9a: a line written before `at` existed reads back as 0, which
+        // classify_block serializes as an ABSENT key — the reload must not
+        // re-date an old turn to the moment it was read.
+        at: v.get("at").and_then(|a| a.as_u64()).unwrap_or(0),
         text: v
             .get("text")
             .and_then(|t| t.as_str())
@@ -719,6 +726,7 @@ mod tests {
             meta: Some("+3 \u{2212}1".into()),
             card: None,
             streaming: true, // in-memory streaming flag must NOT round-trip
+            at: 1_760_000_000_000,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         let back = parse_persisted_block(&line).expect("parse");
@@ -728,6 +736,23 @@ mod tests {
         assert_eq!(back.meta.as_deref(), Some("+3 \u{2212}1"));
         assert!(!back.streaming); // reloaded blocks are always finalized (FR-5)
         assert!(matches!(back.kind, BlockKind::Tool));
+        // design 9a: the append time survives the round-trip, so a reopened
+        // session states when the turn happened rather than when it was read.
+        assert_eq!(back.at, 1_760_000_000_000);
+        assert_eq!(classify_block(&back)["at"], 1_760_000_000_000u64);
+    }
+
+    #[test]
+    fn transcript_line_written_before_timestamps_reads_back_without_one() {
+        // design 9a: `at` is optional in the contract precisely for these lines.
+        // The reload must not re-date the turn to the moment it was read — the
+        // block comes back with 0, and classify_block leaves the key out.
+        let back = parse_persisted_block(
+            r#"{"blockId":"b1","kind":"tool","text":"","tool":"Read","summary":"a.rs","meta":"9 lines"}"#,
+        )
+        .expect("parse");
+        assert_eq!(back.at, 0);
+        assert!(classify_block(&back).get("at").is_none());
     }
 
     #[test]
@@ -741,6 +766,7 @@ mod tests {
             meta: None,
             card: None,
             streaming: false,
+            at: 1_760_000_000_000,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         assert!(line.contains("\"meta\":null"));
@@ -769,6 +795,7 @@ mod tests {
             meta: Some("done".into()),
             card: None,
             streaming: false,
+            at: 1_760_000_000_000,
         };
         let back =
             parse_persisted_block(&serde_json::to_string(&persisted_block_json(&b)).unwrap())

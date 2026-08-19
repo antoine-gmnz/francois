@@ -65,16 +65,6 @@ export function tierControlDimmed(hovered: PermissionDecision | null): boolean {
 }
 
 /**
- * §8.3: the card's headline — the call as it would be typed, `Bash(rm -rf
- * node_modules)`. Falls back to the bare tool name when the tool exposes no
- * one-liner (FR-4), so the line is never a dangling `Tool()`.
- */
-export function askSignature(ask: PermissionAsk): string {
-  const tool = ask.toolName || 'tool';
-  return ask.summary === '' ? tool : `${tool}(${ask.summary})`;
-}
-
-/**
  * §8.2: how long the ask has been sitting there, shown at the right of the
  * header row. Measured from when the card first rendered — the transcript
  * carries no timestamp, so a card restored from a persisted transcript restarts

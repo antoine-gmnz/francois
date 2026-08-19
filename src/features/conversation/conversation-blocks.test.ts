@@ -14,7 +14,6 @@ import {
   cardHeaderLabel,
   commandFromCard,
   compactBlocks,
-  groupToolRuns,
   isClearCommand,
   liveCurrentModelId,
   mergeDelta,
@@ -1032,51 +1031,6 @@ describe('compactBlocks (render-time merge of duplicate consecutive tool rows)',
   });
 });
 
-describe('groupToolRuns (design-refresh FR-7: consecutive tool calls share one bordered block)', () => {
-  const tool = (blockId: string, name: string, summary: string): ConversationBlock => classifyToolStart(name, summary, blockId);
-  const assistant = (blockId: string): ConversationBlock => ({
-    kind: 'assistant',
-    blockId,
-    isStreaming: false,
-    glyph: '●',
-    glyphColor: '#8b93a3',
-    bodyColor: '#c3c9d4',
-    text: 'hi',
-  });
-
-  it('groups a run of consecutive tool blocks (different tools/targets) into one item', () => {
-    const out = groupToolRuns([tool('t1', 'Read', 'a.ts'), tool('t2', 'Edit', 'b.ts'), tool('t3', 'Grep', 'foo')]);
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ kind: 'tool-group', blockId: 't1' });
-    if (out[0].kind !== 'tool-group') throw new Error('expected tool-group');
-    expect(out[0].blocks.map((b) => b.blockId)).toEqual(['t1', 't2', 't3']);
-  });
-
-  it('wraps a lone tool block in a single-item group', () => {
-    const out = groupToolRuns([tool('t1', 'Read', 'a.ts')]);
-    expect(out).toEqual([{ kind: 'tool-group', blockId: 't1', blocks: [tool('t1', 'Read', 'a.ts')] }]);
-  });
-
-  it('does not merge across an intervening non-tool block', () => {
-    const out = groupToolRuns([tool('t1', 'Read', 'a.ts'), assistant('a1'), tool('t2', 'Edit', 'b.ts')]);
-    expect(out).toHaveLength(3);
-    expect(out.map((i) => i.kind)).toEqual(['tool-group', 'single', 'tool-group']);
-  });
-
-  it('never groups subagent blocks with tool blocks', () => {
-    const out = groupToolRuns([tool('t1', 'Read', 'a.ts'), tool('t2', 'Task', 'explorer')]);
-    expect(out).toHaveLength(2);
-    expect(out.map((i) => i.kind)).toEqual(['tool-group', 'single']);
-  });
-
-  it('passes non-tool blocks through unchanged, in order', () => {
-    const out = groupToolRuns([assistant('a1'), assistant('a2')]);
-    expect(out).toEqual([
-      { kind: 'single', block: assistant('a1') },
-      { kind: 'single', block: assistant('a2') },
-    ]);
-  });
-});
 
 describe('TRANSCRIPT_TEXT_SELECT_STYLE (mac-text-selection FR-1)', () => {
   it('sets both the standard and WebKit-prefixed user-select properties to text', () => {

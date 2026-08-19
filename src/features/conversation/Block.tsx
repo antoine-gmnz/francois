@@ -2,14 +2,22 @@
 // ConversationView so the agent-tab body renders a subagent's transcript with the
 // SAME vocabulary — glyphs, colors, markdown, tool-card layout — instead of
 // growing a second renderer that would drift from this one.
+//
+// design 9a: the SESSION transcript no longer renders through `Block` — it
+// groups blocks into turns (Turn.tsx) and draws its own gutter and header. The
+// per-block BODIES are exported from here and shared by both, so a turn and an
+// agent trail keep saying the same thing the same way; only the container
+// around them differs.
 
-import { toolBody, type ConversationBlock, type ToolConversationBlock } from '../../../contract/conversation-view';
+import { toolBody, type ConversationBlock, type SubagentConversationBlock, type ToolConversationBlock, type UserConversationBlock } from '../../../contract/conversation-view';
+import type { AssistantConversationBlock } from '../../../contract/conversation-view';
 import CommandBlock from '../commands/CommandCard';
 import { toneVar } from '../../lib/tone';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
 import { StatusDot } from '../../ui/StatusDot';
+import { toolResultChips } from './transcript-turns';
 import './conversation.css';
 
 export default function Block({ b: block, sessionId }: { b: ConversationBlock; sessionId: string }) {
@@ -33,13 +41,7 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
       <div className="block-row block-user">
         <span className="block-glyph block-user__arrow">›</span>
         <div className="block-content">
-          <div className="block-user__body">{block.text}</div>
-          {block.queued && (
-            <span className="block-user__queued">
-              <StatusDot color="var(--warn)" size={5} pulsing />
-              <span className="block-user__queued-label">queued</span>
-            </span>
-          )}
+          <UserBody b={block} />
         </div>
       </div>
     );
@@ -57,65 +59,115 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
           {block.glyph}
         </span>
         <div className="block-content">
-          <Markdown text={block.text} streaming={block.isStreaming} />
-          {block.isStreaming && <span className="block-caret" />}
+          <AssistantBody b={block} />
         </div>
       </div>
     );
   }
 
   if (block.kind === 'subagent') {
-    // design-refresh FR-7: dispatch renders as a purple-tinted banner, not a
-    // bare glyph row — bold agent name, soft bg/border from --hue-purple.
-    return (
-      <div className="block-subagent">
-        <span className="block-glyph" style={{ color: toneVar(block.glyphColor) }}>
-          {block.glyph}
-        </span>
-        <div className="block-content block-body" style={{ color: toneVar(block.bodyColor) }}>
-          Dispatched subagent <span className="block-subagent__name">{block.agentName}</span>
-          {/* The model the dispatch named — shown only when it differs from the
-              session default, i.e. only when the dispatch named one at all. */}
-          {block.agentModel && <span className="block-subagent__model">{block.agentModel}</span>}
-          {block.meta && <span className="block-meta"> · {block.meta}</span>}
-        </div>
-      </div>
-    );
+    return <SubagentBanner b={block} />;
   }
 
+  // design 9a: a lone tool call is a bare row — the same object a session turn
+  // renders, without the rail. An agent trail is a flat list, so a rail per
+  // block would draw a 1px stub beside every row and join nothing.
+  return <ToolRow b={block} />;
+}
+
+// ---------- shared bodies (design 9a: one vocabulary, two containers) ----------
+
+export function UserBody({ b }: { b: UserConversationBlock }) {
   return (
-    <div className="block-row">
-      <span className="block-glyph" style={{ color: toneVar(block.glyphColor) }}>
-        {block.glyph}
+    <>
+      <div className="block-user__body">{b.text}</div>
+      {b.queued && (
+        <span className="block-user__queued">
+          <StatusDot color="var(--warn)" size={5} pulsing />
+          <span className="block-user__queued-label">queued</span>
+        </span>
+      )}
+    </>
+  );
+}
+
+export function AssistantBody({ b }: { b: AssistantConversationBlock }) {
+  return (
+    <>
+      <Markdown text={b.text} streaming={b.isStreaming} />
+      {b.isStreaming && <span className="block-caret" />}
+    </>
+  );
+}
+
+/**
+ * design-refresh FR-7: dispatch renders as a purple-tinted banner, not a bare
+ * glyph row — bold agent name, soft bg from --hue-purple. It stays a banner
+ * rather than a rail row under 9a: a dispatch hands the work to someone else,
+ * which is a different kind of event from a tool the reply ran itself.
+ */
+export function SubagentBanner({ b }: { b: SubagentConversationBlock }) {
+  return (
+    <div className="block-subagent">
+      <span className="block-glyph" style={{ color: toneVar(b.glyphColor) }}>
+        {b.glyph}
       </span>
-      <div className="block-content block-body" style={{ color: toneVar(block.bodyColor) }}>
-        {toolBody(block.tool, block.summary)}
-        {block.meta && <span className="block-meta"> · {block.meta}</span>}
+      <div className="block-content block-body" style={{ color: toneVar(b.bodyColor) }}>
+        Dispatched subagent <span className="block-subagent__name">{b.agentName}</span>
+        {/* The model the dispatch named — shown only when it differs from the
+            session default, i.e. only when the dispatch named one at all. */}
+        {b.agentModel && <span className="block-subagent__model">{b.agentModel}</span>}
+        {b.meta && <span className="block-meta"> · {b.meta}</span>}
       </div>
     </div>
   );
 }
 
 /**
- * design-refresh FR-7: a run of consecutive tool blocks (grouped by
- * conversation-blocks.ts's `groupToolRuns`) renders as ONE hairline-divided
- * card instead of N loose rows — same glyph/body vocabulary as a bare
- * `.block-row`, just wrapped and separated by `.tool-group-row` + a `--border-2`
- * top rule on every row after the first.
+ * design 9a: one tool call, as a four-column row — glyph · tool name · target ·
+ * result. The result stopped being a ` · 14 failed` tail on the end of a
+ * sentence and became chips at the right edge, so a column of calls can be
+ * scanned for the one that went wrong without reading any of them.
  */
-export function ToolGroup({ blocks }: { blocks: ToolConversationBlock[] }) {
+export function ToolRow({ b }: { b: ToolConversationBlock }) {
+  const chips = toolResultChips(b.meta);
   return (
-    <div className="tool-group">
-      {blocks.map((block) => (
-        <div key={block.blockId} className="tool-group-row">
-          <span className="block-glyph" style={{ color: toneVar(block.glyphColor) }}>
-            {block.glyph}
-          </span>
-          <div className="block-content block-body" style={{ color: toneVar(block.bodyColor) }}>
-            {toolBody(block.tool, block.summary)}
-            {block.meta && <span className="block-meta"> · {block.meta}</span>}
-          </div>
-        </div>
+    <div className={'toolrow' + (b.isStreaming ? ' toolrow--live' : '')}>
+      <span className="toolrow__glyph" style={{ color: toneVar(b.glyphColor) }}>
+        {b.glyph}
+      </span>
+      <span className="toolrow__name">{b.tool}</span>
+      {/* The full call stays reachable on hover — the target column truncates,
+          and a truncated path is exactly when you want the whole one. */}
+      <span className="toolrow__target" title={toolBody(b.tool, b.summary)}>
+        {b.summary}
+      </span>
+      <span className="toolrow__chips">
+        {b.isStreaming && chips.length === 0 ? (
+          <StatusDot color="var(--accent)" size={5} pulsing />
+        ) : (
+          chips.map((c) => (
+            <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`}>
+              {c.text}
+            </span>
+          ))
+        )}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * design 9a: a run of consecutive tool calls hangs off a single vertical rail
+ * inside the turn's content column. The rail replaces 7a's hairline-divided
+ * card — under the flat treatment a card would be a second surface floating in
+ * the turn, where the rail reads as "this is what that paragraph did".
+ */
+export function ToolRail({ blocks }: { blocks: ToolConversationBlock[] }) {
+  return (
+    <div className="toolrail">
+      {blocks.map((b) => (
+        <ToolRow key={b.blockId} b={b} />
       ))}
     </div>
   );

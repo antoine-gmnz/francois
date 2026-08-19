@@ -23,6 +23,17 @@ export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent' |
 interface ConversationBlockBase {
   blockId: BlockId;
   isStreaming: boolean;
+  /**
+   * Design 9a: epoch ms the core appended this block. The turn header states
+   * the clock time of a prompt and the wall duration of a reply, and both have
+   * to survive quit/reopen — a render-time stamp would re-date the whole
+   * transcript on every reload.
+   *
+   * OPTIONAL because transcripts written before this field exists are still
+   * read back (persistence.rs skips nothing on a missing key). A block without
+   * it renders its header without a clock rather than guessing one.
+   */
+  at?: number;
 }
 
 export interface UserConversationBlock extends ConversationBlockBase {

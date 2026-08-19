@@ -68,7 +68,8 @@ export default function WelcomeBlock({ sessionId }: WelcomeBlockProps) {
 
       <div className="welcome__identity">
         <div className="welcome__greeting">Welcome back</div>
-        <Logo size={56} title="Francois" />
+        {/* 9a: down from 56 — the block tightened around it. */}
+        <Logo size={47} title="Francois" />
         <div className="welcome__meta">
           {identity.length > 0 && <span>{identity.join(' · ')}</span>}
           {/* session-profiles FR-22: the ONE acid chip this view gets — the

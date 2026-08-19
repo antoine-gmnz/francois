@@ -370,6 +370,11 @@ pub(crate) struct BufBlock {
     /// interactive-commands: serialized CommandCard (Command kind; None while pending).
     card: Option<Value>,
     streaming: bool,
+    /// design 9a: epoch ms this block was appended, mirrored to the contract's
+    /// `ConversationBlockBase.at`. 0 means "unknown" — a block read back from a
+    /// transcript written before the field existed — and is serialized as an
+    /// ABSENT key rather than as an epoch that would render as 01:00.
+    at: u64,
 }
 
 impl BufBlock {
@@ -378,6 +383,10 @@ impl BufBlock {
     /// only 2-4 fields each. This is the shared shape — `text`/`tool`/`summary`
     /// empty, `meta`/`card` absent, not streaming — callers override just what
     /// differs via `BufBlock { field: value, ..BufBlock::new(id, kind) }`.
+    ///
+    /// `at` is stamped HERE, at construction, because that is the one moment
+    /// every block passes through: a live append happens as the event lands,
+    /// and a reload overrides the field with what the line carried.
     fn new(block_id: &str, kind: BlockKind) -> BufBlock {
         BufBlock {
             block_id: block_id.into(),
@@ -388,6 +397,7 @@ impl BufBlock {
             meta: None,
             card: None,
             streaming: false,
+            at: now_ms(),
         }
     }
 }

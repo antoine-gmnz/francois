@@ -112,13 +112,15 @@
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: var(--space-18) var(--space-24) var(--space-10);
+  /* 9a: tighter than 7a — each turn now carries a header row, so the space
+     between turns comes down to hold the same density on screen. */
+  padding: var(--space-12) var(--space-24) var(--space-6);
   display: flex;
   flex-direction: column;
   /* The column is centered and capped — every row is wrapped in .conv-item
      below, which carries the actual width cap. */
   align-items: center;
-  gap: var(--space-14);
+  gap: var(--space-11);
   /* The app root disables selection (styles.css body rule) for chrome; the
      transcript is CONTENT — copying out of it must work. */
   user-select: text;
@@ -157,7 +159,7 @@
   grid-template-columns: 1fr 1px 1fr;
   column-gap: var(--space-22);
   row-gap: var(--space-14);
-  padding: var(--space-18) var(--space-22) var(--space-20);
+  padding: var(--space-12) var(--space-22) var(--space-13);
   background: var(--bg-deep);
   border: 0;
   border-radius: var(--radius-md);
@@ -608,30 +610,169 @@
   color: var(--text-faint);
 }
 
-/* design 7a: a run of consecutive tool calls is an INDENTED LIST under the
-   paragraph that ordered it, not a card. The mock hangs it off the assistant
-   line's own gutter (`padding-left:22px`), which is what makes a turn read as
-   one thing rather than as prose plus an attachment. */
-.tool-group {
-  padding-left: var(--space-24);
+/* ── design 9a: the TURN ───────────────────────────────────────────────────
+   One gutter glyph, one header, one content column. Before this every block
+   carried its own glyph, so a reply that wrote two files and ran the suite read
+   as five unrelated lines; the grid is what makes it read as one. */
+.turn {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  column-gap: var(--space-12);
+  align-items: start;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.turn__gutter {
+  text-align: center;
+  font-size: var(--font-size-13);
+  line-height: 1.5;
+  color: var(--accent);
+}
+/* The reply's mark is a small dot, not a chevron: it sits on the baseline of
+   the header row above the prose, so it needs the taller line-height to land
+   beside the label rather than above it. */
+.turn--assistant .turn__gutter {
+  font-size: var(--font-size-9);
+  line-height: 2.1;
+  color: var(--accent-dim);
+}
+.turn__col {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-9);
 }
-.tool-group-row {
+.turn--user .turn__col {
+  gap: var(--space-7);
+}
+
+/* Who spoke · on what · then a rule out to the cost of the turn. This is one of
+   the few hairlines the flat treatment keeps: it separates nothing (there is no
+   surface change across it) — it is a typographic rule inside a line of text,
+   the same role markdown's own `---` plays. */
+.turn__head {
   display: flex;
-  gap: var(--space-8);
+  align-items: center;
+  gap: var(--space-10);
+  white-space: nowrap;
 }
-.tool-group .block-body {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-11-5);
-  line-height: 1.6;
+.turn__who {
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
   color: var(--text-dim);
 }
-.tool-group .block-glyph {
-  width: 12px;
+.turn--user .turn__who {
+  color: var(--accent-dim);
+}
+.turn__model,
+.turn__meta {
+  font-size: var(--font-size-9-5);
+  color: var(--text-muted);
+}
+.turn__rule {
+  flex: 1;
+  min-width: var(--space-8);
+  height: 1px;
+  background: var(--bg-elevated);
+}
+.turn__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+}
+
+/* ── design 9a: the tool rail ──────────────────────────────────────────────
+   A run of consecutive tool calls hangs off one vertical rail inside the turn's
+   content column. 7a made this a hairline-divided card; under the flat
+   treatment a card would be a second surface floating in the turn, where the
+   rail reads as "this is what that paragraph did". */
+.toolrail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) 0 var(--space-2) var(--space-14);
+}
+.toolrail::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--space-4);
+  bottom: var(--space-4);
+  width: 1px;
+  background: var(--bg-raised);
+}
+
+/* One call: glyph · tool · target · result. The result stopped being a
+   ` · 14 failed` tail on a sentence and became chips at the right edge, so a
+   column of calls can be scanned for the one that went wrong without reading
+   any of them. */
+.toolrow {
+  display: grid;
+  grid-template-columns: 16px 46px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-10);
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-sm);
+}
+.toolrail > .toolrow {
+  margin-left: calc(-1 * var(--space-8));
+}
+.toolrow:hover {
+  background: var(--bg-deep);
+}
+.toolrow__glyph {
   font-size: var(--font-size-11);
-  line-height: 1.6;
+}
+.toolrow__name {
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toolrow__target {
+  font-size: var(--font-size-12);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A call still in flight has no result yet — it says so with the pulsing dot
+   the rest of the app uses for "live", not with an empty chip. */
+.toolrow--live .toolrow__target {
+  color: var(--text-hint);
+}
+.toolrow__chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-size: var(--font-size-10-5);
+}
+.toolrow__chip {
+  padding: 1px var(--space-5);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+.toolrow__chip--add {
+  background: color-mix(in srgb, var(--success) 16%, var(--bg-canvas));
+  color: var(--success-bright);
+}
+.toolrow__chip--del {
+  background: color-mix(in srgb, var(--error) 16%, var(--bg-canvas));
+  color: var(--error-bright);
+}
+.toolrow__chip--error {
+  background: color-mix(in srgb, var(--error) 16%, var(--bg-canvas));
+  color: var(--error-bright);
+}
+/* The ordinary outcome — `12 lines`, `no matches`. No fill: a chip on every row
+   would make the failures stop standing out, which is the whole point of them. */
+.toolrow__chip--plain {
+  color: var(--text-faint);
 }
 
 /* subagent dispatch banner (FR-7). */

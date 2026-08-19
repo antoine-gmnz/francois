@@ -2,9 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { isBusyStatus, isTerminalStatus } from '../../../contract/fleet-board';
 import { sessionClear, sessionInterrupt, sessionSend } from '../../lib/api';
-import Block, { ToolGroup } from './Block';
+import Block from './Block';
 import Composer from './Composer';
-import { compactBlocks, groupToolRuns, isClearCommand, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
+import Turn from './Turn';
+import { groupTurns } from './transcript-turns';
+import { compactBlocks, isClearCommand, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import UsageLimitBanner from './UsageLimitBanner';
@@ -23,6 +25,7 @@ import {
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { composerPlaceholder, hasPendingQuestionBlock } from '../questions/question-card';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
+import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import {
   completionText,
@@ -84,6 +87,11 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
     onScroll,
     jumpToLatest,
   } = useConversationTranscript(sessionId);
+
+  // design 9a: a streaming turn's header counts its duration up. Gated on the
+  // session being busy, so a transcript of finished turns re-renders never —
+  // their spans are fixed by the blocks' own timestamps.
+  const transcriptClock = useElapsedClock(isBusyStatus(status));
 
   // The composer text. Seeded from — and mirrored back into — the per-session
   // draft map, because this view is keyed by sessionId: switching sessions
@@ -397,9 +405,16 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
               <WelcomeBlock sessionId={sessionId} />
             </div>
           ) : (
-            groupToolRuns(compactBlocks(state.blocks)).map((item) => (
-              <div key={item.kind === 'tool-group' ? item.blockId : item.block.blockId} className="conv-item">
-                {item.kind === 'tool-group' ? <ToolGroup blocks={item.blocks} /> : <Block b={item.block} sessionId={sessionId} />}
+            // design 9a: the transcript is a list of TURNS. A card (approval,
+            // question, command output) still renders at this level — it is the
+            // transcript stopping, not a paragraph of a reply.
+            groupTurns(compactBlocks(state.blocks)).map((item) => (
+              <div key={item.kind === 'turn' ? item.turnId : item.block.blockId} className="conv-item">
+                {item.kind === 'turn' ? (
+                  <Turn turn={item} model={meta?.model.label} now={transcriptClock} />
+                ) : (
+                  <Block b={item.block} sessionId={sessionId} />
+                )}
               </div>
             ))
           )}

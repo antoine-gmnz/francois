@@ -6,7 +6,6 @@ import type { ConversationBlock } from '../../../contract/conversation-view';
 import type { PermissionAsk, PermissionDecision, PermissionRule } from '../../../contract/permission-guardrails';
 import { composerPlaceholder } from '../questions/question-card';
 import {
-  askSignature,
   cardClass,
   hasDetail,
   hasPendingPermissionBlock,
@@ -106,19 +105,6 @@ describe('actions (§8.7, FR-6)', () => {
     expect(new Set(PERMISSION_ACTIONS.map((a) => a.decision)).size).toBe(PERMISSION_ACTIONS.length);
     // `allow` drives the row color; it must agree with the decision it sends.
     for (const a of PERMISSION_ACTIONS) expect(a.allow).toBe(a.decision.startsWith('allow'));
-  });
-});
-
-describe('call signature (§8.3)', () => {
-  it('reads as the call would be typed', () => {
-    expect(askSignature(ask)).toBe('Bash(npm test)');
-    expect(askSignature({ ...ask, toolName: 'Write', summary: 'src/app.ts' })).toBe('Write(src/app.ts)');
-  });
-
-  it('falls back to the bare tool rather than a dangling Tool()', () => {
-    expect(askSignature({ ...ask, summary: '' })).toBe('Bash');
-    expect(askSignature({ ...ask, toolName: '', summary: '' })).toBe('tool');
-    expect(askSignature({ ...ask, toolName: '' })).toBe('tool(npm test)');
   });
 });
 

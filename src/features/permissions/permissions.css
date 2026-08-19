@@ -17,7 +17,9 @@
   background: var(--bg-deep);
   border: 0;
   border-radius: var(--radius-md);
-  padding: var(--space-14) var(--space-18) var(--space-16);
+  /* 9b tightens 7a's padding: the block now carries a whole code surface, and
+     the generous frame would push the choices off a short pane. */
+  padding: var(--space-11) var(--space-14) var(--space-12);
   font-family: var(--font-mono);
 }
 
@@ -54,27 +56,30 @@
   opacity: 0.7;
 }
 
-/* 9a: a plain uppercase label in flow at the top of the block, not a legend
-   riding a rule — there is no rule left to ride, and no surface pad needed to
-   cut one. */
+/* 9b: the legend names what KIND of ask this is (`Permission · edit`), then a
+   rule carries the eye to the waiting clock at the right edge. The rule
+   separates no surfaces — like the turn header's, it is typographic, the role
+   markdown's own `---` plays, not a frame the flat treatment removed. */
 .pcard__head {
   display: flex;
   align-items: center;
   gap: var(--space-10);
-  margin-bottom: var(--space-12);
-  letter-spacing: 0.1em;
+  margin-bottom: var(--space-9);
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   white-space: nowrap;
 }
 
-.pcard__glyph {
-  color: var(--attn);
-  font-size: var(--font-size-9);
+.pcard__head-rule {
+  flex: 1;
+  min-width: var(--space-8);
+  height: 1px;
+  background: color-mix(in srgb, var(--attn) 18%, var(--bg-deep));
 }
 
 .pcard__label {
   color: var(--attn);
-  font-size: var(--font-size-10-5);
+  font-size: var(--font-size-10);
 }
 
 .pcard__note {
@@ -105,55 +110,205 @@
   opacity: 0.8;
 }
 
-/* §8.3: the headline. A <button> so the disclosure is keyboard-reachable, but
-   it carries none of the button chrome — it reads as the card's own text. */
-.pcard__sig {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-8);
-  width: 100%;
-  margin-top: 0;
-  background: none;
-  border: none;
-  padding: 0;
-  font-family: inherit;
-  font-size: var(--font-size-12-5);
-  line-height: 1.5;
-  color: var(--text-bright);
-  text-align: left;
-  cursor: pointer;
-}
-
-/* Nothing to reveal (a resolved card with no input dump and no cwd): the line
-   stays, the affordance does not. */
-.pcard__sig--static {
-  cursor: default;
-}
-
 /* On the warm fill the neutral text ladder goes muddy — 9a reads the pending
-   block in the amber family throughout (#f0e2bd headline, #b8a887 detail). */
-.pcard--pending .pcard__sig {
-  color: color-mix(in srgb, var(--attn-text) 55%, var(--text-bright));
-}
+   block in the amber family throughout. */
 .pcard--pending .pcard__meta,
 .pcard--pending .pcard__rule-label {
   color: color-mix(in srgb, var(--attn) 35%, var(--text-dim));
 }
 
-.pcard__sig-text {
+/* ── design 9b: the code surface ───────────────────────────────────────────
+   What is being approved, SET AS CODE rather than stated as prose. A well
+   recessed into the block — on --bg-canvas, the deepest surface in the app,
+   which is what separates it now that it has no edge. */
+.csurf {
+  background: var(--bg-canvas);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+/* The header answers what language or channel · where · how big the blast
+   radius is, so the risk is legible before the code is read. It is also the
+   disclosure control: the surface already IS the headline, so hanging the caret
+   anywhere else would add a row that says nothing. */
+.csurf__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  width: 100%;
+  padding: var(--space-6) var(--space-11);
+  background: color-mix(in srgb, var(--attn) 6%, var(--bg-canvas));
+  border: 0;
+  font-family: inherit;
+  font-size: var(--font-size-9-5);
+  color: var(--attn);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Nothing to reveal (a resolved card with no input dump and no cwd): the strip
+   stays, the affordance does not. */
+.csurf__head--static {
+  cursor: default;
+}
+
+.csurf__lang {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* The where. Plain end-truncation on purpose: the `direction: rtl` trick that
+   would keep the filename visible reorders leading and trailing punctuation,
+   and a path is mostly slashes — a mangled path is worse than a clipped one.
+   The full string stays in the element's title. */
+.csurf__context {
   min-width: 0;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.csurf__gap {
+  flex: 1;
+  min-width: var(--space-4);
+}
+
+.csurf__count {
+  flex-shrink: 0;
+}
+.csurf__count--add {
+  color: var(--success-bright);
+}
+.csurf__count--del {
+  color: var(--error-bright);
+}
+
+.csurf__blast {
+  flex-shrink: 0;
+  color: var(--attn-text);
+}
+
+.csurf__caret {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.csurf__body {
+  font-size: var(--font-size-12-5);
+  line-height: 1.5;
+}
+
+.csurf__line {
+  display: flex;
+  gap: var(--space-10);
+  padding: var(--space-10) var(--space-11) var(--space-11);
+}
+
+/* The `$` / `↗` that says which channel this runs on. Dim, because it is
+   punctuation — the command beside it is the thing being read. */
+.csurf__prompt {
+  flex-shrink: 0;
+  color: var(--accent-dim);
+}
+
+.csurf__code {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.csurf__code--plain {
+  color: var(--text);
+}
+
+/* The binary, its flags, its arguments and the chain between them each carry a
+   colour, so `rm -rf x && npm ci` reads as two commands at a glance. */
+.csurf__tok--binary {
+  color: var(--attn-text);
+}
+.csurf__tok--flag {
+  color: var(--attn);
+}
+.csurf__tok--arg {
+  color: var(--text);
+}
+.csurf__tok--string {
+  color: var(--hue-clay);
+}
+.csurf__tok--operator {
+  color: var(--text-faint);
+}
+/* The host is the only part of a URL that decides whether a request is safe. */
+.csurf__tok--host {
+  color: var(--attn-text);
+}
+
+/* An Edit's own diff. There is deliberately NO line-number gutter: the tool
+   input carries `old_string`, not a file offset, so any number in that column
+   would be a position inside the fragment while reading as a line of the file
+   named in the header above it. The sign column, the row tint and the context
+   lines carry the same information without inviting that misreading. */
+.csurf__diff {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-8) 0 var(--space-9);
+  font-variant-numeric: tabular-nums;
+}
+
+.csurf__row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--space-4);
+  padding-right: var(--space-11);
+  line-height: 1.65;
+}
+
+.csurf__sign {
+  text-align: center;
+  color: var(--text-disabled);
+}
+
+.csurf__text {
+  min-width: 0;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.pcard__caret {
-  margin-left: auto;
-  flex-shrink: 0;
+.csurf__row--context .csurf__text {
+  color: var(--text-dim);
+}
+
+.csurf__row--del {
+  background: color-mix(in srgb, var(--error) 13%, var(--bg-canvas));
+}
+.csurf__row--del .csurf__sign {
+  color: var(--error-bright);
+}
+.csurf__row--del .csurf__text {
+  color: color-mix(in srgb, var(--error-bright) 45%, var(--text));
+}
+
+.csurf__row--add {
+  background: color-mix(in srgb, var(--success) 13%, var(--bg-canvas));
+}
+.csurf__row--add .csurf__sign {
+  color: var(--success-bright);
+}
+.csurf__row--add .csurf__text {
+  color: color-mix(in srgb, var(--success-bright) 45%, var(--text));
+}
+
+/* What the surface refused to render — a card is a decision, not a review. */
+.csurf__row--elision .csurf__text {
   color: var(--text-faint);
-  font-size: var(--font-size-9-5);
+  font-size: var(--font-size-10-5);
 }
 
 .pcard__detail {
-  margin-top: var(--space-4);
+  margin-top: var(--space-6);
 }
 
 /* A well recessed INTO the block — the deepest surface in the app, which is
@@ -210,8 +365,7 @@
 .pcard__choices {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  margin-top: var(--space-12);
+  margin-top: var(--space-9);
   font-size: var(--font-size-12);
 }
 
@@ -221,8 +375,8 @@
 .pcard__choice {
   display: flex;
   gap: var(--space-10);
-  padding: var(--space-6) var(--space-18);
-  margin: 0 calc(-1 * var(--space-18));
+  padding: var(--space-4) var(--space-14);
+  margin: 0 calc(-1 * var(--space-14));
   color: var(--text-hint);
   cursor: pointer;
 }
