@@ -36,7 +36,7 @@
 
 .wfd-run {
   padding: var(--space-10) var(--space-12);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
 }
 .wfd-run__row {
   display: flex;
@@ -93,15 +93,15 @@
   font-size: var(--font-size-11);
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 8%, transparent);
-  border: 1px solid var(--warn);
-  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-canvas));
+  border: 0;
+  border-radius: var(--radius-md);
 }
 
 /* declared phases — the plan, deliberately not grouped over the agent list */
 .wfd-phases {
-  margin-top: var(--space-8);
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-6);
+  margin-top: var(--space-12);
+  padding-top: 0;
 }
 .wfd-phases__note {
   font-size: var(--font-size-10);
@@ -160,9 +160,9 @@
   border-left: 2px solid transparent;
   padding: var(--space-7) var(--space-9);
   margin-bottom: var(--space-6);
-  background: var(--bg-hover);
+  background: var(--bg-elevated);
   border-radius: var(--radius-card);
-  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+  box-shadow: none;
   cursor: pointer;
 }
 .wfd-agent:hover {
@@ -249,7 +249,7 @@
   max-height: 55%;
   overflow: auto;
   padding: var(--space-12) var(--space-18);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
 }
 .wfd-ask + .wfd-ask {
   margin-top: var(--space-12);
@@ -266,7 +266,7 @@
 .wfd-col__head {
   flex-shrink: 0;
   padding: var(--space-9) var(--space-14);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
 }
 .wfd-col__head-row {
   display: flex;
@@ -318,9 +318,8 @@
 
 /* the value the agent returned to the script — last in the scroller */
 .wfd-returned {
-  margin-top: var(--space-14);
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-10);
+  margin-top: var(--space-18);
+  padding-top: 0;
 }
 .wfd-returned__label {
   font-size: var(--font-size-10);

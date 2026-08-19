@@ -89,7 +89,7 @@
   min-width: 120px;
   height: 6px;
   border-radius: var(--radius-sm);
-  background: var(--border);
+  background: var(--bg-hover-2);
 }
 /* width % and fill color are data-driven — stay inline (see CommandCard.tsx MeterRow). */
 .cmdcard-meter-fill {

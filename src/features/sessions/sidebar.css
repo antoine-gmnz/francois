@@ -1,19 +1,17 @@
 /* pane [1] — the fleet board (Sidebar.tsx + SessionListBody / SessionContextMenu /
    FilterInput, which share this stylesheet's class names 1:1). */
 
-/* design-refresh: a --bg-panel card with the outer border + 8px panel radius. */
+/* design 9a: the roster is a RAIL, not a card — no border, no radius, flush to
+   the window edge and continuous with the session row above it. Focus is
+   carried by the title alone (.sidebar__title--focused), which is all that is
+   left once the border it used to tint is gone. */
 .sidebar {
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-xl);
   overflow: hidden;
   min-height: 0;
   height: 100%;
-}
-.sidebar--focused {
-  border-color: var(--border-focus);
 }
 
 /* No bottom rule, unlike the old right-rail panel headers: the filter field
@@ -24,7 +22,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-9);
-  padding: var(--space-11) var(--space-12) var(--space-9);
+  padding: var(--space-12) var(--space-14) var(--space-10);
   flex-shrink: 0;
 }
 .sidebar__title {
@@ -84,7 +82,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-7);
-  padding: var(--space-6) var(--space-6) var(--space-5);
+  padding: var(--space-8) var(--space-14) var(--space-6);
   cursor: pointer;
   user-select: none;
 }
@@ -126,25 +124,29 @@
    headings + cards nested under it indent one step each (FR-24), depth-capped
    at three levels (group → project → card). */
 .roster-group__head--group {
-  padding: var(--space-5) var(--space-6) var(--space-4);
+  padding: var(--space-6) var(--space-14) var(--space-4);
 }
 .roster-group__label--group {
   font-size: var(--font-size-9-5);
 }
-.roster-group--nested {
-  margin-left: var(--space-10);
+/* 9a: nesting indents by PADDING, never margin — a margin would stop the
+   full-bleed hover fill short of the panel edge and put the row back in a
+   gutter, which is exactly what the flat roster removes. */
+.roster-group--nested > .roster-group__head {
+  padding-left: var(--space-24);
 }
 .sidebar-card--nested {
-  margin-left: var(--space-10);
+  padding-left: var(--space-22);
 }
 
 /* ── design 7a: the dissolved right column ──────────────────────────────────
    Agents / MCP / Skills / Workflows, ruled off under the cards. Deliberately
    NOT card-shaped: they are an index at the foot of a list, and giving them the
    session card's surface would make the roster read as eight sessions. */
+/* 9a: no top rule — a margin sets it off from the last row instead. */
 .sidebar__footer {
   padding: var(--space-6) var(--space-8) var(--space-8);
-  border-top: 1px solid var(--border);
+  margin-top: var(--space-16);
   flex-shrink: 0;
 }
 .roster-pane {
@@ -196,15 +198,15 @@
 /* filter row (FR-20) — design-refresh: a recessed 30px field on the panel, no
    divider rule (the card list below is already visually separated). */
 .filter-input {
-  padding: 0 var(--space-10) var(--space-10);
+  padding: 0 var(--space-14) var(--space-10);
   flex-shrink: 0;
 }
 .filter-input__field {
   width: 100%;
   height: 30px;
-  background: var(--bg-app);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-base);
   padding: 0 var(--space-10);
   color: var(--text);
   font-size: var(--font-size-12-5);
@@ -212,14 +214,15 @@
   outline: none;
 }
 .filter-input__field:focus {
-  border-color: var(--border-focus);
+  background: var(--bg-hover);
 }
 
 /* card list */
+/* 9a: no side padding — rows run to the panel edge (see .sidebar-card). */
 .sidebar-list {
   flex: 1;
   overflow: auto;
-  padding: 0 var(--space-10) var(--space-10);
+  padding: 0 0 var(--space-10);
 }
 .sidebar-error {
   padding: var(--space-16);
@@ -247,29 +250,36 @@
 /* session card — deliberately NOT built on <ListRow>: it's a stacked 4-row
    card (flex-direction: column), not the single-row layout ListRow assumes
    (same reasoning as the AgentsPanel exception in REFACTOR-CONVENTIONS.md). */
-/* design-refresh FR-6: session rows become metadata cards — idle cards get a
-   raised surface of their own (not transparent-until-hover); selected adds a
-   border-focus inset ring plus a 2px accent rail on top of the raised fill. */
-/* Structure follows the mock's card exactly: name + status on one line, the
-   path under it, then ONE compact meta line (model chip · usage bar · tokens ·
-   age). No hanging 17px indent — the earlier version's left dot forced every
-   row to hang off it, which made the card read as a 5-row list, not a card. */
+/* design 9a: the card stops being a card. No radius, no gutter, no surface of
+   its own — the row runs FULL-BLEED to the panel edge and sits directly on the
+   rail, so a hover fill reads as "this row" rather than as a tile lighting up.
+   That is the mock's own note on the roster, and it is the reason the rows
+   below can drop their inter-card margin: with nothing to separate visually,
+   the padding alone sets the rhythm.
+
+   Structure is unchanged from 7a: name + status on one line, the path under it,
+   then ONE compact meta line (model chip · usage bar · tokens · age). */
 .sidebar-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-7);
-  padding: var(--space-11) var(--space-12);
-  border-radius: var(--radius-card);
+  gap: var(--space-5);
+  padding: var(--space-10) var(--space-14);
   cursor: pointer;
-  margin-bottom: var(--space-6);
-  background: var(--bg-elevated);
+  background: transparent;
   outline: none;
   outline-offset: -1px;
+  /* The state rail (attention / selected) rides here. Transparent at rest, so
+     the text column never shifts when a row picks up a state. */
+  border-left: 3px solid transparent;
+  padding-left: var(--space-11);
 }
 .sidebar-card--selected {
-  background: var(--bg-raised);
+  background: var(--bg-elevated);
 }
 .sidebar-card--hovered {
+  background: var(--bg-elevated);
+}
+.sidebar-card--selected.sidebar-card--hovered {
   background: var(--bg-hover);
 }
 .sidebar-card--cursor {
@@ -278,10 +288,16 @@
 /* A session parked on the user (awaiting_approval / awaiting_input). The colour
    comes from --card-attn, set inline from the contract's STATUS_COLOR, so the
    two parked states keep their own hue and this file never re-states the map.
-   Static, not animated: the pulse means "working", and this session is not. */
+   Static, not animated: the pulse means "working", and this session is not.
+   9a gives this the loudest treatment in the app now that the accent has
+   stepped back: a solid 3px rail plus a warm fill, both full-bleed. */
 .sidebar-card--attention {
   border-left-color: var(--card-attn, var(--attn));
-  background: color-mix(in srgb, var(--card-attn, var(--attn)) 7%, var(--bg-elevated));
+  background: color-mix(in srgb, var(--card-attn, var(--attn)) 12%, var(--bg-panel));
+}
+.sidebar-card--attention.sidebar-card--hovered,
+.sidebar-card--attention.sidebar-card--selected {
+  background: color-mix(in srgb, var(--card-attn, var(--attn)) 18%, var(--bg-panel));
 }
 
 .sidebar-card__row1 {
@@ -324,7 +340,7 @@
   font-family: var(--font-ui);
   font-size: var(--font-size-10-5);
   color: var(--text-dim);
-  background: var(--border);
+  background: var(--bg-hover);
   border-radius: var(--radius-base);
   padding: var(--space-2) var(--space-6);
   flex-shrink: 0;
@@ -339,7 +355,7 @@
   min-width: 16px;
   height: 3px;
   border-radius: var(--radius-xs);
-  background: var(--border-2);
+  background: var(--bg-hover-2);
   overflow: hidden;
 }
 .sidebar-card__bar-fill {
@@ -388,8 +404,8 @@
 /* right-click context menu */
 .context-menu {
   position: fixed;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
+  background: var(--bg-elevated);
+  border: 0;
   border-radius: var(--radius-md);
   min-width: 180px;
   /* The header carries a full cwd — without a cap it would stretch the menu off
@@ -405,7 +421,6 @@
 .context-menu__header {
   padding: var(--space-6) var(--space-10);
   background: var(--bg-deep);
-  border-bottom: 1px solid var(--border);
 }
 .context-menu__header-name {
   font-size: var(--font-size-11);
@@ -479,10 +494,11 @@
 /* Destructive action, ruled off from the safe ones above it. Reads in the
    normal text tone at rest and only turns red on hover, so the menu does not
    open shouting — the confirm step is where the danger is stated. */
+/* 9a: the rule between the safe actions and the destructive one is a gap. */
 .context-menu__sep {
-  height: 1px;
-  margin: var(--space-4) 0;
-  background: var(--border);
+  height: var(--space-5);
+  margin: 0;
+  background: transparent;
 }
 .context-menu__item--danger:hover {
   background: var(--bg-hover);
@@ -568,8 +584,8 @@
   font-size: 10px;
   font-weight: 600;
   color: var(--text-2);
-  background: var(--bg-app);
-  border: 1px solid var(--border-2);
+  background: var(--bg-hover);
+  border: 0;
   border-radius: var(--radius-xs);
   padding: 0 var(--space-4);
   flex-shrink: 0;
@@ -603,6 +619,6 @@
    (the mock's `10px 11px 10px 14px`, minus the 2px left border this card uses
    for its rail where the mock uses an absolutely positioned span). */
 .sidebar--dense .sidebar-card {
-  padding: var(--space-10) var(--space-11) var(--space-10) var(--space-12);
-  gap: var(--space-6);
+  padding: var(--space-8) var(--space-11) var(--space-8) var(--space-9);
+  gap: var(--space-4);
 }

@@ -14,8 +14,7 @@
    truncate (direction: rtl) rather than a trailing ellipsis, so the branch list
    at the tail stays visible — same intent as the FR-13 branch chip. */
 .diff-sibling-line {
-  padding: 6px var(--space-14);
-  border-bottom: 1px solid var(--border);
+  padding: 6px var(--space-14) var(--space-10);
   font-size: 10.5px;
   color: var(--text-faint);
   white-space: nowrap;
@@ -252,7 +251,7 @@
 /* footer / commit bar */
 .diff-footer {
   padding: var(--space-10) var(--space-14);
-  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
   display: flex;
   align-items: center;
   gap: var(--space-14);

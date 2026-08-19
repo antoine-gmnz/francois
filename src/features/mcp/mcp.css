@@ -5,16 +5,15 @@
 .mcp-panel {
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-xl);
+  background: var(--bg-canvas);
+  border: 0;
   overflow: hidden;
   min-height: 0;
   height: 100%;
 }
-.mcp-panel--focused {
-  border-color: var(--border-focus);
-}
+/* 9a: focus is carried by the header title alone (.mcp-header-title--focused),
+   which is all that is left once the border it used to tint is gone — the same
+   call the roster and the three sibling panels made. */
 
 /* ── header ── */
 .mcp-header {
@@ -22,7 +21,6 @@
   align-items: center;
   justify-content: space-between;
   padding: var(--space-11) var(--space-12);
-  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 /* design-refresh: matches .panel-header in styles.css (AGENTS/SKILLS use that
@@ -66,8 +64,7 @@
 .mcp-approval {
   flex: none;
   padding: var(--space-8);
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-panel));
 }
 .mcp-approval-row {
   display: flex;
@@ -164,7 +161,7 @@
 }
 .mcp-popover-header {
   padding: var(--space-11) var(--space-13);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
   display: flex;
   align-items: center;
   gap: var(--space-8);
@@ -197,7 +194,7 @@
 }
 .mcp-popover-footer {
   padding: var(--space-9) var(--space-13);
-  border-top: 1px solid var(--border);
+  background: var(--bg-deep);
   display: flex;
   gap: var(--space-14);
   justify-content: flex-end;
@@ -260,7 +257,7 @@
   align-items: center;
   gap: var(--space-11);
   padding: var(--space-14) var(--space-16);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
 }
 .mcp-overlay-icon {
   color: var(--accent);

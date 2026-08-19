@@ -50,6 +50,23 @@ export interface ComposerProps {
    * reports no limit — there is no denominator, so there is no percentage.
    */
   contextPercent: number | null;
+  /**
+   * split-session FR-6: this pane is not the focused one. The composer renders
+   * IDENTICALLY — same bar, same buttons, same hint row, same height — because
+   * a layout that reflows when focus moves is harder to read than one that does
+   * not; the focus chip in the pane header is the single signal (see
+   * .split-pane__header in app.css).
+   *
+   * What it changes is reach, not looks. FR-12 gives the keyboard to exactly one
+   * pane: the textarea goes `readOnly` and drops out of the tab order, the
+   * buttons go inert, and the slash popup cannot open — so a keystroke can never
+   * land in the wrong session's turn. A click anywhere on the bar calls
+   * `onInertClick`, which focuses the pane; ConversationView's
+   * `shouldFocusComposer` then hands it the caret on that edge.
+   */
+  inert?: boolean;
+  /** Focus this pane. Only called while `inert`. */
+  onInertClick?: () => void;
   // Paste-to-attach (FR-14) is NOT a prop: the textarea below carries the native
   // `disabled` attribute, and a disabled control fires no paste event, so a
   // handler here would die with the session while drop and `+` keep staging.
@@ -78,8 +95,13 @@ export default function Composer({
   onRemoveAttachment,
   attachError,
   contextPercent,
+  inert = false,
+  onInertClick,
 }: ComposerProps) {
   const banners = composerErrorBanners(sendError, attachError);
+  // One gate for every interactive part of the bar: while inert the pane does
+  // not own the keyboard, so nothing here may be typed into, tabbed to or fired.
+  const sendDisabled = disabled || inert || !input.trim();
   return (
     <div className="composer-wrap">
       {/* design-refresh FR-8: capped + centered on the transcript's reading
@@ -87,8 +109,10 @@ export default function Composer({
           also the positioning context for the two popovers below — they
           anchor to the input bar's width, not the pane's. */}
       <div className="composer-col">
-        {/* slash-menu popup — anchored above the input bar, never covering it (FR-5) */}
-        {popupOpen && (
+        {/* slash-menu popup — anchored above the input bar, never covering it (FR-5).
+            Never on an inert pane: it is driven by the caret, which lives in the
+            focused pane's composer. */}
+        {popupOpen && !inert && (
           <SlashMenu
             items={filtered}
             selIdx={selIdx}
@@ -110,17 +134,24 @@ export default function Composer({
             ))}
           </div>
         )}
-        <div className="composer-bar">
+        {/* The click target that focuses an inert pane is the WHOLE bar, so the
+            gesture is the same wherever in it you aim (the buttons inside are
+            inert while it is, so none of them swallows the click). */}
+        <div className="composer-bar" onClick={inert ? onInertClick : undefined}>
           {/* session-attachments (design §1): a sibling of the › glyph, not a
               web-style icon button. Opens the native picker in the core.
-              Never disabled: §7 gates *sending* on `disabled`, not *staging* —
-              drop (webview-level) and paste (document-level, see ComposerProps)
-              stay live in every session state, and the `+` is the third gesture
-              for the same thing (§3). */}
+              Never disabled BY SESSION STATE: §7 gates *sending* on `disabled`,
+              not *staging* — drop (webview-level) and paste (document-level, see
+              ComposerProps) stay live in every session state, and the `+` is the
+              third gesture for the same thing (§3). It IS inert on an unfocused
+              pane, which is a different question: staging into a session you are
+              not looking at has no gesture that could have meant it. */}
           <button
             type="button"
             className="composer-attach"
             onClick={onAttachClick}
+            disabled={inert}
+            tabIndex={inert ? -1 : undefined}
             aria-label="Attach files"
             title="Attach files"
           >
@@ -129,10 +160,16 @@ export default function Composer({
           <span className="composer-arrow" style={{ color: disabled ? 'var(--text-disabled)' : 'var(--accent)' }}>
             ›
           </span>
+          {/* readOnly, not disabled: a disabled textarea renders in the UA's own
+              greyed treatment, which is exactly the focus-dependent look this
+              pane is not supposed to have. readOnly looks identical to a live
+              field and still refuses every keystroke. */}
           <textarea
             ref={inputRef}
             value={input}
             disabled={disabled}
+            readOnly={inert}
+            tabIndex={inert ? -1 : undefined}
             placeholder={placeholder}
             onChange={onInputChange}
             onKeyDown={onInputKey}
@@ -142,9 +179,10 @@ export default function Composer({
           {/* design-refresh FR-8: a visible Send button alongside Enter-to-send. */}
           <button
             type="button"
-            disabled={disabled || !input.trim()}
+            disabled={sendDisabled}
+            tabIndex={inert ? -1 : undefined}
             onClick={onSend}
-            className={disabled || !input.trim() ? 'composer-send is-disabled' : 'composer-send'}
+            className={sendDisabled ? 'composer-send is-disabled' : 'composer-send'}
           >
             Send
           </button>

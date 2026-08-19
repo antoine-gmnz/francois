@@ -145,15 +145,11 @@ function SessionPaneSection({
     <section
       onClick={onFocus}
       style={area}
-      className={
-        [
-          'split-pane',
-          focused ? 'split-pane--focused' : null,
-          dense ? 'split-pane--dense' : null,
-        ]
-          .filter(Boolean)
-          .join(' ')
-      }
+      // No `split-pane--focused`: a pane looks the same focused or not, so there
+      // is nothing for the modifier to select. The focus chip in the header is
+      // the signal; `focused` still drives BEHAVIOUR below (who owns the
+      // keyboard, FR-12) — just not appearance.
+      className={['split-pane', dense ? 'split-pane--dense' : null].filter(Boolean).join(' ')}
       data-pane={index}
     >
       {/* header */}
@@ -174,8 +170,11 @@ function SessionPaneSection({
           {session?.name ?? 'no session'}
         </span>
         {focused ? (
-          // The accent chip carries the focus signal in TEXT as well as colour
-          // (design §Accessibility) — the border must not be the only cue.
+          // The ONLY thing in a pane that changes with focus. Everything else —
+          // header surface, name weight, tab strip, composer — is now identical
+          // in both states, so this chip is not competing with four other cues
+          // for one bit. It says it in TEXT as well as colour, which matters
+          // more than ever now that it is alone (design §Accessibility).
           <span className="split-pane__focus-chip">focus</span>
         ) : (
           session && (
@@ -231,8 +230,9 @@ function SessionPaneSection({
               className={t.id === tab ? 'split-tab split-tab--on' : 'split-tab'}
             >
               {t.label}
-              {/* FR-8: the same count, scoped to THIS pane's session. The badge is
-                  the one place an unfocused pane may carry colour. */}
+              {/* FR-8: the same count, scoped to THIS pane's session — and read
+                  the same either way: uncommitted files do not become less true
+                  because you are looking at the other pane. */}
               {t.id === 'diff' && diffCount > 0 && <BadgePill>{diffCount}</BadgePill>}
             </span>
           ))}
@@ -449,7 +449,7 @@ function ShellPaneSection({
     <section
       onClick={onFocus}
       style={area}
-      className={['split-pane', focused ? 'split-pane--focused' : null].filter(Boolean).join(' ')}
+      className="split-pane"
       data-pane={index}
     >
       <div className="split-pane__header">

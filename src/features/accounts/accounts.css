@@ -37,7 +37,7 @@
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
-  border: 1px solid var(--border-emphasis);
+  border: 0;
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-modal);
   overflow: hidden;
@@ -47,7 +47,7 @@
   align-items: center;
   gap: var(--space-9);
   padding: var(--space-12) var(--space-14);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
   flex-shrink: 0;
 }
 /* The mock's panel-title role: 11.5px/600 at .09em, uppercased in CSS so the
@@ -63,7 +63,7 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
   color: var(--text-dim);
-  background: var(--border);
+  background: var(--bg-hover);
   border-radius: var(--radius-2xl);
   padding: var(--space-1) var(--space-7);
 }
@@ -76,7 +76,7 @@
   flex-direction: column;
   gap: var(--space-8);
   padding: var(--space-11) var(--space-14);
-  border-top: 1px solid var(--border);
+  background: var(--bg-deep);
   font-family: var(--font-ui);
 }
 .acc-hints {
@@ -104,8 +104,8 @@
 .acc-rename-input {
   min-width: 0;
   width: 100%;
-  background: var(--bg-app);
-  border: 1px solid var(--accent);
+  background: var(--accent-soft-bg);
+  border: 0;
   border-radius: var(--radius-base);
   padding: var(--space-2) var(--space-6);
   font-family: inherit;
@@ -343,8 +343,8 @@
   text-transform: uppercase;
 }
 .acc-endpoint-input {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
+  background: var(--bg-raised);
+  border: 0;
   border-radius: var(--radius-base);
   height: 30px;
   color: var(--text-bright);
@@ -355,7 +355,7 @@
   outline: none;
 }
 .acc-endpoint-input:focus {
-  border-color: var(--border-focus);
+  background: var(--bg-hover);
 }
 .acc-endpoint-input--mono {
   font-family: var(--font-mono);
@@ -561,8 +561,8 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-10);
   font-weight: 600;
-  background: color-mix(in srgb, var(--acc-hue) 16%, var(--bg-app));
-  border: 1px solid color-mix(in srgb, var(--acc-hue) 38%, var(--bg-app));
+  background: color-mix(in srgb, var(--acc-hue) 24%, var(--bg-panel));
+  border: 0;
   color: color-mix(in srgb, var(--acc-hue) 78%, var(--text-bright));
 }
 .acc-tile--lg {
@@ -689,10 +689,12 @@
 /* The rule that runs the eyebrow out to the "+ ADD KEY" action — same beat
    the mock uses to turn a label into a full section header without a border
    under the whole row (which would compete with the cards below it). */
+/* 9a: the rule that ran out from a section label is a gap — the label's own
+   weight and the space under it are what set the section off. */
 .acc-section-rule {
   flex: 1;
   height: 1px;
-  background: var(--border);
+  background: transparent;
 }
 .acc-section-action {
   flex-shrink: 0;
@@ -749,8 +751,8 @@
   gap: var(--space-10);
   padding: var(--space-13);
   border-radius: var(--radius-xl);
-  background: var(--bg-hover);
-  border: 1px solid var(--border-emphasis);
+  background: var(--bg-elevated);
+  border: 0;
   cursor: pointer;
 }
 /* At-limit / needs-attention — deeper surface + a red edge, distinct from the
@@ -1066,9 +1068,9 @@
   gap: var(--space-8);
 }
 .acc-cli-install {
-  background: transparent;
-  border: 1px solid var(--border-emphasis);
-  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-base);
   padding: var(--space-6) var(--space-11);
   color: var(--text-bright);
   font-family: var(--font-mono);

@@ -21,8 +21,8 @@
 }
 
 .new-session-modal__field {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
+  background: var(--bg-raised);
+  border: 0;
   border-radius: var(--radius-base);
   height: 32px;
   color: var(--text);
@@ -59,7 +59,7 @@
 /* The popup is UA-rendered (see color-scheme in styles.css); these keep the
    closed row and the open list on the same panel color. */
 .new-session-modal__field--select option {
-  background: var(--bg-panel);
+  background: var(--bg-raised);
   color: var(--text);
 }
 

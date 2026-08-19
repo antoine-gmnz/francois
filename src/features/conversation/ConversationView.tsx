@@ -408,13 +408,21 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
         {!isPinned && <JumpToLatestChip onClick={jumpToLatest} />}
       </div>
 
-      {/* input bar — split-session FR-6: the unfocused pane gets an inert strip
-          instead. It reads as an invitation, not a disabled input: no ⏎ hint, no
-          caret, and clicking it only moves focus. */}
-      {inert ? (
-        (inertFooter ?? <InertComposer onClick={onFocusRequest} />)
+      {/* input bar — split-session FR-6: an unfocused pane renders the SAME
+          composer, not a substitute strip. It used to get a shorter "click to
+          focus this pane" bar, which meant the footer changed height and the
+          transcript above it reflowed every time focus moved between panes. The
+          pane header's focus chip is the one signal now; `inert` below takes the
+          keyboard away (FR-12) without touching the layout.
+          `inertFooter` is a different question and still wins: at 3–4 panes
+          split-by-4 FR-11 puts a PaneFooter here instead, because there is not
+          room for four composers — that is a density decision, not a focus one. */}
+      {inert && inertFooter ? (
+        inertFooter
       ) : (
       <Composer
+        inert={inert}
+        onInertClick={onFocusRequest}
         status={status}
         disabled={disabled}
         input={input}
@@ -461,19 +469,9 @@ function Centered({ children }: { children: React.ReactNode }) {
   return <div className="conv-item conv-centered">{children}</div>;
 }
 
-/** split-session FR-6 / design §Composer: the unfocused pane's composer. */
-function InertComposer({ onClick }: { onClick?: () => void }) {
-  return (
-    <div className="composer-wrap">
-      <div className="composer-col">
-        <div className="composer-bar composer-bar--inert" onClick={onClick}>
-          <span className="composer-arrow composer-arrow--inert">›</span>
-          <span className="composer-inert-label">click to focus this pane</span>
-        </div>
-      </div>
-    </div>
-  );
-}
+// The unfocused pane's substitute composer is gone: it rendered a shorter bar
+// than the real one, so the footer changed height with focus. Composer now takes
+// an `inert` prop and renders identically in both states.
 
 // The per-block renderer moved to ./Block.tsx — agent-tab renders a subagent's
 // transcript with the same component, so there is exactly one of it.
