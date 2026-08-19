@@ -251,8 +251,10 @@
   flex: 0 0 36px;
   display: flex;
   align-items: center;
-  gap: var(--space-10);
-  padding: 0 var(--space-12);
+  /* design 10a: an 8px gap and an 8px inset, and every control 26px tall — the row
+     used to mix 20px and 23px targets sitting shoulder to shoulder. */
+  gap: var(--space-8);
+  padding: 0 var(--space-8);
   /* 9a: the session row shares the RAIL surface with the roster beside it, so
      the two read as one continuous L of chrome around the terminal — recessed
      a step under the app row above, raised a step over the terminal below. */
@@ -284,32 +286,30 @@
 .session-row__fold--on {
   color: var(--text-dim);
 }
-.session-row__crumbs {
-  display: flex;
-  align-items: center;
-  gap: var(--space-7);
-  min-width: 0;
-  flex-shrink: 1;
-}
-.session-row__slash {
-  color: var(--text-disabled);
-  flex-shrink: 0;
-}
+/* design 10a: the ONE thing in the row that may shrink; every sibling is
+   `flex-shrink: 0`, which is what stops mid-string crops.
+   `0 1 auto`, not `1 1 auto` — 11a's markup moves the growing to the spacer AFTER
+   the tab cluster. A title that also GREW would re-flow the tabs beside it every
+   time the right-hand cluster changed width (`Stop` appearing when a turn starts,
+   the status word going at the compact tier), so the extension and agent tabs
+   would slide under the cursor while a turn ran. Shrinking is the job; growing was
+   never part of it. */
 .session-row__name {
+  flex: 0 1 auto;
+  min-width: 60px;
   font-size: var(--font-size-12-5);
   font-weight: 600;
   color: var(--text-bright);
   cursor: pointer;
-  max-width: 220px;
 }
 .session-row__name:hover {
   color: var(--accent);
 }
-.session-row__path {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-faint);
-  max-width: 240px;
+/* The separation between the title and the tab cluster. 9a draws no rules in the
+   chrome, so a divider keeps its JOB and drops its line — see .app-row__divider. */
+.session-row__gap {
+  width: var(--space-2);
+  flex-shrink: 0;
 }
 /* The state pill. Its hue is set inline from the contract's STATUS_COLOR, so
    this file never re-states that map. */
@@ -318,10 +318,15 @@
   align-items: center;
   gap: var(--space-6);
   flex-shrink: 0;
-  height: 20px;
-  padding: 0 var(--space-8);
-  border: 1px solid;
-  border-radius: 11px;
+  height: 26px;
+  padding: 0 var(--space-9);
+  /* 9a: tone instead of stroke. The hue arrives inline from the contract's
+     STATUS_COLOR, so `currentColor` is all this file needs to know — it never
+     re-states that map. */
+  border: 0;
+  background: color-mix(in srgb, currentColor 13%, var(--bg-panel));
+  border-radius: var(--radius-base);
+  font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
   white-space: nowrap;
 }
@@ -332,13 +337,14 @@
 .session-row__chip,
 .session-row__mode {
   flex-shrink: 0;
-  height: 21px;
+  height: 26px;
   display: flex;
   align-items: center;
-  padding: 0 var(--space-8);
+  padding: 0 var(--space-9);
   background: var(--bg-raised);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-base);
+  font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
   color: var(--text-2);
   white-space: nowrap;
@@ -349,7 +355,30 @@
 }
 .session-row__mode--danger {
   color: var(--error);
-  border-color: var(--error-dim);
+}
+/* design 10a: the context readout is context ALONE now — the `. 19:13` it used to
+   carry was the same number the status pill already showed, and merging the two
+   clocks is one of the three things turn 10 fixes before anything else. The bar
+   outlives the figure by one tier: a proportion stays glanceable at a width where
+   a five-character number does not. */
+.session-row__context {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  flex-shrink: 0;
+}
+.session-row__context-track {
+  width: 46px;
+  height: 4px;
+  flex-shrink: 0;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover-2);
+  overflow: hidden;
+}
+.session-row__context-fill {
+  display: block;
+  height: 4px;
+  background: var(--accent);
 }
 .session-row__figure {
   font-family: var(--font-mono);
@@ -358,9 +387,6 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   white-space: nowrap;
-}
-.session-row__figure-faint {
-  color: var(--text-faint);
 }
 /* The view segment — a recessed track, icon-only at this height. */
 .session-row__views {
@@ -379,7 +405,7 @@
   align-items: center;
   justify-content: center;
   width: 26px;
-  height: 19px;
+  height: 22px;
   border-radius: var(--radius-sm);
   color: var(--text-faint);
   cursor: pointer;
@@ -416,9 +442,9 @@
   align-items: center;
   gap: var(--space-6);
   flex: 0 1 auto;
-  min-width: 70px;
+  min-width: 0;
   max-width: 140px;
-  height: 21px;
+  height: 26px;
   padding: 0 var(--space-6) 0 var(--space-8);
   border: 0;
   border-radius: var(--radius-base);
@@ -444,12 +470,67 @@
 .session-row__agent-close:hover {
   color: var(--text-bright);
 }
+/* Muted, not accent: 9a's accent means THE live thing, and a branch name is a
+   readout. The `\2442` alone is what survives the medium tier — the name moves to its
+   tooltip, which is where 10a also sent the path. */
 .session-row__branch {
   font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
-  color: var(--accent);
+  color: var(--text-muted);
   flex-shrink: 0;
   white-space: nowrap;
+}
+.session-row__branch--glyph {
+  font-size: var(--font-size-11);
+  cursor: default;
+}
+
+/* design 10a: the overflow. It holds exactly what the bar stopped rendering, in the
+   same drop order, so its contents are derivable from the width rather than taste. */
+.session-row__overflow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.session-row__overflow-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: var(--bg-raised);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-12);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.session-row__overflow-btn:hover,
+.session-row__overflow-btn--on {
+  background: var(--bg-hover);
+}
+.session-row__overflow-panel {
+  position: absolute;
+  top: calc(100% + var(--space-6));
+  right: 0;
+  z-index: 60;
+}
+.session-row__overflow-layout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  margin-top: var(--space-4);
+  padding: var(--space-8) var(--space-11);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+}
+.session-row__overflow-layout-label {
+  font-size: var(--font-size-10-5);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 /* Same treatment as .app-row__divider — the gap, not the line. */
 .session-row__divider {
@@ -466,8 +547,8 @@
   align-items: center;
   gap: var(--space-6);
   flex-shrink: 0;
-  height: 23px;
-  padding: 0 var(--space-9);
+  height: 26px;
+  padding: 0 var(--space-10);
   /* 9a draws this as a filled red-family chip (#2b1c1a) with no edge — the fill
      alone is enough to read as destructive without it being a filled BUTTON,
      which in permanent chrome would look like an error the app is stuck in. */

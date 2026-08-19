@@ -559,3 +559,274 @@
 .ext-tab-chip__glyph {
   color: var(--text-faint);
 }
+
+/* ── design 11a: the plugin surface in the session row ─────────────────────────
+   `◈` is the whole thing — pinned tabs to its left, every installed extension
+   inside it. Nothing about plugins appears anywhere else in the chrome.
+
+   The two controls on a menu row look deliberately unalike: the pin is a glyph
+   (cosmetic, reversible), the switch is a switch (it turns hooks, MCP servers and
+   skills on and off with it). Same weight would invite the same click. */
+.ext-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+.ext-bar__tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 26px;
+  max-width: 150px;
+  padding: 0 var(--space-8) 0 var(--space-6);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-12);
+  color: var(--text-hint);
+  cursor: pointer;
+}
+.ext-bar__tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+.ext-bar__tab--on,
+.ext-bar__tab--on:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
+  color: var(--text-strong);
+}
+.ext-bar__glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  background: var(--bg-raised);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-11);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.ext-bar__glyph:hover,
+.ext-bar__glyph--on {
+  background: var(--bg-hover);
+}
+/* Folded: the glyph keeps the open tab's tile, so a narrow window never loses
+   your place — it only stops offering the ones you were not on. */
+.ext-bar__glyph--carrying {
+  width: auto;
+  padding: 0 var(--space-7);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
+}
+.ext-bar__glyph-count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-dim);
+}
+.ext-bar__caret {
+  font-size: var(--font-size-9);
+  color: var(--text-muted);
+}
+
+/* The identity tile. Never drawn from the accent / attention / error families:
+   in this chrome those mean "the live thing", "come here" and "this broke", and a
+   plugin's mark is none of the three. */
+.ext-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--bg-canvas);
+}
+.ext-tile--tab {
+  width: 16px;
+  height: 16px;
+  font-size: var(--font-size-8-5);
+}
+.ext-tile--row {
+  width: 18px;
+  height: 18px;
+  font-size: var(--font-size-9);
+}
+.ext-tile--purple {
+  background: var(--hue-purple);
+}
+.ext-tile--teal {
+  background: var(--hue-teal);
+}
+.ext-tile--blue {
+  background: var(--hue-blue);
+}
+.ext-tile--slate {
+  background: var(--hue-slate);
+}
+.ext-tile--clay {
+  background: var(--hue-clay);
+}
+/* Disabled: the row keeps its tile, but the tile loses its colour — the same
+   switch that took the tab away took the identity with it. */
+.ext-tile--dim {
+  background: var(--bg-hover-2);
+  color: var(--text-muted);
+}
+
+/* Same panel shell, width and footer grammar as the run chip's menu — the bar has
+   one menu language, not four bespoke popovers. */
+.ext-bar__menu {
+  position: absolute;
+  top: calc(100% + var(--space-6));
+  left: 0;
+  z-index: 60;
+  width: 322px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+  overflow: hidden;
+}
+.ext-bar__menu-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-9) var(--space-11) var(--space-7);
+}
+.ext-bar__menu-title {
+  font-size: var(--font-size-11);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-hint);
+}
+.ext-bar__menu-count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-dim);
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-6);
+}
+.ext-bar__menu-key {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+}
+.ext-bar__menu-error {
+  padding: var(--space-6) var(--space-11);
+  font-size: var(--font-size-11);
+  color: var(--error-bright);
+}
+.ext-bar__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+  padding: var(--space-8) var(--space-11);
+  cursor: pointer;
+}
+.ext-bar__row:hover {
+  background: var(--bg-raised);
+}
+.ext-bar__row--on,
+.ext-bar__row--on:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+}
+.ext-bar__row-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+.ext-bar__row-label {
+  font-size: var(--font-size-12-5);
+  color: var(--text-bright);
+}
+.ext-bar__row-label--off {
+  color: var(--text-dim);
+}
+.ext-bar__row-detail {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-muted);
+}
+.ext-bar__pin {
+  font-size: var(--font-size-10);
+  color: var(--text-disabled);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ext-bar__pin:hover {
+  color: var(--text-hint);
+}
+.ext-bar__pin--on,
+.ext-bar__pin--on:hover {
+  color: var(--accent);
+}
+/* A disabled extension has nothing to pin: the tab cannot exist without it. The
+   glyph keeps its box so the switch column never shifts under the cursor. */
+.ext-bar__pin--gone {
+  visibility: hidden;
+  cursor: default;
+}
+.ext-bar__switch {
+  width: 26px;
+  height: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xl);
+  background: var(--bg-hover-2);
+  cursor: pointer;
+}
+.ext-bar__switch--on {
+  justify-content: flex-end;
+  background: var(--accent);
+}
+.ext-bar__switch-knob {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.ext-bar__switch--on .ext-bar__switch-knob {
+  background: var(--bg-app);
+}
+.ext-bar__menu-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-11);
+  background: var(--bg-deep);
+  font-size: var(--font-size-12);
+  color: var(--text-hint);
+  cursor: pointer;
+}
+.ext-bar__menu-foot:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+.ext-bar__menu-foot-glyph {
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+}
+.ext-bar__menu-empty {
+  padding: var(--space-4) var(--space-11) var(--space-9);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.ext-bar__tab-close {
+  font-size: var(--font-size-10);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.ext-bar__tab-close:hover {
+  color: var(--text-bright);
+}

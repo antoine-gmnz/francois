@@ -16,7 +16,7 @@
         "title": "Francois",
         "width": 1360,
         "height": 864,
-        "minWidth": 1080,
+        "minWidth": 720,
         "minHeight": 700,
         "decorations": true,
         "theme": "Dark"

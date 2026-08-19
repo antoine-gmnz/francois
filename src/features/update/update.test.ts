@@ -52,6 +52,7 @@ const session = (id: string, status: SessionMeta['status']): SessionMeta => ({
   startedAt: 0,
   lastActivityAt: 0,
   permissionMode: 'default',
+  permissionModeSince: 0,
   runtime: 'native',
   accountId: 'default',
   agentRuntime: 'claude-code',

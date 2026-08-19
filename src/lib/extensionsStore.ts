@@ -18,6 +18,7 @@
 import type { StateCreator } from 'zustand';
 import type { AppError } from '../../contract/common';
 import type { ExtensionId, ExtensionInfo, PanelId, StreamId } from '../../contract/extensions';
+import { parsePinnedExtensions, togglePinned } from '../features/extensions/ext-bar';
 import { EMPTY_LOG, appendLogLines, extIdFromTab, extTabId, type LogBuffer } from '../features/extensions/extensions';
 import { extensionsCloseStream } from './api';
 import type { AppState, MainTab } from './store';
@@ -70,6 +71,15 @@ export interface ExtensionsSlice {
   openExtTab: (extensionId: ExtensionId) => void;
   closeExtTab: (extensionId: ExtensionId) => void;
 
+  /**
+   * rework-top-bar (design 11a): the extensions that have earned a tab in the
+   * session row, in the order they were pinned. Cosmetic and reversible — the pin
+   * decides how much bar width an extension gets, `enabled` decides whether it
+   * runs at all, and 11a's whole point is that those two must not be one click.
+   */
+  extPinnedIds: ExtensionId[];
+  toggleExtPin: (extensionId: ExtensionId) => void;
+
   /** FR-42: at most one live stream per panel, keyed by panel id. */
   extStreams: Record<PanelId, ExtStreamState>;
   startExtStream: (panelId: PanelId, root: string | null, sessionId: string | null, token: string | null) => void;
@@ -114,6 +124,27 @@ export function closeStreamsForRemovedPanels(
   return withoutPanels(streams, (panelId) => !remove(panelId));
 }
 
+/** rework-top-bar (design 11a): window chrome, not extension state — hence localStorage. */
+const PINNED_STORAGE_KEY = 'francois.extensions.pinned';
+
+function loadPinned(): ExtensionId[] {
+  try {
+    return parsePinnedExtensions(localStorage.getItem(PINNED_STORAGE_KEY));
+  } catch {
+    // A restricted/ full storage degrades to "nothing pinned" — never to a crash
+    // in permanent chrome, which is the same rule every other pref here follows.
+    return [];
+  }
+}
+
+function savePinned(ids: readonly ExtensionId[]): void {
+  try {
+    localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(ids));
+  } catch {
+    /* the pin still applies for this run */
+  }
+}
+
 export const createExtensionsSlice: StateCreator<AppState, [], [], ExtensionsSlice> = (set) => ({
   extensions: [],
   setExtensions: (list) =>
@@ -123,8 +154,14 @@ export const createExtensionsSlice: StateCreator<AppState, [], [], ExtensionsSli
       const disabled = new Set<string>(list.filter((e) => !e.enabled).map((e) => e.id));
       if (disabled.size === 0) return { extensions: list };
       const activeExt = extIdFromTab(s.mainTab);
+      // rework-top-bar (design 11a): the pin goes with the tab. "A disabled
+      // extension keeps its row but loses its tile colour and its pin — the tab
+      // cannot exist without the extension, so one switch removes both."
+      const pinned = s.extPinnedIds.filter((id) => !disabled.has(id));
+      if (pinned.length !== s.extPinnedIds.length) savePinned(pinned);
       return {
         extensions: list,
+        extPinnedIds: pinned,
         extStickyIds: s.extStickyIds.filter((id) => !disabled.has(id)),
         extStreams: closeStreamsForRemovedPanels(s.extStreams, (panelId) => disabled.has(panelId.split(':')[0])),
         mainTab: activeExt !== null && disabled.has(activeExt) ? ('session' as MainTab) : s.mainTab,
@@ -153,6 +190,14 @@ export const createExtensionsSlice: StateCreator<AppState, [], [], ExtensionsSli
       extStreams: closeStreamsForRemovedPanels(s.extStreams, (panelId) => panelId.split(':')[0] === extensionId),
       mainTab: s.mainTab === extTabId(extensionId) ? ('session' as MainTab) : s.mainTab,
     })),
+
+  extPinnedIds: loadPinned(),
+  toggleExtPin: (extensionId) =>
+    set((s) => {
+      const next = togglePinned(s.extPinnedIds, extensionId);
+      savePinned(next);
+      return { extPinnedIds: next };
+    }),
 
   extStreams: {},
   // FR-42: opening a stream for a panel that already has one replaces it — a

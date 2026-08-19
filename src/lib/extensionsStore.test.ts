@@ -231,3 +231,34 @@ describe('log-tail streams', () => {
     expect(useStore.getState().extStreams['docker:logs'].log.lines).toEqual([]);
   });
 });
+
+// ---------- rework-top-bar (design 11a): the pin set ----------
+
+describe('the pinned extensions', () => {
+  it('starts empty and toggles on and off', () => {
+    expect(useStore.getState().extPinnedIds).toEqual([]);
+    useStore.getState().toggleExtPin('docker');
+    expect(useStore.getState().extPinnedIds).toEqual(['docker']);
+    useStore.getState().toggleExtPin('docker');
+    expect(useStore.getState().extPinnedIds).toEqual([]);
+  });
+
+  it('keeps the order things were pinned in — that IS the bar order', () => {
+    useStore.getState().toggleExtPin('cohorte');
+    useStore.getState().toggleExtPin('docker');
+    expect(useStore.getState().extPinnedIds).toEqual(['cohorte', 'docker']);
+  });
+
+  it('drops the pin when the extension is switched off (11a: one switch removes both)', () => {
+    useStore.getState().toggleExtPin('docker');
+    useStore.getState().setExtensions([ext({ id: 'docker', enabled: false })]);
+    expect(useStore.getState().extPinnedIds).toEqual([]);
+  });
+
+  it('leaves the pins of extensions that stayed enabled alone', () => {
+    useStore.getState().toggleExtPin('docker');
+    useStore.getState().toggleExtPin('cohorte');
+    useStore.getState().setExtensions([ext({ id: 'docker' }), ext({ id: 'cohorte', enabled: false })]);
+    expect(useStore.getState().extPinnedIds).toEqual(['docker']);
+  });
+});

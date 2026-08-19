@@ -36,6 +36,7 @@ function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
     startedAt: 1_000,
     lastActivityAt: 1_000,
     permissionMode: 'default',
+    permissionModeSince: 0,
     runtime: 'native',
     accountId: 'default',
     agentRuntime: 'claude-code',

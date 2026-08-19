@@ -141,6 +141,18 @@ pub(crate) struct SessionMeta {
     error_message: Option<String>,
     #[serde(rename = "permissionMode")]
     permission_mode: String,
+    /// rework-top-bar (design 11c): the epoch-ms stamp of the LAST permission-mode
+    /// write — creation counts as the first one. The run chip's panel renders it as
+    /// the `on since HH:MM` line under `bypass`, which is the one mode whose age is
+    /// worth knowing before you walk away from it.
+    #[serde(rename = "permissionModeSince")]
+    permission_mode_since: u64,
+    /// rework-top-bar (design 11c): the reasoning-effort level this session's next
+    /// turn spawns with — ABSENT (never null) when the model runs at its own
+    /// default, same omit-not-null convention as `projectId`. Already persisted on
+    /// `Session`; it simply had no way onto the wire before the run chip needed it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
     runtime: String,
     /// projects FR-18: the project this session was created under; ABSENT (never
     /// null) when unlinked, so a pre-projects frontend and a pre-projects
@@ -430,6 +442,12 @@ pub(crate) struct Session {
     error_message: Option<String>,
     effort: Option<String>,  // --effort level (None = model default)
     permission_mode: String, // contract PermissionMode; "default" = inherit ~/.claude settings
+    /// rework-top-bar (design 11c): epoch ms of the last `permission_mode` write.
+    /// Seeded at creation (and at load, from the persisted key) so the value is
+    /// always a real instant rather than an "unknown" the frontend has to render
+    /// around. NOT a `Session::new` parameter — every creation path wants the same
+    /// thing, the session's own start.
+    permission_mode_since: u64,
     runtime: String,         // contract ClaudeRuntime; "native" | "wsl"
     /// When true, Francois auto-approves `git`/`gh` tool calls on the stdio
     /// control channel instead of denying them (NewSessionRequest.allowGit) —
@@ -594,6 +612,7 @@ impl Session {
             error_message: None,
             effort,
             permission_mode,
+            permission_mode_since: started_at,
             runtime,
             allow_git,
             project_id,
@@ -658,6 +677,8 @@ impl Session {
             last_activity_at: self.last_activity_at,
             error_message: self.error_message.clone(),
             permission_mode: self.permission_mode.clone(),
+            permission_mode_since: self.permission_mode_since,
+            effort: self.effort.clone(),
             runtime: self.runtime.clone(),
             project_id: self.project_id.clone(),
             worktree: self.worktree.clone(),

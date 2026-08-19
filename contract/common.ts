@@ -210,6 +210,20 @@ export interface SessionMeta {
   errorMessage?: string; // set when status === 'error'
   /** Permission mode for this session's turns; 'default' = inherit ~/.claude settings. */
   permissionMode: PermissionMode;
+  /**
+   * rework-top-bar (design 11c): epoch ms of the last permissionMode write —
+   * creation counts as the first one, so this is never absent and never 0. The run
+   * chip renders it as the `on since HH:MM` line under `bypass`, the one mode whose
+   * age you want before walking away from it. Stamped on EVERY write, including a
+   * no-op re-pick: "on since" means since you last said so.
+   */
+  permissionModeSince: number;
+  /**
+   * rework-top-bar (design 11c): the reasoning-effort level this session's NEXT turn
+   * spawns with. Absent (never null) when the model runs at its own default — which
+   * is also the only state for a model whose ModelInfo advertises no `efforts`.
+   */
+  effort?: string;
   /** CLI runtime for this session; 'wsl' spawns `wsl.exe -- claude …` (Windows only). */
   runtime: ClaudeRuntime;
   /**

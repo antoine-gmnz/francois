@@ -81,6 +81,7 @@ function meta(id: string, lastActivityAt: number, status: SessionMeta['status'] 
     startedAt: 0,
     lastActivityAt,
     permissionMode: 'default',
+    permissionModeSince: 0,
     runtime: 'native',
     accountId: 'default',
     agentRuntime: 'claude-code',
