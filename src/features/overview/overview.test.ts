@@ -58,7 +58,7 @@ function project(over: Partial<ProjectMeta> & { id: string }): ProjectMeta {
 
 const derivedMap = (entries: Record<string, Partial<SessionDerived>>): Map<string, SessionDerived> =>
   new Map(
-    Object.entries(entries).map(([id, d]) => [id, { fileCount: null, runningAgentCount: 0, ...d }]),
+    Object.entries(entries).map(([id, d]) => [id, { fileCount: null, runningAgentCount: 0, addedLines: null, deletedLines: null, ...d }]),
   );
 
 // ---------- countByStatus ----------

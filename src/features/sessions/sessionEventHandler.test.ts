@@ -12,6 +12,11 @@ function makeCtx(): MockContext {
     onUsage: vi.fn(),
     onAgentUpdate: vi.fn(),
     onRemoved: vi.fn(),
+    onTurnStart: vi.fn(),
+    onToolStart: vi.fn(),
+    onPermissionAsked: vi.fn(),
+    onPermissionResolved: vi.fn(),
+    onCleared: vi.fn(),
   };
 }
 
@@ -93,29 +98,58 @@ describe('handleSessionEvent', () => {
     expect(calledCount(ctx)).toBe(1);
   });
 
+  // ── design 12b: the roster's own live signals ─────────────────────────────
+  it('routes message.user to onTurnStart — a new turn restarts the row clock', () => {
+    const ctx = makeCtx();
+    handleSessionEvent({ type: 'message.user', sessionId: 's1', blockId: 'b1', text: 'hi' }, ctx);
+    expect(ctx.onTurnStart).toHaveBeenCalledWith('s1');
+    expect(calledCount(ctx)).toBe(1);
+  });
+
+  it('routes tool.start to onToolStart with the tool and its summary', () => {
+    const ctx = makeCtx();
+    handleSessionEvent({ type: 'tool.start', sessionId: 's1', blockId: 'b1', tool: 'Edit', summary: 'a/b.ts' }, ctx);
+    expect(ctx.onToolStart).toHaveBeenCalledWith('s1', 'Edit', 'a/b.ts');
+    expect(calledCount(ctx)).toBe(1);
+  });
+
+  it('routes permission.asked to onPermissionAsked with the block AND the ask', () => {
+    const ctx = makeCtx();
+    const ask = { toolName: 'Bash', summary: 'x', inputJson: '{}', cwd: '/', pattern: 'Bash(*)', patternLabel: 'any bash' };
+    handleSessionEvent({ type: 'permission.asked', sessionId: 's1', blockId: 'b1', ask }, ctx);
+    expect(ctx.onPermissionAsked).toHaveBeenCalledWith('s1', 'b1', ask);
+    expect(calledCount(ctx)).toBe(1);
+  });
+
+  it('routes permission.resolved to onPermissionResolved, whatever the outcome', () => {
+    for (const state of ['allowed', 'denied', 'cancelled'] as const) {
+      const ctx = makeCtx();
+      handleSessionEvent({ type: 'permission.resolved', sessionId: 's1', blockId: 'b1', state }, ctx);
+      expect(ctx.onPermissionResolved).toHaveBeenCalledWith('s1', 'b1');
+      expect(calledCount(ctx)).toBe(1);
+    }
+  });
+
+  it('routes session.cleared to onCleared', () => {
+    const ctx = makeCtx();
+    handleSessionEvent({ type: 'session.cleared', sessionId: 's1' }, ctx);
+    expect(ctx.onCleared).toHaveBeenCalledWith('s1');
+    expect(calledCount(ctx)).toBe(1);
+  });
+
   // Every event type the sidebar does not act on: no ctx callback fires.
   const ignored: SessionEvent[] = [
-    { type: 'message.user', sessionId: 's1', blockId: 'b1', text: 'hi' },
     { type: 'assistant.delta', sessionId: 's1', blockId: 'b1', text: 'hi', offset: 0 },
     { type: 'assistant.done', sessionId: 's1', blockId: 'b1', text: 'hi' },
-    { type: 'tool.start', sessionId: 's1', blockId: 'b1', tool: 'Read', summary: 'x' },
     { type: 'tool.done', sessionId: 's1', blockId: 'b1', meta: '1 line' },
     { type: 'command.started', sessionId: 's1', blockId: 'b1', command: '/x' },
     { type: 'command.output', sessionId: 's1', blockId: 'b1', card: { kind: 'notice', text: 'x' } },
     { type: 'question.asked', sessionId: 's1', blockId: 'b1', questions: [] },
     { type: 'question.resolved', sessionId: 's1', blockId: 'b1', state: 'answered' },
-    {
-      type: 'permission.asked',
-      sessionId: 's1',
-      blockId: 'b1',
-      ask: { toolName: 'Bash', summary: 'x', inputJson: '{}', cwd: '/', pattern: 'Bash(*)', patternLabel: 'any bash' },
-    },
-    { type: 'permission.resolved', sessionId: 's1', blockId: 'b1', state: 'allowed' },
     { type: 'session.commands', sessionId: 's1', commands: [] },
     { type: 'agent.step', sessionId: 's1', agentId: 'a1', step: { seq: 1, kind: 'tool', at: 0, label: 'x' } },
     { type: 'mcp.update', sessionId: 's1', server: { name: 'srv', scope: 'project', status: 'connected' } },
     { type: 'session.resumeFailed', sessionId: 's1' },
-    { type: 'session.cleared', sessionId: 's1' },
   ];
 
   it.each(ignored)('does not call any ctx callback for $type', (e) => {

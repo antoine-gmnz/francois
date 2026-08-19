@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppError, SessionMeta, SessionStatus } from '../../../contract/common';
-import { countRunning, type SessionDerived } from '../../../contract/fleet-board';
+import { countRunning, isBusyStatus, type SessionDerived } from '../../../contract/fleet-board';
 import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
 import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { clearDraft } from '../conversation/composer-draft';
 import { prunePaletteSession } from '../palette/paletteData';
 import { useShellStore } from '../shell/shellStore';
+import { activityLabel } from './activity';
 import { handleSessionEvent, type SessionEventContext } from './sessionEventHandler';
 
 export interface SessionFleetSync {
@@ -59,6 +60,12 @@ export function useSessionFleetSync(): SessionFleetSync {
   const mergeDerived = useStore((s) => s.mergeDerived);
   const dropDerivedFromCache = useStore((s) => s.dropDerived);
   const recordActivity = useStore((s) => s.recordActivity);
+  // design 12b: the roster's live per-row signals — activity line, turn clock
+  // and the parked ask a WAITING row answers inline.
+  const setSessionActivity = useStore((s) => s.setSessionActivity);
+  const markRunningSince = useStore((s) => s.markRunningSince);
+  const setPendingAsk = useStore((s) => s.setPendingAsk);
+  const clearRosterSignals = useStore((s) => s.clearRosterSignals);
 
   const [hydrationError, setHydrationError] = useState<AppError | null>(null);
   // Backing store for runningAgentCount: sessionId → (agentId → status) (FR-5).
@@ -91,6 +98,7 @@ export function useSessionFleetSync(): SessionFleetSync {
     seededRef.current.delete(id);
     startedRef.current.delete(id);
     dropDerivedFromCache(id);
+    clearRosterSignals(id); // design 12b: activity line / turn clock / parked ask
     // split-session: the rail badges' per-session counts go with it.
     useStore.getState().dropPanelCounts(id);
     // multiple-shells FR-9: purge the session's shell roster/active-id/unread
@@ -100,15 +108,26 @@ export function useSessionFleetSync(): SessionFleetSync {
     clearDraft(id);
   };
 
+  // The full summary — file count AND the line totals design 12b's settled row
+  // shows. Failure leaves all three null, which renders as "unknown", not zero.
+  const readDiff = (id: string) => {
+    void diffGetSummary(id).then((res) => {
+      if (res.ok) {
+        updateDerived(id, {
+          fileCount: res.data.files.length,
+          addedLines: res.data.totalAdd,
+          deletedLines: res.data.totalDel,
+        });
+      }
+    });
+  };
+
   // Best-effort one-shot diff seed, deduped by id so it fires exactly once per
-  // session regardless of cache-membership ordering (FR-6). Failure → leaves
-  // fileCount null.
+  // session regardless of cache-membership ordering (FR-6).
   const seedDiff = (id: string) => {
     if (seededRef.current.has(id)) return;
     seededRef.current.add(id);
-    void diffGetSummary(id).then((res) => {
-      if (res.ok) updateDerived(id, { fileCount: res.data.files.length });
-    });
+    readDiff(id);
   };
 
   // split-by-4 FR-27: this only ever runs for PANE 0's session. The pane keeps
@@ -176,6 +195,21 @@ export function useSessionFleetSync(): SessionFleetSync {
         // finished turn from a session that merely settled.
         const prev = useStore.getState().sessions.find((session) => session.id === sessionId);
         patchStatus(sessionId, status);
+        // design 12b: the RUNNING row's elapsed runs from the moment the turn
+        // went busy and keeps running ACROSS a parked approval — the process is
+        // still alive and the clock is what says how long it has been waiting.
+        // Settling stops it and retires the activity line with it.
+        if (isBusyStatus(status)) {
+          if (!useStore.getState().runningSince.has(sessionId)) markRunningSince(sessionId, Date.now());
+        } else {
+          markRunningSince(sessionId, null);
+          setSessionActivity(sessionId, null);
+          // design 12b: a SETTLED row is the only one that shows +/− line totals,
+          // and `diff.changed` carries only a count — so the summary is re-read
+          // exactly when the row that needs it appears. Re-reading on every
+          // diff.changed instead would run a full git diff per edit per session.
+          if (prev && isBusyStatus(prev.status)) readDiff(sessionId);
+        }
         const kind = statusTransitionKind(prev?.status, status);
         if (kind && prev) {
           logActivity(prev, kind, kind === 'session.error' ? (prev.errorMessage ?? '') : '');
@@ -223,6 +257,27 @@ export function useSessionFleetSync(): SessionFleetSync {
           else if (agent.status === 'error') logActivity(owner, 'agent.failed', agent.name);
         }
       },
+      // design 12b: a new turn retires the previous one's activity line and
+      // restarts the clock — the status event may not arrive first.
+      onTurnStart: (sessionId) => {
+        setSessionActivity(sessionId, null);
+        markRunningSince(sessionId, Date.now());
+      },
+      onToolStart: (sessionId, tool, summary) => {
+        const line = activityLabel(tool, summary);
+        setSessionActivity(sessionId, line === '' ? null : line);
+      },
+      onPermissionAsked: (sessionId, blockId, ask) => {
+        setPendingAsk(sessionId, { blockId, ask });
+      },
+      onPermissionResolved: (sessionId, blockId) => {
+        // Only the ask actually on screen: a late resolution for an older block
+        // must not clear the row's CURRENT one.
+        if (useStore.getState().pendingAsk.get(sessionId)?.blockId === blockId) setPendingAsk(sessionId, null);
+      },
+      onCleared: (sessionId) => {
+        clearRosterSignals(sessionId);
+      },
       onRemoved: (sessionId) => {
         const gone = useStore.getState().sessions.find((session) => session.id === sessionId);
         if (gone) logActivity(gone, 'session.removed', '');
@@ -237,7 +292,13 @@ export function useSessionFleetSync(): SessionFleetSync {
 
     // Per-session diff file count, matched on sessionId for ALL sessions (FR-6).
     void onDiffEvent((e) => {
-      if (e.type === 'diff.changed') updateDerived(e.sessionId, { fileCount: e.fileCount });
+      if (e.type !== 'diff.changed') return;
+      updateDerived(e.sessionId, { fileCount: e.fileCount });
+      // A settled session whose tree changed under it (a commit from the shell,
+      // an external edit) has no status event coming to trigger the re-read, so
+      // it happens here. A BUSY one is left alone — its row shows no totals.
+      const owner = useStore.getState().sessions.find((x) => x.id === e.sessionId);
+      if (owner && !isBusyStatus(owner.status)) readDiff(e.sessionId);
     }).then((unsub) => {
       if (cancelled) unsub();
       else unlistenDiff = unsub;

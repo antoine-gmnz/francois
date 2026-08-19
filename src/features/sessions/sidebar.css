@@ -71,90 +71,28 @@
   color: var(--accent-bright);
 }
 
-/* ── design 7a: repo groups ─────────────────────────────────────────────────
-   A heading per repo, its caret, its session count and a `+` that starts a
-   session in it. The heading is quiet on purpose — it is a divider that happens
-   to be clickable, not a row competing with the cards under it. */
-.roster-group + .roster-group {
-  margin-top: var(--space-8);
-}
-.roster-group__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-7);
-  padding: var(--space-8) var(--space-14) var(--space-6);
-  cursor: pointer;
-  user-select: none;
-}
-.roster-group__caret {
-  font-size: var(--font-size-8);
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
-.roster-group__label {
-  font-size: var(--font-size-10-5);
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  min-width: 0;
-}
-.roster-group__head:hover .roster-group__label {
-  color: var(--text-hint);
-}
-.roster-group__count {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
-.roster-group__new {
-  font-size: var(--font-size-13);
-  line-height: 1;
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
-.roster-group__new:hover {
-  color: var(--accent);
-}
-
-/* ── project-groups: the second tier ────────────────────────────────────────
-   A group heading is thinner still than a project heading — no `+`, a smaller
-   uppercase label, no acid: a repeatable roster row reads neutral. Project
-   headings + cards nested under it indent one step each (FR-24), depth-capped
-   at three levels (group → project → card). */
-.roster-group__head--group {
-  padding: var(--space-6) var(--space-14) var(--space-4);
-}
-.roster-group__label--group {
-  font-size: var(--font-size-9-5);
-}
-/* 9a: nesting indents by PADDING, never margin — a margin would stop the
-   full-bleed hover fill short of the panel edge and put the row back in a
-   gutter, which is exactly what the flat roster removes. */
-.roster-group--nested > .roster-group__head {
-  padding-left: var(--space-24);
-}
-.sidebar-card--nested {
-  padding-left: var(--space-22);
-}
-
 /* ── design 7a: the dissolved right column ──────────────────────────────────
    Agents / MCP / Skills / Workflows, ruled off under the cards. Deliberately
    NOT card-shaped: they are an index at the foot of a list, and giving them the
    session card's surface would make the roster read as eight sessions. */
-/* 9a: no top rule — a margin sets it off from the last row instead. */
+/* 12b: ONE line, not four. A recessed strip flush to the foot of the pane —
+   its own tonal step is what sets it off from the list, so there is still no
+   rule (9a) and no margin to fake one with. */
 .sidebar__footer {
-  padding: var(--space-6) var(--space-8) var(--space-8);
-  margin-top: var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-7) var(--space-8);
+  background: var(--bg-deep);
   flex-shrink: 0;
 }
 .roster-pane {
   display: flex;
-  align-items: center;
-  gap: var(--space-9);
-  padding: var(--space-7) var(--space-10);
-  border-radius: var(--radius-lg);
+  align-items: baseline;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4) var(--space-7);
+  border-radius: var(--radius-base);
   cursor: pointer;
 }
 .roster-pane:hover {
@@ -164,20 +102,21 @@
 .roster-pane--on:hover {
   background: var(--bg-raised);
 }
-.roster-pane__glyph {
-  display: flex;
-  align-items: center;
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
-.roster-pane--on .roster-pane__glyph {
-  color: var(--text-2);
-}
 .roster-pane__label {
-  flex: 1;
   min-width: 0;
-  font-size: var(--font-size-12);
-  color: var(--text-hint);
+  font-size: var(--font-size-11-5);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Nothing to show there — the label says so by going quiet, rather than the
+   count printing a dash beside it. */
+.roster-pane--empty .roster-pane__label {
+  color: var(--text-dim);
+}
+.roster-pane--empty:hover .roster-pane__label {
+  color: var(--text-strong);
 }
 .roster-pane--on .roster-pane__label {
   color: var(--text-bright);
@@ -186,7 +125,7 @@
 .roster-pane__count {
   font-family: var(--font-mono);
   font-size: var(--font-size-9-5);
-  color: var(--text-faint);
+  color: var(--accent);
   flex-shrink: 0;
 }
 /* Warm, never acid: subagents running is a "something is happening over there"
@@ -218,7 +157,7 @@
 }
 
 /* card list */
-/* 9a: no side padding — rows run to the panel edge (see .sidebar-card). */
+/* 9a: no side padding — rows run to the panel edge (see .roster-row). */
 .sidebar-list {
   flex: 1;
   overflow: auto;
@@ -245,160 +184,6 @@
 .sidebar-empty__hint {
   font-size: var(--font-size-10);
   margin-top: var(--space-5);
-}
-
-/* session card — deliberately NOT built on <ListRow>: it's a stacked 4-row
-   card (flex-direction: column), not the single-row layout ListRow assumes
-   (same reasoning as the AgentsPanel exception in REFACTOR-CONVENTIONS.md). */
-/* design 9a: the card stops being a card. No radius, no gutter, no surface of
-   its own — the row runs FULL-BLEED to the panel edge and sits directly on the
-   rail, so a hover fill reads as "this row" rather than as a tile lighting up.
-   That is the mock's own note on the roster, and it is the reason the rows
-   below can drop their inter-card margin: with nothing to separate visually,
-   the padding alone sets the rhythm.
-
-   Structure is unchanged from 7a: name + status on one line, the path under it,
-   then ONE compact meta line (model chip · usage bar · tokens · age). */
-.sidebar-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-10) var(--space-14);
-  cursor: pointer;
-  background: transparent;
-  outline: none;
-  outline-offset: -1px;
-  /* The state rail (attention / selected) rides here. Transparent at rest, so
-     the text column never shifts when a row picks up a state. */
-  border-left: 3px solid transparent;
-  padding-left: var(--space-11);
-}
-.sidebar-card--selected {
-  background: var(--bg-elevated);
-}
-.sidebar-card--hovered {
-  background: var(--bg-elevated);
-}
-.sidebar-card--selected.sidebar-card--hovered {
-  background: var(--bg-hover);
-}
-.sidebar-card--cursor {
-  outline: 1px solid var(--text-disabled);
-}
-/* A session parked on the user (awaiting_approval / awaiting_input). The colour
-   comes from --card-attn, set inline from the contract's STATUS_COLOR, so the
-   two parked states keep their own hue and this file never re-states the map.
-   Static, not animated: the pulse means "working", and this session is not.
-   9a gives this the loudest treatment in the app now that the accent has
-   stepped back: a solid 3px rail plus a warm fill, both full-bleed. */
-.sidebar-card--attention {
-  border-left-color: var(--card-attn, var(--attn));
-  background: color-mix(in srgb, var(--card-attn, var(--attn)) 12%, var(--bg-panel));
-}
-.sidebar-card--attention.sidebar-card--hovered,
-.sidebar-card--attention.sidebar-card--selected {
-  background: color-mix(in srgb, var(--card-attn, var(--attn)) 18%, var(--bg-panel));
-}
-
-.sidebar-card__row1 {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-}
-.sidebar-card__name {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-13);
-  font-weight: 500;
-  color: var(--text);
-}
-.sidebar-card__name--selected {
-  color: var(--text-bright);
-  font-weight: 600;
-}
-/* status cluster — dot + label, right-aligned on the name's line */
-.sidebar-card__status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  flex-shrink: 0;
-  font-size: var(--font-size-11);
-}
-.sidebar-card__cwd {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-11);
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sidebar-card--selected .sidebar-card__cwd {
-  color: var(--text-muted);
-}
-/* model badge chip (FR-6) */
-.sidebar-card__model {
-  font-family: var(--font-ui);
-  font-size: var(--font-size-10-5);
-  color: var(--text-dim);
-  background: var(--bg-hover);
-  border-radius: var(--radius-base);
-  padding: var(--space-2) var(--space-6);
-  flex-shrink: 0;
-}
-.sidebar-card--selected .sidebar-card__model {
-  color: var(--text-hint);
-  background: var(--bg-hover-2);
-}
-/* mini token-usage bar (FR-6) — takes the slack in the meta row */
-.sidebar-card__bar-track {
-  flex: 1;
-  min-width: 16px;
-  height: 3px;
-  border-radius: var(--radius-xs);
-  background: var(--bg-hover-2);
-  overflow: hidden;
-}
-.sidebar-card__bar-fill {
-  display: block;
-  height: 100%;
-  background: var(--hue-blue);
-}
-.sidebar-card__meta-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-size: var(--font-size-10-5);
-  font-family: var(--font-mono);
-}
-.sidebar-card__spacer {
-  flex: 1;
-}
-.sidebar-card__faint {
-  color: var(--text-faint);
-}
-/* session-worktree FR-13: the card's branch line. Left-truncated in JS
-   (truncateBranchLeft) so the leaf segment stays readable. */
-.sidebar-card__branch {
-  font-size: var(--font-size-10-5);
-  font-family: var(--font-mono);
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sidebar-card__branch-glyph {
-  color: var(--accent);
-}
-.sidebar-card__meta {
-  color: var(--text-dim);
-}
-.sidebar-card__files {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-.sidebar-card__agents {
-  color: var(--accent);
 }
 
 /* right-click context menu */
@@ -576,27 +361,290 @@
   border-color: var(--error-dim);
 }
 
-/* unbound-panes FR-14 / design brief §Project marker: same neutral treatment
-   as the pane header's `.split-pane__marker` — never `--accent`, a
-   repeatable surface stays neutral. */
-.sidebar-card__marker {
+/* In split there is no room for the header's total. Every state heading carries
+   its own count, so the total is the one that goes. */
+.sidebar--dense .sidebar__count {
+  display: none;
+}
+
+/* ── design 12b: the state-grouped roster ───────────────────────────────────
+   Groups are STATES, so no ROW carries a status tag — the heading above it
+   already said which state it is in, and that is the repetition 12b removes.
+   Row weight tracks how much the session is asking of you: three lines and two
+   buttons when it is blocked, one to three lines when it is not. */
+.roster-state + .roster-state {
+  margin-top: var(--space-8);
+}
+.roster-state__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  padding: var(--space-8) var(--space-14) var(--space-5);
+  cursor: pointer;
+  user-select: none;
+}
+.roster-state__caret {
+  font-size: var(--font-size-8);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.roster-state__label {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  min-width: 0;
+}
+.roster-state__count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+/* The row. Full-bleed like the 9a card it replaces — a fill reads as the row,
+   not as a tile inside it — and carrying the same 3px state rail, transparent
+   at rest so the text column never shifts. */
+.roster-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-14) var(--space-7) var(--space-11);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+}
+.roster-row--selected {
+  background: var(--bg-elevated);
+}
+.roster-row:hover {
+  background: var(--bg-elevated);
+}
+.roster-row--selected:hover {
+  background: var(--bg-hover);
+}
+.roster-row--cursor {
+  outline: 1px solid var(--text-disabled);
+  outline-offset: -1px;
+}
+/* split-by-4 FR-22: only the FOCUSED pane's row gets the accent rail. */
+.roster-row--pane-focus {
+  border-left-color: var(--accent);
+}
+
+/* WAITING ON YOU — the loudest treatment in the app: a solid rail plus a warm
+   fill, both full-bleed. The colour is --attn for every member of the group
+   (approval, question, error): they differ in what they want, not in how much. */
+.roster-row--attention {
+  gap: var(--space-6);
+  padding-top: var(--space-9);
+  padding-bottom: var(--space-10);
+  border-left-color: var(--attn);
+  background: color-mix(in srgb, var(--attn) 12%, var(--bg-panel));
+}
+.roster-row--attention:hover,
+.roster-row--attention.roster-row--selected {
+  background: color-mix(in srgb, var(--attn) 18%, var(--bg-panel));
+}
+/* Two parked sessions are two asks, not one block: without this their rails and
+   their fills run together into a single amber slab and the pair reads as one
+   row with two names in it. The gap breaks both at once. */
+.roster-row--attention + .roster-row--attention {
+  margin-top: var(--space-3);
+}
+
+.roster-row__line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  min-width: 0;
+}
+.roster-row__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-12-5);
+  font-weight: 600;
+  color: var(--text-bright);
+}
+/* A settled row keeps the weight (it is still the row's subject) but steps back
+   a tone — it is a list entry, not a headline. */
+.roster-row__name--quiet {
+  color: var(--text-strong);
+}
+.roster-row__age {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.roster-row--attention .roster-row__age {
+  color: var(--text-dim);
+}
+/* The one figure on the pane that is still moving. Accent, not amber: this is
+   the live thing, and amber in this pane means "come here" — the WAITING rail
+   above owns it. */
+.roster-row__age--live {
+  color: var(--accent);
+}
+
+/* What the session says: the ask, the question, or the failure. */
+.roster-row__says {
+  font-size: var(--font-size-11-5);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.roster-row__code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-bright);
+}
+.roster-row__failed {
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+.roster-row__actions {
+  display: flex;
+  gap: var(--space-6);
+}
+.roster-row__btn {
+  flex: 1;
+  height: 24px;
+  border: 0;
+  border-radius: var(--radius-base);
+  background: var(--bg-hover);
+  font-family: inherit;
+  font-size: var(--font-size-11-5);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.roster-row__btn:hover:not(:disabled) {
+  background: var(--bg-hover-2);
+  color: var(--text-bright);
+}
+.roster-row__btn:disabled {
+  cursor: default;
+  color: var(--text-faint);
+}
+/* The affirmative is the accent one: allowing is what the row is FOR, and it is
+   the only accent in the pane while an ask is up. It sits on a WARM row, so the
+   fill has to be a step brighter than the accent's usual soft background —
+   against amber, --accent-soft-bg reads as unfilled next to Deny. */
+.roster-row__btn--allow {
+  background: var(--accent-soft-edge);
+  color: var(--accent-bright);
+}
+.roster-row__btn--allow:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 32%, var(--bg-panel));
+  color: var(--accent-bright);
+}
+
+/* RUNNING — what it is doing right now, with a blinking caret. The one place
+   the roster animates: it is the signal that the line is live rather than the
+   last thing that happened. `blink` is the app-wide keyframe (styles.css), not
+   a second copy of it. */
+.roster-row__activity {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+}
+.roster-row__caret {
+  color: var(--accent);
+  animation: blink 1.1s steps(2, end) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .roster-row__caret {
+    animation: none;
+  }
+}
+.roster-row__ctx {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.roster-row__figure {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── the settled row's own lines ────────────────────────────────────────────
+   Branch, context and the working tree's totals. Every one of them is quieter
+   than the name above it — this is what the session IS, not what it wants. */
+.roster-row__branch {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+}
+/* Shown only when the session is NOT on its project's default model, so a chip
+   here always means "this one is different" — same rule as the account badge.
+   Its own hue, not the accent: it is a fact about the row, not a live thing. */
+.roster-row__model {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--hue-blue);
+  background: var(--bg-raised);
+  border-radius: var(--radius-xs);
+  padding: 1px var(--space-4);
+  flex-shrink: 0;
+}
+.roster-row__work {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+}
+.roster-row__add {
+  color: var(--accent);
+}
+.roster-row__del {
+  color: var(--error-bright);
+}
+.roster-row__sep {
+  color: var(--text-disabled);
+}
+
+/* The context bar: 26px on a settled row (a glance, not a reading), full width
+   on a running one (where the number beside it is the reading). */
+.roster-row__bar {
+  width: 26px;
+  height: 3px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover-2);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.roster-row__bar--wide {
+  width: auto;
+  flex: 1;
+  min-width: 16px;
+}
+.roster-row__bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--text-muted);
+}
+.roster-row--running .roster-row__bar-fill {
+  background: var(--accent-dim);
+}
+
+/* Badges — neutral, never accent: a repeatable surface stays neutral. */
+.roster-row__marker {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
   color: var(--text-2);
   background: var(--bg-hover);
-  border: 0;
   border-radius: var(--radius-xs);
   padding: 0 var(--space-4);
   flex-shrink: 0;
 }
-
-/* ── split-by-4 FR-22 ────────────────────────────────────────────────────────
-   Which pane, if any, is showing this session. Fixed per PANE (not per focus)
-   so the set reads as a stable map of the main area; the FOCUS signal is the
-   accent left rail below, and the pane's own header chip. Pane 0 stays neutral
-   — it is the one the rest of the app already means by "active". */
-.sidebar-card__pane {
+.roster-row__pane {
   font-family: var(--font-mono);
   font-size: var(--font-size-9-5);
   border-radius: var(--radius-sm);
@@ -605,20 +653,15 @@
   color: var(--text-hint);
   background: var(--bg-hover-2);
 }
-.sidebar-card__pane--accent {
+.roster-row__pane--accent {
   color: var(--accent);
   background: var(--accent-soft-bg);
 }
-/* Only the FOCUSED side's row gets the rail — one accent per view. It reuses the
-   card's existing 2px left border (transparent by default, coloured by
-   --attention), so an attention rail on the other paned row still shows. */
-.sidebar-card--pane-focus {
-  border-left-color: var(--accent);
+
+/* §8: the roster narrows in split, so the rows tighten by a notch. */
+.sidebar--dense .roster-row {
+  padding: var(--space-6) var(--space-11) var(--space-6) var(--space-9);
 }
-/* §8: the roster narrows 276 → 238px in split, so the cards tighten by a notch
-   (the mock's `10px 11px 10px 14px`, minus the 2px left border this card uses
-   for its rail where the mock uses an absolutely positioned span). */
-.sidebar--dense .sidebar-card {
-  padding: var(--space-8) var(--space-11) var(--space-8) var(--space-9);
-  gap: var(--space-4);
+.sidebar--dense .roster-state__head {
+  padding: var(--space-6) var(--space-11) var(--space-4);
 }
