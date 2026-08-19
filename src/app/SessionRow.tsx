@@ -16,6 +16,7 @@ import { displayWslCwd } from '../../contract/wsl-filesystem';
 import type { ExtensionId, ExtensionInfo } from '../../contract/extensions';
 import { agentTabLabel, tabIdFor, type AgentTabRef } from '../features/agents/agent-tab';
 import { CloudChip } from '../features/cloud-sessions/CloudChip';
+import { PermissionModeBadge } from '../features/permissions/PermissionModeBadge';
 import ProjectSwitcher from '../features/projects/ProjectSwitcher';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import { truncateBranchLeft, worktreeChipLabel } from '../features/sessions/worktree';
@@ -141,16 +142,9 @@ export default function SessionRow({
           <span className="session-row__chip" title={active.model.brief ?? active.model.label}>
             {active.model.label}
           </span>
-          {active.permissionMode !== 'default' && (
-            <span
-              title={`permission mode: ${active.permissionMode}`}
-              className={
-                active.permissionMode === 'bypassPermissions' ? 'session-row__mode session-row__mode--danger' : 'session-row__mode'
-              }
-            >
-              {active.permissionMode === 'acceptEdits' ? 'edits-ok' : active.permissionMode === 'bypassPermissions' ? 'bypass' : 'plan'}
-            </span>
-          )}
+          {/* session-permission-mode FR-9: always rendered (default included) and
+              clickable — the control that changes the mode live. */}
+          <PermissionModeBadge session={active} />
           {active.runtime === 'wsl' && <span className="session-row__mode">wsl</span>}
           <span className="session-row__figure" title="context used · turn elapsed">
             {formatContextTokens(active.contextUsedTokens)}

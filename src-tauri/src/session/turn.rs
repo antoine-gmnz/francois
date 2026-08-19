@@ -552,6 +552,55 @@ mod tests {
         );
     }
 
+    // ---------- session-permission-mode ----------
+
+    #[test]
+    fn a_mode_switch_reaches_the_next_turn_context_but_not_one_already_snapshotted() {
+        // FR-5: the switched mode is picked up by the NEXT `build_turn_context`
+        // call — the only place every runtime family (claude-code, codex, grok,
+        // the Francois loop) reads `permission_mode` off the session, since none
+        // of them re-read the session mid-turn (adapter/mod.rs's `TurnContext`
+        // doc, session/adapter/openai/runner.rs's owned-value destructure).
+        // `permission_args` (session/spawn.rs) is the exact fragment
+        // `claude_code::turn_args` extends its argv with, so asserting its
+        // output changed is the claude-code family's "built argv reflects the
+        // switch" proof (FR-5's acceptance bullet) without reaching into that
+        // module's private `turn_args`.
+        let engine = test_engine_with(test_session()); // starts "default"
+
+        // A turn already in flight snapshotted BEFORE the switch...
+        let ctx_before =
+            build_turn_context(&engine, "s1", "b1".into(), "hi".into(), TurnMode::Normal).unwrap();
+        assert_eq!(ctx_before.permission_mode, "default");
+        assert!(permission_args(&ctx_before.permission_mode).is_empty());
+
+        // FR-1: switch takes effect on the session immediately...
+        let meta = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        assert_eq!(meta.permission_mode, "bypassPermissions");
+
+        // FR-6: ...but the already-built snapshot is an owned value — it never
+        // changes underneath the in-flight turn.
+        assert_eq!(ctx_before.permission_mode, "default");
+
+        // FR-5: the NEXT turn's snapshot picks the new mode up.
+        let ctx_after = build_turn_context(
+            &engine,
+            "s1",
+            "b2".into(),
+            "hi again".into(),
+            TurnMode::Normal,
+        )
+        .unwrap();
+        assert_eq!(ctx_after.permission_mode, "bypassPermissions");
+        assert_eq!(
+            permission_args(&ctx_after.permission_mode),
+            vec![
+                "--permission-mode".to_string(),
+                "bypassPermissions".to_string()
+            ]
+        );
+    }
+
     #[test]
     fn resume_fail_predicate_truth_table() {
         // fires only for a resumed turn that never started a thread and wasn't interrupted

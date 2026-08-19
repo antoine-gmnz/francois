@@ -275,3 +275,8 @@ filtering relative PATH entries is right for extension spawns, it is right every
 ## core
 - [ ] LOW · src-tauri/src/shell/commands.rs:536 · quality · section comment for project-owner target resolution sits above mod tests instead of above struct OwnerTarget — move or drop it · deferred:unbound-panes
 - [ ] LOW · src-tauri/src/shell/commands.rs:447-454 · complexity · shell_restart re-implements the is_wsl_unc_path runtime branch already in project_owner_target — extract a shared runtime_of_root helper · deferred:unbound-panes
+
+## deferred:session-permission-mode
+
+- [ ] LOW · src/features/permissions/PermissionModeBadge.tsx:183 · quality · append `— click to change` to the badge `title` template so the tooltip matches design brief §8 · deferred:session-permission-mode
+- [ ] LOW · src-tauri/src/session/commands/lifecycle.rs:512 · complexity · derive `parse_permission_mode` from `spawn.rs`'s `valid_permission_mode` so a 5th PermissionMode member is a one-place change · deferred:session-permission-mode
