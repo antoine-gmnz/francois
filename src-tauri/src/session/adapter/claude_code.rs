@@ -368,8 +368,11 @@ impl SessionAdapter for ClaudeCodeAdapter {
     /// the wire (`contract/session-engine.ts`'s `session_models` payload is
     /// empty) and always read the GLOBAL `~/.claude/.credentials.json`, a
     /// pre-existing gap this refactor does not change.
-    fn models(&self, _app: &tauri::AppHandle, _account_id: &str) -> Vec<ModelInfo> {
-        crate::session::refresh_models()
+    fn models(&self, app: &tauri::AppHandle, _account_id: &str) -> Vec<ModelInfo> {
+        // With the handle: a picker open that lands a live fetch also mirrors the
+        // catalog and reconciles every session's window, so a run that booted
+        // offline heals as soon as the network comes back.
+        crate::session::refresh_models_for(Some(app))
     }
 }
 

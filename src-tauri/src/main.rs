@@ -94,6 +94,12 @@ fn main() {
             // refuses to act on a registry that came back empty
             // (session-profiles §A2 / multi-account §A1).
             project::reconcile_defaults(app.handle());
+            // MUST come before load_persisted: a session's context window is
+            // derived from the model catalog at load time, so a cold catalog
+            // gave every session the 200K placeholder (and clamped its used
+            // figure against it). The disk mirror makes the real windows
+            // available synchronously, before the first session exists.
+            session::load_model_cache(app.handle());
             session::load_persisted(app.handle());
             session::warm_model_cache(app.handle().clone());
             // extension-install FR-1/FR-13: load the manifest registry from

@@ -617,7 +617,11 @@ pub fn load_persisted(app: &AppHandle) {
             continue;
         };
         let block_buffer = read_transcript(app, &m.id); // FR-5
-        let limit = context_limit(&m.model_id);
+                                                        // Only a window the catalog actually KNOWS is a ceiling — see
+                                                        // `loaded_context`. `load_model_cache` runs before this, so the mirror
+                                                        // from the last run is already in hand.
+        let (limit, used) =
+            loaded_context(resolve_context_tokens(&m.model_id), m.context_used_tokens);
         watched.push((m.id.clone(), m.cwd.clone()));
         map.insert(
             m.id.clone(),
@@ -630,10 +634,12 @@ pub fn load_persisted(app: &AppHandle) {
                 // quit: the child process is gone, so a persisted `starting` or
                 // `awaiting_*` would describe a turn that no longer exists.
                 status: status::IDLE.into(),
-                // Clamped: a record written by a build that mistook the turn's
-                // cost aggregate for the context could hold a figure larger than
-                // the window itself. Reloading heals it.
-                context_used_tokens: m.context_used_tokens.min(limit),
+                // Clamped against a KNOWN window only: a record written by a
+                // build that mistook the turn's cost aggregate for the context
+                // could hold a figure larger than the window itself, and
+                // reloading heals it — but clamping against the 200K placeholder
+                // is not healing, it is destroying a number we cannot recover.
+                context_used_tokens: used,
                 context_limit_tokens: limit,
                 started_at: now,
                 last_activity_at: m.last_activity_at,
