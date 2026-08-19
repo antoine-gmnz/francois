@@ -120,3 +120,17 @@ export function parsePinnedExtensions(raw: string | null): ExtensionId[] {
 export function togglePinned(pinned: readonly ExtensionId[], id: ExtensionId): ExtensionId[] {
   return pinned.includes(id) ? pinned.filter((p) => p !== id) : [...pinned, id];
 }
+
+/**
+ * The number `◈` carries beside its glyph, or null for none.
+ *
+ * A bare diamond next to the view segment is a mystery: same fill, same 26px, no
+ * caret — it reads as a fourth view rather than as the plugin surface. When tabs
+ * ARE in the bar they answer "what is behind this"; when none are (nothing pinned,
+ * nothing open — the common case for a fresh install) the count answers it instead.
+ * Zero installed stays null: `◈ 0` advertises an emptiness the menu already
+ * explains, and the glyph still opens to the install path.
+ */
+export function extGlyphCount(tabsShown: number, installed: number): number | null {
+  return tabsShown === 0 && installed > 0 ? installed : null;
+}

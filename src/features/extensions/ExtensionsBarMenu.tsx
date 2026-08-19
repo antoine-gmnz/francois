@@ -19,6 +19,7 @@ import { useStore, type MainTab } from '../../lib/store';
 import {
   barExtensions,
   enabledCount,
+  extGlyphCount,
   extRowDetail,
   extTileHue,
   extTileInitials,
@@ -69,6 +70,9 @@ export default function ExtensionsBarMenu({ display, mainTab, root, openExtTab }
   const tabs = barExtensions(extensions, pinnedIds, sticky, activeExtId);
   const openTab = activeExtId ? (extensions.find((e) => e.id === activeExtId) ?? null) : null;
   const on = enabledCount(extensions);
+  const folded = display === 'folded';
+  // What the glyph says when no tab in the bar says it for it.
+  const glyphCount = extGlyphCount(folded ? 0 : tabs.length, extensions.length);
 
   const toggle = (e: ExtensionInfo) => {
     // extension-install FR-16: enabling something never consented to is never a
@@ -141,7 +145,11 @@ export default function ExtensionsBarMenu({ display, mainTab, root, openExtTab }
         tabIndex={0}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={openTab ? `${sanitizeForDisplay(openTab.label)} open · ${tabs.length} extension tabs` : 'Extensions'}
+        title={
+          openTab
+            ? `${sanitizeForDisplay(openTab.label)} open · ${tabs.length} extension tab${tabs.length === 1 ? '' : 's'}`
+            : `Extensions — ${extensions.length} installed, ${on} on`
+        }
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -152,18 +160,26 @@ export default function ExtensionsBarMenu({ display, mainTab, root, openExtTab }
         className={
           'ext-bar__glyph' +
           (open ? ' ext-bar__glyph--on' : '') +
-          (display === 'folded' && openTab ? ' ext-bar__glyph--carrying' : '')
+          (folded && openTab ? ' ext-bar__glyph--carrying' : '')
         }
       >
-        {display === 'folded' && openTab ? (
+        {folded && openTab ? (
           <>
             <Tile label={openTab.label} id={openTab.id} size="tab" />
             <span className="ext-bar__glyph-count">{tabs.length}</span>
-            <span className="ext-bar__caret">▾</span>
           </>
         ) : (
-          '◈'
+          <>
+            <span className="ext-bar__glyph-mark">◈</span>
+            {glyphCount !== null && <span className="ext-bar__glyph-count">{glyphCount}</span>}
+          </>
         )}
+        {/* The caret is not decoration: it is the only thing telling this apart
+            from the view segment 8px to its left, which is the same fill, the same
+            26px and the same shape. Every other menu in this row carries one — the
+            project chip, the run chip, the layout control — so a menu without one
+            reads as a button that does something immediately. */}
+        <span className="ext-bar__caret">▾</span>
       </span>
 
       {open && (

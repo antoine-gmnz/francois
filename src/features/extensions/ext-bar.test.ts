@@ -11,6 +11,7 @@ import {
   extRowDetail,
   extSourceLabel,
   extTileHue,
+  extGlyphCount,
   extTileInitials,
   parsePinnedExtensions,
   togglePinned,
@@ -138,5 +139,21 @@ describe('the pin set', () => {
     expect(togglePinned(['a', 'b'], 'c')).toEqual(['a', 'b', 'c']);
     expect(togglePinned(['a', 'b', 'c'], 'b')).toEqual(['a', 'c']);
     expect(togglePinned([], 'a')).toEqual(['a']);
+  });
+});
+
+describe('extGlyphCount', () => {
+  it('counts the installed extensions when the bar shows no tabs', () => {
+    expect(extGlyphCount(0, 3)).toBe(3);
+    expect(extGlyphCount(0, 1)).toBe(1);
+  });
+
+  it('stays silent when tabs already say what is behind the glyph', () => {
+    expect(extGlyphCount(2, 3)).toBe(null);
+    expect(extGlyphCount(1, 1)).toBe(null);
+  });
+
+  it('never renders `0` — the menu explains an empty registry better than a badge', () => {
+    expect(extGlyphCount(0, 0)).toBe(null);
   });
 });
