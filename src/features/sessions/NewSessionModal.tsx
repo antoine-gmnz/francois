@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AppError, ClaudeRuntime, PermissionMode, SessionMeta } from '../../../contract/common';
+import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
 import { isWslUncPath } from '../../../contract/wsl-filesystem';
 import { sessionCreate } from '../../lib/api';
 import { useStore } from '../../lib/store';
@@ -26,18 +27,13 @@ import { WorktreeField } from './WorktreeField';
 import { submitErrorBanner, worktreeBranchInUsePath } from './worktree';
 import './new-session-modal.css';
 
-// PermissionMode choices (contract/common.ts): label + the plain-language consequence.
-const PERMISSION_OPTIONS: { mode: PermissionMode; label: string; hint: string }[] = [
-  { mode: 'default', label: 'default', hint: 'inherit your Claude settings (~/.claude)' },
-  { mode: 'plan', label: 'plan', hint: 'read & plan only — never edits or runs commands' },
-  { mode: 'acceptEdits', label: 'accept edits', hint: 'auto-approve file edits; other tools follow your settings' },
-  { mode: 'bypassPermissions', label: 'bypass', hint: 'skip every permission check — full access' },
-];
-
-const PERMISSION_CHIP_OPTIONS: ChipOption<PermissionMode>[] = PERMISSION_OPTIONS.map((opt) => ({
+// session-permission-mode FR-8: PERMISSION_MODE_OPTIONS (contract) is now the
+// single source for the label/hint/danger flag — no component maps a mode to
+// a label or a hint on its own.
+const PERMISSION_CHIP_OPTIONS: ChipOption<PermissionMode>[] = PERMISSION_MODE_OPTIONS.map((opt) => ({
   value: opt.mode,
   label: opt.label,
-  danger: opt.mode === 'bypassPermissions',
+  danger: opt.danger,
 }));
 
 const RUNTIME_CHIP_OPTIONS: ChipOption<ClaudeRuntime>[] = (['native', 'wsl'] as const).map((runtime) => ({
@@ -369,7 +365,7 @@ export default function NewSessionModal({
             <ChipGroup options={PERMISSION_CHIP_OPTIONS} value={permissionMode} onChange={setPermissionMode} />
           </div>
           <div className="new-session-modal__hint new-session-modal__hint--below-chips">
-            {PERMISSION_OPTIONS.find((opt) => opt.mode === permissionMode)?.hint}
+            {PERMISSION_MODE_OPTIONS.find((opt) => opt.mode === permissionMode)?.hint}
           </div>
         </div>
 

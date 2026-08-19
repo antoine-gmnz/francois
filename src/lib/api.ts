@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { demoInvoke, demoListen } from '../demo/demo';
-import type { AccountId, Result, SessionMeta, ModelInfo, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, Result, SessionMeta, ModelInfo, PermissionMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
   WorkflowDetail,
@@ -283,6 +283,13 @@ export const sessionListCommands = (sessionId: SessionId) =>
 
 export const sessionSwitchModel = (sessionId: SessionId, modelId: string) =>
   ipc<Result<SessionMeta>>('session_switch_model', { sessionId, modelId });
+// session-permission-mode FR-1: the twin of sessionSwitchModel above — sets
+// SessionMeta.permissionMode for the session's NEXT turn (FR-6: a running
+// turn is unaffected). The frontend's only update path is the session.meta
+// event that accompanies this Result (FR-12); the Result itself is used only
+// to surface a failure (FR-13).
+export const sessionSwitchPermissionMode = (sessionId: SessionId, mode: PermissionMode) =>
+  ipc<Result<SessionMeta>>('session_switch_permission_mode', { sessionId, mode });
 export const sessionCompact = (sessionId: SessionId) => ipc<Result<null>>('session_compact', { sessionId });
 export const sessionClear = (sessionId: SessionId) => ipc<Result<null>>('session_clear', { sessionId });
 

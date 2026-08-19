@@ -502,6 +502,76 @@ pub(crate) fn apply_model_switch(
     Some(meta)
 }
 
+/// session-permission-mode FR-2: `francois:session:switchPermissionMode`'s enum
+/// re-validation. The core never trusts the frontend's narrowing — a value
+/// outside `PermissionMode` (an older frontend, the CLI, an extension) yields
+/// `None` so the command answers `INVALID_INPUT` rather than silently falling
+/// back to `default`. Mirrors `valid_permission_mode` (session/spawn.rs), which
+/// stays the create-time check; this one hands back the canonical `&'static
+/// str` the switch stores, matching the shape the spec names.
+pub(crate) fn parse_permission_mode(mode: &str) -> Option<&'static str> {
+    match mode {
+        "default" => Some("default"),
+        "plan" => Some("plan"),
+        "acceptEdits" => Some("acceptEdits"),
+        "bypassPermissions" => Some("bypassPermissions"),
+        _ => None,
+    }
+}
+
+/// session-permission-mode FR-1/FR-2/FR-3: the engine half of
+/// `session_switch_permission_mode` — the status-terminal guard (a session
+/// that can take no further turn has nothing for a next-turn setting to act
+/// on) plus the mutation, kept pure like `rename_in_engine` so both are
+/// testable without an `AppHandle` (persist + emit stay in the handler).
+/// Setting the mode the session already has is deliberately NOT special-cased
+/// (FR-3): same mutation, same `Ok`.
+pub(crate) fn switch_permission_mode_in_engine(
+    engine: &Engine,
+    session_id: &str,
+    mode: &str,
+) -> Result<SessionMeta, (&'static str, &'static str)> {
+    match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
+        None => return Err(("SESSION_NOT_FOUND", "no such session")),
+        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        Some(true) => {}
+    }
+    engine
+        .with_session_mut(session_id, |s| {
+            s.permission_mode = mode.to_string();
+            s.meta()
+        })
+        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+}
+
+/// session-permission-mode FR-1: `francois:session:switchPermissionMode`.
+/// Semantics and code shape mirror `apply_model_switch` — set the field,
+/// persist with the existing atomic write, emit one `session.meta`, resolve
+/// the same snapshot the event carries. FR-2's error ladder: `INVALID_INPUT`
+/// for a `mode` outside `PermissionMode`, `SESSION_NOT_FOUND` /
+/// `SESSION_NOT_RUNNING` from `switch_permission_mode_in_engine`. FR-6: no
+/// process is signalled and no stdin is written — a running turn already
+/// carries its own `permission_mode` copy on its `TurnContext` snapshot
+/// (session/turn.rs), so this mutation only ever reaches the NEXT turn.
+#[tauri::command(async)]
+pub fn session_switch_permission_mode(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    mode: String,
+) -> IpcResult<Value> {
+    let Some(mode) = parse_permission_mode(&mode) else {
+        return err("INVALID_INPUT", "unknown permission mode");
+    };
+    let meta = match switch_permission_mode_in_engine(&engine, &session_id, mode) {
+        Ok(meta) => meta,
+        Err((code, msg)) => return err(code, msg),
+    };
+    persist(&app, &engine);
+    emit(&app, SessionEvent::Meta { meta: meta.clone() });
+    ok(serde_json::to_value(meta).unwrap())
+}
+
 /// session-rename FR-3/FR-4/FR-5: `francois:session:rename`. Validates the raw
 /// input (FR-1), swaps the name, persists with the existing atomic write and emits
 /// `session.meta` — the frontend's single update path. Accepted in EVERY status:
@@ -582,6 +652,75 @@ mod tests {
 
         assert!(validate_create_input(cwd, None, Some("bogus".into()), None, false).is_err());
         assert!(validate_create_input(cwd, None, None, Some("bogus".into()), false).is_err());
+    }
+
+    // ---------- session-permission-mode ----------
+
+    #[test]
+    fn parse_permission_mode_accepts_all_four_members_and_rejects_the_rest() {
+        for m in ["default", "plan", "acceptEdits", "bypassPermissions"] {
+            assert_eq!(parse_permission_mode(m), Some(m));
+        }
+        // FR-2: an older frontend, the CLI or an extension sending a stale/bogus
+        // string never falls back to 'default' silently.
+        for bogus in ["auto", "dontAsk", "", "Default", "bypass"] {
+            assert_eq!(parse_permission_mode(bogus), None);
+        }
+    }
+
+    #[test]
+    fn switch_permission_mode_in_engine_mutates_and_returns_the_updated_meta() {
+        // FR-1: the returned SessionMeta is exactly what the accompanying
+        // session.meta emission carries.
+        let engine = test_engine_with(test_session());
+        let meta = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        assert_eq!(meta.permission_mode, "bypassPermissions");
+        assert_eq!(
+            engine.with_session("s1", |s| s.permission_mode.clone()),
+            Some("bypassPermissions".to_string())
+        );
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["permissionMode"], "bypassPermissions");
+    }
+
+    #[test]
+    fn switch_permission_mode_in_engine_is_a_no_op_success_for_the_current_mode() {
+        // FR-3: picking the mode already set is a success, no special-casing.
+        let engine = test_engine_with(test_session()); // starts "default"
+        let meta = switch_permission_mode_in_engine(&engine, "s1", "default").unwrap();
+        assert_eq!(meta.permission_mode, "default");
+    }
+
+    #[test]
+    fn switch_permission_mode_in_engine_rejects_an_unknown_session() {
+        // FR-2: SESSION_NOT_FOUND.
+        let engine = test_engine_with(test_session());
+        let Err(err) = switch_permission_mode_in_engine(&engine, "nope", "plan") else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.0, "SESSION_NOT_FOUND");
+        assert_eq!(
+            engine.with_session("s1", |s| s.permission_mode.clone()),
+            Some("default".to_string())
+        );
+    }
+
+    #[test]
+    fn switch_permission_mode_in_engine_rejects_a_terminal_session() {
+        // FR-2: a session that can take no further turn has nothing for a
+        // next-turn setting to act on — same rule session_send already applies.
+        let mut session = test_session();
+        session.status = status::DONE.into();
+        let engine = test_engine_with(session);
+        let Err(err) = switch_permission_mode_in_engine(&engine, "s1", "plan") else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.0, "SESSION_NOT_RUNNING");
+        // Nothing was mutated.
+        assert_eq!(
+            engine.with_session("s1", |s| s.permission_mode.clone()),
+            Some("default".to_string())
+        );
     }
 
     // ---------- session-rename ----------
