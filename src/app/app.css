@@ -40,15 +40,31 @@
   column-gap: 0;
 }
 
+/* ── .app-grid item placement: DOM order, never `grid-row` ──────────────────
+   The three children (roster-or-rail, the drag handle, the main cell) take the
+   three tracks purely by document order. Do NOT pin `grid-row: 1` on any of
+   them, however harmless it looks in a one-row grid.
+
+   Why: CSS Grid's placement algorithm (§8.5) runs items with a DEFINITE row in
+   step 2, before auto-positioned items in step 4 — so a pinned item claims the
+   earliest free column regardless of where it sits in the DOM. These three used
+   to be pinned while RosterDivider (`.app-split-divider`, added with
+   resizable-sidebar) was not, which placed the main cell in the 12px handle
+   track and the handle itself across the whole 1fr:
+
+       .app-col-left  -> col 1   (step 2, definite row)
+       .app-main-cell -> col 2   (step 2 — the GUTTER)
+       RosterDivider  -> col 3   (step 4 — the whole main pane)
+
+   The result was a 12px-wide transcript beside a full-width invisible drag
+   handle. Unpinned, all three are auto-placed in order into the single row. */
 .app-col-left {
-  grid-row: 1;
   min-height: 0;
 }
 
 /* The single content cell. Two stacked children — the persistent panel host and
    the main view — of which exactly one is displayed at a time. */
 .app-main-cell {
-  grid-row: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1033,8 +1049,8 @@ body.app-resizing-y * {
 /* ── the folded roster (FR-6 / turn 5d) ─────────────────────────────────────
    Same 46px geometry and the same 30px buttons as the right column's rail, so
    the two folded edges of the shell read as one system. */
+/* No `grid-row` — see the placement note on .app-col-left. */
 .session-rail {
-  grid-row: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
