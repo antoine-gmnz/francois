@@ -229,13 +229,13 @@
           </section>
 
           <section style="min-height:0; display:flex; flex-direction:column; background:#0a0b0e; overflow:hidden;">
-            <div class="scz" style="flex:1; min-height:0; overflow:auto; padding:16px 24px 10px; display:flex; flex-direction:column; gap:14px;">
+            <div class="scz" style="flex:1; min-height:0; overflow:auto; padding:12px 24px 6px; display:flex; flex-direction:column; gap:11px;">
 
-              <div style="background:#101319; border-radius:5px; padding:18px 22px 20px; display:grid; grid-template-columns:1fr 1fr; gap:26px;">
-                <div style="display:flex; flex-direction:column; align-items:center; gap:14px; padding:6px 0;">
+              <div style="background:#101319; border-radius:5px; padding:12px 22px 13px; display:grid; grid-template-columns:1fr 1fr; gap:26px;">
+                <div style="display:flex; flex-direction:column; align-items:center; gap:10px; padding:0;">
                   <div style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#f2f4f8;">Welcome back, Charles</div>
-                  <span style="position:relative; display:inline-block; width:64px; height:56px; flex-shrink:0;"><span style="position:absolute; left:10px; top:0; width:54px; height:16px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#9cb45f;"></span><span style="position:absolute; left:5px; top:20px; width:54px; height:16px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#9cb45f;"></span><span style="position:absolute; left:0; top:40px; width:54px; height:16px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#586c30;"></span></span>
-                  <div style="display:flex; flex-direction:column; align-items:center; gap:4px; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
+                  <span style="position:relative; display:inline-block; width:54px; height:47px; flex-shrink:0;"><span style="position:absolute; left:8px; top:0; width:46px; height:13px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#9cb45f;"></span><span style="position:absolute; left:4px; top:17px; width:46px; height:13px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#9cb45f;"></span><span style="position:absolute; left:0; top:34px; width:46px; height:13px; clip-path:polygon(28% 0%, 100% 0%, 72% 100%, 0% 100%); background:#586c30;"></span></span>
+                  <div style="display:flex; flex-direction:column; align-items:center; gap:3px; font-family:'JetBrains Mono',monospace; font-size:11px; color:#6b7385;">
                     <span>Francois v0.14.0 · Sonnet 4.7 · work@acme.dev</span>
                     <span>D:\acme-api · ⑂ router-adapter</span>
                   </div>
@@ -254,28 +254,80 @@
                 </div>
               </div>
 
-              <div style="display:flex; flex-direction:column; gap:11px; font-family:'JetBrains Mono',monospace; font-size:12.5px; line-height:1.65;">
-                <div style="display:flex; gap:10px;"><span style="color:#9cb45f;">›</span><span style="flex:1; color:#e6e9ef; text-wrap:pretty;">migrate the router to the new adapter and get the suite green</span></div>
-                <div style="display:flex; gap:10px;"><span style="color:#565e6e;">⏺</span><span style="flex:1; color:#c3c9d4; text-wrap:pretty;">Eleven route files move to the adapter API. Doing them in one pass, then running the suite.</span></div>
-                <div style="display:flex; flex-direction:column; gap:3px; padding-left:22px; color:#8b93a3;">
-                  <div><span style="color:#6f9fd8;">✎</span> Edit <span style="color:#d6dae2;">src/routes/index.ts</span> <span style="color:#7fa07a;">+88</span> <span style="color:#e0918a;">−140</span></div>
-                  <div><span style="color:#6f9fd8;">✎</span> Edit <span style="color:#d6dae2;">src/routes/middleware.ts</span> <span style="color:#7fa07a;">+12</span> <span style="color:#e0918a;">−19</span></div>
-                  <div><span style="color:#c9a2d8;">⌗</span> Bash <span style="color:#d6dae2;">npm test</span> <span style="color:#e0918a;">· 14 failed · exit 1</span></div>
+              <div style="display:flex; flex-direction:column; gap:13px; font-family:'JetBrains Mono',monospace; font-variant-numeric:tabular-nums;">
+
+                <div style="display:grid; grid-template-columns:20px 1fr; column-gap:12px; align-items:start;">
+                  <span style="font-size:13px; line-height:1.5; color:#9cb45f; text-align:center;">›</span>
+                  <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                      <span style="font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:#6f8340;">You</span>
+                      <span style="flex:1; height:1px; background:#15181e;"></span>
+                      <span style="font-size:9.5px; color:#6b7385;">12:04</span>
+                    </div>
+                    <div style="font-size:13.5px; line-height:1.6; letter-spacing:-.005em; color:#f2f4f8; text-wrap:pretty;">migrate the router to the new adapter and get the suite green</div>
+                  </div>
                 </div>
-                <div style="display:flex; gap:10px;"><span style="color:#565e6e;">⏺</span><span style="flex:1; color:#c3c9d4; text-wrap:pretty;">All fourteen failures are the same install error — the lockfile still pins the old peer range. A clean reinstall fixes it.</span></div>
+
+                <div style="display:grid; grid-template-columns:20px 1fr; column-gap:12px; align-items:start;">
+                  <span style="font-size:9px; line-height:2.1; color:#586c30; text-align:center;">⏺</span>
+                  <div style="display:flex; flex-direction:column; gap:9px; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                      <span style="font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:#8b93a3;">Francois</span>
+                      <span style="font-size:9.5px; color:#6b7385;">sonnet 4.7</span>
+                      <span style="flex:1; height:1px; background:#15181e;"></span>
+                      <span style="font-size:9.5px; color:#6b7385;">3 steps · 1m 52s</span>
+                    </div>
+                    <div style="font-size:12.5px; line-height:1.65; color:#c9cfd9; max-width:82ch; text-wrap:pretty;">Eleven route files move to the adapter API. Doing them in one pass, then running the suite.</div>
+
+                    <div style="position:relative; display:flex; flex-direction:column; gap:1px; padding:2px 0 2px 14px;">
+                      <span style="position:absolute; left:0; top:4px; bottom:4px; width:1px; background:#1d222b;"></span>
+                      <div style="display:grid; grid-template-columns:16px 46px 1fr auto; align-items:center; column-gap:10px; padding:4px 8px; margin-left:-8px; border-radius:3px;" style-hover="background:#101319">
+                        <span style="font-size:11px; color:#6f9fd8;">✎</span>
+                        <span style="font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:#5d798f;">Edit</span>
+                        <span style="font-size:12px; color:#d6dae2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">src/routes/index.ts</span>
+                        <span style="display:flex; gap:5px; font-size:10.5px;"><span style="padding:1px 5px; border-radius:3px; background:#141d16; color:#7fa07a;">+88</span><span style="padding:1px 5px; border-radius:3px; background:#1f1414; color:#d48b84;">−140</span></span>
+                      </div>
+                      <div style="display:grid; grid-template-columns:16px 46px 1fr auto; align-items:center; column-gap:10px; padding:4px 8px; margin-left:-8px; border-radius:3px;" style-hover="background:#101319">
+                        <span style="font-size:11px; color:#6f9fd8;">✎</span>
+                        <span style="font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:#5d798f;">Edit</span>
+                        <span style="font-size:12px; color:#d6dae2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">src/routes/middleware.ts</span>
+                        <span style="display:flex; gap:5px; font-size:10.5px;"><span style="padding:1px 5px; border-radius:3px; background:#141d16; color:#7fa07a;">+12</span><span style="padding:1px 5px; border-radius:3px; background:#1f1414; color:#d48b84;">−19</span></span>
+                      </div>
+                      <div style="display:grid; grid-template-columns:16px 46px 1fr auto; align-items:center; column-gap:10px; padding:4px 8px; margin-left:-8px; border-radius:3px;" style-hover="background:#101319">
+                        <span style="font-size:11px; color:#c9a2d8;">⌗</span>
+                        <span style="font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:#8b6f96;">Bash</span>
+                        <span style="font-size:12px; color:#d6dae2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">npm test</span>
+                        <span style="display:flex; align-items:center; gap:7px; font-size:10.5px;"><span style="color:#565e6e;">exit 1</span><span style="padding:1px 5px; border-radius:3px; background:#1f1414; color:#d48b84;">14 failed</span></span>
+                      </div>
+                    </div>
+
+                    <div style="font-size:12.5px; line-height:1.65; color:#c9cfd9; max-width:82ch; text-wrap:pretty;">All fourteen failures are the same install error — the lockfile still pins the old peer range. <span style="color:#f2f4f8;">A clean reinstall fixes it.</span></div>
+                  </div>
+                </div>
               </div>
 
-              <div style="background:#17130b; border-radius:5px; padding:14px 18px 16px; display:flex; flex-direction:column; gap:12px;">
-                <div style="display:flex; align-items:center; gap:10px; font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:#c99f56;">
+              <div style="background:#17130b; border-radius:5px; padding:11px 14px 12px; display:flex; flex-direction:column; gap:9px;">
+                <div style="display:flex; align-items:center; gap:10px; font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#c99f56;">
                   <span>Permission</span>
-                  <span style="color:#8a7345;">waiting 4m</span>
+                  <span style="flex:1; height:1px; background:#241d10;"></span>
+                  <span style="letter-spacing:.1em; color:#8a7345;">waiting 4m</span>
                 </div>
-                <div style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#f0e2bd;">Bash(rm -rf node_modules &amp;&amp; npm ci)</div>
-                <div style="font-family:'JetBrains Mono',monospace; font-size:11.5px; line-height:1.6; color:#b8a887;">in <span style="color:#d6dae2;">D:\acme-api</span> — deletes 1,204 untracked files</div>
+                <div style="background:#0a0b0e; border-radius:3px; overflow:hidden;">
+                  <div style="display:flex; align-items:center; gap:9px; padding:6px 11px; background:#100e09; font-family:'JetBrains Mono',monospace; font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:#8a7345;">
+                    <span>bash</span>
+                    <span style="letter-spacing:0; text-transform:none; color:#6d5c3a;">D:\acme-api</span>
+                    <span style="flex:1;"></span>
+                    <span style="letter-spacing:0; text-transform:none; color:#c99f56;">deletes 1,204 untracked files</span>
+                  </div>
+                  <div style="display:flex; gap:10px; padding:10px 11px 11px; font-family:'JetBrains Mono',monospace; font-size:12.5px; line-height:1.5;">
+                    <span style="color:#586c30;">$</span>
+                    <span style="flex:1; text-wrap:pretty;"><span style="color:#f0e2bd;">rm</span> <span style="color:#c99f56;">-rf</span> <span style="color:#d6dae2;">node_modules</span> <span style="color:#8a7345;">&amp;&amp;</span> <span style="color:#f0e2bd;">npm</span> <span style="color:#d6dae2;">ci</span></span>
+                  </div>
+                </div>
                 <div style="display:flex; flex-direction:column; font-family:'JetBrains Mono',monospace; font-size:12px;">
-                  <div style="display:flex; gap:10px; padding:6px 18px; margin:0 -18px; background:#241d10; cursor:pointer;"><span style="color:#9cb45f;">1</span><span style="color:#f2f4f8;">Yes, run it</span></div>
-                  <div style="display:flex; gap:10px; padding:6px 18px; margin:0 -18px; cursor:pointer; color:#9aa2b1;" style-hover="background:#1d180e"><span style="color:#8b93a3;">2</span><span>Yes, and always allow this in acme-api</span></div>
-                  <div style="display:flex; gap:10px; padding:6px 18px; margin:0 -18px; cursor:pointer; color:#9aa2b1;" style-hover="background:#1d180e"><span style="color:#8b93a3;">3</span><span>No, and tell Francois what to do instead</span></div>
+                  <div style="display:flex; gap:10px; padding:4px 14px; margin:0 -14px; background:#241d10; cursor:pointer;"><span style="color:#9cb45f;">1</span><span style="color:#f2f4f8;">Yes, run it</span></div>
+                  <div style="display:flex; gap:10px; padding:4px 14px; margin:0 -14px; cursor:pointer; color:#9aa2b1;" style-hover="background:#1d180e"><span style="color:#8b93a3;">2</span><span>Yes, and always allow this in acme-api</span></div>
+                  <div style="display:flex; gap:10px; padding:4px 14px; margin:0 -14px; cursor:pointer; color:#9aa2b1;" style-hover="background:#1d180e"><span style="color:#8b93a3;">3</span><span>No, and tell Francois what to do instead</span></div>
                 </div>
               </div>
             </div>
@@ -302,8 +354,76 @@
 
       <div style="display:flex; flex-direction:column; gap:5px; max-width:1280px; font-size:12.5px; line-height:1.6; color:#6b7385;">
         <div>· Every 1px stroke is gone; the four surfaces do the separating — window <span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">#0d0f13</span>, chrome <span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">#171b22</span>, rails <span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">#12161c</span>, terminal <span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">#0a0b0e</span>. Session rows run full-bleed to the panel edge so the hover fill reads as the row, not as a card.</div>
-        <div>· The framed welcome and permission blocks become filled ones — the notched legend is replaced by a plain uppercase label, since a notch only exists to interrupt a border.</div>
+        <div>· What is being approved is now set as code, not prose: a dark inset surface with a header carrying the interpreter, the working directory and the blast radius, then the command itself with the binary, flags, arguments and the <span style="font-family:'JetBrains Mono',monospace; color:#8b93a3;">&amp;&amp;</span> chain each coloured. An <em style="font-style:normal; color:#9aa2b1;">Edit</em> approval uses the same surface with a line-number gutter — see <a href="#9b">9b</a>.</div>
         <div>· Trade-off: without the acid, <span style="font-family:'JetBrains Mono',monospace; color:#9cb45f;">Working</span> and the accent green sit closer to the body text, so the amber waiting state now clearly wins the page. Open question: whether the olive is too close to the <span style="font-family:'JetBrains Mono',monospace; color:#7fa07a;">finished</span> green to stay legible as two states.</div>
+      </div>
+    </div>
+
+    <div id="9b" style="display:flex; flex-direction:column; gap:14px; width:620px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500; color:#0a0b0e; background:#9cb45f; border-radius:4px; padding:3px 8px;">9b</span>
+        <span style="font-size:16px; font-weight:600; color:#f2f4f8;">Approval surfaces</span>
+        <span style="font-size:13px; color:#6b7385;">the same code surface, three kinds of ask</span>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px; padding:22px; background:#0a0b0e; border-radius:6px;">
+
+        <div style="background:#17130b; border-radius:5px; padding:11px 14px 12px; display:flex; flex-direction:column; gap:9px;">
+          <div style="display:flex; align-items:center; gap:10px; font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#c99f56;">
+            <span>Permission · edit</span>
+            <span style="flex:1; height:1px; background:#241d10;"></span>
+            <span style="letter-spacing:.1em; color:#8a7345;">waiting 1m</span>
+          </div>
+          <div style="background:#0a0b0e; border-radius:3px; overflow:hidden;">
+            <div style="display:flex; align-items:center; gap:9px; padding:6px 11px; background:#100e09; font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#8a7345;">
+              <span style="letter-spacing:.14em; text-transform:uppercase;">typescript</span>
+              <span style="color:#6d5c3a;">src/routes/auth.ts</span>
+              <span style="flex:1;"></span>
+              <span style="color:#7fa07a;">+3</span>
+              <span style="color:#d48b84;">−1</span>
+            </div>
+            <div style="display:flex; flex-direction:column; padding:8px 0 9px; font-family:'JetBrains Mono',monospace; font-size:12px; line-height:1.65; font-variant-numeric:tabular-nums;">
+              <div style="display:grid; grid-template-columns:34px 12px 1fr; column-gap:4px;"><span style="text-align:right; color:#3e4653;">41</span><span style="color:#3e4653;"> </span><span style="color:#8b93a3;">  <span style="color:#c9a2d8;">export async function</span> <span style="color:#9cc2e4;">verify</span>(token: <span style="color:#c9a2d8;">string</span>) {</span></div>
+              <div style="display:grid; grid-template-columns:34px 12px 1fr; column-gap:4px; background:#1f1414;"><span style="text-align:right; color:#8a5a55;">42</span><span style="color:#d48b84;">−</span><span style="color:#c9a09b;">    <span style="color:#c9a2d8;">return</span> jwt.<span style="color:#9cc2e4;">verify</span>(token, SECRET)</span></div>
+              <div style="display:grid; grid-template-columns:34px 12px 1fr; column-gap:4px; background:#141d16;"><span style="text-align:right; color:#5f8a6d;">42</span><span style="color:#7fa07a;">+</span><span style="color:#a8c4ac;">    <span style="color:#c9a2d8;">const</span> keys = <span style="color:#c9a2d8;">await</span> <span style="color:#9cc2e4;">jwks</span>(ISSUER)</span></div>
+              <div style="display:grid; grid-template-columns:34px 12px 1fr; column-gap:4px; background:#141d16;"><span style="text-align:right; color:#5f8a6d;">43</span><span style="color:#7fa07a;">+</span><span style="color:#a8c4ac;">    <span style="color:#c9a2d8;">return</span> jwt.<span style="color:#9cc2e4;">verify</span>(token, keys, { <span style="color:#9cc2e4;">algorithms</span>: [<span style="color:#dcb673;">'RS256'</span>] })</span></div>
+              <div style="display:grid; grid-template-columns:34px 12px 1fr; column-gap:4px;"><span style="text-align:right; color:#3e4653;">44</span><span style="color:#3e4653;"> </span><span style="color:#8b93a3;">  }</span></div>
+            </div>
+          </div>
+          <div style="display:flex; flex-direction:column; font-family:'JetBrains Mono',monospace; font-size:12px;">
+            <div style="display:flex; gap:10px; padding:4px 14px; margin:0 -14px; background:#241d10; cursor:pointer;"><span style="color:#9cb45f;">1</span><span style="color:#f2f4f8;">Yes, apply the edit</span></div>
+            <div style="display:flex; gap:10px; padding:4px 14px; margin:0 -14px; cursor:pointer; color:#9aa2b1;" style-hover="background:#1d180e"><span style="color:#8b93a3;">2</span><span>Yes, and always allow edits in src/routes</span></div>
+            <div style="display:flex; gap:10px; padding:4px 14px; margin:0 -14px; cursor:pointer; color:#9aa2b1;" style-hover="background:#1d180e"><span style="color:#8b93a3;">3</span><span>No, and tell Francois what to do instead</span></div>
+          </div>
+        </div>
+
+        <div style="background:#17130b; border-radius:5px; padding:11px 14px 12px; display:flex; flex-direction:column; gap:9px;">
+          <div style="display:flex; align-items:center; gap:10px; font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#c99f56;">
+            <span>Permission · fetch</span>
+            <span style="flex:1; height:1px; background:#241d10;"></span>
+            <span style="letter-spacing:.1em; color:#8a7345;">waiting 8s</span>
+          </div>
+          <div style="background:#0a0b0e; border-radius:3px; overflow:hidden;">
+            <div style="display:flex; align-items:center; gap:9px; padding:6px 11px; background:#100e09; font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#8a7345;">
+              <span style="letter-spacing:.14em; text-transform:uppercase;">network</span>
+              <span style="flex:1;"></span>
+              <span style="color:#c99f56;">first request to this host</span>
+            </div>
+            <div style="display:flex; gap:10px; padding:10px 11px 11px; font-family:'JetBrains Mono',monospace; font-size:12.5px; line-height:1.5;">
+              <span style="color:#586c30;">↗</span>
+              <span style="flex:1;"><span style="color:#f0e2bd;">GET</span> <span style="color:#d6dae2;">https://</span><span style="color:#dcb673;">registry.npmjs.org</span><span style="color:#d6dae2;">/@acme/router-adapter</span></span>
+            </div>
+          </div>
+          <div style="display:flex; flex-direction:column; font-family:'JetBrains Mono',monospace; font-size:12px;">
+            <div style="display:flex; gap:10px; padding:4px 14px; margin:0 -14px; background:#241d10; cursor:pointer;"><span style="color:#9cb45f;">1</span><span style="color:#f2f4f8;">Yes, allow this request</span></div>
+            <div style="display:flex; gap:10px; padding:4px 14px; margin:0 -14px; cursor:pointer; color:#9aa2b1;" style-hover="background:#1d180e"><span style="color:#8b93a3;">2</span><span>Yes, and always allow registry.npmjs.org</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:5px; font-size:12.5px; line-height:1.6; color:#6b7385;">
+        <div>· One surface, three payloads. The header always answers <em style="font-style:normal; color:#9aa2b1;">what language or channel</em>, <em style="font-style:normal; color:#9aa2b1;">where</em>, and <em style="font-style:normal; color:#9aa2b1;">how big the blast radius is</em> — deleted files, diff counts, an unseen host — so the risk is legible before the code is read.</div>
+        <div>· Edits carry a real gutter: tabular line numbers, a <span style="font-family:'JetBrains Mono',monospace; color:#d48b84;">−</span>/<span style="font-family:'JetBrains Mono',monospace; color:#7fa07a;">+</span> column, tinted rows and two lines of unchanged context. The choices stay numbered so the keyboard path is identical whatever is being approved.</div>
       </div>
     </div>
 

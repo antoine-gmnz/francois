@@ -261,10 +261,19 @@ export const ACTIVE_SESSION = S_API;
 
 const b = (n: number) => `blk-${n}`;
 
+/**
+ * design 9a: the turn header states when a prompt was sent and how long the
+ * reply ran, both derived from the blocks' own `at`. The demo fleet stamps
+ * them relative to T0 so the hero session shows a real clock and a real
+ * duration instead of a header with both halves missing.
+ */
+const at = (secondsAgo: number) => T0 - secondsAgo * 1000;
+
 export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'user',
     blockId: b(1),
+    at: at(452),
     isStreaming: false,
     queued: false,
     text: 'The OAuth callback drops the `state` param when the token exchange is retried, so every retry fails CSRF validation. Track it down and fix it — with a regression test.',
@@ -272,6 +281,7 @@ export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'assistant',
     blockId: b(2),
+    at: at(447),
     isStreaming: false,
     glyph: '●',
     glyphColor: '#8b93a3',
@@ -281,6 +291,7 @@ export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'tool',
     blockId: b(3),
+    at: at(431),
     isStreaming: false,
     tool: 'Read',
     glyph: '⧉',
@@ -292,6 +303,7 @@ export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'tool',
     blockId: b(4),
+    at: at(402),
     isStreaming: false,
     tool: 'Grep',
     glyph: '⌕',
@@ -303,6 +315,7 @@ export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'assistant',
     blockId: b(5),
+    at: at(355),
     isStreaming: false,
     glyph: '●',
     glyphColor: '#8b93a3',
@@ -312,6 +325,7 @@ export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'tool',
     blockId: b(6),
+    at: at(296),
     isStreaming: false,
     tool: 'Edit',
     glyph: '✎',
@@ -323,6 +337,7 @@ export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'subagent',
     blockId: b(7),
+    at: at(240),
     isStreaming: false,
     glyph: '⇉',
     glyphColor: '#b39ede',
@@ -334,6 +349,7 @@ export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'tool',
     blockId: b(8),
+    at: at(174),
     isStreaming: false,
     tool: 'Bash',
     glyph: '●',
@@ -345,6 +361,7 @@ export const TRANSCRIPT: ConversationBlock[] = [
   {
     kind: 'assistant',
     blockId: b(9),
+    at: at(108),
     isStreaming: false,
     glyph: '●',
     glyphColor: '#8b93a3',

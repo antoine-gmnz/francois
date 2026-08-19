@@ -13,24 +13,41 @@ pub(crate) fn tool_glyph(tool: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// design 9a: stamp `at` onto a serialized block, or leave the key out when the
+/// buffer has no time for it (a line persisted before the field existed). The
+/// contract types it optional for exactly that case — an absent key is what
+/// tells the turn header to render without a clock, and `0` would not.
+fn with_at(mut o: Value, b: &BufBlock) -> Value {
+    if b.at != 0 {
+        o["at"] = Value::from(b.at);
+    }
+    o
+}
+
 /// Serialize a buffered block to the ConversationBlock JSON shape (§5 of
 /// conversation-view). Mirrors classifyToolStart in the TS contract.
 pub(crate) fn classify_block(b: &BufBlock) -> Value {
     match b.kind {
-        BlockKind::User => serde_json::json!({
-            "kind": "user", "blockId": b.block_id, "isStreaming": b.streaming,
-            "text": b.text, "queued": false,
-        }),
+        BlockKind::User => with_at(
+            serde_json::json!({
+                "kind": "user", "blockId": b.block_id, "isStreaming": b.streaming,
+                "text": b.text, "queued": false,
+            }),
+            b,
+        ),
         BlockKind::Assistant => {
             let (gc, bc) = if b.streaming {
                 ("#c3f53f", "#e6e9ef")
             } else {
                 ("#8b93a3", "#c3c9d4")
             };
-            serde_json::json!({
-                "kind": "assistant", "blockId": b.block_id, "isStreaming": b.streaming,
-                "glyph": "\u{25CF}", "glyphColor": gc, "bodyColor": bc, "text": b.text,
-            })
+            with_at(
+                serde_json::json!({
+                    "kind": "assistant", "blockId": b.block_id, "isStreaming": b.streaming,
+                    "glyph": "\u{25CF}", "glyphColor": gc, "bodyColor": bc, "text": b.text,
+                }),
+                b,
+            )
         }
         BlockKind::Tool => {
             let (glyph, gc) = tool_glyph(&b.tool);
@@ -42,7 +59,7 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
             if let Some(m) = &b.meta {
                 o["meta"] = Value::String(m.clone());
             }
-            o
+            with_at(o, b)
         }
         BlockKind::Subagent => {
             let mut o = serde_json::json!({
@@ -58,7 +75,7 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
             if let Some(m) = &b.meta {
                 o["meta"] = Value::String(m.clone());
             }
-            o
+            with_at(o, b)
         }
         BlockKind::Notice => serde_json::json!({
             // agent-tab FR-4: AgentNoticeBlock — appended already final, so it

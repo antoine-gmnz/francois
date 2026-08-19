@@ -133,6 +133,9 @@ fn buf_block(
         meta: None,
         card: None,
         streaming,
+        // design 9a: an agent tab's blocks are timed the same as a session's —
+        // the tab renders the same turn header, so the clock has to be real.
+        at: now_ms(),
     }
 }
 

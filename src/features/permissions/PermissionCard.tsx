@@ -1,5 +1,6 @@
 // permission-guardrails — approval card renderer for the SESSION transcript
-// (spec §8). Compact by design: a header strip, the call signature, and the
+// (spec §8), under design 9b. Compact by design: a legend row, the CODE SURFACE
+// (what is being approved, set as code rather than stated as prose), and the
 // action row — everything else (raw input, cwd, the rule an "always" would
 // write) lives behind the disclosure caret. The classes live in
 // ./permissions.css and contain NO @keyframes/animation/transition (the
@@ -7,7 +8,7 @@
 // is pure in ./permission-card (unit-tested); this file is DOM assembly +
 // card-local UI state (chosen tier, disclosure, in-flight flag, inline error).
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   PermissionConversationBlock,
   PermissionDecision,
@@ -18,8 +19,9 @@ import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
+import { askCodeSurface, cardLegend } from './permission-code';
+import CodeSurfaceView from './CodeSurface';
 import {
-  askSignature,
   cardClass,
   hasDetail,
   PERMISSION_ACTIONS,
@@ -66,6 +68,10 @@ export default function PermissionCard({
   const interactive = pending && !inFlight;
   const note = stateNote(block.state);
   const detail = hasDetail(block.ask, pending);
+  // 9b: the ask, parsed into the surface that sets it — a tokenized command, a
+  // request line or a real diff. Pure and cheap, but the ask never changes
+  // while the card lives, so it is derived once per block rather than per key.
+  const surface = useMemo(() => askCodeSurface(block.ask), [block.ask]);
 
   const decide = (decision: PermissionDecision) => {
     if (!interactive) return;
@@ -107,34 +113,36 @@ export default function PermissionCard({
 
   return (
     <div className={cardClass(block.state, inFlight)}>
-      {/* design 7a: the legend rides the top rule — `Permission · waiting 4m`. */}
+      {/* 9b: the legend names WHAT KIND of ask this is, then a rule carries the
+          eye to the waiting clock at the right edge. */}
       <div className="pcard__head">
-        <span className="pcard__glyph">◈</span>
-        <span className="pcard__label">Permission</span>
+        <span className="pcard__label">{cardLegend(surface)}</span>
         {note && <span className={`pcard__note pcard__note--${block.state}`}>{note}</span>}
+        <span className="pcard__head-rule" />
         {/* relativeAge already reads "5m ago" / "just now" — no "waiting" prefix,
             which would double the tense the mock's `waiting 4m` states once. */}
         {pending && <span className="pcard__age">{relativeAge(now - askedAt.current)}</span>}
       </div>
 
-      {/* §8.3: the call as it would be typed — `Bash(rm -rf node_modules)`.
-          Doubles as the disclosure control when there is detail to reveal. */}
-      <button
-        type="button"
-        className={'pcard__sig' + (detail ? '' : ' pcard__sig--static')}
-        onClick={detail ? () => setOpen((v) => !v) : undefined}
-        aria-expanded={detail ? open : undefined}
-      >
-        <span className="pcard__sig-text">{askSignature(block.ask)}</span>
-        {detail && <span className="pcard__caret">{open ? '▾' : '▸'}</span>}
-      </button>
+      {/* §8.3 / 9b: what is being approved, set as code. Its header strip
+          doubles as the disclosure control when there is detail to reveal. */}
+      <CodeSurfaceView
+        surface={surface}
+        open={detail ? open : undefined}
+        onToggle={detail ? () => setOpen((v) => !v) : undefined}
+      />
 
       {detail && open && (
         <div className="pcard__detail">
           {/* FR-20: the raw input, so nothing is hidden behind the summary. */}
           {block.ask.inputJson !== '' && <div className="scz pcard__input">{block.ask.inputJson}</div>}
 
-          {block.ask.cwd !== '' && <div className="pcard__meta">cwd {block.ask.cwd}</div>}
+          {/* 9b: skipped when the surface header already states it — a command
+              ask puts the cwd there, and repeating it inside the disclosure
+              makes the reader check whether the two say different things. */}
+          {block.ask.cwd !== '' && block.ask.cwd !== surface.header.context && (
+            <div className="pcard__meta">cwd {block.ask.cwd}</div>
+          )}
 
           {/* FR-20: the rule an "always" decision WOULD write — visible before
               the user commits to it. The tier that scopes it sits in the action
