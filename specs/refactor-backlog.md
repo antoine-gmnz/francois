@@ -268,6 +268,11 @@ filtering relative PATH entries is right for extension spawns, it is right every
 
 - [ ] LOW · src/features/diff/DiffTree.tsx:85 · quality · the `role="tree"` container carries `aria-activedescendant` but has no `tabIndex`, so it is never focusable — either make it focusable or drop the decorative ARIA · deferred:diff-navigator
 
+## deferred:resizable-sidebar — SHIP-round leftovers (review round 1)
+
+- [ ] MEDIUM · src/app/RosterDivider.tsx:66-85 · quality · Base the arrow-key nudge on the stored `rosterWidth` intent (pass it alongside `renderedWidth`) instead of the clamped `renderedWidth`, so a nudge under a clamped viewport/regime cannot overwrite a wider stored width; clamp only for the `aria-valuenow` readout. · deferred:resizable-sidebar
+- [ ] LOW · src/lib/hooks/usePaneDrag.ts · quality · Add `usePaneDrag.test.ts` covering measure/onDrag/dragging-flag transitions once a DOM component testing framework is wired for this repo. · deferred:resizable-sidebar
+
 ## frontend
 - [ ] LOW · src/app/app.css:963-969 · quality · pane header ⋯ button is opacity:0 until .split-pane:hover/:focus-within — add :focus-visible on the button itself as a redundant reveal trigger · deferred:unbound-panes
 - [ ] MEDIUM · src/lib/layoutStore.ts:1012-1013,1169-1174 · quality · closePane disposes the dropped shell then unsplitPatch re-disposes s.extraPanes — pass the filtered pane list into unsplitPatch (or skip the early dispose when keep.length===1) · deferred:unbound-panes

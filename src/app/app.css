@@ -10,21 +10,34 @@
   background: var(--bg-app);
 }
 
-/* design 9a: the body is `282px | 1fr`, FLUSH — no window padding and no
-   gutter. In 7a the 12px window padding was what made each pane read as a card
-   floating on the window; with the strokes and radii gone there are no cards to
-   float, and the gutter would just be a grey channel between two surfaces that
-   already differ in tone. The rail runs to the window edge, the terminal runs
-   to the other one, and the step between them does the work.
+/* The body is `<left> 12px 1fr`. There is no status-bar row — [3]–[6] live in
+   the roster's footer and the chrome lives in the two rows above. The left
+   track is 282px by default but user-set from here on; see appShell.ts
+   `shellColumns`.
 
-   (The 12px gutter is NOT gone from the app — it moved down to .app-split-grid,
-   which still needs it: two panes on the SAME surface can't be told apart by
-   tone, so there the window showing through IS the separation.) */
+   design 9a drops the 12px window PADDING: in 7a that padding was what made
+   each pane read as a card floating on the window, and with the strokes and
+   radii gone there are no cards left to float. The rail runs to the window
+   edge, the terminal runs to the other one, and the tonal step between them
+   does the separating.
+
+   The middle TRACK stays, against 9a's flush seam, because it is not
+   decoration: resizable-sidebar FR-1 makes it the roster drag handle's hit area
+   (RosterDivider renders into it), having deliberately chosen a real track over
+   an overlay that would steal clicks from the roster's right edge. So this is
+   the one place the window is still allowed to show through — the same
+   reasoning as .app-split-grid's gutter, where the window between two panes on
+   the SAME surface IS their separation. `column-gap: 0` because the track
+   already provides the spacing; a gap on top would double it.
+
+   (RosterDivider measures `.app-grid`'s content-box left as border-box left +
+   paddingLeft. That still holds with the padding gone — the term is just 0.) */
 .app-grid {
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr;
+  column-gap: 0;
 }
 
 .app-col-left {
