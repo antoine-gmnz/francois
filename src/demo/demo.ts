@@ -15,7 +15,7 @@ import type { AgentInfo, AgentStep, Result, SessionEvent, SessionMeta } from '..
 import type { AgentBlock, AgentEvent } from '../../contract/agent-tab';
 import type { ConversationBlock } from '../../contract/conversation-view';
 import type { ShellEvent, ShellInfo, ShellOwner } from '../../contract/shell-terminal';
-import { COLLAPSED_GROUPS_KEY } from '../features/sessions/roster-groups';
+import { COLLAPSED_STATES_KEY, DEFAULT_COLLAPSED_STATES } from '../features/sessions/state-groups';
 import {
   ACCOUNTS,
   AGENTS,
@@ -67,11 +67,11 @@ async function openingView() {
   s.setMainTab('session');
   if (s.theme !== 'dark') s.setTheme('dark');
   if (!s.showLeftPane) s.toggleLeftPane();
-  // design 7a: no right column and no per-card collapse left to reset — but the
-  // roster's repo groups are collapsible and persisted, so they are what a stale
-  // localStorage can now amputate.
+  // design 12b: the roster's state groups are collapsible and persisted, so a
+  // stale localStorage is what can now amputate a capture. ARCHIVED is MEANT to
+  // start collapsed, so the record is reset to exactly that rather than cleared.
   try {
-    localStorage.removeItem(COLLAPSED_GROUPS_KEY);
+    localStorage.setItem(COLLAPSED_STATES_KEY, JSON.stringify(DEFAULT_COLLAPSED_STATES));
   } catch {
     /* ignore */
   }

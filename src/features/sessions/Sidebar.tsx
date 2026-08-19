@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Plug, Search, Sparkles, Terminal as TerminalIcon, Workflow } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { filterSessionsByProject } from '../../../contract/projects';
 import type { EditorId } from '../../../contract/open-in-vscode';
 import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
@@ -11,18 +11,22 @@ import { MAX_PANES, paneCount, paneIndicesOf, shellPaneEligibleProjects } from '
 import { abbreviate } from '../../lib/path';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { EMPTY_PANEL_COUNTS, type CountedPane } from '../../lib/panelCountsStore';
+import { isBusyStatus } from '../../../contract/fleet-board';
+import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useStore } from '../../lib/store';
 import { getEditorList } from './editors';
 import { FilterInput } from './FilterInput';
+import { groupKeyFor } from './roster-groups';
 import {
-  buildRoster,
-  flattenGroups,
-  loadCollapsedGroups,
-  persistCollapsedGroups,
-  type RosterProjectNode,
-} from './roster-groups';
+  flattenStateGroups,
+  groupSessionsByState,
+  loadCollapsedStates,
+  persistCollapsedStates,
+} from './state-groups';
+import { paneBadgeLabel } from './roster-row';
+import { RosterGate } from './RosterGate';
 import { SessionContextMenu, type MenuState } from './SessionContextMenu';
-import { SessionListBody } from './SessionListBody';
+import { StateRosterBody } from './StateRosterBody';
 import { useRowCursorClamp } from './useRowCursorClamp';
 import { useSessionFleetSync } from './useSessionFleetSync';
 import { useSidebarKeyboard } from './useSidebarKeyboard';
@@ -31,15 +35,19 @@ import './sidebar.css';
 const ICON = { size: 13, strokeWidth: 1.75 } as const;
 
 /**
- * design 7a: the right column is dissolved into four quiet rows under the
+ * design 7a: the right column is dissolved into four destinations under the
  * roster. They are NOT session cards — no status, no card surface — so the
  * roster still reads as a list of sessions with a small index beneath it.
+ *
+ * 12b folds the four rows onto ONE line, and the icons go with the fold: four
+ * labels, four counts and four glyphs do not fit across 276px, and a label
+ * clipped to "Age…" is worse than no icon at all.
  */
-const PANE_ROWS: readonly { pane: CountedPane; label: string; key: number; glyph: JSX.Element }[] = [
-  { pane: 'agents', label: 'Agents', key: 3, glyph: <Bot {...ICON} /> },
-  { pane: 'mcp', label: 'MCP', key: 4, glyph: <Plug {...ICON} /> },
-  { pane: 'skills', label: 'Skills', key: 5, glyph: <Sparkles {...ICON} /> },
-  { pane: 'workflows', label: 'Workflows', key: 6, glyph: <Workflow {...ICON} /> },
+const PANE_ROWS: readonly { pane: CountedPane; label: string; key: number }[] = [
+  { pane: 'agents', label: 'Agents', key: 3 },
+  { pane: 'mcp', label: 'MCP', key: 4 },
+  { pane: 'skills', label: 'Skills', key: 5 },
+  { pane: 'workflows', label: 'Flows', key: 6 },
 ];
 
 // pane [1] — the fleet board (Mission Control). Evolves the sessions-sidebar row
@@ -82,11 +90,6 @@ export default function Sidebar({ home }: { home: string }) {
   const panes = paneCount({ extraPanes });
 
   const [menu, setMenu] = useState<MenuState | null>(null);
-  // unbound-panes FR-9: the roster's PROJECT-row context menu — the fourth
-  // shell-pane entry point. Its own state, not MenuState's: that one is keyed
-  // by a session and carries a whole remove/worktree flow this shares none of.
-  const [projectMenu, setProjectMenu] = useState<{ projectId: string; label: string; x: number; y: number } | null>(null);
-  const openShellPane = useStore((s) => s.openShellPane);
   const menuRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
 
@@ -103,36 +106,44 @@ export default function Sidebar({ home }: { home: string }) {
     [sessions, activeProjectId, sidebarFilter],
   );
 
-  // design 7a: the roster is grouped by repo. project-groups FR-11 adds a second
-  // tier above it. `groups` is what paints; `visible` is the same sessions
-  // flattened in PAINTED order, which is what the keyboard cursor indexes — a
-  // collapsed group's or project's rows drop out of both.
-  const groups = useMemo(
-    () => buildRoster(inScope, projects, groupRegistry),
-    [inScope, projects, groupRegistry],
-  );
-  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(loadCollapsedGroups);
-  const visible = useMemo(() => flattenGroups(groups, collapsedGroups), [groups, collapsedGroups]);
+  // design 12b: the roster groups by STATE and nothing else, so a blocked
+  // session can never be the fourth row down behind two repos you are not
+  // looking at. ARCHIVED starts collapsed (state-groups' own record).
+  const stateNodes = useMemo(() => groupSessionsByState(inScope), [inScope]);
+  const [collapsedStates, setCollapsedStates] = useState<ReadonlySet<string>>(loadCollapsedStates);
 
-  const toggleGroup = (key: string) => {
-    setCollapsedGroups((prev) => {
+  // The FLAT painted order — what the keyboard cursor indexes, so ↑/↓ always
+  // walks what is actually on screen (a collapsed group's rows are not).
+  const visible = useMemo(() => flattenStateGroups(stateNodes, collapsedStates), [stateNodes, collapsedStates]);
+
+  // 12b: "project becomes a tag, only shown when more than one project is open"
+  // — the repo is no longer a heading, so a row only needs to name it when there
+  // is more than one to tell apart.
+  const projectLabels = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const session of inScope) byId.set(session.id, groupKeyFor(session, projects).label);
+    return byId;
+  }, [inScope, projects]);
+  const manyProjects = useMemo(() => new Set(projectLabels.values()).size > 1, [projectLabels]);
+
+  // A live row's elapsed has to move on its own — nothing else re-renders the
+  // roster while a turn is quietly streaming. Ticks only while something is
+  // actually busy (useElapsedClock is frozen otherwise).
+  const anyBusy = useMemo(() => inScope.some((s) => isBusyStatus(s.status)), [inScope]);
+  const clock = useElapsedClock(anyBusy);
+  // Frozen while nothing is busy, so read the wall clock at render time instead
+  // — the roster still re-renders on every session event, which is exactly the
+  // cadence the ages had before there was a clock at all.
+  const now = anyBusy ? clock : Date.now();
+
+  const toggleState = (key: string) => {
+    setCollapsedStates((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
-      persistCollapsedGroups(next);
+      persistCollapsedStates(next);
       return next;
     });
-  };
-
-  // A project heading's `+` (project-groups FR-25: never on a group heading). It
-  // also scopes the board to that project first, so the modal's project field
-  // lands on the repo whose heading was clicked rather than on whatever was
-  // selected before.
-  const newInGroup = (group: RosterProjectNode) => {
-    if (group.projectId !== null && group.projectId !== activeProjectId) {
-      useStore.getState().setActiveProjectId(group.projectId);
-    }
-    useStore.getState().setNewSessionOpen(true);
   };
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
@@ -188,21 +199,6 @@ export default function Sidebar({ home }: { home: string }) {
       window.removeEventListener('keydown', onKey);
     };
   }, [menu]);
-
-  // The same dismissal for the project-row menu (unbound-panes FR-9).
-  useEffect(() => {
-    if (!projectMenu) return;
-    const close = () => setProjectMenu(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setProjectMenu(null);
-    };
-    window.addEventListener('click', close);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [projectMenu]);
 
   // session-worktree FR-17: kicks off the dirty/unpushed probe when the confirm
   // step opens for a session that has a worktree.
@@ -276,6 +272,16 @@ export default function Sidebar({ home }: { home: string }) {
 
   const focused = focusedPane === 'sidebar';
 
+  // Both bodies open the same row menu; open-in-vscode FR-10 fetches the editor
+  // list on open (memoized in editors.ts — while unresolved the group stays
+  // absent, no spinner, no skeleton).
+  const openRowMenu = (sessionId: string, x: number, y: number) => {
+    setMenu({ sessionId, x, y, confirming: false, error: null, editors: [] });
+    void getEditorList().then((editors) => {
+      setMenu((m) => (m && m.sessionId === sessionId ? { ...m, editors } : m));
+    });
+  };
+
   return (
     // split-session §8: the roster narrows 276 → 238px in split, so its cards go
     // one notch denser to keep the same information on a shorter line.
@@ -321,92 +327,53 @@ export default function Sidebar({ home }: { home: string }) {
       {/* filter */}
       {sidebarFilter !== null && <FilterInput value={sidebarFilter} onChange={setSidebarFilter} inputRef={filterRef} />}
 
-      {/* list */}
-      <SessionListBody
+      {/* list — one gate, two bodies (design 12b's grouping toggle). */}
+      <RosterGate
         hydrationError={fleet.hydrationError}
         onRetry={fleet.retryHydration}
         sessionCount={sessions.length}
         activeProjectId={activeProjectId}
         inProjectCount={inProject.length}
         activeProject={activeProject}
-        groups={groups}
-        collapsedGroups={collapsedGroups}
-        onToggleGroup={toggleGroup}
-        onNewInGroup={newInGroup}
-        // unbound-panes FR-9: only while a shell pane could actually be opened
-        // FOR THIS project — the row already names the project, so no picker
-        // is involved. Mirrors the other three entry points'
-        // shellPaneEligibleProjects gate (root-exists + per-project cap), not
-        // the aggregate canOpenShellPane check which only asks whether ANY
-        // project qualifies.
-        onProjectContext={
-          shellPaneEligibleProjects(projects, extraPanes).length > 0
-            ? (projectId, label, x, y) => {
-                if (!shellPaneEligibleProjects(projects, extraPanes).some((p) => p.id === projectId)) return;
-                setProjectMenu({ projectId, label, x, y });
-              }
-            : undefined
-        }
-        home={home}
-        activeSessionId={activeSessionId}
-        focused={focused}
-        rowCursor={rowCursor}
-        derived={derived}
-        paneIndicesOf={(id) => paneIndicesOf({ activeSessionId, mainTab: 'session', extraPanes }, id)}
-        paneCount={panes}
-        focusedPaneIndex={focusedPaneIndex}
-        onSelect={(id) => {
-          selectSession(id);
-          setFocusedPane('sidebar');
-        }}
-        onContext={(sessionId, x, y) => {
-          setMenu({ sessionId, x, y, confirming: false, error: null, editors: [] });
-          // open-in-vscode FR-10: fetched on menu open, memoized in editors.ts —
-          // while unresolved the group stays absent (no spinner, no skeleton).
-          void getEditorList().then((editors) => {
-            setMenu((m) => (m && m.sessionId === sessionId ? { ...m, editors } : m));
-          });
-        }}
-      />
+        visibleCount={stateNodes.length}
+      >
+        <StateRosterBody
+          nodes={stateNodes}
+          collapsed={collapsedStates}
+          onToggle={toggleState}
+          home={home}
+          now={now}
+          cursorIndex={focused ? rowCursor : -1}
+          activeSessionId={activeSessionId}
+          derived={derived}
+          projectLabelOf={(session) => (manyProjects ? (projectLabels.get(session.id) ?? null) : null)}
+          projectDefaultModelId={(session) =>
+            projects.find((p) => p.id === session.projectId)?.defaults.modelId ?? null
+          }
+          paneLabelOf={(session) => {
+            if (panes <= 1) return null;
+            const indices = paneIndicesOf({ activeSessionId, mainTab: 'session', extraPanes }, session.id);
+            if (indices.length === 0) return null;
+            return {
+              label: indices.map((p) => paneBadgeLabel(p, panes)).join('·'),
+              accent: indices.some((p) => p > 0),
+              focused: indices.includes(focusedPaneIndex),
+            };
+          }}
+          onSelect={(id) => {
+            selectSession(id);
+            setFocusedPane('sidebar');
+          }}
+          onContext={openRowMenu}
+        />
+      </RosterGate>
 
-      {/* footer — design 7a: the dissolved right column. Four quiet rows, ruled
-          off from the cards above, each opening that pane as a main tab. Keeping
-          them here (rather than in a column of their own) is what gives the
-          terminal the full remaining width. */}
+      {/* footer — the dissolved right column (design 7a), folded onto ONE line
+          at 12b: four stacked rows spent ~130px of the pane on two counters that
+          usually read '—'. Same four destinations, same keys, one strip. */}
       <div className="sidebar__footer">
         <PaneRows />
       </div>
-
-      {/* unbound-panes FR-9 — the roster's project-row menu. One entry, and the
-          project is the row's own, so it never opens a picker. */}
-      {projectMenu && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="context-menu"
-          style={{ left: projectMenu.x, top: projectMenu.y }}
-        >
-          <div className="context-menu__header">
-            <div className="context-menu__header-name truncate" title={projectMenu.label}>
-              {projectMenu.label}
-            </div>
-          </div>
-          <div className="context-menu__items">
-            <button
-              type="button"
-              className="context-menu__item"
-              onClick={() => {
-                openShellPane(projectMenu.projectId);
-                setProjectMenu(null);
-              }}
-            >
-              <span className="context-menu__glyph">
-                <TerminalIcon size={14} strokeWidth={1.75} />
-              </span>
-              <span className="context-menu__label">Open a shell pane here</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* context menu */}
       {menu && (
@@ -461,12 +428,16 @@ export default function Sidebar({ home }: { home: string }) {
 }
 
 /**
- * design 7a: Agents / MCP / Skills / Workflows as roster rows. Each carries its
- * own count, published by the panel itself (panelCountsStore) and scoped to the
- * FOCUSED session — the panels stay mounted behind the main pane, so the counts
- * stay live whichever tab is open. Agents additionally goes warm while subagents
- * are actually running: the count is the roster size, so the colour is what
- * carries liveness.
+ * design 7a, re-set as 12b's one-line strip: Agents / MCP / Skills / Flows.
+ * Each carries its own count, published by the panel itself (panelCountsStore)
+ * and scoped to the FOCUSED session — the panels stay mounted behind the main
+ * pane, so the counts stay live whichever tab is open. Agents additionally goes
+ * warm while subagents are actually running: the count is the roster size, so
+ * the colour is what carries liveness.
+ *
+ * A count of zero prints NOTHING and dims the label instead of printing a dash:
+ * "no skills configured" is a fact about the destination, not a figure, and the
+ * strip has no room to say it twice.
  */
 function PaneRows() {
   const mainTab = useStore((s) => s.mainTab);
@@ -483,18 +454,33 @@ function PaneRows() {
         return (
           <div
             key={row.pane}
-            className={mainTab === row.pane ? 'roster-pane roster-pane--on' : 'roster-pane'}
-            title={`${row.label} · ${row.key}`}
+            className={
+              [
+                'roster-pane',
+                mainTab === row.pane ? 'roster-pane--on' : null,
+                !live && counts[row.pane] === 0 ? 'roster-pane--empty' : null,
+              ]
+                .filter(Boolean)
+                .join(' ')
+            }
+            title={
+              live
+                ? `${row.label} · ${runningAgents} running · ${row.key}`
+                : counts[row.pane] > 0
+                  ? `${row.label} · ${counts[row.pane]} · ${row.key}`
+                  : `no ${row.label.toLowerCase()} here · ${row.key}`
+            }
             onClick={() => {
               setFocusedPane('main');
               setMainTab(mainTab === row.pane ? 'session' : row.pane);
             }}
           >
-            <span className="roster-pane__glyph">{row.glyph}</span>
             <span className="roster-pane__label">{row.label}</span>
-            <span className={live ? 'roster-pane__count roster-pane__count--live' : 'roster-pane__count'}>
-              {live ? `${runningAgents} running` : counts[row.pane] > 0 ? counts[row.pane] : '—'}
-            </span>
+            {(live || counts[row.pane] > 0) && (
+              <span className={live ? 'roster-pane__count roster-pane__count--live' : 'roster-pane__count'}>
+                {live ? runningAgents : counts[row.pane]}
+              </span>
+            )}
           </div>
         );
       })}

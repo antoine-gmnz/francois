@@ -36,7 +36,7 @@ export const createOverviewSlice: StateCreator<AppState, [], [], OverviewSlice> 
   mergeDerived: (id, partial) =>
     set((s) => {
       if (!s.sessions.some((x) => x.id === id)) return {};
-      const current = s.derived.get(id) ?? { fileCount: null, runningAgentCount: 0 };
+      const current = s.derived.get(id) ?? { fileCount: null, runningAgentCount: 0, addedLines: null, deletedLines: null };
       const merged = { ...current, ...partial };
       // Bail on a no-op merge. `agent.update` fires per subagent STEP and Sidebar
       // recomputes runningAgentCount unconditionally, so most merges change
@@ -46,7 +46,9 @@ export const createOverviewSlice: StateCreator<AppState, [], [], OverviewSlice> 
       if (
         s.derived.has(id) &&
         merged.fileCount === current.fileCount &&
-        merged.runningAgentCount === current.runningAgentCount
+        merged.runningAgentCount === current.runningAgentCount &&
+        merged.addedLines === current.addedLines &&
+        merged.deletedLines === current.deletedLines
       ) {
         return {};
       }

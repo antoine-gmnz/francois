@@ -40,6 +40,15 @@ export interface SessionDerived {
   fileCount: number | null;
   /** This session's subagents currently in status 'running' (FR-5). 0 when none. */
   runningAgentCount: number;
+  /**
+   * design 12b: the working tree's line totals, for the settled row's third line
+   * (`+184 −52 · 6 files, uncommitted`). Same source as `fileCount` — the
+   * `diff_get_summary` read — but NOT kept live by `diff.changed`, which carries
+   * only a count: they are refreshed when the session SETTLES, which is the only
+   * state whose row renders them. null ⇒ unknown, render no totals.
+   */
+  addedLines: number | null;
+  deletedLines: number | null;
 }
 
 // ---------- status presentation (single source; frontend-only) ----------

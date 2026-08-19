@@ -25,6 +25,7 @@ import { createPanelCountsSlice, type PanelCountsSlice } from './panelCountsStor
 import { createProfilesSlice, type ProfilesSlice } from './profilesStore';
 import { createProjectsSlice } from './projectsStore';
 import { createRemoteSlice, type RemoteSlice } from './remoteStore';
+import { createRosterSlice, type RosterSlice } from './rosterStore';
 import { createSessionsSlice, type SessionsSlice } from './sessionsStore';
 import { createThemeSlice, type Theme, type ThemeSlice } from './theme';
 import { createUpdateSlice, type UpdateSlice } from './updateStore';
@@ -36,6 +37,7 @@ export type { Pane, RightPane, MainTab, Theme };
 // (contract/projects.ts §5) — a drift there breaks the build here.
 export type AppState = SessionsSlice &
   RemoteSlice &
+  RosterSlice &
   OverviewSlice &
   PanelCountsSlice &
   AgentTabSlice &
@@ -52,6 +54,7 @@ export const useStore = create<AppState>()(
   subscribeWithSelector((set, get, api) => ({
   ...createSessionsSlice(set, get, api),
   ...createRemoteSlice(set, get, api),
+  ...createRosterSlice(set, get, api),
   ...createOverviewSlice(set, get, api),
   ...createPanelCountsSlice(set, get, api),
   ...createAgentTabSlice(set, get, api),

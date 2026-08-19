@@ -9,7 +9,7 @@
 // switch only decides WHICH callback fires for which event, never how the
 // store is touched.
 
-import type { AgentInfo, SessionEvent, SessionId, SessionStatus } from '../../../contract/common';
+import type { AgentInfo, BlockId, PermissionAsk, SessionEvent, SessionId, SessionStatus } from '../../../contract/common';
 
 export interface SessionEventContext {
   onMeta: (meta: Extract<SessionEvent, { type: 'session.meta' }>['meta']) => void;
@@ -18,6 +18,17 @@ export interface SessionEventContext {
   onUsage: (sessionId: SessionId, usedTokens: number, limitTokens: number) => void;
   onAgentUpdate: (agent: AgentInfo) => void;
   onRemoved: (sessionId: SessionId) => void;
+  // ── design 12b: the roster's live per-row signals ────────────────────────
+  /** A turn began — the row's elapsed restarts and its activity line is stale. */
+  onTurnStart: (sessionId: SessionId) => void;
+  /** The tool a RUNNING row names ('editing UsageBar.tsx'). */
+  onToolStart: (sessionId: SessionId, tool: string, summary: string) => void;
+  /** A gated call parked the turn — the roster answers it inline (Allow/Deny). */
+  onPermissionAsked: (sessionId: SessionId, blockId: BlockId, ask: PermissionAsk) => void;
+  /** …and its single resolution, whoever made it (the roster or the transcript). */
+  onPermissionResolved: (sessionId: SessionId, blockId: BlockId) => void;
+  /** /clear wiped the transcript: every signal above refers to a turn that is gone. */
+  onCleared: (sessionId: SessionId) => void;
 }
 
 /** Routes one SessionEvent to its `ctx` callback. Unhandled types are a documented no-op. */
@@ -41,26 +52,36 @@ export function handleSessionEvent(e: SessionEvent, ctx: SessionEventContext): v
     case 'session.removed':
       ctx.onRemoved(e.sessionId);
       break;
+    case 'message.user':
+      ctx.onTurnStart(e.sessionId);
+      break;
+    case 'tool.start':
+      ctx.onToolStart(e.sessionId, e.tool, e.summary);
+      break;
+    case 'permission.asked':
+      ctx.onPermissionAsked(e.sessionId, e.blockId, e.ask);
+      break;
+    case 'permission.resolved':
+      ctx.onPermissionResolved(e.sessionId, e.blockId);
+      break;
+    case 'session.cleared':
+      ctx.onCleared(e.sessionId);
+      break;
     // Not sidebar-relevant — listed explicitly (rather than a catch-all) so a
     // new SessionEvent member fails the `default` exhaustiveness check below
     // instead of silently landing here.
-    case 'message.user':
     case 'assistant.delta':
     case 'assistant.done':
-    case 'tool.start':
     case 'tool.done':
     case 'command.started':
     case 'command.output':
     case 'question.asked':
     case 'question.resolved':
-    case 'permission.asked':
-    case 'permission.resolved':
     case 'session.commands':
     case 'agent.step':
     case 'mcp.update':
     case 'workflow.update':
     case 'session.resumeFailed':
-    case 'session.cleared':
       break;
     default: {
       const exhaustive: never = e;

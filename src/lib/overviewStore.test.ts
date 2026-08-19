@@ -86,10 +86,10 @@ describe('overview store slice', () => {
     useStore.getState().setSessions([sess('s1')]);
 
     useStore.getState().mergeDerived('s1', { fileCount: 2 });
-    expect(useStore.getState().derived.get('s1')).toEqual({ fileCount: 2, runningAgentCount: 0 });
+    expect(useStore.getState().derived.get('s1')).toEqual({ fileCount: 2, runningAgentCount: 0, addedLines: null, deletedLines: null });
 
     useStore.getState().mergeDerived('s1', { runningAgentCount: 5 });
-    expect(useStore.getState().derived.get('s1')).toEqual({ fileCount: 2, runningAgentCount: 5 });
+    expect(useStore.getState().derived.get('s1')).toEqual({ fileCount: 2, runningAgentCount: 5, addedLines: null, deletedLines: null });
   });
 
   it('mergeDerived keeps the SAME map reference for a no-op merge', async () => {
