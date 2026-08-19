@@ -10,16 +10,22 @@
   background: var(--bg-app);
 }
 
-/* design 7a: the body is `282px | 1fr` with a 12px gutter and 12px window
+/* design 7a: the body is `<left> | 1fr` with a 12px gutter and 12px window
    padding, per the mock's `grid-template-columns:282px 1fr; gap:12px;
-   padding:12px`. There is no third column and no status-bar row — [3]–[6] live
-   in the roster's footer and the chrome lives in the two rows above. */
+   padding:12px`. There is no status-bar row — [3]–[6] live in the roster's
+   footer and the chrome lives in the two rows above.
+   resizable-sidebar FR-1: THREE tracks now — `<left> 12px 1fr` — with
+   `column-gap: 0`, since the 12px middle track reproduces the old `gap`
+   exactly AND is the roster's drag handle's hit area (RosterDivider.tsx). The
+   left track's width is `282px` by default but is user-set from here on —
+   see appShell.ts `shellColumns`. */
 .app-grid {
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr;
-  gap: var(--space-12);
+  row-gap: var(--space-12);
+  column-gap: 0;
   padding: var(--space-12);
 }
 

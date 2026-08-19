@@ -7,7 +7,7 @@
 // or with no accounts at all, there is nothing to name yet, so it renders
 // nothing).
 
-import { useEffect, useState } from 'react';
+import { useWindowWidth } from '../../lib/hooks/useWindowWidth';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
 import {
@@ -19,17 +19,6 @@ import {
   usageAccountId,
 } from './accounts';
 import './accounts.css';
-
-/** The one bit of layout state `statusChipMaxChars` needs (§Responsive). */
-function useWindowWidth(): number {
-  const [width, setWidth] = useState(() => window.innerWidth);
-  useEffect(() => {
-    const onResize = () => setWidth(window.innerWidth);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-  return width;
-}
 
 export function AccountChip(): JSX.Element | null {
   const accounts = useStore((s) => s.accounts);

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback } from 'react';
+import { usePaneDrag } from '../lib/hooks/usePaneDrag';
 import {
   DEFAULT_SPLIT_RATIO,
   MAX_SPLIT_RATIO,
@@ -32,52 +33,25 @@ export interface SplitDividerProps {
 export default function SplitDivider({ axis, area }: SplitDividerProps) {
   const ratio = useStore((s) => (axis === 'x' ? s.splitRatio : s.splitRowRatio));
   const setRatio = useStore((s) => (axis === 'x' ? s.setSplitRatio : s.setSplitRowRatio));
-  const [dragging, setDragging] = useState(false);
-  // Measured once per drag: the grid box cannot change mid-drag (only the
-  // tracks inside it do), and re-reading it per pointermove would force a
-  // layout flush on every frame.
-  const gridBox = useRef<{ start: number; size: number } | null>(null);
 
-  // While dragging, the pointer is over a transcript / a terminal / a diff —
-  // every one of them would otherwise show a text caret and start selecting.
-  useEffect(() => {
-    if (!dragging) return;
-    const cls = axis === 'x' ? 'app-resizing-x' : 'app-resizing-y';
-    document.body.classList.add(cls);
-    return () => document.body.classList.remove(cls);
-  }, [dragging, axis]);
-
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      const grid = e.currentTarget.parentElement;
-      if (!grid || e.button !== 0) return;
-      const box = grid.getBoundingClientRect();
-      gridBox.current = axis === 'x' ? { start: box.left, size: box.width } : { start: box.top, size: box.height };
-      // Pointer capture, not a window listener: the pointer leaving the handle —
-      // or the window — keeps feeding this element, and release cleans up even
-      // when the pointerup lands somewhere else entirely.
-      e.currentTarget.setPointerCapture(e.pointerId);
-      setDragging(true);
-      e.preventDefault();
-    },
-    [axis],
-  );
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      const box = gridBox.current;
-      if (!dragging || !box) return;
-      const pos = axis === 'x' ? e.clientX : e.clientY;
-      setRatio(splitRatioFromDrag(pos, box.start, box.size, axis === 'x' ? MIN_SPLIT_PANE_PX : MIN_SPLIT_PANE_ROW_PX));
-    },
-    [dragging, setRatio, axis],
-  );
-
-  const endDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-    gridBox.current = null;
-    setDragging(false);
-  }, []);
+  const { dragging, handlers } = usePaneDrag({
+    axis,
+    measure: useCallback(
+      (handle) => {
+        const grid = handle.parentElement;
+        if (!grid) return null;
+        const box = grid.getBoundingClientRect();
+        return axis === 'x' ? { start: box.left, size: box.width } : { start: box.top, size: box.height };
+      },
+      [axis],
+    ),
+    onDrag: useCallback(
+      (pos, box) => {
+        setRatio(splitRatioFromDrag(pos, box.start, box.size, axis === 'x' ? MIN_SPLIT_PANE_PX : MIN_SPLIT_PANE_ROW_PX));
+      },
+      [setRatio, axis],
+    ),
+  });
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -120,10 +94,7 @@ export default function SplitDivider({ axis, area }: SplitDividerProps) {
       // The panes focus themselves on click (FR-12); grabbing a divider is a
       // layout gesture and must not move the keyboard between sessions.
       onClick={(e) => e.stopPropagation()}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      {...handlers}
       onDoubleClick={() => setRatio(DEFAULT_SPLIT_RATIO)}
       onKeyDown={onKeyDown}
     />

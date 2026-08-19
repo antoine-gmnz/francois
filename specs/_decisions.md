@@ -77,6 +77,9 @@
 - 2026-08-18 · deps · No third-party grammar/parser engine may run over repo or transcript content in the webview, and no dependency added for a display nicety — because the npm-first install sells on bundle size and the engine parses untrusted input inside the IPC-authoritative webview · diff-navigator
 - 2026-08-18 · ui · In a navigator whose rows are not all selectable, the keyboard CURSOR is separate state from the SELECTION and the detail pane never blanks on a non-selectable row — because collapsing them makes traversal destroy what the user was reading · diff-navigator
 - 2026-08-18 · ui · A filter is a view, never a mutation: it changes visibility only, and any action whose scope exceeds what is visible must state the hidden count rather than be blocked or silently narrowed — because a filter that edits selection loses hand-built state on every keystroke · diff-navigator
+- 2026-08-19 · ui · A regime or viewport may CONSTRAIN a user-set value at render time without owning it — stored = intent, rendered = intent ∩ fit, and the constraint never writes back — because otherwise every fit rule reads as a second owner and the one-owner rule blocks legitimate clamping · resizable-sidebar
+- 2026-08-19 · ui · Visibility and size are separate state: a gesture that hides a surface never writes its size, so reopening restores the user's value and not the default — because collapsing is what makes a resize gesture destructive · resizable-sidebar
+- 2026-08-19 · design · Once a dimension becomes user-settable the design mirror owns its DEFAULT and no longer its runtime value; review and align-ds must not read that divergence as drift — because the mock stays the source of truth for everything it still governs · resizable-sidebar
 
 ## Superseded
 
