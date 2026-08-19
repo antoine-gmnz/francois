@@ -62,6 +62,8 @@ export type ErrorCode =
   | 'ACCOUNT_ENDPOINT_UNREACHABLE' // multi-provider-endpoint: the base URL did not answer a usable /models
   | 'ACCOUNT_ENDPOINT_UNAUTHORIZED' // multi-provider-endpoint: the endpoint rejected the key (401/403)
   | 'ACCOUNT_KEY_WRITE_FAILED' // multi-provider-endpoint: the key file could not be written or removed
+  | 'CLI_INSTALL_UNAVAILABLE' // multi-account: npm is not on PATH, so no vendor CLI can be installed from here
+  | 'CLI_INSTALL_FAILED' // multi-account: `npm i -g <package>` exited non-zero (detail: { code, tail })
   | 'WORKFLOW_NOT_FOUND' // workflow-details: runId matches no run this session has seen
   | 'WORKFLOW_NO_TRANSCRIPT' // workflow-details FR-2/FR-7: the run has no usable transcriptDir
   | 'WORKFLOW_AGENT_NOT_FOUND' // workflow-details FR-8: agentId matches no agent the scan has seen
@@ -161,10 +163,19 @@ export type ClaudeRuntime = 'native' | 'wsl';
  * protocol 'openai' exactly as 'francois' does, and the two differ ONLY in who
  * owns the loop. A single collapsed enum could not tell them apart.
  *
+ * 'grok' (multi-provider-grok FR-1) is xAI's `grok` CLI driving its own loop over
+ * `grok -p --output-format streaming-json`, a third non-interactive transport
+ * alongside 'codex'. It also pairs with protocol 'openai' — xAI's API is an
+ * OpenAI `/chat/completions` dialect — even though the vendor is neither
+ * Anthropic nor OpenAI; ProviderProtocol names the wire, not the vendor.
+ *
  * NOT called `runtime`: SessionMeta.runtime is taken by wsl-filesystem and means
  * native-vs-WSL. NOT called 'native' for the second member, for the same reason.
+ *
+ * Every `match` on this type in the core is exhaustive with NO wildcard arm
+ * (multi-provider-grok FR-1) — a fifth member must fail the build, not default.
  */
-export type AgentRuntime = 'claude-code' | 'francois' | 'codex';
+export type AgentRuntime = 'claude-code' | 'francois' | 'codex' | 'grok';
 
 /**
  * Which wire dialect the session's endpoint speaks (multi-provider-seam FR-11a).

@@ -65,21 +65,12 @@ fn resolve_codex_program() -> String {
     if !cfg!(windows) {
         return CODEX_BIN.to_string();
     }
-    // `.exe` first: a native install beats a shim, and skips a `cmd.exe` hop.
-    // `.ps1` is deliberately absent — it is not directly executable.
-    let candidates = ["codex.exe", "codex.cmd", "codex.bat"];
-    let Some(path) = std::env::var_os("PATH") else {
-        return CODEX_BIN.to_string();
-    };
-    for dir in std::env::split_paths(&path) {
-        for name in candidates {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return candidate.to_string_lossy().into_owned();
-            }
-        }
-    }
-    CODEX_BIN.to_string()
+    // The PATH scan (and its `.exe` → `.cmd` → `.bat` order) is shared with the
+    // CLI-tools probe, which asks the same question for `claude` and `grok` —
+    // see process_util::resolve_program.
+    crate::process_util::resolve_program(CODEX_BIN)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| CODEX_BIN.to_string())
 }
 
 /// FR-7 §7: what a user sees when the CLI is not installed. Names the package,

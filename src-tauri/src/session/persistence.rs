@@ -689,6 +689,9 @@ pub fn load_persisted(app: &AppHandle) {
                 workflow_by_tool: HashMap::new(),
                 workflow_scripts: HashMap::new(),
                 cli_commands: Vec::new(),
+                // multi-provider-grok FR-27: a reload starts false again — a
+                // fresh reminder after a restart is honest, not a bug.
+                grok_sandbox_notice_emitted: false,
             },
         );
     }

@@ -26,6 +26,11 @@
 // was removed) is driven from commands.rs AFTER the registry write returns,
 // by calling into `session::reassign_account_sessions` with no account lock held.
 
+/// The vendor CLIs the login routes are driven by (`claude`, `codex`, `grok`):
+/// is one installed on this machine, and `npm i -g` it if not. A CHILD here
+/// rather than a domain of its own — it is machine-scoped, not account-scoped,
+/// but the only surface that asks is the Accounts modal.
+mod cli_tools;
 mod codex;
 mod commands;
 /// multi-provider-endpoint FR-1..FR-10: the `openai-compatible` account's
@@ -34,13 +39,20 @@ mod commands;
 /// registry.rs's OAuth-focused FRs, even though both touch `AccountRecord` —
 /// same "one concern per child" shape as `cloud` inside `session`.
 mod endpoint;
+/// multi-provider-grok FR-19..FR-22: `grok-cli` accounts — a per-account
+/// `GROK_HOME` that `grok login` fills in. Structurally identical to codex.rs
+/// (same trade, same file layout); a CHILD of its own rather than folded into
+/// codex.rs so a third CLI does not turn that file into a two-vendor module.
+mod grok;
 mod login;
 mod mirror;
 mod registry;
 
+pub(crate) use cli_tools::*;
 pub(crate) use codex::*;
 pub(crate) use commands::*;
 pub(crate) use endpoint::*;
+pub(crate) use grok::*;
 pub(crate) use login::*;
 pub(crate) use mirror::*;
 pub(crate) use registry::*;
@@ -83,6 +95,10 @@ pub enum AccountKind {
     /// which CLI and which env var (FR-18).
     #[serde(rename = "codex-cli")]
     CodexCli,
+    /// multi-provider-grok FR-2: an interactive `grok login` with its own
+    /// `GROK_HOME` — the same trade again, a third time (FR-19).
+    #[serde(rename = "grok-cli")]
+    GrokCli,
 }
 
 impl AccountKind {
@@ -98,6 +114,8 @@ impl AccountKind {
         match self {
             AccountKind::ClaudeCodeOauth => Some("CLAUDE_CONFIG_DIR"),
             AccountKind::CodexCli => Some("CODEX_HOME"),
+            // multi-provider-grok FR-19.
+            AccountKind::GrokCli => Some("GROK_HOME"),
             AccountKind::OpenAiCompatible => None,
         }
     }
@@ -128,13 +146,14 @@ pub struct Account {
     /// multi-provider-endpoint FR-1. Present iff `kind == OpenAiCompatible`.
     #[serde(skip_serializing_if = "Option::is_none")]
     endpoint: Option<AccountEndpoint>,
-    /// multi-provider-codex FR-21a. Present iff `kind == CodexCli`, and
-    /// **derived** on every list from `auth.json`'s existence (FR-20) — the same
-    /// shape and the same reasoning as `AccountEndpoint::has_key`.
+    /// multi-provider-codex FR-21a, widened by multi-provider-grok FR-22.
+    /// Present iff `kind == CodexCli | GrokCli`, and **derived** on every list
+    /// from `auth.json`'s existence (FR-20/FR-19) — the same shape and the same
+    /// reasoning as `AccountEndpoint::has_key`.
     ///
     /// It exists because `authFailedAt` cannot answer this: that flag is only
-    /// ever set BY a failed turn, so a freshly added Codex account would look
-    /// healthy right up until the first message bounced.
+    /// ever set BY a failed turn, so a freshly added Codex/Grok account would
+    /// look healthy right up until the first message bounced.
     #[serde(rename = "signedIn", skip_serializing_if = "Option::is_none")]
     signed_in: Option<bool>,
 }
@@ -183,6 +202,19 @@ pub(crate) enum AccountEvent {
         #[serde(rename = "loginId")]
         login_id: String,
         error: crate::ipc::AppError,
+    },
+    /// A chunk of `npm i -g <package>`'s merged output (cli_tools.rs).
+    #[serde(rename = "cli.install.output")]
+    CliInstallOutput { tool: String, data: String },
+    /// Terminal for one install. `tools` is the re-probed status of ALL of them,
+    /// so one channel keeps the whole CLI section honest — including the case
+    /// where npm failed but the binary is nonetheless there.
+    #[serde(rename = "cli.install.done")]
+    CliInstallDone {
+        tool: String,
+        tools: Vec<CliToolStatus>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<crate::ipc::AppError>,
     },
 }
 
@@ -463,6 +495,16 @@ pub fn identity_file_exists(config_dir: &str) -> bool {
 /// `codex logout` in a terminal, and would then block turns on an account that
 /// is actually fine (or, worse, wave through one that is not).
 pub fn codex_auth_file_exists(config_dir: &str) -> bool {
+    Path::new(config_dir).join("auth.json").is_file()
+}
+
+/// multi-provider-grok FR-19/FR-22: the same question for a `grok-cli`
+/// account — signed in iff `grok login` has written an `auth.json` into its
+/// `GROK_HOME`. Same filename, same derivation, same "never persisted"
+/// reasoning as `codex_auth_file_exists` — xAI's own CLI docs list
+/// `GROK_HOME/auth.json` as "Cached OAuth2/API credentials", the direct
+/// analogue of Codex's file.
+pub fn grok_auth_file_exists(config_dir: &str) -> bool {
     Path::new(config_dir).join("auth.json").is_file()
 }
 

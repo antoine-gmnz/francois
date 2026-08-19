@@ -137,6 +137,43 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     usageBar: { available: false, reason: "Plan limits aren't available on this provider yet." },
     compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
   },
+  // multi-provider-grok FR-26. Grok owns its own loop like claude-code and codex,
+  // over the same shape of NON-INTERACTIVE transport as codex (`grok -p
+  // --output-format streaming-json`, prompt on stdin, stdin then closed) — so the
+  // same reasoning drives most of these falses.
+  //
+  // `permissions` DIVERGES from both other rows for the same reason codex's does:
+  // not a gap, Grok enforces with an OS-level sandbox chosen from permissionMode
+  // (FR-9). `usageBar` diverges from BOTH: a Grok CLI session bills against a
+  // SuperGrok / X Premium+ plan, which is neither francois' "bills per token, not
+  // against a plan" nor codex's ChatGPT wording — so it gets its own sentence
+  // rather than reusing either.
+  grok: {
+    mcp: { available: false, reason: "MCP servers aren't available on this provider yet." },
+    subagents: { available: false, reason: "Subagents aren't available on this provider yet." },
+    // Grok has its own MCP-configured skills-adjacent surface, but the panes read
+    // Claude Code's control surface; inverting discovery is capability-registry.
+    skills: { available: false, reason: "Skills aren't available on this provider yet." },
+    skillsInstall: {
+      available: false,
+      reason: "Installing skills isn't available on this provider yet.",
+    },
+    workflows: { available: false, reason: "Workflows aren't available on this provider yet." },
+    interactiveCommands: {
+      available: false,
+      reason: "Slash commands aren't available on this provider yet.",
+    },
+    permissions: {
+      available: false,
+      reason: 'Grok enforces permissions with its own sandbox.',
+    },
+    remoteControl: { available: false, reason: 'Remote Control is an Anthropic service.' },
+    usageBar: {
+      available: false,
+      reason: 'A Grok CLI session bills against your SuperGrok / X Premium+ plan.',
+    },
+    compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
+  },
 };
 
 export function runtimeCapabilities(runtime: AgentRuntime): RuntimeCapabilities {

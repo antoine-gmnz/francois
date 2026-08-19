@@ -270,7 +270,7 @@ describe('installExtension', () => {
     expect(id).toBe('francois-k8s');
     expect(fs.existsSync(path.join(installed, 'extension.json'))).toBe(true);
     // Nothing runs, nothing is enabled — that is the app's job (FR-30).
-    expect(readToggles({ home })).toEqual({});
+    expect(readToggles({ home, env: {} })).toEqual({});
   });
 
   it('refuses to overwrite an existing directory unless --force', () => {

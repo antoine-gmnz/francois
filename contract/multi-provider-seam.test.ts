@@ -19,7 +19,7 @@ const CAPABILITIES: RuntimeCapability[] = [
   'compaction',
 ];
 
-const RUNTIMES: AgentRuntime[] = ['claude-code', 'francois', 'codex'];
+const RUNTIMES: AgentRuntime[] = ['claude-code', 'francois', 'codex', 'grok'];
 
 describe('runtimeCapabilities', () => {
   it('answers for every runtime', () => {
@@ -107,6 +107,32 @@ describe('runtimeCapabilities', () => {
     expect(codex).not.toBe(francois);
     expect(codex).toMatch(/yet/);
     expect(codex).not.toMatch(/per token/);
+  });
+
+  // multi-provider-grok FR-26.
+  it('makes nothing available on the grok runtime', () => {
+    const caps = runtimeCapabilities('grok');
+    for (const capability of CAPABILITIES) {
+      expect(caps[capability].available).toBe(false);
+    }
+  });
+
+  it("states grok's sandbox rather than calling permissions an unbuilt gap (FR-26)", () => {
+    const reason = runtimeCapabilities('grok').permissions.reason!;
+    expect(reason).toBe('Grok enforces permissions with its own sandbox.');
+    expect(reason).not.toMatch(/yet/);
+  });
+
+  it('gives grok its own usageBar wording distinct from francois and codex (FR-26)', () => {
+    // A Grok CLI session bills against a SuperGrok / X Premium+ plan — neither
+    // francois' "bills per token" nor codex's ChatGPT-flavored "yet" is true here.
+    const grok = runtimeCapabilities('grok').usageBar.reason!;
+    const codex = runtimeCapabilities('codex').usageBar.reason!;
+    const francois = runtimeCapabilities('francois').usageBar.reason!;
+    expect(grok).not.toBe(codex);
+    expect(grok).not.toBe(francois);
+    expect(grok).toMatch(/SuperGrok|X Premium/);
+    expect(grok).not.toMatch(/per token/);
   });
 
   // FR-14a: the table keys on the runtime alone. `protocol` is not a key here —

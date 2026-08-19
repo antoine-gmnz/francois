@@ -529,6 +529,12 @@ pub(crate) struct Session {
     // stream-json init (bare names, init order). In-memory only — never
     // persisted; a fresh app relearns it on the next turn (spec §6).
     cli_commands: Vec<String>,
+    /// multi-provider-grok FR-27: has THIS session already shown its
+    /// once-per-session Windows sandbox notice? In-memory only, like `cloud`
+    /// above — not a `Session::new` parameter, so no creation path can
+    /// accidentally pre-set it, and a reload starts false again (a fresh
+    /// reminder after a restart is honest, not a bug).
+    grok_sandbox_notice_emitted: bool,
 }
 
 impl Session {
@@ -612,7 +618,20 @@ impl Session {
             workflow_by_tool: HashMap::new(),
             workflow_scripts: HashMap::new(),
             cli_commands: Vec::new(),
+            grok_sandbox_notice_emitted: false,
         }
+    }
+
+    /// multi-provider-grok FR-27: claim the once-per-session Windows sandbox
+    /// notice. Returns `true` the FIRST time it is called on a session (and
+    /// flips the flag so every later call returns `false`) — the caller emits
+    /// the notice iff this returns `true`.
+    fn claim_grok_sandbox_notice(&mut self) -> bool {
+        if self.grok_sandbox_notice_emitted {
+            return false;
+        }
+        self.grok_sandbox_notice_emitted = true;
+        true
     }
 
     fn meta(&self) -> SessionMeta {

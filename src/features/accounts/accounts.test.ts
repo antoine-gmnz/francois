@@ -20,7 +20,9 @@ import {
   accountAdd,
   accountAddCodex,
   accountAddEndpoint,
+  accountAddGrok,
   accountCodexLogin,
+  accountGrokLogin,
   accountList,
   accountLoginCancel,
   accountLoginResize,
@@ -42,11 +44,16 @@ import {
   accountDisplayLabel,
   accountFieldOptions,
   accountIsCodex,
+  accountIsGrok,
   accountUsageProbeable,
   codexAddPayload,
   codexLoginActionLabel,
   codexNeedsFirstLogin,
   codexSaveDisabled,
+  grokAddPayload,
+  grokLoginActionLabel,
+  grokNeedsFirstLogin,
+  grokSaveDisabled,
   accountMetersView,
   accountNeedsLogin,
   accountSecondaryEmail,
@@ -1036,11 +1043,82 @@ describe('codex accounts', () => {
   it('derives probeability from the capability table, not from a list of kinds', () => {
     // The guarantee that matters for the NEXT runtime: whatever the table says
     // about usageBar is what the seed does, with nothing to remember to update.
-    for (const kind of ['claude-code-oauth', 'openai-compatible', 'codex-cli'] as const) {
-      const runtime = { 'claude-code-oauth': 'claude-code', 'openai-compatible': 'francois', 'codex-cli': 'codex' } as const;
+    for (const kind of ['claude-code-oauth', 'openai-compatible', 'codex-cli', 'grok-cli'] as const) {
+      const runtime = {
+        'claude-code-oauth': 'claude-code',
+        'openai-compatible': 'francois',
+        'codex-cli': 'codex',
+        'grok-cli': 'grok',
+      } as const;
       expect(accountUsageProbeable(account({ id: 'x', kind }))).toBe(
         runtimeCapabilities(runtime[kind]).usageBar.available,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// multi-provider-grok — the 'grok-cli' account kind (FR-2/FR-20/FR-21/FR-22).
+// Structurally the same shape as the codex accounts block above — mirrored on
+// purpose, per the spec's "structurally this is multi-provider-codex again".
+
+describe('grok accounts', () => {
+  const grok = (over: Partial<Account> = {}) =>
+    account({ id: 'gk', kind: 'grok-cli', signedIn: false, ...over });
+
+  it('recognises a grok account and does not confuse it with codex or an endpoint one', () => {
+    expect(accountIsGrok(grok())).toBe(true);
+    expect(accountIsEndpoint(grok())).toBe(false);
+    expect(accountIsCodex(grok())).toBe(false);
+    expect(accountIsGrok(account({ id: 'a' }))).toBe(false);
+    expect(accountIsGrok(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
+    expect(accountIsGrok(account({ id: 'cx', kind: 'codex-cli' }))).toBe(false);
+  });
+
+  it('says Sign in before there is any credential and Re-login after', () => {
+    expect(grokLoginActionLabel(grok({ signedIn: false }))).toBe('Sign in');
+    expect(grokLoginActionLabel(grok({ signedIn: true }))).toBe('Re-login');
+  });
+
+  it('never claims a non-grok row needs a first sign-in', () => {
+    expect(grokNeedsFirstLogin(account({ id: 'a' }))).toBe(false);
+    expect(grokNeedsFirstLogin(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
+    expect(grokNeedsFirstLogin(account({ id: 'cx', kind: 'codex-cli', signedIn: false }))).toBe(false);
+    expect(grokNeedsFirstLogin(grok({ signedIn: true }))).toBe(false);
+    expect(grokNeedsFirstLogin(grok({ signedIn: false }))).toBe(true);
+  });
+
+  it('disables Save until the label has real content', () => {
+    expect(grokSaveDisabled('', false)).toBe(true);
+    expect(grokSaveDisabled('   ', false)).toBe(true);
+    expect(grokSaveDisabled('Work', true)).toBe(true); // busy
+    expect(grokSaveDisabled('Work', false)).toBe(false);
+  });
+
+  it('trims the label into the add payload', () => {
+    expect(grokAddPayload('  SuperGrok  ')).toEqual({ label: 'SuperGrok' });
+  });
+
+  it('sends account_add_grok and account_grok_login on the right channels', async () => {
+    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
+    await accountAddGrok({ label: 'SuperGrok' });
+    expect(invokeMock).toHaveBeenCalledWith('account_add_grok', { label: 'SuperGrok' });
+
+    invokeMock.mockResolvedValueOnce({ ok: true, data: undefined });
+    await accountGrokLogin({ accountId: 'gk' });
+    expect(invokeMock).toHaveBeenCalledWith('account_grok_login', { accountId: 'gk' });
+  });
+
+  it('is selectable in the account picker', () => {
+    const options = accountFieldOptions([account({ id: 'a' }), grok()]);
+    expect(options.map((o) => o.value)).toEqual(['a', 'gk']);
+    expect(options).toHaveLength(2);
+  });
+
+  // Same regression guard as the codex block: a fresh grok-cli account must
+  // never be usage-probed with `claude`, which would plant a Claude profile
+  // inside its GROK_HOME.
+  it('never probes plan limits for an account whose runtime has no plan', () => {
+    expect(accountUsageProbeable(grok())).toBe(false);
   });
 });

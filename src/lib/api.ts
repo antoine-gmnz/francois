@@ -19,8 +19,15 @@ import type {
   AccountEvent,
   AccountAddCodexPayload,
   AccountAddCodexResponse,
+  AccountAddGrokPayload,
+  AccountAddGrokResponse,
+  AccountCliToolsResponse,
   AccountCodexLoginPayload,
   AccountCodexLoginResponse,
+  AccountGrokLoginPayload,
+  AccountGrokLoginResponse,
+  AccountInstallCliPayload,
+  AccountInstallCliResponse,
   AccountListResponse,
   AccountLoginAck,
   AccountLoginCancelPayload,
@@ -404,6 +411,20 @@ export const accountAddCodex = (payload: AccountAddCodexPayload) =>
   ipc<AccountAddCodexResponse>('account_add_codex', payload);
 export const accountCodexLogin = (payload: AccountCodexLoginPayload) =>
   ipc<AccountCodexLoginResponse>('account_codex_login', payload);
+// multi-provider-grok FR-20/FR-21. Same shape as the Codex pair above:
+// `addGrok` resolves the fresh list, `grokLogin` resolves as soon as the
+// browser round-trip starts and `signedIn` arrives later on account.list.
+export const accountAddGrok = (payload: AccountAddGrokPayload) =>
+  ipc<AccountAddGrokResponse>('account_add_grok', payload);
+export const accountGrokLogin = (payload: AccountGrokLoginPayload) =>
+  ipc<AccountGrokLoginResponse>('account_grok_login', payload);
+// The vendor CLIs the login routes are driven by. `cliTools` re-probes PATH on
+// every call (never cached — installing one in a terminal is the normal case);
+// `installCli` resolves as soon as `npm i -g` is spawned, and its output plus
+// its outcome arrive on the shared francois://account/event stream.
+export const accountCliTools = () => ipc<AccountCliToolsResponse>('account_cli_tools');
+export const accountInstallCli = (payload: AccountInstallCliPayload) =>
+  ipc<AccountInstallCliResponse>('account_install_cli', payload);
 
 /** Subscribe to francois://account/event (account.list + the login sub-stream). */
 export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {

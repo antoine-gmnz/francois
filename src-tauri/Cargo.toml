@@ -41,6 +41,10 @@ base64 = "0.22"
 # extension-install FR-18: the sha256 of a manifest's bytes, so consent can be
 # bound to its content and a later edit reverts the extension to disabled.
 sha2 = "0.10"
+# multi-provider-grok FR-25: the model catalog lives in $GROK_HOME/config.toml
+# ([models]/[model.<id>] tables) — the vendor's own format, not JSON, and no
+# dependency already in this tree parses TOML.
+toml = "0.8"
 
 # self-update FR-15: the relauncher is spawned DETACHED so it outlives the app.
 # On unix that means `setsid()` in a pre_exec hook — there is no std API for it,
