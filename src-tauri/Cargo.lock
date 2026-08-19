@@ -1067,7 +1067,7 @@ dependencies = [
 
 [[package]]
 name = "francois"
-version = "0.23.0"
+version = "0.26.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1075,6 +1075,7 @@ dependencies = [
  "libc",
  "notify",
  "portable-pty",
+ "regex",
  "serde",
  "serde_json",
  "sha2",
@@ -1082,6 +1083,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
+ "toml 0.8.2",
  "ureq",
  "uuid",
  "windows-sys 0.59.0",

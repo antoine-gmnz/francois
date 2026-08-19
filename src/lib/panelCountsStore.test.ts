@@ -8,7 +8,22 @@ import { EMPTY_PANEL_COUNTS } from './panelCountsStore';
 import { useStore } from './store';
 
 function meta(id: string): SessionMeta {
-  return { id, name: id, lastActivityAt: 1 } as unknown as SessionMeta;
+  return {
+    id,
+    name: id,
+    cwd: '/repo',
+    model: { id: 'm', label: 'M' },
+    status: 'idle',
+    contextUsedTokens: 0,
+    contextLimitTokens: 0,
+    startedAt: 0,
+    lastActivityAt: 1,
+    permissionMode: 'default',
+    runtime: 'native',
+    accountId: 'default',
+    agentRuntime: 'claude-code',
+    protocol: 'anthropic',
+  };
 }
 
 beforeEach(() => {

@@ -75,6 +75,17 @@
   white-space: nowrap;
 }
 
+/* multi-provider-openai FR-20 design brief §2: the usage bar's off-state —
+   the reason line stands in for the meters at the bar's existing height, so
+   focus moving between a Claude session and an endpoint session never shifts
+   the layout. Full sentence rides on `title` for a narrow window. */
+.usage-unavailable {
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .usage-chip {
   display: flex;
   align-items: center;

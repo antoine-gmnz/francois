@@ -778,6 +778,20 @@ pub fn check_session_link(
     }
 }
 
+/// unbound-panes FR-6/§5: the root a project-owned shell spawns at.
+/// `PROJECT_NOT_FOUND` takes precedence over `PROJECT_ROOT_MISSING`, both
+/// checked before the `shell` domain spawns anything — wraps `root_of` with
+/// the app-handle lookup the `shell` domain (a different domain) needs.
+pub fn root_for_shell(
+    app: &AppHandle,
+    project_id: &str,
+) -> Result<String, (&'static str, &'static str)> {
+    match app.try_state::<ProjectRegistry>() {
+        Some(state) => root_of(&state.doc.lock().unwrap().projects, project_id),
+        None => Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

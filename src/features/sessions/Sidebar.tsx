@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Plug, Search, Sparkles, Workflow } from 'lucide-react';
+import { Bot, Plug, Search, Sparkles, Terminal as TerminalIcon, Workflow } from 'lucide-react';
 import { filterSessionsByProject } from '../../../contract/projects';
 import type { EditorId } from '../../../contract/open-in-vscode';
 import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
@@ -7,7 +7,7 @@ import { AdoptCloudButton } from '../cloud-sessions/AdoptCloudButton';
 import { prunePaletteSession } from '../palette/paletteData';
 import { showToast } from '../palette/palette';
 import { visibleSessions } from '../projects/projects';
-import { MAX_PANES, paneCount, paneIndexOf } from '../../lib/layoutStore';
+import { MAX_PANES, paneCount, paneIndicesOf, shellPaneEligibleProjects } from '../../lib/layoutStore';
 import { abbreviate } from '../../lib/path';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { EMPTY_PANEL_COUNTS, type CountedPane } from '../../lib/panelCountsStore';
@@ -82,6 +82,11 @@ export default function Sidebar({ home }: { home: string }) {
   const panes = paneCount({ extraPanes });
 
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // unbound-panes FR-9: the roster's PROJECT-row context menu — the fourth
+  // shell-pane entry point. Its own state, not MenuState's: that one is keyed
+  // by a session and carries a whole remove/worktree flow this shares none of.
+  const [projectMenu, setProjectMenu] = useState<{ projectId: string; label: string; x: number; y: number } | null>(null);
+  const openShellPane = useStore((s) => s.openShellPane);
   const menuRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
 
@@ -183,6 +188,21 @@ export default function Sidebar({ home }: { home: string }) {
       window.removeEventListener('keydown', onKey);
     };
   }, [menu]);
+
+  // The same dismissal for the project-row menu (unbound-panes FR-9).
+  useEffect(() => {
+    if (!projectMenu) return;
+    const close = () => setProjectMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setProjectMenu(null);
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [projectMenu]);
 
   // session-worktree FR-17: kicks off the dirty/unpushed probe when the confirm
   // step opens for a session that has a worktree.
@@ -313,12 +333,26 @@ export default function Sidebar({ home }: { home: string }) {
         collapsedGroups={collapsedGroups}
         onToggleGroup={toggleGroup}
         onNewInGroup={newInGroup}
+        // unbound-panes FR-9: only while a shell pane could actually be opened
+        // FOR THIS project — the row already names the project, so no picker
+        // is involved. Mirrors the other three entry points'
+        // shellPaneEligibleProjects gate (root-exists + per-project cap), not
+        // the aggregate canOpenShellPane check which only asks whether ANY
+        // project qualifies.
+        onProjectContext={
+          shellPaneEligibleProjects(projects, extraPanes).length > 0
+            ? (projectId, label, x, y) => {
+                if (!shellPaneEligibleProjects(projects, extraPanes).some((p) => p.id === projectId)) return;
+                setProjectMenu({ projectId, label, x, y });
+              }
+            : undefined
+        }
         home={home}
         activeSessionId={activeSessionId}
         focused={focused}
         rowCursor={rowCursor}
         derived={derived}
-        paneIndexOf={(id) => paneIndexOf({ activeSessionId, mainTab: 'session', extraPanes }, id)}
+        paneIndicesOf={(id) => paneIndicesOf({ activeSessionId, mainTab: 'session', extraPanes }, id)}
         paneCount={panes}
         focusedPaneIndex={focusedPaneIndex}
         onSelect={(id) => {
@@ -343,6 +377,37 @@ export default function Sidebar({ home }: { home: string }) {
         <PaneRows />
       </div>
 
+      {/* unbound-panes FR-9 — the roster's project-row menu. One entry, and the
+          project is the row's own, so it never opens a picker. */}
+      {projectMenu && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="context-menu"
+          style={{ left: projectMenu.x, top: projectMenu.y }}
+        >
+          <div className="context-menu__header">
+            <div className="context-menu__header-name truncate" title={projectMenu.label}>
+              {projectMenu.label}
+            </div>
+          </div>
+          <div className="context-menu__items">
+            <button
+              type="button"
+              className="context-menu__item"
+              onClick={() => {
+                openShellPane(projectMenu.projectId);
+                setProjectMenu(null);
+              }}
+            >
+              <span className="context-menu__glyph">
+                <TerminalIcon size={14} strokeWidth={1.75} />
+              </span>
+              <span className="context-menu__label">Open a shell pane here</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* context menu */}
       {menu && (
         <SessionContextMenu
@@ -356,9 +421,10 @@ export default function Sidebar({ home }: { home: string }) {
           // session in scope — the row it is on IS the session it opens.
           openInNewPaneLabel={panes === 1 ? 'Open in right pane' : 'Open in new pane'}
           onOpenInNewPane={
-            activeProjectId !== null &&
+            // unbound-panes FR-2: the activeProjectId===null clause is deleted —
+            // a full grid is the only thing left that hides this entry.
             panes < MAX_PANES &&
-            paneIndexOf({ activeSessionId, mainTab: 'session', extraPanes }, menu.sessionId) === null
+            paneIndicesOf({ activeSessionId, mainTab: 'session', extraPanes }, menu.sessionId).length === 0
               ? (sessionId) => {
                   setMenu(null);
                   openInNewPane(sessionId);

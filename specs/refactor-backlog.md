@@ -194,6 +194,7 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, qu
 - [ ] LOW · src-tauri/src/session/cloud/auth.rs:81 · quality · resolve Bedrock/Vertex/base-URL env through the account-scoped mechanism `account_env` uses, once accounts carry provider config · deferred:cloud-sessions
 - [ ] LOW · src-tauri/src/session/cloud/api.rs:1-1028 · rule · file is 1028 lines, over the ~1000-line cap in PIPELINE.md §Code layout; split the ref-normalizer/repo-matching pure helpers (normalize_cloud_ref, remote_slug, repo_matches, timestamp parsing) plus their tests into a sibling module (cloud/refs.rs), leaving api.rs the HTTP calls and response mapping · deferred:cloud-sessions
 - [ ] LOW · src/features/cloud-sessions/AdoptCloudSessionModal.tsx:146-149 · quality · pick() sets ref/resolved but never updates cursor, so ArrowDown/ArrowUp right after a mouse pick restarts navigation from index 0/-1 instead of the clicked row; thread the row index into onPick (or list.sessions.findIndex) and setCursor to it inside pick · deferred:cloud-sessions
+
 ## deferred:extensions
 
 - [ ] LOW · src-tauri/src/session/status.rs, src-tauri/src/session/stream/lines.rs · quality · pure `cargo fmt` reflow unrelated to extensions rode along in this diff — split it into its own formatting commit · deferred:extensions
@@ -221,6 +222,37 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, qu
 - [ ] MEDIUM · src-tauri/src/session/persistence.rs:653-830 · quality · No unit test round-trips `systemPrompt`/`extraArgs`/`profile` through `persist`→`parse_session_record` (FR-19), only implicit coverage via unrelated pre-feature-record tests — add a test building a record with these fields set (and one with them omitted) asserting round-trip/default behavior, mirroring the worktree round-trip test · deferred:session-profiles
 - [ ] LOW · src/features/profiles/profiles.ts:75 · quality · `flagAdvisoryTokens` classifies via `t.startsWith('-')`, misreading a plain value beginning with `-` (e.g. a negative-number arg) as a flag needing the FR-10 advisory — track advisory tokens by index-following-a-flag instead of value shape · deferred:session-profiles
 
+## deferred:multi-provider-endpoint
+
+- [ ] LOW · src/features/accounts/AccountRow.tsx:1-33 · quality · add `import './accounts.css';` so the component imports the stylesheet whose classes it renders · deferred:multi-provider-endpoint
+- [ ] LOW · src/features/accounts/accounts.ts:171 · quality · endpointErrorLine's empty-message fallback is hardcoded to 'could not save' even when rendering a Test failure; use a context-neutral fallback or thread a context: 'test' | 'save' param · deferred:multi-provider-endpoint
+- [ ] LOW · src-tauri/src/account/commands.rs:264-292 · quality · narrow TOCTOU in account_update_endpoint — the key-file write and the registry-record lookup take the account lock separately, so a concurrent account_remove between them can recreate a just-deleted config dir with an orphaned key file; hold one lock across both halves or re-assert the record after the write and roll the key file back · deferred:multi-provider-endpoint
+- [ ] LOW · src-tauri/src/account/endpoint.rs:432-436 · quality · read_key maps a non-UTF8 key file to "no key" via .ok(), masking externally-corrupted key material as a clean absence; distinguish NotFound from a decode/IO failure and surface the latter as an AppError · deferred:multi-provider-endpoint
+
+## deferred:multi-provider-seam
+
+- [x] LOW · src/features/sessions/rename.test.ts:20, src/lib/panelCountsStore.test.ts:11, src/features/sessions/useSessionFleetSync.test.ts:11, src/lib/split-by-4.test.ts:55 · quality · replace the blanket `as unknown as SessionMeta` bypass casts with fully-populated fixture builders so future required contract fields fail loudly instead of silently · deferred:multi-provider-seam — DONE in the axis-split commit (66c1ce5); review round 3 verified zero `as unknown as SessionMeta` remain in src/ and no substitute escape hatch replaced them
+- [ ] LOW · src-tauri/src/session/mod.rs:1174 · complexity · exceeds the PIPELINE §Code layout ~1000-line guidance; split by concern (hive off SessionMeta/persistence-adjacent types), moving each type's tests with it · deferred:multi-provider-seam
+- [ ] LOW · src/features/**/*.test.ts, src/lib/*.test.ts (~15 files) · quality · ~15 hand-maintained SessionMeta/Account fixture builders duplicate the same field list; extract one shared makeSessionMeta(overrides?: Partial<SessionMeta>) (and makeAccount) into a test-utils module and have each spec's local helper delegate to it · deferred:multi-provider-seam
+
+## deferred:multi-provider-openai
+
+- [x] LOW · src-tauri/src/session/adapter/openai/runner.rs · complexity · 1033 lines, over PIPELINE.md §Code layout's ~1000-line ceiling — split the pure decision + block-emission helpers into a sibling `blocks.rs` · **CLOSED 2026-08-17**: all 9 named helpers moved with the 12 tests covering them; `runner.rs` 1033 → 825, `blocks.rs` 298. Siblings, so the 9 needed `pub(super)`. Call sites are qualified `super::blocks::…` because the bare name collided with the unrelated pre-existing `session::blocks` that `runner.rs` already glob-imports (a real E0659, not a style nit) · deferred:multi-provider-openai
+- [x] LOW · src-tauri/src/session/adapter/openai/skills.rs (`excludes_slash_command_entries`) · quality · FR-27's "excludes every kind: 'command' entry" was proven by a standalone manual `.filter()` assertion, so removing the real filter would not have failed the test · **CLOSED 2026-08-17**: rewritten over a `FixedEnv` returning one `command` + one `skill`, asserting on `build_skill_block`'s own output. Proven the way the defect demanded — the filter was commented out, the test went red, the filter was restored, the test went green · deferred:multi-provider-openai
+- [x] LOW · src/ui/CapabilityNotice.tsx:20 / src/styles.css:1402 · quality · the design brief (specs/design/multi-provider-openai.md:97) specified wrap-to-two-lines then middle-truncate; the implementation end-clips via `-webkit-line-clamp: 2` with the full text on `title` · **CLOSED 2026-08-17 by amending the brief, not the code** — middle truncation at the *rendered* two-line boundary depends on the pane's live pixel width (resizable window, draggable dividers), so it needs DOM measurement this project cannot test (`environment: 'node'`, no DOM renderer), and the `middleTruncate` character-count route would be wrong at every width but one. Rationale recorded in the brief's §Resize behaviour · deferred:multi-provider-openai
+
+## deferred:multi-provider-grok
+
+Parked at the `/cohorte-review` SHIP verdict (2026-08-17). None are CRITICAL/HIGH or security.
+
+- [ ] MEDIUM · specs/multi-provider-grok.md FR-25 · spec-violation · fallback model catalog text (`grok-4.6`, `grok-4.6-mini`, `grok-build-0.1`) doesn't match the live-verified list `models.rs` actually implements (`grok-4.6`, `grok-4.5`); amend FR-25's parenthetical to match · deferred:multi-provider-grok
+- [ ] MEDIUM · src-tauri/src/session/mod.rs:629, src-tauri/src/session/adapter/grok/runner.rs:379-393 · test-coverage · FR-27's once-per-session Windows sandbox notice has no test — add a unit test on `claim_grok_sandbox_notice()`'s true-once/false-after behavior plus a `#[cfg(windows)]` test on `begin_turn` if feasible · deferred:multi-provider-grok
+- [ ] MEDIUM · src/features/accounts/CliToolCard.tsx:1, src/features/accounts/cliTools.ts:1 · complexity · this diff builds a generic vendor-CLI probe/install subsystem (all 3 providers) that no grok FR asks for and that §3's own text claims already shipped — split it into its own spec/PR attributed to multi-account, or amend this spec to claim it · deferred:multi-provider-grok
+- [ ] LOW · src-tauri/src/session/persistence.rs:834-852 · test-coverage · no persistence round-trip test pins `agentRuntime: "grok"` reloading as `AgentRuntime::Grok` (FR-4); add a grok/openai pair to `agent_runtime_and_protocol_round_trip_through_a_persisted_record` (codex/openai pair also missing) · deferred:multi-provider-grok
+- [ ] LOW · contract/multi-provider-seam.ts:457 · spec-violation · FR-26 asks every disabled capability read as a "current gap"; `grok.remoteControl`'s reason reads as settled architecture instead — reword to "not yet" framing or except `remoteControl` in FR-26 explicitly · deferred:multi-provider-grok
+- [ ] LOW · src/features/accounts/AccountsModal.tsx:61 · quality · `installs` typed `Record<string, CliInstallState>` though every site keys by `CliToolId`; type it `Record<CliToolId, CliInstallState>` · deferred:multi-provider-grok
+- [ ] LOW · src/lib/api.ts:1666, src/features/accounts/accounts.test.ts:1043 · test-coverage · `accountCliTools`/`accountInstallCli` have no `invokeMock` test unlike every other new wrapper in this diff; add the two missing cases · deferred:multi-provider-grok
+
 ## deferred:ext-path-resolution
 
 Logged per spec §2 non-goal (explicit — not a review finding). Marion's unresolved panel caveat: if
@@ -240,3 +272,11 @@ filtering relative PATH entries is right for extension spawns, it is right every
 
 - [ ] MEDIUM · src/app/RosterDivider.tsx:66-85 · quality · Base the arrow-key nudge on the stored `rosterWidth` intent (pass it alongside `renderedWidth`) instead of the clamped `renderedWidth`, so a nudge under a clamped viewport/regime cannot overwrite a wider stored width; clamp only for the `aria-valuenow` readout. · deferred:resizable-sidebar
 - [ ] LOW · src/lib/hooks/usePaneDrag.ts · quality · Add `usePaneDrag.test.ts` covering measure/onDrag/dragging-flag transitions once a DOM component testing framework is wired for this repo. · deferred:resizable-sidebar
+
+## frontend
+- [ ] LOW · src/app/app.css:963-969 · quality · pane header ⋯ button is opacity:0 until .split-pane:hover/:focus-within — add :focus-visible on the button itself as a redundant reveal trigger · deferred:unbound-panes
+- [ ] MEDIUM · src/lib/layoutStore.ts:1012-1013,1169-1174 · quality · closePane disposes the dropped shell then unsplitPatch re-disposes s.extraPanes — pass the filtered pane list into unsplitPatch (or skip the early dispose when keep.length===1) · deferred:unbound-panes
+
+## core
+- [ ] LOW · src-tauri/src/shell/commands.rs:536 · quality · section comment for project-owner target resolution sits above mod tests instead of above struct OwnerTarget — move or drop it · deferred:unbound-panes
+- [ ] LOW · src-tauri/src/shell/commands.rs:447-454 · complexity · shell_restart re-implements the is_wsl_unc_path runtime branch already in project_owner_target — extract a shared runtime_of_root helper · deferred:unbound-panes

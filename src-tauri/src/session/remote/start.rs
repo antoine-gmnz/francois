@@ -354,7 +354,7 @@ pub fn remote_start(
     else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
-    let account_config_dir = crate::account::config_dir_of(&app, &account_id);
+    let account_config_dir = crate::account::claude_config_dir_of(&app, &account_id);
 
     // The host is a real interactive TUI, so an undecided MCP-consent or
     // folder-trust dialog PARKS it: `blocking_prompt` catches that downstream and

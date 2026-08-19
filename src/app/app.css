@@ -472,6 +472,31 @@
   flex-shrink: 0;
 }
 
+/* unbound-panes FR-6/edge cases 3/4 — a project-owned shell pane's spawning /
+   error states. Errors render IN PLACE, never as a toast (design §Notes). */
+.shell-pane-hint {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: var(--font-size-11-5);
+}
+.shell-pane-error {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-9);
+  text-align: center;
+  padding: var(--space-12);
+}
+.shell-pane-error__text {
+  color: var(--error);
+  font-size: var(--font-size-11-5);
+}
+
 /* multiple-shells §8: the SHELL tab's sub-tab strip (.shell-strip/.shell-chip
    .shell-empty moved to src/features/shell/shell.css, imported from
    ShellStrip.tsx — per-feature CSS convention. */
@@ -844,6 +869,103 @@ body.app-resizing-y * {
   background: var(--bg-hover-2);
   border-color: var(--border-focus);
 }
+/* unbound-panes FR-9 — the two-choice affordance (replaces the single "New
+   session" prompt above): "pick a session" / "open a shell here", side by side. */
+.split-pane__empty-choices {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-9);
+}
+.split-pane__empty-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  height: 26px;
+  padding: 0 var(--space-11);
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  font-size: var(--font-size-11-5);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.split-pane__empty-choice:hover {
+  border-color: var(--border-focus);
+  color: var(--text-bright);
+}
+/* anchors the ProjectPickerPopover to the "Open a shell here" button. */
+.split-pane__empty-choice-anchor {
+  position: relative;
+}
+
+/* unbound-panes FR-14 — the neutral project marker in the pane header, sitting
+   immediately left of the session/project name so it reads as `‹repo› name`.
+   Never `--accent` (design: acid marks the one focused surface). */
+.split-pane__marker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-app);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xs);
+  padding: 0 var(--space-4);
+  flex-shrink: 0;
+}
+/* unbound-panes FR-9 / design brief flow 4 — the pane header's `⋯` menu.
+   Hover-revealed, like the rest of the header's actions; it stays visible while
+   its own menu is open so the affordance does not vanish under the cursor. */
+.split-pane__menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.split-pane__menu-btn {
+  opacity: 0;
+}
+.split-pane:hover .split-pane__menu-btn,
+.split-pane__menu:focus-within .split-pane__menu-btn {
+  opacity: 1;
+}
+.split-pane__menu-list {
+  position: absolute;
+  top: calc(100% + var(--space-4));
+  right: 0;
+  z-index: 30;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-dropdown);
+}
+.split-pane__menu-item {
+  text-align: left;
+  white-space: nowrap;
+  padding: var(--space-6) var(--space-8);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11-5);
+  cursor: pointer;
+}
+.split-pane__menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+/* unbound-panes FR-6 — a shell pane's header glyph. */
+.split-pane__shell-glyph {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
 
 /* ── the grid chrome (FR-9/FR-11 / turn 5d) ──────────────────────────────────
    At four panes a pane is ~590×350: no room for a tab row, and no room for a
@@ -988,6 +1110,31 @@ body.app-resizing-y * {
 }
 .session-rail__dot--live {
   animation: pulse 1.6s steps(6, end) infinite;
+}
+/* unbound-panes FR-15 / design brief — the 1px rule separating the PINNED
+   (paned) tiles from the rest of the fleet. A plain flex item, so it takes its
+   own slot in the column and never overlaps a tile. */
+.session-rail__hairline {
+  width: 18px;
+  height: 1px;
+  flex-shrink: 0;
+  background: var(--border-2);
+}
+
+/* unbound-panes FR-14: the neutral project marker, bottom-left corner of the
+   30px tile — under the initials and status dot, never accent. */
+.session-rail__marker {
+  position: absolute;
+  left: -2px;
+  bottom: -2px;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 2px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
 }
 .session-rail__new,
 .session-rail__expand {

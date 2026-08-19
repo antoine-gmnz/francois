@@ -43,6 +43,8 @@ const metaOf = (id: string, s: SessionStatus): SessionMeta => ({
   permissionMode: 'default',
   runtime: 'native',
   accountId: 'default',
+  agentRuntime: 'claude-code',
+  protocol: 'anthropic',
 });
 
 describe('deriveTrigger (FR-1, moved verbatim from notifications.test.ts)', () => {

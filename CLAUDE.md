@@ -1,7 +1,7 @@
 > Project profile & pipeline facts: **@PIPELINE.md**
 >
-> Pipeline: bundled core (`.claude/`) — run `npx cohorte install` to refresh if
-> `/brainstorm`, `/build` etc. are missing.
+> Pipeline: global core — run `npx cohorte@latest update --global` (or the installer) to refresh if
+> `/cohorte-brainstorm`, `/cohorte-build` etc. are missing.
 
 # Francois
 

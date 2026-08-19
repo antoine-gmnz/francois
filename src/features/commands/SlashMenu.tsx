@@ -6,10 +6,11 @@
 
 import { useEffect, useRef } from 'react';
 import type { SlashCommandInfo } from '../../../contract/common';
+import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { sourceTag } from './slash-menu';
 
 interface SlashMenuProps {
-  /** Filtered registry rows, verbatim (FR-11). */
+  /** Filtered registry rows, verbatim (FR-11). Always [] while `unavailableReason` is set. */
   items: SlashCommandInfo[];
   selIdx: number;
   /** Hover selects (FR-7) — fired on real pointer movement only, so wheel scrolling never moves the selection (§8). */
@@ -18,9 +19,15 @@ interface SlashMenuProps {
   onRun: (name: string) => void;
   /** Outside click dismisses identically to Esc (FR-9). */
   onDismiss: () => void;
+  /**
+   * multi-provider-openai FR-20: interactiveCommands' reason when unavailable —
+   * replaces the row list with the same disabled-pane treatment every other
+   * capability consumer renders. Null/absent on an ordinary claude-code session.
+   */
+  unavailableReason?: string | null;
 }
 
-export default function SlashMenu({ items, selIdx, onHover, onRun, onDismiss }: SlashMenuProps) {
+export default function SlashMenu({ items, selIdx, onHover, onRun, onDismiss, unavailableReason }: SlashMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const dismissRef = useRef(onDismiss);
   dismissRef.current = onDismiss;
@@ -44,20 +51,24 @@ export default function SlashMenu({ items, selIdx, onHover, onRun, onDismiss }: 
 
   return (
     <div ref={rootRef} className="slash-menu scz" onMouseDown={(e) => e.preventDefault()}>
-      {items.map((c, i) => (
-        <div
-          key={c.name}
-          className={i === selIdx ? 'slash-row slash-row-sel' : 'slash-row'}
-          onMouseMove={() => {
-            if (i !== selIdx) onHover(i);
-          }}
-          onClick={() => onRun(c.name)}
-        >
-          <span className="slash-name">/{c.name}</span>
-          <span className="slash-desc">{c.description}</span>
-          <span className="slash-tag">{sourceTag(c)}</span>
-        </div>
-      ))}
+      {unavailableReason ? (
+        <CapabilityNotice reason={unavailableReason} />
+      ) : (
+        items.map((c, i) => (
+          <div
+            key={c.name}
+            className={i === selIdx ? 'slash-row slash-row-sel' : 'slash-row'}
+            onMouseMove={() => {
+              if (i !== selIdx) onHover(i);
+            }}
+            onClick={() => onRun(c.name)}
+          >
+            <span className="slash-name">/{c.name}</span>
+            <span className="slash-desc">{c.description}</span>
+            <span className="slash-tag">{sourceTag(c)}</span>
+          </div>
+        ))
+      )}
     </div>
   );
 }

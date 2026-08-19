@@ -7,11 +7,10 @@ use crate::session::*;
 
 use serde_json::Value;
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_stream_event(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     cwd: &str,
     ev: &Value,
@@ -25,13 +24,13 @@ pub(crate) fn handle_stream_event(
     let event_type = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match event_type {
         "content_block_start" => {
-            handle_content_block_start(app, session_id, ev, blocks, tools, text_accum)
+            handle_content_block_start(env, session_id, ev, blocks, tools, text_accum)
         }
         "content_block_delta" => {
-            handle_content_block_delta(app, session_id, ev, blocks, tools, text_accum, open_block)
+            handle_content_block_delta(env, session_id, ev, blocks, tools, text_accum, open_block)
         }
         "content_block_stop" => handle_content_block_stop(
-            app, session_id, cwd, ev, blocks, tools, text_accum, open_block,
+            env, session_id, cwd, ev, blocks, tools, text_accum, open_block,
         ),
         _ => {}
     }
@@ -40,7 +39,7 @@ pub(crate) fn handle_stream_event(
 /// `content_block_start`: opens the bookkeeping slot for a new text or
 /// tool_use block. Other block types (e.g. `thinking`) are ignored.
 fn handle_content_block_start(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     ev: &Value,
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
@@ -55,7 +54,7 @@ fn handle_content_block_start(
         .unwrap_or("");
     match block_type {
         "text" => start_text_block(idx, blocks, text_accum),
-        "tool_use" => start_tool_use_block(app, session_id, idx, &content_block, blocks, tools),
+        "tool_use" => start_tool_use_block(env, session_id, idx, &content_block, blocks, tools),
         _ => {} // thinking etc. — ignored
     }
 }
@@ -94,7 +93,7 @@ fn parse_tool_use_block(content_block: &Value) -> (String, String, Value) {
 /// Mint the bookkeeping slot for a new tool_use block, then — if the tool is
 /// a subagent dispatch — mint the FR-37 agent record too.
 fn start_tool_use_block(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     idx: u64,
     content_block: &Value,
@@ -121,13 +120,13 @@ fn start_tool_use_block(
         .get_mut(&idx)
         .map(|entry| entry.2 = tool_use_id.clone());
     if is_task {
-        mint_subagent(app, session_id, &tool_use_id, tools);
+        mint_subagent(env, session_id, &tool_use_id, tools);
     }
     // workflow-panel FR-2: the run's clock starts at the dispatch, exactly like
     // a subagent's. Its name/phases stay provisional until the input finishes
     // accumulating (FR-4, in finish_tool_block).
     if is_workflow {
-        let run_uuid = on_workflow_start(app, session_id, &tool_use_id);
+        let run_uuid = on_workflow_start(env, session_id, &tool_use_id);
         if let Some(rec) = tools.get_mut(&tool_use_id) {
             rec.input["__workflowId"] = Value::String(run_uuid);
         }
@@ -137,7 +136,7 @@ fn start_tool_use_block(
 /// async-agents FR-37: a `Task` (or other subagent) dispatch starts — mint
 /// its `AgentInfo` record and stash the correlation key.
 fn mint_subagent(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     tool_use_id: &str,
     tools: &mut HashMap<String, ToolRec>,
@@ -164,8 +163,7 @@ fn mint_subagent(
         step_count: 0,
     };
     {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         if let Some(s) = map.get_mut(session_id) {
             s.insert_agent(agent.clone());
             // async-agents FR-1: the correlation key. Session-scoped
@@ -179,11 +177,11 @@ fn mint_subagent(
     if let Some(rec) = tools.get_mut(tool_use_id) {
         rec.input["__agentId"] = Value::String(agent_id.clone());
     }
-    emit(app, SessionEvent::AgentUpdate { agent });
+    env.emit_session(SessionEvent::AgentUpdate { agent });
 }
 
 fn handle_content_block_delta(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     ev: &Value,
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
@@ -196,7 +194,7 @@ fn handle_content_block_delta(
     let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match delta_type {
         "text_delta" => {
-            handle_text_delta(app, session_id, idx, &delta, blocks, text_accum, open_block)
+            handle_text_delta(env, session_id, idx, &delta, blocks, text_accum, open_block)
         }
         "input_json_delta" => handle_input_json_delta(idx, &delta, blocks, tools),
         _ => {} // thinking_delta / signature_delta — ignored
@@ -204,7 +202,7 @@ fn handle_content_block_delta(
 }
 
 fn handle_text_delta(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     idx: u64,
     delta: &Value,
@@ -232,22 +230,18 @@ fn handle_text_delta(
     // Keep the transcript buffer current with the partial text, so a view that
     // hydrates mid-block seeds the opening it would otherwise never receive.
     {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         if let Some(s) = map.get_mut(session_id) {
             s.buf_assistant_streaming(&block_id, accum);
         }
     }
     *open_block = Some((block_id.clone(), BlockKind::Text));
-    emit(
-        app,
-        SessionEvent::AssistantDelta {
-            session_id: session_id.into(),
-            block_id,
-            text,
-            offset,
-        },
-    );
+    env.emit_session(SessionEvent::AssistantDelta {
+        session_id: session_id.into(),
+        block_id,
+        text,
+        offset,
+    });
 }
 
 /// `input_json_delta`: accumulate the tool call's partial JSON input onto its
@@ -279,7 +273,7 @@ fn handle_input_json_delta(
 }
 
 fn handle_content_block_stop(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     cwd: &str,
     ev: &Value,
@@ -293,22 +287,22 @@ fn handle_content_block_stop(
         return;
     };
     match kind {
-        BlockKind::Text => finish_text_block(app, session_id, &block_id, text_accum, open_block),
+        BlockKind::Text => finish_text_block(env, session_id, &block_id, text_accum, open_block),
         BlockKind::Tool => {
-            finish_tool_block(app, session_id, cwd, &block_id, &slot, tools, open_block)
+            finish_tool_block(env, session_id, cwd, &block_id, &slot, tools, open_block)
         }
     }
 }
 
 fn finish_text_block(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     block_id: &str,
     text_accum: &mut HashMap<String, String>,
     open_block: &mut Option<(String, BlockKind)>,
 ) {
     let text = text_accum.get(block_id).cloned().unwrap_or_default();
-    finalize_text_block(app, session_id, block_id, text);
+    finalize_text_block(env, session_id, block_id, text);
     *open_block = None;
 }
 
@@ -319,31 +313,32 @@ fn finish_text_block(
 /// Shared with `close_open_block` (lines.rs), which reaches this same path when
 /// the reader dies with a block still open — an interrupted answer used to
 /// never reach the buffer at all, so it vanished from the transcript on reload.
-pub(crate) fn finalize_text_block(app: &AppHandle, session_id: &str, block_id: &str, text: String) {
+pub(crate) fn finalize_text_block(
+    env: &dyn SessionEnv,
+    session_id: &str,
+    block_id: &str,
+    text: String,
+) {
     let block = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         map.get_mut(session_id)
             .and_then(|s| s.finish_assistant(block_id, text.clone()))
     };
     if let Some(buf_block) = &block {
-        append_transcript(app, session_id, buf_block); // durable-sessions FR-2
+        env.append_transcript(session_id, buf_block); // durable-sessions FR-2
     }
-    emit(
-        app,
-        SessionEvent::AssistantDone {
-            session_id: session_id.into(),
-            block_id: block_id.to_string(),
-            text,
-        },
-    );
+    env.emit_session(SessionEvent::AssistantDone {
+        session_id: session_id.into(),
+        block_id: block_id.to_string(),
+        text,
+    });
 }
 
 /// tool: finalize input (accumulated json overrides start input), derive
 /// summary, emit `tool.start`. `tool_use_id` is the block's accum-slot
 /// field, which for a tool block holds the tool_use_id rather than text.
 fn finish_tool_block(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     cwd: &str,
     block_id: &str,
@@ -384,8 +379,7 @@ fn finish_tool_block(
         None
     };
     let dispatch_emissions = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = env.engine().sessions.lock().unwrap();
         let mut ems = Vec::new();
         if let Some(s) = map.get_mut(session_id) {
             s.buf_tool(
@@ -401,26 +395,23 @@ fn finish_tool_block(
         }
         ems
     };
-    emit_agent_emissions(app, session_id, dispatch_emissions);
+    emit_agent_emissions(env, session_id, dispatch_emissions);
     // workflow-panel FR-4: the script (and so its `export const meta` block) is
     // only complete now — read the run's real name, description, and phases off it.
     if rec.is_workflow {
         if let Some(run_uuid) = rec.input.get("__workflowId").and_then(|v| v.as_str()) {
             let (run_uuid, input) = (run_uuid.to_string(), rec.input.clone());
-            on_workflow_input_complete(app, session_id, &run_uuid, &input);
+            on_workflow_input_complete(env, session_id, &run_uuid, &input);
         }
     }
     *open_block = Some((block_id.to_string(), BlockKind::Tool));
-    emit(
-        app,
-        SessionEvent::ToolStart {
-            session_id: session_id.into(),
-            block_id: block_id.to_string(),
-            tool: rec.tool.clone(),
-            summary,
-            model,
-        },
-    );
+    env.emit_session(SessionEvent::ToolStart {
+        session_id: session_id.into(),
+        block_id: block_id.to_string(),
+        tool: rec.tool.clone(),
+        summary,
+        model,
+    });
 }
 
 #[cfg(test)]

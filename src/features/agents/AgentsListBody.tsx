@@ -4,6 +4,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { AgentInfo, AgentStep, AppError } from '../../../contract/common';
+import type { CapabilityState } from '../../../contract/multi-provider-seam';
 import { formatElapsed } from '../../../contract/conversation-view';
 import {
   ASYNC_MARKER,
@@ -19,6 +20,7 @@ import {
   stepMetaColor,
   stepToolPrefix,
 } from './agent-trail';
+import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { StatusDot } from '../../ui/StatusDot';
 
 const statusColor: Record<string, string> = {
@@ -29,6 +31,8 @@ const statusColor: Record<string, string> = {
 };
 
 export interface AgentsListBodyProps {
+  /** multi-provider-openai FR-20: subagents' capability state for this session. */
+  capability: CapabilityState;
   listError: AppError | null;
   loading: boolean;
   list: AgentInfo[];
@@ -44,6 +48,7 @@ export interface AgentsListBodyProps {
 }
 
 export function AgentsListBody({
+  capability,
   listError,
   loading,
   list,
@@ -59,7 +64,9 @@ export function AgentsListBody({
 }: AgentsListBodyProps) {
   return (
     <div className="scz agents-body">
-      {listError ? (
+      {!capability.available ? (
+        <CapabilityNotice reason={capability.reason ?? ''} />
+      ) : listError ? (
         <div className="agents-error-text">{listError.message}</div>
       ) : loading ? null : list.length === 0 ? (
         <div className="agents-empty">

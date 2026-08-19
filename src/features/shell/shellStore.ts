@@ -173,13 +173,18 @@ export function initShellEvents(): void {
   if (started) return;
   started = true;
   void onShellEvent((e) => {
+    // unbound-panes FR-6: this store only ever tracks SESSION-owned shells — a
+    // project-owned shell pane manages its own single PTY directly and never
+    // touches the multi-shell strip/unread bookkeeping.
+    if (e.owner.kind !== 'session') return;
+    const sessionId = e.owner.sessionId;
     const store = useShellStore.getState();
     if (e.type === 'shell.data') {
-      if (!isDisplayedShell(e.sessionId, e.shellId)) store.markUnread(e.shellId);
+      if (!isDisplayedShell(sessionId, e.shellId)) store.markUnread(e.shellId);
       return;
     }
     // shell.exit
-    store.setShellStatus(e.sessionId, e.shellId, false, e.exitCode);
-    if (!isDisplayedShell(e.sessionId, e.shellId)) store.markUnread(e.shellId);
+    store.setShellStatus(sessionId, e.shellId, false, e.exitCode);
+    if (!isDisplayedShell(sessionId, e.shellId)) store.markUnread(e.shellId);
   });
 }

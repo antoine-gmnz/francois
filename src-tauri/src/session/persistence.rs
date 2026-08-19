@@ -252,6 +252,12 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
                 // multi-account FR-19: always written (unlike projectId) — a
                 // session always has an account, and 'default' is a real value.
                 "accountId": s.account_id,
+                // multi-provider-seam FR-11a: always written — every session
+                // has both, derived once at creation and never re-derived.
+                // The superseded `provider` key is read (see
+                // `parse_session_record`), never written.
+                "agentRuntime": s.agent_runtime,
+                "protocol": s.protocol,
             });
             // projects FR-18: write projectId ONLY when linked. An unlinked session
             // must omit the key entirely rather than emit null, so a record written
@@ -339,6 +345,13 @@ pub(crate) struct PersistedMeta {
     /// multi-account FR-19: None on every pre-multi-account record. Whether the
     /// id still RESOLVES is decided at load (FR-10), not here — parsing stays pure.
     account_id: Option<String>,
+    /// multi-provider-seam FR-11a: both absent ⇒ `(ClaudeCode, Anthropic)`.
+    /// A record carrying the superseded `provider` key maps
+    /// `'claude-code'` → `(ClaudeCode, Anthropic)`,
+    /// `'openai-compatible'` → `(Francois, Openai)` — see
+    /// `parse_session_record`'s migration.
+    agent_runtime: AgentRuntime,
+    protocol: ProviderProtocol,
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
@@ -364,6 +377,36 @@ pub(crate) struct PersistedMeta {
     profile: Option<SessionProfileRef>,
 }
 
+/// multi-provider-seam FR-11a (Phase B gate): the read-side migration off the
+/// superseded single `provider` key onto the two axes.
+///
+///   - both `agentRuntime`/`protocol` present and parse ⇒ used verbatim (the
+///     current write shape — see `persist`).
+///   - else a legacy `provider` string is mapped: `'claude-code'` ⇒
+///     `(ClaudeCode, Anthropic)`, `'openai-compatible'` ⇒ `(Francois, Openai)`.
+///   - else (both absent, or an unrecognised value either way) ⇒ the default
+///     pair `(ClaudeCode, Anthropic)` — every session on disk from before this
+///     feature, or written by a build in between, is unaffected.
+///
+/// Save-side (`persist`) writes only the two new keys; the legacy key is read
+/// here, never written.
+fn parse_agent_runtime_and_protocol(rec: &Value) -> (AgentRuntime, ProviderProtocol) {
+    let runtime = rec
+        .get("agentRuntime")
+        .and_then(|v| serde_json::from_value::<AgentRuntime>(v.clone()).ok());
+    let protocol = rec
+        .get("protocol")
+        .and_then(|v| serde_json::from_value::<ProviderProtocol>(v.clone()).ok());
+    if let (Some(r), Some(p)) = (runtime, protocol) {
+        return (r, p);
+    }
+    match rec.get("provider").and_then(|v| v.as_str()) {
+        Some("claude-code") => (AgentRuntime::ClaudeCode, ProviderProtocol::Anthropic),
+        Some("openai-compatible") => (AgentRuntime::Francois, ProviderProtocol::Openai),
+        _ => (AgentRuntime::default(), ProviderProtocol::default()),
+    }
+}
+
 pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
     let id = rec.get("id")?.as_str()?.to_string();
     let name = rec.get("name")?.as_str()?.to_string();
@@ -380,6 +423,9 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
         other => other,
     }
     .to_string();
+    // multi-provider-seam FR-11a: computed once, ahead of the literal below —
+    // see `parse_agent_runtime_and_protocol`'s doc comment for the migration.
+    let (agent_runtime, protocol) = parse_agent_runtime_and_protocol(rec);
     Some(PersistedMeta {
         id,
         name,
@@ -433,6 +479,8 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(String::from),
+        agent_runtime,
+        protocol,
         claude_session_id: rec
             .get("claudeSessionId")
             .and_then(|v| v.as_str())
@@ -607,6 +655,8 @@ pub fn load_persisted(app: &AppHandle) {
                 // cloud-sessions FR-10: provenance survives quit/reopen — that
                 // is the whole point of persisting it (§9).
                 cloud: m.cloud,
+                agent_runtime: m.agent_runtime,
+                protocol: m.protocol,
                 // session-profiles FR-19: a resumed session spawns with ITS
                 // persisted values, not the profile's current ones.
                 system_prompt: m.system_prompt,
@@ -639,6 +689,9 @@ pub fn load_persisted(app: &AppHandle) {
                 workflow_by_tool: HashMap::new(),
                 workflow_scripts: HashMap::new(),
                 cli_commands: Vec::new(),
+                // multi-provider-grok FR-27: a reload starts false again — a
+                // fresh reminder after a restart is honest, not a bug.
+                grok_sandbox_notice_emitted: false,
             },
         );
     }
@@ -776,6 +829,60 @@ mod tests {
         );
         // missing required field → None
         assert!(parse_session_record(&json!({ "name": "x" }), 0).is_none());
+    }
+
+    #[test]
+    fn agent_runtime_and_protocol_round_trip_through_a_persisted_record() {
+        // multi-provider-seam FR-11a: an explicit pair round-trips verbatim.
+        let full = json!({
+            "id": "abc", "name": "n", "cwd": "/x",
+            "agentRuntime": "francois", "protocol": "openai",
+        });
+        let m = parse_session_record(&full, 0).unwrap();
+        assert_eq!(m.agent_runtime, AgentRuntime::Francois);
+        assert_eq!(m.protocol, ProviderProtocol::Openai);
+
+        let claude_pair = json!({
+            "id": "abc", "name": "n", "cwd": "/x",
+            "agentRuntime": "claude-code", "protocol": "anthropic",
+        });
+        let m = parse_session_record(&claude_pair, 0).unwrap();
+        assert_eq!(m.agent_runtime, AgentRuntime::ClaudeCode);
+        assert_eq!(m.protocol, ProviderProtocol::Anthropic);
+    }
+
+    #[test]
+    fn both_keys_absent_defaults_to_claude_code_anthropic() {
+        // multi-provider-seam FR-11a Phase B gate: neither key present (every
+        // session written before this feature, and before multi-provider-seam) ⇒
+        // the default pair.
+        let old = json!({ "id": "abc", "name": "n", "cwd": "/x" });
+        let m = parse_session_record(&old, 0).unwrap();
+        assert_eq!(m.agent_runtime, AgentRuntime::ClaudeCode);
+        assert_eq!(m.protocol, ProviderProtocol::Anthropic);
+    }
+
+    #[test]
+    fn legacy_provider_key_migrates_to_the_right_pair() {
+        // multi-provider-seam FR-11a Phase B gate: a record written by the
+        // pre-split build carries the single `provider` key — migrate it.
+        let claude = json!({ "id": "abc", "name": "n", "cwd": "/x", "provider": "claude-code" });
+        let m = parse_session_record(&claude, 0).unwrap();
+        assert_eq!(m.agent_runtime, AgentRuntime::ClaudeCode);
+        assert_eq!(m.protocol, ProviderProtocol::Anthropic);
+
+        let openai =
+            json!({ "id": "abc", "name": "n", "cwd": "/x", "provider": "openai-compatible" });
+        let m = parse_session_record(&openai, 0).unwrap();
+        assert_eq!(m.agent_runtime, AgentRuntime::Francois);
+        assert_eq!(m.protocol, ProviderProtocol::Openai);
+
+        // an unrecognised legacy value degrades to the default pair rather than
+        // failing the whole record (matching the "absent" case, not a hard error).
+        let bad = json!({ "id": "abc", "name": "n", "cwd": "/x", "provider": "bogus" });
+        let m = parse_session_record(&bad, 0).unwrap();
+        assert_eq!(m.agent_runtime, AgentRuntime::ClaudeCode);
+        assert_eq!(m.protocol, ProviderProtocol::Anthropic);
     }
 
     #[test]
@@ -1225,6 +1332,22 @@ mod project_link_tests {
             "a1",
             "the stored value is reported verbatim, never re-derived"
         );
+    }
+
+    #[test]
+    fn session_meta_always_carries_agent_runtime_and_protocol() {
+        // multi-provider-seam FR-11a: required on the wire, reported
+        // verbatim — never re-derived from the (possibly since-changed) account.
+        let v = serde_json::to_value(test_session().meta()).unwrap();
+        assert_eq!(v["agentRuntime"], "claude-code");
+        assert_eq!(v["protocol"], "anthropic");
+
+        let mut s = test_session();
+        s.agent_runtime = AgentRuntime::Francois;
+        s.protocol = ProviderProtocol::Openai;
+        let v = serde_json::to_value(s.meta()).unwrap();
+        assert_eq!(v["agentRuntime"], "francois");
+        assert_eq!(v["protocol"], "openai");
     }
 
     #[test]

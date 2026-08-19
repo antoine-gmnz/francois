@@ -4,7 +4,6 @@ use crate::ipc::{err, err_detail, ok, IpcResult};
 use crate::session::*;
 use serde_json::Value;
 use std::process::{Command, Stdio};
-use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager, State};
 
 /// projects: the decision half of `session_create`'s post-insert TOCTOU re-check.
@@ -262,8 +261,18 @@ pub fn session_create(
         }
     }
 
-    if let Err((code, msg)) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref()) {
-        return err(code, msg);
+    // multi-provider-codex FR-5: this preflight runs `claude --version` with the
+    // account's dir as CLAUDE_CONFIG_DIR. On a non-Claude account it checks the
+    // WRONG BINARY — and worse, `claude` initializes whatever config dir it is
+    // pointed at, so it seeds a Codex account's CODEX_HOME with a full Claude
+    // profile (`.claude.json`, `projects/`, `sessions/`) the moment a session is
+    // created. Each runtime's own preflight is its adapter's
+    // (`SessionAdapter::preflight`), which is where the Codex auth check lives.
+    if crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::ClaudeCodeOauth {
+        if let Err((code, msg)) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref())
+        {
+            return err(code, msg);
+        }
     }
 
     // projects FR-19: a link must resolve to a live registry entry. The core does
@@ -345,6 +354,11 @@ pub fn session_create(
     let id = uuid();
     let name = name.unwrap_or_else(|| basename(&cwd));
     let context_limit_tokens = context_limit(&model_id);
+    // multi-provider-seam FR-13a: both axes derived from the resolved
+    // account's kind — session_create gains no field and the new-session
+    // modal gains no control.
+    let (agent_runtime, protocol) =
+        AgentRuntime::from_account_kind(crate::account::kind_of(&app, &account_id));
     let session = Session::new(
         id.clone(),
         name,
@@ -362,7 +376,9 @@ pub fn session_create(
         session_worktree,
         worktree_distro,
         account_id, // multi-account FR-19: stored VERBATIM, never re-derived
-        None,       // claude_session_id
+        agent_runtime,
+        protocol,
+        None, // claude_session_id
         Vec::new(),
         system_prompt,
         extra_args,
@@ -414,8 +430,9 @@ pub fn session_remove(
         None => err("SESSION_NOT_FOUND", "no such session"),
         Some(session) => {
             if let Some(turn) = session.current {
-                turn.interrupted.store(true, Ordering::SeqCst);
-                let _ = turn.child.lock().unwrap().kill();
+                // multi-provider-seam FR-8: reached only through TurnControl.
+                turn.interrupt();
+                turn.kill();
             }
             if let Some(p) = &session.pending_probe {
                 p.kill(); // interactive-commands: the probe dies with the session (§7)
@@ -525,8 +542,9 @@ pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcRe
         return ok(None); // FR-23 no-op
     }
     if let Some(turn) = &s.current {
-        turn.interrupted.store(true, Ordering::SeqCst);
-        let _ = turn.child.lock().unwrap().kill();
+        // multi-provider-seam FR-8: reached only through TurnControl.
+        turn.interrupt();
+        turn.kill();
     }
     // The turn's reader thread observes the kill, closes the open block, and
     // routes completion (drain queue or go idle) — FR-24. A pending question is

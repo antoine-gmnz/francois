@@ -6,7 +6,7 @@ use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 // ---------- async-agents: lifecycle + activity trail (specs/async-agents.md) ----------
 //
@@ -588,28 +588,30 @@ pub(crate) fn activity_of(
         })
 }
 
-pub(crate) fn emit_agent_emissions(app: &AppHandle, session_id: &str, ems: Vec<AgentEmission>) {
+pub(crate) fn emit_agent_emissions(
+    env: &dyn SessionEnv,
+    session_id: &str,
+    ems: Vec<AgentEmission>,
+) {
     for e in ems {
         match e {
-            AgentEmission::Step { agent_id, step } => emit(
-                app,
-                SessionEvent::AgentStepEvent {
+            AgentEmission::Step { agent_id, step } => {
+                env.emit_session(SessionEvent::AgentStepEvent {
                     session_id: session_id.into(),
                     agent_id,
                     step,
-                },
-            ),
-            AgentEmission::Update { agent } => emit(app, SessionEvent::AgentUpdate { agent }),
+                })
+            }
+            AgentEmission::Update { agent } => {
+                env.emit_session(SessionEvent::AgentUpdate { agent })
+            }
             // agent-tab FR-8: blocks ride the `agents` domain stream, not the
             // session one (§5 — common.ts stays import-free).
-            AgentEmission::Block { agent_id, block } => emit_agent_event(
-                app,
-                AgentEvent::Block {
-                    session_id: session_id.into(),
-                    agent_id,
-                    block,
-                },
-            ),
+            AgentEmission::Block { agent_id, block } => env.emit_agent(AgentEvent::Block {
+                session_id: session_id.into(),
+                agent_id,
+                block,
+            }),
         }
     }
 }
@@ -618,14 +620,14 @@ pub(crate) fn emit_agent_emissions(app: &AppHandle, session_id: &str, ems: Vec<A
 /// no known dispatch is ignored entirely — either way the line never reaches the
 /// parent-turn handlers, so the SESSION transcript stays the parent turn's record.
 pub(crate) fn attribute_inner_line(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     parent_tuid: &str,
     v: &Value,
     cwd: &str,
 ) {
-    let engine = app.state::<Engine>();
-    let ems = engine
+    let ems = env
+        .engine()
         .with_session_mut(session_id, |s| {
             let agent_id = s.agent_by_tool.get(parent_tuid).cloned()?;
             Some(apply_attributed_line(s, &agent_id, v, cwd, now_ms()))
@@ -634,23 +636,24 @@ pub(crate) fn attribute_inner_line(
     let Some(ems) = ems else {
         return;
     };
-    emit_agent_emissions(app, session_id, ems);
+    emit_agent_emissions(env, session_id, ems);
 }
 
 /// FR-13/FR-14/FR-15. Returns true when the line was a notice and is consumed —
 /// an unresolved notice is consumed too (it is harness-injected, not user content).
-pub(crate) fn handle_task_notification(app: &AppHandle, session_id: &str, v: &Value) -> bool {
+pub(crate) fn handle_task_notification(env: &dyn SessionEnv, session_id: &str, v: &Value) -> bool {
     if !is_task_notification(v) {
         return false;
     }
     let text = user_line_text(v);
-    let engine = app.state::<Engine>();
-    let ems = engine.with_session_mut(session_id, |s| match resolve_notice_agent(s, &text) {
-        Some(agent_id) => apply_notice(s, &agent_id, &text, now_ms()),
-        None => Vec::new(),
-    });
+    let ems = env
+        .engine()
+        .with_session_mut(session_id, |s| match resolve_notice_agent(s, &text) {
+            Some(agent_id) => apply_notice(s, &agent_id, &text, now_ms()),
+            None => Vec::new(),
+        });
     if let Some(ems) = ems {
-        emit_agent_emissions(app, session_id, ems);
+        emit_agent_emissions(env, session_id, ems);
     }
     true
 }

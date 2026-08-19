@@ -32,6 +32,8 @@ const meta: SessionMeta = {
   permissionMode: 'default',
   runtime: 'native',
   accountId: 'default',
+  agentRuntime: 'claude-code',
+  protocol: 'anthropic',
 };
 
 const agent: AgentInfo = {

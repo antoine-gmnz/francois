@@ -20,7 +20,7 @@ export async function newShell(sessionId: SessionId): Promise<void> {
   if (atShellCap(shells)) return;
   let res;
   try {
-    res = await shellCreate(sessionId);
+    res = await shellCreate({ kind: 'session', sessionId });
   } catch (e) {
     // IPC-layer rejection (not a domain Result:false) — same treatment as
     // paletteCommands.ts's delegate() catch branch.

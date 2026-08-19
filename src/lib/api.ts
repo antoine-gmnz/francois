@@ -12,9 +12,22 @@ import type {
   WorkflowScript,
 } from '../../contract/workflow-details';
 import type {
+  AccountAddEndpointPayload,
+  AccountAddEndpointResponse,
   AccountAddPayload,
   AccountAddResponse,
   AccountEvent,
+  AccountAddCodexPayload,
+  AccountAddCodexResponse,
+  AccountAddGrokPayload,
+  AccountAddGrokResponse,
+  AccountCliToolsResponse,
+  AccountCodexLoginPayload,
+  AccountCodexLoginResponse,
+  AccountGrokLoginPayload,
+  AccountGrokLoginResponse,
+  AccountInstallCliPayload,
+  AccountInstallCliResponse,
   AccountListResponse,
   AccountLoginAck,
   AccountLoginCancelPayload,
@@ -23,6 +36,10 @@ import type {
   AccountRemoveResponse,
   AccountRenameResponse,
   AccountSetDefaultResponse,
+  AccountTestEndpointPayload,
+  AccountTestEndpointResponse,
+  AccountUpdateEndpointPayload,
+  AccountUpdateEndpointResponse,
 } from '../../contract/multi-account';
 import type {
   GroupId,
@@ -64,6 +81,7 @@ import type {
   ShellEvent,
   ShellId,
   ShellInfo,
+  ShellOwner,
   ShellRenamePayload,
   ShellResizePayload,
   ShellRestartData,
@@ -132,7 +150,13 @@ export const appSetWindowTheme = (theme: 'light' | 'dark') =>
 export const appDndState = () => ipc<Result<DndState>>('app_dnd_state');
 
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
-export const sessionModels = () => ipc<Result<ModelInfo[]>>('session_models');
+// multi-provider-openai FR-18/FR-21: keyed on `accountId`, not `sessionId` —
+// the model picker's only mount (the New Session modal) has no session yet.
+// Every existing call site (no account context) keeps invoking with no
+// payload and the core keeps answering with the default account's Claude
+// Code catalog unchanged.
+export const sessionModels = (accountId?: AccountId) =>
+  ipc<Result<ModelInfo[]>>('session_models', accountId ? { accountId } : undefined);
 // projects FR-19: session_create gained an optional projectId, stored verbatim —
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
 // session-worktree: session_create also gained an optional `worktree` (spec §5),
@@ -371,6 +395,36 @@ export const accountRename = (accountId: AccountId, label: string) =>
 export const accountSetDefault = (accountId: AccountId) =>
   ipc<AccountSetDefaultResponse>('account_set_default', { accountId });
 export const accountRemove = (accountId: AccountId) => ipc<AccountRemoveResponse>('account_remove', { accountId });
+// multi-provider-endpoint (§5). Endpoint accounts add/update resolve the same
+// FRESH re-read list every other mutation does; test is stateless (FR-9) and
+// never touches the registry, so it carries no such list.
+export const accountAddEndpoint = (payload: AccountAddEndpointPayload) =>
+  ipc<AccountAddEndpointResponse>('account_add_endpoint', payload);
+export const accountUpdateEndpoint = (payload: AccountUpdateEndpointPayload) =>
+  ipc<AccountUpdateEndpointResponse>('account_update_endpoint', payload);
+export const accountTestEndpoint = (payload: AccountTestEndpointPayload) =>
+  ipc<AccountTestEndpointResponse>('account_test_endpoint', payload);
+// multi-provider-codex (§5). `addCodex` resolves the same fresh list every other
+// mutation does; `codexLogin` resolves as soon as the browser round-trip starts
+// and the row's `signedIn` arrives later on account.list.
+export const accountAddCodex = (payload: AccountAddCodexPayload) =>
+  ipc<AccountAddCodexResponse>('account_add_codex', payload);
+export const accountCodexLogin = (payload: AccountCodexLoginPayload) =>
+  ipc<AccountCodexLoginResponse>('account_codex_login', payload);
+// multi-provider-grok FR-20/FR-21. Same shape as the Codex pair above:
+// `addGrok` resolves the fresh list, `grokLogin` resolves as soon as the
+// browser round-trip starts and `signedIn` arrives later on account.list.
+export const accountAddGrok = (payload: AccountAddGrokPayload) =>
+  ipc<AccountAddGrokResponse>('account_add_grok', payload);
+export const accountGrokLogin = (payload: AccountGrokLoginPayload) =>
+  ipc<AccountGrokLoginResponse>('account_grok_login', payload);
+// The vendor CLIs the login routes are driven by. `cliTools` re-probes PATH on
+// every call (never cached — installing one in a terminal is the normal case);
+// `installCli` resolves as soon as `npm i -g` is spawned, and its output plus
+// its outcome arrive on the shared francois://account/event stream.
+export const accountCliTools = () => ipc<AccountCliToolsResponse>('account_cli_tools');
+export const accountInstallCli = (payload: AccountInstallCliPayload) =>
+  ipc<AccountInstallCliResponse>('account_install_cli', payload);
 
 /** Subscribe to francois://account/event (account.list + the login sub-stream). */
 export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {
@@ -412,8 +466,9 @@ export function onCloudEvent(cb: (e: CloudEvent) => void): Promise<UnlistenFn> {
 // multiple-shells (§5). The domain is keyed by ShellId end to end — every
 // call below addresses a shell directly, never a session's "the" shell.
 export const shellEnsure = (payload: ShellEnsurePayload) => ipc<Result<ShellEnsureData>>('shell_ensure', payload);
-export const shellCreate = (sessionId: SessionId) =>
-  ipc<Result<ShellInfo>>('shell_create', { sessionId } satisfies ShellCreatePayload);
+// unbound-panes FR-6: a shell's owner is a union now — `shellCreate` takes it
+// directly rather than assuming a session.
+export const shellCreate = (owner: ShellOwner) => ipc<Result<ShellInfo>>('shell_create', { owner } satisfies ShellCreatePayload);
 export const shellRestart = (shellId: ShellId) =>
   ipc<Result<ShellRestartData>>('shell_restart', { shellId } satisfies ShellRestartPayload);
 export const shellRename = (shellId: ShellId, name: string) =>

@@ -35,6 +35,9 @@ export function AccountField({ accounts, accountId, fromProject, onChange }: Acc
           onChange={(e) => onChange(e.target.value)}
         >
           {accountFieldOptions(accounts).map((opt) => (
+            // multi-provider-openai FR-22: multi-provider-endpoint FR-14's
+            // disabled-with-reason block is deleted — every account, endpoint
+            // included, is an ordinary selectable, keyboard-reachable option.
             <option key={opt.value} value={opt.value}>
               {opt.email ? `${opt.label} · ${opt.email}` : opt.label}
               {opt.needsLogin ? ' (needs login)' : ''}

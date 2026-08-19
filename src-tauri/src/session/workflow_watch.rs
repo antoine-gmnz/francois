@@ -66,22 +66,19 @@ fn wait_debounced(rx: &Receiver<()>, window: Duration) -> bool {
 /// FR-5/FR-6: rescan the run directory and emit the whole detail. Returns
 /// whether the watch should keep running — a terminal run gets exactly ONE
 /// final flush and then stops, and a run that no longer resolves stops at once.
-pub(crate) fn flush_workflow_detail(app: &AppHandle, run_id: &str) -> bool {
-    let engine = app.state::<Engine>();
-    let Ok(detail) = compute_detail(&engine, run_id) else {
-        stop_workflow_watch(&engine, run_id); // gone, or never had a directory
+pub(crate) fn flush_workflow_detail(env: &dyn SessionEnv, run_id: &str) -> bool {
+    let engine = env.engine();
+    let Ok(detail) = compute_detail(engine, run_id) else {
+        stop_workflow_watch(engine, run_id); // gone, or never had a directory
         return false;
     };
-    let terminal = run_is_terminal(&engine, run_id);
-    emit_workflow_event(
-        app,
-        WorkflowDetailEvent::Detail {
-            session_id: detail.session_id.clone(),
-            detail,
-        },
-    );
+    let terminal = run_is_terminal(engine, run_id);
+    env.emit_workflow_detail(WorkflowDetailEvent::Detail {
+        session_id: detail.session_id.clone(),
+        detail,
+    });
     if terminal {
-        stop_workflow_watch(&engine, run_id);
+        stop_workflow_watch(engine, run_id);
     }
     !terminal
 }
@@ -179,15 +176,15 @@ pub(crate) fn stop_all_workflow_watches(engine: &Engine) {
 /// behaves today — a SESSION card, resolved by the existing commands under the
 /// existing exactly-once claim.
 pub(crate) fn attribute_workflow_ask(
-    app: &AppHandle,
+    env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
     block_id: &str,
     kind: &str,
     tool_name: Option<&str>,
 ) {
-    let engine = app.state::<Engine>();
-    let seen = seen_agents(&engine);
+    let engine = env.engine();
+    let seen = seen_agents(engine);
     let found = {
         let map = engine.sessions.lock().unwrap();
         map.get(session_id).and_then(|s| attribute_ask(s, v, &seen))
@@ -209,18 +206,18 @@ pub(crate) fn attribute_workflow_ask(
     let Some(n) = pushed else {
         return; // already attributed
     };
-    emit_ask_count(app, session_id, &a.run_id, n);
+    emit_ask_count(env, session_id, &a.run_id, n);
     // FR-23: immediately — a blocked run produces no filesystem activity for the
     // 300 ms debounce to wait on.
-    flush_workflow_detail(app, &a.run_id);
+    flush_workflow_detail(env, &a.run_id);
 }
 
 /// FR-22/FR-26: an attributed ask is gone — answered (here or in the SESSION
 /// tab), cancelled by the CLI, or orphaned when the turn ended. Dropping it
 /// restores the agent's disk-derived status and tells the tab at once. A
 /// `blockId` that was never attributed is a no-op.
-pub(crate) fn remove_workflow_ask(app: &AppHandle, session_id: &str, block_id: &str) {
-    let engine = app.state::<Engine>();
+pub(crate) fn remove_workflow_ask(env: &dyn SessionEnv, session_id: &str, block_id: &str) {
+    let engine = env.engine();
     let dropped = {
         let mut asks = engine.workflow_asks.lock().unwrap();
         drop_ask(&mut asks, block_id)
@@ -228,18 +225,18 @@ pub(crate) fn remove_workflow_ask(app: &AppHandle, session_id: &str, block_id: &
     let Some((run_id, remaining)) = dropped else {
         return;
     };
-    emit_ask_count(app, session_id, &run_id, remaining);
-    flush_workflow_detail(app, &run_id); // FR-23, the same immediacy
+    emit_ask_count(env, session_id, &run_id, remaining);
+    flush_workflow_detail(env, &run_id); // FR-23, the same immediacy
 }
 
 /// FR-24: mirror the run's ask count onto its `WorkflowRun` and emit it, so the
 /// pane [6] card reads `waiting on you` without subscribing to this feature.
-fn emit_ask_count(app: &AppHandle, session_id: &str, run_id: &str, n: u32) {
-    let updated = app
-        .state::<Engine>()
+fn emit_ask_count(env: &dyn SessionEnv, session_id: &str, run_id: &str, n: u32) {
+    let updated = env
+        .engine()
         .with_session_mut(session_id, |s| set_pending_asks(s, run_id, n))
         .flatten();
-    emit_workflow_updates(app, updated.into_iter().collect());
+    emit_workflow_updates(env, updated.into_iter().collect());
 }
 
 #[cfg(test)]

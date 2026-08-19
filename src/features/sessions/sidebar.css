@@ -560,6 +560,21 @@
   border-color: var(--error-dim);
 }
 
+/* unbound-panes FR-14 / design brief §Project marker: same neutral treatment
+   as the pane header's `.split-pane__marker` — never `--accent`, a
+   repeatable surface stays neutral. */
+.sidebar-card__marker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-app);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xs);
+  padding: 0 var(--space-4);
+  flex-shrink: 0;
+}
+
 /* ── split-by-4 FR-22 ────────────────────────────────────────────────────────
    Which pane, if any, is showing this session. Fixed per PANE (not per focus)
    so the set reads as a stable map of the main area; the FOCUS signal is the

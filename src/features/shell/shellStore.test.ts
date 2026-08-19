@@ -9,7 +9,7 @@ import type { ShellInfo } from '../../../contract/shell-terminal';
 import { useShellStore } from './shellStore';
 
 function shell(id: string, patch: Partial<ShellInfo> = {}): ShellInfo {
-  return { id, sessionId: 's1', name: `zsh ${id}`, shellName: 'zsh', cwd: '/tmp', alive: true, ...patch };
+  return { id, owner: { kind: 'session', sessionId: 's1' }, name: `zsh ${id}`, shellName: 'zsh', cwd: '/tmp', alive: true, ...patch };
 }
 
 beforeEach(() => {
@@ -116,7 +116,7 @@ describe('removeSession (FR-9, mirrors core dispose_session_shells)', () => {
     store.markUnread('a');
     store.markUnread('b');
     // an unrelated session's shell/unread must survive untouched.
-    store.setShells('s2', [shell('c', { sessionId: 's2' })]);
+    store.setShells('s2', [shell('c', { owner: { kind: 'session', sessionId: 's2' } })]);
     store.markUnread('c');
 
     store.removeSession('s1');
