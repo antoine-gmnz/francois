@@ -403,6 +403,28 @@
   flex-shrink: 0;
 }
 
+/* roster-group-tier: the innermost tier, nested inside a state band. Reuses
+   roster-state__head's caret/count metrics verbatim (see StateRosterBody) —
+   the only new rule is the indent, which sits at the ROWS' own left edge
+   (space-11) rather than the state heading's (space-14), and is quieter:
+   no dot, no accent, ever. */
+.roster-group__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  padding: var(--space-6) var(--space-14) var(--space-4) var(--space-11);
+  cursor: pointer;
+  user-select: none;
+}
+.roster-group__label {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  min-width: 0;
+}
+
 /* The row. Full-bleed like the 9a card it replaces — a fill reads as the row,
    not as a tile inside it — and carrying the same 3px state rail, transparent
    at rest so the text column never shifts. */
@@ -664,4 +686,7 @@
 }
 .sidebar--dense .roster-state__head {
   padding: var(--space-6) var(--space-11) var(--space-4);
+}
+.sidebar--dense .roster-group__head {
+  padding: var(--space-6) var(--space-11) var(--space-4) var(--space-9);
 }

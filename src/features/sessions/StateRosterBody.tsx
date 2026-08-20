@@ -30,6 +30,7 @@ import { useStore } from '../../lib/store';
 import type { RosterAsk } from '../../lib/rosterStore';
 import { askLine, contextFraction, formatLineCount, rowTitle, workLine } from './roster-row';
 import { STATE_STATUS, type RosterStateNode, type SessionState } from './state-groups';
+import type { RosterGroupTier } from './group-tier';
 import '../accounts/accounts.css';
 import './sidebar.css';
 
@@ -58,9 +59,19 @@ export interface StateRosterBodyProps extends StateRowContext {
   nodes: readonly RosterStateNode[];
   collapsed: ReadonlySet<string>;
   onToggle: (key: string) => void;
+  /** roster-group-tier FR-9/FR-10: independent of `collapsed`, its own slot space. */
+  collapsedTiers: ReadonlySet<string>;
+  onToggleTier: (key: string) => void;
 }
 
-export function StateRosterBody({ nodes, collapsed, onToggle, ...row }: StateRosterBodyProps): JSX.Element {
+export function StateRosterBody({
+  nodes,
+  collapsed,
+  onToggle,
+  collapsedTiers,
+  onToggleTier,
+  ...row
+}: StateRosterBodyProps): JSX.Element {
   // The keyboard cursor indexes the FLAT painted order (flattenStateGroups), so
   // the walk below reproduces it with a running counter rather than an indexOf
   // per row — the roster re-renders on every session event.
@@ -74,16 +85,57 @@ export function StateRosterBody({ nodes, collapsed, onToggle, ...row }: StateRos
           <div key={node.key} className="roster-state">
             <StateHeading node={node} collapsed={isCollapsed} onToggle={() => onToggle(node.key)} />
             {!isCollapsed &&
-              node.sessions.map((session) => {
-                flatIndex += 1;
-                return (
-                  <StateRow key={session.id} session={session} state={node.state} index={flatIndex} {...row} />
-                );
-              })}
+              (node.tiers
+                ? node.tiers.map((tier) => {
+                    const tierCollapsed = collapsedTiers.has(tier.key);
+                    return (
+                      <div key={tier.key} className="roster-group">
+                        <GroupHeading
+                          tier={tier}
+                          collapsed={tierCollapsed}
+                          onToggle={() => onToggleTier(tier.key)}
+                        />
+                        {!tierCollapsed &&
+                          tier.sessions.map((session) => {
+                            flatIndex += 1;
+                            return (
+                              <StateRow key={session.id} session={session} state={node.state} index={flatIndex} {...row} />
+                            );
+                          })}
+                      </div>
+                    );
+                  })
+                : node.sessions.map((session) => {
+                    flatIndex += 1;
+                    return (
+                      <StateRow key={session.id} session={session} state={node.state} index={flatIndex} {...row} />
+                    );
+                  }))}
           </div>
         );
       })}
     </>
+  );
+}
+
+/** roster-group-tier FR-15/FR-16/FR-19: a thin, neutral row at the rows' own
+ *  indent — caret, group name, count. No accent, no status dot, no tint: the
+ *  state heading above it already owns the colour. */
+function GroupHeading({
+  tier,
+  collapsed,
+  onToggle,
+}: {
+  tier: RosterGroupTier;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="roster-group__head" role="button" aria-expanded={!collapsed} onClick={onToggle}>
+      <span className="roster-state__caret">{collapsed ? '▸' : '▾'}</span>
+      <span className="roster-group__label">{tier.label}</span>
+      <span className="roster-state__count">{tier.sessions.length}</span>
+    </div>
   );
 }
 
