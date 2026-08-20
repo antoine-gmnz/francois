@@ -573,6 +573,10 @@
   align-items: center;
   gap: var(--space-3);
   flex-shrink: 0;
+  /* The plugin surface is its own cluster. Without this it sits 8px from the view
+     segment wearing the same fill and the same 26px box, and reads as a fourth
+     view rather than as the entry to everything plugins. */
+  margin-left: var(--space-6);
 }
 .ext-bar__tab {
   display: flex;
@@ -595,19 +599,25 @@
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
   color: var(--text-strong);
 }
+/* Auto width, not a 26px square: it carries a caret always, and a count whenever
+   no tab in the bar is doing that job for it. */
 .ext-bar__glyph {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-6);
-  width: 26px;
+  gap: var(--space-5);
   height: 26px;
+  padding: 0 var(--space-7);
   flex-shrink: 0;
   background: var(--bg-raised);
   border-radius: var(--radius-base);
   font-size: var(--font-size-11);
   color: var(--text-2);
   cursor: pointer;
+}
+.ext-bar__glyph-mark {
+  font-size: var(--font-size-11);
+  line-height: 1;
 }
 .ext-bar__glyph:hover,
 .ext-bar__glyph--on {
@@ -616,8 +626,6 @@
 /* Folded: the glyph keeps the open tab's tile, so a narrow window never loses
    your place — it only stops offering the ones you were not on. */
 .ext-bar__glyph--carrying {
-  width: auto;
-  padding: 0 var(--space-7);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
 }
 .ext-bar__glyph-count {
