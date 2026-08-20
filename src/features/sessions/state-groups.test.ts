@@ -117,6 +117,28 @@ describe('flattenStateGroups', () => {
     const collapsed = new Set([stateGroupKey('archived')]);
     expect(flattenStateGroups(nodes, collapsed).map((s) => s.id)).toEqual(['blocked', 'live']);
   });
+
+  it('walks node.tiers when present (roster-group-tier FR-21), skipping a collapsed tier', () => {
+    const withTiers: typeof nodes = nodes.map((node) =>
+      node.state === 'running'
+        ? {
+            ...node,
+            tiers: [
+              { key: 'gtier:state:running:group:a', groupKey: 'group:a', label: 'A', sessions: node.sessions },
+            ],
+          }
+        : node,
+    );
+    expect(flattenStateGroups(withTiers).map((s) => s.id)).toEqual(['blocked', 'live', 'old']);
+    expect(
+      flattenStateGroups(withTiers, new Set(), new Set(['gtier:state:running:group:a'])).map((s) => s.id),
+    ).toEqual(['blocked', 'old']);
+  });
+
+  it('falls back to node.sessions when tiers is absent or null', () => {
+    const withNullTiers: typeof nodes = nodes.map((node) => ({ ...node, tiers: null }));
+    expect(flattenStateGroups(withNullTiers).map((s) => s.id)).toEqual(['blocked', 'live', 'old']);
+  });
 });
 
 describe('parseCollapsedStates', () => {

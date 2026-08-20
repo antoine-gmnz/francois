@@ -16,6 +16,7 @@ import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useStore } from '../../lib/store';
 import { getEditorList } from './editors';
 import { FilterInput } from './FilterInput';
+import { loadCollapsedTiers, persistCollapsedTiers, withGroupTiers } from './group-tier';
 import { groupKeyFor } from './roster-groups';
 import {
   flattenStateGroups,
@@ -112,9 +113,20 @@ export default function Sidebar({ home }: { home: string }) {
   const stateNodes = useMemo(() => groupSessionsByState(inScope), [inScope]);
   const [collapsedStates, setCollapsedStates] = useState<ReadonlySet<string>>(loadCollapsedStates);
 
+  // roster-group-tier: the innermost tier, nested inside every state band —
+  // paint only, derived per render from the already-registered projects/groups.
+  const groupedStateNodes = useMemo(
+    () => withGroupTiers(stateNodes, projects, groupRegistry),
+    [stateNodes, projects, groupRegistry],
+  );
+  const [collapsedTiers, setCollapsedTiers] = useState<ReadonlySet<string>>(loadCollapsedTiers);
+
   // The FLAT painted order — what the keyboard cursor indexes, so ↑/↓ always
   // walks what is actually on screen (a collapsed group's rows are not).
-  const visible = useMemo(() => flattenStateGroups(stateNodes, collapsedStates), [stateNodes, collapsedStates]);
+  const visible = useMemo(
+    () => flattenStateGroups(groupedStateNodes, collapsedStates, collapsedTiers),
+    [groupedStateNodes, collapsedStates, collapsedTiers],
+  );
 
   // 12b: "project becomes a tag, only shown when more than one project is open"
   // — the repo is no longer a heading, so a row only needs to name it when there
@@ -142,6 +154,16 @@ export default function Sidebar({ home }: { home: string }) {
       if (next.has(key)) next.delete(key);
       else next.add(key);
       persistCollapsedStates(next);
+      return next;
+    });
+  };
+
+  const toggleTier = (key: string) => {
+    setCollapsedTiers((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      persistCollapsedTiers(next);
       return next;
     });
   };
@@ -338,9 +360,11 @@ export default function Sidebar({ home }: { home: string }) {
         visibleCount={stateNodes.length}
       >
         <StateRosterBody
-          nodes={stateNodes}
+          nodes={groupedStateNodes}
           collapsed={collapsedStates}
           onToggle={toggleState}
+          collapsedTiers={collapsedTiers}
+          onToggleTier={toggleTier}
           home={home}
           now={now}
           cursorIndex={focused ? rowCursor : -1}

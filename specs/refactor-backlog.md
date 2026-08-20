@@ -290,3 +290,8 @@ filtering relative PATH entries is right for extension spawns, it is right every
 
 - [ ] MEDIUM · contract/app-shell.ts · quality · author the file specs/app-shell.md §5 requires (`AppShellState`, `PaneId`, `MainTab`, `KEY_BINDINGS`, `PANE_FOCUS_LABELS`, `STATUS_BAR_HINTS`) or retire that §9 acceptance line — the frontend imports `MainTab` from `src/lib/store` instead · deferred:app-shell
 - [ ] LOW · src/features/permissions/PermissionModeBadge.tsx:183 · obsolete · the `deferred:session-permission-mode` tooltip item above is dead — the file was deleted by design 11c's run chip; strike it · deferred:app-shell
+- [ ] LOW · src/features/sessions/StateRosterBody.tsx:161 · quality · add role="button" aria-expanded + Enter/Space handling to StateHeading · deferred:roster-group-tier
+
+## deferred:roster-group-tier — SHIP-round leftovers (review round 1)
+
+- [ ] LOW · src/features/sessions/useRowCursorClamp.ts · quality · these hunks belong to the already-committed roster-cursor-anchor commit and are unrelated to any FR in specs/roster-group-tier.md — exclude from this feature's staged diff going forward · deferred:roster-group-tier
