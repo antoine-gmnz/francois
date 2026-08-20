@@ -99,6 +99,79 @@ pub(crate) fn parse_numstat_z(data: &[u8]) -> HashMap<String, (u64, u64)> {
     map
 }
 
+/// diff-review FR-15: single-letter status from `git diff --name-status`, as
+/// opposed to `map_status`'s two-char porcelain code. `R`/`C` (rename/copy,
+/// with a trailing similarity number e.g. `R100`) map to Renamed; everything
+/// else that isn't `A`/`D` is Modified (covers `M`, `T`, `U`).
+pub(crate) fn map_name_status(code: &str) -> DiffFileStatus {
+    match code.chars().next() {
+        Some('A') => DiffFileStatus::Added,
+        Some('D') => DiffFileStatus::Deleted,
+        Some('R') | Some('C') => DiffFileStatus::Renamed,
+        _ => DiffFileStatus::Modified,
+    }
+}
+
+/// Parse `git diff --name-status -z` into (status, path). With `-z`, EVERY
+/// separator becomes NUL — including the one between the status letter and
+/// the path — so a plain record is `STATUS\0PATH\0`, and a rename/copy
+/// (`R100`/`C100`) is `STATUS\0OLDPATH\0NEWPATH\0`; the new path is the
+/// following token, mirroring `parse_porcelain_z`'s handling of that shape.
+pub(crate) fn parse_name_status_z(data: &[u8]) -> Vec<(String, String)> {
+    let s = String::from_utf8_lossy(data);
+    let tokens: Vec<&str> = s.split('\0').collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let status = tokens[i];
+        i += 1;
+        if status.is_empty() {
+            continue; // trailing empty token
+        }
+        let Some(path) = tokens.get(i) else { break };
+        i += 1;
+        if status.starts_with('R') || status.starts_with('C') {
+            let Some(new_path) = tokens.get(i) else {
+                break;
+            };
+            i += 1;
+            out.push((status.to_string(), new_path.to_string()));
+        } else {
+            out.push((status.to_string(), path.to_string()));
+        }
+    }
+    out
+}
+
+/// diff-review §5: field separator `\x1f`, record separator `\x1e` for
+/// `git log --format=%H%x1f%h%x1f%at%x1f%s%x1f%b%x1e`. Records with fewer than
+/// 4 fields (a malformed/partial trailing record) are dropped defensively.
+pub(crate) fn parse_commit_log(text: &str) -> Vec<(String, String, i64, String, String)> {
+    text.split('\u{1e}')
+        .filter(|rec| !rec.trim_matches('\n').is_empty())
+        .filter_map(|rec| {
+            let rec = rec.trim_start_matches('\n'); // record sep is followed by log's own '\n'
+            let mut parts = rec.splitn(5, '\u{1f}');
+            let hash = parts.next()?.to_string();
+            let short = parts.next()?.to_string();
+            let at: i64 = parts.next()?.trim().parse().ok()?;
+            let subject = parts.next()?.to_string();
+            let body = parts
+                .next()
+                .unwrap_or("")
+                .trim_end_matches('\n')
+                .to_string();
+            Some((hash, short, at, subject, body))
+        })
+        .collect()
+}
+
+/// diff-review §5 `DiffGetFileDiffRequest.context`: clamp to `[0, 10000]`,
+/// default 3 when absent. Pure.
+pub(crate) fn clamp_context(context: Option<i64>) -> u32 {
+    context.unwrap_or(3).clamp(0, 10000) as u32
+}
+
 pub(crate) fn parse_hunk_header(line: &str) -> (u64, u64) {
     // Only read the `-a,b +c,d` between the first and second `@@`; git appends
     // function-context text after the closing `@@` that can contain `+`/`-` tokens.
@@ -321,5 +394,78 @@ mod tests {
         assert_eq!(num("42"), 42);
         assert_eq!(num("-"), 0); // git's binary marker
         assert_eq!(num(""), 0);
+    }
+
+    // ---- diff-review: name-status / commit-log / context clamp ----
+
+    #[test]
+    fn name_status_maps_the_single_letter_code() {
+        assert_eq!(map_name_status("A"), DiffFileStatus::Added);
+        assert_eq!(map_name_status("D"), DiffFileStatus::Deleted);
+        assert_eq!(map_name_status("R100"), DiffFileStatus::Renamed);
+        assert_eq!(map_name_status("C75"), DiffFileStatus::Renamed);
+        assert_eq!(map_name_status("M"), DiffFileStatus::Modified);
+        assert_eq!(map_name_status("T"), DiffFileStatus::Modified);
+    }
+
+    #[test]
+    fn name_status_z_parses_rename_and_plain_records() {
+        // `-z` turns EVERY separator into NUL, including status<->path.
+        let data = b"M\0tracked.txt\0A\0new.txt\0D\0gone.txt\0R100\0old.txt\0new.txt\0";
+        let out = parse_name_status_z(data);
+        assert_eq!(
+            out,
+            vec![
+                ("M".to_string(), "tracked.txt".to_string()),
+                ("A".to_string(), "new.txt".to_string()),
+                ("D".to_string(), "gone.txt".to_string()),
+                ("R100".to_string(), "new.txt".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn commit_log_parses_hash_short_time_subject_and_body() {
+        let text = "\
+hash1\u{1f}h1\u{1f}1700000000\u{1f}first subject\u{1f}\u{1e}
+hash2\u{1f}h2\u{1f}1700000100\u{1f}second subject\u{1f}line one\nline two\u{1e}
+";
+        let out = parse_commit_log(text);
+        assert_eq!(out.len(), 2);
+        assert_eq!(
+            out[0],
+            (
+                "hash1".to_string(),
+                "h1".to_string(),
+                1_700_000_000,
+                "first subject".to_string(),
+                String::new(),
+            )
+        );
+        assert_eq!(
+            out[1],
+            (
+                "hash2".to_string(),
+                "h2".to_string(),
+                1_700_000_100,
+                "second subject".to_string(),
+                "line one\nline two".to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn commit_log_drops_a_malformed_trailing_record() {
+        assert_eq!(parse_commit_log("").len(), 0);
+        assert_eq!(parse_commit_log("\n").len(), 0);
+    }
+
+    #[test]
+    fn context_clamps_into_range_and_defaults_to_three() {
+        assert_eq!(clamp_context(None), 3);
+        assert_eq!(clamp_context(Some(0)), 0);
+        assert_eq!(clamp_context(Some(-5)), 0);
+        assert_eq!(clamp_context(Some(10)), 10);
+        assert_eq!(clamp_context(Some(50_000)), 10_000);
     }
 }

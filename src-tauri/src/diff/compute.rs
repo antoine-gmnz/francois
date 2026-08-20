@@ -89,15 +89,13 @@ pub(crate) fn untracked_counts_wsl_fallback(distro: &str, root: &str, path: &str
     )
 }
 
-pub(crate) fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
-    // Cached host + root + base (run everything from the worktree top so paths
-    // agree; wsl-filesystem FR-5 routes every call below on `host`).
-    let Some((host, root, base)) = repo_info(cwd) else {
-        return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
-    };
+/// The working-tree file list — the pre-diff-review `compute_summary` body,
+/// unchanged in behavior, factored out so `compute_summary` can also serve a
+/// commit ref (FR-15).
+fn worktree_files(host: &GitHost, root: &str, base: &str) -> Result<Vec<DiffFileSummary>, GitErr> {
     let st = git_routed(
-        &host,
-        &root,
+        host,
+        root,
         &[
             "status",
             "--porcelain=v1",
@@ -117,7 +115,7 @@ pub(crate) fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
             },
         ));
     }
-    let numstat = git_routed(&host, &root, &["diff", &base, "-M", "-z", "--numstat"])
+    let numstat = git_routed(host, root, &["diff", base, "-M", "-z", "--numstat"])
         .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
     let counts = parse_numstat_z(&numstat.stdout);
 
@@ -126,7 +124,7 @@ pub(crate) fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
         .map(|(xy, path)| {
             let status = map_status(&xy);
             let (additions, deletions) = if status == DiffFileStatus::Untracked {
-                untracked_counts(&host, &root, &path)
+                untracked_counts(host, root, &path)
             } else {
                 counts.get(&path).copied().unwrap_or((0, 0))
             };
@@ -142,19 +140,125 @@ pub(crate) fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
         })
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// FR-15: the file list for `commit` vs its first parent (or `EMPTY_TREE` for
+/// a root commit) — no working-tree status probe, since a commit's own diff
+/// carries no "untracked" concept.
+fn commit_files(host: &GitHost, root: &str, hash: &str) -> Result<Vec<DiffFileSummary>, GitErr> {
+    let parent = commit_parent(host, root, hash);
+    let name_status = git_routed(
+        host,
+        root,
+        &["diff", "--name-status", "-z", "-M", &parent, hash],
+    )
+    .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    if name_status.code != 0 {
+        return Err((
+            "GIT_ERROR".into(),
+            if name_status.stderr.is_empty() {
+                "git diff failed".into()
+            } else {
+                name_status.stderr
+            },
+        ));
+    }
+    let numstat = git_routed(
+        host,
+        root,
+        &["diff", "--numstat", "-z", "-M", &parent, hash],
+    )
+    .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    let counts = parse_numstat_z(&numstat.stdout);
+
+    let mut files: Vec<DiffFileSummary> = parse_name_status_z(&name_status.stdout)
+        .into_iter()
+        .map(|(code, path)| {
+            let status = map_name_status(&code);
+            let (additions, deletions) = counts.get(&path).copied().unwrap_or((0, 0));
+            let (dir, name) = split_path(&path);
+            DiffFileSummary {
+                path,
+                dir,
+                name,
+                additions,
+                deletions,
+                status,
+            }
+        })
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// FR-4/FR-13/FR-15: the summary for the working tree, or — when `commit` is
+/// set — for that commit vs its first parent, read-only. Branch/base info is
+/// attached regardless, since it describes the repo, not the selected ref.
+pub(crate) fn compute_summary(cwd: &str, commit: Option<&str>) -> Result<DiffSummary, GitErr> {
+    // Cached host + root + base (run everything from the worktree top so paths
+    // agree; wsl-filesystem FR-5 routes every call below on `host`).
+    let Some((host, root, base)) = repo_info(cwd) else {
+        return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
+    };
+    let (branch, head_short) = branch_and_head(&host, &root);
+    let base_branch = resolve_base_branch(&host, &root);
+
+    let files = match commit {
+        Some(commit_ref) => {
+            let hash = resolve_commit(&host, &root, commit_ref)?;
+            commit_files(&host, &root, &hash)?
+        }
+        None => worktree_files(&host, &root, &base)?,
+    };
     let total_add = files.iter().map(|f| f.additions).sum();
     let total_del = files.iter().map(|f| f.deletions).sum();
     Ok(DiffSummary {
         files,
         total_add,
         total_del,
+        branch,
+        head_short,
+        base_branch,
     })
 }
 
-pub(crate) fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
+/// FR-15/FR-26: the diff for one file — working tree (`commit: None`) or a
+/// selected commit vs its first parent — at `context` lines of surrounding
+/// context (clamped by the caller via `clamp_context`).
+pub(crate) fn compute_file_diff(
+    cwd: &str,
+    path: &str,
+    commit: Option<&str>,
+    context: u32,
+) -> Result<FileDiff, GitErr> {
     let Some((host, root, base)) = repo_info(cwd) else {
         return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
     };
+    let ctx_flag = format!("-U{context}");
+
+    if let Some(commit_ref) = commit {
+        let hash = resolve_commit(&host, &root, commit_ref)?;
+        let parent = commit_parent(&host, &root, &hash);
+        let out = git_routed(
+            &host,
+            &root,
+            &["diff", &parent, &hash, "-M", &ctx_flag, "--", path],
+        )
+        .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+        if out.code != 0 {
+            return Err((
+                "GIT_ERROR".into(),
+                if out.stderr.is_empty() {
+                    "git diff failed".into()
+                } else {
+                    out.stderr
+                },
+            ));
+        }
+        return Ok(diff_output_to_file_diff(&out.stdout));
+    }
+
     // Targeted status for just this path — avoids re-running the whole summary (which
     // costs a full `git status` + numstat + a diff per untracked file). Big win on a
     // large repo where every chip click otherwise re-scans everything.
@@ -196,10 +300,10 @@ pub(crate) fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitEr
         git_routed(
             &host,
             &root,
-            &["diff", "--no-index", "--", "/dev/null", path],
+            &["diff", "--no-index", &ctx_flag, "--", "/dev/null", path],
         )
     } else {
-        git_routed(&host, &root, &["diff", &base, "-M", "--", path])
+        git_routed(&host, &root, &["diff", &base, "-M", &ctx_flag, "--", path])
     }
     .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
 
@@ -219,20 +323,24 @@ pub(crate) fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitEr
             },
         ));
     }
-    let text = String::from_utf8_lossy(&out.stdout);
+    Ok(diff_output_to_file_diff(&out.stdout))
+}
+
+fn diff_output_to_file_diff(stdout: &[u8]) -> FileDiff {
+    let text = String::from_utf8_lossy(stdout);
     if text
         .lines()
         .any(|l| l.starts_with("Binary files") && l.contains("differ"))
     {
-        return Ok(FileDiff {
+        return FileDiff {
             hunks: Vec::new(),
             binary: true,
-        });
+        };
     }
-    Ok(FileDiff {
+    FileDiff {
         hunks: parse_unified_diff(&text),
         binary: false,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -265,5 +373,127 @@ mod tests {
             untracked_counts(&GitHost::Native, &root, "missing.txt"),
             (0, 0)
         );
+    }
+
+    // ---- diff-review: commit-ref summary/diff (FR-15) ----
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .expect("git spawn");
+        assert!(status.success(), "git {args:?} failed in {dir:?}");
+    }
+
+    fn init_repo(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "francois-diff-compute-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["config", "user.email", "t@t.t"]);
+        git(&dir, &["config", "user.name", "t"]);
+        dir
+    }
+
+    #[test]
+    fn compute_summary_for_a_commit_is_readonly_and_carries_branch_info() {
+        let dir = init_repo("summary-commit");
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-qm", "root"]);
+        std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "new\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-qm", "second"]);
+
+        let cwd = dir.to_string_lossy().to_string();
+        let head = {
+            let host = GitHost::Native;
+            String::from_utf8_lossy(
+                &git_routed(&host, &cwd, &["rev-parse", "HEAD"])
+                    .unwrap()
+                    .stdout,
+            )
+            .trim()
+            .to_string()
+        };
+
+        let summary = compute_summary(&cwd, Some(&head)).unwrap();
+        assert_eq!(summary.branch.as_deref(), Some("main"));
+        assert_eq!(summary.files.len(), 2);
+        let names: Vec<&str> = summary.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["a.txt", "b.txt"]);
+        assert_eq!(summary.files[1].status, DiffFileStatus::Added);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compute_summary_rejects_an_unresolvable_commit_ref() {
+        let dir = init_repo("summary-bad-ref");
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-qm", "root"]);
+
+        let cwd = dir.to_string_lossy().to_string();
+        let err = compute_summary(&cwd, Some("not-a-ref")).unwrap_err();
+        assert_eq!(err.0, "DIFF_COMMIT_NOT_FOUND");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compute_file_diff_for_a_commit_diffs_against_its_parent() {
+        let dir = init_repo("file-diff-commit");
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-qm", "root"]);
+        std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-qm", "second"]);
+
+        let cwd = dir.to_string_lossy().to_string();
+        let head = String::from_utf8_lossy(
+            &git_routed(&GitHost::Native, &cwd, &["rev-parse", "HEAD"])
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+
+        let diff = compute_file_diff(&cwd, "a.txt", Some(&head), 3).unwrap();
+        assert!(!diff.binary);
+        assert_eq!(diff.hunks.len(), 1);
+        assert!(diff.hunks[0]
+            .lines
+            .iter()
+            .any(|l| l.kind == "add" && l.text == "two"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compute_file_diff_context_flag_widens_surrounding_lines() {
+        let dir = init_repo("context");
+        let lines: String = (1..=20).map(|n| format!("line{n}\n")).collect();
+        std::fs::write(dir.join("a.txt"), &lines).unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-qm", "root"]);
+        let changed = lines.replacen("line10\n", "CHANGED\n", 1);
+        std::fs::write(dir.join("a.txt"), &changed).unwrap();
+
+        let cwd = dir.to_string_lossy().to_string();
+        let narrow = compute_file_diff(&cwd, "a.txt", None, 1).unwrap();
+        let wide = compute_file_diff(&cwd, "a.txt", None, 8).unwrap();
+        assert!(wide.hunks[0].lines.len() > narrow.hunks[0].lines.len());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

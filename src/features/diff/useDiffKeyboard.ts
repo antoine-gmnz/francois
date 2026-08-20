@@ -8,7 +8,6 @@ export interface UseDiffKeyboardOptions {
   commitOpen: boolean;
   doCommit: () => void;
   closeCommit: () => void;
-  stageAll: () => void;
   openCommit: () => void;
   setFilter: (v: string) => void;
   filterInputRef: RefObject<HTMLInputElement>;
@@ -17,11 +16,15 @@ export interface UseDiffKeyboardOptions {
   onCursorRight: () => void;
   onCursorLeft: () => void;
   onCursorEnter: () => void;
+  /** Space on the cursor row — toggles its checkbox (FR-40). */
+  onCursorSpace: () => void;
 }
 
-/** Keyboard handling for the DIFF tab (FR-10/17/18/19). Active only while the DIFF
- *  tab is visible. `s`, `c`, `Esc`, `Enter`-in-commit semantics are unchanged; the
- *  flat `←`/`→` file cycle is replaced by tree traversal (FR-17). */
+/** Keyboard handling for the DIFF tab (FR-40/FR-41), active only while the tab is
+ *  visible. `s`/stage-all is gone for good (FR-41/FR-45) — this is `diff-navigator`'s
+ *  traversal plus `c`/`/`/`Esc` and the new `Space` checkbox toggle. `⌘⏎` for the
+ *  commit form itself lives in the form (a plain `Enter` must still type a
+ *  newline in the description textarea). */
 export function useDiffKeyboard(options: UseDiffKeyboardOptions): void {
   const {
     mainTab,
@@ -29,7 +32,6 @@ export function useDiffKeyboard(options: UseDiffKeyboardOptions): void {
     commitOpen,
     doCommit,
     closeCommit,
-    stageAll,
     openCommit,
     setFilter,
     filterInputRef,
@@ -38,40 +40,37 @@ export function useDiffKeyboard(options: UseDiffKeyboardOptions): void {
     onCursorRight,
     onCursorLeft,
     onCursorEnter,
+    onCursorSpace,
   } = options;
 
   useEffect(() => {
     if (mainTab !== 'diff') return;
     const onKey = (e: KeyboardEvent) => {
       if (commitOpen) {
-        if (e.key === 'Enter') {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault();
           doCommit();
         } else if (e.key === 'Escape') {
           e.preventDefault();
           closeCommit();
         }
-        return; // let all other keys type into the commit input
+        return; // let every other key type into the form's fields
       }
 
       const activeEl = document.activeElement as HTMLElement | null;
       const inFilter = activeEl === filterInputRef.current;
       const inOtherInput = !!activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && !inFilter;
-      if (inOtherInput) return; // FR-10: `/` and everything else is inert in another text input
+      if (inOtherInput) return; // FR-41/FR-42: inert while any other text input has focus
 
       if (inFilter) {
         if (e.key === 'Escape') {
           e.preventDefault();
-          setFilter(''); // FR-10: clear and return focus to the tree
+          setFilter(''); // FR-41: clear and return focus to the tree
           filterInputRef.current?.blur();
         }
         return; // let every other key type into the filter
       }
 
-      if (e.key === 's' || e.key === 'S') {
-        stageAll();
-        return;
-      }
       if (e.key === 'c' || e.key === 'C') {
         openCommit();
         return;
@@ -103,6 +102,10 @@ export function useDiffKeyboard(options: UseDiffKeyboardOptions): void {
           e.preventDefault();
           onCursorEnter();
           break;
+        case ' ':
+          e.preventDefault();
+          onCursorSpace();
+          break;
       }
     };
     window.addEventListener('keydown', onKey);
@@ -113,7 +116,6 @@ export function useDiffKeyboard(options: UseDiffKeyboardOptions): void {
     commitOpen,
     doCommit,
     closeCommit,
-    stageAll,
     openCommit,
     setFilter,
     filterInputRef,
@@ -122,5 +124,6 @@ export function useDiffKeyboard(options: UseDiffKeyboardOptions): void {
     onCursorRight,
     onCursorLeft,
     onCursorEnter,
+    onCursorSpace,
   ]);
 }

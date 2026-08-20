@@ -174,21 +174,46 @@ pub(crate) fn wsl_folder_uri(distro: &str, linux_path: &str) -> String {
 }
 
 /// FR-4/5/6 in one place: the argv Francois spawns for `editor_path` at
-/// `cwd`. Routing is decided by whether `cwd` IS a WSL UNC path (delegating
-/// to `wsl::wsl_unc_to_linux`, which is exactly `is_wsl_unc_path`'s own
-/// check) ALONE — the session's `ClaudeRuntime` never enters this decision
-/// (mirrors wsl-filesystem FR-5). A worktree session needs no special
-/// handling (FR-7): `SessionMeta.cwd` already IS the worktree path, so the
-/// plain FR-6 branch below opens it, never the source repo. Pure.
-pub(crate) fn launch_argv(editor_path: &str, cwd: &str) -> Vec<String> {
+/// `cwd`, optionally targeting one repo-relative `path` inside it
+/// (diff-review FR-27/44 — `↗ editor` opens the exact file, not the session
+/// directory). Routing is decided by whether `cwd` IS a WSL UNC path
+/// (delegating to `wsl::wsl_unc_to_linux`, which is exactly
+/// `is_wsl_unc_path`'s own check) ALONE — the session's `ClaudeRuntime` never
+/// enters this decision (mirrors wsl-filesystem FR-5). A worktree session
+/// needs no special handling (FR-7): `SessionMeta.cwd` already IS the
+/// worktree path, so the plain FR-6 branch below opens it, never the source
+/// repo. `path` is absent ⇒ today's behaviour exactly (FR-44). Pure.
+pub(crate) fn launch_argv(editor_path: &str, cwd: &str, path: Option<&str>) -> Vec<String> {
     if let Some((distro, linux_path)) = wsl_unc_to_linux(cwd) {
-        return vec![
-            editor_path.to_string(),
-            "--folder-uri".to_string(),
-            wsl_folder_uri(&distro, &linux_path),
-        ];
+        return match path {
+            Some(p) => vec![
+                editor_path.to_string(),
+                "--file-uri".to_string(),
+                wsl_folder_uri(
+                    &distro,
+                    &format!("{}/{p}", linux_path.trim_end_matches('/')),
+                ),
+            ],
+            None => vec![
+                editor_path.to_string(),
+                "--folder-uri".to_string(),
+                wsl_folder_uri(&distro, &linux_path),
+            ],
+        };
     }
-    vec![editor_path.to_string(), cwd.to_string()]
+    match path {
+        // Plain string join, deliberately not `std::path::Path::join`: `cwd`'s own
+        // separator convention (native path components) is left untouched and `/`
+        // is appended before the contract's forward-slash-separated `path` — every
+        // mainstream editor (and Windows itself) accepts `/` in an argv path, and
+        // this keeps the result identical regardless of which OS builds/tests it,
+        // where `Path::join`'s platform `MAIN_SEPARATOR` would not.
+        Some(p) => {
+            let joined = format!("{}/{p}", cwd.trim_end_matches(['/', '\\']));
+            vec![editor_path.to_string(), joined]
+        }
+        None => vec![editor_path.to_string(), cwd.to_string()],
+    }
 }
 
 // ---------- FR-8: spawn (argv array, never a shell string; not awaited) ----------
@@ -221,11 +246,13 @@ pub fn session_editor_list() -> IpcResult<EditorListData> {
 /// cannot construct a `Session` — its fields are private to the session
 /// module tree per this codebase's ownership convention). Resolves
 /// `editor_id` against the (caller-supplied) detected list, then spawns
-/// (FR-8). No session mutation, no event, no disk write (FR-12).
+/// (FR-8), optionally targeting `path` (diff-review FR-44). No session
+/// mutation, no event, no disk write (FR-12).
 pub(crate) fn open_in_editor_impl(
     editors: &[EditorInfo],
     cwd: &str,
     editor_id: EditorId,
+    path: Option<&str>,
 ) -> IpcResult<Option<()>> {
     let Some(editor) = editors.iter().find(|e| e.id == editor_id) else {
         return err_detail(
@@ -234,7 +261,7 @@ pub(crate) fn open_in_editor_impl(
             json!({ "editorId": editor_id }),
         );
     };
-    let argv = launch_argv(&editor.path, cwd);
+    let argv = launch_argv(&editor.path, cwd, path);
     match spawn_editor(&argv) {
         Ok(()) => ok(None),
         Err(e) => err_detail(
@@ -245,15 +272,16 @@ pub(crate) fn open_in_editor_impl(
     }
 }
 
-/// francois:session:openInEditor (FR-4..FR-12).
+/// francois:session:openInEditor (FR-4..FR-12; `path` per diff-review FR-44).
 #[tauri::command(async)]
 pub fn session_open_in_editor(
     engine: State<'_, Engine>,
     session_id: String,
     editor_id: EditorId,
+    path: Option<String>,
 ) -> IpcResult<Option<()>> {
     let Some(cwd) = engine.cwd_of(&session_id) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
-    open_in_editor_impl(&cached_editors(), &cwd, editor_id)
+    open_in_editor_impl(&cached_editors(), &cwd, editor_id, path.as_deref())
 }

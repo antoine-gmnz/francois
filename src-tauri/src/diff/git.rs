@@ -29,7 +29,7 @@ pub(crate) type GitErr = (String, String); // (ErrorCode, message)
 // "Git follows the filesystem. The shell and claude follow the runtime." — every
 // git op below routes on whether the REPO lives on a WSL UNC path, never on the
 // claude runtime. `GitHost` is derived ONCE per operation from the session cwd
-// (`GitHost::of`, called by `repo_info`/`diff_stage_all`/`diff_commit`) and
+// (`GitHost::of`, called by `repo_info`/`diff_list_commits`/`diff_commit`) and
 // threaded through explicitly from there — deliberately NOT re-derived from
 // whatever `dir` string a given call happens to receive, because a WSL repo's
 // cached root (from `--show-toplevel`, a Linux path like `/home/u/api`) would

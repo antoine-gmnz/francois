@@ -17,17 +17,19 @@ The DIFF tab is the second tab of main pane `[2]`: a git-review surface for the 
 - **Goals**:
   - Compute an accurate changed-file summary (staged + unstaged + untracked, respecting `.gitignore`) for a session's `cwd` via the system `git` CLI.
   - Render a per-file unified diff with hunk/add/del/ctx rows, gutter line numbers, and binary-file handling.
-  - Stage all changes and commit staged changes from the UI.
+  - Commit an explicit set of paths, or amend the last commit, from the UI. *(`stageAll` and its
+    `git add -A` were removed by `diff-review` FR-43: there is one staging model, always an explicit
+    path list. See `specs/diff-review.md`.)*
   - Keep the changed-file count live via fs-watch + `tool.done` (Edit/Write) + manual refresh, broadcast on `francois:diff:event`, so `app-shell`'s DIFF tab badge and this tab's own chip strip stay in sync without polling.
   - Full keyboard operability: chip cycling, stage, commit, cancel.
 - **Non-goals**:
   - The DIFF tab's label, its badge pill chrome, and tab-switch behavior (`d` key, mouse click on the tab header) — owned by `app-shell` (see `specs/app-shell.md`); this spec only supplies the `fileCount` value.
   - The SESSION and SHELL tabs — `conversation-view` and `shell-terminal` respectively.
   - Merge-conflict UI (git status `U` / unmerged paths) — conflicted files fall back to being reported with status `'modified'` using git's raw diff output; a dedicated conflict-resolution UI is future work.
-  - Multi-file / side-by-side diff view, and diff of binary content — out of scope for v1 (binary files get a placeholder row, see §7).
+  - **Side-by-side diff view**, and diff of binary content — out of scope for v1 (binary files get a placeholder row, see §7). *(The **multi-file** half of this non-goal is **superseded by `diff-review`**, which makes the body one scroll containing every changed file; side-by-side remains a non-goal there too.)*
   - **Syntax highlighting inside diff lines.** Declined, not deferred: a tokenizer (Shiki/Prism/hljs) adds bundle weight to a package whose selling point is `npm i -g francois`, and it would parse untrusted repo content — including large minified files — inside the webview. Rows stay kind-tinted (add/del/ctx) only.
   - **Word-level intraline diffing** as originally scoped here is superseded by `diff-navigator`, which adds it dependency-free at the view layer (no tokenizer, no contract change) — see `specs/diff-navigator.md`.
-  - Any git operations beyond stage-all and commit (branch switching, push/pull, reset, discard) — those belong to `shell-terminal` (the user runs `git` directly there).
+  - Any git operations beyond commit and amend (branch switching, push/pull, reset, discard) — those belong to `shell-terminal` (the user runs `git` directly there).
   - Persisting commit-message drafts across sessions/restarts.
 
 ## 3. User stories / flows

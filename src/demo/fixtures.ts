@@ -18,7 +18,7 @@ import type {
   WorkflowRun,
 } from '../../contract/common';
 import type { ConversationBlock } from '../../contract/conversation-view';
-import type { DiffSummary, FileDiff } from '../../contract/diff-view';
+import type { DiffCommitList, DiffSummary, FileDiff } from '../../contract/diff-view';
 import type { Account } from '../../contract/multi-account';
 import type { ProjectMeta } from '../../contract/projects';
 import type { UsageSnapshot } from '../../contract/usage-bar';
@@ -515,6 +515,9 @@ export const DIFF: Record<string, DiffSummary> = {
     ],
     totalAdd: 117,
     totalDel: 81,
+    branch: 'feat/oauth-state-retry',
+    headShort: 'a1f9c2d',
+    baseBranch: 'main',
   },
   [S_WEB]: {
     files: [
@@ -524,6 +527,9 @@ export const DIFF: Record<string, DiffSummary> = {
     ],
     totalAdd: 44,
     totalDel: 20,
+    branch: 'feat/login-redesign',
+    headShort: 'b6e2a11',
+    baseBranch: 'main',
   },
   [S_WORKER]: {
     files: [
@@ -532,6 +538,36 @@ export const DIFF: Record<string, DiffSummary> = {
     ],
     totalAdd: 35,
     totalDel: 8,
+    branch: 'main',
+    headShort: 'c73f008',
+    baseBranch: 'main',
+  },
+};
+
+export const DIFF_COMMITS: Record<string, DiffCommitList> = {
+  [S_API]: {
+    commits: [
+      {
+        hash: '7b30de1c9a4e5f6b8c0d1e2f3a4b5c6d7e8f9a0b',
+        shortHash: '7b30de1',
+        subject: 'retry: freeze exchange params before the first attempt',
+        body: '',
+        authoredAt: T0 - 4 * 60 * MIN,
+        isHead: true,
+        pushed: false,
+      },
+      {
+        hash: '4f1c9ad2e7b6135a08d4c9f2ab77e315c9d0e142',
+        shortHash: '4f1c9ad',
+        subject: 'auth: add retry test coverage',
+        body: '',
+        authoredAt: T0 - 26 * 60 * MIN,
+        isHead: false,
+        pushed: true,
+      },
+    ],
+    baseBranch: 'main',
+    truncated: false,
   },
 };
 

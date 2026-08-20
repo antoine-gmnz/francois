@@ -36,14 +36,19 @@ zero Rust**, entirely inside `src/features/diff/`.
   - **Syntax highlighting / any tokenizer.** Declined: Shiki/Prism/hljs each add bundle weight to a
     package whose selling point is `npm i -g francois`, and each parses untrusted repo content
     (including large minified files) inside the webview. Stays a `diff-view` §2 non-goal.
-  - **Multi-file continuous-scroll body.** The body still renders exactly one file.
+  - **Multi-file continuous-scroll body.** The body still renders exactly one file. *(**Superseded by
+    `diff-review`** FR-18: the body became one scroll containing every changed file.)*
   - **Side-by-side view.** Unchanged non-goal.
   - **Any new git verb** — no discard, revert, stage-hunk, unstage. `stageAll` + `commit(paths)`
-    remain the only mutations; the rest belongs to SHELL.
+    remain the only mutations; the rest belongs to SHELL. *(`stageAll` was since deleted by
+    `diff-review` FR-43; `commit(paths)` — plus amend — is the only mutation now.)*
   - **Folder-level checkboxes.** The selection model stays a flat leaf `deselected: Set<string>`;
-    folder marks are display-only and never write.
+    folder marks are display-only and never write. *(**Superseded by `diff-review`** FR-7: directory
+    checkboxes are writable and the model became `inCommit: Set<string>`.)*
   - **Viewed/read-state dimming.** Dropped after first use: dimming rows the user had merely
-    clicked through obscured the changeset more than it tracked progress.
+    clicked through obscured the changeset more than it tracked progress. *(**Superseded by
+    `diff-review`** FR-28: read is inferred from scroll rather than from a click, which is what makes
+    it track progress.)*
   - **Persisting fold-state across restarts.**
   - **Windowing the tree.** Accepted limit (FR-3): a 500-file changeset renders 500+ rows unwindowed,
     as today. Folds are the mitigation.
@@ -81,9 +86,11 @@ zero Rust**, entirely inside `src/features/diff/`.
 - **FR-3 (no windowing).** Tree rows render unwindowed. The known limit is stated, not mitigated.
 - **FR-4 (fold state).** Folders start expanded. Fold state is a `Set` of folder keys held in
   frontend memory, **keyed per session**, and is not persisted.
-- **FR-5 (roll-up mark).** A folder row shows a tri-state mark in the checkbox column reflecting its
+- **FR-5 (roll-up mark).** ~~A folder row shows a tri-state mark in the checkbox column reflecting its
   descendant files' checked state (all → checked, none → empty, mixed → dash). It is rendered dimmed,
-  has **no click handler**, and never writes to `deselected`.
+  has **no click handler**, and never writes to `deselected`.~~ **Superseded by `diff-review` FR-7**:
+  the mark stayed tri-state, but the checkbox became **writable** — clicking it sets every descendant
+  file — and `deselected` was replaced by `inCommit`.
 - **FR-6 (selection is leaf-only).** Only a file row can be the selected path. Clicking or pressing
   `Enter` on a folder row toggles its fold and changes nothing else.
 - **FR-7 (cursor vs selection).** The keyboard cursor may sit on a folder row; the diff body keeps

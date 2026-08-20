@@ -1,20 +1,19 @@
-/* DiffView (main tab DIFF) — layout shell, vertical file selector, diff body
-   rows and the stage/commit footer. Colours reference the shared tokens in
-   src/styles.css directly (no local alias object). */
+/* DIFF tab (diff-review) — one-scroll body, tree rail, commits block, commit form.
+   Flat per design turn 9a: no 1px strokes, no shadows in flow, separation by tonal
+   step alone. Colours reference the shared tokens in src/styles.css directly (no
+   local alias object). Desktop only. */
 
 .diff-view {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg-deep);
+  background: var(--bg-canvas);
 }
-/* session-worktree FR-15: dim, read-only sibling-worktree hint — no links, no
-   buttons, no hover affordance. design brief §"Narrow window": middle-/left-
-   truncate (direction: rtl) rather than a trailing ellipsis, so the branch list
-   at the tail stays visible — same intent as the FR-13 branch chip. */
+
+/* session-worktree FR-15: dim, read-only sibling-worktree hint. */
 .diff-sibling-line {
-  padding: 6px var(--space-14) var(--space-10);
+  padding: 4px var(--space-14);
   font-size: 10.5px;
   color: var(--text-faint);
   white-space: nowrap;
@@ -23,46 +22,117 @@
   flex-shrink: 0;
   direction: rtl;
   text-align: left;
+  background: var(--bg-panel);
 }
+
+/* ---------- top bar (FR-1/FR-2) ---------- */
+.diff-topbar {
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-14);
+  padding: 0 var(--space-12);
+  background: var(--bg-panel);
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+}
+.diff-topbar__branch {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.diff-topbar__vs {
+  color: var(--text-faint);
+}
+.diff-topbar__spacer {
+  flex: 1;
+}
+.diff-topbar__action {
+  cursor: pointer;
+  color: var(--text-hint);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.diff-topbar__action:hover {
+  color: var(--text-2);
+}
+.diff-topbar__action--inert {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+/* ---------- layout: rail | body ---------- */
 .diff-main {
   flex: 1;
   display: flex;
   min-height: 0;
 }
 
-/* vertical file selector */
-.diff-filelist {
-  width: 236px;
+/* ---------- rail (FR-5..FR-14) ---------- */
+.diff-rail {
+  width: 220px;
+  min-width: 140px;
   flex-shrink: 0;
-  overflow-y: auto;
-  border-right: 1px solid var(--border);
-  padding: var(--space-8) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  min-height: 0;
 }
-.diff-filelist__header {
+.diff-rail__resize {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+}
+.diff-rail__resize:hover,
+.diff-rail__resize--dragging {
+  background: var(--accent-soft-edge);
+}
+
+.diff-rail__header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--space-7);
-  padding: var(--space-4) var(--space-8) var(--space-6);
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: var(--font-size-10-5);
+  padding: var(--space-6) var(--space-8);
+  font-size: var(--font-size-10);
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+.diff-rail__header-count {
+  color: var(--accent);
+}
+.diff-rail__header-spacer {
+  flex: 1;
+}
+.diff-rail__mode-toggle {
+  display: flex;
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.diff-rail__mode-btn {
+  padding: 2px var(--space-6);
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: var(--font-size-10-5);
+}
+.diff-rail__mode-btn--active {
+  background: var(--bg-hover-2);
+  color: var(--text-2);
 }
 
-/* diff-navigator: filter box — pinned above the header row (design brief §Left column) */
 .diff-filter {
   display: flex;
   align-items: center;
   gap: var(--space-6);
   padding: var(--space-4) var(--space-8);
-  margin-bottom: var(--space-6);
-  border: 1px solid var(--border);
+  margin: 0 var(--space-6) var(--space-4);
   border-radius: var(--radius-base);
   background: var(--bg-elevated);
 }
 .diff-filter:focus-within {
-  border-color: var(--accent-soft-edge);
   background: var(--accent-soft-bg);
 }
 .diff-filter__icon {
@@ -88,26 +158,28 @@
   font-size: var(--font-size-10);
 }
 
-/* diff-navigator: folder tree */
 .diff-tree {
-  display: flex;
-  flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 var(--space-6);
 }
 .diff-tree-row {
   display: flex;
   align-items: center;
   gap: var(--space-7);
-  padding: var(--space-5) var(--space-8);
+  padding: var(--space-4) var(--space-6);
   border-radius: var(--radius-base);
-  margin-bottom: var(--space-1);
   cursor: pointer;
 }
 .diff-tree-row--folder:hover {
   background: var(--bg-hover);
 }
+/* design brief: the cursor is the rail's one non-checkbox olive mark — a 2px inset
+   left rule + a raised fill, not an outline. */
 .diff-tree-row--cursor {
-  outline: 1px solid var(--border-emphasis);
-  outline-offset: -1px;
+  background: var(--bg-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .diff-tree-row__caret {
   flex-shrink: 0;
@@ -120,12 +192,12 @@
   flex: 1;
   min-width: 0;
   font-size: var(--font-size-12);
-  color: var(--text-muted);
+  color: var(--text-2);
 }
-.diff-checkbox--dim {
-  opacity: 0.55;
-  cursor: default;
-  pointer-events: none;
+.diff-tree-row__count {
+  flex-shrink: 0;
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
 }
 .diff-tree__no-match {
   padding: var(--space-6) var(--space-8);
@@ -137,13 +209,8 @@
   font-weight: 600;
 }
 
-.diff-body {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-}
-
-/* checkbox — border/background depend on checked/indeterminate, set inline */
+/* checkbox — border/background depend on checked/indeterminate, set inline. FR-7:
+   the checked state is the rail's other olive mark. */
 .diff-checkbox {
   width: var(--space-13);
   height: var(--space-13);
@@ -167,17 +234,8 @@
   flex-shrink: 0;
 }
 
-/* file row — pairs with src/ui/ListRow (list-row / list-row--selected handle
-   the background); this adds the layout + the left accent border. */
 .diff-file-row {
-  gap: var(--space-7);
-  padding: var(--space-5) var(--space-8);
-  border-radius: var(--radius-base);
-  margin-bottom: var(--space-1);
   border-left: 2px solid transparent;
-}
-.diff-file-row.list-row--selected {
-  border-left-color: var(--accent);
 }
 .diff-file-status {
   width: var(--space-9);
@@ -190,12 +248,22 @@
   flex: 1;
   min-width: 0;
   font-size: var(--font-size-12);
+  color: var(--text-2);
+}
+/* FR-6: a read file's name and counts dim — green-dim, never acid (design brief). */
+.diff-file-row--read .diff-file-name,
+.diff-file-row--read .diff-file-stat {
+  color: var(--text-muted);
+}
+.diff-file-read-tick {
+  flex-shrink: 0;
+  color: var(--success-dim);
+  font-size: var(--font-size-9-5);
 }
 .diff-file-stat {
   flex-shrink: 0;
   font-size: var(--font-size-10);
 }
-
 .diff-color-add {
   color: var(--success);
 }
@@ -203,6 +271,122 @@
   color: var(--error);
 }
 
+/* ---------- COMMITS block (FR-13..FR-17) ---------- */
+.diff-commits {
+  flex-shrink: 0;
+  background: var(--bg-deep);
+  max-height: 45%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.diff-commits__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-8);
+  cursor: pointer;
+  font-size: var(--font-size-10);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.diff-commits__title {
+  color: var(--text-hint);
+}
+.diff-commits__count {
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-faint);
+}
+.diff-commits__list {
+  overflow-y: auto;
+  min-height: 0;
+}
+.diff-commits__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  padding: var(--space-4) var(--space-8);
+  cursor: pointer;
+  font-size: var(--font-size-11);
+}
+.diff-commits__row:hover {
+  background: var(--bg-hover);
+}
+.diff-commits__row--selected {
+  background: var(--bg-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.diff-commits__hash {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-10-5);
+}
+.diff-commits__subject {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-commits__head {
+  flex-shrink: 0;
+  padding: 1px var(--space-6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--accent);
+  font-size: var(--font-size-9-5);
+  letter-spacing: 0.05em;
+}
+.diff-commits__age {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: var(--font-size-10);
+}
+.diff-commits__expander,
+.diff-commits__empty {
+  padding: var(--space-4) var(--space-8) var(--space-6);
+  color: var(--text-faint);
+  font-size: var(--font-size-10-5);
+  cursor: pointer;
+}
+.diff-commits__empty {
+  cursor: default;
+}
+
+/* ---------- rail foot bar (FR-32) ---------- */
+.diff-rail__foot {
+  flex-shrink: 0;
+  padding: var(--space-6) var(--space-8);
+  background: var(--bg-canvas);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+}
+.diff-rail__foot-track {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+.diff-rail__foot-fill {
+  height: 100%;
+  background: var(--success-dim);
+}
+
+/* ---------- body (FR-18..FR-30) ---------- */
+.diff-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  background: var(--bg-canvas);
+}
 .diff-empty-state {
   height: 100%;
   display: flex;
@@ -214,7 +398,92 @@
   padding: 0 var(--space-24);
 }
 
-/* windowed diff body — paddingTop/paddingBottom are computed from the visible
+.diff-file-block {
+  display: flex;
+  flex-direction: column;
+}
+.diff-file-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0 var(--space-12);
+  background: var(--bg-deep);
+  font-size: var(--font-size-11-5);
+}
+.diff-file-block--collapsed .diff-file-header {
+  background: var(--bg-canvas);
+}
+.diff-file-header--read .diff-file-header__path {
+  color: var(--text-muted);
+}
+.diff-file-header__caret {
+  flex-shrink: 0;
+  width: var(--space-12);
+  text-align: center;
+  color: var(--text-faint);
+  cursor: pointer;
+  user-select: none;
+}
+.diff-file-header__status {
+  flex-shrink: 0;
+  width: var(--space-12);
+  text-align: center;
+  font-size: var(--font-size-9-5);
+  font-weight: 600;
+}
+.diff-file-header__path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-file-header__dir {
+  color: var(--text-muted);
+}
+.diff-file-header__name {
+  color: var(--text-bright);
+}
+.diff-file-header__hint {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: var(--font-size-10-5);
+  cursor: pointer;
+}
+.diff-file-header__spacer {
+  flex: 1;
+}
+.diff-file-header__editor {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-hint);
+  cursor: pointer;
+  font-size: var(--font-size-10-5);
+}
+.diff-file-header__editor:hover {
+  color: var(--text-2);
+}
+.diff-file-header__checkbox {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+  color: var(--text-hint);
+  font-size: var(--font-size-10-5);
+  cursor: pointer;
+  user-select: none;
+}
+.diff-file-header__checkbox input {
+  accent-color: var(--accent);
+}
+
+/* windowed diff rows — paddingTop/paddingBottom are computed from the visible
    window and stay inline; font-size/line-height are constant (ROW_H). */
 .diff-rows {
   font-size: var(--font-size-12);
@@ -241,75 +510,226 @@
 .diff-row__text {
   white-space: pre;
 }
-
+.diff-fold-row {
+  padding: 0 var(--space-12) 0 46px;
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 21px;
+}
+.diff-fold-row:hover {
+  color: var(--accent);
+  background: var(--accent-soft-bg);
+}
 .diff-placeholder {
   padding: var(--space-16) var(--space-14);
   font-size: var(--font-size-12);
   color: var(--text-faint);
 }
 
-/* footer / commit bar */
-.diff-footer {
-  padding: var(--space-10) var(--space-14);
-  background: var(--bg-panel);
-  display: flex;
-  align-items: center;
-  gap: var(--space-14);
-  font-size: var(--font-size-11);
-  color: var(--text-muted);
+/* ---------- commit block (FR-33..FR-39) ---------- */
+.diff-commit-block {
   flex-shrink: 0;
+  background: var(--bg-panel);
 }
-.diff-footer__spacer {
-  flex: 1;
-}
-.diff-footer__hint {
-  color: var(--text-hint);
-  cursor: pointer;
-}
-.diff-footer__hint--inert {
-  color: var(--text-disabled);
-  cursor: default;
-}
-/* diff-navigator FR-26: a statement, not an alarm — plain text, no icon, no badge */
-.diff-footer__hidden-warn {
-  color: var(--warn);
-}
-
-.diff-commit-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  flex: 1;
-  min-width: 0;
-  align-items: flex-end;
-}
-.diff-commit-row {
+.diff-commit-strip {
+  height: 26px;
   display: flex;
   align-items: center;
   gap: var(--space-10);
-  min-width: 0;
-  align-self: stretch;
-  justify-content: flex-end;
+  padding: 0 var(--space-12);
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+  cursor: pointer;
 }
-.diff-commit-prompt {
+.diff-commit-strip--disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+.diff-commit-strip__spacer {
+  flex: 1;
+}
+.diff-commit-strip__hint {
+  color: var(--text-faint);
+  font-size: var(--font-size-10-5);
+}
+.diff-commit-strip--viewing {
+  color: var(--text-2);
+}
+.diff-commit-strip--viewing .diff-commit-strip__back {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.diff-commit-form {
+  padding: var(--space-10) var(--space-14) var(--space-12);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.diff-commit-form__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+}
+.diff-commit-form__title {
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+.diff-commit-form__spacer {
+  flex: 1;
+}
+.diff-commit-form__amend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+  cursor: pointer;
+  color: var(--text-hint);
+}
+.diff-commit-form__esc {
+  cursor: pointer;
+  color: var(--text-faint);
+}
+.diff-commit-form__warn {
+  color: var(--warn);
+  font-size: var(--font-size-10-5);
+}
+
+.diff-commit-subject-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-10);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-base);
+}
+.diff-commit-subject-row__prompt {
   color: var(--accent);
   font-size: var(--font-size-13);
+  flex-shrink: 0;
 }
-.diff-commit-input {
+.diff-commit-subject-input {
   flex: 1;
-  max-width: 320px;
-  min-width: 80px;
+  min-width: 0;
   border: none;
   outline: none;
   background: transparent;
   font-family: inherit;
   font-size: var(--font-size-12-5);
+  color: var(--text-bright);
 }
-.diff-commit-action {
-  color: var(--text-hint);
-  cursor: pointer;
+.diff-commit-subject-input::placeholder {
+  color: var(--text-faint);
 }
-.diff-commit-error {
+.diff-commit-subject-row__meter {
+  flex-shrink: 0;
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.diff-commit-subject-row__meter--warn {
+  color: var(--warn);
+}
+
+.diff-commit-form__body-row {
+  display: flex;
+  gap: var(--space-10);
+}
+.diff-commit-description {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  resize: vertical;
+  border: none;
+  outline: none;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+  font-family: inherit;
+  font-size: var(--font-size-11-5);
+  color: var(--text-2);
+}
+.diff-commit-description::placeholder {
+  color: var(--text-faint);
+}
+.diff-commit-manifest {
+  width: 252px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-10-5);
+}
+.diff-commit-manifest__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  color: var(--text-2);
+}
+.diff-commit-manifest__status {
+  flex-shrink: 0;
+  width: var(--space-9);
+  font-weight: 600;
+}
+.diff-commit-manifest__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-commit-manifest__more {
+  color: var(--text-faint);
+}
+
+.diff-commit-form__stays {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.diff-commit-form__hidden-note {
+  color: var(--warn);
+}
+
+.diff-commit-form__buttons {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-10);
+}
+.diff-commit-form__error {
   color: var(--error);
   font-size: var(--font-size-10-5);
+  margin-right: auto;
+}
+.diff-commit-form__cancel {
+  padding: var(--space-6) var(--space-14);
+  border-radius: var(--radius-base);
+  background: var(--bg-raised);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.diff-commit-form__submit {
+  padding: var(--space-6) var(--space-14);
+  border-radius: var(--radius-base);
+  background: var(--accent-soft-bg);
+  color: var(--accent-bright);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.diff-commit-form__submit--disabled {
+  color: var(--text-disabled);
+  background: var(--bg-raised);
+  cursor: default;
+}
+.diff-commit-form__hint {
+  color: var(--text-faint);
+  font-size: var(--font-size-10);
 }

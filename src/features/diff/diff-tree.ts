@@ -1,6 +1,7 @@
-// diff-navigator FR-1..FR-9, FR-18/19: pure tree build + flatten + traversal helpers.
-// Frontend-internal types only (spec §5) — DiffTreeNode/IntralineSpan live here, not
-// in contract/diff-view.ts, since nothing here crosses IPC.
+// diff-review FR-5..FR-12: pure tree build + flatten + traversal + roll-up helpers,
+// superseding diff-navigator FR-5 (display-only rollup) per FR-7. Frontend-internal
+// types only (spec §5) — DiffTreeNode lives here, not in contract/diff-view.ts, since
+// nothing here crosses IPC.
 
 import type { DiffFileSummary } from '../../../contract/diff-view';
 
@@ -13,7 +14,7 @@ interface RawFolder {
   files: DiffFileSummary[];
 }
 
-/** FR-1/FR-2: build the folder tree from DiffSummary.files (already path-sorted),
+/** FR-5: build the folder tree from DiffSummary.files (already path-sorted),
  *  chain-collapsing single-child folder runs into one row. Subfolders sort before
  *  files, each alphabetically, within a folder. */
 export function buildDiffTree(files: DiffFileSummary[]): DiffTreeNode[] {
@@ -46,23 +47,31 @@ function toNodes(folder: RawFolder, pathPrefix: string): DiffTreeNode[] {
 
 /** The path of the first FILE in tree order — which is not `files[0]`, because
  *  subfolders sort before same-level files (`['a.ts', 'z/x.ts']` renders `z/x.ts`
- *  first). Spec §3 story 1: opening DIFF selects the first file in TREE order. */
+ *  first). Used to seed the rail's initial keyboard cursor. */
 export function firstFilePathInTreeOrder(files: DiffFileSummary[]): string | null {
-  const walk = (nodes: DiffTreeNode[]): string | null => {
+  const all = treeOrderFiles(files);
+  return all.length > 0 ? all[0]!.path : null;
+}
+
+/** FR-24: the body's order is the tree's — a DFS walk of the FULL tree, ignoring
+ *  fold state and the filter (those are rail-only navigation, spec §"body"). */
+export function treeOrderFiles(files: DiffFileSummary[]): DiffFileSummary[] {
+  const out: DiffFileSummary[] = [];
+  const walk = (nodes: DiffTreeNode[]) => {
     for (const node of nodes) {
-      const hit = node.kind === 'file' ? node.file.path : walk(node.children);
-      if (hit !== null) return hit;
+      if (node.kind === 'file') out.push(node.file);
+      else walk(node.children);
     }
-    return null;
   };
-  return walk(buildDiffTree(files));
+  walk(buildDiffTree(files));
+  return out;
 }
 
 function collapseFolder(name: string, folder: RawFolder, pathPrefix: string): DiffTreeNode {
   let label = name;
   let key = pathPrefix ? `${pathPrefix}/${name}` : name;
   let cur = folder;
-  // FR-2: a folder whose only child is a folder (no files of its own) merges with
+  // FR-5: a folder whose only child is a folder (no files of its own) merges with
   // that child, applied transitively for an arbitrarily deep chain.
   while (cur.files.length === 0 && cur.folders.size === 1) {
     const [childName, child] = [...cur.folders.entries()][0]!;
@@ -74,7 +83,7 @@ function collapseFolder(name: string, folder: RawFolder, pathPrefix: string): Di
 }
 
 /** Full-tree parent lookup (independent of fold/filter visibility), used by keyboard
- *  traversal to hop from a row to its parent folder row (FR-18). */
+ *  traversal to hop from a row to its parent folder row (FR-40). */
 export function buildParentMap(tree: DiffTreeNode[]): Map<string, string | null> {
   const map = new Map<string, string | null>();
   const walk = (nodes: DiffTreeNode[], parent: string | null) => {
@@ -98,6 +107,23 @@ export function findNode(nodes: DiffTreeNode[], key: string): DiffTreeNode | nul
   return null;
 }
 
+/** FR-7: every file path under a node — the write set for a directory checkbox. */
+export function descendantFilePaths(node: DiffTreeNode): string[] {
+  if (node.kind === 'file') return [node.file.path];
+  const out: string[] = [];
+  const walk = (n: DiffTreeNode) => {
+    if (n.kind === 'file') out.push(n.file.path);
+    else n.children.forEach(walk);
+  };
+  node.children.forEach(walk);
+  return out;
+}
+
+/** FR-6: a directory row's count is its descendant FILE count — never a +/- sum. */
+export function descendantFileCount(node: DiffTreeNode): number {
+  return descendantFilePaths(node).length;
+}
+
 export interface VisibleRow {
   key: string;
   depth: number;
@@ -106,9 +132,10 @@ export interface VisibleRow {
   expanded: boolean;
 }
 
-/** FR-4/FR-8/FR-9: single source for both rendering and ↑/↓ traversal — folder fold
- *  state × filter text flattened into the visible row order. While the filter is
- *  non-empty, fold state is ignored and every visible folder renders expanded. */
+/** FR-8/FR-10/FR-12: single source for both rendering and keyboard traversal —
+ *  folder fold state x filter text flattened into the visible row order. While the
+ *  filter is non-empty, fold state is ignored and every visible folder renders
+ *  expanded. */
 export function flattenVisibleRows(tree: DiffTreeNode[], folded: ReadonlySet<string>, filter: string): VisibleRow[] {
   const query = filter.trim().toLowerCase();
   const filtering = query.length > 0;
@@ -133,17 +160,25 @@ export function flattenVisibleRows(tree: DiffTreeNode[], folded: ReadonlySet<str
   return rows;
 }
 
+/** FR-9: flat mode — diff-navigator's list without folders, same file rows, in
+ *  path order, filtered the same way as the tree. */
+export function flattenFlatRows(files: DiffFileSummary[], filter: string): VisibleRow[] {
+  const query = filter.trim().toLowerCase();
+  const filtered = query === '' ? files : files.filter((f) => f.path.toLowerCase().includes(query));
+  return filtered.map((file) => ({ key: file.path, depth: 0, node: { kind: 'file', key: file.path, file }, expanded: false }));
+}
+
 export type RollupState = 'checked' | 'mixed' | 'none';
 
-/** FR-5: tri-state read-only roll-up mark for a folder row, from its descendant
- *  files' checked state (checked = not in `deselected`). */
-export function folderRollup(node: DiffTreeNode, deselected: ReadonlySet<string>): RollupState {
+/** FR-7: tri-state roll-up mark for a directory row, from its descendant files'
+ *  `inCommit` membership (checked = path IS in the set). */
+export function folderRollup(node: DiffTreeNode, inCommit: ReadonlySet<string>): RollupState {
   let anyChecked = false;
   let anyUnchecked = false;
   const walk = (n: DiffTreeNode) => {
     if (n.kind === 'file') {
-      if (deselected.has(n.file.path)) anyUnchecked = true;
-      else anyChecked = true;
+      if (inCommit.has(n.file.path)) anyChecked = true;
+      else anyUnchecked = true;
     } else {
       n.children.forEach(walk);
     }
@@ -154,19 +189,20 @@ export function folderRollup(node: DiffTreeNode, deselected: ReadonlySet<string>
   return 'none';
 }
 
-/** FR-26: checked files hidden by an active filter — the footer's warning count. */
-export function hiddenCheckedCount(files: DiffFileSummary[], deselected: ReadonlySet<string>, filter: string): number {
+/** diff-navigator FR-25/FR-26 (carried over, spec §7 "Filter hides checked files"):
+ *  checked files hidden by an active filter, for the commit form's note. */
+export function hiddenCheckedCount(files: DiffFileSummary[], inCommit: ReadonlySet<string>, filter: string): number {
   const query = filter.trim().toLowerCase();
   if (!query) return 0;
   let hidden = 0;
   for (const file of files) {
-    if (deselected.has(file.path)) continue;
+    if (!inCommit.has(file.path)) continue;
     if (!file.path.toLowerCase().includes(query)) hidden++;
   }
   return hidden;
 }
 
-/** FR-18: ↑/↓ move the cursor one visible row; clamped at the edges (no wrap). */
+/** FR-40: up/down move the cursor one visible row; clamped at the edges (no wrap). */
 export function moveCursor(rows: VisibleRow[], cursorKey: string | null, dir: 1 | -1): string | null {
   if (rows.length === 0) return null;
   const idx = rows.findIndex((row) => row.key === cursorKey);
@@ -181,8 +217,8 @@ export interface StepResult {
   cursorKey: string | null;
 }
 
-/** FR-18: → expands a collapsed folder; on an expanded folder moves to its first
- *  child; on a file, no-op. */
+/** FR-40: right expands a collapsed folder; on an expanded folder moves to its
+ *  first child; on a file, no-op. */
 export function stepRight(tree: DiffTreeNode[], folded: ReadonlySet<string>, cursorKey: string | null): StepResult {
   if (!cursorKey) return { folded, cursorKey };
   const node = findNode(tree, cursorKey);
@@ -196,8 +232,8 @@ export function stepRight(tree: DiffTreeNode[], folded: ReadonlySet<string>, cur
   return { folded, cursorKey };
 }
 
-/** FR-18: ← collapses an expanded folder; on a collapsed folder or a file, hops the
- *  cursor to its parent folder row (no-op at the root). */
+/** FR-40: left collapses an expanded folder; on a collapsed folder or a file, hops
+ *  the cursor to its parent folder row (no-op at the root). */
 export function stepLeft(
   tree: DiffTreeNode[],
   folded: ReadonlySet<string>,

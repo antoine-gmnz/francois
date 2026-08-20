@@ -22,6 +22,7 @@ import {
   AGENT_STEPS,
   COMMANDS,
   DIFF,
+  DIFF_COMMITS,
   MCP,
   MODELS,
   PROJECTS,
@@ -296,13 +297,14 @@ function route(cmd: string, a: Args): unknown {
     case 'workflows_list':
       return ok(WORKFLOWS.filter((w) => w.sessionId === sid(a)));
 
-    // ---- diff ----
+    // ---- diff (diff-review §5: `commit`/`context` params are accepted and ignored
+    // — the demo fleet has no real git history to diff against a ref) ----
     case 'diff_get_summary':
-      return ok(DIFF[sid(a)] ?? { files: [], totalAdd: 0, totalDel: 0 });
+      return ok(DIFF[sid(a)] ?? { files: [], totalAdd: 0, totalDel: 0, branch: 'main', headShort: null, baseBranch: null });
     case 'diff_get_file_diff':
       return ok(fileDiff(String(a?.path ?? '')));
-    case 'diff_stage_all':
-      return ok(null);
+    case 'diff_list_commits':
+      return ok(DIFF_COMMITS[sid(a)] ?? { commits: [], baseBranch: 'main', truncated: false });
     case 'diff_commit':
       return ok({ commitHash: '4f1c9ad2e7b6135a08d4c9f2ab77e315c9d0e142' });
 

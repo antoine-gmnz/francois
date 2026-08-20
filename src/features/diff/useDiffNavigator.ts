@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import type { Dispatch, RefObject } from 'react';
 import type { DiffFileSummary } from '../../../contract/diff-view';
+import type { DiffUiAction } from './diff-state';
 import {
   buildDiffTree,
   buildParentMap,
+  descendantFilePaths,
   findNode,
+  flattenFlatRows,
   flattenVisibleRows,
   folderRollup,
   hiddenCheckedCount,
@@ -19,11 +22,7 @@ import {
 
 export interface DiffNavigator {
   visibleRows: VisibleRow[];
-  filter: string;
-  setFilter: (v: string) => void;
   filterInputRef: RefObject<HTMLInputElement>;
-  cursorKey: string | null;
-  toggleFold: (key: string) => void;
   rollup: (node: DiffTreeNode) => RollupState;
   hiddenChecked: number;
   onCursorUp: () => void;
@@ -31,93 +30,106 @@ export interface DiffNavigator {
   onCursorRight: () => void;
   onCursorLeft: () => void;
   onCursorEnter: () => void;
+  onCursorSpace: () => void;
 }
 
 /**
- * diff-navigator FR-4/5/9: folder fold state, filter query and the keyboard cursor
- * for the DIFF tab's tree. All frontend-only, in memory —
- * held per session because DiffView itself is keyed by sessionId in App, so this
- * hook's state is naturally reset by remount on session switch (spec §7).
+ * diff-review FR-5..FR-12, FR-40: the rail's tree/flat rows, filter, fold state and
+ * keyboard cursor. Selection state (folded/filter/cursorKey/railMode) lives in the
+ * DiffUiState reducer (diff-state.ts) — this hook only derives the visible rows and
+ * wires the traversal callbacks, dispatching actions rather than holding state
+ * itself (spec §6: one state, two views).
  */
 export function useDiffNavigator(params: {
   files: DiffFileSummary[];
-  deselected: Set<string>;
-  selectedPath: string | null;
-  setSelectedPath: (path: string) => void;
+  inCommit: Set<string>;
+  folded: Set<string>;
+  filter: string;
+  railMode: 'tree' | 'flat';
+  cursorKey: string | null;
+  dispatch: Dispatch<DiffUiAction>;
+  /** FR-8: clicking/entering a file row jumps the body to it — never a selection. */
+  onJumpToFile: (path: string) => void;
 }): DiffNavigator {
-  const { files, deselected, selectedPath, setSelectedPath } = params;
+  const { files, inCommit, folded, filter, railMode, cursorKey, dispatch, onJumpToFile } = params;
 
   const tree = useMemo(() => buildDiffTree(files), [files]);
   const parentMap = useMemo(() => buildParentMap(tree), [tree]);
-
-  const [folded, setFolded] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState('');
-  const [cursorKey, setCursorKey] = useState<string | null>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
 
-  const visibleRows = useMemo(() => flattenVisibleRows(tree, folded, filter), [tree, folded, filter]);
+  const visibleRows = useMemo(
+    () => (railMode === 'tree' ? flattenVisibleRows(tree, folded, filter) : flattenFlatRows(files, filter)),
+    [railMode, tree, folded, filter, files],
+  );
 
-  // Keep the cursor on a visible row: pick an initial one, and hop to the nearest
-  // still-visible ancestor (or the first row) when a fold/filter change hides it
-  // (spec §7 edge case).
+  // Keep the cursor on a visible row: hop to the nearest still-visible ancestor (tree
+  // mode) or fall back to the first row, whenever a fold/filter/mode change hides it.
   useEffect(() => {
-    setCursorKey((prev) => {
-      if (visibleRows.length === 0) return null;
-      if (prev !== null) return resolveCursor(visibleRows, prev, parentMap);
-      return selectedPath && visibleRows.some((row) => row.key === selectedPath) ? selectedPath : visibleRows[0]!.key;
-    });
-  }, [visibleRows, parentMap, selectedPath]);
+    if (visibleRows.length === 0) {
+      if (cursorKey !== null) dispatch({ type: 'setCursor', key: null });
+      return;
+    }
+    const next = railMode === 'tree' ? resolveCursor(visibleRows, cursorKey, parentMap) : (visibleRows.find((r) => r.key === cursorKey)?.key ?? visibleRows[0]!.key);
+    if (next !== cursorKey) dispatch({ type: 'setCursor', key: next });
+  }, [visibleRows, parentMap, cursorKey, railMode, dispatch]);
 
-  const toggleFold = useCallback((key: string) => {
-    setFolded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-
-  const rollup = useCallback((node: DiffTreeNode) => folderRollup(node, deselected), [deselected]);
-  const hiddenChecked = useMemo(() => hiddenCheckedCount(files, deselected, filter), [files, deselected, filter]);
+  const rollup = useCallback((node: DiffTreeNode) => folderRollup(node, inCommit), [inCommit]);
+  const hiddenChecked = useMemo(() => hiddenCheckedCount(files, inCommit, filter), [files, inCommit, filter]);
 
   const onCursorUp = useCallback(() => {
     const next = moveCursor(visibleRows, cursorKey, -1);
-    if (next !== cursorKey) setCursorKey(next);
-  }, [visibleRows, cursorKey]);
+    if (next !== cursorKey) dispatch({ type: 'setCursor', key: next });
+  }, [visibleRows, cursorKey, dispatch]);
 
   const onCursorDown = useCallback(() => {
     const next = moveCursor(visibleRows, cursorKey, 1);
-    if (next !== cursorKey) setCursorKey(next);
-  }, [visibleRows, cursorKey]);
+    if (next !== cursorKey) dispatch({ type: 'setCursor', key: next });
+  }, [visibleRows, cursorKey, dispatch]);
 
+  // stepRight/stepLeft only ever flip the CURSOR's own folder key (never another
+  // row's), so `toggleFold` reproduces exactly what each returns.
   const onCursorRight = useCallback(() => {
+    if (railMode !== 'tree') return; // no folders to expand in flat mode
     const res = stepRight(tree, folded, cursorKey);
-    // res.folded is already a fresh Set instance whenever it differs from the input.
-    if (res.folded !== folded) setFolded(res.folded as Set<string>);
-    if (res.cursorKey !== cursorKey) setCursorKey(res.cursorKey);
-  }, [tree, folded, cursorKey]);
+    if (res.folded !== folded) dispatch({ type: 'toggleFold', key: cursorKey! });
+    if (res.cursorKey !== cursorKey) dispatch({ type: 'setCursor', key: res.cursorKey });
+  }, [railMode, tree, folded, cursorKey, dispatch]);
 
   const onCursorLeft = useCallback(() => {
+    if (railMode !== 'tree') return;
     const res = stepLeft(tree, folded, cursorKey, parentMap);
-    if (res.folded !== folded) setFolded(res.folded as Set<string>);
-    if (res.cursorKey !== cursorKey) setCursorKey(res.cursorKey);
-  }, [tree, folded, cursorKey, parentMap]);
+    if (res.folded !== folded) dispatch({ type: 'toggleFold', key: cursorKey! });
+    if (res.cursorKey !== cursorKey) dispatch({ type: 'setCursor', key: res.cursorKey });
+  }, [railMode, tree, folded, cursorKey, parentMap, dispatch]);
 
   const onCursorEnter = useCallback(() => {
     if (!cursorKey) return;
+    if (railMode === 'flat') {
+      onJumpToFile(cursorKey); // flat rows are keyed by path
+      return;
+    }
     const node = findNode(tree, cursorKey);
     if (!node) return;
-    if (node.kind === 'file') setSelectedPath(node.file.path);
-    else toggleFold(node.key);
-  }, [tree, cursorKey, setSelectedPath, toggleFold]);
+    if (node.kind === 'file') onJumpToFile(node.file.path);
+    else dispatch({ type: 'toggleFold', key: node.key });
+  }, [railMode, tree, cursorKey, dispatch, onJumpToFile]);
+
+  const onCursorSpace = useCallback(() => {
+    if (!cursorKey) return;
+    const node = railMode === 'tree' ? findNode(tree, cursorKey) : ({ kind: 'file', key: cursorKey, file: files.find((f) => f.path === cursorKey)! } as DiffTreeNode);
+    if (!node) return;
+    if (node.kind === 'file') {
+      dispatch({ type: 'toggleInCommit', path: node.file.path });
+    } else {
+      const paths = descendantFilePaths(node);
+      const checked = folderRollup(node, inCommit) === 'checked';
+      dispatch({ type: 'setInCommit', paths, checked: !checked });
+    }
+  }, [railMode, tree, cursorKey, files, inCommit, dispatch]);
 
   return {
     visibleRows,
-    filter,
-    setFilter,
     filterInputRef,
-    cursorKey,
-    toggleFold,
     rollup,
     hiddenChecked,
     onCursorUp,
@@ -125,5 +137,6 @@ export function useDiffNavigator(params: {
     onCursorRight,
     onCursorLeft,
     onCursorEnter,
+    onCursorSpace,
   };
 }

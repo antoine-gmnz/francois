@@ -108,6 +108,8 @@ export type ErrorCode =
   | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
   | 'PROFILE_NOT_FOUND' // session-profiles: a profileId that is not in the registry
   | 'PROFILE_ARG_DENIED' // session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
+  | 'DIFF_COMMIT_NOT_FOUND' // diff-review FR-15: the `commit` ref does not resolve in this repo
+  | 'DIFF_NOTHING_TO_AMEND' // diff-review FR-39: amend requested with no commit on the branch
   | 'INTERNAL';
 
 // ---------- sessions ----------

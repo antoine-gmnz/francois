@@ -226,7 +226,7 @@ fn main() {
             extensions::extensions_close_stream,
             diff::diff_get_summary,
             diff::diff_get_file_diff,
-            diff::diff_stage_all,
+            diff::diff_list_commits,
             diff::diff_commit,
         ])
         .build(tauri::generate_context!())

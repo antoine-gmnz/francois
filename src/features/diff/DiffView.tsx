@@ -1,21 +1,23 @@
-import { useCallback, useRef, useState } from 'react';
-import type { DiffSummary } from '../../../contract/diff-view';
-import { diffCommit, diffStageAll } from '../../lib/api';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import type { DiffCommitSummary } from '../../../contract/diff-view';
+import { diffCommit, sessionOpenInEditor } from '../../lib/api';
+import { getEditorList } from '../sessions/editors';
 import { useStore } from '../../lib/store';
 import { IS_WINDOWS } from '../../lib/platform';
 import { siblingWorktreeSummaryLine } from '../sessions/worktree';
-import { DiffListBody } from './DiffListBody';
+import { DiffTopBar } from './DiffTopBar';
+import { DiffRail, DEFAULT_RAIL_WIDTH } from './DiffRail';
+import { DiffBody } from './DiffBody';
+import { DiffCommitBlock } from './DiffCommitBlock';
+import { EXPANDED_CONTEXT, offsetForPath, type BlockOffset } from './diff-body';
+import { diffUiReducer, initDiffUiState, WORKTREE_REF } from './diff-state';
+import { descendantFilePaths, folderRollup, treeOrderFiles, type DiffTreeNode } from './diff-tree';
 import { useDiffFeed } from './useDiffFeed';
 import { useDiffKeyboard } from './useDiffKeyboard';
 import { useDiffNavigator } from './useDiffNavigator';
 import './diff.css';
 
-interface CommitState {
-  open: boolean;
-  message: string;
-  error: string | null;
-  success: string | null; // short hash
-}
+const EMPTY_READ_SET: Set<string> = new Set();
 
 export default function DiffView({ sessionId }: { sessionId: string }) {
   const focusedPane = useStore((s) => s.focusedPane);
@@ -26,232 +28,258 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const meta = sessions.find((s) => s.id === sessionId) ?? null;
   const siblingLine = meta ? siblingWorktreeSummaryLine(meta, sessions, IS_WINDOWS) : null;
 
-  const feed = useDiffFeed(sessionId);
-  const {
-    summary,
-    summaryError,
-    summaryLoading,
-    notRepo,
-    files,
-    selectedPath,
-    setSelectedPath,
-    deselected,
-    toggleFile,
-    toggleAll,
-    selectedPaths,
-    selectedCount,
-    allSelected,
-    fileDiff,
-    fileDiffError,
-    fileDiffLoading,
-    loadSummary,
-    mountedRef,
-  } = feed;
+  const [ui, dispatch] = useReducer(diffUiReducer, undefined, initDiffUiState);
+  const onExternalChange = useCallback(() => dispatch({ type: 'flagWorkingTreeChanged' }), []);
 
-  // diff-navigator FR-4/5/9/17/18/19: tree fold state, filter and the keyboard
-  // cursor, replacing the flat file cycle.
-  const navigator = useDiffNavigator({ files, deselected, selectedPath, setSelectedPath });
+  const feed = useDiffFeed(sessionId, ui.viewingCommit, onExternalChange);
+  const { summary, summaryError, summaryLoading, notRepo, files, commits, commitsError, fileDiffs, requestFileContext, reload, mountedRef } = feed;
 
-  const [commit, setCommit] = useState<CommitState>({ open: false, message: '', error: null, success: null });
-  const [busy, setBusy] = useState(false);
+  // FR-1 seeding / §7 path enter-leave — only meaningful for the working tree; a
+  // read-only commit view's file list never feeds the staging set.
+  useEffect(() => {
+    if (ui.viewingCommit !== null) return;
+    dispatch({ type: 'syncFiles', paths: files.map((f) => f.path) });
+  }, [files, ui.viewingCommit]);
 
-  const commitInputRef = useRef<HTMLInputElement>(null);
+  const orderedFiles = useMemo(() => treeOrderFiles(files), [files]);
+
   const bodyScrollRef = useRef<HTMLDivElement>(null);
-  const commitRef = useRef(commit); // latest commit state, read by doCommit outside any updater
-  commitRef.current = commit;
-  const selectedPathsRef = useRef<string[]>([]);
-  selectedPathsRef.current = selectedPaths; // read by doCommit without re-creating it
+  const offsetsRef = useRef<BlockOffset[]>([]);
+  const onOffsetsChange = useCallback((offsets: BlockOffset[]) => {
+    offsetsRef.current = offsets;
+  }, []);
 
-  // Only a mutation (stage/commit) or a summary reload gates the footer actions. The
-  // per-file diff fetch deliberately does NOT: it fires on every file click, and
-  // including it made [s]/[c] go inert (and stay inert if that fetch never settled)
-  // just from clicking through the file list — staging and committing are unaffected
-  // by which file's diff is on screen.
-  const requestBusy = busy || summaryLoading;
+  // FR-8: jump, never switch — scrolls the body's own container to that file's
+  // sticky header, changing no other state.
+  const jumpToFile = useCallback((path: string) => {
+    const offset = offsetForPath(offsetsRef.current, path);
+    if (offset !== null && bodyScrollRef.current) bodyScrollRef.current.scrollTop = offset;
+  }, []);
 
-  const stageAll = useCallback(() => {
-    if (requestBusy || notRepo || files.length === 0) return; // FR-22 inert
-    setBusy(true);
-    void diffStageAll(sessionId)
-      .then(() => loadSummary(sessionId)) // fresh summary (FR-4 flow)
-      .finally(() => {
-        if (mountedRef.current) setBusy(false);
+  const currentRef = ui.viewingCommit ?? WORKTREE_REF;
+  const readSet = ui.read.get(currentRef) ?? EMPTY_READ_SET;
+
+  const navigator = useDiffNavigator({
+    files,
+    inCommit: ui.inCommit,
+    folded: ui.folded,
+    filter: ui.filter,
+    railMode: ui.railMode,
+    cursorKey: ui.cursorKey,
+    dispatch,
+    onJumpToFile: jumpToFile,
+  });
+
+  // FR-7: the directory checkbox write — every descendant file flips to the
+  // opposite of the row's current roll-up state.
+  const onToggleDirectory = useCallback(
+    (node: DiffTreeNode) => {
+      const paths = descendantFilePaths(node);
+      const checked = folderRollup(node, ui.inCommit) === 'checked';
+      dispatch({ type: 'setInCommit', paths, checked: !checked });
+    },
+    [ui.inCommit],
+  );
+
+  const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH);
+
+  const onOpenEditor = useCallback(
+    (path: string) => {
+      // FR-27: the first available editor from EDITOR_ORDER, no menu.
+      void getEditorList().then((editors) => {
+        if (editors.length === 0) return;
+        void sessionOpenInEditor({ sessionId, editorId: editors[0]!.id, path });
       });
-  }, [requestBusy, notRepo, files.length, sessionId, loadSummary, mountedRef]);
+    },
+    [sessionId],
+  );
+
+  const onExpandContext = useCallback(
+    (path: string) => {
+      dispatch({ type: 'setContext', path, context: EXPANDED_CONTEXT });
+      requestFileContext(path, EXPANDED_CONTEXT);
+    },
+    [requestFileContext],
+  );
+
+  const onBigFile = useCallback((path: string) => dispatch({ type: 'ensureCollapsed', paths: [path] }), []);
+  const onReadPaths = useCallback((paths: string[]) => dispatch({ type: 'markRead', paths, ref: currentRef }), [currentRef]);
+  const doCollapseRead = useCallback(() => dispatch({ type: 'collapseRead', ref: currentRef }), [currentRef]);
+
+  const onSelectCommit = useCallback((hash: string) => dispatch({ type: 'viewCommit', hash }), []);
+  const onBackToWorktree = useCallback(() => dispatch({ type: 'backToWorktree' }), []);
+
+  const headCommit = useMemo(() => commits?.commits.find((c) => c.isHead) ?? null, [commits]);
+
+  const subjectInputRef = useRef<HTMLInputElement>(null);
 
   const openCommit = useCallback(() => {
-    if (requestBusy || notRepo || selectedCount === 0) return; // FR-23 inert; nothing selected → nothing to commit
-    setCommit({ open: true, message: '', error: null, success: null });
-    requestAnimationFrame(() => commitInputRef.current?.focus());
-  }, [requestBusy, notRepo, selectedCount]);
+    dispatch({ type: 'openCommit' });
+    requestAnimationFrame(() => subjectInputRef.current?.focus());
+  }, []);
+  const closeCommit = useCallback(() => dispatch({ type: 'closeCommit' }), []);
 
-  const closeCommit = useCallback(() => setCommit({ open: false, message: '', error: null, success: null }), []);
+  // FR-16: alt-clicking HEAD arms amend and opens the form, without switching the
+  // body into the read-only commit view.
+  const onAltClickHead = useCallback((commit: DiffCommitSummary) => {
+    dispatch({ type: 'setAmend', amend: true, headSubject: commit.subject, headBody: commit.body });
+    dispatch({ type: 'openCommit' });
+    requestAnimationFrame(() => subjectInputRef.current?.focus());
+  }, []);
+
+  const onSetAmend = useCallback(
+    (amend: boolean) => dispatch({ type: 'setAmend', amend, headSubject: headCommit?.subject ?? '', headBody: headCommit?.body ?? '' }),
+    [headCommit],
+  );
+
+  const [busy, setBusy] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
+  // Side effects live OUTSIDE any state updater / read via refs so a double-invoke
+  // can't fire the commit twice and doCommit always sees the LATEST draft/inCommit
+  // without needing them in its own dependency array.
+  const draftRef = useRef(ui.draft);
+  draftRef.current = ui.draft;
+  const inCommitRef = useRef(ui.inCommit);
+  inCommitRef.current = ui.inCommit;
 
   const doCommit = useCallback(() => {
-    // Side effects live OUTSIDE any state updater so React StrictMode's double-invoke
-    // of updaters can't fire the commit twice (N2). Read latest state from the ref.
-    const c = commitRef.current;
-    const msg = c.message.trim();
-    const paths = selectedPathsRef.current;
-    if (!c.open || !msg || busy || paths.length === 0) return; // FR-24 blank / no selection = no-op
+    const draft = draftRef.current;
+    const subject = draft.subject.trim();
+    const paths = [...inCommitRef.current];
+    if (busy || subject === '' || paths.length === 0) return; // FR-36/FR-37: blank subject / nothing checked = no-op
     setBusy(true);
-    void diffCommit(sessionId, msg, paths)
+    setCommitError(null);
+    void diffCommit({ sessionId, message: subject, body: draft.body.trim() || undefined, paths, amend: draft.amend })
       .then((res) => {
         if (res.ok) {
-          const short = res.data.commitHash.slice(0, 7);
-          setCommit({ open: true, message: '', error: null, success: short }); // FR-25
-          loadSummary(sessionId);
-          setTimeout(() => setCommit((cur) => (cur.success === short ? { open: false, message: '', error: null, success: null } : cur)), 1800);
+          dispatch({ type: 'commitSucceeded', paths });
+          reload();
         } else {
-          setCommit((cur) => ({ ...cur, error: res.error.message })); // FR-26, keep message + bar open
+          setCommitError(res.error.message);
         }
       })
-      .catch(() => setCommit((cur) => ({ ...cur, error: 'commit failed unexpectedly' })))
+      .catch(() => setCommitError('commit failed unexpectedly'))
       .finally(() => {
         if (mountedRef.current) setBusy(false);
       });
-  }, [busy, sessionId, loadSummary, mountedRef]);
+  }, [busy, sessionId, reload, mountedRef]);
 
-  // Keyboard (FR-10/17/18/19). Active only while the DIFF tab is visible.
   useDiffKeyboard({
     mainTab,
     focusedPane,
-    commitOpen: commit.open,
+    commitOpen: ui.commitOpen,
     doCommit,
     closeCommit,
-    stageAll,
     openCommit,
-    setFilter: navigator.setFilter,
+    setFilter: (v) => dispatch({ type: 'setFilter', value: v }),
     filterInputRef: navigator.filterInputRef,
     onCursorUp: navigator.onCursorUp,
     onCursorDown: navigator.onCursorDown,
     onCursorRight: navigator.onCursorRight,
     onCursorLeft: navigator.onCursorLeft,
     onCursorEnter: navigator.onCursorEnter,
+    onCursorSpace: navigator.onCursorSpace,
   });
 
-  // ---------- render ----------
+  const totalFiles = files.length;
+  const totalRead = readSet.size;
+  const viewingShortHash = ui.viewingCommit
+    ? (commits?.commits.find((c) => c.hash === ui.viewingCommit)?.shortHash ?? ui.viewingCommit.slice(0, 7))
+    : null;
 
   return (
     <div className="diff-view">
-      {/* session-worktree FR-15: read-only — no links, no buttons, no hover affordance.
-          design brief §Notes: a truncated value always carries its full text in a title. */}
       {siblingLine && (
         <div className="diff-sibling-line" title={siblingLine}>
           {siblingLine}
         </div>
       )}
-      <DiffListBody
-        files={files}
-        selectedPath={selectedPath}
-        deselected={deselected}
-        allSelected={allSelected}
-        selectedCount={selectedCount}
-        notRepo={notRepo}
-        summaryError={summaryError}
-        summary={summary}
-        fileDiff={fileDiff}
-        fileDiffError={fileDiffError}
-        fileDiffLoading={fileDiffLoading}
-        bodyScrollRef={bodyScrollRef}
-        navigator={navigator}
-        onSelectPath={setSelectedPath}
-        onToggleFile={toggleFile}
-        onToggleAll={toggleAll}
+      <DiffTopBar
+        branch={summary?.branch ?? null}
+        headShort={summary?.headShort ?? null}
+        viewingShortHash={viewingShortHash}
+        totalAdd={summary?.totalAdd ?? 0}
+        totalDel={summary?.totalDel ?? 0}
+        collapseReadInert={totalRead === 0}
+        onCollapseRead={doCollapseRead}
+        reloadInert={summaryLoading}
+        onReload={reload}
       />
-
-      {/* footer / commit bar — hidden entirely for a non-repo (nothing actionable) */}
-      {!notRepo && (
-        <Footer
-          summary={summary}
-          commit={commit}
-          setMessage={(m) => setCommit((c) => ({ ...c, message: m }))}
-          onCommit={doCommit}
-          onCancel={closeCommit}
-          onStage={stageAll}
-          onOpenCommit={openCommit}
-          inputRef={commitInputRef}
-          stageInert={requestBusy || files.length === 0}
-          commitInert={requestBusy || selectedCount === 0}
-          selectedCount={selectedCount}
-          hiddenChecked={navigator.hiddenChecked}
+      <div className="diff-main">
+        <DiffRail
+          width={railWidth}
+          onWidthChange={setRailWidth}
+          visibleRows={navigator.visibleRows}
+          railMode={ui.railMode}
+          filter={ui.filter}
+          filterInputRef={navigator.filterInputRef}
+          cursorKey={ui.cursorKey}
+          inCommit={ui.inCommit}
+          readSet={readSet}
+          rollup={navigator.rollup}
+          totalFiles={totalFiles}
+          checkedCount={ui.inCommit.size}
+          readCount={totalRead}
+          commits={commits}
+          commitsError={commitsError}
+          commitsExpanded={ui.commitsExpanded}
+          viewingCommit={ui.viewingCommit}
+          onFilterChange={(v) => dispatch({ type: 'setFilter', value: v })}
+          onSetRailMode={(mode) => dispatch({ type: 'setRailMode', mode })}
+          onToggleFold={(key) => dispatch({ type: 'toggleFold', key })}
+          onJumpToFile={jumpToFile}
+          onToggleFile={(path) => dispatch({ type: 'toggleInCommit', path })}
+          onToggleDirectory={onToggleDirectory}
+          onToggleReadTick={(path) => dispatch({ type: 'toggleRead', path, ref: currentRef })}
+          onSelectCommit={onSelectCommit}
+          onAltClickHead={onAltClickHead}
+          onToggleCommitsExpanded={() => dispatch({ type: 'toggleCommitsExpanded' })}
         />
-      )}
-    </div>
-  );
-}
-
-function Footer({
-  summary,
-  commit,
-  setMessage,
-  onCommit,
-  onCancel,
-  onStage,
-  onOpenCommit,
-  inputRef,
-  stageInert,
-  commitInert,
-  selectedCount,
-  hiddenChecked,
-}: {
-  summary: DiffSummary | null;
-  commit: CommitState;
-  setMessage: (m: string) => void;
-  onCommit: () => void;
-  onCancel: () => void;
-  onStage: () => void;
-  onOpenCommit: () => void;
-  inputRef: React.RefObject<HTMLInputElement>;
-  stageInert: boolean;
-  commitInert: boolean;
-  selectedCount: number;
-  hiddenChecked: number;
-}) {
-  const totalAdd = summary?.totalAdd ?? 0;
-  const totalDel = summary?.totalDel ?? 0;
-  const nFiles = summary?.files.length ?? 0;
-
-  return (
-    <div className="diff-footer">
-      <span>
-        <span className="diff-color-add">+{totalAdd}</span> <span className="diff-color-del">−{totalDel}</span>
-        <span> across {nFiles} files</span>
-      </span>
-      <span className="diff-footer__spacer" />
-
-      {commit.open ? (
-        commit.success ? (
-          <span className="diff-color-add">committed {commit.success}</span>
-        ) : (
-          <div className="diff-commit-form">
-            <div className="diff-commit-row">
-              <span className="diff-commit-prompt">›</span>
-              <input
-                ref={inputRef}
-                className="diff-commit-input"
-                value={commit.message}
-                placeholder="commit message…"
-                onChange={(e) => setMessage(e.target.value)}
-                style={{ color: commit.message ? 'var(--text-bright)' : 'var(--text-faint)' }}
-              />
-              <span onClick={onCommit} className="diff-commit-action">⏎ commit</span>
-              <span onClick={onCancel} className="diff-commit-action">esc cancel</span>
-            </div>
-            {commit.error && <span className="diff-commit-error">{commit.error}</span>}
-          </div>
-        )
-      ) : (
-        <>
-          <span onClick={() => !stageInert && onStage()} className={`diff-footer__hint${stageInert ? ' diff-footer__hint--inert' : ''}`}>
-            [s] stage all
-          </span>
-          <span onClick={() => !commitInert && onOpenCommit()} className={`diff-footer__hint${commitInert ? ' diff-footer__hint--inert' : ''}`}>
-            [c] commit {selectedCount > 0 ? `${selectedCount} ` : ''}…
-          </span>
-          {/* diff-navigator FR-26: a statement, not an alarm — nothing is blocked. */}
-          {hiddenChecked > 0 && <span className="diff-footer__hidden-warn">· {hiddenChecked} hidden by filter</span>}
-        </>
+        <div ref={bodyScrollRef} className="diff-body">
+          <DiffBody
+            files={orderedFiles}
+            fileDiffs={fileDiffs}
+            collapsed={ui.collapsed}
+            inCommit={ui.inCommit}
+            readSet={readSet}
+            readOnly={ui.viewingCommit !== null}
+            notRepo={notRepo}
+            summaryLoaded={summary !== null}
+            summaryErrorMessage={summaryError && !notRepo ? summaryError.message : null}
+            scrollRef={bodyScrollRef}
+            onToggleCollapse={(path) => dispatch({ type: 'toggleCollapse', path })}
+            onToggleInCommit={(path) => dispatch({ type: 'toggleInCommit', path })}
+            onOpenEditor={onOpenEditor}
+            onExpandContext={onExpandContext}
+            onBigFile={onBigFile}
+            onReadPaths={onReadPaths}
+            onOffsetsChange={onOffsetsChange}
+          />
+        </div>
+      </div>
+      {!notRepo && (
+        <DiffCommitBlock
+          files={files}
+          inCommit={ui.inCommit}
+          readCount={totalRead}
+          totalFiles={totalFiles}
+          hiddenChecked={navigator.hiddenChecked}
+          viewingCommit={ui.viewingCommit}
+          viewingShortHash={viewingShortHash}
+          workingTreeChanged={ui.workingTreeChanged}
+          onBackToWorktree={onBackToWorktree}
+          open={ui.commitOpen}
+          onOpenStrip={openCommit}
+          onCloseForm={closeCommit}
+          draft={ui.draft}
+          onDraftChange={(patch) => dispatch({ type: 'setDraft', patch })}
+          onSetAmend={onSetAmend}
+          headPushed={headCommit?.pushed ?? false}
+          busy={busy}
+          error={commitError}
+          onCommit={doCommit}
+          subjectInputRef={subjectInputRef}
+        />
       )}
     </div>
   );

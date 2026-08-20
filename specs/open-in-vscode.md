@@ -117,6 +117,11 @@ existing error state showing the core's message; a click anywhere dismisses it.
   state.
 - **FR-12** Opening an editor performs no session mutation, emits no event, and writes nothing to
   disk — it is observable only as a running process.
+- **FR-13** *(added by `diff-review` FR-44.)* `OpenInEditorRequest` carries an optional
+  `path?: string`, repo-relative. When present the editor opens **that file** rather than the session
+  directory — it is what the DIFF tab's per-file `↗ editor` sends. Absent ⇒ today's behaviour
+  exactly. The path is resolved against the session's `cwd` and follows the same filesystem rule as
+  FR-4/5/6 (`is_wsl_unc_path(session.cwd)`), so a worktree and a WSL session need no special case.
 
 ## 5. API contract
 

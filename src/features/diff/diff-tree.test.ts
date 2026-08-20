@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { DiffFileSummary } from '../../../contract/diff-view';
 import {
   buildDiffTree,
-  firstFilePathInTreeOrder,
   buildParentMap,
+  descendantFileCount,
+  descendantFilePaths,
   findNode,
+  firstFilePathInTreeOrder,
+  flattenFlatRows,
   flattenVisibleRows,
   folderRollup,
   hiddenCheckedCount,
@@ -12,6 +15,7 @@ import {
   resolveCursor,
   stepLeft,
   stepRight,
+  treeOrderFiles,
   type DiffTreeNode,
 } from './diff-tree';
 
@@ -29,7 +33,7 @@ function file(path: string, extra: Partial<DiffFileSummary> = {}): DiffFileSumma
 }
 
 describe('buildDiffTree', () => {
-  it('chain-collapses a single-child folder chain into one row (FR-1/FR-2)', () => {
+  it('chain-collapses a single-child folder chain into one row (FR-5)', () => {
     const files = [file('src/features/diff/a.tsx'), file('src/features/diff/b.tsx')];
     const tree = buildDiffTree(files);
     expect(tree).toHaveLength(1);
@@ -65,6 +69,25 @@ describe('buildDiffTree', () => {
   });
 });
 
+describe('descendantFilePaths / descendantFileCount (FR-6/FR-7)', () => {
+  const files = [file('src/features/diff/a.tsx'), file('src/features/diff/b.tsx'), file('src/features/diff/c.tsx')];
+  const tree = buildDiffTree(files);
+  const folder = tree[0]!;
+
+  it('lists every descendant file path, never a +/- sum', () => {
+    expect(descendantFilePaths(folder)).toEqual(['src/features/diff/a.tsx', 'src/features/diff/b.tsx', 'src/features/diff/c.tsx']);
+  });
+
+  it('counts descendant files', () => {
+    expect(descendantFileCount(folder)).toBe(3);
+  });
+
+  it('a file node reports itself as its own single-element descendant set', () => {
+    const fileNode = findNode(tree, 'src/features/diff/a.tsx')!;
+    expect(descendantFilePaths(fileNode)).toEqual(['src/features/diff/a.tsx']);
+  });
+});
+
 describe('flattenVisibleRows', () => {
   const files = [file('src/a/x.ts'), file('src/a/y.ts'), file('src/b.ts')];
   const tree = buildDiffTree(files);
@@ -74,13 +97,13 @@ describe('flattenVisibleRows', () => {
     expect(rows.map((r) => r.key)).toEqual(['src', 'src/a', 'src/a/x.ts', 'src/a/y.ts', 'src/b.ts']);
   });
 
-  it('hides a folded folder’s descendants but keeps the folder row (FR-6)', () => {
+  it('hides a folded folder’s descendants but keeps the folder row (FR-10)', () => {
     const rows = flattenVisibleRows(tree, new Set(['src/a']), '');
     expect(rows.map((r) => r.key)).toEqual(['src', 'src/a', 'src/b.ts']);
     expect(rows.find((r) => r.key === 'src/a')!.expanded).toBe(false);
   });
 
-  it('filters to matching files and their ancestor folders, force-expanding folders (FR-8/FR-9)', () => {
+  it('filters to matching files and their ancestor folders, force-expanding folders (FR-12)', () => {
     const rows = flattenVisibleRows(tree, new Set(['src/a']), 'x.ts');
     expect(rows.map((r) => r.key)).toEqual(['src', 'src/a', 'src/a/x.ts']);
     expect(rows.find((r) => r.key === 'src/a')!.expanded).toBe(true); // folded set ignored while filtering
@@ -97,20 +120,35 @@ describe('flattenVisibleRows', () => {
   });
 });
 
-describe('folderRollup', () => {
+describe('flattenFlatRows (FR-9)', () => {
+  const files = [file('src/a/x.ts'), file('src/a/y.ts'), file('src/b.ts')];
+
+  it('lists every file with no folder rows, in path order', () => {
+    const rows = flattenFlatRows(files, '');
+    expect(rows.map((r) => r.key)).toEqual(['src/a/x.ts', 'src/a/y.ts', 'src/b.ts']);
+    expect(rows.every((r) => r.node.kind === 'file')).toBe(true);
+  });
+
+  it('filters the same way as the tree — case-insensitive substring on the full path', () => {
+    const rows = flattenFlatRows(files, 'Y.TS');
+    expect(rows.map((r) => r.key)).toEqual(['src/a/y.ts']);
+  });
+});
+
+describe('folderRollup (FR-7 — checked = path IS in inCommit)', () => {
   const files = [file('src/a.ts'), file('src/b.ts')];
   const tree = buildDiffTree(files);
   const folder = tree[0]!;
 
-  it('reads checked when no descendant is deselected', () => {
-    expect(folderRollup(folder, new Set())).toBe('checked');
+  it('reads checked when every descendant is in inCommit', () => {
+    expect(folderRollup(folder, new Set(['src/a.ts', 'src/b.ts']))).toBe('checked');
   });
 
-  it('reads none when every descendant is deselected', () => {
-    expect(folderRollup(folder, new Set(['src/a.ts', 'src/b.ts']))).toBe('none');
+  it('reads none when no descendant is in inCommit', () => {
+    expect(folderRollup(folder, new Set())).toBe('none');
   });
 
-  it('reads mixed when some but not all descendants are deselected', () => {
+  it('reads mixed when some but not all descendants are in inCommit', () => {
     expect(folderRollup(folder, new Set(['src/a.ts']))).toBe('mixed');
   });
 });
@@ -119,13 +157,13 @@ describe('hiddenCheckedCount', () => {
   const files = [file('a.ts'), file('b.ts'), file('c.ts')];
 
   it('is zero with no filter', () => {
-    expect(hiddenCheckedCount(files, new Set(), '')).toBe(0);
+    expect(hiddenCheckedCount(files, new Set(['a.ts', 'b.ts', 'c.ts']), '')).toBe(0);
   });
 
   it('counts checked files hidden by the filter, ignoring already-unchecked ones', () => {
-    // filter matches only 'a.ts'; 'b.ts' and 'c.ts' are hidden, but 'c.ts' is
-    // already unchecked so it should not count toward the warning.
-    expect(hiddenCheckedCount(files, new Set(['c.ts']), 'a.ts')).toBe(1);
+    // filter matches only 'a.ts'; 'b.ts' and 'c.ts' are hidden, but 'c.ts' is not
+    // checked so it should not count toward the note.
+    expect(hiddenCheckedCount(files, new Set(['a.ts', 'b.ts']), 'a.ts')).toBe(1);
   });
 });
 
@@ -211,21 +249,24 @@ describe('findNode', () => {
   });
 });
 
-describe('firstFilePathInTreeOrder', () => {
-  it('picks the first file in TREE order, not path order', () => {
-    // subfolders render before same-level files, so `z/x.ts` is the first row
-    expect(firstFilePathInTreeOrder([file('a.ts'), file('z/x.ts')])).toBe('z/x.ts');
+describe('treeOrderFiles / firstFilePathInTreeOrder (FR-24)', () => {
+  it('lists every file in DFS tree order, subfolders before same-level files', () => {
+    expect(treeOrderFiles([file('a.ts'), file('z/x.ts')]).map((f) => f.path)).toEqual(['z/x.ts', 'a.ts']);
   });
 
   it('descends through chain-collapsed folders', () => {
-    expect(firstFilePathInTreeOrder([file('src/features/diff/b.ts'), file('r.ts')])).toBe('src/features/diff/b.ts');
+    expect(treeOrderFiles([file('src/features/diff/b.ts'), file('r.ts')]).map((f) => f.path)).toEqual(['src/features/diff/b.ts', 'r.ts']);
   });
 
-  it('falls back to the sole root file when there are no folders', () => {
+  it('firstFilePathInTreeOrder picks the first file in TREE order, not path order', () => {
+    expect(firstFilePathInTreeOrder([file('a.ts'), file('z/x.ts')])).toBe('z/x.ts');
+  });
+
+  it('firstFilePathInTreeOrder falls back to the sole root file when there are no folders', () => {
     expect(firstFilePathInTreeOrder([file('b.ts'), file('a.ts')])).toBe('a.ts');
   });
 
-  it('returns null for an empty changeset', () => {
+  it('firstFilePathInTreeOrder returns null for an empty changeset', () => {
     expect(firstFilePathInTreeOrder([])).toBeNull();
   });
 });

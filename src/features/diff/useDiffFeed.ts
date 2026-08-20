@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import type { AppError } from '../../../contract/common';
-import type { DiffFileSummary, DiffSummary, FileDiff } from '../../../contract/diff-view';
-import { diffGetFileDiff, diffGetSummary, onDiffEvent } from '../../lib/api';
+import type { DiffCommitList, DiffFileSummary, DiffSummary, FileDiff } from '../../../contract/diff-view';
+import { diffGetFileDiff, diffGetSummary, diffListCommits, onDiffEvent } from '../../lib/api';
 import { nextDiffEventAction } from './diff-events';
-import { firstFilePathInTreeOrder } from './diff-tree';
+
+export interface FileDiffEntry {
+  diff: FileDiff | null;
+  error: AppError | null;
+  loading: boolean;
+}
 
 export interface DiffFeed {
   summary: DiffSummary | null;
@@ -13,145 +18,161 @@ export interface DiffFeed {
   notRepo: boolean;
   files: DiffFileSummary[];
 
-  selectedPath: string | null;
-  setSelectedPath: (path: string | null) => void;
-  deselected: Set<string>;
-  toggleFile: (path: string) => void;
-  toggleAll: () => void;
-  selectedPaths: string[];
-  selectedCount: number;
-  allSelected: boolean;
+  commits: DiffCommitList | null;
+  commitsError: AppError | null;
 
-  fileDiff: FileDiff | null;
-  fileDiffError: AppError | null;
-  fileDiffLoading: boolean;
+  fileDiffs: Map<string, FileDiffEntry>;
+  /** FR-26: re-fetch one file's diff with a wider `-U<n>` context, removing every
+   *  fold row that context now covers. */
+  requestFileContext: (path: string, context: number) => void;
 
-  loadSummary: (sid: string) => void;
-  /** True while DiffView is mounted — shared with the subscription effect below so
-   *  commit/stage flows in DiffView can skip a setState after an async response
-   *  settles post-unmount. */
+  /** FR-2 `⟳` refresh. */
+  reload: () => void;
+
   mountedRef: MutableRefObject<boolean>;
 }
 
 /**
- * Summary + selected-file-diff data for one session's DIFF tab: hydrate + live
- * diff.changed subscription, file-selection state, and vertical-list cycling.
+ * Summary + commits + every changed file's diff for one session's DIFF tab
+ * (spec §5/§6). `viewingCommit` (null = working tree) re-points getSummary/
+ * getFileDiff at that commit's diff vs its first parent (FR-15); a read-only
+ * commit view never refetches on its own — §7 "the strip is a snapshot".
  *
- * The hydrate effect below is intentionally NOT built on the shared
- * useHydratedSubscription hook (see REFACTOR-CONVENTIONS.md "known gaps"): it
- * registers its listener BEFORE the first getSummary specifically to count and
- * swallow that fetch's own diff.changed echo (FR-17, pendingEchoRef), and it
- * coalesces concurrent refreshes (summaryInFlightRef / refreshQueuedRef). Left
- * structurally unchanged — do not restructure this guard logic.
+ * The hydrate/subscribe effect keeps the diff-view echo-swallow/coalescing guard
+ * (see diff-events.ts): a plain working-tree getSummary broadcasts one diff.changed
+ * echo of its own, which must be consumed rather than re-triggering a fetch. While
+ * viewing a commit no working-tree getSummary happens, so any diff.changed that
+ * arrives is genuinely external — it only flags `onExternalChange` (the caller sets
+ * DiffUiState.workingTreeChanged) rather than refetching the frozen body (§7).
  */
-export function useDiffFeed(sessionId: string): DiffFeed {
+export function useDiffFeed(sessionId: string, viewingCommit: string | null, onExternalChange: () => void): DiffFeed {
   const [summary, setSummary] = useState<DiffSummary | null>(null);
   const [summaryError, setSummaryError] = useState<AppError | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  // Commit selection. We track the paths the user EXPLICITLY unchecked (not the
-  // checked ones) so every newly-appearing change defaults to selected without any
-  // reconciliation on summary reload — a path simply drops out of the set when the
-  // user re-checks it, and stale entries are harmless.
-  const [deselected, setDeselected] = useState<Set<string>>(new Set());
-  const [fileDiff, setFileDiff] = useState<FileDiff | null>(null);
-  const [fileDiffError, setFileDiffError] = useState<AppError | null>(null);
-  const [fileDiffLoading, setFileDiffLoading] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [commits, setCommits] = useState<DiffCommitList | null>(null);
+  const [commitsError, setCommitsError] = useState<AppError | null>(null);
+  const [fileDiffs, setFileDiffs] = useState<Map<string, FileDiffEntry>>(new Map());
 
-  const selectedRef = useRef<string | null>(null);
-  selectedRef.current = selectedPath;
   const mountedRef = useRef(true);
-  // Every getSummary emits one diff.changed echo (FR-17). We count outstanding echoes
-  // so our own subscription skips them and refetches only on external changes
-  // (watcher / tool.done / another surface) — otherwise getSummary would self-trigger
-  // an unbounded refetch loop.
   const pendingEchoRef = useRef(0);
-  // Coalesce external-broadcast refetches: while one summary load is in flight, a
-  // burst of diff.changed events queues exactly ONE trailing re-run instead of
-  // stacking fetches (which strobed requestBusy → the footer hints "blinked").
   const summaryInFlightRef = useRef(false);
   const refreshQueuedRef = useRef(false);
+  const contextRef = useRef<Map<string, number>>(new Map());
+  const onExternalChangeRef = useRef(onExternalChange);
+  onExternalChangeRef.current = onExternalChange;
 
   const notRepo = summaryError?.code === 'NOT_A_GIT_REPO';
-  const files = summary?.files ?? [];
+  const files = useMemo(() => summary?.files ?? [], [summary]);
 
-  // Paths that will actually be committed (everything not explicitly unchecked).
-  const selectedPaths = useMemo(() => files.filter((file) => !deselected.has(file.path)).map((file) => file.path), [files, deselected]);
-  const selectedCount = selectedPaths.length;
-  const allSelected = files.length > 0 && selectedCount === files.length;
-
-  const toggleFile = useCallback((path: string) => {
-    setDeselected((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
-
-  // Header checkbox: all-checked → uncheck every current file, otherwise select all.
-  const toggleAll = useCallback(() => {
-    setDeselected((prev) => (files.length > 0 && files.every((file) => !prev.has(file.path)) ? new Set(files.map((file) => file.path)) : new Set()));
-  }, [files]);
-
-  // Load summary, preserving selection when the selected path survives (FR-19).
-  const loadSummary = useCallback((sid: string) => {
+  const loadSummary = useCallback((sid: string, commit: string | null) => {
+    const worktree = commit === null;
     const run = () => {
       summaryInFlightRef.current = true;
-      pendingEchoRef.current += 1; // a successful getSummary will broadcast one echo
+      if (worktree) pendingEchoRef.current += 1; // only a plain getSummary broadcasts an echo
       setSummaryLoading(true);
-      void diffGetSummary(sid)
+      void diffGetSummary(sid, commit ?? undefined)
         .then((res) => {
-          if (!res.ok) pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1); // no broadcast on error
+          if (!res.ok && worktree) pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1);
           if (!mountedRef.current) return;
           setSummaryLoading(false);
           if (res.ok) {
             setSummary(res.data);
             setSummaryError(null);
-            const prev = selectedRef.current;
-            const keep = prev && res.data.files.some((file) => file.path === prev);
-            // Tree order, not path order: subfolders render before same-level files, so
-            // files[0] is not the first row the user sees (spec §3 story 1).
-            setSelectedPath(keep ? prev : firstFilePathInTreeOrder(res.data.files));
           } else {
             setSummary(null);
             setSummaryError(res.error);
-            setSelectedPath(null);
           }
         })
         .catch(() => {
-          pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1);
+          if (worktree) pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1);
           if (mountedRef.current) setSummaryLoading(false);
         })
         .finally(() => {
           summaryInFlightRef.current = false;
           if (refreshQueuedRef.current && mountedRef.current) {
             refreshQueuedRef.current = false;
-            run(); // one trailing re-run covers every broadcast that arrived mid-flight
+            run();
           }
         });
     };
     run();
   }, []);
 
-  // Hydrate + live diff.changed for this session (component is keyed by sessionId in App).
+  const loadCommits = useCallback((sid: string) => {
+    void diffListCommits(sid).then((res) => {
+      if (!mountedRef.current) return;
+      if (res.ok) {
+        setCommits(res.data);
+        setCommitsError(null);
+      } else {
+        setCommits(null);
+        setCommitsError(res.error);
+      }
+    });
+  }, []);
+
+  const fetchOne = useCallback(
+    (sid: string, path: string, commit: string | null, context: number | undefined) => {
+      setFileDiffs((prev) => {
+        const next = new Map(prev);
+        next.set(path, { diff: prev.get(path)?.diff ?? null, error: null, loading: true });
+        return next;
+      });
+      void diffGetFileDiff(sid, path, { commit: commit ?? undefined, context }).then((res) => {
+        if (!mountedRef.current) return;
+        setFileDiffs((prev) => {
+          const next = new Map(prev);
+          next.set(path, res.ok ? { diff: res.data, error: null, loading: false } : { diff: null, error: res.error, loading: false });
+          return next;
+        });
+      });
+    },
+    [],
+  );
+
+  const requestFileContext = useCallback(
+    (path: string, context: number) => {
+      contextRef.current.set(path, context);
+      fetchOne(sessionId, path, viewingCommit, context);
+    },
+    [sessionId, viewingCommit, fetchOne],
+  );
+
+  const reload = useCallback(() => {
+    loadSummary(sessionId, viewingCommit);
+    loadCommits(sessionId);
+  }, [sessionId, viewingCommit, loadSummary, loadCommits]);
+
+  // The listener closure below is registered once per session; it reads the LATEST
+  // viewingCommit through this ref rather than resubscribing on every ref switch.
+  const viewingCommitLatest = useRef(viewingCommit);
+  viewingCommitLatest.current = viewingCommit;
+
+  // Hydrate + live diff.changed, once per session mount (DiffView keys this hook by
+  // sessionId — see DiffView.tsx). Registers the listener BEFORE the first fetch so
+  // that fetch's own echo is guaranteed to be consumed by the counter (N1 guard,
+  // carried over from diff-view's original hydrate effect).
   useEffect(() => {
     mountedRef.current = true;
     let unlisten: (() => void) | undefined;
-    // Register the listener BEFORE the first getSummary so that fetch's own echo is
-    // guaranteed to be consumed by the counter (no mount-race stuck-at-1, N1).
     void onDiffEvent((e) => {
-      switch (nextDiffEventAction(e, sessionId, pendingEchoRef.current, summaryInFlightRef.current)) {
-        case 'ignore':
-          return;
+      const action = nextDiffEventAction(e, sessionId, pendingEchoRef.current, summaryInFlightRef.current);
+      if (action === 'ignore') return;
+      if (viewingCommitLatest.current !== null) {
+        // §7: a frozen commit view never refetches on its own — flag instead.
+        if (action !== 'consumeEcho') onExternalChangeRef.current();
+        return;
+      }
+      switch (action) {
         case 'consumeEcho':
-          pendingEchoRef.current -= 1; // our own getSummary echo — do not refetch
+          pendingEchoRef.current -= 1;
           return;
         case 'queueRefresh':
-          refreshQueuedRef.current = true; // fold the burst into one trailing re-run
+          refreshQueuedRef.current = true;
           return;
         case 'refetch':
-          loadSummary(sessionId); // external change
+          loadSummary(sessionId, null);
+          loadCommits(sessionId);
           return;
       }
     }).then((unsub) => {
@@ -160,45 +181,41 @@ export function useDiffFeed(sessionId: string): DiffFeed {
         return;
       }
       unlisten = unsub;
-      loadSummary(sessionId); // initial hydrate, now that the listener is live
+      loadSummary(sessionId, null);
+      loadCommits(sessionId);
     });
     return () => {
       mountedRef.current = false;
       if (unlisten) unlisten();
     };
-  }, [sessionId, loadSummary]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by sessionId only; viewingCommit read via the ref above
+  }, [sessionId]);
 
-  // Load the selected file's diff (FR-7/8). Stale path → refresh summary (FR §7).
+  // Re-fetch the summary whenever the viewed ref changes AFTER mount (the mount's
+  // own initial fetch is handled by the hydrate effect above, always against the
+  // working tree, matching viewingCommit's initial value of null).
+  const didMountRef = useRef(false);
   useEffect(() => {
-    if (!selectedPath) {
-      setFileDiff(null);
-      setFileDiffError(null);
-      setFileDiffLoading(false); // a fetch in flight when the selection cleared would otherwise leave this stuck true
+    if (!didMountRef.current) {
+      didMountRef.current = true;
       return;
     }
-    const mounted = { current: true };
-    setFileDiffLoading(true);
-    setFileDiffError(null);
-    void diffGetFileDiff(sessionId, selectedPath).then((res) => {
-      if (!mounted.current) return;
-      setFileDiffLoading(false);
-      if (res.ok) {
-        setFileDiff(res.data);
-        setFileDiffError(null);
-      } else {
-        setFileDiff(null);
-        setFileDiffError(res.error);
-        if (res.error.code === 'INVALID_INPUT') loadSummary(sessionId); // stale path → refresh
-      }
-    }).catch(() => {
-      // A transport-level rejection (as opposed to a Result error) must still clear the
-      // in-flight flag — without this the loader stuck true forever.
-      if (mounted.current) setFileDiffLoading(false);
+    loadSummary(sessionId, viewingCommit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excludes sessionId (that's the hydrate effect's job)
+  }, [viewingCommit]);
+
+  // Fetch every current file's diff whenever the file list or the viewed ref
+  // changes. Eager, not viewport-lazy — see the frontend handoff TODO.
+  useEffect(() => {
+    const paths = files.map((f) => f.path);
+    setFileDiffs((prev) => {
+      const next = new Map(prev);
+      for (const key of Array.from(next.keys())) if (!paths.includes(key)) next.delete(key);
+      return next;
     });
-    return () => {
-      mounted.current = false;
-    };
-  }, [sessionId, selectedPath, loadSummary]);
+    paths.forEach((path) => fetchOne(sessionId, path, viewingCommit, contextRef.current.get(path)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchOne is stable; re-run only on file-list/ref identity change
+  }, [files, viewingCommit, sessionId]);
 
   return {
     summary,
@@ -206,18 +223,11 @@ export function useDiffFeed(sessionId: string): DiffFeed {
     summaryLoading,
     notRepo,
     files,
-    selectedPath,
-    setSelectedPath,
-    deselected,
-    toggleFile,
-    toggleAll,
-    selectedPaths,
-    selectedCount,
-    allSelected,
-    fileDiff,
-    fileDiffError,
-    fileDiffLoading,
-    loadSummary,
+    commits,
+    commitsError,
+    fileDiffs,
+    requestFileContext,
+    reload,
     mountedRef,
   };
 }

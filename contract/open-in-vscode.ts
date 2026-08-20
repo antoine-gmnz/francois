@@ -26,6 +26,9 @@ export type EditorListResponse = Result<EditorListData>;
 export interface OpenInEditorRequest {
   sessionId: SessionId;
   editorId: EditorId;
+  /** Repo-relative path to open instead of the session directory (diff-review FR-44).
+   *  Absent ⇒ today's behaviour exactly (opens session.cwd). */
+  path?: string;
 }
 // invoke('session_open_in_editor', req): Promise<Result<null>>
 // FR-4/5/6: target resolution follows the filesystem (is_wsl_unc_path(session.cwd)), never the

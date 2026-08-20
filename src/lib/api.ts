@@ -89,7 +89,7 @@ import type {
   ShellWritePayload,
 } from '../../contract/shell-terminal';
 import type { SkillsEvent } from '../../contract/skills-panel';
-import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
+import type { DiffSummary, FileDiff, DiffCommitList, DiffCommitRequest, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
 import type {
@@ -361,12 +361,15 @@ export function onSkillsEvent(cb: (e: SkillsEvent) => void): Promise<UnlistenFn>
   return stream<SkillsEvent>('francois://skills/event', cb);
 }
 
-export const diffGetSummary = (sessionId: SessionId) => ipc<Result<DiffSummary>>('diff_get_summary', { sessionId });
-export const diffGetFileDiff = (sessionId: SessionId, path: string) =>
-  ipc<Result<FileDiff>>('diff_get_file_diff', { sessionId, path });
-export const diffStageAll = (sessionId: SessionId) => ipc<Result<null>>('diff_stage_all', { sessionId });
-export const diffCommit = (sessionId: SessionId, message: string, paths: string[] = []) =>
-  ipc<Result<CommitResult>>('diff_commit', { sessionId, message, paths });
+// diff-review §5: `commit` (a full hash) re-points getSummary/getFileDiff at that commit's
+// diff vs its first parent (FR-15); `context` widens getFileDiff's `-U<n>` window (FR-26).
+// `diffStageAll`/`git add -A` are deleted for good (FR-43) — do not reintroduce.
+export const diffGetSummary = (sessionId: SessionId, commit?: string) =>
+  ipc<Result<DiffSummary>>('diff_get_summary', { sessionId, commit });
+export const diffGetFileDiff = (sessionId: SessionId, path: string, opts?: { commit?: string; context?: number }) =>
+  ipc<Result<FileDiff>>('diff_get_file_diff', { sessionId, path, ...opts });
+export const diffListCommits = (sessionId: SessionId) => ipc<Result<DiffCommitList>>('diff_list_commits', { sessionId });
+export const diffCommit = (req: DiffCommitRequest) => ipc<Result<CommitResult>>('diff_commit', req);
 
 /** Subscribe to francois://diff/event (diff.changed). */
 export function onDiffEvent(cb: (e: DiffEvent) => void): Promise<UnlistenFn> {

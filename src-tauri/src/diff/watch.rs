@@ -38,7 +38,7 @@ pub(crate) fn broadcast(app: &AppHandle, session_id: &str, file_count: usize) {
 pub(crate) fn recompute_and_broadcast(app: &AppHandle, session_id: &str, cwd: &str) {
     let lock = git_lock(session_id);
     let _g = lock.lock().unwrap();
-    match compute_summary(cwd) {
+    match compute_summary(cwd, None) {
         Ok(s) => broadcast(app, session_id, s.files.len()),
         Err((code, _)) if code == "NOT_A_GIT_REPO" => broadcast(app, session_id, 0),
         Err(_) => {} // transient git error — don't zero the badge

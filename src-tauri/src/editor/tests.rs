@@ -47,7 +47,8 @@ fn launch_argv_native_drive_path_is_editor_path_and_cwd_verbatim() {
     assert_eq!(
         launch_argv(
             "C:\\Users\\u\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd",
-            "D:\\acme-api"
+            "D:\\acme-api",
+            None
         ),
         vec![
             "C:\\Users\\u\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd".to_string(),
@@ -60,7 +61,7 @@ fn launch_argv_native_drive_path_is_editor_path_and_cwd_verbatim() {
 fn launch_argv_wsl_unc_cwd_uses_folder_uri() {
     // FR-4/FR-5: story C — a WSL UNC cwd opens as a Remote-WSL window.
     assert_eq!(
-        launch_argv("C:\\code.cmd", "\\\\wsl$\\Ubuntu\\home\\u\\api"),
+        launch_argv("C:\\code.cmd", "\\\\wsl$\\Ubuntu\\home\\u\\api", None),
         vec![
             "C:\\code.cmd".to_string(),
             "--folder-uri".to_string(),
@@ -69,7 +70,7 @@ fn launch_argv_wsl_unc_cwd_uses_folder_uri() {
     );
     // Both UNC spellings are recognized (wsl-filesystem FR-1/2).
     assert_eq!(
-        launch_argv("C:\\code.cmd", "\\\\wsl.localhost\\Debian\\srv\\x"),
+        launch_argv("C:\\code.cmd", "\\\\wsl.localhost\\Debian\\srv\\x", None),
         vec![
             "C:\\code.cmd".to_string(),
             "--folder-uri".to_string(),
@@ -87,10 +88,10 @@ fn launch_argv_routes_purely_on_the_cwd_shape_never_a_runtime_flag() {
     // drive-letter cwd on a hypothetical wsl-runtime session still opens
     // NATIVELY, and a WSL UNC cwd on a hypothetical native-runtime session
     // still opens REMOTELY.
-    let native_argv = launch_argv("C:\\code.cmd", "D:\\acme-api");
+    let native_argv = launch_argv("C:\\code.cmd", "D:\\acme-api", None);
     assert_eq!(native_argv.len(), 2, "drive cwd never gets --folder-uri");
 
-    let remote_argv = launch_argv("C:\\code.cmd", "\\\\wsl$\\Ubuntu\\srv");
+    let remote_argv = launch_argv("C:\\code.cmd", "\\\\wsl$\\Ubuntu\\srv", None);
     assert!(remote_argv.contains(&"--folder-uri".to_string()));
 }
 
@@ -102,7 +103,7 @@ fn launch_argv_worktree_path_opens_verbatim_never_a_source_repo_root() {
     // silently start resolving the source repo instead.
     let worktree_cwd = "D:\\.francois-worktrees\\acme-api\\feat-auth";
     assert_eq!(
-        launch_argv("C:\\code.cmd", worktree_cwd),
+        launch_argv("C:\\code.cmd", worktree_cwd, None),
         vec!["C:\\code.cmd".to_string(), worktree_cwd.to_string()]
     );
 }
@@ -111,7 +112,7 @@ fn launch_argv_worktree_path_opens_verbatim_never_a_source_repo_root() {
 fn launch_argv_native_path_with_spaces_and_non_ascii_survives_intact() {
     let cwd = "D:\\repos\\my project (café)";
     assert_eq!(
-        launch_argv("C:\\code.cmd", cwd),
+        launch_argv("C:\\code.cmd", cwd, None),
         vec!["C:\\code.cmd".to_string(), cwd.to_string()]
     );
 }
@@ -119,8 +120,57 @@ fn launch_argv_native_path_with_spaces_and_non_ascii_survives_intact() {
 #[test]
 fn launch_argv_never_produces_a_cmd_c_string() {
     // FR-8: no hand-rolled `cmd /c` invocation anywhere — argv only.
-    let argv = launch_argv("C:\\code.cmd", "D:\\acme-api");
+    let argv = launch_argv("C:\\code.cmd", "D:\\acme-api", None);
     assert!(!argv.iter().any(|a| a == "cmd" || a == "/c"));
+}
+
+// ================= diff-review FR-27/44: launch_argv with a file path =================
+
+#[test]
+fn launch_argv_native_with_path_opens_the_exact_file() {
+    // FR-44: `path` present -> the file, not the session directory.
+    let argv = launch_argv("C:\\code.cmd", "D:\\acme-api", Some("src/a.ts"));
+    assert_eq!(
+        argv,
+        vec![
+            "C:\\code.cmd".to_string(),
+            "D:\\acme-api/src/a.ts".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn launch_argv_wsl_with_path_uses_file_uri() {
+    let argv = launch_argv(
+        "C:\\code.cmd",
+        "\\\\wsl$\\Ubuntu\\home\\u\\api",
+        Some("src/a.ts"),
+    );
+    assert_eq!(
+        argv,
+        vec![
+            "C:\\code.cmd".to_string(),
+            "--file-uri".to_string(),
+            "vscode-remote://wsl+Ubuntu/home/u/api/src/a.ts".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn launch_argv_path_absent_is_todays_behaviour_exactly() {
+    // FR-44: absent path leaves both branches byte-identical to the pre-FR-44 shape.
+    assert_eq!(
+        launch_argv("C:\\code.cmd", "D:\\acme-api", None),
+        vec!["C:\\code.cmd".to_string(), "D:\\acme-api".to_string()]
+    );
+    assert_eq!(
+        launch_argv("C:\\code.cmd", "\\\\wsl$\\Ubuntu\\home\\u\\api", None),
+        vec![
+            "C:\\code.cmd".to_string(),
+            "--folder-uri".to_string(),
+            "vscode-remote://wsl+Ubuntu/home/u/api".to_string(),
+        ]
+    );
 }
 
 // ================= FR-3: cache — successes only =================
@@ -178,7 +228,7 @@ fn session_editor_list_resolves_ok_never_an_error() {
 fn open_in_editor_impl_reports_editor_not_found_with_the_requested_id_in_detail() {
     // Only vscode is "installed" in this list — cursor is not.
     let editors = vec![editor(EditorId::Vscode, "C:\\code.cmd")];
-    match open_in_editor_impl(&editors, "D:\\acme-api", EditorId::Cursor) {
+    match open_in_editor_impl(&editors, "D:\\acme-api", EditorId::Cursor, None) {
         IpcResult::Err { error, .. } => {
             assert_eq!(error.code, "EDITOR_NOT_FOUND");
             assert_eq!(error.detail.unwrap()["editorId"], "cursor");
@@ -200,7 +250,7 @@ fn open_in_editor_impl_reports_launch_failed_for_an_uninstalled_since_startup_ed
     // `Result`. A missing extensionless binary fails `spawn()` directly.)
     let bogus_path = "D:\\francois-test-does-not-exist\\code-editor-binary";
     let editors = vec![editor(EditorId::Vscode, bogus_path)];
-    match open_in_editor_impl(&editors, "D:\\acme-api", EditorId::Vscode) {
+    match open_in_editor_impl(&editors, "D:\\acme-api", EditorId::Vscode, None) {
         IpcResult::Err { error, .. } => {
             assert_eq!(error.code, "EDITOR_LAUNCH_FAILED");
             assert_eq!(error.detail.unwrap()["path"], bogus_path);

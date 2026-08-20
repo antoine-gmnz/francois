@@ -23,11 +23,6 @@ pub(crate) fn cwd_or_err<T: Serialize>(
 /// call site did by hand: a non-zero exit reports git's own stderr, falling back
 /// to `fallback` when git said nothing; a spawn failure reports the io error.
 /// `Err` carries the message the caller passes to `err("GIT_ERROR", …)`.
-///
-/// Only for steps where exit 0 means success. Two git calls in this file
-/// deliberately do NOT use it, because for them exit 0 is not success:
-/// `diff --cached --quiet` (exit 0 means nothing is staged — an error, FR-11)
-/// and `rev-parse HEAD` (a failure is tolerated and yields an empty hash).
 fn require_git_ok(
     host: &GitHost,
     root: &str,
@@ -55,7 +50,11 @@ fn require_git_ok(
 // `State<'_, Engine>` parameter: an async command's future must be 'static, and a
 // borrowed State param breaks that (E0597 in the generated handler).
 #[tauri::command]
-pub async fn diff_get_summary(app: AppHandle, session_id: String) -> IpcResult<DiffSummary> {
+pub async fn diff_get_summary(
+    app: AppHandle,
+    session_id: String,
+    commit: Option<String>,
+) -> IpcResult<DiffSummary> {
     let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
@@ -63,9 +62,9 @@ pub async fn diff_get_summary(app: AppHandle, session_id: String) -> IpcResult<D
     };
     let lock = git_lock(&session_id);
     let _g = lock.lock().unwrap();
-    match compute_summary(&cwd) {
+    match compute_summary(&cwd, commit.as_deref()) {
         Ok(s) => {
-            broadcast(&app, &session_id, s.files.len()); // FR-17
+            broadcast(&app, &session_id, s.files.len()); // FR-17 (diff-view)
             ok(s)
         }
         Err((code, msg)) => err(&code, msg),
@@ -77,6 +76,8 @@ pub async fn diff_get_file_diff(
     app: AppHandle,
     session_id: String,
     path: String,
+    commit: Option<String>,
+    context: Option<i64>,
 ) -> IpcResult<FileDiff> {
     let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
@@ -85,14 +86,15 @@ pub async fn diff_get_file_diff(
     };
     let lock = git_lock(&session_id);
     let _g = lock.lock().unwrap();
-    match compute_file_diff(&cwd, &path) {
+    match compute_file_diff(&cwd, &path, commit.as_deref(), clamp_context(context)) {
         Ok(d) => ok(d),
         Err((code, msg)) => err(&code, msg),
     }
 }
 
+/// francois:diff:listCommits (diff-review FR-13..17).
 #[tauri::command]
-pub async fn diff_stage_all(app: AppHandle, session_id: String) -> IpcResult<Option<()>> {
+pub async fn diff_list_commits(app: AppHandle, session_id: String) -> IpcResult<DiffCommitList> {
     let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
@@ -105,18 +107,34 @@ pub async fn diff_stage_all(app: AppHandle, session_id: String) -> IpcResult<Opt
     let lock = git_lock(&session_id);
     let _g = lock.lock().unwrap();
     let root = repo_root(&host, &cwd);
-    match require_git_ok(&host, &root, &["add", "-A"], "git add failed") {
-        Ok(_) => ok(None), // succeeds even with nothing to stage (FR-10)
-        Err(message) => err("GIT_ERROR", message),
+    match list_commits(&host, &root) {
+        Ok(l) => ok(l),
+        Err((code, msg)) => err(&code, msg),
     }
 }
 
-/// Pure: the `git commit` argv for `message` + selected `paths`. With no paths we
-/// commit whatever is already in the index (legacy stage-all flow). With paths we
-/// pin the commit to exactly those files — `git commit -m <msg> -- <paths…>` — so
-/// anything else already staged is left in the index, not committed.
-pub(crate) fn commit_args<'a>(message: &'a str, paths: &'a [String]) -> Vec<&'a str> {
-    let mut args = vec!["commit", "-m", message];
+/// Pure: the `git commit` argv for `message` + optional `body` + selected
+/// `paths` + `amend` (diff-review §5). `amend` adds `--amend`; `body` adds a
+/// second `-m` when non-empty; `paths` adds the trailing pathspec only when
+/// non-empty — empty paths + amend amends the message alone.
+pub(crate) fn commit_args<'a>(
+    message: &'a str,
+    body: Option<&'a str>,
+    paths: &'a [String],
+    amend: bool,
+) -> Vec<&'a str> {
+    let mut args = vec!["commit"];
+    if amend {
+        args.push("--amend");
+    }
+    args.push("-m");
+    args.push(message);
+    if let Some(b) = body {
+        if !b.is_empty() {
+            args.push("-m");
+            args.push(b);
+        }
+    }
     if !paths.is_empty() {
         args.push("--");
         args.extend(paths.iter().map(|p| p.as_str()));
@@ -124,20 +142,27 @@ pub(crate) fn commit_args<'a>(message: &'a str, paths: &'a [String]) -> Vec<&'a 
     args
 }
 
+/// francois:diff:commit (diff-review FR-37/38/39; stageAll deleted, FR-43).
 #[tauri::command]
 pub async fn diff_commit(
     app: AppHandle,
     session_id: String,
     message: String,
+    body: Option<String>,
     paths: Vec<String>,
+    amend: bool,
 ) -> IpcResult<CommitResult> {
     let engine = app.state::<Engine>();
     let cwd = match cwd_or_err(&engine, &session_id) {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if message.trim().is_empty() {
-        return err("INVALID_INPUT", "commit message is empty"); // defense in depth (FR-24)
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return err("INVALID_INPUT", "commit message is empty");
+    }
+    if paths.is_empty() && !amend {
+        return err("INVALID_INPUT", "no paths selected to commit"); // FR-43
     }
     let host = GitHost::of(&cwd); // wsl-filesystem FR-9: same routing as every other git op
     if !is_git_repo(&host, &cwd) {
@@ -147,25 +172,16 @@ pub async fn diff_commit(
     let _g = lock.lock().unwrap();
     let root = repo_root(&host, &cwd);
 
-    let message = message.trim();
-    if paths.is_empty() {
-        // Legacy flow: commit the current index. Guard nothing-staged (FR-11) —
-        // `git diff --cached --quiet` exits 0 when the index is empty.
-        match git_routed(&host, &root, &["diff", "--cached", "--quiet"]) {
-            Ok(o) if o.code == 0 => {
-                return err(
-                    "GIT_ERROR",
-                    "nothing staged to commit — stage changes first",
-                )
-            }
-            Ok(_) => {}
-            Err(e) => return err("GIT_ERROR", e.to_string()),
-        }
-    } else {
-        // Selected-files flow: stage exactly the chosen paths first so untracked
-        // files and deletions are picked up (`git add -- <paths>`), then the
-        // path-scoped commit below records only them. `git add` succeeds with a
-        // no-op when a path has nothing to stage.
+    if amend && diff_base(&host, &root) != "HEAD" {
+        return err("DIFF_NOTHING_TO_AMEND", "no commit on this branch to amend");
+        // FR-39
+    }
+
+    if !paths.is_empty() {
+        // Stage exactly the chosen paths first so untracked files and deletions
+        // are picked up (`git add -- <paths>`); the path-scoped commit below
+        // records only them. `git add` succeeds with a no-op when a path has
+        // nothing to stage.
         let mut add = vec!["add", "--"];
         add.extend(paths.iter().map(|p| p.as_str()));
         if let Err(message) = require_git_ok(&host, &root, &add, "git add failed") {
@@ -173,15 +189,9 @@ pub async fn diff_commit(
         }
     }
 
-    // FR-9: commit identity/hooks are the distro's own git config for WSL repos
-    // (documented, not managed — spec §4). With paths, git itself errors if none of
-    // the selected files have anything to commit.
-    if let Err(message) = require_git_ok(
-        &host,
-        &root,
-        &commit_args(message, &paths),
-        "git commit failed",
-    ) {
+    let body = body.filter(|b| !b.trim().is_empty());
+    let args = commit_args(&message, body.as_deref(), &paths, amend);
+    if let Err(message) = require_git_ok(&host, &root, &args, "git commit failed") {
         return err("GIT_ERROR", message);
     }
     match git_routed(&host, &root, &["rev-parse", "HEAD"]) {
@@ -199,18 +209,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn commit_args_no_paths_commits_the_index() {
-        // Empty selection → legacy flow: commit whatever is staged, no pathspec.
-        assert_eq!(commit_args("msg", &[]), vec!["commit", "-m", "msg"]);
+    fn commit_args_plain_commit_pins_the_selected_paths() {
+        let paths = vec!["src/a.ts".to_string(), "b.rs".to_string()];
+        assert_eq!(
+            commit_args("msg", None, &paths, false),
+            vec!["commit", "-m", "msg", "--", "src/a.ts", "b.rs"]
+        );
     }
 
     #[test]
-    fn commit_args_pins_the_commit_to_selected_paths() {
-        // Selected files → path-scoped commit so other staged changes are left alone.
-        let paths = vec!["src/a.ts".to_string(), "b.rs".to_string()];
+    fn commit_args_includes_the_body_as_a_second_dash_m() {
+        let paths = vec!["a.ts".to_string()];
         assert_eq!(
-            commit_args("msg", &paths),
-            vec!["commit", "-m", "msg", "--", "src/a.ts", "b.rs"]
+            commit_args("subject", Some("extended body"), &paths, false),
+            vec![
+                "commit",
+                "-m",
+                "subject",
+                "-m",
+                "extended body",
+                "--",
+                "a.ts"
+            ]
+        );
+    }
+
+    #[test]
+    fn commit_args_amend_adds_the_flag_and_still_scopes_to_paths() {
+        let paths = vec!["a.ts".to_string()];
+        assert_eq!(
+            commit_args("msg", None, &paths, true),
+            vec!["commit", "--amend", "-m", "msg", "--", "a.ts"]
+        );
+    }
+
+    #[test]
+    fn commit_args_amend_with_no_paths_amends_the_message_alone() {
+        assert_eq!(
+            commit_args("msg", None, &[], true),
+            vec!["commit", "--amend", "-m", "msg"]
+        );
+    }
+
+    #[test]
+    fn commit_args_empty_body_is_not_passed_as_a_second_dash_m() {
+        let paths = vec!["a.ts".to_string()];
+        assert_eq!(
+            commit_args("msg", Some(""), &paths, false),
+            vec!["commit", "-m", "msg", "--", "a.ts"]
         );
     }
 }
