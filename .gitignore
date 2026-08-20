@@ -34,3 +34,4 @@ docs/.vitepress/cache/
 
 # local cargo test run logs — developer paths, never committed (multi-provider-seam review round 2)
 .cargo-test.log
+.claude/preflight-report.txt

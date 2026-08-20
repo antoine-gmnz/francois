@@ -285,3 +285,8 @@ filtering relative PATH entries is right for extension spawns, it is right every
 
 - [ ] LOW · src/features/permissions/PermissionModeBadge.tsx:183 · quality · append `— click to change` to the badge `title` template so the tooltip matches design brief §8 · deferred:session-permission-mode
 - [ ] LOW · src-tauri/src/session/commands/lifecycle.rs:512 · complexity · derive `parse_permission_mode` from `spawn.rs`'s `valid_permission_mode` so a 5th PermissionMode member is a one-place change · deferred:session-permission-mode
+
+## deferred:app-shell
+
+- [ ] MEDIUM · contract/app-shell.ts · quality · author the file specs/app-shell.md §5 requires (`AppShellState`, `PaneId`, `MainTab`, `KEY_BINDINGS`, `PANE_FOCUS_LABELS`, `STATUS_BAR_HINTS`) or retire that §9 acceptance line — the frontend imports `MainTab` from `src/lib/store` instead · deferred:app-shell
+- [ ] LOW · src/features/permissions/PermissionModeBadge.tsx:183 · obsolete · the `deferred:session-permission-mode` tooltip item above is dead — the file was deleted by design 11c's run chip; strike it · deferred:app-shell
