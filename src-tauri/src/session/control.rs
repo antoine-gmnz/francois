@@ -21,6 +21,16 @@ pub(crate) struct QuestionOption {
     pub(crate) description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) preview: Option<String>,
+    /// design 13c: the recommended pick, lifted out of the label's own
+    /// `(Recommended)` suffix by `parse_questions`. Skipped when false so the
+    /// persisted block JSON is unchanged for every card that has no
+    /// recommendation (contract: `recommended?: boolean`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) recommended: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Mirrors SessionQuestion in contract/common.ts. multiSelect defaults to false
@@ -42,6 +52,19 @@ pub(crate) struct SessionQuestion {
 /// call now parks on an approval card instead.)
 pub(crate) const PERMISSION_DENY_MSG: &str = "Francois: the user denied this tool call.";
 
+/// design 13c: the AskUserQuestion convention for "I recommend this one" is a
+/// `(Recommended)` suffix appended to the option's own label. True iff the label
+/// ends in that marker, case- and spacing-insensitive. The label is NOT rewritten
+/// — it stays the canonical answer value the CLI matches against (FR-12), so
+/// only the frontend's rendering drops the marker.
+pub(crate) fn is_recommended_label(label: &str) -> bool {
+    let t = label.trim_end();
+    let Some(open) = t.rfind('(') else {
+        return false;
+    };
+    t.ends_with(')') && t[open + 1..t.len() - 1].trim().eq_ignore_ascii_case("recommended")
+}
+
 /// FR-7: parse the AskUserQuestion input leniently. None ⇔ no non-empty
 /// `questions` array (or unparseable entries) → auto-deny, no card.
 pub(crate) fn parse_questions(input: &Value) -> Option<Vec<SessionQuestion>> {
@@ -49,9 +72,18 @@ pub(crate) fn parse_questions(input: &Value) -> Option<Vec<SessionQuestion>> {
     if arr.is_empty() {
         return None;
     }
-    arr.iter()
-        .map(|q| serde_json::from_value(q.clone()).ok())
-        .collect()
+    let mut questions: Vec<SessionQuestion> = arr
+        .iter()
+        .map(|q| serde_json::from_value::<SessionQuestion>(q.clone()).ok())
+        .collect::<Option<Vec<_>>>()?;
+    // A wire-level `recommended: true` is honoured as-is; otherwise it is
+    // derived from the label. Never cleared — the flag only ever goes on.
+    for q in &mut questions {
+        for o in &mut q.options {
+            o.recommended = o.recommended || is_recommended_label(&o.label);
+        }
+    }
+    Some(questions)
 }
 
 /// §5.5 allow response: `updatedInput` = verbatim original input + the answers map.
@@ -207,6 +239,66 @@ mod tests {
         };
         assert!(!questions[0].multi_select);
         assert_eq!(questions[0].options[0].preview.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn recommended_label_matches_only_a_trailing_marker() {
+        // design 13c: the marker is a trailing `(Recommended)`, case- and
+        // spacing-insensitive. Anything else in the parentheses, or the word
+        // anywhere but at the end, is just part of the label.
+        assert!(is_recommended_label("Keep auto-submit (Recommended)"));
+        assert!(is_recommended_label("Keep auto-submit (recommended)   "));
+        assert!(is_recommended_label("Keep auto-submit ( RECOMMENDED )"));
+        assert!(is_recommended_label("(Recommended)"));
+        assert!(!is_recommended_label("Recommended"));
+        assert!(!is_recommended_label("(Recommended) first"));
+        assert!(!is_recommended_label("Use the recommended defaults"));
+        assert!(!is_recommended_label("Rebuild (fast)"));
+        assert!(!is_recommended_label(""));
+    }
+
+    #[test]
+    fn parse_questions_lifts_the_recommendation_out_of_the_label() {
+        // design 13c: the flag goes on, the label stays verbatim — it is the
+        // answer value the CLI matches against (FR-12).
+        let v = json!({ "questions": [{ "question": "Q", "header": "H", "options": [
+            { "label": "Wire it fully (Recommended)", "description": "d" },
+            { "label": "Frontend only", "description": "d" }] }] });
+        let qs = parse_questions(&v).expect("parsed");
+        assert_eq!(qs[0].options[0].label, "Wire it fully (Recommended)");
+        assert!(qs[0].options[0].recommended);
+        assert!(!qs[0].options[1].recommended);
+    }
+
+    #[test]
+    fn parse_questions_honours_a_wire_level_recommended_flag() {
+        // Never cleared: a CLI that starts sending the flag outright keeps it,
+        // marker or no marker.
+        let v = json!({ "questions": [{ "question": "Q", "header": "H", "options": [
+            { "label": "A", "description": "d", "recommended": true }] }] });
+        let qs = parse_questions(&v).expect("parsed");
+        assert!(qs[0].options[0].recommended);
+    }
+
+    #[test]
+    fn unrecommended_options_serialize_without_the_flag() {
+        // `recommended?: boolean` — false is absent, so every persisted block
+        // written before design 13c round-trips byte-identical.
+        let o = QuestionOption {
+            label: "A".into(),
+            description: "d".into(),
+            preview: None,
+            recommended: false,
+        };
+        assert_eq!(serde_json::to_string(&o).unwrap(), r#"{"label":"A","description":"d"}"#);
+        let on = QuestionOption {
+            recommended: true,
+            ..o
+        };
+        assert_eq!(
+            serde_json::to_string(&on).unwrap(),
+            r#"{"label":"A","description":"d","recommended":true}"#
+        );
     }
 
     #[test]

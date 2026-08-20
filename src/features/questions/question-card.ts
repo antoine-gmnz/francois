@@ -3,7 +3,7 @@
 // multi-select join, free-text pass-through and the FR-21 failure path are
 // unit-testable without the DOM.
 
-import type { Result, SessionQuestion, SessionStatus } from '../../../contract/common';
+import type { QuestionOption, Result, SessionQuestion, SessionStatus } from '../../../contract/common';
 import type { ConversationBlock } from '../../../contract/conversation-view';
 
 /** Card-local answer state for one question section (parallel to `questions`). */
@@ -57,6 +57,85 @@ export function commitFreeText(
     if (i !== sectionIdx) return s;
     return q.multiSelect ? { ...s, freeText: text } : { selected: [], freeText: text };
   });
+}
+
+// ---------- design 13c: recommendation ----------
+
+/**
+ * The AskUserQuestion convention for "I recommend this one" — a trailing
+ * `(Recommended)` on the option label. The core lifts it into
+ * `QuestionOption.recommended` (control.rs), but the same test runs here too:
+ * question blocks persisted before that flag existed replay from disk with only
+ * the marker, and they must still read as recommended.
+ */
+export function isRecommendedLabel(label: string): boolean {
+  return /\(\s*recommended\s*\)\s*$/i.test(label);
+}
+
+export function isRecommended(o: QuestionOption): boolean {
+  return o.recommended === true || isRecommendedLabel(o.label);
+}
+
+/**
+ * 13c strips the marker from the rendered label — the badge-free variant states
+ * the recommendation with the row's own treatment instead. The raw `label` stays
+ * the answer value everywhere else (FR-12), so this is display-only. A label that
+ * is nothing BUT the marker keeps it, rather than rendering as an empty row.
+ */
+export function displayLabel(label: string): string {
+  const stripped = label.replace(/\s*\(\s*recommended\s*\)\s*$/i, '').trim();
+  return stripped === '' ? label : stripped;
+}
+
+/** The recommended option's raw label for one section; null when none is marked. */
+export function recommendedLabel(q: SessionQuestion): string | null {
+  return q.options.find(isRecommended)?.label ?? null;
+}
+
+/** How many sections carry a recommendation — the N in "Accept all N recommended". */
+export function recommendedCount(questions: SessionQuestion[]): number {
+  return questions.filter((q) => recommendedLabel(q) !== null).length;
+}
+
+/**
+ * 13c header action: take my picks. Sections with a recommendation get it as
+ * their sole selection (replacing whatever was picked, multi-select included —
+ * "accept all recommended" means exactly the recommended set); sections without
+ * one are left untouched, so a partial recommendation still leaves the card
+ * honestly incomplete rather than silently answering for the user.
+ */
+export function acceptRecommended(
+  questions: SessionQuestion[],
+  sel: SectionSelection[],
+): SectionSelection[] {
+  return sel.map((s, i) => {
+    const q = questions[i];
+    if (!q) return s;
+    const label = recommendedLabel(q);
+    return label === null ? s : { selected: [label], freeText: '' };
+  });
+}
+
+// ---------- design 13c: progress ----------
+
+/** How many sections are answered — the "N answered" in the block header. */
+export function answeredCount(sel: SectionSelection[]): number {
+  return sel.filter(sectionComplete).length;
+}
+
+/**
+ * The section the block is waiting on: the first incomplete one. -1 once every
+ * section is answered (and for a resolved card, whose caller passes no picks).
+ * 13c accents that section's ordinal and greys the rest, so a multi-question
+ * block says where you are without a progress widget.
+ */
+export function currentSection(sel: SectionSelection[]): number {
+  return sel.findIndex((s) => !sectionComplete(s));
+}
+
+/** 1-based section ordinal, zero-padded like the mock: `01`, `02`, … `10`. */
+export function sectionOrdinal(i: number): string {
+  return String(i + 1).padStart(2, '0');
 }
 
 export function sectionComplete(s: SectionSelection): boolean {

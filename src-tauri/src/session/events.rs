@@ -246,6 +246,7 @@ mod tests {
                 label: "A".into(),
                 description: "d".into(),
                 preview: None,
+                recommended: false,
             }],
             multi_select: true,
         }];

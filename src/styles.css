@@ -604,141 +604,12 @@ a {
 .xterm .xterm-viewport::-webkit-scrollbar-track {
   background: transparent;
 }
-/* session-questions §8 — question card. Motion: none — no @keyframes, no
-   animation, no transition anywhere in these rules (state changes are instant
-   swaps). Tokens pinned by specs/session-questions.md §8. */
-/* design 9a: a filled block, not a framed one — the fill IS the separation. The
-   pending rail survives the flattening: a 2px state bar is a signal, not a
-   frame (9a keeps exactly this on the parked roster row). */
-.qcard {
-  background: var(--bg-deep);
-  border-radius: 4px;
-  padding: 10px 12px;
-}
-.qcard-pending {
-  border-left: 2px solid var(--accent);
-}
-/* card-cancelled/card-head/card-label are the shared base for the question-card
-   family. (The permission card used to share them; it now owns its whole class
-   set in src/features/permissions/permissions.css — its header carries a glyph,
-   an amber label and a right-aligned age, so it no longer reads the same
-   properties.) */
-.card-cancelled,
-.qcard-cancelled {
-  opacity: 0.55;
-}
-.qcard-inflight {
-  opacity: 0.7;
-}
-.card-head,
-.qcard-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-6);
-}
-.card-label,
-.qcard-label {
-  color: var(--text-faint);
-  font-size: var(--font-size-9-5);
-  letter-spacing: 0.08em;
-}
-.qcard-chip {
-  color: var(--accent);
-  background: var(--accent-soft-bg);
-  border-radius: 3px;
-  padding: 0 6px;
-  font-size: 9.5px;
-}
-.qcard-cancelled-note {
-  color: var(--text-faint);
-  font-size: 9.5px;
-}
-.qcard-section + .qcard-section {
-  margin-top: 12px;
-}
-.qcard-q {
-  color: var(--text);
-  margin: 8px 0 6px;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-.qopt {
-  display: flex;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 3px;
-  align-items: baseline;
-}
-.qopt-interactive {
-  cursor: pointer;
-}
-.qopt-interactive:hover {
-  background: var(--bg-elevated);
-}
-.qopt-glyph {
-  width: 14px;
-  flex-shrink: 0;
-  text-align: center;
-  font-size: 11px;
-  color: var(--text-faint);
-}
-.qopt-glyph-on {
-  color: var(--accent);
-}
-.qopt-label {
-  color: var(--text-bright);
-  font-size: 12px;
-  flex-shrink: 0;
-}
-.qopt-label-on {
-  color: var(--accent);
-}
-.qopt-desc {
-  color: var(--text-dim);
-  font-size: 11px;
-  min-width: 0;
-}
-.qopt-unchosen {
-  opacity: 0.45;
-}
-.qother {
-  color: var(--text-faint);
-  font-style: italic;
-  font-size: 12px;
-}
-.qother-input {
-  background: var(--bg-raised);
-  border: 0;
-  color: var(--text-bright);
-  padding: 2px 6px;
-  width: 100%;
-  font-family: inherit;
-  font-size: 12px;
-  outline: none;
-}
-.qprev {
-  background: var(--bg-canvas);
-  padding: 8px;
-  white-space: pre;
-  overflow-x: auto;
-  font-size: 10.5px;
-  color: var(--text-2);
-  margin-top: 6px;
-}
-.qcard-submit {
-  margin-top: 10px;
-  text-align: right;
-}
-.qsubmit {
-  color: var(--accent);
-  font-size: 11px;
-  cursor: pointer;
-}
-.qsubmit-disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+/* session-questions §8 — the question block's classes moved to
+   src/features/questions/questions.css with the design 13c redraw (per-feature
+   CSS next to its components). The `card-head`/`card-label`/`card-cancelled`
+   aliases that used to be the shared base for the question/permission card
+   family went with them — nothing reads them any more; the command card owns
+   `cmdcard-header-*` and the approval card owns `pcard__*`. */
 /* permission-guardrails §8 — the approval card's own classes moved to
    src/features/permissions/permissions.css with the §8 redesign (per-feature
    CSS next to its components). The rules-editor rows below still live here
@@ -1110,8 +981,7 @@ a {
   min-height: 0;
 }
 /* Identical to .hint-bar below (every modal's footer IS a hint bar) — grouped
-   rather than duplicated, same spirit as the qcard-/pcard-* consolidation
-   above. */
+   rather than duplicated. */
 .modal-footer,
 .hint-bar {
   display: flex;

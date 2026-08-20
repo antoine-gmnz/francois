@@ -7,16 +7,25 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Result, SessionQuestion } from '../../../contract/common';
 import type { ConversationBlock } from '../../../contract/conversation-view';
 import {
+  acceptRecommended,
   allComplete,
+  answeredCount,
   answeredSelection,
   buildAnswers,
   commitFreeText,
   composerPlaceholder,
+  currentSection,
+  displayLabel,
   hasMultiSelect,
   hasPendingQuestionBlock,
   initSelections,
+  isRecommended,
+  isRecommendedLabel,
   pickOption,
+  recommendedCount,
+  recommendedLabel,
   sectionComplete,
+  sectionOrdinal,
   shouldAutoSubmit,
   submitAnswers,
 } from './question-card';
@@ -300,5 +309,127 @@ describe('composer placeholder (FR-20)', () => {
     expect(composerPlaceholder('done', undefined, true)).toBe('session ended — press n for a new one');
     expect(composerPlaceholder('error', 'spawn failed', true)).toBe('spawn failed');
     expect(composerPlaceholder('error', undefined, false)).toBe('session error');
+  });
+});
+
+// ---------- design 13c ----------
+
+const recSingle: SessionQuestion = {
+  question: 'How far should I go?',
+  header: 'Effort',
+  multiSelect: false,
+  options: [
+    { label: 'Wire it fully (Recommended)', description: 'touches the core' },
+    { label: 'Frontend only', description: 'no Rust changes' },
+  ],
+};
+
+const recMulti: SessionQuestion = {
+  question: 'Which features?',
+  header: 'Features',
+  multiSelect: true,
+  options: [
+    { label: 'A', description: 'a', recommended: true },
+    { label: 'B', description: 'b' },
+  ],
+};
+
+describe('recommendation (design 13c)', () => {
+  it('isRecommendedLabel matches only a trailing marker', () => {
+    expect(isRecommendedLabel('Wire it fully (Recommended)')).toBe(true);
+    expect(isRecommendedLabel('Wire it fully (recommended)   ')).toBe(true);
+    expect(isRecommendedLabel('Wire it fully ( RECOMMENDED )')).toBe(true);
+    expect(isRecommendedLabel('Recommended')).toBe(false);
+    expect(isRecommendedLabel('(Recommended) first')).toBe(false);
+    expect(isRecommendedLabel('Use the recommended defaults')).toBe(false);
+    expect(isRecommendedLabel('Rebuild (fast)')).toBe(false);
+  });
+
+  it('isRecommended reads the flag, and falls back to the label for blocks persisted before it', () => {
+    expect(isRecommended({ label: 'A', description: '', recommended: true })).toBe(true);
+    expect(isRecommended({ label: 'A (Recommended)', description: '' })).toBe(true);
+    expect(isRecommended({ label: 'A', description: '' })).toBe(false);
+    // an explicit false never resurrects the marker check... except that the
+    // marker itself is still evidence, so it stays recommended
+    expect(isRecommended({ label: 'A (Recommended)', description: '', recommended: false })).toBe(true);
+  });
+
+  it('displayLabel drops the marker but never empties a label', () => {
+    expect(displayLabel('Wire it fully (Recommended)')).toBe('Wire it fully');
+    expect(displayLabel('Wire it fully')).toBe('Wire it fully');
+    expect(displayLabel('(Recommended)')).toBe('(Recommended)');
+  });
+
+  it('recommendedLabel returns the RAW label — it is the answer value (FR-12)', () => {
+    expect(recommendedLabel(recSingle)).toBe('Wire it fully (Recommended)');
+    expect(recommendedLabel(single)).toBeNull();
+  });
+
+  it('recommendedCount counts sections that carry one, not options', () => {
+    expect(recommendedCount([recSingle, recMulti, single])).toBe(2);
+    expect(recommendedCount([single, multi])).toBe(0);
+  });
+});
+
+describe('acceptRecommended (design 13c header action)', () => {
+  it('takes the recommended pick in every section that has one', () => {
+    const qs = [recSingle, recMulti];
+    expect(acceptRecommended(qs, initSelections(qs))).toEqual([
+      { selected: ['Wire it fully (Recommended)'], freeText: '' },
+      { selected: ['A'], freeText: '' },
+    ]);
+  });
+
+  it('leaves a section with no recommendation untouched, so the card stays honestly incomplete', () => {
+    const qs = [recSingle, single];
+    const next = acceptRecommended(qs, initSelections(qs));
+    expect(next[1]).toEqual({ selected: [], freeText: '' });
+    expect(allComplete(next)).toBe(false);
+  });
+
+  it('replaces an existing pick and any committed free text', () => {
+    const qs = [recSingle];
+    const picked = commitFreeText(qs, pickOption(qs, initSelections(qs), 0, 'Frontend only'), 0, 'my own idea');
+    expect(acceptRecommended(qs, picked)).toEqual([
+      { selected: ['Wire it fully (Recommended)'], freeText: '' },
+    ]);
+  });
+
+  it('feeds buildAnswers the verbatim label, marker and all (FR-12)', () => {
+    const qs = [recSingle];
+    expect(buildAnswers(qs, acceptRecommended(qs, initSelections(qs)))).toEqual({
+      'How far should I go?': 'Wire it fully (Recommended)',
+    });
+  });
+
+  it('completes a pure single-select card, so the accept click submits it (FR-18)', () => {
+    const qs = [recSingle];
+    expect(shouldAutoSubmit(qs, acceptRecommended(qs, initSelections(qs)))).toBe(true);
+    // a multi-select section defers to `Send` either way (§8.6)
+    expect(shouldAutoSubmit([recMulti], acceptRecommended([recMulti], initSelections([recMulti])))).toBe(false);
+  });
+});
+
+describe('block progress (design 13c)', () => {
+  it('answeredCount counts complete sections', () => {
+    const qs = [single, multi];
+    const sel = initSelections(qs);
+    expect(answeredCount(sel)).toBe(0);
+    expect(answeredCount(pickOption(qs, sel, 0, 'JWT'))).toBe(1);
+    expect(answeredCount(pickOption(qs, pickOption(qs, sel, 0, 'JWT'), 1, 'A'))).toBe(2);
+  });
+
+  it('currentSection is the first incomplete one, -1 once the card is complete', () => {
+    const qs = [single, multi];
+    const sel = initSelections(qs);
+    expect(currentSection(sel)).toBe(0);
+    expect(currentSection(pickOption(qs, sel, 0, 'JWT'))).toBe(1);
+    expect(currentSection(pickOption(qs, pickOption(qs, sel, 0, 'JWT'), 1, 'A'))).toBe(-1);
+  });
+
+  it('sectionOrdinal is 1-based and zero-padded', () => {
+    expect(sectionOrdinal(0)).toBe('01');
+    expect(sectionOrdinal(8)).toBe('09');
+    expect(sectionOrdinal(9)).toBe('10');
   });
 });
