@@ -350,6 +350,86 @@ timeout) and stdin EOF ends the process.
 
 ## 8. Design brief
 
+**Superseded 2026-08-20 by design turn 13c** (`Francois Redesign.dc.html`, TURN 13 · QUESTION
+BLOCK, variant `13c` "keep the table, fix the table"). The original brief — kept collapsed at the
+end of this section for the FR references it carries — invented a treatment because the mock had
+none; turn 13 draws one. Where the two disagree, 13c wins.
+
+Turn 13's critique of what shipped: three questions arrived as one undifferentiated slab — no
+numbering, no progress, no submit, and nothing that looked clickable, the only affordance being a
+`▸` whose meaning you had to guess. Descriptions sat at roughly 2.5:1 contrast in a ragged second
+column whose left edge moved per question, backticks reached the screen as literal characters, and
+the header chips repeated each question's own title a line above the question itself, linking to
+nothing. 13c is the smallest-change fix: the two-column shape survives.
+
+Surfaces, not strokes (design 9a): 13c's mock draws 1px borders and an 8px radius, which is how it
+was drawn standalone — in flow the block keeps the flat grammar, so the mock's tonal steps are what
+carry across and its strokes are not. Classes live in `src/features/questions/questions.css`.
+
+### 8.1 Components & states
+
+1. **Block** — `background: --bg-deep; border-radius: --radius-md`. Pending carries a
+   `2px solid --accent` left rail and drops its radius (a 2px state bar is the one stroke 9a keeps;
+   on a rounded corner it curves away at both ends — same call the approval card makes). Cancelled:
+   `opacity: 0.55`. In flight: `opacity: 0.7`.
+2. **Header** (`--bg-panel`, mono) — `QUESTION` in `--accent` + the block's shape as
+   `N · M answered`, then a right-aligned **`✓ Accept all N recommended`** button
+   (`color-mix(--accent 24%, --bg-panel)` / `--accent-bright`). The per-question header chips are
+   **gone**; the ordinals replace them. A cancelled block states `— cancelled` beside the count.
+3. **Question** — separated from the next by a single `1px --bg-chrome` line, never a frame. A mono
+   ordinal (`01`, `02`, …) then the question text (`--font-size-13`, 600, `--text-bright`). The
+   ordinal is `--accent-dim` on the section the block is *waiting on* (the first incomplete one) and
+   `--text-muted` on the rest, so a multi-question block says where you are with no progress widget
+   and still carries exactly one accent. Options hang under the text, past the ordinal column.
+4. **Option row** — two columns with a **fixed `--qopt-rail: 208px` label rail**, which is the whole
+   point: every description in the block shares one left edge. Glyph + label at
+   `--font-size-12-5`/`--text-2`; description at the same size, `--text-dim` (up out of the contrast
+   hole). Glyphs read as controls: `●`/`○` single-select, `☑`/`☐` multi. Hover `--bg-elevated`.
+   - *Chosen*: row fills `--accent-soft-bg`, label 600 `--accent-bright`, glyph `--accent`,
+     description `--text-hint`. One filled row per question.
+   - *Recommended, unpicked*: glyph `--accent-dim`, label `--text-strong`, **no fill** — the
+     suggestion must be findable without reading as an answer already given.
+   - *Answered, unchosen* (FR-19): `opacity: 0.45`.
+5. **Recommendation** — `QuestionOption.recommended`, lifted by the core out of the tool's own
+   `(Recommended)` label suffix (`control.rs`). The label stays **verbatim** — it is the canonical
+   answer value (FR-12) — so only the rendering drops the marker (`displayLabel`). The frontend
+   re-derives the flag from the suffix as well, because blocks persisted before it existed replay
+   from disk carrying only the marker.
+6. **Free-text row** — `Something else…` in `--text-faint`; click expands an inline input
+   (`--bg-raised`). Enter commits (FR-18), Escape collapses. A committed value renders as a chosen
+   row.
+7. **Preview** (FR-17) — recessed on `--bg-canvas`, `white-space: pre; overflow-x: auto`.
+8. **Footer** (`--bg-panel`) — the block ends on a stated rule rather than trailing off:
+   `Send N answers` + a hint. §8.6 still governs the button — a **pure single-select card submits on
+   the click that completes it** (FR-18), so a Send there could never be reached and those cards
+   carry the hint alone (`pick one per question`).
+9. **Composer placeholder** (FR-20): unchanged — `answer the question above — typed messages will
+   queue`.
+
+### 8.2 Interactions & motion
+
+- Click option (single-select) → select; if that completes the card, submit (FR-18).
+- Click option (multi-select) → toggle; submit via `Send`.
+- `✓ Accept all N recommended` → takes the recommended pick in every section that has one, leaving
+  sections without one untouched (a partial recommendation leaves the card honestly incomplete
+  rather than answering for the user). On a pure single-select card that completes it, so the click
+  submits.
+- Question text and option descriptions render markdown's **inline** grammar (code spans, emphasis,
+  links) via `InlineMarkdown` — turn 13's literal-backticks finding.
+- In-flight: block `opacity: 0.7`, clicks ignored; restored on failure (FR-21).
+- **Motion: none** — no `@keyframes`, no `animation`, no `transition` in `questions.css`.
+
+### 8.3 Responsive
+
+The block spans the transcript column. Below (rail + a readable description) the description wraps
+onto its own full-width line rather than crushing to one word per line; labels and descriptions both
+`overflow-wrap: anywhere`, so a long verbatim label (FR-7) never pushes the transcript into
+horizontal scroll. Previews scroll inside their own box, never the transcript.
+
+<details>
+<summary>Original §8 (pre-13c, kept for the FR references it carries)</summary>
+
+
 No question treatment exists in the mock (`Claude Terminal.dc.html`); the card inherits the
 command-card visual language from `specs/interactive-commands.md` §8 and the app tokens
 (`src/styles.css`). JetBrains Mono throughout.
@@ -394,6 +474,9 @@ command-card visual language from `specs/interactive-commands.md` §8 and the ap
 Cards span the transcript column; option descriptions wrap; previews scroll horizontally inside
 their box (`overflow-x:auto`), never the transcript.
 
+</details>
+
+
 ## 9. Acceptance criteria
 
 - [ ] A session turn's spawn includes `--input-format stream-json --permission-prompt-tool stdio`,
@@ -422,6 +505,14 @@ their box (`overflow-x:auto`), never the transcript.
 - [ ] `cancelled` and `answered` cards are inert; a failed answer re-enables unless already
       resolved (FR-19, FR-21).
 - [ ] No `@keyframes`/`animation`/`transition` in the card's CSS (§8 motion rule).
+- [ ] design 13c: a `(Recommended)` label suffix sets `QuestionOption.recommended` on the wire while
+      the label itself round-trips verbatim; `false` is omitted from the serialized option, so blocks
+      persisted before the flag are byte-identical (`cargo test`).
+- [ ] design 13c: `acceptRecommended` fills only the sections that carry a recommendation, replaces
+      an existing pick and any committed free text, feeds `buildAnswers` the raw marker-bearing label
+      (FR-12), and completes — hence submits — a pure single-select card (vitest).
+- [ ] design 13c: `answeredCount`/`currentSection`/`sectionOrdinal` drive the header counter and the
+      accented ordinal; `displayLabel` drops the marker without ever emptying a label (vitest).
 
 ## Remediation
 

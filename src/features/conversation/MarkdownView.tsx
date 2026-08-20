@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { parseMarkdown, type MdBlock, type MdInline, type TableAlign } from './markdown';
+import { parseInline, parseMarkdown, type MdBlock, type MdInline, type TableAlign } from './markdown';
 import './conversation.css';
 
 // Renders the Markdown AST with the terminal palette. The whole app is set in
@@ -51,6 +51,18 @@ function Inline({ nodes }: { nodes: MdInline[] }) {
       })}
     </>
   );
+}
+
+/**
+ * One line of markdown's INLINE grammar only — code spans, emphasis, links —
+ * with no block structure around it. Exported for the surfaces that render a
+ * single provider-authored string in place: a question's own text and its
+ * option descriptions (design 13c, where backticks were reaching the screen as
+ * literal characters).
+ */
+export function InlineMarkdown({ text }: { text: string }) {
+  const nodes = useMemo(() => parseInline(text), [text]);
+  return <Inline nodes={nodes} />;
 }
 
 const HEADING_SIZE: Record<number, number> = { 1: 15, 2: 14, 3: 13.5, 4: 13, 5: 12.5, 6: 12.5 };

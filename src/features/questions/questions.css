@@ -1,0 +1,336 @@
+/* session-questions §8 — the question block, redrawn to design turn 13c
+   ("keep the table, fix the table").
+
+   13c is the smallest-change variant of turn 13: the two-column option shape
+   survives, but the label rail becomes a FIXED width so every description in
+   the block shares one left edge instead of stepping in and out per option,
+   the description contrast comes up out of the ~2.5:1 hole, the options grow a
+   glyph that actually reads as clickable, each question is numbered, and the
+   header carries the one-click "take my picks".
+
+   Surfaces, not strokes (design 9a): the block is --bg-deep, its header and
+   footer step up to --bg-panel, and the question separators are a single
+   --bg-chrome line. Nothing here is framed.
+
+   Motion: none — no @keyframes, no animation, no transition anywhere in this
+   file (state changes are instant swaps, spec §8). */
+
+.qcard {
+  /* The label rail. One value, read by every option row in the block, which is
+     what makes the descriptions line up down the whole card. */
+  --qopt-rail: 208px;
+
+  background: var(--bg-deep);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* The pending rail — a 2px state bar, the one stroke 9a keeps, because it is a
+   signal rather than a frame. Square while it is there: on a rounded corner the
+   rail curves away at both ends instead of reading as a straight edge (the
+   permission card makes the same call for the same reason). */
+.qcard--pending {
+  border-left: 2px solid var(--accent);
+  border-radius: 0;
+}
+
+.qcard--cancelled {
+  opacity: 0.55;
+}
+
+.qcard--inflight {
+  opacity: 0.7;
+}
+
+/* ── header ─────────────────────────────────────────────────────────────────
+   13c drops the row of per-question header chips. They repeated each question's
+   own title one line above the question itself and linked to nothing; the
+   ordinals below say the same thing in the place you are already reading. What
+   replaces them is the block's shape — how many, how far in — and the accept
+   action. */
+.qcard__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-10);
+  padding: var(--space-10) var(--space-14);
+  background: var(--bg-panel);
+  font-family: var(--font-mono);
+}
+
+.qcard__label {
+  color: var(--accent);
+  font-size: var(--font-size-10-5);
+  letter-spacing: 0.14em;
+}
+
+.qcard__count {
+  color: var(--text-faint);
+  font-size: var(--font-size-10-5);
+}
+
+.qcard__note {
+  color: var(--text-faint);
+  font-size: var(--font-size-10-5);
+}
+
+.qcard__gap {
+  flex: 1;
+  min-width: var(--space-4);
+}
+
+/* "Accept all N recommended" — the common case is that you want the picks, and
+   before 13c taking them cost one click per question. Accent-tinted rather than
+   solid accent: it is a shortcut through the block, not the block's own
+   subject. */
+.qcard__accept {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 var(--space-10);
+  border: 0;
+  border-radius: var(--radius-base);
+  background: color-mix(in srgb, var(--accent) 24%, var(--bg-panel));
+  color: var(--accent-bright);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-11-5);
+  cursor: pointer;
+}
+
+.qcard__accept:hover {
+  background: color-mix(in srgb, var(--accent) 34%, var(--bg-panel));
+}
+
+.qcard__accept:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── one question ───────────────────────────────────────────────────────── */
+
+.qcard__body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The separator is a line between two questions, not an edge around either —
+   the same role markdown's own `---` plays. */
+.qsec + .qsec {
+  border-top: 1px solid var(--bg-chrome);
+}
+
+.qsec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+  padding: var(--space-13) var(--space-14) var(--space-12);
+}
+
+.qsec__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+}
+
+/* The ordinal. Accent on the section the block is waiting on and neutral on the
+   rest, so a three-question block says where you are with no progress widget —
+   and still has exactly one accent. */
+.qsec__num {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+}
+
+.qsec--current .qsec__num {
+  color: var(--accent-dim);
+}
+
+.qsec__q {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-13);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-bright);
+  overflow-wrap: anywhere;
+}
+
+/* The options hang under the question text, past the ordinal column. */
+.qsec__opts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-left: var(--space-22);
+}
+
+/* ── one option ─────────────────────────────────────────────────────────── */
+
+.qopt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-12);
+  padding: var(--space-7) var(--space-9);
+  border-radius: var(--radius-md);
+}
+
+.qopt--live {
+  cursor: pointer;
+}
+
+.qopt--live:hover {
+  background: var(--bg-elevated);
+}
+
+/* The label rail: a fixed width, never shrinking, because the alignment IS the
+   fix. Under (rail + a readable description) the description wraps onto its own
+   full-width line rather than crushing to one word per line. */
+.qopt__label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-7);
+  flex: 0 0 auto;
+  width: var(--qopt-rail);
+  max-width: 100%;
+  font-size: var(--font-size-12-5);
+  line-height: 1.55;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* A row with no second column — a committed free-text answer, or the input it
+   is typed into. The rail exists to align short labels against descriptions;
+   there is nothing here to align against, and prose crushed into 208px reads
+   worse than prose across the row. */
+.qopt--wide .qopt__label {
+  flex: 1 1 100%;
+  width: auto;
+}
+
+.qopt__glyph {
+  flex-shrink: 0;
+  width: 9px;
+  font-size: var(--font-size-9);
+  color: var(--text-disabled);
+}
+
+.qopt__desc {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-size: var(--font-size-12-5);
+  line-height: 1.55;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+/* Chosen. The fill is the answer — one filled row per question. */
+.qopt--on {
+  background: var(--accent-soft-bg);
+}
+
+.qopt--on.qopt--live:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--accent-soft-bg));
+}
+
+.qopt--on .qopt__label {
+  font-weight: 600;
+  color: var(--accent-bright);
+}
+
+.qopt--on .qopt__glyph {
+  color: var(--accent);
+}
+
+.qopt--on .qopt__desc {
+  color: var(--text-hint);
+}
+
+/* Recommended but not picked. An olive ring, no fill: the suggestion has to be
+   findable without reading as an answer already given — which is exactly what
+   the "Accept all N recommended" button in the header turns it into. */
+.qopt--rec .qopt__glyph {
+  color: var(--accent-dim);
+}
+
+.qopt--rec .qopt__label {
+  color: var(--text-strong);
+}
+
+/* FR-19: on a resolved card the rows that were not chosen step back. */
+.qopt--dim {
+  opacity: 0.45;
+}
+
+/* The free-text row. Faint until it carries an answer, at which point it is
+   rendered by the .qopt--on branch like any other chosen row. */
+.qopt--other .qopt__label {
+  color: var(--text-faint);
+}
+
+.qopt__input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-6);
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: var(--font-size-12-5);
+  outline: none;
+}
+
+/* FR-17: the hovered-or-chosen option's preview, recessed into the block on the
+   deepest surface in the app. Scrolls inside its own box — never the
+   transcript. */
+.qsec__prev {
+  margin-left: var(--space-22);
+  padding: var(--space-8);
+  background: var(--bg-canvas);
+  border-radius: var(--radius-sm);
+  white-space: pre;
+  overflow-x: auto;
+  font-size: var(--font-size-10-5);
+  color: var(--text-2);
+}
+
+/* ── footer ─────────────────────────────────────────────────────────────────
+   The block ends on a stated rule rather than trailing off. §8.6 still governs
+   the button: a pure single-select card submits on the click that completes it
+   (FR-18), so a Send there would be an affordance that can never be reached —
+   those cards get the hint alone. */
+.qcard__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-14);
+  background: var(--bg-panel);
+}
+
+.qcard__send {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 var(--space-12);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 24%, var(--bg-panel));
+  color: var(--accent-bright);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12);
+  cursor: pointer;
+}
+
+.qcard__send:hover {
+  background: color-mix(in srgb, var(--accent) 34%, var(--bg-panel));
+}
+
+.qcard__send:disabled {
+  background: var(--bg-hover);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.qcard__hint {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}

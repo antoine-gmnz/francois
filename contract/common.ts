@@ -525,6 +525,14 @@ export interface QuestionOption {
   label: string; // display text, also the canonical answer value
   description: string; // what choosing it means
   preview?: string; // optional monospace preview content
+  /**
+   * design 13c: true when the CLI marked this the recommended pick. The tool's
+   * own convention carries it as a `(Recommended)` suffix ON the label, which
+   * the core lifts into this flag (control.rs). The label itself stays
+   * verbatim — it is the canonical answer value (FR-12) — so rendering, and
+   * only rendering, drops the marker. Absent ⇔ not recommended.
+   */
+  recommended?: boolean;
 }
 
 export interface SessionQuestion {

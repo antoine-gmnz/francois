@@ -4,9 +4,10 @@
 
    Two rules from the brief govern what is NOT here: the transcript column is the
    SESSION tab's block rendering unchanged (conversation.css), and the approval /
-   question cards are the existing components unmodified (styles.css's qcard-/
-   pcard-*). This file styles the rail, the agent row, the one genuinely new
-   element — the span bar — and the column's own chrome. Motion: none new. */
+   question cards are the existing components unmodified (questions.css's
+   qcard-/qopt-* and permissions.css's pcard-*). This file styles the rail, the
+   agent row, the one genuinely new element — the span bar — and the column's
+   own chrome. Motion: none new. */
 
 .wfd-view {
   flex: 1;
