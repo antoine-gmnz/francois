@@ -9,6 +9,10 @@
 // record.
 
 import type { SessionMeta, SessionStatus } from '../../../contract/common';
+// roster-group-tier: type-only, so this stays a compile-time-only cycle with
+// group-tier.ts (which imports RosterStateNode from here) — erased by tsc,
+// no runtime circular import.
+import type { RosterGroupTier } from './group-tier';
 
 /**
  * The four buckets. `attention` is everything that is stalled ON THE USER —
@@ -68,6 +72,10 @@ export interface RosterStateNode {
   state: SessionState;
   label: string;
   sessions: SessionMeta[];
+  /** roster-group-tier: FR-7-aware group tiers for this band, or `null` when
+   *  suppressed (a single tier) or absent (no tier attached at all — paint
+   *  `sessions` flat, exactly as before this feature existed). */
+  tiers?: RosterGroupTier[] | null;
 }
 
 export function stateGroupKey(state: SessionState): string {
@@ -104,10 +112,20 @@ export function groupSessionsByState(sessions: readonly SessionMeta[]): RosterSt
 export function flattenStateGroups(
   nodes: readonly RosterStateNode[],
   collapsed: ReadonlySet<string> = new Set(),
+  collapsedTiers?: ReadonlySet<string>,
 ): SessionMeta[] {
   const out: SessionMeta[] = [];
   for (const node of nodes) {
     if (collapsed.has(node.key)) continue;
+    if (node.tiers) {
+      // roster-group-tier FR-21: bands -> tiers (FR-3 order) -> sessions
+      // (FR-5 order), skipping a collapsed tier's sessions entirely.
+      for (const tier of node.tiers) {
+        if (collapsedTiers?.has(tier.key)) continue;
+        out.push(...tier.sessions);
+      }
+      continue;
+    }
     out.push(...node.sessions);
   }
   return out;

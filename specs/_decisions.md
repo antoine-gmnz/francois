@@ -80,6 +80,9 @@
 - 2026-08-19 · ui · A regime or viewport may CONSTRAIN a user-set value at render time without owning it — stored = intent, rendered = intent ∩ fit, and the constraint never writes back — because otherwise every fit rule reads as a second owner and the one-owner rule blocks legitimate clamping · resizable-sidebar
 - 2026-08-19 · ui · Visibility and size are separate state: a gesture that hides a surface never writes its size, so reopening restores the user's value and not the default — because collapsing is what makes a resize gesture destructive · resizable-sidebar
 - 2026-08-19 · design · Once a dimension becomes user-settable the design mirror owns its DEFAULT and no longer its runtime value; review and align-ds must not read that divergence as drift — because the mock stays the source of truth for everything it still governs · resizable-sidebar
+- 2026-08-20 · ui · A pane [1] grouping tier nests INSIDE a state band, never above it — because state-first order is what keeps a blocked session off row four · roster-group-tier
+- 2026-08-20 · ui · A derived grouping heading is suppressed when the band resolves to ONE group — because a heading that partitions nothing costs a row and teaches nothing · roster-group-tier
+- 2026-08-20 · data · Group membership is hand-assigned only, never inferred from a name or path prefix — because a prefix misses members and silently reclassifies on rename · roster-group-tier
 
 ## Superseded
 
