@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { demoInvoke, demoListen } from '../demo/demo';
-import type { AccountId, Result, SessionMeta, ModelInfo, PermissionMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, BlockId, Result, SessionMeta, ModelInfo, PermissionMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
   WorkflowDetail,
@@ -70,7 +70,7 @@ import type {
   CommitAttachmentsResult,
   PickAttachmentsResponse,
 } from '../../contract/session-attachments';
-import type { ConversationBlock } from '../../contract/conversation-view';
+import type { GetTranscriptRequest, TranscriptPage } from '../../contract/conversation-view';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpApprovalState, McpDecision, McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
 import type {
@@ -223,8 +223,11 @@ export const sessionEditorList = () => ipc<Result<EditorListData>>('session_edit
 export const sessionOpenInEditor = (req: OpenInEditorRequest) =>
   ipc<Result<null>>('session_open_in_editor', req);
 
-export const getTranscript = (sessionId: SessionId) =>
-  ipc<Result<ConversationBlock[]>>('conversation_get_transcript', { sessionId });
+// transcript-scale FR-5/FR-9: `before`/`limit` page backwards; omitted ⇒ the
+// live tail the core holds in memory. `limit` is clamped by the core to
+// 1..=500 (default 200) — never an INVALID_INPUT.
+export const getTranscript = (sessionId: SessionId, page?: { before?: BlockId; limit?: number }) =>
+  ipc<Result<TranscriptPage>>('conversation_get_transcript', { sessionId, ...page } satisfies GetTranscriptRequest);
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
   ipc<Result<null>>('session_answer_question', { sessionId, blockId, answers });
 // permission-guardrails (§5.1). decide answers a parked approval card; the other

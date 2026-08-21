@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppError, McpServerInfo, SessionEvent } from '../../../contract/common';
 import type { McpApprovalState, McpDecision, McpRegistryEntry, McpServerDetail } from '../../../contract/mcp-panel';
-import { mcpApprovals, mcpDecide, mcpDetach, mcpDetail, mcpList, mcpReconnect, onSessionEvent } from '../../lib/api';
+import { mcpApprovals, mcpDecide, mcpDetach, mcpDetail, mcpList, mcpReconnect } from '../../lib/api';
 import { sessionCapability } from '../../lib/runtimeCapability';
+import { subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
@@ -33,7 +34,9 @@ function useMcpServers(sessionId: string | null) {
     let mounted = true;
     let unlisten: (() => void) | undefined;
 
-    void onSessionEvent((e: SessionEvent) => {
+    // transcript-scale FR-21: through the one router subscription, scoped to
+    // this session.
+    void subscribeSessionEvents(sessionId, (e: SessionEvent) => {
       if (e.type !== 'mcp.update' || e.sessionId !== sessionId) return;
       setServers((prev) => {
         const i = prev.findIndex((server) => server.name === e.server.name);

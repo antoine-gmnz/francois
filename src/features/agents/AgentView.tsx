@@ -7,7 +7,8 @@ import type { AgentInfo, SessionEvent } from '../../../contract/common';
 import type { AgentBlock } from '../../../contract/agent-tab';
 import type { ConversationBlock } from '../../../contract/conversation-view';
 import { formatElapsed } from '../../../contract/conversation-view';
-import { agentsList, agentsTranscript, onAgentEvent, onSessionEvent, sessionInterrupt } from '../../lib/api';
+import { agentsList, agentsTranscript, onAgentEvent, sessionInterrupt } from '../../lib/api';
+import { subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import Block from '../conversation/Block';
@@ -58,7 +59,10 @@ export default function AgentView({ agentId, sessionId, onBack }: AgentViewProps
     setAgent(null);
     let mounted = true;
     let unlisten: (() => void) | undefined;
-    void onSessionEvent((e: SessionEvent) => {
+    // transcript-scale FR-21: through the one router subscription. agent.update
+    // carries no top-level sessionId, so the router treats it as
+    // session-agnostic (FR-19) and this filter keeps doing what it always did.
+    void subscribeSessionEvents(sessionId, (e: SessionEvent) => {
       if (e.type === 'agent.update' && e.agent.id === agentId) setAgent(e.agent);
     }).then((unsub) => (mounted ? (unlisten = unsub) : unsub()));
     void agentsList(sessionId).then((res) => {

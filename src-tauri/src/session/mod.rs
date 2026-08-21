@@ -45,6 +45,11 @@ pub(crate) mod status;
 mod stdio;
 mod stream;
 mod tools;
+/// transcript-scale FR-1/FR-2: the `block_buffer` eviction concern — split out
+/// here per §Code layout once its logic + tests pushed this file past the
+/// ~1000-line ceiling. A CHILD of this module on purpose, same rationale as
+/// `cloud` above: it reads `BufBlock`'s private `streaming` field directly.
+mod transcript_cap;
 mod turn;
 mod usage_probe;
 mod workflow_details;
@@ -79,6 +84,7 @@ pub(crate) use spawn::*;
 pub(crate) use stdio::*;
 pub(crate) use stream::*;
 pub(crate) use tools::*;
+pub(crate) use transcript_cap::*;
 pub(crate) use turn::*;
 pub(crate) use usage_probe::*;
 pub(crate) use workflow_details::*;
@@ -532,6 +538,13 @@ pub(crate) struct Session {
     /// FR-5: blocks evicted past the window — the tab's `… N earlier blocks` row.
     agent_blocks_dropped: HashMap<String, u32>,
     block_buffer: Vec<BufBlock>, // §6: read by conversation-view's getTranscript
+    /// transcript-scale FR-6: true once ANY block has ever been evicted from
+    /// `block_buffer` (live, FR-2) or trimmed off the tail at load (FR-3) —
+    /// monotonic, since the transcript is append-only and nothing evicted is
+    /// ever un-evicted. This IS "a block older than the first held one exists
+    /// in the persisted transcript" (`getTranscript`'s `hasMore` with no
+    /// `before`), computed without re-reading the file.
+    transcript_truncated: bool,
     /// session-attachments §6: the staged/sent refs of this session, persisted
     /// alongside the rest of the record in sessions.json so FR-17's start-up
     /// sweep survives a crash. The attachments DIR is never stored — it is
@@ -640,6 +653,10 @@ impl Session {
             agent_block_seq: HashMap::new(),
             agent_blocks_dropped: HashMap::new(),
             block_buffer,
+            // transcript-scale: always false at fresh construction — both
+            // `Session::new` callers (session_create, cloud adoption) pass an
+            // empty or freshly-hydrated buffer that has never been trimmed.
+            transcript_truncated: false,
             attachments: Vec::new(),
             mcp: HashMap::new(),
             workflows: HashMap::new(),
@@ -690,11 +707,23 @@ impl Session {
         }
     }
 
+    /// transcript-scale FR-1/FR-2: trim `block_buffer` to `TRANSCRIPT_BUFFER_CAP`,
+    /// stopping at the oldest unsettled block — see `trim_transcript`. Called
+    /// after every append AND after every mutation that can settle a block
+    /// (finishing a stream, resolving an ask), since either can unblock an
+    /// eviction that was previously pinned.
+    fn trim_block_buffer(&mut self) {
+        if trim_transcript(&mut self.block_buffer, TRANSCRIPT_BUFFER_CAP) {
+            self.transcript_truncated = true;
+        }
+    }
+
     fn buf_user(&mut self, block_id: &str, text: String) {
         self.block_buffer.push(BufBlock {
             text,
             ..BufBlock::new(block_id, BlockKind::User)
         });
+        self.trim_block_buffer();
     }
 
     fn buf_assistant(&mut self, block_id: &str, text: String) {
@@ -702,6 +731,7 @@ impl Session {
             text,
             ..BufBlock::new(block_id, BlockKind::Assistant)
         });
+        self.trim_block_buffer();
     }
 
     /// conversation-view FR-10 / transcript-perf FR-22: an assistant block
@@ -731,6 +761,7 @@ impl Session {
             streaming: true,
             ..BufBlock::new(block_id, BlockKind::Assistant)
         });
+        self.trim_block_buffer();
     }
 
     /// Close a streaming assistant block: final text, streaming off. Returns the
@@ -738,7 +769,7 @@ impl Session {
     /// Falls back to an append when no streaming block exists — a stop with no
     /// deltas at all, which must still buffer whatever text it carries.
     fn finish_assistant(&mut self, block_id: &str, text: String) -> Option<BufBlock> {
-        match self
+        let out = match self
             .block_buffer
             .iter_mut()
             .rev()
@@ -753,7 +784,12 @@ impl Session {
                 self.buf_assistant(block_id, text);
                 self.block_buffer.last().cloned()
             }
-        }
+        };
+        // transcript-scale FR-2: settling this block may unblock an eviction
+        // that was pinned on it (the None arm already trims via buf_assistant;
+        // trimming again here is a cheap no-op in that case).
+        self.trim_block_buffer();
+        out
     }
 
     /// `model` is the one a subagent dispatch named (None ⇒ inherited, or not a
@@ -783,6 +819,7 @@ impl Session {
             streaming: true,
             ..BufBlock::new(block_id, kind)
         });
+        self.trim_block_buffer();
     }
 
     /// interactive-commands FR-6: append a pending command block (loading card).
@@ -792,25 +829,45 @@ impl Session {
             streaming: true,
             ..BufBlock::new(block_id, BlockKind::Command)
         });
+        self.trim_block_buffer();
     }
 
     /// interactive-commands FR-9/20: finalize the pending command block in place, or
     /// append a finalized one when the flow had no command.started (instant cards).
-    fn buf_command_output(&mut self, block_id: &str, command: &str, card: Value) {
-        if let Some(b) = self
+    /// Returns the finalized block so the caller can persist it — transcript-scale
+    /// FR-2: the clone MUST be taken before `trim_block_buffer` runs below, because
+    /// finalizing is exactly what can settle a block that was itself pinning
+    /// eviction (a settled block over cap is evicted immediately); re-`find`ing by
+    /// id after the trim would return `None` for that block and lose it from the
+    /// persisted transcript entirely.
+    fn buf_command_output(
+        &mut self,
+        block_id: &str,
+        command: &str,
+        card: Value,
+    ) -> Option<BufBlock> {
+        let out = match self
             .block_buffer
             .iter_mut()
             .find(|b| b.block_id == block_id)
         {
-            b.card = Some(card);
-            b.streaming = false;
-        } else {
-            self.block_buffer.push(BufBlock {
-                tool: command.into(),
-                card: Some(card),
-                ..BufBlock::new(block_id, BlockKind::Command)
-            });
-        }
+            Some(b) => {
+                b.card = Some(card);
+                b.streaming = false;
+                Some(b.clone())
+            }
+            None => {
+                let block = BufBlock {
+                    tool: command.into(),
+                    card: Some(card),
+                    ..BufBlock::new(block_id, BlockKind::Command)
+                };
+                self.block_buffer.push(block.clone());
+                Some(block)
+            }
+        };
+        self.trim_block_buffer();
+        out
     }
 
     /// session-questions FR-6: append a pending question block. `card` reuse: for
@@ -821,6 +878,7 @@ impl Session {
             streaming: true,
             ..BufBlock::new(block_id, BlockKind::Question)
         });
+        self.trim_block_buffer();
     }
 
     /// session-questions FR-11/FR-13: flip a question block to its resolved state
@@ -842,7 +900,11 @@ impl Session {
             }
         }
         b.streaming = false;
-        Some(b.clone())
+        let out = b.clone();
+        // transcript-scale FR-2: this ask may have been the block pinning
+        // eviction — resolving it can now let the buffer return to the cap.
+        self.trim_block_buffer();
+        Some(out)
     }
 
     /// permission-guardrails FR-2: append a pending permission block. `card`
@@ -853,6 +915,7 @@ impl Session {
             streaming: true,
             ..BufBlock::new(block_id, BlockKind::Permission)
         });
+        self.trim_block_buffer();
     }
 
     /// permission-guardrails FR-8/FR-10: flip a permission block to its resolved
@@ -875,7 +938,10 @@ impl Session {
             }
         }
         b.streaming = false;
-        Some(b.clone())
+        let out = b.clone();
+        // transcript-scale FR-2: same rationale as buf_question_resolve above.
+        self.trim_block_buffer();
+        Some(out)
     }
 
     /// interactive-commands FR-11: reserve the single in-flight probe slot.
@@ -892,15 +958,24 @@ impl Session {
         Some(child)
     }
 
-    fn buf_tool_done(&mut self, block_id: &str, meta: String) {
-        if let Some(b) = self
+    /// Returns the finalized block so the caller can persist it — same
+    /// transcript-scale FR-2 rationale as `buf_command_output`: the clone is
+    /// taken BEFORE `trim_block_buffer` runs, so a tool/subagent block that was
+    /// itself pinning eviction is never evicted before its caller can persist it.
+    fn buf_tool_done(&mut self, block_id: &str, meta: String) -> Option<BufBlock> {
+        let out = self
             .block_buffer
             .iter_mut()
             .find(|b| b.block_id == block_id)
-        {
-            b.meta = Some(meta);
-            b.streaming = false;
-        }
+            .map(|b| {
+                b.meta = Some(meta);
+                b.streaming = false;
+                b.clone()
+            });
+        // transcript-scale FR-2: settling this tool/subagent block may unblock
+        // an eviction pinned on it.
+        self.trim_block_buffer();
+        out
     }
 
     fn insert_agent(&mut self, a: AgentInfo) {
@@ -1249,5 +1324,90 @@ mod tests {
         assert_eq!(engine.running_count(), 1);
         engine.with_session_mut("s1", |s| s.status = "error".into());
         assert_eq!(engine.running_count(), 0);
+    }
+
+    // ---------- transcript-scale FR-1/FR-2: bounded block_buffer ----------
+    // `trim_transcript` itself (evict-from-head / noop-under-cap / stops-at-
+    // unsettled-head) is unit-tested in transcript_cap.rs, next to the function
+    // it covers. What's left here exercises Session's own buf_* methods, which
+    // live in this file.
+
+    #[test]
+    fn appending_past_the_cap_evicts_from_the_session_buffer() {
+        let mut s = test_session();
+        for i in 0..(TRANSCRIPT_BUFFER_CAP + 10) {
+            s.buf_user(&format!("b{i}"), "hi".into());
+        }
+        assert_eq!(s.block_buffer.len(), TRANSCRIPT_BUFFER_CAP);
+        assert!(s.transcript_truncated);
+        assert_eq!(s.block_buffer[0].block_id, "b10");
+    }
+
+    #[test]
+    fn a_parked_permission_older_than_the_cap_survives_eviction_and_the_buffer_returns_to_the_cap_on_resolve(
+    ) {
+        let mut s = test_session();
+        s.buf_permission("ask-1", serde_json::json!({ "tool": "Bash" }));
+        for i in 0..(TRANSCRIPT_BUFFER_CAP + 20) {
+            s.buf_user(&format!("b{i}"), "hi".into());
+        }
+        // The parked ask pins eviction: the buffer exceeds the cap and the ask
+        // is still first (and still resolvable).
+        assert!(s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP);
+        assert_eq!(s.block_buffer[0].block_id, "ask-1");
+
+        let resolved = s.buf_permission_resolve("ask-1", "allowed", None);
+        assert!(resolved.is_some());
+        // Resolving it lets the buffer catch back up to the cap — the now-settled
+        // ask is itself evictable like any other block once it's no longer parked.
+        assert_eq!(s.block_buffer.len(), TRANSCRIPT_BUFFER_CAP);
+        assert_eq!(s.block_buffer[0].block_id, "b20");
+    }
+
+    // Regression for the transcript-scale CRITICAL fix: `buf_tool_done` and
+    // `buf_command_output` must return the finalized block even though
+    // finalizing it is exactly what can unpin — and immediately evict — it.
+    // Before the fix, callers re-`find`-by-id AFTER the mutator returned and
+    // got `None` for precisely this case, silently dropping the block from the
+    // persisted transcript.
+
+    #[test]
+    fn finishing_the_pinning_tool_block_still_returns_it_for_persistence() {
+        let mut s = test_session();
+        s.buf_tool("tool-1", "Bash".into(), "ls".into(), false, None);
+        for i in 0..(TRANSCRIPT_BUFFER_CAP + 20) {
+            s.buf_user(&format!("b{i}"), "hi".into());
+        }
+        // The still-running tool call pins eviction at the head.
+        assert!(s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP);
+        assert_eq!(s.block_buffer[0].block_id, "tool-1");
+
+        let done = s.buf_tool_done("tool-1", "3 lines".into());
+        assert_eq!(done.as_ref().map(|b| b.block_id.as_str()), Some("tool-1"));
+        assert_eq!(done.unwrap().meta.as_deref(), Some("3 lines"));
+        // Settling it unpins eviction, which catches back up to the cap in the
+        // SAME call — the returned clone was captured before that happened.
+        assert_eq!(s.block_buffer.len(), TRANSCRIPT_BUFFER_CAP);
+        assert_eq!(s.block_buffer[0].block_id, "b20");
+    }
+
+    #[test]
+    fn finishing_the_pinning_command_block_still_returns_it_for_persistence() {
+        let mut s = test_session();
+        s.buf_command_pending("cmd-1", "model");
+        for i in 0..(TRANSCRIPT_BUFFER_CAP + 20) {
+            s.buf_user(&format!("b{i}"), "hi".into());
+        }
+        assert!(s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP);
+        assert_eq!(s.block_buffer[0].block_id, "cmd-1");
+
+        let done = s.buf_command_output(
+            "cmd-1",
+            "model",
+            serde_json::json!({ "kind": "notice", "text": "model \u{2192} Opus" }),
+        );
+        assert_eq!(done.as_ref().map(|b| b.block_id.as_str()), Some("cmd-1"));
+        assert_eq!(s.block_buffer.len(), TRANSCRIPT_BUFFER_CAP);
+        assert_eq!(s.block_buffer[0].block_id, "b20");
     }
 }

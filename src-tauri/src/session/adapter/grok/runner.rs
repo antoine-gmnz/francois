@@ -307,15 +307,13 @@ fn apply(app: &AppHandle, session_id: &str, cwd: &str, effect: Effect) {
             tool,
             meta,
         } => {
+            // transcript-scale CRITICAL fix: use the clone `buf_tool_done`
+            // returns (captured before its internal trim runs) instead of
+            // re-`find`ing by id — a re-find can miss a block that settling
+            // itself just evicted.
             let block = app
                 .state::<Engine>()
-                .with_session_mut(session_id, |s| {
-                    s.buf_tool_done(&block_id, meta.clone());
-                    s.block_buffer
-                        .iter()
-                        .find(|b| b.block_id == block_id)
-                        .cloned()
-                })
+                .with_session_mut(session_id, |s| s.buf_tool_done(&block_id, meta.clone()))
                 .flatten();
             if let Some(b) = &block {
                 append_transcript(app, session_id, b);

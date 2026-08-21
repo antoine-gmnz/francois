@@ -6,8 +6,9 @@
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import type { AppError, SessionEvent, WorkflowRun } from '../../../contract/common';
-import { onSessionEvent, workflowsList } from '../../lib/api';
+import { workflowsList } from '../../lib/api';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
+import { subscribeSessionEvents } from '../../lib/session-events';
 import type { AgentTabRef } from '../agents/agent-tab';
 import { applyRunUpdate, seedRuns, workflowTabRef } from './workflow-run';
 
@@ -49,7 +50,9 @@ export function useWorkflowsFeed(
 
   useHydratedSubscription<SessionEvent, WorkflowRun[]>({
     enabled: sessionId !== null,
-    subscribe: onSessionEvent,
+    // transcript-scale FR-21: through the one router subscription, scoped to
+    // this session — workflow.update carries its own sessionId.
+    subscribe: (cb) => subscribeSessionEvents(sessionId ?? '', cb),
     fetchInitial: () => workflowsList(sessionId ?? ''),
     isRelevant: (e) => e.type === 'workflow.update' && e.run.sessionId === sessionId,
     onHydrated: (data) => {

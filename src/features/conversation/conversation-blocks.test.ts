@@ -3,7 +3,7 @@
 // and the model-card switch error path. Pure logic only (no DOM).
 
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentInfo, AgentStep, CommandCard, McpServerInfo, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion } from '../../../contract/common';
+import type { AgentInfo, AgentStep, CommandCard, McpServerInfo, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion, WorkflowRun } from '../../../contract/common';
 import type { CommandConversationBlock } from '../../../contract/interactive-commands';
 import type { PermissionConversationBlock } from '../../../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
@@ -14,21 +14,28 @@ import {
   cardHeaderLabel,
   commandFromCard,
   compactBlocks,
+  decideEarlierActivation,
   drainDeltas,
+  earlierRowLabel,
+  earlierRowState,
   isClearCommand,
+  isTranscriptRelevantEvent,
   liveCurrentModelId,
   mergeDelta,
   meterFillColor,
   pushDelta,
+  RENDER_WINDOW,
   switchModelFromCard,
   transcriptReducer,
   TRANSCRIPT_TEXT_SELECT_STYLE,
+  windowedBlocks,
+  windowStartIndex,
   type ConversationEventSetters,
   type DeltaChunk,
   type TranscriptState,
 } from './conversation-blocks';
 
-const S0: TranscriptState = { blocks: [] };
+const S0: TranscriptState = { blocks: [], windowSize: RENDER_WINDOW };
 
 const usageCard: CommandCard = {
   kind: 'usage',
@@ -48,7 +55,7 @@ function commandBlock(s: TranscriptState, blockId: string): CommandConversationB
 describe('transcriptReducer — command.started (FR-20)', () => {
   it('inserts a pending command block at the end', () => {
     const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: '/usage' };
-    const s = transcriptReducer({ blocks: [user] }, { t: 'commandStarted', blockId: 'c1', command: 'usage' });
+    const s = transcriptReducer({ blocks: [user], windowSize: RENDER_WINDOW }, { t: 'commandStarted', blockId: 'c1', command: 'usage' });
     expect(s.blocks).toHaveLength(2);
     expect(s.blocks[1]).toEqual({ kind: 'command', blockId: 'c1', isStreaming: true, command: 'usage' });
     expect(commandBlock(s, 'c1').card).toBeUndefined();
@@ -97,7 +104,7 @@ describe('transcriptReducer — command.output (FR-20)', () => {
 
   it('is a no-op when the blockId belongs to a non-command block', () => {
     const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' };
-    const s1: TranscriptState = { blocks: [user] };
+    const s1: TranscriptState = { blocks: [user], windowSize: RENDER_WINDOW };
     const s2 = transcriptReducer(s1, { t: 'commandOutput', blockId: 'u1', card: noticeCard });
     expect(s2).toBe(s1);
   });
@@ -274,7 +281,7 @@ describe('transcriptReducer — question.asked / question.resolved (session-ques
 
   it('questionAsked inserts a pending block at the end (FR-15: isStreaming iff pending)', () => {
     const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'go' };
-    const s = transcriptReducer({ blocks: [user] }, { t: 'questionAsked', blockId: 'q1', questions });
+    const s = transcriptReducer({ blocks: [user], windowSize: RENDER_WINDOW }, { t: 'questionAsked', blockId: 'q1', questions });
     expect(s.blocks).toHaveLength(2);
     expect(s.blocks[1]).toEqual({ kind: 'question', blockId: 'q1', isStreaming: true, questions, state: 'pending' });
     expect(questionBlock(s, 'q1')).not.toHaveProperty('answers');
@@ -344,14 +351,14 @@ describe('transcriptReducer — question.asked / question.resolved (session-ques
 
   it('questionAsked is a no-op when the blockId belongs to a non-question block', () => {
     const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' };
-    const s1: TranscriptState = { blocks: [user] };
+    const s1: TranscriptState = { blocks: [user], windowSize: RENDER_WINDOW };
     const s2 = transcriptReducer(s1, { t: 'questionAsked', blockId: 'u1', questions });
     expect(s2).toBe(s1);
   });
 
   it('questionResolved is a no-op when the blockId belongs to a non-question block', () => {
     const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' };
-    const s1: TranscriptState = { blocks: [user] };
+    const s1: TranscriptState = { blocks: [user], windowSize: RENDER_WINDOW };
     const s2 = transcriptReducer(s1, { t: 'questionResolved', blockId: 'u1', state: 'cancelled' });
     expect(s2).toBe(s1);
   });
@@ -383,7 +390,7 @@ describe('transcriptReducer — permission.asked / permission.resolved (permissi
 
   it('permissionAsked inserts a pending block (FR-25: isStreaming iff pending)', () => {
     const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'go' };
-    const s = transcriptReducer({ blocks: [user] }, { t: 'permissionAsked', blockId: 'p1', ask });
+    const s = transcriptReducer({ blocks: [user], windowSize: RENDER_WINDOW }, { t: 'permissionAsked', blockId: 'p1', ask });
     expect(s.blocks).toHaveLength(2);
     expect(s.blocks[1]).toEqual({ kind: 'permission', blockId: 'p1', isStreaming: true, ask, state: 'pending' });
     expect(permBlock(s, 'p1')).not.toHaveProperty('rule');
@@ -478,7 +485,7 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
 
   describe('seed', () => {
     it('replaces the whole block list (hydration)', () => {
-      const s1: TranscriptState = { blocks: [user('u1', 'old')] };
+      const s1: TranscriptState = { blocks: [user('u1', 'old')], windowSize: RENDER_WINDOW };
       const seeded = [user('u2', 'restored')];
       const s2 = transcriptReducer(s1, { t: 'seed', blocks: seeded });
       expect(s2.blocks).toEqual(seeded);
@@ -801,9 +808,15 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
 
   describe('clear', () => {
     it('drops every block (full reset from a non-empty state)', () => {
-      const s1: TranscriptState = { blocks: [user('u1', 'hi'), user('u2', 'there')] };
+      const s1: TranscriptState = { blocks: [user('u1', 'hi'), user('u2', 'there')], windowSize: RENDER_WINDOW };
       const s2 = transcriptReducer(s1, { t: 'clear' });
-      expect(s2).toEqual({ blocks: [] });
+      expect(s2).toEqual({ blocks: [], windowSize: RENDER_WINDOW });
+    });
+
+    it('resets an already-widened window (transcript-scale FR-15)', () => {
+      const s1: TranscriptState = { blocks: [user('u1', 'hi')], windowSize: RENDER_WINDOW * 3 };
+      const s2 = transcriptReducer(s1, { t: 'clear' });
+      expect(s2).toEqual({ blocks: [], windowSize: RENDER_WINDOW });
     });
   });
 
@@ -819,6 +832,191 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
       const s2 = transcriptReducer(s1, { t: 'remove', blockId: 'nope' });
       expect(s2).toBe(s1);
     });
+  });
+
+  describe('windowSize is carried unchanged through every ordinary action (transcript-scale)', () => {
+    const widened: TranscriptState = { blocks: [], windowSize: RENDER_WINDOW * 2 };
+
+    it('optimisticUser / msgUser / toolStart / commandStarted append without touching windowSize', () => {
+      expect(transcriptReducer(widened, { t: 'optimisticUser', blockId: 'u1', text: 'hi' }).windowSize).toBe(RENDER_WINDOW * 2);
+      expect(transcriptReducer(widened, { t: 'msgUser', blockId: 'u1', text: 'hi' }).windowSize).toBe(RENDER_WINDOW * 2);
+      expect(transcriptReducer(widened, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'a.ts' }).windowSize).toBe(RENDER_WINDOW * 2);
+      expect(transcriptReducer(widened, { t: 'commandStarted', blockId: 'c1', command: 'usage' }).windowSize).toBe(RENDER_WINDOW * 2);
+    });
+
+    it('delta / deltaBatch / assistantDone / toolDone (replace-in-place) preserve windowSize', () => {
+      const withAssistant = transcriptReducer(widened, { t: 'delta', blockId: 'a1', text: 'Hel', offset: 0 });
+      expect(withAssistant.windowSize).toBe(RENDER_WINDOW * 2);
+      expect(transcriptReducer(withAssistant, { t: 'deltaBatch', blockId: 'a1', chunks: [{ text: 'lo', offset: 3 }] }).windowSize).toBe(
+        RENDER_WINDOW * 2,
+      );
+      expect(transcriptReducer(withAssistant, { t: 'assistantDone', blockId: 'a1', text: 'Hello' }).windowSize).toBe(RENDER_WINDOW * 2);
+      const withTool = transcriptReducer(widened, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'a.ts' });
+      expect(transcriptReducer(withTool, { t: 'toolDone', blockId: 't1', meta: '10 lines' }).windowSize).toBe(RENDER_WINDOW * 2);
+    });
+
+    it('remove preserves windowSize', () => {
+      const withUser = transcriptReducer(widened, { t: 'optimisticUser', blockId: 'u1', text: 'hi' });
+      expect(transcriptReducer(withUser, { t: 'remove', blockId: 'u1' }).windowSize).toBe(RENDER_WINDOW * 2);
+    });
+  });
+
+  describe('expandWindow (transcript-scale FR-13)', () => {
+    it('grows windowSize by one RENDER_WINDOW page and leaves blocks untouched', () => {
+      const s1: TranscriptState = { blocks: [user('u1', 'a'), user('u2', 'b')], windowSize: RENDER_WINDOW };
+      const s2 = transcriptReducer(s1, { t: 'expandWindow' });
+      expect(s2.windowSize).toBe(RENDER_WINDOW * 2);
+      expect(s2.blocks).toBe(s1.blocks);
+    });
+  });
+
+  describe('prepend (transcript-scale FR-13)', () => {
+    it('prepends oldest-first and grows windowSize by the number of NEW blocks added', () => {
+      const s1: TranscriptState = { blocks: [user('u3', 'held')], windowSize: RENDER_WINDOW };
+      const page = [user('u1', 'older'), user('u2', 'less old')];
+      const s2 = transcriptReducer(s1, { t: 'prepend', blocks: page });
+      expect(s2.blocks.map((b) => b.blockId)).toEqual(['u1', 'u2', 'u3']);
+      expect(s2.windowSize).toBe(RENDER_WINDOW + 2);
+    });
+
+    it('never duplicates a block already held — returns the same state when the whole page is already present', () => {
+      const s1: TranscriptState = { blocks: [user('u1', 'a'), user('u2', 'b')], windowSize: RENDER_WINDOW };
+      const s2 = transcriptReducer(s1, { t: 'prepend', blocks: [user('u1', 'a')] });
+      expect(s2).toBe(s1);
+    });
+
+    it('drops only the already-held blocks from a partially-overlapping page', () => {
+      const s1: TranscriptState = { blocks: [user('u2', 'b')], windowSize: RENDER_WINDOW };
+      const s2 = transcriptReducer(s1, { t: 'prepend', blocks: [user('u1', 'a'), user('u2', 'b')] });
+      expect(s2.blocks.map((b) => b.blockId)).toEqual(['u1', 'u2']);
+      expect(s2.windowSize).toBe(RENDER_WINDOW + 1); // only u1 was actually new
+    });
+  });
+});
+
+describe('windowedBlocks (transcript-scale FR-11: the DOM-bound trailing slice)', () => {
+  it('renders only the trailing windowSize blocks', () => {
+    const blocks = Array.from({ length: 5 }, (_, i) => ({
+      kind: 'user' as const,
+      blockId: `u${i}`,
+      isStreaming: false,
+      text: String(i),
+    }));
+    const state: TranscriptState = { blocks, windowSize: 2 };
+    expect(windowedBlocks(state).map((b) => b.blockId)).toEqual(['u3', 'u4']);
+  });
+
+  it('renders every block when windowSize exceeds the total held', () => {
+    const blocks = [
+      { kind: 'user' as const, blockId: 'u1', isStreaming: false, text: 'a' },
+      { kind: 'user' as const, blockId: 'u2', isStreaming: false, text: 'b' },
+    ];
+    const state: TranscriptState = { blocks, windowSize: RENDER_WINDOW };
+    expect(windowedBlocks(state)).toEqual(blocks);
+  });
+
+  // quality fix: a raw trailing-count cut can land mid-run inside a multi-tool
+  // assistant turn (groupTurns folds consecutive assistant/tool/subagent blocks
+  // into ONE turn) — the window must extend back to the nearest turn boundary
+  // instead of splitting that turn's earlier tool calls from its later ones.
+  const assistant = (blockId: string): ConversationBlock => ({
+    kind: 'assistant',
+    blockId,
+    isStreaming: false,
+    glyph: '●',
+    glyphColor: '#8b93a3',
+    bodyColor: '#c3c9d4',
+    text: blockId,
+  });
+  const toolCall = (blockId: string): ConversationBlock => ({ ...classifyToolStart('Read', 'x', blockId), isStreaming: false });
+  const userBlock = (blockId: string): ConversationBlock => ({ kind: 'user', blockId, isStreaming: false, text: blockId });
+
+  it('extends the window backward to the start of a turn a raw count would cut in half', () => {
+    // one turn: assistant prose + 2 tool calls (a1, t1, t2) — a raw slice(-2)
+    // would keep only [t1, t2] and silently drop a1's lead-in.
+    const blocks = [userBlock('u1'), assistant('a1'), toolCall('t1'), toolCall('t2')];
+    const state: TranscriptState = { blocks, windowSize: 2 };
+    expect(windowStartIndex(blocks, 2)).toBe(1); // backs up past a1/t1's shared run to a1
+    expect(windowedBlocks(state).map((b) => b.blockId)).toEqual(['a1', 't1', 't2']);
+  });
+
+  it('does not extend when the raw cut already lands on a turn boundary', () => {
+    const blocks = [userBlock('u1'), assistant('a1'), toolCall('t1'), userBlock('u2')];
+    const state: TranscriptState = { blocks, windowSize: 1 };
+    expect(windowStartIndex(blocks, 1)).toBe(3); // u2 already opens its own turn
+    expect(windowedBlocks(state).map((b) => b.blockId)).toEqual(['u2']);
+  });
+
+  it('never backs up past index 0 even if the whole array is one open run', () => {
+    const blocks = [assistant('a1'), toolCall('t1'), toolCall('t2')];
+    expect(windowStartIndex(blocks, 1)).toBe(0);
+  });
+});
+
+describe('earlierRowState (transcript-scale FR-12 + design brief "Data shown")', () => {
+  it('is invisible when every held block is already rendered and there is nothing more on disk', () => {
+    const state: TranscriptState = { blocks: [{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'a' }], windowSize: RENDER_WINDOW };
+    expect(earlierRowState(state, false)).toEqual({ visible: false, count: 0 });
+  });
+
+  it('states the exact count of held-but-unrendered blocks once hasMore is false', () => {
+    const blocks = Array.from({ length: 10 }, (_, i) => ({ kind: 'user' as const, blockId: `u${i}`, isStreaming: false, text: '' }));
+    const state: TranscriptState = { blocks, windowSize: 4 };
+    expect(earlierRowState(state, false)).toEqual({ visible: true, count: 6 });
+  });
+
+  it('is indefinite (count: null) whenever hasMore is true, even with held-but-unrendered blocks', () => {
+    const blocks = Array.from({ length: 10 }, (_, i) => ({ kind: 'user' as const, blockId: `u${i}`, isStreaming: false, text: '' }));
+    const state: TranscriptState = { blocks, windowSize: 4 };
+    expect(earlierRowState(state, true)).toEqual({ visible: true, count: null });
+  });
+
+  it('is visible with an indefinite count even when the whole held buffer is fully rendered', () => {
+    const state: TranscriptState = { blocks: [{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'a' }], windowSize: RENDER_WINDOW };
+    expect(earlierRowState(state, true)).toEqual({ visible: true, count: null });
+  });
+});
+
+describe('earlierRowLabel (design brief: singular / plural / indefinite, thousands-separated)', () => {
+  it('states the indefinite form with no figure', () => {
+    expect(earlierRowLabel(null)).toBe('▲ earlier blocks');
+  });
+  it('states the singular form for exactly one', () => {
+    expect(earlierRowLabel(1)).toBe('▲ 1 earlier block');
+  });
+  it('states the plural form, thousands-separated', () => {
+    expect(earlierRowLabel(2)).toBe('▲ 2 earlier blocks');
+    expect(earlierRowLabel(2140)).toBe('▲ 2,140 earlier blocks');
+    expect(earlierRowLabel(0)).toBe('▲ 0 earlier blocks');
+  });
+});
+
+describe('decideEarlierActivation (transcript-scale FR-13)', () => {
+  it('expands in place when the reducer already holds blocks beyond the window', () => {
+    const blocks = Array.from({ length: 10 }, (_, i) => ({ kind: 'user' as const, blockId: `u${i}`, isStreaming: false, text: '' }));
+    const state: TranscriptState = { blocks, windowSize: 4 };
+    expect(decideEarlierActivation(state, true, false)).toEqual({ kind: 'expand' });
+    expect(decideEarlierActivation(state, false, false)).toEqual({ kind: 'expand' }); // held blocks win even without hasMore
+  });
+
+  it('fetches a page keyed on the oldest held block once the window has caught up and hasMore is true', () => {
+    const state: TranscriptState = { blocks: [{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'a' }], windowSize: RENDER_WINDOW };
+    expect(decideEarlierActivation(state, true, false)).toEqual({ kind: 'fetch', before: 'u1' });
+  });
+
+  it('does nothing once the window has caught up and hasMore is false (exhausted)', () => {
+    const state: TranscriptState = { blocks: [{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'a' }], windowSize: RENDER_WINDOW };
+    expect(decideEarlierActivation(state, false, false)).toEqual({ kind: 'none' });
+  });
+
+  it('does nothing while a page is already in flight, even if one would otherwise be fetched', () => {
+    const state: TranscriptState = { blocks: [{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'a' }], windowSize: RENDER_WINDOW };
+    expect(decideEarlierActivation(state, true, true)).toEqual({ kind: 'none' });
+  });
+
+  it('does nothing on a genuinely empty transcript', () => {
+    const state: TranscriptState = { blocks: [], windowSize: RENDER_WINDOW };
+    expect(decideEarlierActivation(state, true, false)).toEqual({ kind: 'none' });
   });
 });
 
@@ -840,6 +1038,7 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
       setPinned: vi.fn(),
       setCommands: vi.fn(),
       patchUsage: vi.fn(),
+      setHasMore: vi.fn(),
     };
   }
 
@@ -931,13 +1130,14 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     expect(setters.setResumeFailed).toHaveBeenCalledWith(true);
   });
 
-  it('session.cleared → dispatches clear, resets resume-fail and re-pins', () => {
+  it('session.cleared → dispatches clear, resets resume-fail, re-pins and clears hasMore', () => {
     const dispatch = vi.fn();
     const setters = newSetters();
     applySessionEvent(dispatch, setters, { type: 'session.cleared', sessionId: 'x' });
     expect(dispatch).toHaveBeenCalledWith({ t: 'clear' });
     expect(setters.setResumeFailed).toHaveBeenCalledWith(false);
     expect(setters.setPinned).toHaveBeenCalledWith(true);
+    expect(setters.setHasMore).toHaveBeenCalledWith(false); // transcript-scale FR-15
   });
 
   it('assistant.delta / assistant.done / tool.start / tool.done forward to the reducer verbatim', () => {
@@ -1017,6 +1217,41 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     for (const e of ignored) applySessionEvent(dispatch, setters, e);
     expect(dispatch).not.toHaveBeenCalled();
     for (const fn of Object.values(setters)) expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe('isTranscriptRelevantEvent (transcript-scale FR-21 regression fix)', () => {
+  it('rejects agent.update and workflow.update — both carry no sessionId, so the router broadcasts them to every session', () => {
+    const agent: AgentInfo = {
+      id: 'a1',
+      sessionId: 'x',
+      name: 'explorer',
+      task: 'look around',
+      status: 'running',
+      startedAt: 0,
+      background: false,
+      stepCount: 0,
+    };
+    const run: WorkflowRun = {
+      id: 'w1',
+      sessionId: 'x',
+      name: 'plan',
+      description: '',
+      status: 'running',
+      startedAt: 0,
+      phases: [],
+    };
+    expect(isTranscriptRelevantEvent({ type: 'agent.update', agent })).toBe(false);
+    expect(isTranscriptRelevantEvent({ type: 'workflow.update', run })).toBe(false);
+  });
+
+  it('accepts every other event type, including this session’s own agent.step/mcp.update', () => {
+    const step: AgentStep = { seq: 1, kind: 'text', at: 0, label: 'thinking' };
+    const server: McpServerInfo = { name: 'fs', status: 'connected' };
+    expect(isTranscriptRelevantEvent({ type: 'session.status', sessionId: 'x', status: 'running' })).toBe(true);
+    expect(isTranscriptRelevantEvent({ type: 'assistant.delta', sessionId: 'x', blockId: 'b1', text: 'hi', offset: 0 })).toBe(true);
+    expect(isTranscriptRelevantEvent({ type: 'agent.step', sessionId: 'x', agentId: 'a1', step })).toBe(true);
+    expect(isTranscriptRelevantEvent({ type: 'mcp.update', sessionId: 'x', server })).toBe(true);
   });
 });
 
@@ -1138,7 +1373,7 @@ describe('transcriptReducer — a delta on one block never disturbs another (mac
     // blocks whose props changed, and this asserts `user` never becomes a new
     // object (nor moves) across two delta dispatches targeting a different block.
     const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'earlier message' };
-    const s1: TranscriptState = { blocks: [user] };
+    const s1: TranscriptState = { blocks: [user], windowSize: RENDER_WINDOW };
     const s2 = transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'Hel', offset: 0 });
     const s3 = transcriptReducer(s2, { t: 'delta', blockId: 'a1', text: 'lo', offset: 3 });
     expect(s2.blocks[0]).toBe(user);
@@ -1149,7 +1384,7 @@ describe('transcriptReducer — a delta on one block never disturbs another (mac
   it('keeps every sibling block referentially stable across a run of deltas on one block', () => {
     const a: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'a' };
     const b: ConversationBlock = { kind: 'user', blockId: 'u2', isStreaming: false, text: 'b' };
-    let s: TranscriptState = { blocks: [a, b] };
+    let s: TranscriptState = { blocks: [a, b], windowSize: RENDER_WINDOW };
     let offset = 0;
     for (const chunk of ['Hel', 'lo ', 'wor', 'ld']) {
       s = transcriptReducer(s, { t: 'delta', blockId: 'a1', text: chunk, offset });

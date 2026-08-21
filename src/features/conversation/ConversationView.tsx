@@ -4,7 +4,8 @@ import ComposerPane from './ComposerPane';
 import Block from './Block';
 import Turn from './Turn';
 import { groupTurns, turnIsStreaming, type TranscriptItem } from './transcript-turns';
-import { compactBlocks, TRANSCRIPT_TEXT_SELECT_STYLE } from './conversation-blocks';
+import { compactBlocks, TRANSCRIPT_TEXT_SELECT_STYLE, windowedBlocks } from './conversation-blocks';
+import EarlierBlocksRow from './EarlierBlocksRow';
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import UsageLimitBanner from './UsageLimitBanner';
@@ -64,6 +65,8 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
     scrollRef,
     onScroll,
     jumpToLatest,
+    earlierRow,
+    activateEarlier,
   } = useConversationTranscript(sessionId);
 
   // design 9a: a streaming turn's header counts its duration up. Gated on the
@@ -86,11 +89,13 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
   // for the one turn actually receiving it, and every other `Turn`'s
   // `React.memo` bails on the rest.
   const prevItemsRef = useRef<TranscriptItem[]>([]);
+  // transcript-scale FR-11: only the trailing RENDER_WINDOW blocks are ever
+  // turned into DOM items — the rest stay held (bounded) but unmounted.
   const items = useMemo(() => {
-    const next = groupTurns(compactBlocks(state.blocks), prevItemsRef.current);
+    const next = groupTurns(compactBlocks(windowedBlocks(state)), prevItemsRef.current);
     prevItemsRef.current = next;
     return next;
-  }, [state.blocks]);
+  }, [state]);
 
   // session-questions FR-20 / permission-guardrails FR-23: whether the
   // composer's placeholder should swap. Derived here (not passed as raw
@@ -145,19 +150,26 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
             // design 9a: the transcript is a list of TURNS. A card (approval,
             // question, command output) still renders at this level — it is the
             // transcript stopping, not a paragraph of a reply.
-            items.map((item) => (
-              <div key={item.kind === 'turn' ? item.turnId : item.block.blockId} className="conv-item">
-                {item.kind === 'turn' ? (
-                  // transcript-perf FR-4: the ticking clock reaches only the
-                  // turn actually streaming; every settled turn gets a frozen
-                  // value `turnSpanMs` never reads, so Turn's memo bails and a
-                  // 1s tick re-renders exactly one Turn.
-                  <Turn turn={item} model={meta?.model.label} now={turnIsStreaming(item) ? transcriptClock : 0} />
-                ) : (
-                  <Block b={item.block} sessionId={sessionId} />
-                )}
-              </div>
-            ))
+            <>
+              {/* transcript-scale FR-12: the earlier-blocks row, first child of
+                  the reading column, above the oldest rendered block. */}
+              {earlierRow.visible && (
+                <EarlierBlocksRow count={earlierRow.count} onActivate={activateEarlier} inert={inert} />
+              )}
+              {items.map((item) => (
+                <div key={item.kind === 'turn' ? item.turnId : item.block.blockId} className="conv-item">
+                  {item.kind === 'turn' ? (
+                    // transcript-perf FR-4: the ticking clock reaches only the
+                    // turn actually streaming; every settled turn gets a frozen
+                    // value `turnSpanMs` never reads, so Turn's memo bails and a
+                    // 1s tick re-renders exactly one Turn.
+                    <Turn turn={item} model={meta?.model.label} now={turnIsStreaming(item) ? transcriptClock : 0} />
+                  ) : (
+                    <Block b={item.block} sessionId={sessionId} />
+                  )}
+                </div>
+              ))}
+            </>
           )}
         </div>
 

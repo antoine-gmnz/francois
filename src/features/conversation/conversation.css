@@ -288,6 +288,37 @@
   }
 }
 
+/* transcript-scale FR-12 + design brief: the earlier-blocks row — the first
+   child of the reading column, above the oldest rendered block. Same height
+   and horizontal padding as .composer-pending__row (transcript-perf) — full-
+   bleed siblings in spirit. Flat (9a): no stroke, no shadow, no radius — the
+   tonal step from --bg-deep to the transcript body is the only separation. */
+.conv-earlier-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 26px;
+  padding: 0 var(--space-10);
+  border: none;
+  background: var(--bg-deep);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12-5);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+.conv-earlier-row:hover:not(:disabled) {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+.conv-earlier-row:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -1px;
+}
+.conv-earlier-row:disabled {
+  cursor: default;
+}
+
 .jump-latest {
   position: absolute;
   bottom: var(--space-10);

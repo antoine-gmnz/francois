@@ -5,28 +5,28 @@
 // registry hydration that piggybacks on the same session.commands events.
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type RefObject } from 'react';
-import type { ConversationBlock } from '../../../contract/conversation-view';
+import type { TranscriptPage } from '../../../contract/conversation-view';
 import type { SessionEvent, SessionStatus, SlashCommandInfo } from '../../../contract/common';
-import { getTranscript, onSessionEvent, sessionListCommands } from '../../lib/api';
+import { getTranscript, sessionListCommands } from '../../lib/api';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
+import { subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
 import { getSessionCommands, setSessionCommands } from '../commands/slash-menu';
 import {
   applySessionEvent,
+  decideEarlierActivation,
   drainDeltas,
+  earlierRowState,
+  isTranscriptRelevantEvent,
   pushDelta,
+  RENDER_WINDOW,
   transcriptReducer,
   type ConversationEventSetters,
   type DeltaChunk,
+  type EarlierRowState,
   type TranscriptAction,
   type TranscriptState,
 } from './conversation-blocks';
-
-function eventSessionId(e: SessionEvent): string | null {
-  if (e.type === 'session.meta') return e.meta.id;
-  if ('sessionId' in e) return e.sessionId;
-  return null;
-}
 
 export interface ConversationTranscript {
   state: TranscriptState;
@@ -47,11 +47,19 @@ export interface ConversationTranscript {
   scrollRef: RefObject<HTMLDivElement>;
   onScroll: () => void;
   jumpToLatest: () => void;
+  /** transcript-scale FR-12: the earlier-blocks row's visibility + count. */
+  earlierRow: EarlierRowState;
+  /** transcript-scale FR-13: activate the earlier-blocks row. */
+  activateEarlier: () => void;
 }
 
 export function useConversationTranscript(sessionId: string): ConversationTranscript {
-  const [state, dispatch] = useReducer(transcriptReducer, { blocks: [] });
+  const [state, dispatch] = useReducer(transcriptReducer, { blocks: [], windowSize: RENDER_WINDOW });
   const [hydrated, setHydrated] = useState(false);
+  // transcript-scale FR-6/FR-7: whether older blocks exist beyond what the
+  // reducer holds — hook state beside `hydrated` (spec §6), updated by every
+  // page (initial hydration and each "earlier" fetch).
+  const [hasMore, setHasMore] = useState(false);
   const [hydrationError, setHydrationError] = useState<string | null>(null);
   // Read once at mount (matches the original `useState(meta?.status ?? 'idle')`
   // initializer, which also only ever applied meta's value once).
@@ -85,6 +93,41 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
     setPinned,
     setCommands,
     patchUsage: (usedTokens, limitTokens) => useStore.getState().patchUsage(sessionId, usedTokens, limitTokens),
+    setHasMore,
+  };
+
+  // transcript-scale FR-13: gates "two rapid activations" (edge case §7) and
+  // the mounted guard for a page that resolves after a session switch (§7 —
+  // "discarded by the existing mounted guard"). Both refs, not state: neither
+  // should itself trigger a render.
+  const fetchingRef = useRef(false);
+  const liveRef = useRef(true);
+  useEffect(() => {
+    liveRef.current = true;
+    return () => {
+      liveRef.current = false;
+    };
+  }, [sessionId]);
+  // FR-14: the scrollHeight captured just before a prepend/expand mutates
+  // `state.blocks`, so the layout effect below can correct scrollTop by the
+  // exact delta instead of re-pinning or jumping.
+  const pendingScrollHeightRef = useRef<number | null>(null);
+
+  const activateEarlier = () => {
+    const decision = decideEarlierActivation(state, hasMore, fetchingRef.current);
+    if (decision.kind === 'expand') {
+      if (scrollRef.current) pendingScrollHeightRef.current = scrollRef.current.scrollHeight;
+      dispatch({ t: 'expandWindow' });
+    } else if (decision.kind === 'fetch') {
+      fetchingRef.current = true;
+      void getTranscript(sessionId, { before: decision.before }).then((res) => {
+        fetchingRef.current = false;
+        if (!liveRef.current || !res.ok) return;
+        if (scrollRef.current) pendingScrollHeightRef.current = scrollRef.current.scrollHeight;
+        dispatch({ t: 'prepend', blocks: res.data.blocks });
+        setHasMore(res.data.hasMore);
+      });
+    }
   };
 
   // transcript-perf FR-5..9: the rAF delta coalescer. Ref-held (never state,
@@ -125,21 +168,30 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
   // Hydration + live events (FR-8/9/10). Component is keyed by sessionId in the
   // parent, so this runs fresh per session; a stale getTranscript after unmount
   // is discarded via useHydratedSubscription's own mounted guard (FR-9).
-  useHydratedSubscription<SessionEvent, ConversationBlock[]>({
+  useHydratedSubscription<SessionEvent, TranscriptPage>({
     enabled: true,
+    // transcript-scale FR-21: through the one router subscription, scoped to
+    // this session — the router already guarantees relevance, so isRelevant
+    // below is trivially true.
     subscribe: (cb) =>
-      onSessionEvent((e) => {
+      subscribeSessionEvents(sessionId, (e) => {
         // slash-menu edge 7: cache the registry for EVERY session (no UI effect
         // for non-visible ones — they re-seed from this cache when shown).
         if (e.type === 'session.commands') setSessionCommands(e.sessionId, e.commands);
         cb(e);
       }),
     fetchInitial: () => getTranscript(sessionId),
-    isRelevant: (e) => eventSessionId(e) === sessionId,
-    onHydrated: (blocks) => {
-      dispatch({ t: 'seed', blocks });
+    // transcript-scale FR-21 regression fix: agent.update/workflow.update carry
+    // no sessionId, so the router (session-events.ts) broadcasts them to every
+    // session — filter them out here rather than let them reach
+    // onTranscriptEvent, which would force-flush this session's rAF-coalesced
+    // deltas for another session's subagent/workflow update.
+    isRelevant: isTranscriptRelevantEvent,
+    onHydrated: (page) => {
+      dispatch({ t: 'seed', blocks: page.blocks });
       setHydrated(true);
       setPinned(true);
+      setHasMore(page.hasMore); // transcript-scale FR-6
     },
     onEvent: onTranscriptEvent,
     onError: (message) => setHydrationError(message),
@@ -161,12 +213,23 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
     };
   }, [sessionId]);
 
-  // Scroll-to-bottom while pinned (FR-17/18).
+  // FR-14: preserve the reading position across an "earlier" expansion — the
+  // element at the top of the viewport stays there. Takes priority over the
+  // pin-to-bottom effect below (an expansion never sets isPinned and never
+  // scrolls to the bottom — decideEarlierActivation/activateEarlier never fire
+  // while the user is pinned to a live tail, so the two never race in practice).
   useLayoutEffect(() => {
-    if (pinnedRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    const before = pendingScrollHeightRef.current;
+    if (before !== null && el) {
+      pendingScrollHeightRef.current = null;
+      el.scrollTop += el.scrollHeight - before;
+      return;
     }
-  }, [state.blocks, hydrated]);
+    if (pinnedRef.current && el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [state.blocks, state.windowSize, hydrated]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -201,5 +264,7 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
     scrollRef,
     onScroll,
     jumpToLatest,
+    earlierRow: earlierRowState(state, hasMore),
+    activateEarlier,
   };
 }

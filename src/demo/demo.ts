@@ -261,8 +261,11 @@ function route(cmd: string, a: Args): unknown {
     }
 
     // ---- conversation ----
+    // transcript-scale FR-5: the demo fleet is small and finite, so every page
+    // is just the whole thing — `before`/`limit` are accepted but ignored,
+    // and hasMore is always false (there is nothing further back to page to).
     case 'conversation_get_transcript':
-      return ok(sid(a) === S_API ? transcriptNow() : []);
+      return ok({ blocks: sid(a) === S_API ? transcriptNow() : [], hasMore: false });
 
     // ---- agents ----
     case 'agents_list':

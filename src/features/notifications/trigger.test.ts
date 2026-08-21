@@ -200,7 +200,7 @@ describe('registerTriggerSink (FR-2/FR-3)', () => {
     vi.restoreAllMocks();
   });
 
-  it('subscribes to onSessionEvent exactly once, on the first registration, regardless of how many sinks register', async () => {
+  it('subscribes to the session event stream exactly once, on the first registration, regardless of how many sinks register', async () => {
     const { registerTriggerSink } = await import('./trigger');
     registerTriggerSink(vi.fn());
     registerTriggerSink(vi.fn());

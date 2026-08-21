@@ -15,6 +15,12 @@ import type { QuestionConversationBlock } from './session-questions';
 
 export interface GetTranscriptRequest {
   sessionId: SessionId;
+  /** Page backwards: the blocks immediately BEFORE this one. Omitted ⇒ the live
+   *  tail the core holds in memory (transcript-scale FR-6). */
+  before?: BlockId;
+  /** Blocks to return. Clamped by the core to 1..=500; default 200
+   *  (transcript-scale FR-9). */
+  limit?: number;
 }
 
 export type ConversationGlyph = '●' | '⧉' | '⌕' | '✎' | '⇉' | '';
@@ -87,8 +93,21 @@ export type ConversationBlock =
   | QuestionConversationBlock // session-questions (contract/session-questions.ts)
   | PermissionConversationBlock; // permission-guardrails (contract/permission-guardrails.ts)
 
-// resolves Result<ConversationBlock[]>; error: SESSION_NOT_FOUND
-export type GetTranscriptResponse = Result<ConversationBlock[]>;
+export interface TranscriptPage {
+  /** Oldest-first and contiguous, already folded — a re-appended question or
+   *  permission block appears once, in its resolved state, at the position of
+   *  its first occurrence (transcript-scale FR-7). */
+  blocks: ConversationBlock[];
+  /** true ⇒ older blocks exist; page again with `before` = blocks[0].blockId
+   *  (transcript-scale FR-6/FR-7). */
+  hasMore: boolean;
+}
+
+// resolves Result<TranscriptPage>; error: SESSION_NOT_FOUND
+// BREAKING (transcript-scale): this channel resolved Result<ConversationBlock[]>
+// before FR-5; both callers (useConversationTranscript, useWorkflowAskCards) move
+// to TranscriptPage in the same commit — no compatibility window.
+export type GetTranscriptResponse = Result<TranscriptPage>;
 
 // ---------- consumed (owned by session-engine) ----------
 

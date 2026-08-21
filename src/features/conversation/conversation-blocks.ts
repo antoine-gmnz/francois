@@ -5,7 +5,7 @@
 // Every rule is a keyed upsert on blockId: replaying an event is a no-op or an
 // identical replace, and out-of-order arrivals insert rather than drop.
 
-import type { CommandCard, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion, SessionStatus, SlashCommandInfo } from '../../../contract/common';
+import type { BlockId, CommandCard, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion, SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import {
   assistantColors,
   classifyToolStart,
@@ -32,6 +32,99 @@ export const TRANSCRIPT_TEXT_SELECT_STYLE: { userSelect: 'text'; WebkitUserSelec
 
 export interface TranscriptState {
   blocks: ConversationBlock[];
+  /** transcript-scale FR-11: the count of trailing blocks actually rendered —
+   *  reset to RENDER_WINDOW by `seed`/`clear`, widened by `expandWindow`/`prepend`. */
+  windowSize: number;
+}
+
+/** transcript-scale FR-11: the frontend render cap — at most this many of the
+ *  most recent HELD blocks are ever in the DOM. Ordinary streamed appends do
+ *  NOT grow `windowSize`; a live turn simply slides the trailing window, and
+ *  whatever falls out of it becomes an "earlier" block like any other. */
+export const RENDER_WINDOW = 200;
+
+/**
+ * A block `groupTurns` (transcript-turns.ts) folds into an open ASSISTANT-role
+ * turn — assistant prose, a tool call, or a subagent dispatch. A `user` block
+ * is excluded on purpose: it always opens its own one-block turn there, so it
+ * is a turn BOUNDARY, never a block a run continues across.
+ */
+function isOpenTurnBlock(b: ConversationBlock): boolean {
+  return b.kind === 'assistant' || b.kind === 'tool' || b.kind === 'subagent';
+}
+
+/**
+ * FR-11: where the trailing window starts. A plain `blocks.length - windowSize`
+ * can land mid-run inside a multi-tool assistant turn — `groupTurns` would
+ * fold the dropped earlier half and the kept later half into ONE turn, so
+ * cutting between them silently drops that turn's earlier tool calls while
+ * keeping its later ones. Walk the cut point back to the nearest turn
+ * boundary using the same block-role rule `groupTurns` uses: while both the
+ * candidate block and the one before it are part of an open assistant-role
+ * run, they would be folded together, so the cut is not yet at a boundary.
+ */
+export function windowStartIndex(blocks: ConversationBlock[], windowSize: number): number {
+  const raw = Math.max(0, blocks.length - windowSize);
+  let i = raw;
+  while (i > 0 && isOpenTurnBlock(blocks[i]!) && isOpenTurnBlock(blocks[i - 1]!)) i--;
+  return i;
+}
+
+/** FR-11: the trailing slice of `state.blocks` actually rendered, extended
+ *  back to the nearest turn boundary (windowStartIndex) so a window cut never
+ *  splits one assistant turn's tool calls across the "earlier" row. */
+export function windowedBlocks(state: TranscriptState): ConversationBlock[] {
+  return state.blocks.slice(windowStartIndex(state.blocks, state.windowSize));
+}
+
+/**
+ * FR-12 + design brief ("Data shown"): what the earlier-blocks row states.
+ * `count: null` is the indefinite case — `hasMore` true means older blocks
+ * exist on disk beyond what the core handed the frontend, so the true total
+ * is unknown until a page is fetched; the row states no figure rather than a
+ * guessed one. `visible: false` is the "exhausted" state (FR-12) — the row is
+ * removed, not disabled, once every held block is rendered and hasMore is false.
+ */
+export interface EarlierRowState {
+  visible: boolean;
+  count: number | null;
+}
+
+export function earlierRowState(state: TranscriptState, hasMore: boolean): EarlierRowState {
+  if (hasMore) return { visible: true, count: null };
+  const count = Math.max(0, state.blocks.length - state.windowSize);
+  return { visible: count > 0, count };
+}
+
+/** Thousands-separated, locale-independent (deterministic across CI). */
+function withThousands(n: number): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** Design brief: "▲ 2,140 earlier blocks" / singular "▲ 1 earlier block" /
+ *  indefinite "▲ earlier blocks" (count === null, FR-12). */
+export function earlierRowLabel(count: number | null): string {
+  if (count === null) return '▲ earlier blocks';
+  if (count === 1) return '▲ 1 earlier block';
+  return `▲ ${withThousands(count)} earlier blocks`;
+}
+
+/**
+ * FR-13: what activating the earlier row does next. `fetching` gates the "two
+ * rapid activations" edge case (§7) — the second activation while a page is
+ * already in flight is a no-op.
+ */
+export type EarlierActivation = { kind: 'expand' } | { kind: 'fetch'; before: BlockId } | { kind: 'none' };
+
+export function decideEarlierActivation(state: TranscriptState, hasMore: boolean, fetching: boolean): EarlierActivation {
+  if (fetching) return { kind: 'none' };
+  // The reducer already holds blocks beyond the window — reveal another page
+  // of them without a round trip.
+  if (state.blocks.length > state.windowSize) return { kind: 'expand' };
+  if (!hasMore) return { kind: 'none' };
+  const oldest = state.blocks[0];
+  if (!oldest) return { kind: 'none' };
+  return { kind: 'fetch', before: oldest.blockId };
 }
 
 /** transcript-perf FR-5: one buffered chunk inside the rAF coalescer. */
@@ -58,7 +151,14 @@ export type TranscriptAction =
   | { t: 'permissionAsked'; blockId: string; ask: PermissionAsk } // permission-guardrails FR-24
   | { t: 'permissionResolved'; blockId: string; state: 'allowed' | 'denied' | 'cancelled'; rule?: PermissionRule } // permission-guardrails FR-24
   | { t: 'clear' } // /clear: full reset — drop every block
-  | { t: 'remove'; blockId: string };
+  | { t: 'remove'; blockId: string }
+  // transcript-scale FR-13: widen the render window by one page — the
+  // reducer already holds the newly-revealed blocks.
+  | { t: 'expandWindow' }
+  // transcript-scale FR-13: prepend a fetched page, oldest-first, deduped by
+  // blockId; the newly-added ones join the render window too (§ design brief
+  // flow 3: they appear immediately above the row, not merely held).
+  | { t: 'prepend'; blocks: ConversationBlock[] };
 
 /** True iff `text` is exactly the bare `/clear` command (no argument). */
 export function isClearCommand(text: string): boolean {
@@ -138,15 +238,17 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
   const replace = (i: number, b: ConversationBlock) => {
     const next = state.blocks.slice();
     next[i] = b;
-    return { blocks: next };
+    return { blocks: next, windowSize: state.windowSize };
   };
   switch (a.t) {
     case 'seed':
-      return { blocks: a.blocks };
+      // transcript-scale FR-15: hydration/session-switch/`session.cleared` all
+      // reset the window to RENDER_WINDOW.
+      return { blocks: a.blocks, windowSize: RENDER_WINDOW };
     case 'optimisticUser': {
       if (idx(a.blockId) !== -1) return state;
       const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text };
-      return { blocks: [...state.blocks, b] };
+      return { blocks: [...state.blocks, b], windowSize: state.windowSize };
     }
     case 'msgUser': {
       const i = idx(a.blockId);
@@ -156,7 +258,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
         return replace(i, { ...b, text: a.text });
       }
       const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text };
-      return { blocks: [...state.blocks, b] };
+      return { blocks: [...state.blocks, b], windowSize: state.windowSize };
     }
     case 'delta': {
       const i = idx(a.blockId);
@@ -172,6 +274,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
           ...state.blocks,
           { kind: 'assistant', blockId: a.blockId, isStreaming: true, glyph: '●', glyphColor, bodyColor, text: a.text },
         ],
+        windowSize: state.windowSize,
       };
     }
     // transcript-perf FR-5: the rAF coalescer's own dispatch — one or more
@@ -196,6 +299,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
           ...state.blocks,
           { kind: 'assistant', blockId: a.blockId, isStreaming: true, glyph: '●', glyphColor, bodyColor, text },
         ],
+        windowSize: state.windowSize,
       };
     }
     case 'assistantDone': {
@@ -210,6 +314,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
             ...state.blocks,
             { kind: 'assistant', blockId: a.blockId, isStreaming: false, glyph: '●', glyphColor, bodyColor, text: a.text },
           ],
+          windowSize: state.windowSize,
         };
       }
       const b = state.blocks[i];
@@ -219,7 +324,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
     }
     case 'toolStart': {
       if (idx(a.blockId) !== -1) return state;
-      return { blocks: [...state.blocks, classifyToolStart(a.tool, a.summary, a.blockId, a.model)] };
+      return { blocks: [...state.blocks, classifyToolStart(a.tool, a.summary, a.blockId, a.model)], windowSize: state.windowSize };
     }
     case 'toolDone': {
       const i = idx(a.blockId);
@@ -232,7 +337,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       // FR-20: insert a pending command block (loading card); replay is a no-op.
       if (idx(a.blockId) !== -1) return state;
       const b: CommandConversationBlock = { kind: 'command', blockId: a.blockId, isStreaming: true, command: a.command };
-      return { blocks: [...state.blocks, b] };
+      return { blocks: [...state.blocks, b], windowSize: state.windowSize };
     }
     case 'commandOutput': {
       // FR-20: upsert the card; insert if unseen (instant notices arrive without
@@ -246,7 +351,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
           command: commandFromCard(a.card),
           card: a.card,
         };
-        return { blocks: [...state.blocks, b] };
+        return { blocks: [...state.blocks, b], windowSize: state.windowSize };
       }
       const b = state.blocks[i];
       if (b.kind !== 'command') return state;
@@ -265,7 +370,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
           questions: a.questions,
           state: 'pending',
         };
-        return { blocks: [...state.blocks, b] };
+        return { blocks: [...state.blocks, b], windowSize: state.windowSize };
       }
       const b = state.blocks[i];
       if (b.kind !== 'question') return state;
@@ -288,7 +393,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
           state: a.state,
           ...(a.answers !== undefined ? { answers: a.answers } : {}),
         };
-        return { blocks: [...state.blocks, b] };
+        return { blocks: [...state.blocks, b], windowSize: state.windowSize };
       }
       const b = state.blocks[i];
       if (b.kind !== 'question') return state;
@@ -316,7 +421,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
           ask: a.ask,
           state: 'pending',
         };
-        return { blocks: [...state.blocks, b] };
+        return { blocks: [...state.blocks, b], windowSize: state.windowSize };
       }
       const b = state.blocks[i];
       if (b.kind !== 'permission') return state;
@@ -339,7 +444,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
           state: a.state,
           ...(a.rule !== undefined ? { rule: a.rule } : {}),
         };
-        return { blocks: [...state.blocks, b] };
+        return { blocks: [...state.blocks, b], windowSize: state.windowSize };
       }
       const b = state.blocks[i];
       if (b.kind !== 'permission') return state;
@@ -354,13 +459,22 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       return replace(i, next);
     }
     case 'clear':
-      return { blocks: [] };
+      // transcript-scale FR-15: /clear resets the window like a fresh seed.
+      return { blocks: [], windowSize: RENDER_WINDOW };
     case 'remove': {
       const i = idx(a.blockId);
       if (i === -1) return state;
       const next = state.blocks.slice();
       next.splice(i, 1);
-      return { blocks: next };
+      return { blocks: next, windowSize: state.windowSize };
+    }
+    case 'expandWindow':
+      return { blocks: state.blocks, windowSize: state.windowSize + RENDER_WINDOW };
+    case 'prepend': {
+      const existing = new Set(state.blocks.map((b) => b.blockId));
+      const fresh = a.blocks.filter((b) => !existing.has(b.blockId));
+      if (fresh.length === 0) return state; // FR-13: never duplicate a block already held
+      return { blocks: [...fresh, ...state.blocks], windowSize: state.windowSize + fresh.length };
     }
   }
 }
@@ -404,6 +518,8 @@ export interface ConversationEventSetters {
   setPinned: (value: boolean) => void;
   setCommands: (commands: SlashCommandInfo[]) => void;
   patchUsage: (usedTokens: number, limitTokens: number) => void;
+  /** transcript-scale FR-15: /clear has no older history either. */
+  setHasMore: (value: boolean) => void;
 }
 
 type SessionEventOf<T extends SessionEvent['type']> = Extract<SessionEvent, { type: T }>;
@@ -464,6 +580,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
     dispatch({ t: 'clear' });
     setters.setResumeFailed(false);
     setters.setPinned(true);
+    setters.setHasMore(false); // transcript-scale FR-15: nothing older left to page
   },
   'assistant.delta': (dispatch, _setters, e) => dispatch({ t: 'delta', blockId: e.blockId, text: e.text, offset: e.offset }),
   'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId, text: e.text }),
@@ -497,6 +614,23 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
 export function applySessionEvent(dispatch: TranscriptDispatch, setters: ConversationEventSetters, e: SessionEvent): void {
   const handler = SESSION_EVENT_HANDLERS[e.type] as SessionEventHandler<SessionEvent['type']>;
   handler(dispatch, setters, e);
+}
+
+/**
+ * useConversationTranscript's `isRelevant` (transcript-scale FR-21 regression
+ * fix). `agent.update` / `workflow.update` carry no `sessionId` at all
+ * (contract/common.ts), so `subscribeSessionEvents`'s router
+ * (src/lib/session-events.ts) broadcasts them to EVERY session-scoped
+ * handler, not just the session they describe. Both are already no-ops in
+ * `SESSION_EVENT_HANDLERS` above, but letting them reach
+ * `onTranscriptEvent` at all still forces its `flushDeltas()` — cancelling
+ * the rAF delta coalescer and dispatching early — for every OTHER session's
+ * subagent/workflow update (reopening transcript-perf FR-5/FR-8's cost).
+ * Filtering them out here, before they are ever buffered or applied, is
+ * cheaper than gating the flush after the fact.
+ */
+export function isTranscriptRelevantEvent(e: SessionEvent): boolean {
+  return e.type !== 'agent.update' && e.type !== 'workflow.update';
 }
 
 // ---------- render-time compaction of duplicate tool rows ----------
