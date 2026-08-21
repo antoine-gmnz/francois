@@ -185,6 +185,11 @@ export const sessionWorktreeRemove = (sessionId: SessionId) =>
 export const sessionPickDirectory = () => ipc<Result<PickDirectoryData>>('session_pick_directory');
 export const sessionSend = (sessionId: SessionId, blockId: string, text: string) =>
   ipc<Result<{ queued: boolean; queuePosition?: number }>>('session_send', { sessionId, blockId, text });
+// transcript-perf FR-17/19: retract a still-queued prompt before the turn
+// drains it. `removed: false` means the turn already drained it (or it was
+// never queued) — the caller leaves the composer alone.
+export const sessionUnqueue = (sessionId: SessionId, blockId: string) =>
+  ipc<Result<{ removed: boolean }>>('session_unqueue', { sessionId, blockId });
 // Kill the running turn (⌃C). No-op if the session isn't running (core FR-23).
 export const sessionInterrupt = (sessionId: SessionId) =>
   ipc<Result<null>>('session_interrupt', { sessionId });

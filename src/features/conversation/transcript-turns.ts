@@ -52,25 +52,74 @@ function isTurnBlock(b: ConversationBlock): b is TurnBlock {
  *  - a card closes whatever turn is open and stands alone. It has to: the card
  *    renders at transcript level, so it cannot sit inside the turn's content
  *    column, and anything after it is a genuinely separate stretch of work.
+ *
+ * transcript-perf FR-2: `previous` is the last render's own output. A turn
+ * whose block list comes out elementwise-identical to the matching turn from
+ * `previous` (same `turnId`, same blocks in the same order, by reference)
+ * reuses THAT wrapper object rather than a fresh one — so `Turn`'s
+ * `React.memo` bails on every turn except the one whose blocks actually
+ * changed, instead of re-rendering the whole transcript on every streamed
+ * token. Omit `previous` (as every direct test call below does) and every
+ * turn is freshly built, exactly as before.
  */
-export function groupTurns(blocks: ConversationBlock[]): TranscriptItem[] {
+export function groupTurns(blocks: ConversationBlock[], previous?: TranscriptItem[]): TranscriptItem[] {
+  const prevTurnsById = new Map<string, TranscriptTurn>();
+  if (previous !== undefined) {
+    for (const item of previous) {
+      if (item.kind === 'turn') prevTurnsById.set(item.turnId, item);
+    }
+  }
+
   const out: TranscriptItem[] = [];
-  let open: TranscriptTurn | null = null;
+  let openId: string | null = null;
+  let openRole: TurnRole | null = null;
+  let openBlocks: TurnBlock[] | null = null;
+
+  const closeOpen = () => {
+    if (openId === null || openRole === null || openBlocks === null) return;
+    out.push(reuseOrBuild(openId, openRole, openBlocks, prevTurnsById));
+    openId = null;
+    openRole = null;
+    openBlocks = null;
+  };
+
   for (const b of blocks) {
     if (!isTurnBlock(b)) {
-      open = null;
+      closeOpen();
       out.push({ kind: 'card', block: b });
       continue;
     }
     const role: TurnRole = b.kind === 'user' ? 'user' : 'assistant';
-    if (open !== null && open.role === role && role === 'assistant') {
-      open.blocks.push(b);
+    if (openBlocks !== null && openRole === role && role === 'assistant') {
+      openBlocks.push(b);
       continue;
     }
-    open = { kind: 'turn', turnId: b.blockId, role, blocks: [b] };
-    out.push(open);
+    closeOpen();
+    openId = b.blockId;
+    openRole = role;
+    openBlocks = [b];
   }
+  closeOpen();
   return out;
+}
+
+function reuseOrBuild(
+  turnId: string,
+  role: TurnRole,
+  blocks: TurnBlock[],
+  prevTurnsById: Map<string, TranscriptTurn>,
+): TranscriptTurn {
+  const prev = prevTurnsById.get(turnId);
+  if (prev !== undefined && prev.role === role && sameBlocks(prev.blocks, blocks)) return prev;
+  return { kind: 'turn', turnId, role, blocks };
+}
+
+function sameBlocks(a: TurnBlock[], b: TurnBlock[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 // ---------- header derivation (9a: `Francois · sonnet 4.7 · 3 steps · 1m 52s`) ----------
@@ -93,6 +142,17 @@ export function turnStartedAt(turn: TranscriptTurn): number | null {
   return null;
 }
 
+/**
+ * transcript-perf FR-4: true iff any block in the turn is still streaming.
+ * The caller (ConversationView) uses this to decide whether a turn's `now`
+ * prop should track the ticking clock or stay frozen — `turnSpanMs` below
+ * only ever reads `now` for a streaming turn, so a settled turn's `now` is
+ * otherwise dead weight that would defeat Turn's React.memo bail-out.
+ */
+export function turnIsStreaming(turn: TranscriptTurn): boolean {
+  return turn.blocks.some((b) => b.isStreaming);
+}
+
 /** When the turn last did something: the last block that carries a time. */
 export function turnEndedAt(turn: TranscriptTurn): number | null {
   for (let i = turn.blocks.length - 1; i >= 0; i--) {
@@ -110,8 +170,7 @@ export function turnEndedAt(turn: TranscriptTurn): number | null {
 export function turnSpanMs(turn: TranscriptTurn, now: number): number | null {
   const start = turnStartedAt(turn);
   if (start === null) return null;
-  const streaming = turn.blocks.some((b) => b.isStreaming);
-  const end = streaming ? now : (turnEndedAt(turn) ?? start);
+  const end = turnIsStreaming(turn) ? now : (turnEndedAt(turn) ?? start);
   return Math.max(0, end - start);
 }
 

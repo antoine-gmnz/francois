@@ -31,7 +31,7 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
         BlockKind::User => with_at(
             serde_json::json!({
                 "kind": "user", "blockId": b.block_id, "isStreaming": b.streaming,
-                "text": b.text, "queued": false,
+                "text": b.text,
             }),
             b,
         ),
@@ -184,23 +184,35 @@ mod tests {
         // joined the buffer at content_block_stop, so a view hydrating mid-answer
         // seeded a transcript without it and rendered the answer minus its opening.
         let mut s = test_session();
-        s.buf_assistant_streaming("a1", "Hel");
+        s.buf_assistant_streaming("a1", "Hel", "Hel");
         assert_eq!(s.block_buffer.len(), 1);
         let partial = classify_block(&s.block_buffer[0]);
         assert_eq!(partial["kind"], "assistant");
         assert_eq!(partial["text"], "Hel");
         assert_eq!(partial["isStreaming"], true);
 
-        // Later deltas replace the text in place — one block, never a run of them.
-        s.buf_assistant_streaming("a1", "Hello");
+        // Later deltas APPEND onto the text in place (transcript-perf FR-22) —
+        // one block, never a run of them.
+        s.buf_assistant_streaming("a1", "lo", "Hello");
         assert_eq!(s.block_buffer.len(), 1);
+        assert_eq!(classify_block(&s.block_buffer[0])["text"], "Hello");
+    }
+
+    #[test]
+    fn buf_assistant_streaming_append_is_independent_of_the_accumulated_arg() {
+        // transcript-perf FR-22/FR-23: once a block exists, only `chunk` is
+        // pushed — `accumulated` is read solely to seed a NEW block, so a
+        // stale/wrong accumulated value on an existing block must not corrupt it.
+        let mut s = test_session();
+        s.buf_assistant_streaming("a1", "Hel", "Hel");
+        s.buf_assistant_streaming("a1", "lo", "anything-else-entirely");
         assert_eq!(classify_block(&s.block_buffer[0])["text"], "Hello");
     }
 
     #[test]
     fn finish_assistant_settles_the_streaming_block_in_place() {
         let mut s = test_session();
-        s.buf_assistant_streaming("a1", "Hel");
+        s.buf_assistant_streaming("a1", "Hel", "Hel");
         let finished = s.finish_assistant("a1", "Hello".into()).expect("block");
         assert_eq!(finished.text, "Hello");
         assert_eq!(s.block_buffer.len(), 1, "settled in place, never appended");
@@ -223,7 +235,7 @@ mod tests {
         // A tool block can land between a text block's deltas and its stop; the
         // finish must find the right block rather than the newest one.
         let mut s = test_session();
-        s.buf_assistant_streaming("a1", "Hel");
+        s.buf_assistant_streaming("a1", "Hel", "Hel");
         s.buf_tool("t1", "Read".into(), "file.rs".into(), false, None);
         s.finish_assistant("a1", "Hello".into()).expect("block");
         assert_eq!(s.block_buffer.len(), 2);

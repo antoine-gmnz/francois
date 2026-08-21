@@ -356,6 +356,58 @@
   padding: var(--space-6) var(--space-10);
 }
 
+/* transcript-perf design brief: the pending strip — a stack of rows between
+   .composer-banners and .composer-bar, full-bleed within the reading column.
+   Flat (turn 9a): no stroke, no shadow, no radius; separation from the bar
+   below comes from the recessed block tone alone. */
+.composer-pending {
+  /* default order (0) — sorts before the chips row (1) and the bar (2), which
+     is what makes it push the bar down instead of overlapping it (DOM order
+     already agrees: it sits between .composer-banners and .composer-bar). */
+  order: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--space-4);
+}
+.composer-pending__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 26px;
+  padding: 0 var(--space-10);
+  background: var(--bg-deep);
+}
+.composer-pending__glyph {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12-5);
+  color: var(--warn);
+}
+.composer-pending__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12-5);
+  color: var(--text-muted);
+}
+.composer-pending__remove {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-13);
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.composer-pending__remove:hover {
+  color: var(--error);
+}
+
 /* 9a: a filled field on the rail (#1c212a on #12161c), no edge. */
 .composer-bar {
   /* visual order — see .composer-col (chips 1, bar 2, hint 3) */
@@ -813,18 +865,6 @@
 /* design 7a: the prompt is an accent `›` line, not a card — see Block.tsx. */
 .block-user__arrow {
   color: var(--accent);
-}
-.block-user__queued {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  margin-top: var(--space-4);
-}
-.block-user__queued-label {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
-  letter-spacing: 0.04em;
-  color: var(--warn);
 }
 .block-user__body {
   font-family: var(--font-mono);

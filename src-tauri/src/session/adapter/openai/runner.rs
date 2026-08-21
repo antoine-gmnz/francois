@@ -542,7 +542,13 @@ fn run_loop(
                 }
                 let block_id = text_block_id.clone().unwrap();
                 assistant_text.push_str(&text);
-                super::blocks::buf_assistant_delta(&app, &session_id, &block_id, &assistant_text);
+                super::blocks::buf_assistant_delta(
+                    &app,
+                    &session_id,
+                    &block_id,
+                    &text,
+                    &assistant_text,
+                );
                 emit(
                     &app,
                     SessionEvent::AssistantDelta {

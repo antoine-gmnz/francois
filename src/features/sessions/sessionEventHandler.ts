@@ -21,6 +21,12 @@ export interface SessionEventContext {
   // ── design 12b: the roster's live per-row signals ────────────────────────
   /** A turn began — the row's elapsed restarts and its activity line is stale. */
   onTurnStart: (sessionId: SessionId) => void;
+  /**
+   * transcript-perf FR-12: the SINGLE point a queued prompt enters the
+   * transcript, whether or not this session's own SESSION tab is mounted to
+   * see it — resolves (drains) that blockId out of the pending-queue strip.
+   */
+  onMessageUser: (sessionId: SessionId, blockId: BlockId) => void;
   /** The tool a RUNNING row names ('editing UsageBar.tsx'). */
   onToolStart: (sessionId: SessionId, tool: string, summary: string) => void;
   /** A gated call parked the turn — the roster answers it inline (Allow/Deny). */
@@ -54,6 +60,7 @@ export function handleSessionEvent(e: SessionEvent, ctx: SessionEventContext): v
       break;
     case 'message.user':
       ctx.onTurnStart(e.sessionId);
+      ctx.onMessageUser(e.sessionId, e.blockId);
       break;
     case 'tool.start':
       ctx.onToolStart(e.sessionId, e.tool, e.summary);

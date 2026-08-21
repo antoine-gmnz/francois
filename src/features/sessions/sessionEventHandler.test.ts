@@ -13,6 +13,7 @@ function makeCtx(): MockContext {
     onAgentUpdate: vi.fn(),
     onRemoved: vi.fn(),
     onTurnStart: vi.fn(),
+    onMessageUser: vi.fn(),
     onToolStart: vi.fn(),
     onPermissionAsked: vi.fn(),
     onPermissionResolved: vi.fn(),
@@ -100,11 +101,12 @@ describe('handleSessionEvent', () => {
   });
 
   // ── design 12b: the roster's own live signals ─────────────────────────────
-  it('routes message.user to onTurnStart — a new turn restarts the row clock', () => {
+  it('routes message.user to onTurnStart AND onMessageUser (transcript-perf FR-12)', () => {
     const ctx = makeCtx();
     handleSessionEvent({ type: 'message.user', sessionId: 's1', blockId: 'b1', text: 'hi' }, ctx);
     expect(ctx.onTurnStart).toHaveBeenCalledWith('s1');
-    expect(calledCount(ctx)).toBe(1);
+    expect(ctx.onMessageUser).toHaveBeenCalledWith('s1', 'b1');
+    expect(calledCount(ctx)).toBe(2);
   });
 
   it('routes tool.start to onToolStart with the tool and its summary', () => {

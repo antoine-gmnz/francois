@@ -149,10 +149,11 @@ pub(super) fn buf_assistant_delta(
     app: &AppHandle,
     session_id: &str,
     block_id: &str,
+    chunk: &str,
     accumulated: &str,
 ) {
     app.state::<Engine>().with_session_mut(session_id, |s| {
-        s.buf_assistant_streaming(block_id, accumulated);
+        s.buf_assistant_streaming(block_id, chunk, accumulated);
     });
 }
 

@@ -704,25 +704,30 @@ impl Session {
         });
     }
 
-    /// conversation-view FR-10: an assistant block joins the buffer at its FIRST
-    /// delta, not at `content_block_stop`. Before that it was invisible to
-    /// `getTranscript`, so a view hydrating mid-block seeded a transcript with no
-    /// in-flight block and then only saw the deltas that arrived after it — the
-    /// answer rendered with its opening missing. Upsert: later deltas replace the
-    /// text of the same block in place (searched from the end — it is the newest
-    /// block in all but pathological interleavings).
-    fn buf_assistant_streaming(&mut self, block_id: &str, text: &str) {
+    /// conversation-view FR-10 / transcript-perf FR-22: an assistant block
+    /// joins the buffer at its FIRST delta, not at `content_block_stop`.
+    /// Before that it was invisible to `getTranscript`, so a view hydrating
+    /// mid-block seeded a transcript with no in-flight block and then only
+    /// saw the deltas that arrived after it — the answer rendered with its
+    /// opening missing. Upsert, but APPEND rather than replace: a later
+    /// delta pushes just its own `chunk` onto the existing block's text
+    /// (amortized O(1), not O(block length) — transcript-perf FR-23), and
+    /// only the first delta for a block-id ever pays for the full text, by
+    /// seeding the new block with `accumulated` (so a block first observed
+    /// mid-stream still carries its head). Searched from the end — it is
+    /// the newest block in all but pathological interleavings.
+    fn buf_assistant_streaming(&mut self, block_id: &str, chunk: &str, accumulated: &str) {
         if let Some(b) = self
             .block_buffer
             .iter_mut()
             .rev()
             .find(|b| b.block_id == block_id)
         {
-            b.text = text.to_string();
+            b.text.push_str(chunk);
             return;
         }
         self.block_buffer.push(BufBlock {
-            text: text.to_string(),
+            text: accumulated.to_string(),
             streaming: true,
             ..BufBlock::new(block_id, BlockKind::Assistant)
         });

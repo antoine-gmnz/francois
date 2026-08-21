@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { parseInline, parseMarkdown, type MdBlock, type MdInline, type TableAlign } from './markdown';
 import './conversation.css';
 
@@ -183,7 +183,11 @@ function Blocks({ blocks, tight }: { blocks: MdBlock[]; tight?: boolean }) {
 // is mostly bare `text` nodes with no class of their own, so whatever color sits
 // on the root is what the whole reply inherits; an inline one would outrank every
 // theme rule and leave the light theme reading dark-palette gray on white.
-export default function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
+// transcript-perf FR-2: wrapped in React.memo — `text`/`streaming` are the
+// only props (both primitives), so the default shallow comparison is exactly
+// right: a Markdown body re-parses only when its own text or streaming flag
+// actually changed, never because a sibling block streamed.
+function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
   const blocks = useMemo(() => parseMarkdown(text), [text]);
   return (
     <div className={streaming ? 'md-root md-root--streaming' : 'md-root'}>
@@ -191,3 +195,4 @@ export default function Markdown({ text, streaming }: { text: string; streaming?
     </div>
   );
 }
+export default memo(Markdown);

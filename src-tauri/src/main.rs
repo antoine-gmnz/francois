@@ -122,6 +122,7 @@ fn main() {
             session::session_create,
             session::session_remove,
             session::session_send,
+            session::session_unqueue,
             session::session_interrupt,
             session::session_answer_question,
             session::session_switch_model,

@@ -5,7 +5,13 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SessionMeta } from '../../../contract/common';
-import { nextActiveAfterRemoval } from './useSessionFleetSync';
+import { getPending, parkPrompt } from '../conversation/pending-queue';
+import {
+  clearQueueOnSessionCleared,
+  clearQueueOnSessionError,
+  drainQueueOnMessageUser,
+  nextActiveAfterRemoval,
+} from './useSessionFleetSync';
 
 function meta(id: string): SessionMeta {
   return {
@@ -52,5 +58,31 @@ describe('nextActiveAfterRemoval (§7)', () => {
 
   it('clamps into range for an id that is not in the list rather than throwing', () => {
     expect(nextActiveAfterRemoval(list, 'gone')).toBe('s1');
+  });
+});
+
+// transcript-perf FR-12/FR-14: the ctx callbacks the hook actually plugs into
+// `handleSessionEvent` (onMessageUser/onError/onCleared) delegate to THESE
+// exported functions rather than calling pending-queue inline — so the
+// wiring itself is under test here, not just pending-queue's own map ops
+// (pending-queue.test.ts).
+describe('pending-queue wiring (transcript-perf FR-12/FR-14)', () => {
+  it('drainQueueOnMessageUser resolves the matching parked prompt', () => {
+    parkPrompt('fs1', 'b1', 'go');
+    drainQueueOnMessageUser('fs1', 'b1');
+    expect(getPending('fs1')).toEqual([]);
+  });
+
+  it('clearQueueOnSessionError drops the whole queue', () => {
+    parkPrompt('fs2', 'b1', 'a');
+    parkPrompt('fs2', 'b2', 'b');
+    clearQueueOnSessionError('fs2');
+    expect(getPending('fs2')).toEqual([]);
+  });
+
+  it('clearQueueOnSessionCleared drops the whole queue', () => {
+    parkPrompt('fs3', 'b1', 'a');
+    clearQueueOnSessionCleared('fs3');
+    expect(getPending('fs3')).toEqual([]);
   });
 });

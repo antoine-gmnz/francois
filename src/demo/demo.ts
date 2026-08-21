@@ -542,7 +542,7 @@ async function toolCall(blockId: string, tool: string, summary: string, meta: st
 }
 
 function userSays(blockId: string, text: string) {
-  liveBlocks.push({ kind: 'user', blockId, isStreaming: false, queued: false, text });
+  liveBlocks.push({ kind: 'user', blockId, isStreaming: false, text });
   session({ type: 'message.user', sessionId: S_API, blockId, text });
 }
 

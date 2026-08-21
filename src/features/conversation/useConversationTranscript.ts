@@ -13,8 +13,11 @@ import { useStore } from '../../lib/store';
 import { getSessionCommands, setSessionCommands } from '../commands/slash-menu';
 import {
   applySessionEvent,
+  drainDeltas,
+  pushDelta,
   transcriptReducer,
   type ConversationEventSetters,
+  type DeltaChunk,
   type TranscriptAction,
   type TranscriptState,
 } from './conversation-blocks';
@@ -84,6 +87,41 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
     patchUsage: (usedTokens, limitTokens) => useStore.getState().patchUsage(sessionId, usedTokens, limitTokens),
   };
 
+  // transcript-perf FR-5..9: the rAF delta coalescer. Ref-held (never state,
+  // spec §6) so buffering itself never triggers a render; a burst of
+  // `assistant.delta` events inside one animation frame merges into ONE
+  // `deltaBatch` dispatch per blockId (arrival order preserved — see
+  // pushDelta/drainDeltas), so the existing scroll-pin effect below (keyed on
+  // `state.blocks`) writes `scrollTop` at most once per flush too (FR-8).
+  const deltaBufferRef = useRef<Map<string, DeltaChunk[]>>(new Map());
+  const rafRef = useRef<number | null>(null);
+
+  const flushDeltas = () => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    for (const action of drainDeltas(deltaBufferRef.current)) dispatch(action);
+  };
+
+  const onTranscriptEvent = (e: SessionEvent) => {
+    if (e.type === 'assistant.delta') {
+      pushDelta(deltaBufferRef.current, e.blockId, e.text, e.offset);
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(flushDeltas);
+      }
+      return;
+    }
+    // FR-6: any non-delta event flushes the pending buffer BEFORE it applies,
+    // so a delta can never be reordered behind a tool.start/assistant.done/card.
+    flushDeltas();
+    applySessionEvent(dispatch, eventSetters, e);
+  };
+
+  // FR-7: a pending delta is never dropped on unmount or session switch —
+  // both tear down this same [sessionId]-keyed effect.
+  useEffect(() => () => flushDeltas(), [sessionId]);
+
   // Hydration + live events (FR-8/9/10). Component is keyed by sessionId in the
   // parent, so this runs fresh per session; a stale getTranscript after unmount
   // is discarded via useHydratedSubscription's own mounted guard (FR-9).
@@ -103,7 +141,7 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
       setHydrated(true);
       setPinned(true);
     },
-    onEvent: (e) => applySessionEvent(dispatch, eventSetters, e),
+    onEvent: onTranscriptEvent,
     onError: (message) => setHydrationError(message),
     deps: [sessionId],
   });

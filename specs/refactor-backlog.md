@@ -290,3 +290,9 @@ filtering relative PATH entries is right for extension spawns, it is right every
 
 - [ ] MEDIUM · contract/app-shell.ts · quality · author the file specs/app-shell.md §5 requires (`AppShellState`, `PaneId`, `MainTab`, `KEY_BINDINGS`, `PANE_FOCUS_LABELS`, `STATUS_BAR_HINTS`) or retire that §9 acceptance line — the frontend imports `MainTab` from `src/lib/store` instead · deferred:app-shell
 - [ ] LOW · src/features/permissions/PermissionModeBadge.tsx:183 · obsolete · the `deferred:session-permission-mode` tooltip item above is dead — the file was deleted by design 11c's run chip; strike it · deferred:app-shell
+
+## deferred:transcript-perf
+
+- [ ] LOW · src-tauri/src/session/stream/blocks.rs:228 · complexity · `accum.encode_utf16().count()` recomputes the UTF-16 length of the whole accumulated block text on every delta (O(block length) per delta, outside the lock this feature amortized) — track a running UTF-16 counter alongside `accum` in `text_accum` and increment it by the chunk length instead of recounting the prefix · deferred:transcript-perf
+- [ ] LOW · src/features/conversation/ConversationView.tsx:172 · complexity · `ComposerPane` is not memoized, so every transcript-driven `state.blocks` change (each rAF-coalesced delta flush, `assistant.done`, tool events) re-renders the whole composer subtree — wrap its export in `React.memo`; its props are already reference-stable · deferred:transcript-perf
+- [ ] LOW · src-tauri/src/session/blocks.rs:29 · quality · FR-21 removed the `queued` field from `classify_block`'s User-block JSON but no unit test asserts the resulting shape — add `classify_block_user_has_no_queued_field` mirroring `classify_block_assistant_uses_new_palette` · deferred:transcript-perf
