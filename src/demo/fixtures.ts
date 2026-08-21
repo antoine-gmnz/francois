@@ -276,7 +276,6 @@ export const TRANSCRIPT: ConversationBlock[] = [
     blockId: b(1),
     at: at(452),
     isStreaming: false,
-    queued: false,
     text: 'The OAuth callback drops the `state` param when the token exchange is retried, so every retry fails CSRF validation. Track it down and fix it — with a regression test.',
   },
   {

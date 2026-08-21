@@ -12,6 +12,7 @@
 import type {
   SessionId,
   AccountId,
+  BlockId,
   ModelInfo,
   SessionEvent,
   Result,
@@ -51,10 +52,14 @@ export interface SessionRemoveInput {
 }
 // invoke('session_remove', req: SessionRemoveInput): Promise<Result<null>>
 
-// ---------- francois:session:send ----------
+// ---------- francois:session:send (amended, transcript-perf FR-20) ----------
 
 export interface SessionSendInput {
   sessionId: SessionId;
+  /** Client-minted so the optimistic block matches the eventual message.user
+   *  (conversation-view FR-15/21). Already sent and already accepted by the
+   *  core — declared here to close the drift. Omitted ⇒ the core mints one. */
+  blockId?: BlockId;
   text: string; // non-empty after trim
 }
 
@@ -63,6 +68,22 @@ export interface SessionSendOutput {
   queuePosition?: number; // 1-based FIFO position; present iff queued === true
 }
 // invoke('session_send', req: SessionSendInput): Promise<Result<SessionSendOutput>>
+// errors: SESSION_NOT_FOUND · SESSION_NOT_RUNNING · INVALID_INPUT (empty text, queue full)
+
+// ---------- francois:session:unqueue (NEW, transcript-perf FR-19) ----------
+
+export interface SessionUnqueueInput {
+  sessionId: SessionId;
+  blockId: BlockId; // the id session:send was called with
+}
+
+export interface SessionUnqueueOutput {
+  /** false ⇒ the turn already drained it (or it was never queued); the caller
+   *  leaves the composer alone and lets message.user clear the row. */
+  removed: boolean;
+}
+// invoke('session_unqueue', req: SessionUnqueueInput): Promise<Result<SessionUnqueueOutput>>
+// errors: SESSION_NOT_FOUND
 
 // ---------- francois:session:interrupt ----------
 

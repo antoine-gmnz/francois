@@ -10,6 +10,7 @@ import {
   formatTurnDuration,
   groupTurns,
   toolResultChips,
+  turnIsStreaming,
   turnMeta,
   turnSpanMs,
   turnStartedAt,
@@ -18,7 +19,7 @@ import {
 } from './transcript-turns';
 
 function user(blockId: string, at?: number): ConversationBlock {
-  return { kind: 'user', blockId, isStreaming: false, text: 'go', queued: false, ...(at !== undefined ? { at } : {}) };
+  return { kind: 'user', blockId, isStreaming: false, text: 'go', ...(at !== undefined ? { at } : {}) };
 }
 function assistant(blockId: string, at?: number, isStreaming = false): ConversationBlock {
   return {
@@ -115,6 +116,48 @@ describe('groupTurns (design 9a: one gutter glyph + one header per turn)', () =>
   });
 });
 
+describe('groupTurns turn identity (transcript-perf FR-2: referential stability)', () => {
+  it('reuses the previous TranscriptTurn reference for a turn whose blocks are unchanged', () => {
+    const u1 = user('u1');
+    const a1 = assistant('a1');
+    const first = groupTurns([u1, a1]);
+    const second = groupTurns([u1, a1], first);
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toBe(first[1]);
+  });
+
+  it('builds a fresh wrapper only for the turn whose blocks actually changed', () => {
+    const u1 = user('u1');
+    const a1 = assistant('a1');
+    const first = groupTurns([u1, a1]);
+    // A new object standing in for `a1` after a streamed delta — same
+    // blockId, different reference, the way the reducer replaces a block.
+    const a1Streamed = assistant('a1', undefined, true);
+    const second = groupTurns([u1, a1Streamed], first);
+    expect(second[0]).toBe(first[0]); // the user turn never touched
+    expect(second[1]).not.toBe(first[1]); // the assistant turn's content changed
+    expect(turnAt(second, 1).blocks[0]).toBe(a1Streamed);
+  });
+
+  it('builds a fresh wrapper for a turn that grew a new block', () => {
+    const a1 = assistant('a1');
+    const t1 = tool('t1');
+    const first = groupTurns([a1]);
+    const second = groupTurns([a1, t1], first);
+    expect(second[0]).not.toBe(first[0]);
+    expect(turnAt(second, 0).blocks.map((b) => b.blockId)).toEqual(['a1', 't1']);
+  });
+
+  it('builds fresh wrappers for every turn when no previous is given', () => {
+    const u1 = user('u1');
+    const a1 = assistant('a1');
+    const first = groupTurns([u1, a1]);
+    const second = groupTurns([u1, a1]);
+    expect(second[0]).not.toBe(first[0]);
+    expect(second[1]).not.toBe(first[1]);
+  });
+});
+
 describe('turn header derivation', () => {
   it('counts tools and dispatches as steps, never prose', () => {
     const reply = turnAt(groupTurns([assistant('a1'), tool('t1'), subagent('s1'), assistant('a2')]), 0);
@@ -162,6 +205,22 @@ describe('turn header derivation', () => {
 
   it('states a user prompt with no step count — a prompt has no steps', () => {
     expect(turnMeta(turnAt(groupTurns([user('u1', 0)]), 0), 60_000)).toBe('');
+  });
+});
+
+describe('turnIsStreaming (transcript-perf FR-4)', () => {
+  it('is true when any block in the turn is still streaming', () => {
+    const running = turnAt(groupTurns([assistant('a1', 0, true)]), 0);
+    expect(turnIsStreaming(running)).toBe(true);
+  });
+
+  it('is false once every block in the turn has settled', () => {
+    const settled = turnAt(groupTurns([assistant('a1', 0), tool('t1', 1_000)]), 0);
+    expect(turnIsStreaming(settled)).toBe(false);
+  });
+
+  it('is false for a user prompt, which is never streaming', () => {
+    expect(turnIsStreaming(turnAt(groupTurns([user('u1', 0)]), 0))).toBe(false);
   });
 });
 

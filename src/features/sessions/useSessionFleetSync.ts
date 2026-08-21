@@ -5,6 +5,7 @@ import { statusTransitionKind, type ActivityKind } from '../../../contract/overv
 import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { clearDraft } from '../conversation/composer-draft';
+import { clearPending, resolvePrompt } from '../conversation/pending-queue';
 import { prunePaletteSession } from '../palette/paletteData';
 import { useShellStore } from '../shell/shellStore';
 import { activityLabel } from './activity';
@@ -18,6 +19,34 @@ export interface SessionFleetSync {
   reassignAfterRemoval: (id: string) => void;
   /** Drops `id`'s per-session derived figures and internal bookkeeping (FR-7). */
   dropDerived: (id: string) => void;
+}
+
+/**
+ * transcript-perf FR-12: the pending-queue half of `ctx.onMessageUser` —
+ * factored out (rather than the inline `resolvePrompt(sessionId, blockId)`
+ * this replaces) so the wiring itself, not just pending-queue's own map ops
+ * (pending-queue.test.ts), has a test that does not need to render the hook.
+ */
+export function drainQueueOnMessageUser(sessionId: string, blockId: string): void {
+  resolvePrompt(sessionId, blockId);
+}
+
+/**
+ * transcript-perf FR-14: the pending-queue half of `ctx.onError` — the hook
+ * also calls `patchError` in the same callback; this is only the part that
+ * touches the queue.
+ */
+export function clearQueueOnSessionError(sessionId: string): void {
+  clearPending(sessionId);
+}
+
+/**
+ * transcript-perf FR-14: the pending-queue half of `ctx.onCleared` — the hook
+ * also calls `clearRosterSignals` in the same callback; this is only the part
+ * that touches the queue.
+ */
+export function clearQueueOnSessionCleared(sessionId: string): void {
+  clearPending(sessionId);
 }
 
 /**
@@ -106,6 +135,8 @@ export function useSessionFleetSync(): SessionFleetSync {
     useShellStore.getState().removeSession(id);
     // …and the unsent composer draft, which outlives the view by design.
     clearDraft(id);
+    // transcript-perf FR-15: …and the pending-queue strip, same reason.
+    clearPending(id);
   };
 
   // The full summary — file count AND the line totals design 12b's settled row
@@ -222,6 +253,11 @@ export function useSessionFleetSync(): SessionFleetSync {
         // event so it is already in the cache when the transition above reads
         // `prev`.
         patchError(sessionId, message);
+        // transcript-perf FR-14: the core's own s.queue.clear() runs on EVERY
+        // errored turn end — transient (USAGE_LIMIT, session lives on) and
+        // terminal alike — so this fires on every session.error regardless of
+        // code, matching it exactly.
+        clearQueueOnSessionError(sessionId);
       },
       onUsage: (sessionId, usedTokens, limitTokens) => {
         patchUsage(sessionId, usedTokens, limitTokens); // keeps the ctx figure live (FR-3)
@@ -263,6 +299,10 @@ export function useSessionFleetSync(): SessionFleetSync {
         setSessionActivity(sessionId, null);
         markRunningSince(sessionId, Date.now());
       },
+      // transcript-perf FR-12: the single, always-listening resolution point
+      // for a queued prompt — fires whether or not this session's own SESSION
+      // tab happens to be mounted right now.
+      onMessageUser: (sessionId, blockId) => drainQueueOnMessageUser(sessionId, blockId),
       onToolStart: (sessionId, tool, summary) => {
         const line = activityLabel(tool, summary);
         setSessionActivity(sessionId, line === '' ? null : line);
@@ -277,6 +317,7 @@ export function useSessionFleetSync(): SessionFleetSync {
       },
       onCleared: (sessionId) => {
         clearRosterSignals(sessionId);
+        clearQueueOnSessionCleared(sessionId); // transcript-perf FR-14
       },
       onRemoved: (sessionId) => {
         const gone = useStore.getState().sessions.find((session) => session.id === sessionId);

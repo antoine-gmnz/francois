@@ -34,11 +34,20 @@ export interface TranscriptState {
   blocks: ConversationBlock[];
 }
 
+/** transcript-perf FR-5: one buffered chunk inside the rAF coalescer. */
+export interface DeltaChunk {
+  text: string;
+  offset: number;
+}
+
 export type TranscriptAction =
   | { t: 'seed'; blocks: ConversationBlock[] }
   | { t: 'optimisticUser'; blockId: string; text: string }
   | { t: 'msgUser'; blockId: string; text: string }
   | { t: 'delta'; blockId: string; text: string; offset: number }
+  // transcript-perf FR-5: one or more same-blockId chunks accumulated over one
+  // animation frame, applied in ONE reducer pass — see the 'deltaBatch' case.
+  | { t: 'deltaBatch'; blockId: string; chunks: DeltaChunk[] }
   | { t: 'assistantDone'; blockId: string; text: string }
   | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string }
   | { t: 'toolDone'; blockId: string; meta: string }
@@ -136,7 +145,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       return { blocks: a.blocks };
     case 'optimisticUser': {
       if (idx(a.blockId) !== -1) return state;
-      const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text, queued: true };
+      const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text };
       return { blocks: [...state.blocks, b] };
     }
     case 'msgUser': {
@@ -144,9 +153,9 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       if (i !== -1) {
         const b = state.blocks[i];
         if (b.kind !== 'user') return state;
-        return replace(i, { ...b, text: a.text, queued: false });
+        return replace(i, { ...b, text: a.text });
       }
-      const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text, queued: false };
+      const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text };
       return { blocks: [...state.blocks, b] };
     }
     case 'delta': {
@@ -162,6 +171,30 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
         blocks: [
           ...state.blocks,
           { kind: 'assistant', blockId: a.blockId, isStreaming: true, glyph: '●', glyphColor, bodyColor, text: a.text },
+        ],
+      };
+    }
+    // transcript-perf FR-5: the rAF coalescer's own dispatch — one or more
+    // same-blockId chunks accumulated over one animation frame, folded through
+    // `mergeDelta` in arrival order inside this ONE reducer pass (one array
+    // copy) instead of one dispatch per chunk. Text is byte-identical to
+    // applying each chunk as its own 'delta' action (FR-9's acceptance).
+    case 'deltaBatch': {
+      const i = idx(a.blockId);
+      if (i !== -1) {
+        const b = state.blocks[i];
+        if (b.kind !== 'assistant') return state;
+        let text = b.text;
+        for (const c of a.chunks) text = mergeDelta(text, c.text, c.offset);
+        return text === b.text ? state : replace(i, { ...b, text });
+      }
+      let text = '';
+      for (const c of a.chunks) text = mergeDelta(text, c.text, c.offset);
+      const { glyphColor, bodyColor } = assistantColors(true);
+      return {
+        blocks: [
+          ...state.blocks,
+          { kind: 'assistant', blockId: a.blockId, isStreaming: true, glyph: '●', glyphColor, bodyColor, text },
         ],
       };
     }
@@ -330,6 +363,31 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       return { blocks: next };
     }
   }
+}
+
+// ---------- transcript-perf FR-5/FR-7: the rAF delta coalescer's buffer ----------
+//
+// A ref-held (never state — spec §6) `Map<blockId, DeltaChunk[]>` inside
+// useConversationTranscript. Pure so the "one dispatch per blockId, arrival
+// order preserved" contract is testable without a rAF/DOM environment.
+
+/** Buffers one delta chunk for `blockId`, preserving arrival order. */
+export function pushDelta(buffer: Map<string, DeltaChunk[]>, blockId: string, text: string, offset: number): void {
+  const list = buffer.get(blockId);
+  if (list) list.push({ text, offset });
+  else buffer.set(blockId, [{ text, offset }]);
+}
+
+/**
+ * Drains the buffer into one `deltaBatch` action per blockId (first-seen
+ * order) and empties it. Called on the animation-frame flush, on any
+ * non-delta event (FR-6), and on unmount/session switch (FR-7).
+ */
+export function drainDeltas(buffer: Map<string, DeltaChunk[]>): TranscriptAction[] {
+  const actions: TranscriptAction[] = [];
+  for (const [blockId, chunks] of buffer) actions.push({ t: 'deltaBatch', blockId, chunks });
+  buffer.clear();
+  return actions;
 }
 
 // ---------- session-event application (conversation-view FR-8/9/10) ----------

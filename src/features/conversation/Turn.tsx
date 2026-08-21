@@ -9,6 +9,7 @@
 // The grouping and every derived string are pure (./transcript-turns); this
 // file is DOM assembly only.
 
+import { memo } from 'react';
 import { AssistantBody, SubagentBanner, ToolRail, UserBody } from './Block';
 import {
   formatClock,
@@ -24,7 +25,13 @@ import './conversation.css';
 const GUTTER = { user: '›', assistant: '⏺' } as const;
 const WHO = { user: 'You', assistant: 'Francois' } as const;
 
-export default function Turn({
+// transcript-perf FR-2/FR-4: wrapped in React.memo. `now` is only ever
+// dereferenced by a STREAMING turn's `turnMeta` (turnSpanMs falls back to the
+// turn's own fixed end time otherwise) — the caller (ConversationView) passes
+// a frozen value to every settled turn, so the 1s clock's changing prop
+// reaches exactly the one turn that is actually running and every other
+// Turn's shallow prop comparison bails.
+function TurnImpl({
   turn,
   model,
   now,
@@ -32,7 +39,7 @@ export default function Turn({
   turn: TranscriptTurn;
   /** The session's model, shown on a reply. Absent on an agent trail or before meta lands. */
   model?: string;
-  /** Ticking clock, so a streaming reply's duration counts up. */
+  /** Ticking clock while streaming; a frozen, unused value otherwise. */
   now: number;
 }) {
   const startedAt = turnStartedAt(turn);
@@ -60,6 +67,8 @@ export default function Turn({
     </div>
   );
 }
+
+export default memo(TurnImpl);
 
 /**
  * Lay the turn's blocks out, collapsing each run of consecutive tool calls onto

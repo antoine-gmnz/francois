@@ -292,7 +292,7 @@ describe('composer placeholder (FR-20)', () => {
   });
 
   it('hasPendingQuestionBlock: true only for a pending question block', () => {
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' };
     expect(hasPendingQuestionBlock([user])).toBe(false);
     expect(hasPendingQuestionBlock([user, questionBlock('pending')])).toBe(true);
     expect(hasPendingQuestionBlock([user, questionBlock('answered')])).toBe(false);

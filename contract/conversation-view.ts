@@ -39,7 +39,9 @@ interface ConversationBlockBase {
 export interface UserConversationBlock extends ConversationBlockBase {
   kind: 'user';
   text: string;
-  queued: boolean;
+  // `queued: boolean` REMOVED (transcript-perf FR-21) — a queued prompt is no
+  // longer a transcript block; see session-engine.ts SessionUnqueue* + the
+  // frontend's pending-queue strip (specs/transcript-perf.md §6).
 }
 
 export interface AssistantConversationBlock extends ConversationBlockBase {

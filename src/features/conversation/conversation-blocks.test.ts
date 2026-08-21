@@ -14,14 +14,17 @@ import {
   cardHeaderLabel,
   commandFromCard,
   compactBlocks,
+  drainDeltas,
   isClearCommand,
   liveCurrentModelId,
   mergeDelta,
   meterFillColor,
+  pushDelta,
   switchModelFromCard,
   transcriptReducer,
   TRANSCRIPT_TEXT_SELECT_STYLE,
   type ConversationEventSetters,
+  type DeltaChunk,
   type TranscriptState,
 } from './conversation-blocks';
 
@@ -44,7 +47,7 @@ function commandBlock(s: TranscriptState, blockId: string): CommandConversationB
 
 describe('transcriptReducer — command.started (FR-20)', () => {
   it('inserts a pending command block at the end', () => {
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: '/usage', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: '/usage' };
     const s = transcriptReducer({ blocks: [user] }, { t: 'commandStarted', blockId: 'c1', command: 'usage' });
     expect(s.blocks).toHaveLength(2);
     expect(s.blocks[1]).toEqual({ kind: 'command', blockId: 'c1', isStreaming: true, command: 'usage' });
@@ -93,7 +96,7 @@ describe('transcriptReducer — command.output (FR-20)', () => {
   });
 
   it('is a no-op when the blockId belongs to a non-command block', () => {
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' };
     const s1: TranscriptState = { blocks: [user] };
     const s2 = transcriptReducer(s1, { t: 'commandOutput', blockId: 'u1', card: noticeCard });
     expect(s2).toBe(s1);
@@ -270,7 +273,7 @@ describe('transcriptReducer — question.asked / question.resolved (session-ques
   }
 
   it('questionAsked inserts a pending block at the end (FR-15: isStreaming iff pending)', () => {
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'go', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'go' };
     const s = transcriptReducer({ blocks: [user] }, { t: 'questionAsked', blockId: 'q1', questions });
     expect(s.blocks).toHaveLength(2);
     expect(s.blocks[1]).toEqual({ kind: 'question', blockId: 'q1', isStreaming: true, questions, state: 'pending' });
@@ -340,14 +343,14 @@ describe('transcriptReducer — question.asked / question.resolved (session-ques
   });
 
   it('questionAsked is a no-op when the blockId belongs to a non-question block', () => {
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' };
     const s1: TranscriptState = { blocks: [user] };
     const s2 = transcriptReducer(s1, { t: 'questionAsked', blockId: 'u1', questions });
     expect(s2).toBe(s1);
   });
 
   it('questionResolved is a no-op when the blockId belongs to a non-question block', () => {
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' };
     const s1: TranscriptState = { blocks: [user] };
     const s2 = transcriptReducer(s1, { t: 'questionResolved', blockId: 'u1', state: 'cancelled' });
     expect(s2).toBe(s1);
@@ -379,7 +382,7 @@ describe('transcriptReducer — permission.asked / permission.resolved (permissi
   }
 
   it('permissionAsked inserts a pending block (FR-25: isStreaming iff pending)', () => {
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'go', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'go' };
     const s = transcriptReducer({ blocks: [user] }, { t: 'permissionAsked', blockId: 'p1', ask });
     expect(s.blocks).toHaveLength(2);
     expect(s.blocks[1]).toEqual({ kind: 'permission', blockId: 'p1', isStreaming: true, ask, state: 'pending' });
@@ -466,27 +469,26 @@ describe('isClearCommand (/clear full-reset detector)', () => {
 });
 
 describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior identity)', () => {
-  const user = (blockId: string, text: string, queued: boolean): ConversationBlock => ({
+  const user = (blockId: string, text: string): ConversationBlock => ({
     kind: 'user',
     blockId,
     isStreaming: false,
     text,
-    queued,
   });
 
   describe('seed', () => {
     it('replaces the whole block list (hydration)', () => {
-      const s1: TranscriptState = { blocks: [user('u1', 'old', false)] };
-      const seeded = [user('u2', 'restored', false)];
+      const s1: TranscriptState = { blocks: [user('u1', 'old')] };
+      const seeded = [user('u2', 'restored')];
       const s2 = transcriptReducer(s1, { t: 'seed', blocks: seeded });
       expect(s2.blocks).toEqual(seeded);
     });
   });
 
   describe('optimisticUser', () => {
-    it('appends a queued user block', () => {
+    it('appends the optimistic user block (transcript-perf FR-21: no `queued` field)', () => {
       const s = transcriptReducer(S0, { t: 'optimisticUser', blockId: 'u1', text: 'hi' });
-      expect(s.blocks).toEqual([{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: true }]);
+      expect(s.blocks).toEqual([{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' }]);
     });
 
     it('guards against duplicates (existing blockId → same state)', () => {
@@ -497,15 +499,15 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
   });
 
   describe('msgUser', () => {
-    it('upserts onto the optimistic block and clears the queued flag (echo)', () => {
+    it('upserts onto the optimistic block (echo)', () => {
       const s1 = transcriptReducer(S0, { t: 'optimisticUser', blockId: 'u1', text: 'hi' });
       const s2 = transcriptReducer(s1, { t: 'msgUser', blockId: 'u1', text: 'hi' });
-      expect(s2.blocks).toEqual([{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false }]);
+      expect(s2.blocks).toEqual([{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' }]);
     });
 
     it('inserts when unseen (echo without an optimistic block)', () => {
       const s = transcriptReducer(S0, { t: 'msgUser', blockId: 'u1', text: 'hi' });
-      expect(s.blocks).toEqual([{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false }]);
+      expect(s.blocks).toEqual([{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' }]);
     });
 
     it('is idempotent on replay', () => {
@@ -591,6 +593,92 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
     it('returns the same state when the chunk adds nothing (no needless re-render)', () => {
       const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hello', offset: 0 });
       expect(transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'ell', offset: 1 })).toBe(s1);
+    });
+  });
+
+  describe('deltaBatch (transcript-perf FR-5/FR-9: one dispatch per blockId per frame)', () => {
+    it('is byte-identical to applying the same chunks one at a time via delta', () => {
+      const oneAtATime = ['Hel', 'lo ', 'world'].reduce(
+        (s, text, i, arr) =>
+          transcriptReducer(s, {
+            t: 'delta',
+            blockId: 'a1',
+            text,
+            offset: arr.slice(0, i).join('').length,
+          }),
+        S0,
+      );
+      const batched = transcriptReducer(S0, {
+        t: 'deltaBatch',
+        blockId: 'a1',
+        chunks: [
+          { text: 'Hel', offset: 0 },
+          { text: 'lo ', offset: 3 },
+          { text: 'world', offset: 6 },
+        ],
+      });
+      expect(batched.blocks).toEqual(oneAtATime.blocks);
+      const b = batched.blocks[0];
+      if (b.kind !== 'assistant') throw new Error('expected assistant block');
+      expect(b.text).toBe('Hello world');
+    });
+
+    it('inserts a streaming assistant block when unseen, folding every chunk into the seed', () => {
+      const s = transcriptReducer(S0, {
+        t: 'deltaBatch',
+        blockId: 'a1',
+        chunks: [
+          { text: 'Hel', offset: 0 },
+          { text: 'lo', offset: 3 },
+        ],
+      });
+      const b = s.blocks[0];
+      if (b.kind !== 'assistant') throw new Error('expected assistant block');
+      expect(b.text).toBe('Hello');
+      expect(b.isStreaming).toBe(true);
+    });
+
+    it('appends onto an already-open block', () => {
+      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hel', offset: 0 });
+      const s2 = transcriptReducer(s1, {
+        t: 'deltaBatch',
+        blockId: 'a1',
+        chunks: [
+          { text: 'lo ', offset: 3 },
+          { text: 'world', offset: 6 },
+        ],
+      });
+      const b = s2.blocks[0];
+      if (b.kind !== 'assistant') throw new Error('expected assistant block');
+      expect(b.text).toBe('Hello world');
+    });
+
+    it('returns the same state when the batch adds nothing (no needless re-render)', () => {
+      const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'Hello', offset: 0 });
+      const s2 = transcriptReducer(s1, { t: 'deltaBatch', blockId: 'a1', chunks: [{ text: 'ell', offset: 1 }] });
+      expect(s2).toBe(s1);
+    });
+  });
+
+  describe('pushDelta / drainDeltas (the rAF buffer)', () => {
+    it('accumulates chunks per blockId, preserving arrival order', () => {
+      const buffer = new Map<string, DeltaChunk[]>();
+      pushDelta(buffer, 'a1', 'Hel', 0);
+      pushDelta(buffer, 'a1', 'lo', 3);
+      pushDelta(buffer, 'a2', 'Hi', 0);
+      const actions = drainDeltas(buffer);
+      expect(actions).toEqual([
+        { t: 'deltaBatch', blockId: 'a1', chunks: [{ text: 'Hel', offset: 0 }, { text: 'lo', offset: 3 }] },
+        { t: 'deltaBatch', blockId: 'a2', chunks: [{ text: 'Hi', offset: 0 }] },
+      ]);
+    });
+
+    it('empties the buffer on drain', () => {
+      const buffer = new Map<string, DeltaChunk[]>();
+      pushDelta(buffer, 'a1', 'Hel', 0);
+      drainDeltas(buffer);
+      expect(drainDeltas(buffer)).toEqual([]);
+      expect(buffer.size).toBe(0);
     });
   });
 
@@ -713,7 +801,7 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
 
   describe('clear', () => {
     it('drops every block (full reset from a non-empty state)', () => {
-      const s1: TranscriptState = { blocks: [user('u1', 'hi', false), user('u2', 'there', false)] };
+      const s1: TranscriptState = { blocks: [user('u1', 'hi'), user('u2', 'there')] };
       const s2 = transcriptReducer(s1, { t: 'clear' });
       expect(s2).toEqual({ blocks: [] });
     });
@@ -1049,7 +1137,7 @@ describe('transcriptReducer — a delta on one block never disturbs another (mac
     // an assistant.delta appending elsewhere: React only re-renders the DOM for
     // blocks whose props changed, and this asserts `user` never becomes a new
     // object (nor moves) across two delta dispatches targeting a different block.
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'earlier message', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'earlier message' };
     const s1: TranscriptState = { blocks: [user] };
     const s2 = transcriptReducer(s1, { t: 'delta', blockId: 'a1', text: 'Hel', offset: 0 });
     const s3 = transcriptReducer(s2, { t: 'delta', blockId: 'a1', text: 'lo', offset: 3 });
@@ -1059,8 +1147,8 @@ describe('transcriptReducer — a delta on one block never disturbs another (mac
   });
 
   it('keeps every sibling block referentially stable across a run of deltas on one block', () => {
-    const a: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'a', queued: false };
-    const b: ConversationBlock = { kind: 'user', blockId: 'u2', isStreaming: false, text: 'b', queued: false };
+    const a: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'a' };
+    const b: ConversationBlock = { kind: 'user', blockId: 'u2', isStreaming: false, text: 'b' };
     let s: TranscriptState = { blocks: [a, b] };
     let offset = 0;
     for (const chunk of ['Hel', 'lo ', 'wor', 'ld']) {
@@ -1078,7 +1166,7 @@ describe('compactBlocks preserves block identity for untouched blocks (mac-text-
     // key={b.blockId} map to <Block>. If it recreated non-merged blocks the
     // reconciler would still key them the same, but keeping reference identity
     // here is the cheapest guarantee that unrelated re-renders stay no-ops.
-    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', queued: false };
+    const user: ConversationBlock = { kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi' };
     const assistant: ConversationBlock = {
       kind: 'assistant',
       blockId: 'a1',

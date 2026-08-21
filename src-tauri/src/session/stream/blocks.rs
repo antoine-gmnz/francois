@@ -229,10 +229,13 @@ fn handle_text_delta(
     accum.push_str(&text);
     // Keep the transcript buffer current with the partial text, so a view that
     // hydrates mid-block seeds the opening it would otherwise never receive.
+    // transcript-perf FR-23: the lock is held only for the push itself — no
+    // allocation/serialization of the full block text happens inside it; the
+    // chunk (`text`) is what gets appended, `accum` only seeds a fresh block.
     {
         let mut map = env.engine().sessions.lock().unwrap();
         if let Some(s) = map.get_mut(session_id) {
-            s.buf_assistant_streaming(&block_id, accum);
+            s.buf_assistant_streaming(&block_id, &text, accum);
         }
     }
     *open_block = Some((block_id.clone(), BlockKind::Text));

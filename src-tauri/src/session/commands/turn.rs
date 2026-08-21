@@ -131,6 +131,44 @@ pub fn session_send(
     )
 }
 
+#[derive(Serialize)]
+pub struct UnqueueOutput {
+    removed: bool,
+}
+
+/// transcript-perf FR-19: remove the queued prompt whose blockId matches from
+/// `Session.queue`. Never touches `current`/status and mutates nothing but the
+/// queue — a lost race (already drained, or never queued) is not an error,
+/// just `removed: false`. Pure map mutation, split out like `apply_clear` so
+/// the command wrapper below is a one-line lock + call.
+pub(crate) fn apply_unqueue(
+    map: &mut HashMap<String, Session>,
+    session_id: &str,
+    block_id: &str,
+) -> Option<bool> {
+    let s = map.get_mut(session_id)?;
+    let before = s.queue.len();
+    s.queue.retain(|(id, _)| id != block_id);
+    Some(s.queue.len() < before)
+}
+
+/// francois:session:unqueue — retract a prompt parked in the FIFO queue before
+/// the running turn drains it (transcript-perf FR-19). Emits no event: the
+/// caller (conversation-view) removes the pending row itself on `removed:
+/// true`, and lets the eventual `message.user` clear it on `removed: false`.
+#[tauri::command(async)]
+pub fn session_unqueue(
+    engine: State<'_, Engine>,
+    session_id: String,
+    block_id: String,
+) -> IpcResult<UnqueueOutput> {
+    let mut map = engine.sessions.lock().unwrap();
+    match apply_unqueue(&mut map, &session_id, &block_id) {
+        Some(removed) => ok(UnqueueOutput { removed }),
+        None => err("SESSION_NOT_FOUND", "no such session"),
+    }
+}
+
 #[tauri::command(async)]
 pub fn session_compact(
     app: AppHandle,
@@ -427,6 +465,61 @@ mod tests {
             apply_clear(&mut map, "nope"),
             ClearOutcome::NotFound
         ));
+    }
+
+    #[test]
+    fn unqueue_removes_the_matching_pending_prompt() {
+        // FR-19: removes the entry whose blockId matches, returns removed:true.
+        let mut s = test_session();
+        s.status = "running".into();
+        s.queue.push_back(("b1".into(), "first".into()));
+        s.queue.push_back(("b2".into(), "second".into()));
+        let engine = test_engine_with(s);
+
+        let removed = {
+            let mut map = engine.sessions.lock().unwrap();
+            apply_unqueue(&mut map, "s1", "b1")
+        };
+        assert_eq!(removed, Some(true));
+
+        let map = engine.sessions.lock().unwrap();
+        let s = map.get("s1").unwrap();
+        assert_eq!(s.queue.len(), 1);
+        assert_eq!(s.queue.front().unwrap().0, "b2");
+        // FR-19: never touches status.
+        assert_eq!(s.status, "running");
+    }
+
+    #[test]
+    fn unqueue_lost_race_reports_not_removed_without_mutating() {
+        // FR-19/edge case: the turn already drained it (or it was never
+        // queued) — removed:false, queue left exactly as it was.
+        let mut s = test_session();
+        s.queue.push_back(("b1".into(), "first".into()));
+        let engine = test_engine_with(s);
+
+        let removed = {
+            let mut map = engine.sessions.lock().unwrap();
+            apply_unqueue(&mut map, "s1", "b2")
+        };
+        assert_eq!(removed, Some(false));
+
+        let map = engine.sessions.lock().unwrap();
+        assert_eq!(map.get("s1").unwrap().queue.len(), 1);
+    }
+
+    #[test]
+    fn unqueue_on_idle_session_with_empty_queue_is_not_an_error() {
+        let engine = test_engine_with(test_session());
+        let mut map = engine.sessions.lock().unwrap();
+        assert_eq!(apply_unqueue(&mut map, "s1", "whatever"), Some(false));
+    }
+
+    #[test]
+    fn unqueue_unknown_session_reports_not_found() {
+        let engine = test_engine_with(test_session());
+        let mut map = engine.sessions.lock().unwrap();
+        assert_eq!(apply_unqueue(&mut map, "nope", "b1"), None);
     }
 
     #[test]

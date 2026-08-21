@@ -295,3 +295,9 @@ filtering relative PATH entries is right for extension spawns, it is right every
 ## deferred:roster-group-tier — SHIP-round leftovers (review round 1)
 
 - [ ] LOW · src/features/sessions/useRowCursorClamp.ts · quality · these hunks belong to the already-committed roster-cursor-anchor commit and are unrelated to any FR in specs/roster-group-tier.md — exclude from this feature's staged diff going forward · deferred:roster-group-tier
+
+## deferred:transcript-perf
+
+- [ ] LOW · src-tauri/src/session/stream/blocks.rs:228 · complexity · `accum.encode_utf16().count()` recomputes the UTF-16 length of the whole accumulated block text on every delta (O(block length) per delta, outside the lock this feature amortized) — track a running UTF-16 counter alongside `accum` in `text_accum` and increment it by the chunk length instead of recounting the prefix · deferred:transcript-perf
+- [ ] LOW · src/features/conversation/ConversationView.tsx:172 · complexity · `ComposerPane` is not memoized, so every transcript-driven `state.blocks` change (each rAF-coalesced delta flush, `assistant.done`, tool events) re-renders the whole composer subtree — wrap its export in `React.memo`; its props are already reference-stable · deferred:transcript-perf
+- [ ] LOW · src-tauri/src/session/blocks.rs:29 · quality · FR-21 removed the `queued` field from `classify_block`'s User-block JSON but no unit test asserts the resulting shape — add `classify_block_user_has_no_queued_field` mirroring `classify_block_assistant_uses_new_palette` · deferred:transcript-perf

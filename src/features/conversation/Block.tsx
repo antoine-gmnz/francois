@@ -9,6 +9,7 @@
 // agent trail keep saying the same thing the same way; only the container
 // around them differs.
 
+import { memo } from 'react';
 import { toolBody, type ConversationBlock, type SubagentConversationBlock, type ToolConversationBlock, type UserConversationBlock } from '../../../contract/conversation-view';
 import type { AssistantConversationBlock } from '../../../contract/conversation-view';
 import CommandBlock from '../commands/CommandCard';
@@ -20,7 +21,12 @@ import { StatusDot } from '../../ui/StatusDot';
 import { toolResultChips } from './transcript-turns';
 import './conversation.css';
 
-export default function Block({ b: block, sessionId }: { b: ConversationBlock; sessionId: string }) {
+// transcript-perf FR-2: every prop these receive is referentially stable
+// across a render that does not change it (Turn.tsx's `turn`/Turn items come
+// from a useMemo keyed on state.blocks), so the default shallow React.memo
+// comparison is enough to bail a render that has nothing new to draw.
+
+function BlockImpl({ b: block, sessionId }: { b: ConversationBlock; sessionId: string }) {
   // interactive-commands: command cards (and notice one-liners) have their own renderer (§8)
   if (block.kind === 'command') {
     return <CommandBlock b={block} sessionId={sessionId} />;
@@ -75,23 +81,21 @@ export default function Block({ b: block, sessionId }: { b: ConversationBlock; s
   return <ToolRow b={block} />;
 }
 
+const Block = memo(BlockImpl);
+export default Block;
+
 // ---------- shared bodies (design 9a: one vocabulary, two containers) ----------
 
-export function UserBody({ b }: { b: UserConversationBlock }) {
-  return (
-    <>
-      <div className="block-user__body">{b.text}</div>
-      {b.queued && (
-        <span className="block-user__queued">
-          <StatusDot color="var(--warn)" size={5} pulsing />
-          <span className="block-user__queued-label">queued</span>
-        </span>
-      )}
-    </>
-  );
+function UserBodyImpl({ b }: { b: UserConversationBlock }) {
+  // transcript-perf FR-21: the `.block-user__queued` badge is gone — a queued
+  // prompt no longer becomes a transcript block at all (see ./pending-queue
+  // and the composer's own pending strip), so `queued` is no longer a field
+  // this body could read.
+  return <div className="block-user__body">{b.text}</div>;
 }
+export const UserBody = memo(UserBodyImpl);
 
-export function AssistantBody({ b }: { b: AssistantConversationBlock }) {
+function AssistantBodyImpl({ b }: { b: AssistantConversationBlock }) {
   return (
     <>
       <Markdown text={b.text} streaming={b.isStreaming} />
@@ -99,6 +103,7 @@ export function AssistantBody({ b }: { b: AssistantConversationBlock }) {
     </>
   );
 }
+export const AssistantBody = memo(AssistantBodyImpl);
 
 /**
  * design-refresh FR-7: dispatch renders as a purple-tinted banner, not a bare
@@ -106,7 +111,7 @@ export function AssistantBody({ b }: { b: AssistantConversationBlock }) {
  * rather than a rail row under 9a: a dispatch hands the work to someone else,
  * which is a different kind of event from a tool the reply ran itself.
  */
-export function SubagentBanner({ b }: { b: SubagentConversationBlock }) {
+function SubagentBannerImpl({ b }: { b: SubagentConversationBlock }) {
   return (
     <div className="block-subagent">
       <span className="block-glyph" style={{ color: toneVar(b.glyphColor) }}>
@@ -122,6 +127,7 @@ export function SubagentBanner({ b }: { b: SubagentConversationBlock }) {
     </div>
   );
 }
+export const SubagentBanner = memo(SubagentBannerImpl);
 
 /**
  * design 9a: one tool call, as a four-column row — glyph · tool name · target ·
@@ -129,7 +135,7 @@ export function SubagentBanner({ b }: { b: SubagentConversationBlock }) {
  * sentence and became chips at the right edge, so a column of calls can be
  * scanned for the one that went wrong without reading any of them.
  */
-export function ToolRow({ b }: { b: ToolConversationBlock }) {
+function ToolRowImpl({ b }: { b: ToolConversationBlock }) {
   const chips = toolResultChips(b.meta);
   return (
     <div className={'toolrow' + (b.isStreaming ? ' toolrow--live' : '')}>
@@ -156,6 +162,7 @@ export function ToolRow({ b }: { b: ToolConversationBlock }) {
     </div>
   );
 }
+export const ToolRow = memo(ToolRowImpl);
 
 /**
  * design 9a: a run of consecutive tool calls hangs off a single vertical rail
@@ -163,7 +170,7 @@ export function ToolRow({ b }: { b: ToolConversationBlock }) {
  * card — under the flat treatment a card would be a second surface floating in
  * the turn, where the rail reads as "this is what that paragraph did".
  */
-export function ToolRail({ blocks }: { blocks: ToolConversationBlock[] }) {
+function ToolRailImpl({ blocks }: { blocks: ToolConversationBlock[] }) {
   return (
     <div className="toolrail">
       {blocks.map((b) => (
@@ -172,3 +179,4 @@ export function ToolRail({ blocks }: { blocks: ToolConversationBlock[] }) {
     </div>
   );
 }
+export const ToolRail = memo(ToolRailImpl);

@@ -261,7 +261,7 @@ fn apply(app: &AppHandle, session_id: &str, cwd: &str, effect: Effect) {
             offset,
         } => {
             app.state::<Engine>().with_session_mut(session_id, |s| {
-                s.buf_assistant_streaming(&block_id, &accumulated);
+                s.buf_assistant_streaming(&block_id, &delta, &accumulated);
             });
             emit(
                 app,

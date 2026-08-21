@@ -5,11 +5,14 @@ import type { Attachment } from '../../../contract/session-attachments';
 import SlashMenu from '../commands/SlashMenu';
 import AttachmentChip from './AttachmentChip';
 import { composerErrorBanners } from './attachments';
+import { firstLine, type PendingPrompt } from './pending-queue';
 
 // The SESSION tab input bar: slash-menu popup (FR-5) anchored above it, the
-// transient send-error banner, and the composer textarea itself. Extracted
-// verbatim from ConversationView — all the popup/send logic (FR-5..FR-12,
-// FR-20/23) stays in the parent, which owns the state it reads and writes.
+// transient send-error banner, the pending-queue strip (transcript-perf §6..8),
+// and the composer textarea itself. Presentational only — every bit of popup/
+// send/attachments/pending-queue logic (FR-5..FR-12, FR-20/23,
+// transcript-perf FR-10..18) lives in ./ComposerPane, which owns the state
+// this component reads and writes through props.
 
 export interface ComposerProps {
   status: SessionStatus;
@@ -71,6 +74,12 @@ export interface ComposerProps {
   // `disabled` attribute, and a disabled control fires no paste event, so a
   // handler here would die with the session while drop and `+` keep staging.
   // useSessionAttachments listens at the document instead (subscribeDocumentPaste).
+
+  // ── transcript-perf §6..8: the pending-queue strip ──────────────────────
+  /** This session's parked prompts, FIFO. Empty ⇒ the strip renders nothing. */
+  pending: readonly PendingPrompt[];
+  /** A row's `✕` (FR-17/18). Inert on an unfocused pane (no control renders at all). */
+  onRetractPending: (blockId: string, text: string) => void;
 }
 
 export default function Composer({
@@ -97,6 +106,8 @@ export default function Composer({
   contextPercent,
   inert = false,
   onInertClick,
+  pending,
+  onRetractPending,
 }: ComposerProps) {
   const banners = composerErrorBanners(sendError, attachError);
   // One gate for every interactive part of the bar: while inert the pane does
@@ -130,6 +141,33 @@ export default function Composer({
             {banners.map((line) => (
               <div key={line} className="send-error-banner">
                 {line}
+              </div>
+            ))}
+          </div>
+        )}
+        {/* transcript-perf design brief: the pending strip sits in the SAME
+            slot the banners above already use — a row pushes the composer
+            down rather than overlapping it. Empty ⇒ not rendered at all (no
+            placeholder, no zero-height wrapper). */}
+        {pending.length > 0 && (
+          <div className="composer-pending">
+            {pending.map((p) => (
+              <div key={p.blockId} className="composer-pending__row" title={p.text}>
+                <span className="composer-pending__glyph" aria-hidden="true">
+                  ⟳
+                </span>
+                <span className="composer-pending__text">{firstLine(p.text)}</span>
+                {/* inert (unfocused pane): read-only, no ✕ — matches the composer's own gate. */}
+                {!inert && (
+                  <button
+                    type="button"
+                    className="composer-pending__remove"
+                    aria-label="remove queued message"
+                    onClick={() => onRetractPending(p.blockId, p.text)}
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -206,7 +244,7 @@ export default function Composer({
             attachment + slash-menu tokens, ⌘K by the global capture listener. */}
         <span className="composer-hint">
           {/* the mock's copy reads "esc interrupt", but the real binding here is
-              ⌃C (ConversationView.onInputKey) — the hint names the hotkey that
+              ⌃C (ComposerPane.onInputKey) — the hint names the hotkey that
               actually fires, not the mock's label; see the handoff. */}
           {isBusyStatus(status) && (
             <span>
