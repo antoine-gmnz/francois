@@ -22,5 +22,30 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['{src,contract}/**/*.test.ts', '{packaging,scripts}/**/*.test.mjs'],
+    coverage: {
+      provider: 'v8',
+      reportsDirectory: 'reports/coverage',
+      // text for the terminal, lcov for Codecov-style tools, json-summary for
+      // the CI job summary, html to actually read a file's uncovered lines.
+      reporter: ['text-summary', 'lcov', 'json-summary', 'html'],
+      // Only what the tests are meant to cover: pure helpers, stores, hooks and
+      // the contract-typed wrappers. Components are not unit-tested (no DOM
+      // framework is wired — see PIPELINE.md §Testing), so counting .tsx would
+      // report a number that measures the testing STRATEGY rather than the
+      // suite, and a number nobody can act on gets ignored.
+      include: ['src/**/*.ts', 'contract/**/*.ts', 'scripts/**/*.mjs', 'packaging/**/*.js'],
+      exclude: [
+        '**/*.test.ts',
+        '**/*.test.mjs',
+        '**/testutil.ts',
+        'src/demo/**', // stripped from shipped builds by the `define` above
+        'src/main.tsx',
+        'src/**/*.d.ts',
+      ],
+      // No global threshold on purpose: a single repo-wide percentage is a
+      // number people game. The report is the artefact; ratcheting specific
+      // directories is a separate, deliberate decision.
+      thresholds: undefined,
+    },
   },
 });

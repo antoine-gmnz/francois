@@ -188,6 +188,7 @@ enum AppEvent {
 #[derive(Default)]
 pub struct UsageState(Mutex<HashMap<String, UsageInner>>);
 
+#[derive(Default)]
 struct UsageInner {
     snapshot: UsageSnapshot,
     /// Some iff a probe is in flight (FR-7).
@@ -198,18 +199,6 @@ struct UsageInner {
     generation: u64,
     /// FR-13: a post-turn probe is already scheduled (coalescing).
     debounce_pending: bool,
-}
-
-impl Default for UsageInner {
-    fn default() -> Self {
-        UsageInner {
-            snapshot: UsageSnapshot::default(),
-            probe: None,
-            last_started_at: 0,
-            generation: 0,
-            debounce_pending: false,
-        }
-    }
 }
 
 // ---------- pure decision logic ----------

@@ -257,8 +257,7 @@ mod tests {
             0,
             0,
         )
-        .err()
-        .expect("denied");
+        .expect_err("denied");
         match err {
             ProfileError::ArgDenied { flag, reason } => {
                 assert_eq!(flag, "--model");
@@ -318,8 +317,7 @@ mod tests {
             0,
             0,
         )
-        .err()
-        .expect("invalid");
+        .expect_err("invalid");
         assert!(matches!(err, ProfileError::InvalidInput(_)));
     }
 

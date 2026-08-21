@@ -62,7 +62,10 @@ pub(crate) fn is_recommended_label(label: &str) -> bool {
     let Some(open) = t.rfind('(') else {
         return false;
     };
-    t.ends_with(')') && t[open + 1..t.len() - 1].trim().eq_ignore_ascii_case("recommended")
+    t.ends_with(')')
+        && t[open + 1..t.len() - 1]
+            .trim()
+            .eq_ignore_ascii_case("recommended")
 }
 
 /// FR-7: parse the AskUserQuestion input leniently. None ⇔ no non-empty
@@ -290,7 +293,10 @@ mod tests {
             preview: None,
             recommended: false,
         };
-        assert_eq!(serde_json::to_string(&o).unwrap(), r#"{"label":"A","description":"d"}"#);
+        assert_eq!(
+            serde_json::to_string(&o).unwrap(),
+            r#"{"label":"A","description":"d"}"#
+        );
         let on = QuestionOption {
             recommended: true,
             ..o

@@ -15,7 +15,7 @@ use super::FrancoisTool;
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::io::{self, BufRead, Read};
+use std::io::{self, BufRead};
 
 // ---------- FR-6: the loop cap ----------
 
@@ -465,6 +465,9 @@ fn truncate_500(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::permissions::path_key;
+    // Only the stub HTTP server below reads a body off the socket, so `Read`
+    // belongs here — at module scope the bin build sees it unused.
+    use std::io::Read;
 
     // ---------- FR-3: request body ----------
 

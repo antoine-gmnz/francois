@@ -285,7 +285,8 @@ function parseList(lines: string[], from: number): { block: Extract<MdBlock, { t
 
 // ---------- inline parser ----------
 
-const ESCAPABLE = /[\\`*_{}\[\]()#+\-.!~>|]/;
+// `]` still needs its backslash inside the class; `[` does not.
+const ESCAPABLE = /[\\`*_{}[\]()#+\-.!~>|]/;
 const isAlnum = (ch: string | undefined): boolean => ch !== undefined && /[A-Za-z0-9]/.test(ch);
 
 function runLength(text: string, pos: number, ch: string): number {
@@ -364,7 +365,7 @@ function matchLink(text: string, start: number): { text: string; href: string; e
     }
   }
   if (k >= text.length) return null;
-  let dest = text.slice(j + 2, k).trim().replace(/^<(.*)>$/, '$1');
+  const dest = text.slice(j + 2, k).trim().replace(/^<(.*)>$/, '$1');
   const sp = dest.search(/\s/);
   const href = sp === -1 ? dest : dest.slice(0, sp);
   return { text: label, href, end: k + 1 };

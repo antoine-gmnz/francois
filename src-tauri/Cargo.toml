@@ -58,3 +58,47 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphic
 [profile.release]
 strip = true
 lto = true
+
+# ── lint policy ─────────────────────────────────────────────────────────────
+# Owned HERE rather than as `cargo clippy -- -D warnings` in CI, deliberately:
+# flags after `--` are appended LAST, so `-D warnings` would silently re-deny
+# every exception below. Cargo's `priority` solves it properly — the group is
+# evaluated first (priority -1), the named exceptions afterwards (priority 0) —
+# and it means `cargo clippy` behaves identically on a laptop and on CI.
+#
+# Every `allow` here is a deliberate exception with a reason, not a mute button.
+# Anything not listed is denied, so a new warning fails the build.
+[lints.rust]
+unused_imports = "deny"
+unused_must_use = "deny"
+dead_code = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+# Doc-comment markdown nits (indentation of wrapped list items). This is a
+# binary crate that publishes no rustdoc, and its doc comments are hand-wrapped
+# prose carrying design rationale — reflowing them to satisfy a markdown parser
+# nobody runs would cost readability and buy nothing.
+doc_lazy_continuation = "allow"
+
+# 3 sites, all boundary signatures (diff/git.rs, permissions/commands.rs,
+# session/turn.rs). The types are shaped by the contract; naming each one adds
+# an indirection at the exact place a reader most wants the shape spelled out.
+type_complexity = "allow"
+
+# 2 sites: `session/commands/lifecycle.rs` spawn (15 args) and
+# `session/stream/blocks.rs` (8). Both are single-caller entry points whose
+# arguments are the session's spawn parameters — bundling them into a struct is
+# a worthwhile refactor, but a behavioural one, not a lint fix.
+too_many_arguments = "allow"
+
+# `SessionEvent` and `InteractiveMsg` are ≥640 bytes because one variant carries
+# a full transcript block. Boxing that variant is a REAL improvement — it is on
+# the backlog — but it touches every construction and match site in the stream
+# path, so it does not belong in a tooling change.
+large_enum_variant = "allow"
+
+# `extensions::Stream*` variants share their prefix on purpose: the prefix is
+# what marks them as the streaming sub-protocol.
+enum_variant_names = "allow"

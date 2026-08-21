@@ -315,7 +315,7 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     if (id) void accountLoginCancel({ loginId: id }).catch(() => {});
   };
 
-  useEffect(() => cancelLogin, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => cancelLogin, []);  
 
   // The palette's "Add account" opens the modal straight into the login view.
   // One-shot: cleared here so re-opening the modal normally lands on the list.

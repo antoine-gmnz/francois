@@ -359,6 +359,9 @@ fn detach(cmd: &mut Command) {
     cmd.creation_flags(windows_creation_flags());
 }
 
+// Never passed to a child — it exists so the regression test below can assert
+// that `windows_creation_flags()` does NOT contain it. See the doc above.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const DETACHED_PROCESS: u32 = 0x0000_0008;
 pub(crate) const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -693,6 +696,7 @@ mod tests {
     // An EBUSY on npm's rename can be a race that the next attempt wins, so the
     // install is retried before the update is called off.
     #[test]
+    #[allow(clippy::assertions_on_constants)] // pinning the constants IS the test
     fn both_helpers_retry_the_install_before_giving_up() {
         assert!(NPM_TRIES > 1 && NPM_RETRY_SECS > 0);
 

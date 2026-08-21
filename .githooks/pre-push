@@ -1,0 +1,23 @@
+#!/bin/sh
+# Runs before a push reaches the remote — the last cheap gate before CI spends
+# a 2-OS matrix on the answer. Deliberately whole-repo (unlike pre-commit, which
+# is staged-file scoped): the question here is "is the branch green", not "is
+# this hunk clean".
+#
+# Still NOT the test suites — vitest + cargo test take minutes and CI owns them.
+# This catches the two failures that are both instant and embarrassing: a type
+# error, and a layout convention regression.
+#
+# Skip it deliberately with:  git push --no-verify
+set -e
+
+printf '\033[36m•\033[0m tsc --noEmit\n'
+npx tsc --noEmit || {
+  printf '\033[31m✗\033[0m typecheck failed\n'
+  exit 1
+}
+
+printf '\033[36m•\033[0m conventions\n'
+node scripts/quality/check.mjs || exit 1
+
+exit 0

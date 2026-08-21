@@ -173,6 +173,15 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 .get("ask")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
+            // NOT `unwrap_or("cancelled")`, though clippy's `manual_unwrap_or`
+            // suggests exactly that: this is a WHITELIST, not a null-check. Only
+            // `allowed`/`denied` are terminal states worth replaying — any other
+            // value, `pending` above all, means the app died with the card still
+            // on screen, and must reload as `cancelled`. `unwrap_or` would catch
+            // only an ABSENT key and let `pending` through, resurrecting a
+            // permission prompt that can never be answered.
+            // (Regression test: persisted_pending_permission_reloads_as_cancelled.)
+            #[allow(clippy::manual_unwrap_or)]
             let state = match v.get("state").and_then(|s| s.as_str()) {
                 Some(s @ ("allowed" | "denied")) => s,
                 _ => "cancelled",
@@ -326,10 +335,8 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
         // it now holds every session's claudeSessionId resume anchor (FR-10).
         let bytes = serde_json::to_vec_pretty(&list).unwrap_or_default();
         let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, &bytes).is_ok() {
-            if std::fs::rename(&tmp, &path).is_err() {
-                let _ = std::fs::remove_file(&tmp);
-            }
+        if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+            let _ = std::fs::remove_file(&tmp);
         }
     }
 }
@@ -348,8 +355,8 @@ pub(crate) struct PersistedMeta {
     /// path then falls back to the session's own `lastActivityAt`, which is the
     /// closest instant we can honestly claim the mode has been in force since.
     permission_mode_since: Option<u64>,
-    runtime: String,         // "native" when absent, or when "wsl" off-Windows
-    allow_git: bool,         // false when absent (pre-feature records)
+    runtime: String, // "native" when absent, or when "wsl" off-Windows
+    allow_git: bool, // false when absent (pre-feature records)
     /// projects FR-18: None when absent (every pre-projects record). Whether the
     /// id still RESOLVES is decided at load, not here — parsing stays pure.
     project_id: Option<String>,

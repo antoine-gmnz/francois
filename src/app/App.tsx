@@ -5,7 +5,6 @@ import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab, tabsForSession } from '../features/agents/agent-tab';
 import AdoptCloudSessionModal from '../features/cloud-sessions/AdoptCloudSessionModal';
 import ExtensionsModal from '../features/extensions/ExtensionsModal';
-import { visibleExtensions } from '../features/extensions/extensions';
 import { detectionRoot, initExtensionEvents, refreshExtensions } from '../features/extensions/extensionsFeed';
 import McpPanel from '../features/mcp/McpPanel';
 import { initNotifications } from '../features/notifications/notifications';
@@ -101,9 +100,8 @@ export default function App() {
   const upsertSession = useStore((s) => s.upsertSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
   // extensions FR-9..FR-11: the `ext:<id>` tabs, after the view segment and
-  // before the dynamic agent/workflow tabs.
-  const extensions = useStore((s) => s.extensions);
-  const extStickyIds = useStore((s) => s.extStickyIds);
+  // before the dynamic agent/workflow tabs. SessionRow derives the tab list
+  // itself; App only opens one.
   const extensionsOpen = useStore((s) => s.extensionsOpen);
   const openExtTab = useStore((s) => s.openExtTab);
   // agent-tab FR-9: the dynamic per-subagent tabs, after the view segment.
@@ -214,7 +212,6 @@ export default function App() {
     void refreshExtensions(extRoot);
   }, [extRoot]);
 
-  const extTabs = visibleExtensions(extensions, extStickyIds);
   // FR-13: the name the `not available in <project>` copy carries — the
   // registered project when the session has one, else the root's basename.
   const activeProjectName = active

@@ -544,7 +544,7 @@ mod golden_replay_tests {
                 })
                 .unwrap_or_default()
         };
-        let any = |f: &dyn Fn(&Value) -> bool| lines.iter().any(|v| f(v));
+        let any = |f: &dyn Fn(&Value) -> bool| lines.iter().any(f);
 
         // 1. assistant text deltas
         assert!(

@@ -5,7 +5,7 @@
 //! runs, or two tests in the same run, must never collide).
 
 use super::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -34,7 +34,7 @@ pub(crate) const SID: &str = "a3f9c1e2-1111-2222-3333-444444444444";
 pub(crate) fn att(
     id: &str,
     ref_path: &str,
-    stored: &PathBuf,
+    stored: &Path,
     copied: bool,
     state: &str,
 ) -> Attachment {

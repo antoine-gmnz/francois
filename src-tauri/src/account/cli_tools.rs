@@ -103,6 +103,7 @@ fn in_flight() -> &'static Mutex<HashSet<String>> {
     IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // only the unit tests read the set back
 fn install_in_flight(id: &str) -> bool {
     in_flight()
         .lock()

@@ -152,7 +152,7 @@ describe('Open shell pane… (unbound-panes FR-9)', () => {
       ],
     });
     // p1 is nowhere near cap yet with only 2 open — sanity check both offered.
-    let step = findCommand('open-shell-pane').run(activeCtx) as SecondaryStep | undefined;
+    const step = findCommand('open-shell-pane').run(activeCtx) as SecondaryStep | undefined;
     expect(step!.items.map((i) => i.id)).toEqual(['p1', 'p2']);
 
     // Excluding it directly through the shared selector (the palette's own

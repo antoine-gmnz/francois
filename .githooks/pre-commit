@@ -1,0 +1,54 @@
+#!/bin/sh
+# Francois pre-commit gate. Installed by `npm run prepare` (which sets
+# core.hooksPath to .githooks), so there is no husky and no dependency — the
+# hooks are just tracked files, which is also why reviewing a change to them is
+# a normal diff rather than an audit of node_modules.
+#
+# Design rule: this hook only runs checks that are FAST and that act on what is
+# actually being committed. The full test suites belong to CI — a pre-commit
+# hook that takes a minute is a pre-commit hook people bypass with --no-verify.
+#
+# Skip it deliberately with:  git commit --no-verify
+set -e
+
+# Only staged, still-existing files. -z + tr handles paths with spaces.
+staged() {
+  git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n' | grep -E "$1" || true
+}
+
+TS_FILES=$(staged '\.(ts|tsx|mjs|js)$')
+RS_FILES=$(staged '\.rs$')
+fail=0
+
+if [ -n "$TS_FILES" ]; then
+  printf '\033[36m•\033[0m eslint (%s files)\n' "$(printf '%s\n' "$TS_FILES" | wc -l | tr -d ' ')"
+  # --no-warn-ignored: a staged file that the config ignores is not an error.
+  # No --max-warnings: warnings are the ratchet's reporting channel, and
+  # blocking a commit on pre-existing debt in a file you merely touched is how
+  # a hook gets disabled. Errors block; warnings inform.
+  # shellcheck disable=SC2086
+  printf '%s\n' "$TS_FILES" | xargs npx eslint --no-warn-ignored || fail=1
+fi
+
+if [ -n "$RS_FILES" ]; then
+  printf '\033[36m•\033[0m rustfmt\n'
+  # `--check` so the hook never rewrites files under the user mid-commit; it
+  # reports and refuses, and `npm run format` is the one-word fix.
+  (cd src-tauri && cargo fmt --check) || {
+    printf '\033[31m✗\033[0m rustfmt: run \033[1mnpm run format\033[0m, then re-stage\n'
+    fail=1
+  }
+
+  printf '\033[36m•\033[0m clippy\n'
+  # Lint policy lives in src-tauri/Cargo.toml [lints], so no -D flags here.
+  # Scoped to the lib/bin (not --all-targets) to keep the hook quick; CI runs
+  # the full target set including tests.
+  (cd src-tauri && cargo clippy --quiet) || fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  printf '\n\033[31m✗ pre-commit failed.\033[0m Fix the above, or bypass with \033[1mgit commit --no-verify\033[0m\n'
+  exit 1
+fi
+
+exit 0

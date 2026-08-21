@@ -10,7 +10,7 @@
 // by this app's own frontend and resolves with the new state, so a push channel would carry
 // nothing the response does not (the projects §5 preamble reasoning, verbatim).
 
-import type { ProfileId, Result, SessionProfileRef } from './common';
+import type { ProfileId, SessionProfileRef } from './common';
 
 export type { ProfileId, SessionProfileRef };
 

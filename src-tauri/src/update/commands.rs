@@ -298,7 +298,10 @@ mod tests {
     }
 
     // FR-16: the ack reaches the webview before the window goes.
+    // A compile-time-constant assertion is the POINT here: the test pins an
+    // invariant of the constant, so clippy's "this is always true" is the pass.
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn the_shutdown_grace_is_non_zero() {
         assert!(SHUTDOWN_GRACE_MS > 0);
     }

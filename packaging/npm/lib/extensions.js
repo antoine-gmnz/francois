@@ -87,8 +87,8 @@ function assertNoForbiddenArgv0(root) {
  * `sanitizeForDisplay` in src/features/extensions/extensions.ts — the manifest
  * `label` is untrusted, disk-supplied text and must never carry terminal
  * control sequences to stdout. */
-// eslint-disable-next-line no-control-regex
 const CONTROL_OR_BIDI_RE =
+  // eslint-disable-next-line no-control-regex -- the control range IS the subject
   /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
 function sanitizeForDisplay(value) {
   return typeof value === 'string' ? value.replace(CONTROL_OR_BIDI_RE, '') : value;

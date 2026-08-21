@@ -448,7 +448,7 @@ pub(crate) struct Session {
     /// around. NOT a `Session::new` parameter — every creation path wants the same
     /// thing, the session's own start.
     permission_mode_since: u64,
-    runtime: String,         // contract ClaudeRuntime; "native" | "wsl"
+    runtime: String, // contract ClaudeRuntime; "native" | "wsl"
     /// When true, Francois auto-approves `git`/`gh` tool calls on the stdio
     /// control channel instead of denying them (NewSessionRequest.allowGit) —
     /// lets a session run git commit/push without bypassing every permission.

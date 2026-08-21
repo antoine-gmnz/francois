@@ -142,9 +142,9 @@ pub(crate) fn scan_run_dir(dir: &Path, state: &mut ScanState) {
                 apply_transcript_line(agg, &line);
             }
         } else if let Some(id) = meta_agent_id(&name) {
-            if !state.metas.contains_key(&id) {
+            if let std::collections::hash_map::Entry::Vacant(e) = state.metas.entry(id) {
                 if let Some(meta) = read_meta(&path) {
-                    state.metas.insert(id, meta);
+                    e.insert(meta);
                 }
             }
         }

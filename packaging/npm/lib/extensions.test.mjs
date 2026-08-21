@@ -1,3 +1,7 @@
+/* eslint-disable no-control-regex --
+ * These tests assert that control and bidi code points are STRIPPED from
+ * untrusted text, so the control characters in the patterns below are the
+ * subject under test, not a typo. */
 import { describe, expect, it, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';

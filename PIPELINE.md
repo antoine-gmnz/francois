@@ -44,9 +44,9 @@ surfaces:
     test_cmd: npm test
     # Bridled variant — what agents actually RUN, so a green run costs lines, not pages.
     test_quiet_cmd: npm test -- --reporter=dot
-    lint_cmd: ""                              # no eslint configured; tsc is the static gate
-    lint_quiet_cmd: ""
-    format_cmd: ""
+    lint_cmd: npx eslint .
+    lint_quiet_cmd: npx eslint . --format compact
+    format_cmd: ""                            # no prettier; eslint --fix is the autofixer
     typecheck_cmd: npx tsc --noEmit
     build_cmd: npm run build
     uses_design: true
@@ -58,8 +58,8 @@ surfaces:
     model: inherit
     test_cmd: cd src-tauri && cargo test
     test_quiet_cmd: cd src-tauri && cargo test --quiet
-    lint_cmd: ""
-    lint_quiet_cmd: ""
+    lint_cmd: cd src-tauri && cargo clippy --all-targets
+    lint_quiet_cmd: cd src-tauri && cargo clippy --all-targets --quiet
     format_cmd: cd src-tauri && cargo fmt
     typecheck_cmd: cd src-tauri && cargo check
     build_cmd: ""                             # release builds via tauri build / CI matrix
@@ -84,9 +84,9 @@ release_notes:
 commands:
   install: npm install
   dev: npm run dev:app
-  lint: ""
-  lint_quiet: ""
-  format: ""
+  lint: npm run quality
+  lint_quiet: npm run quality
+  format: cd src-tauri && cargo fmt
   typecheck: npx tsc --noEmit
   test: npm test && cd src-tauri && cargo test
   test_quiet: npm test -- --reporter=dot && cd src-tauri && cargo test --quiet
@@ -292,6 +292,18 @@ that owns the feature — never in a new top-level file.
 - **scripts** (same `npm test` run — vitest's include covers `{packaging,scripts}/**/*.test.mjs`): cover the release version logic — bump decision, semver ordering, the pre-1.0 guard. The I/O half (`bump.mjs`) is proven by `node scripts/release/bump.mjs --dry-run` and by every release that runs it.
 - **packaging** (same `npm test` run): cover the pure helpers only — asset/executable resolution, install-record round-trips, desktop-entry generation and shortcut paths. Anything that touches the real OS (`reg`, `WScript.Shell`, `lsregister`) takes an injectable `home`/`appData` so no test writes outside a temp dir. The download + unpack + register path is proven end-to-end in CI by `npm-publish.yml`, which runs the real postinstall on the runner before publishing.
 - **core** (`cargo test` in `src-tauri`): cover command handlers against the contract shapes (serde round-trips of payloads and the tagged event unions), NDJSON stream parsing, and git operations against throwaway temp repos. No shared global state between tests.
+
+## Code quality gates
+
+`npm run quality` is the whole gate in one word — typecheck, ESLint, conventions, rustfmt, clippy. Everything below is a piece of it, and every piece runs identically on a laptop and in CI.
+
+- **Where the policy lives.** ESLint's is `eslint.config.js` (flat config, pinned to **9.x** because ESLint 10 requires Node ≥20.19 and the hooks must run on whatever Node is already installed). Clippy's is `src-tauri/Cargo.toml` **`[lints]`** — *not* a `-D warnings` flag, because flags after `--` are appended last and would silently override every documented exception. The repo-shape rules are `scripts/quality/conventions.mjs`.
+- **The ratchet.** A rule with **zero** current violations is an `error`; a rule with existing violations is a `warn` that carries its count. So new code is held to the rule while nobody is asked to pay down old debt to merge. Every clippy `allow` and every warn-level ESLint rule carries a comment saying *why* it sits there and what would clear it — an exception without a reason is a mute button.
+- **The file-size ratchet is explicit.** `scripts/quality/oversized-baseline.json` lists the files already over the CLAUDE.md 1000-line cap. A file **on** the list warns; a file **not** on it that crosses the cap **fails**. Shrink the list, never grow it (`node scripts/quality/check.mjs --update-baseline` re-records it).
+- **Hooks are tracked files, not a dependency.** `npm run prepare` points `core.hooksPath` at `.githooks/`, so there is no husky and reviewing a hook change is an ordinary diff. `pre-commit` lints **staged files only** and never blocks on warnings — a hook that punishes you for touching a file with pre-existing debt is a hook people disable. `pre-push` runs `tsc` + conventions. Neither runs the test suites; CI owns those. Bypass either with `--no-verify`.
+- **Reports.** `npm run quality:report` writes `reports/` (gitignored): SARIF + JSON per tool, plus `summary.md`. `.github/workflows/quality.yml` uploads the SARIF to **code scanning**, so findings land inline on the PR's Files Changed tab rather than in a log, and attaches the rest as artifacts. `npm run test:coverage` writes `reports/coverage/` — published on every run, with **no threshold gate**, deliberately: a single repo-wide percentage is a number people game.
+- **`quality.yml` is separate from `ci.yml`** because they answer different questions. `ci.yml` proves the code *works* (build + both suites, on both shipping OSes); `quality.yml` proves it is *clean*, once, on Linux, since linting is OS-independent.
+- **Known backlog**, surfaced by the gate and deliberately not fixed in it: 13 `react-hooks/exhaustive-deps` sites (`npm run lint:deps`), `SessionEvent`/`InteractiveMsg` at ≥640 bytes per variant (`clippy::large_enum_variant`), 15 oversized files, and 61 cross-feature imports.
 
 ## Feature map
 
