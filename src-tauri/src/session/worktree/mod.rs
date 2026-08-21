@@ -773,12 +773,14 @@ pub fn session_worktree_status(
 /// shape is the contract's and stays untouched — but the wording must branch on
 /// `upstream` rather than blame a missing one that is plainly there.
 fn removal_block_reason(status: &WorktreeStatusData) -> String {
-    let pushed_part = (status.unpushed_count > 0)
-        .then(|| format!("{} commits not pushed", status.unpushed_count))
-        .unwrap_or_else(|| match &status.upstream {
+    let pushed_part = if status.unpushed_count > 0 {
+        format!("{} commits not pushed", status.unpushed_count)
+    } else {
+        match &status.upstream {
             Some(u) => format!("push status unknown — could not compare with {u}"),
             None => "push status unknown — no upstream configured".to_string(),
-        });
+        }
+    };
     match (status.dirty, status.unpushed) {
         (true, true) => format!("{} uncommitted files, {pushed_part}", status.dirty_count),
         (true, false) => format!("{} uncommitted files", status.dirty_count),

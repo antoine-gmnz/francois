@@ -1,0 +1,193 @@
+name: quality
+
+# The static-analysis half of CI. ci.yml proves the code WORKS (build + both
+# test suites, on both shipping OSes); this proves it is clean. Split because
+# they answer different questions and fail for different reasons — and because
+# linting is OS-independent, so it runs once on Linux instead of twice on the
+# matrix.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Uploading SARIF is what puts findings inline on the PR's Files Changed tab.
+  security-events: write
+
+jobs:
+  frontend:
+    name: frontend (eslint · tsc · conventions)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Ordered cheapest-and-most-fundamental first: a type error makes every
+      # lint finding below it suspect. `continue-on-error` is deliberately NOT
+      # set — these are gates.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        run: npx eslint .
+
+      - name: Conventions (CLAUDE.md §Code layout)
+        run: node scripts/quality/check.mjs
+
+      # Always: a failed gate is exactly when you most want the full report.
+      - name: Build reports
+        if: always()
+        run: node scripts/quality/report.mjs --no-rust
+
+      - name: Job summary
+        if: always()
+        run: cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload ESLint SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/eslint.sarif
+          category: eslint
+
+      - name: Upload conventions SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/conventions.sarif
+          category: conventions
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-frontend
+          path: reports/
+          retention-days: 14
+
+  core:
+    name: core (clippy · rustfmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri's crate graph does not build on a bare Linux runner — the same set
+      # ci.yml and release.yml install.
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # PINNED, unlike ci.yml/release.yml which build on `stable`. clippy gains
+      # lints with every Rust release, so a floating toolchain means an
+      # unrelated PR can go red the day a new stable ships, for a finding that
+      # has nothing to do with it. The gate has to be reproducible to be worth
+      # obeying. Bump deliberately (and fix the new lints in that same PR).
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98.0'
+          components: clippy, rustfmt
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: rustfmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      # No `-- -D warnings`: flags after `--` are appended LAST and would
+      # override the documented exceptions in Cargo.toml [lints]. The deny
+      # levels live there, so this behaves identically to a local run.
+      - name: clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets
+
+      - uses: actions/setup-node@v4
+        if: always()
+        with:
+          node-version: 20
+
+      - name: Build clippy report
+        if: always()
+        run: node scripts/quality/report.mjs 2>/dev/null || true
+
+      - name: Upload clippy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/clippy.sarif
+          category: clippy
+        continue-on-error: true
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-core
+          path: reports/
+          retention-days: 14
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # scripts/capture/no-demo.test.mjs asserts the shipped bundle carries no
+      # demo fixtures, so it needs a dist/ to inspect. Building first is what
+      # makes `npm test` green here as well as in ci.yml.
+      - name: Build
+        run: npm run build
+
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      # No threshold gate (see vite.config.ts) — this publishes the number and
+      # lets a human decide. The artifact holds the browsable HTML report.
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '## Coverage'
+            echo
+            if [ -f reports/coverage/coverage-summary.json ]; then
+              node -e '
+                const t = require("./reports/coverage/coverage-summary.json").total;
+                console.log("| metric | % | covered / total |");
+                console.log("| --- | ---: | ---: |");
+                for (const k of ["lines", "statements", "functions", "branches"]) {
+                  console.log(`| ${k} | ${t[k].pct}% | ${t[k].covered} / ${t[k].total} |`);
+                }
+              '
+            else
+              echo '_no coverage summary produced_'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: reports/coverage/
+          retention-days: 14

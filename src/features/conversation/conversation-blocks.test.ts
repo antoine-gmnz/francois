@@ -229,7 +229,7 @@ describe('switchModelFromCard (FR-21 error path)', () => {
       currentId: 'a',
       modelId: 'b',
       switchModel: vi.fn(async () => {
-        // eslint-disable-next-line no-throw-literal
+         
         throw 'boom';
       }),
       setError,

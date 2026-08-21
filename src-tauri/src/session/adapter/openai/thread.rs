@@ -185,8 +185,8 @@ pub(crate) fn drop_unanswered_tool_calls(messages: &[ThreadMessage]) -> Vec<Thre
             if let Some(calls) = &m.tool_calls {
                 let kept: Vec<ThreadToolCall> = calls
                     .iter()
+                    .filter(|&c| answered.contains(c.id.as_str()))
                     .cloned()
-                    .filter(|c| answered.contains(c.id.as_str()))
                     .collect();
                 m.tool_calls = if kept.is_empty() { None } else { Some(kept) };
             }

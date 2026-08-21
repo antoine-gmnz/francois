@@ -23,7 +23,7 @@ pub(crate) const ATTACHMENT_MAX_BYTES: u64 = 10 * 1024 * 1024;
 /// whitespace is refused as too large — the trade the cap is worth.
 const BASE64_SLACK: u64 = 1024;
 pub(crate) const ATTACHMENT_MAX_BASE64_CHARS: u64 =
-    (ATTACHMENT_MAX_BYTES + 2) / 3 * 4 + BASE64_SLACK;
+    ATTACHMENT_MAX_BYTES.div_ceil(3) * 4 + BASE64_SLACK;
 
 /// The decoded size a base64 payload of `chars` characters carries — the number
 /// FR-8's `detail.bytes` reports when the pre-check refuses, so the chip's copy

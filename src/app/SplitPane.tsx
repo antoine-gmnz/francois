@@ -1,6 +1,6 @@
 import { Maximize2, Plus, Terminal as TerminalIcon, X } from 'lucide-react';
 import { useState } from 'react';
-import type { ProjectId, SessionId } from '../../contract/common';
+import type { ProjectId } from '../../contract/common';
 import type { ShellId } from '../../contract/shell-terminal';
 import { formatContextTokens } from '../../contract/conversation-view';
 import { isBusyStatus, STATUS_COLOR, STATUS_LABEL, statusPulses } from '../../contract/fleet-board';

@@ -54,7 +54,7 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
     // row's `enable` affordance already reads that reason, nothing to open.
   };
 
-  const { visible, selected, setSelected, filterOpen, setFilterOpen, query, setQuery, filterRef } = useSkillsKeyboard({
+  const { visible, selected, setSelected, filterOpen, query, setQuery, filterRef } = useSkillsKeyboard({
     sessionId,
     skills,
     status,

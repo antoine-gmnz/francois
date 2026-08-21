@@ -594,10 +594,14 @@ where
     cleared
 }
 
+// The production sweep calls the generic `clear_default_from` directly; these
+// two named wrappers exist so the unit tests can pin each field's behaviour.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn clear_profile_from(projects: &mut [Project], profile_id: &str) -> usize {
     clear_default_from(projects, profile_id, |d| &mut d.profile_id)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn clear_account_from(projects: &mut [Project], account_id: &str) -> usize {
     clear_default_from(projects, account_id, |d| &mut d.account_id)
 }

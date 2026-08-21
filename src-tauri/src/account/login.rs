@@ -482,13 +482,10 @@ fn register(
         }
     }
     // The row was just inserted or updated above, so this lookup is expected to
-    // always find it; still an explicit match rather than an `.expect()`, so a
-    // future refactor that breaks the invariant fails soft (no row) instead of
+    // always find it; still returned as an Option rather than `.expect()`ed, so
+    // a future refactor that breaks the invariant fails soft (no row) instead of
     // panicking a background thread.
-    match build_list(inner).into_iter().find(|a| a.id == account_id) {
-        Some(account) => Some(account),
-        None => None,
-    }
+    build_list(inner).into_iter().find(|a| a.id == account_id)
 }
 
 // ---------- the passthrough surface (FR-12/FR-16) ----------

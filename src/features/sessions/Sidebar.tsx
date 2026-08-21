@@ -7,7 +7,7 @@ import { AdoptCloudButton } from '../cloud-sessions/AdoptCloudButton';
 import { prunePaletteSession } from '../palette/paletteData';
 import { showToast } from '../palette/palette';
 import { visibleSessions } from '../projects/projects';
-import { MAX_PANES, paneCount, paneIndicesOf, shellPaneEligibleProjects } from '../../lib/layoutStore';
+import { MAX_PANES, paneCount, paneIndicesOf } from '../../lib/layoutStore';
 import { abbreviate } from '../../lib/path';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { EMPTY_PANEL_COUNTS, type CountedPane } from '../../lib/panelCountsStore';

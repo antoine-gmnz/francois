@@ -115,7 +115,7 @@ describe('detail state', () => {
   });
 
   it('ignores an event for another run and a stale response', () => {
-    let s = openDetail('run-1', 2);
+    const s = openDetail('run-1', 2);
     expect(receiveDetailEvent(s, detail({ id: 'run-2' }))).toBe(s);
     expect(receiveDetail(s, 1, { ok: true, data: detail() })).toBe(s);
   });

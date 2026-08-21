@@ -116,9 +116,9 @@ fn start_tool_use_block(
         },
     );
     // stash tool_use_id in the block accum slot's kind — track via separate map:
-    blocks
-        .get_mut(&idx)
-        .map(|entry| entry.2 = tool_use_id.clone());
+    if let Some(entry) = blocks.get_mut(&idx) {
+        entry.2 = tool_use_id.clone();
+    }
     if is_task {
         mint_subagent(env, session_id, &tool_use_id, tools);
     }

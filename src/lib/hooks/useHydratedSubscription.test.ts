@@ -40,7 +40,7 @@ describe('routeIncoming', () => {
   it('a shouldBuffer predicate can let specific events bypass buffering (AgentsPanel\'s agent.step)', () => {
     type E = { kind: 'update' | 'step'; id: number };
     const shouldBuffer = (e: E) => e.kind === 'update';
-    let s = initHydrationBuffer<E>();
+    const s = initHydrationBuffer<E>();
 
     const stepEvent: E = { kind: 'step', id: 1 };
     const r1 = routeIncoming(s, stepEvent, shouldBuffer);

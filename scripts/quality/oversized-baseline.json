@@ -1,0 +1,21 @@
+{
+  "_comment": "Files already over the CLAUDE.md 1000-line cap when the quality gate landed. A file here warns; a file NOT here that crosses the cap fails the build. Shrink the list, never grow it.",
+  "maxFileLines": 1000,
+  "oversized": [
+    "src-tauri/src/extensions/manifest.rs",
+    "src-tauri/src/project/registry.rs",
+    "src-tauri/src/session/agents.rs",
+    "src-tauri/src/session/cloud/adopt.rs",
+    "src-tauri/src/session/cloud/api.rs",
+    "src-tauri/src/session/commands/lifecycle.rs",
+    "src-tauri/src/session/mcp_approval.rs",
+    "src-tauri/src/session/mod.rs",
+    "src-tauri/src/session/persistence.rs",
+    "src-tauri/src/session/workflows.rs",
+    "src-tauri/src/session/worktree/tests.rs",
+    "src-tauri/src/usage.rs",
+    "src/features/accounts/accounts.test.ts",
+    "src/features/conversation/conversation-blocks.test.ts",
+    "src/lib/layoutStore.ts"
+  ]
+}

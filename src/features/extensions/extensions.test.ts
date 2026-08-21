@@ -1,3 +1,7 @@
+/* eslint-disable no-control-regex --
+ * These tests assert that control and bidi code points are STRIPPED from
+ * untrusted text, so the control characters in the patterns below are the
+ * subject under test, not a typo. */
 import { describe, expect, it } from 'vitest';
 import type { AppError } from '../../../contract/common';
 import type { ExtensionInfo, ExtensionSource, PanelInfo, TableRow } from '../../../contract/extensions';

@@ -504,7 +504,7 @@ mod tests {
         let (s, present) = parse_standards("# just a readme\n");
         assert!(!present);
         assert_eq!(s, ProjectStandards::default());
-        assert_eq!(parse_standards("").1, false);
+        assert!(!parse_standards("").1);
     }
 
     #[test]

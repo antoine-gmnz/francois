@@ -596,7 +596,9 @@ pub fn session_switch_effort(
     session_id: String,
     effort: Option<String>,
 ) -> IpcResult<Value> {
-    let level = effort.map(|e| e.trim().to_string()).filter(|e| !e.is_empty());
+    let level = effort
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty());
     if let Some(e) = &level {
         if !valid_effort(e) {
             return err("INVALID_INPUT", "unknown effort level");
@@ -953,8 +955,7 @@ mod tests {
             false,
             |_| panic!("lookup must not run once the denylist has already failed"),
         )
-        .err()
-        .expect("denied");
+        .expect_err("denied");
         match err {
             ProfileResolveError::ArgDenied { flag, reason } => {
                 assert_eq!(flag, "--model");
@@ -967,9 +968,7 @@ mod tests {
     #[test]
     fn resolve_profile_ref_reports_not_found_for_an_unresolved_profile_id() {
         // FR-15: an unresolved profileId refuses creation entirely.
-        let err = resolve_profile_ref(&[], Some("ghost"), false, |_| None)
-            .err()
-            .expect("not found");
+        let err = resolve_profile_ref(&[], Some("ghost"), false, |_| None).expect_err("not found");
         assert!(matches!(err, ProfileResolveError::NotFound));
     }
 

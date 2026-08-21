@@ -243,7 +243,7 @@ pub(crate) fn last_lines(content: &str, max: usize) -> Vec<String> {
         .collect();
     // A trailing newline produces a final empty element that is not a line.
     let all = match all.last() {
-        Some(last) if last.is_empty() => &all[..all.len() - 1],
+        Some(&"") => &all[..all.len() - 1],
         _ => &all[..],
     };
     let start = all.len().saturating_sub(max);

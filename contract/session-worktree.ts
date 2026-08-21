@@ -1,7 +1,7 @@
 // contract/session-worktree.ts — session-worktree feature contract.
 // Binding per PIPELINE.md: francois:session:<verb> -> invoke('session_<verb>') -> Promise<Result<T>>.
 
-import type { Result, SessionId, SessionMeta, SessionWorktree } from './common';
+import type { SessionId, SessionMeta } from './common';
 import { isPathInside } from './projects';
 
 // ---------- francois:session:worktreeProbe ----------

@@ -1,0 +1,68 @@
+# Dependency freshness for all three ecosystems this repo actually ships from.
+# Grouped and rate-limited on purpose: a solo-maintained repo drowns in
+# single-dependency PRs, and a drowned maintainer merges without reading.
+version: 2
+
+updates:
+  # ── frontend (npm) ────────────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Dev tooling moves fast and breaks nothing users see — one PR for all of
+      # it, and CI is a sufficient check.
+      dev-tooling:
+        dependency-type: development
+        patterns: ['*']
+      # Runtime deps land individually for majors, grouped for the rest: a
+      # react/zustand/xterm major is a change worth reading on its own.
+      runtime-minor:
+        dependency-type: production
+        update-types: [minor, patch]
+        patterns: ['*']
+    ignore:
+      # Tauri's JS API is pinned to the Rust crate's major — bumping it alone
+      # desynchronises the bridge. Both move together, by hand, or not at all.
+      - dependency-name: '@tauri-apps/api'
+        update-types: [version-update:semver-major]
+      - dependency-name: '@tauri-apps/cli'
+        update-types: [version-update:semver-major]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # ── core (cargo) ──────────────────────────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor:
+        update-types: [minor, patch]
+        patterns: ['*']
+    ignore:
+      # Same reason as the JS side: the tauri crate major is a coordinated move.
+      - dependency-name: tauri
+        update-types: [version-update:semver-major]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # ── CI (github actions) ───────────────────────────────────────────────────
+  # release.yml pins third-party actions; an unmaintained pinned action is a
+  # supply-chain risk that nothing else in this repo would surface.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+      include: scope
