@@ -1,6 +1,9 @@
 # Dependency freshness for all three ecosystems this repo actually ships from.
 # Grouped and rate-limited on purpose: a solo-maintained repo drowns in
 # single-dependency PRs, and a drowned maintainer merges without reading.
+# Two extra reasons to batch hard here: every merge to main cuts a release
+# (release.yml), and an ungrouped major per package is how one Monday turns
+# into seven open PRs.
 version: 2
 
 updates:
@@ -8,21 +11,31 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     groups:
-      # Dev tooling moves fast and breaks nothing users see — one PR for all of
-      # it, and CI is a sufficient check.
-      dev-tooling:
-        dependency-type: development
+      # Security fixes are the one thing worth interrupting for — grouped so
+      # they still arrive as a single PR, and never rate-limited away by the
+      # routine bumps below.
+      npm-security:
+        applies-to: security-updates
         patterns: ['*']
-      # Runtime deps land individually for majors, grouped for the rest: a
-      # react/zustand/xterm major is a change worth reading on its own.
-      runtime-minor:
-        dependency-type: production
+      # Everything routine, dev and runtime together, in one monthly PR. CI is
+      # a sufficient check for a minor/patch sweep.
+      npm-routine:
+        applies-to: version-updates
         update-types: [minor, patch]
         patterns: ['*']
+      # Dev-tooling majors (vite, vitest, typescript, …) break builds, not
+      # users. One PR, read once, merged or closed.
+      npm-dev-major:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: [major]
+        patterns: ['*']
+    # Runtime majors stay ungrouped and land individually — a react / zustand /
+    # xterm major is the one change here actually worth its own PR, and they
+    # are rare enough not to be noise.
     ignore:
       # Tauri's JS API is pinned to the Rust crate's major — bumping it alone
       # desynchronises the bridge. Both move together, by hand, or not at all.
@@ -38,12 +51,21 @@ updates:
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     groups:
-      cargo-minor:
+      cargo-security:
+        applies-to: security-updates
+        patterns: ['*']
+      cargo-routine:
+        applies-to: version-updates
         update-types: [minor, patch]
+        patterns: ['*']
+      # Crate majors arrive together too: they are almost always transitive
+      # plumbing (ureq, portable-pty) that either compiles or does not.
+      cargo-major:
+        applies-to: version-updates
+        update-types: [major]
         patterns: ['*']
     ignore:
       # Same reason as the JS side: the tauri crate major is a coordinated move.
@@ -55,14 +77,19 @@ updates:
 
   # ── CI (github actions) ───────────────────────────────────────────────────
   # release.yml pins third-party actions; an unmaintained pinned action is a
-  # supply-chain risk that nothing else in this repo would surface.
+  # supply-chain risk that nothing else in this repo would surface. Patch bumps
+  # of actions are pure churn — only minor and major move the needle.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 1
     groups:
       actions:
         patterns: ['*']
+    ignore:
+      - dependency-name: '*'
+        update-types: [version-update:semver-patch]
     commit-message:
       prefix: ci
       include: scope
