@@ -428,10 +428,8 @@ mod golden_replay_tests {
                             }
                         }
                     }
-                    "startedAt" | "endedAt" | "at" => {
-                        if val.is_number() {
-                            *val = serde_json::json!(0);
-                        }
+                    "startedAt" | "endedAt" | "at" if val.is_number() => {
+                        *val = serde_json::json!(0);
                     }
                     _ => {}
                 }

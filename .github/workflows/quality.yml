@@ -90,8 +90,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      # PINNED, unlike ci.yml/release.yml which build on `stable`. clippy gains
+      # lints with every Rust release, so a floating toolchain means an
+      # unrelated PR can go red the day a new stable ships, for a finding that
+      # has nothing to do with it. The gate has to be reproducible to be worth
+      # obeying. Bump deliberately (and fix the new lints in that same PR).
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: '1.98.0'
           components: clippy, rustfmt
 
       - uses: swatinem/rust-cache@v2

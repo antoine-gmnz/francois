@@ -86,9 +86,15 @@ pub fn wsl_base_args(cwd: &str) -> Vec<String> {
 /// sniff for NULs and decode accordingly. Also strips a leading BOM.
 pub fn decode_wsl_output(bytes: &[u8]) -> String {
     let s = if bytes.contains(&0) {
+        // as_chunks, not chunks_exact: the pair IS the unit here, so a
+        // [u8; 2] carries the length invariant that from_le_bytes needs
+        // (clippy::chunks_exact_to_as_chunks). A trailing odd byte is dropped
+        // either way — a lone half of a UTF-16 code unit decodes to nothing.
         let units: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
             .collect();
         String::from_utf16_lossy(&units)
     } else {
