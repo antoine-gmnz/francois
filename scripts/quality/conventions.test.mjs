@@ -115,6 +115,26 @@ describe('importsOf', () => {
     expect(importsOf(src)).toEqual(['./a', '../b/types', './c', '../../lib/d']);
   });
 
+  // Regression: the first version of this regex used [^'\"\n]*? and so could
+  // not cross a newline, silently missing every multi-line import — which is
+  // most of the long ones in src/features. Caught by Codacy on the PR that
+  // introduced it.
+  it('reads a multi-line import statement', () => {
+    const src = `import {
+  a,
+  b,
+} from '../other/thing';`;
+    expect(importsOf(src)).toEqual(['../other/thing']);
+  });
+
+  // The negated class still excludes quotes, so a side-effect import cannot
+  // swallow the statement after it and report the wrong specifier.
+  it('does not run a no-from import into the next statement', () => {
+    const src = `import './side-effect.css';
+import { a } from '../other/thing';`;
+    expect(importsOf(src)).toEqual(['../other/thing']);
+  });
+
   it('does not treat a quoted path inside a string as an import', () => {
     expect(importsOf('const s = "import x from \'./nope\'";')).toEqual([]);
   });
