@@ -31,7 +31,7 @@ portable-pty = "0.8"
 regex = "1"
 dirs = "5"
 uuid = { version = "1", features = ["v4"] }
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 notify = "8"
 # session-attachments FR-6: `pasted-<YYYYMMDD>-<HHMMSS>` is stamped in LOCAL time,
 # which std cannot produce (no timezone database). `clock` is the only feature used.
