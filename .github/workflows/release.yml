@@ -39,12 +39,12 @@ jobs:
        !startsWith(github.event.head_commit.message, 'chore(release):'))
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -72,10 +72,10 @@ jobs:
       tag: ${{ steps.bump.outputs.tag }}
       previous_tag: ${{ steps.previous.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # `git describe` needs the tags and the full history
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       - name: Record the tag we are releasing from
@@ -120,7 +120,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       # The tag, not github.sha: that commit is the one carrying the new version.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
@@ -130,7 +130,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -149,7 +149,7 @@ jobs:
       # finalize un-drafts it only once they have all landed. A published release
       # carrying two platforms out of three would be worse than none.
       - name: Build the installers + attach them to the draft release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -174,7 +174,7 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
           fetch-depth: 0

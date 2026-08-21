@@ -25,9 +25,9 @@ jobs:
     name: frontend (eslint · tsc · conventions)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -57,21 +57,21 @@ jobs:
 
       - name: Upload ESLint SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: reports/eslint.sarif
           category: eslint
 
       - name: Upload conventions SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: reports/conventions.sarif
           category: conventions
 
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quality-frontend
           path: reports/
@@ -81,7 +81,7 @@ jobs:
     name: core (clippy · rustfmt)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Tauri's crate graph does not build on a bare Linux runner — the same set
       # ci.yml and release.yml install.
@@ -115,7 +115,7 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: always()
         with:
           node-version: 20
@@ -126,7 +126,7 @@ jobs:
 
       - name: Upload clippy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: reports/clippy.sarif
           category: clippy
@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quality-core
           path: reports/
@@ -144,9 +144,9 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -186,7 +186,7 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: reports/coverage/
