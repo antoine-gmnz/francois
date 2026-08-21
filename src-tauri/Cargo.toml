@@ -24,7 +24,7 @@ serde = { version = "1", features = ["derive"] }
 # three-writer, hand-maintained file being reshuffled on the first "always allow"
 # breaks that promise. Also stabilizes sessions.json and the transcript writes.
 serde_json = { version = "1", features = ["preserve_order"] }
-portable-pty = "0.8"
+portable-pty = "0.9"
 # multi-provider-openai FR-14: the Francois agent loop's `Grep` tool carries
 # Claude Code's own tool name, so it must accept the regex syntax Claude
 # Code's Grep accepts rather than only literal substrings.
