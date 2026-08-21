@@ -101,7 +101,7 @@ export function summarize(findings) {
  *  this file may not depend on a parser (scripts/ has zero dependencies). */
 export function importsOf(source) {
   const out = [];
-  const re = /(?:^|\n)\s*(?:import|export)[^'"\n]*?from\s*['"]([^'"]+)['"]/g;
+  const re = /(?:^|\n)\s*(?:import|export)[^'"]*?\bfrom\s*['"]([^'"]+)['"]/g;
   let m;
   while ((m = re.exec(source)) !== null) out.push(m[1]);
   return out;
