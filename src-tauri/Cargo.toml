@@ -24,23 +24,23 @@ serde = { version = "1", features = ["derive"] }
 # three-writer, hand-maintained file being reshuffled on the first "always allow"
 # breaks that promise. Also stabilizes sessions.json and the transcript writes.
 serde_json = { version = "1", features = ["preserve_order"] }
-portable-pty = "0.8"
+portable-pty = "0.9"
 # multi-provider-openai FR-14: the Francois agent loop's `Grep` tool carries
 # Claude Code's own tool name, so it must accept the regex syntax Claude
 # Code's Grep accepts rather than only literal substrings.
 regex = "1"
-dirs = "5"
+dirs = "6"
 uuid = { version = "1", features = ["v4"] }
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 notify = "8"
 # session-attachments FR-6: `pasted-<YYYYMMDD>-<HHMMSS>` is stamped in LOCAL time,
 # which std cannot produce (no timezone database). `clock` is the only feature used.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # session-attachments: the clipboard image arrives as base64 over the IPC bridge.
-base64 = "0.22"
+base64 = "0.23"
 # extension-install FR-18: the sha256 of a manifest's bytes, so consent can be
 # bound to its content and a later edit reverts the extension to disabled.
-sha2 = "0.10"
+sha2 = "0.11"
 # multi-provider-grok FR-25: the model catalog lives in $GROK_HOME/config.toml
 # ([models]/[model.<id>] tables) — the vendor's own format, not JSON, and no
 # dependency already in this tree parses TOML.
@@ -53,7 +53,7 @@ toml = "1.1"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
 
 [profile.release]
 strip = true
