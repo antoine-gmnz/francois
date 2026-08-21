@@ -643,10 +643,14 @@ pub fn load_persisted(app: &AppHandle) {
         let Some(m) = parse_session_record(&rec, now) else {
             continue;
         };
-        let block_buffer = read_transcript(app, &m.id); // FR-5
-                                                        // Only a window the catalog actually KNOWS is a ceiling — see
-                                                        // `loaded_context`. `load_model_cache` runs before this, so the mirror
-                                                        // from the last run is already in hand.
+        let mut block_buffer = read_transcript(app, &m.id); // FR-5
+                                                            // transcript-scale FR-3: keep only the tail, same rule as a live
+                                                            // eviction (FR-1/2) — boot cost becomes `sessions × cap` rather
+                                                            // than paying each session's whole history in RAM.
+        let transcript_truncated = trim_transcript(&mut block_buffer, TRANSCRIPT_BUFFER_CAP);
+        // Only a window the catalog actually KNOWS is a ceiling — see
+        // `loaded_context`. `load_model_cache` runs before this, so the mirror
+        // from the last run is already in hand.
         let (limit, used) =
             loaded_context(resolve_context_tokens(&m.model_id), m.context_used_tokens);
         watched.push((m.id.clone(), m.cwd.clone()));
@@ -711,6 +715,7 @@ pub fn load_persisted(app: &AppHandle) {
                 agent_block_seq: HashMap::new(),
                 agent_blocks_dropped: HashMap::new(),
                 block_buffer,
+                transcript_truncated,
                 // session-attachments FR-17: the file of every attachment still
                 // 'staged' is deleted right here, and the record dropped —
                 // composer drafts do not survive a restart, so a surviving
@@ -1195,6 +1200,32 @@ mod tests {
         let q = classify_block(&blocks[1]);
         assert_eq!(q["state"], "answered");
         assert_eq!(q["answers"], json!({ "Q": "A" }));
+    }
+
+    #[test]
+    fn restoring_a_session_with_5000_persisted_blocks_trims_to_the_transcript_buffer_cap() {
+        // transcript-scale FR-3: load_persisted is `read_transcript` (parse_transcript
+        // over the file content, exercised here as a string since read_transcript
+        // itself needs an AppHandle) followed by the same trim a live eviction
+        // applies. Every line here is finalized (no card kind), so parse_transcript
+        // reloads every block already settled (streaming: false) — nothing pins
+        // eviction, exactly as a dead process leaves no answerable ask (FR-2 note).
+        let mut content = String::new();
+        for i in 0..5_000 {
+            content.push_str(&format!(
+                r#"{{"blockId":"b{i}","kind":"user","text":"m{i}","tool":"","summary":"","meta":null}}"#
+            ));
+            content.push('\n');
+        }
+        let mut blocks = parse_transcript(&content);
+        assert_eq!(blocks.len(), 5_000);
+        let truncated = trim_transcript(&mut blocks, TRANSCRIPT_BUFFER_CAP);
+        assert!(truncated);
+        assert_eq!(blocks.len(), TRANSCRIPT_BUFFER_CAP);
+        // The tail survives, oldest-first: block 4600 is the first kept one
+        // (5000 - 400 = 4600), block 4999 the last.
+        assert_eq!(blocks[0].block_id, "b4600");
+        assert_eq!(blocks.last().unwrap().block_id, "b4999");
     }
 
     #[test]

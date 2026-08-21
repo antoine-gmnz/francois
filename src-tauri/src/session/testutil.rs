@@ -173,6 +173,7 @@ pub(crate) fn test_session() -> Session {
         agent_block_seq: HashMap::new(),
         agent_blocks_dropped: HashMap::new(),
         block_buffer: Vec::new(),
+        transcript_truncated: false,
         attachments: Vec::new(),
         mcp: HashMap::new(),
         workflows: HashMap::new(),

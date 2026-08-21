@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { AppError, SessionMeta, SessionStatus } from '../../../contract/common';
 import { countRunning, isBusyStatus, type SessionDerived } from '../../../contract/fleet-board';
 import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
-import { diffGetSummary, onDiffEvent, onSessionEvent, sessionList } from '../../lib/api';
+import { diffGetSummary, onDiffEvent, sessionList } from '../../lib/api';
+import { subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
 import { clearDraft } from '../conversation/composer-draft';
 import { clearPending, resolvePrompt } from '../conversation/pending-queue';
@@ -326,7 +327,9 @@ export function useSessionFleetSync(): SessionFleetSync {
       },
     };
 
-    void onSessionEvent((e) => handleSessionEvent(e, ctx)).then((unsub) => {
+    // transcript-scale FR-21: this is the fleet-wide '*' consumer — every
+    // session's own events, through the one router subscription.
+    void subscribeSessionEvents('*', (e) => handleSessionEvent(e, ctx)).then((unsub) => {
       if (cancelled) unsub();
       else unlistenSession = unsub;
     });

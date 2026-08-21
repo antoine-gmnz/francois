@@ -65,7 +65,7 @@ export function hydrateBuffer<E>(state: HydrationBuffer<E>): { next: HydrationBu
 export interface UseHydratedSubscriptionOptions<E, D> {
   /** Gate — mirrors every `if (!sessionId) { …; return; }` early-out. */
   enabled: boolean;
-  /** The `onSessionEvent`/`onSkillsEvent`-shaped subscribe call. */
+  /** The `subscribeSessionEvents`/`onSkillsEvent`-shaped subscribe call. */
   subscribe: (cb: (e: E) => void) => Promise<UnlistenFn>;
   /** The one hydration read (`getTranscript`/`agentsList`/`skillsList`/…). */
   fetchInitial: () => Promise<Result<D>>;

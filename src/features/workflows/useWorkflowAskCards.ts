@@ -14,11 +14,13 @@
 
 import { useMemo, useReducer } from 'react';
 import type { SessionEvent } from '../../../contract/common';
-import type { ConversationBlock } from '../../../contract/conversation-view';
-import { getTranscript, onSessionEvent } from '../../lib/api';
+import type { ConversationBlock, TranscriptPage } from '../../../contract/conversation-view';
+import { getTranscript } from '../../lib/api';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
+import { subscribeSessionEvents } from '../../lib/session-events';
 import {
   applySessionEvent,
+  RENDER_WINDOW,
   transcriptReducer,
   type ConversationEventSetters,
 } from '../conversation/conversation-blocks';
@@ -32,24 +34,23 @@ const IGNORED_SETTERS: ConversationEventSetters = {
   setPinned: () => {},
   setCommands: () => {},
   patchUsage: () => {},
+  setHasMore: () => {},
 };
-
-function eventSessionId(e: SessionEvent): string | null {
-  if (e.type === 'session.meta') return e.meta.id;
-  if ('sessionId' in e) return e.sessionId;
-  return null;
-}
 
 /** blockId → the block the existing approval/question card renders. */
 export function useWorkflowAskCards(sessionId: string, enabled: boolean): Map<string, ConversationBlock> {
-  const [state, dispatch] = useReducer(transcriptReducer, { blocks: [] });
+  const [state, dispatch] = useReducer(transcriptReducer, { blocks: [], windowSize: RENDER_WINDOW });
 
-  useHydratedSubscription<SessionEvent, ConversationBlock[]>({
+  // transcript-scale FR-10: correct against the tail alone (no paging here) —
+  // FR-2 pins every unresolved ask into the core's held buffer, so the plain
+  // tail `getTranscript` resolves is never missing a pending card.
+  // FR-21: through the one router subscription, scoped to this session.
+  useHydratedSubscription<SessionEvent, TranscriptPage>({
     enabled,
-    subscribe: onSessionEvent,
+    subscribe: (cb) => subscribeSessionEvents(sessionId, cb),
     fetchInitial: () => getTranscript(sessionId),
-    isRelevant: (e) => eventSessionId(e) === sessionId,
-    onHydrated: (blocks) => dispatch({ t: 'seed', blocks }),
+    isRelevant: () => true,
+    onHydrated: (page) => dispatch({ t: 'seed', blocks: page.blocks }),
     onEvent: (e) => applySessionEvent(dispatch, IGNORED_SETTERS, e),
     onError: () => {}, // FR-10: fail soft — no card rather than an error surface
     deps: [sessionId, enabled],

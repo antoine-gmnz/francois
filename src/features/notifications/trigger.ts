@@ -9,7 +9,7 @@ import type { BlockId, SessionEvent, SessionId, SessionStatus } from '../../../c
 import { isBusyStatus } from '../../../contract/fleet-board';
 import type { NotifyTrigger } from '../../../contract/notifications';
 import { isSettleStatus } from '../../../contract/notifications';
-import { onSessionEvent } from '../../lib/api';
+import { subscribeSessionEvents } from '../../lib/session-events';
 
 export interface DeriveState {
   lastStatus: Map<SessionId, SessionStatus>;
@@ -79,12 +79,13 @@ function handleSessionEvent(e: SessionEvent): void {
 
 /**
  * FR-2 — appends a sink, run in registration order on every non-null trigger.
- * Subscribes to `onSessionEvent` exactly once, on the first registration.
+ * FR-22 (transcript-scale): registers as a `'*'` consumer through the one
+ * router subscription, exactly once, on the first registration.
  */
 export function registerTriggerSink(sink: (t: NotifyTrigger) => void): void {
   sinks.push(sink);
   if (!subscribed) {
     subscribed = true;
-    void onSessionEvent(handleSessionEvent);
+    void subscribeSessionEvents('*', handleSessionEvent);
   }
 }

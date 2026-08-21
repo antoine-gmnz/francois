@@ -356,12 +356,13 @@ pub(crate) fn finalize_command_block(
         let Some(s) = map.get_mut(session_id) else {
             return;
         };
-        s.buf_command_output(block_id, command, card_json.clone());
+        // transcript-scale CRITICAL fix: use the clone `buf_command_output`
+        // returns (captured before its internal trim runs) instead of
+        // re-`find`ing by id — a re-find can miss a block that settling
+        // itself just evicted.
+        let block = s.buf_command_output(block_id, command, card_json.clone());
         s.last_activity_at = now_ms();
-        s.block_buffer
-            .iter()
-            .find(|b| b.block_id == block_id)
-            .cloned()
+        block
     };
     if let Some(b) = &block {
         env.append_transcript(session_id, b);

@@ -13,7 +13,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { SessionEvent, WorkflowRun } from '../../../contract/common';
-import { onSessionEvent, onWorkflowEvent, workflowsDetail, workflowsList } from '../../lib/api';
+import { onWorkflowEvent, workflowsDetail, workflowsList } from '../../lib/api';
+import { subscribeSessionEvents } from '../../lib/session-events';
 import {
   CLOSED_DETAIL,
   openDetail,
@@ -37,7 +38,9 @@ export function useWorkflowDetail(runId: string, sessionId: string): UseWorkflow
     setRun(null);
     let mounted = true;
     let unlisten: (() => void) | undefined;
-    void onSessionEvent((e: SessionEvent) => {
+    // transcript-scale FR-21: through the one router subscription, scoped to
+    // this session — workflow.update carries its own sessionId.
+    void subscribeSessionEvents(sessionId, (e: SessionEvent) => {
       if (e.type === 'workflow.update' && e.run.id === runId) setRun(e.run);
     }).then((unsub) => (mounted ? (unlisten = unsub) : unsub()));
     void workflowsList(sessionId).then((res) => {

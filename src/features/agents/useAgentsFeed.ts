@@ -7,8 +7,9 @@
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import type { AgentInfo, AppError, SessionEvent } from '../../../contract/common';
-import { agentsList, onSessionEvent } from '../../lib/api';
+import { agentsList } from '../../lib/api';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
+import { subscribeSessionEvents } from '../../lib/session-events';
 import { COLLAPSED_TRAIL, collapseTrail, routeSessionEventToTrail, type TrailState } from './agent-trail';
 
 export interface UseAgentsFeedOptions {
@@ -71,7 +72,14 @@ export function useAgentsFeed({ sessionId, syncAgentTab }: UseAgentsFeedOptions)
 
   useHydratedSubscription<SessionEvent, AgentInfo[]>({
     enabled: sessionId !== null,
-    subscribe: onSessionEvent,
+    // transcript-scale FR-21: through the one router subscription, scoped to
+    // this session. `agent.step` carries its own sessionId so the router
+    // already filters it per-session (routeSessionEventToTrail's own
+    // `e.sessionId !== sessionId` guard is now redundant but harmless);
+    // `agent.update` carries no top-level sessionId, so the router treats it
+    // as session-agnostic (FR-19) and this hook's own isRelevant below keeps
+    // doing the filtering it always did.
+    subscribe: (cb) => subscribeSessionEvents(sessionId ?? '', cb),
     fetchInitial: () => agentsList(sessionId ?? ''),
     // async-agents FR-20/FR-22: only the expanded card consumes steps.
     isRelevant: (e) => e.type === 'agent.step' || (e.type === 'agent.update' && e.agent.sessionId === sessionId),

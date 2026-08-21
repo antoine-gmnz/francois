@@ -73,13 +73,11 @@ pub(crate) fn handle_tool_results(
         let done_block = {
             let mut map = env.engine().sessions.lock().unwrap();
             match map.get_mut(session_id) {
-                Some(s) => {
-                    s.buf_tool_done(&block_id, meta.clone());
-                    s.block_buffer
-                        .iter()
-                        .find(|block| block.block_id == block_id)
-                        .cloned()
-                }
+                // transcript-scale CRITICAL fix: use the clone `buf_tool_done`
+                // returns (captured before its internal trim runs) instead of
+                // re-`find`ing by id — a re-find can miss a block that settling
+                // itself just evicted.
+                Some(s) => s.buf_tool_done(&block_id, meta.clone()),
                 None => None,
             }
         };
