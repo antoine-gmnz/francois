@@ -456,6 +456,7 @@ fn run_loop(
         model_id,
         permission_mode,
         account_id,
+        response_mode,
         ..
     } = ctx;
 
@@ -509,7 +510,8 @@ fn run_loop(
         } else {
             ""
         };
-        let request_messages = super::blocks::build_request_messages(skill_text, &messages);
+        let request_messages =
+            super::blocks::build_request_messages(skill_text, response_mode, &messages);
         let body = wire::request_body(&model_id, &request_messages);
         // FR-3: read per request, never held in session state.
         let key = crate::account::read_key(&config_dir);

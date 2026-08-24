@@ -142,6 +142,10 @@ pub(crate) struct TurnContext {
     /// session-profiles FR-12: raw extra argv tokens, appended last to the
     /// runtime's own argv. Empty when the session carries none.
     pub(crate) extra_args: Vec<String>,
+    /// response-mode FR-5: the mode this turn was SPAWNED with, snapshotted with
+    /// the rest. No adapter re-reads the session mid-turn, which is what makes
+    /// FR-4's next-turn semantics uniform across runtimes.
+    pub(crate) response_mode: crate::session::ResponseMode,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -358,6 +362,7 @@ mod tests {
             resume: None,
             system_prompt: None,
             extra_args: Vec::new(),
+            response_mode: crate::session::ResponseMode::Default,
         };
         assert_eq!(ctx.session_id, "s1");
         assert!(ctx.mode == TurnMode::Normal);

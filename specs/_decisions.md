@@ -83,6 +83,8 @@
 - 2026-08-20 · ui · A pane [1] grouping tier nests INSIDE a state band, never above it — because state-first order is what keeps a blocked session off row four · roster-group-tier
 - 2026-08-20 · ui · A derived grouping heading is suppressed when the band resolves to ONE group — because a heading that partitions nothing costs a row and teaches nothing · roster-group-tier
 - 2026-08-20 · data · Group membership is hand-assigned only, never inferred from a name or path prefix — because a prefix misses members and silently reclassifies on rename · roster-group-tier
+- 2026-08-23 · api · A change-only injection channel must emit an explicit REVERT instruction when returning to the neutral value, never fall silent — because the previous instruction survives in the thread's own history · response-mode
+- 2026-08-23 · api · Instruction/prompt text the core injects never crosses the IPC boundary; the frontend gets the enum plus a label/hint table only — because text the webview can read is text it will be asked to edit, and that is a registry feature, not a setting · response-mode
 
 ## Superseded
 

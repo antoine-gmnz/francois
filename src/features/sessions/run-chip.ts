@@ -5,19 +5,23 @@
 // single question — what is about to run, and how much it is allowed to do — and
 // splitting them meant the answer lived in two places that could disagree.
 //
-// The panel it opens holds exactly those two things, in the chip's own order:
-// model on top, permission mode under it. Nothing else from the run cluster joins
-// — context and branch are readouts, not settings, and a panel that mixes the two
-// teaches you to click things that cannot be clicked.
+// The panel it opens holds those two things plus response-mode's writing style, in
+// the chip's own order: model on top, permission mode, then response. Nothing else
+// from the run cluster joins — context and branch are readouts, not settings, and
+// a panel that mixes the two teaches you to click things that cannot be clicked.
 //
 // Effort is a property of the MODEL, so it lives inside the selected model's row
 // rather than beside it, and only exists for models that advertise one.
 
-import type { ModelInfo, PermissionMode, ProjectDefaults, SessionMeta } from '../../../contract/common';
+import type { ModelInfo, PermissionMode, ProjectDefaults, ResponseMode, SessionMeta } from '../../../contract/common';
+import { RESPONSE_MODE_OPTIONS, type ResponseModeOption } from '../../../contract/response-mode';
 import { permissionModeOption } from '../permissions/permission-mode';
 
 export const APPLIES_COPY = 'Applies from the next turn';
 export const SET_PROJECT_DEFAULT_COPY = 'Set as project default';
+/** response-mode FR-16: the action writes four values now, so it names four. */
+export const SET_PROJECT_DEFAULT_TITLE =
+  "write this model, effort, permission mode and response mode into the project's defaults";
 
 export interface RunChipParts {
   /** The model's display label — `Opus 5`. */
@@ -28,6 +32,12 @@ export interface RunChipParts {
   effort: string | null;
   /** True only for `bypassPermissions` — the one mode the chip tints. */
   danger: boolean;
+  /**
+   * response-mode FR-15: the mode's `short` — `concise`, `explain`, `learn` — or
+   * null on 'default'. Null rather than 'default' so the face renders nothing at
+   * all for the common case and the row never widens for a setting nobody set.
+   */
+  response: string | null;
 }
 
 /** What the chip renders, left to right. */
@@ -38,7 +48,18 @@ export function runChipParts(session: SessionMeta): RunChipParts {
     mode: option.short,
     effort: session.effort ?? null,
     danger: option.danger === true,
+    response: session.responseMode === 'default' ? null : responseModeOption(session.responseMode).short,
   };
+}
+
+/**
+ * response-mode FR-13: the option row for a mode — the single source for every
+ * presentation of it, exactly as `permissionModeOption` is for permissions. The
+ * fallback is the 'default' row, so a persisted record carrying a string outside
+ * the union renders as default rather than blank (spec §7).
+ */
+export function responseModeOption(mode: ResponseMode): ResponseModeOption {
+  return RESPONSE_MODE_OPTIONS.find((o) => o.mode === mode) ?? RESPONSE_MODE_OPTIONS[0]!;
 }
 
 /** The levels a model's row offers. Empty ⇒ the row shows no segmented track at all. */
@@ -87,7 +108,7 @@ export function canSetProjectDefault(session: SessionMeta): boolean {
 
 /**
  * `defaults` REPLACES the whole object on the wire (ProjectUpdateRequest), so this
- * merges rather than patches. The three keys the panel owns are written from the
+ * merges rather than patches. The four keys the panel owns are written from the
  * session; an absent effort DELETES the key rather than leaving the project's old
  * level behind — "make this project look like this session" has to include the
  * parts of this session that are unset, or the button quietly lies.
@@ -97,6 +118,11 @@ export function nextProjectDefaults(current: ProjectDefaults, session: SessionMe
     ...current,
     modelId: session.model.id,
     permissionMode: session.permissionMode as PermissionMode,
+    // response-mode FR-16: written unconditionally, 'default' included — it is a
+    // real member of the union rather than an unset field, so writing it is how
+    // "make this project look like this session" clears a project default of
+    // `concise` when the session is back on default.
+    responseMode: session.responseMode,
   };
   if (session.effort) next.effort = session.effort;
   else delete next.effort;

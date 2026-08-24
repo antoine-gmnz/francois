@@ -279,6 +279,13 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
                 // `parse_session_record`), never written.
                 "agentRuntime": s.agent_runtime,
                 "protocol": s.protocol,
+                // response-mode FR-1: always written, like accountId — every
+                // session has one and 'default' is a real value. FR-10's
+                // `responseModeSent` rides alongside the thread anchor it is
+                // scoped to, so a resumed codex/grok thread does not re-send a
+                // directive it already carries.
+                "responseMode": s.response_mode.as_str(),
+                "responseModeSent": s.response_mode_sent.map(|m| m.as_str()),
             });
             // projects FR-18: write projectId ONLY when linked. An unlinked session
             // must omit the key entirely rather than emit null, so a record written
@@ -398,6 +405,14 @@ pub(crate) struct PersistedMeta {
     /// as "no profile" rather than costing the session its whole record —
     /// only the chip depends on it.
     profile: Option<SessionProfileRef>,
+    /// response-mode FR-1/§7: `Default` on every pre-feature record, and on
+    /// every record carrying a value outside the enum — not an error, and never
+    /// a load failure.
+    response_mode: ResponseMode,
+    /// response-mode FR-10: what the persisted thread has already been told.
+    /// None on every pre-feature record and on every session whose thread has
+    /// been told nothing.
+    response_mode_sent: Option<ResponseMode>,
 }
 
 /// multi-provider-seam FR-11a (Phase B gate): the read-side migration off the
@@ -469,6 +484,13 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .get("permissionModeSince")
             .and_then(|v| v.as_u64())
             .filter(|t| *t > 0),
+        response_mode: ResponseMode::parse_or_default(
+            rec.get("responseMode").and_then(|v| v.as_str()),
+        ),
+        response_mode_sent: rec
+            .get("responseModeSent")
+            .and_then(|v| v.as_str())
+            .and_then(ResponseMode::parse),
         // A sessions.json copied to a non-Windows machine degrades wsl → native.
         runtime: rec
             .get("runtime")
@@ -700,6 +722,8 @@ pub fn load_persisted(app: &AppHandle) {
                 system_prompt: m.system_prompt,
                 extra_args: m.extra_args,
                 profile: m.profile,
+                response_mode: m.response_mode,
+                response_mode_sent: m.response_mode_sent,
                 queue: VecDeque::new(),
                 claude_session_id: m.claude_session_id,
                 current: None,
@@ -859,6 +883,33 @@ mod tests {
             parse_session_record(&bad, 5).unwrap().permission_mode,
             "default"
         );
+    }
+
+    #[test]
+    fn persisted_response_mode_defaults_and_round_trips() {
+        // response-mode FR-1: a record written before this feature loads as
+        // 'default', and has been told nothing on its thread.
+        let old = serde_json::json!({ "id": "a", "name": "n", "cwd": "/x" });
+        let m = parse_session_record(&old, 5).unwrap();
+        assert_eq!(m.response_mode, ResponseMode::Default);
+        assert_eq!(m.response_mode_sent, None);
+        // A valid persisted value round-trips, sent value included (FR-10).
+        let full = serde_json::json!({
+            "id": "a", "name": "n", "cwd": "/x",
+            "responseMode": "explanatory", "responseModeSent": "concise",
+        });
+        let m = parse_session_record(&full, 5).unwrap();
+        assert_eq!(m.response_mode, ResponseMode::Explanatory);
+        assert_eq!(m.response_mode_sent, Some(ResponseMode::Concise));
+        // §7: an unknown string loads as 'default' — not an error, and it costs
+        // the session neither its record nor its thread anchor.
+        let bad = serde_json::json!({
+            "id": "a", "name": "n", "cwd": "/x",
+            "responseMode": "terse", "responseModeSent": "terse",
+        });
+        let m = parse_session_record(&bad, 5).unwrap();
+        assert_eq!(m.response_mode, ResponseMode::Default);
+        assert_eq!(m.response_mode_sent, None);
     }
 
     #[test]

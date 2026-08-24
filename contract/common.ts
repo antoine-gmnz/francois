@@ -148,6 +148,17 @@ export type SessionStatus =
  */
 export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
 
+/**
+ * response-mode FR-1: how the model should WRITE, orthogonal to what it may do.
+ * Closed set; user-authored modes are a stated non-goal. Every `match` on this in
+ * the core is exhaustive with no wildcard arm.
+ *
+ * 'default' is the absence of an instruction, not an instruction saying "be
+ * normal" — see FR-7/FR-8. (The one exception is the codex/grok clearing
+ * directive, FR-11, which exists because those threads carry history.)
+ */
+export type ResponseMode = 'default' | 'concise' | 'explanatory' | 'learning';
+
 /** Where the claude CLI runs for a session: natively, or inside WSL (Windows only). */
 export type ClaudeRuntime = 'native' | 'wsl';
 
@@ -267,6 +278,9 @@ export interface SessionMeta {
   protocol: ProviderProtocol;
   /** Present ⇔ created from a profile; snapshot-only (session-profiles FR-16). */
   profile?: SessionProfileRef;
+  /** How this session's NEXT turn is told to write. A persisted record without
+   *  the key loads as 'default' (response-mode FR-1). */
+  responseMode: ResponseMode;
 }
 
 /** The id of a Claude Code on the web session — `'session_…'` or `'cse_…'`. */
@@ -328,6 +342,8 @@ export interface ProjectDefaults {
   accountId?: AccountId;
   /** A profile that no longer resolves is dropped in the modal (session-profiles FR-21). */
   profileId?: ProfileId;
+  /** Pre-fills the New Session modal; a SNAPSHOT, like every other default. */
+  responseMode?: ResponseMode;
 }
 
 // ---------- session profiles ----------

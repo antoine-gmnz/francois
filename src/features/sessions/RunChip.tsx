@@ -11,13 +11,26 @@
 // been on and in which worktree — the same information you would want before
 // leaving it on.
 //
+// response-mode adds a THIRD section under Permissions — how the model is told to
+// write back. Last of the three because it is the least consequential: the model
+// decides what runs, permissions decide what it may do, response decides how it
+// reads back. No row is tinted there, deliberately: tint means consequence, and no
+// writing style has one.
+//
 // Same panel shell, width and footer grammar as 11a's `◈` menu, so the bar has one
 // menu language rather than four bespoke popovers.
 
 import { useRef, useState } from 'react';
-import type { ModelInfo, PermissionMode, SessionMeta } from '../../../contract/common';
+import type { ModelInfo, PermissionMode, ResponseMode, SessionMeta } from '../../../contract/common';
+import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
-import { projectUpdate, sessionSwitchEffort, sessionSwitchModel, sessionSwitchPermissionMode } from '../../lib/api';
+import {
+  projectUpdate,
+  sessionSwitchEffort,
+  sessionSwitchModel,
+  sessionSwitchPermissionMode,
+  sessionSwitchResponseMode,
+} from '../../lib/api';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useTimedError } from '../../lib/hooks/useTimedError';
@@ -26,6 +39,7 @@ import { useModelCatalog } from './useModelCatalog';
 import {
   APPLIES_COPY,
   SET_PROJECT_DEFAULT_COPY,
+  SET_PROJECT_DEFAULT_TITLE,
   bypassNote,
   canSetProjectDefault,
   effortHint,
@@ -121,6 +135,15 @@ export default function RunChip({ session, readouts, bare = false }: RunChipProp
     }
   };
 
+  // response-mode FR-14/FR-18: the panel STAYS OPEN — like the model and effort
+  // rows, and unlike the permission rows, because picking a writing style is a
+  // thing you compare rather than commit to. Nothing is written to the store: the
+  // session.meta event this Result accompanies is the only update path.
+  const pickResponseMode = async (mode: ResponseMode) => {
+    if (mode === session.responseMode) return;
+    await run(sessionSwitchResponseMode(session.id, mode));
+  };
+
   const setProjectDefault = async () => {
     const project = projects.find((p) => p.id === session.projectId);
     if (!project) return;
@@ -131,7 +154,7 @@ export default function RunChip({ session, readouts, bare = false }: RunChipProp
   };
 
   const panel = (
-    <div role="menu" aria-label="model and permissions" className="run-chip__panel">
+    <div role="menu" aria-label="model, permissions and response" className="run-chip__panel">
       {/* 11c at 720: what the bar stopped showing is stated here, above the first
           heading — readouts, so they sit outside both option lists. */}
       {readouts && readouts.length > 0 && (
@@ -243,6 +266,42 @@ export default function RunChip({ session, readouts, bare = false }: RunChipProp
         })}
       </div>
 
+      <div className="run-chip__rule" />
+
+      <div className="run-chip__head">
+        <span className="run-chip__head-label">Response</span>
+        <span className="app-flex-spacer" />
+        <span className="run-chip__head-hint">this session</span>
+      </div>
+
+      {/* response-mode FR-14: the same radio shape as Permissions, minus the danger
+          tone — no writing style is risky, and a tint that means nothing teaches the
+          eye to ignore the tint that does. */}
+      <div className="run-chip__group">
+        {RESPONSE_MODE_OPTIONS.map((opt) => {
+          const on = opt.mode === session.responseMode;
+          return (
+            <div
+              key={opt.mode}
+              role="menuitemradio"
+              aria-checked={on}
+              tabIndex={-1}
+              onClick={() => void pickResponseMode(opt.mode)}
+              className={on ? 'run-chip__option run-chip__option--on' : 'run-chip__option'}
+            >
+              <div className="run-chip__option-line">
+                <span className={on ? 'run-chip__dot run-chip__dot--on' : 'run-chip__dot'}>●</span>
+                <span className="run-chip__option-body">
+                  <span className="run-chip__option-label">{opt.label}</span>
+                  <span className="run-chip__option-sub">{opt.hint}</span>
+                </span>
+                {on && <span className="run-chip__option-hint">current</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {error && <div className="run-chip__error">{error}</div>}
 
       <div className="run-chip__foot">
@@ -253,7 +312,7 @@ export default function RunChip({ session, readouts, bare = false }: RunChipProp
             role="button"
             tabIndex={0}
             className="run-chip__foot-action"
-            title="write this model, effort and permission mode into the project's defaults"
+            title={SET_PROJECT_DEFAULT_TITLE}
             onClick={() => void setProjectDefault()}
           >
             {SET_PROJECT_DEFAULT_COPY}
@@ -285,6 +344,9 @@ export default function RunChip({ session, readouts, bare = false }: RunChipProp
         <span className="run-chip__model">{parts.model}</span>
         {parts.effort && <span className="run-chip__effort-tag">{parts.effort}</span>}
         <span className={parts.danger ? 'run-chip__mode run-chip__mode--danger' : 'run-chip__mode'}>{parts.mode}</span>
+        {/* response-mode FR-15: last in the cluster, and only when it is not
+            'default' — the common case leaves the row exactly as wide as it was. */}
+        {parts.response && <span className="run-chip__response">{parts.response}</span>}
         <span className="run-chip__caret">▾</span>
       </span>
       {open && panel}

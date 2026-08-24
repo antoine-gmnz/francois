@@ -73,6 +73,7 @@ function sess(id: string, projectId?: string): SessionMeta {
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
+    responseMode: 'default',
     ...(projectId ? { projectId } : {}),
   };
 }
@@ -223,6 +224,7 @@ describe('applyProjectDefaults (FR-21/FR-22)', () => {
       permissionMode: 'default',
       runtime: 'native',
       allowGit: false,
+      responseMode: 'default',
     });
     expect(baseFormValues([]).modelId).toBe('');
   });
@@ -240,6 +242,7 @@ describe('applyProjectDefaults (FR-21/FR-22)', () => {
       permissionMode: 'acceptEdits',
       runtime: 'wsl',
       allowGit: true,
+      responseMode: 'concise',
     }, env);
     expect(r.values).toEqual({
       modelId: 'claude-opus-5',
@@ -247,7 +250,15 @@ describe('applyProjectDefaults (FR-21/FR-22)', () => {
       permissionMode: 'acceptEdits',
       runtime: 'wsl',
       allowGit: true,
+      responseMode: 'concise',
     });
+  });
+
+  // response-mode FR-17: the modal's Response field is pre-filled from the
+  // project's default; an absent one means 'default', never undefined.
+  it('pre-fills the response mode, and reads an absent one as default (response-mode FR-17)', () => {
+    expect(applyProjectDefaults(base, { responseMode: 'learning' }, env).values.responseMode).toBe('learning');
+    expect(applyProjectDefaults(base, { effort: 'high' }, env).values.responseMode).toBe('default');
   });
 
   it('keeps the pre-feature default for every field the project leaves unset', () => {

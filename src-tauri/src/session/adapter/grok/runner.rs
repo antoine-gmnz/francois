@@ -395,8 +395,15 @@ pub(super) fn begin_turn(
     }
 
     let resume = ctx.resume.is_some();
+    // response-mode FR-9: grok has no append-system-prompt seam either, so the
+    // directive is prefixed to a LOCAL COPY of the prompt — never to `ctx.text`,
+    // which is what `turn.rs` buffers the transcript's user block from. FR-10:
+    // emitted only when it can be needed (fresh thread, or a mode this thread
+    // has not been told about).
+    let prefix = crate::session::pending_prefix(app, &ctx.session_id, ctx.response_mode, !resume);
+    let prompt = prefixed_prompt(prefix, &ctx.text);
     let (program, argv) = grok_invocation(
-        &ctx.text,
+        &prompt,
         &ctx.model_id,
         &ctx.session_id,
         resume,
@@ -438,6 +445,10 @@ pub(super) fn begin_turn(
         detail: None,
     });
     let mut child = child?;
+
+    // FR-10: the prompt rode the argv of a child that started, so the thread now
+    // carries this mode.
+    crate::session::mark_sent(app, &ctx.session_id, ctx.response_mode);
 
     let stdout = child.stdout.take();
     let child = Arc::new(Mutex::new(child));

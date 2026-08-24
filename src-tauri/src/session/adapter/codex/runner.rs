@@ -367,6 +367,17 @@ pub(super) fn begin_turn(
     ctx: TurnContext,
 ) -> Result<Arc<dyn crate::session::adapter::TurnControl>, AppError> {
     let config_dir = crate::account::config_dir_of(app, &ctx.account_id);
+    // response-mode FR-10: decided BEFORE the spawn, recorded only after the
+    // prompt reaches the child (below). `resume.is_none()` is "fresh thread" —
+    // which is also how a resume retry arrives here, so the directive is
+    // re-sent on the new thread it starts.
+    let prefix = crate::session::pending_prefix(
+        app,
+        &ctx.session_id,
+        ctx.response_mode,
+        ctx.resume.is_none(),
+    )
+    .map(str::to_string);
     let (program, argv) = codex_invocation(
         &ctx.model_id,
         ctx.resume.as_deref(),
@@ -414,8 +425,15 @@ pub(super) fn begin_turn(
 
     // The prompt, then EOF. A failure here means the child died before reading
     // it — a spawn failure in everything but name.
+    //
+    // response-mode FR-9: `codex exec` has no append-system-prompt seam, so the
+    // directive is prefixed to a LOCAL COPY of the prompt bytes — never to
+    // `ctx.text`, which is the string `turn.rs` buffers the transcript's user
+    // block from. FR-10: emitted only when it can be needed (fresh thread, or a
+    // mode this thread has not been told about).
+    let prompt = prefixed_prompt(prefix.as_deref(), &ctx.text);
     let wrote = match child.stdin.take() {
-        Some(mut w) => w.write_all(ctx.text.as_bytes()).and_then(|_| w.flush()),
+        Some(mut w) => w.write_all(prompt.as_bytes()).and_then(|_| w.flush()),
         None => Ok(()),
     };
     if let Err(e) = wrote {
@@ -426,6 +444,9 @@ pub(super) fn begin_turn(
             detail: None,
         });
     }
+
+    // FR-10: the prompt reached the child, so the thread now carries this mode.
+    crate::session::mark_sent(app, &ctx.session_id, ctx.response_mode);
 
     let stdout = child.stdout.take();
     let child = Arc::new(Mutex::new(child));

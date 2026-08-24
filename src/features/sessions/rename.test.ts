@@ -33,6 +33,7 @@ const META: SessionMeta = {
   accountId: 'default',
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
+  responseMode: 'default',
 };
 
 describe('canCommitRename (FR-10)', () => {

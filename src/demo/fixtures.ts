@@ -165,6 +165,7 @@ const BASE: Omit<SessionMeta, 'id' | 'name' | 'cwd'> = {
   accountId: 'acct-work',
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
+  responseMode: 'default',
 };
 
 export const SESSIONS: SessionMeta[] = [

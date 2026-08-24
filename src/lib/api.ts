@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { demoInvoke, demoListen } from '../demo/demo';
-import type { AccountId, BlockId, Result, SessionMeta, ModelInfo, PermissionMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, BlockId, Result, SessionMeta, ModelInfo, PermissionMode, ResponseMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
   WorkflowDetail,
@@ -164,10 +164,12 @@ export const sessionModels = (accountId?: AccountId) =>
 // session-profiles FR-15: session_create also gained systemPrompt/extraArgs/profileId —
 // the frontend sends the RESOLVED (post-edit) values plus the profile id, and the core
 // snapshots the profile's name from the registry itself.
+// response-mode FR-17: and an optional responseMode — omitted for 'default', which
+// IS the absence of an instruction rather than an instruction to be normal.
 export const sessionCreate = (
   req: NewSessionRequest &
     Pick<ProjectAwareSessionCreateRequest, 'projectId'> &
-    Pick<SessionCreateInput, 'worktree' | 'systemPrompt' | 'extraArgs' | 'profileId'>,
+    Pick<SessionCreateInput, 'worktree' | 'systemPrompt' | 'extraArgs' | 'profileId' | 'responseMode'>,
 ) => ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
 // session-rename §5: mutate a session's display name. The core validates/cleans it
@@ -305,6 +307,14 @@ export const sessionSwitchPermissionMode = (sessionId: SessionId, mode: Permissi
 // accompanying session.meta event, never the Result.
 export const sessionSwitchEffort = (sessionId: SessionId, effort: string | null) =>
   ipc<Result<SessionMeta>>('session_switch_effort', { sessionId, effort });
+// response-mode FR-2: the fourth member of the switch family — HOW the model is
+// told to write, from the next turn on (FR-4: a running turn is unaffected). The
+// `mode` is re-validated by the core, so this wrapper's narrowing is a convenience
+// and never the check (FR-3). Same single update path as its siblings: the
+// accompanying session.meta event, never this Result (FR-18) — which is read only
+// to surface a failure inline.
+export const sessionSwitchResponseMode = (sessionId: SessionId, mode: ResponseMode) =>
+  ipc<Result<SessionMeta>>('session_switch_response_mode', { sessionId, mode });
 export const sessionCompact = (sessionId: SessionId) => ipc<Result<null>>('session_compact', { sessionId });
 export const sessionClear = (sessionId: SessionId) => ipc<Result<null>>('session_clear', { sessionId });
 
