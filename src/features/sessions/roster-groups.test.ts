@@ -20,6 +20,7 @@ function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
     responseMode: 'default',
+    allowGit: false,
     ...over,
   };
 }

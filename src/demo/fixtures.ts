@@ -166,6 +166,7 @@ const BASE: Omit<SessionMeta, 'id' | 'name' | 'cwd'> = {
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
   responseMode: 'default',
+  allowGit: false,
 };
 
 export const SESSIONS: SessionMeta[] = [

@@ -206,6 +206,13 @@ pub(crate) struct SessionMeta {
     /// one, and a persisted record without the key loads as `default`.
     #[serde(rename = "responseMode")]
     response_mode: ResponseMode,
+    /// session-settings-sheet FR-1: Francois auto-approves direct `git`/`gh`
+    /// Bash calls for this session. REQUIRED on the wire (never omitted, like
+    /// `accountId`/`responseMode`) — a persisted record without the key loads
+    /// as `false`. Already persisted under this name (`session/persistence.rs`);
+    /// this only widens `meta()` to project the field that was already there.
+    #[serde(rename = "allowGit")]
+    allow_git: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -734,6 +741,7 @@ impl Session {
             protocol: self.protocol,
             profile: self.profile.clone(),
             response_mode: self.response_mode,
+            allow_git: self.allow_git,
         }
     }
 

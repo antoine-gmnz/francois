@@ -1,0 +1,420 @@
+/* SessionSettingsSheet.tsx — field/label/hint/chip-row primitives shared by both
+   modes (formerly NewSessionModal.tsx's alone). Modal chrome itself
+   (backdrop/panel/header/body/footer) comes from src/ui/Modal.tsx + .modal-* in
+   styles.css; these classes cover only what is local to this form's layout. */
+
+.new-session-modal__title {
+  font-size: var(--font-size-14);
+  color: var(--text-strong);
+}
+
+.new-session-modal__title-accent {
+  color: var(--accent);
+}
+
+.new-session-modal__label {
+  font-size: var(--font-size-10);
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  margin-bottom: var(--space-5);
+  display: block;
+}
+
+.new-session-modal__field {
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-base);
+  height: 32px;
+  color: var(--text);
+  font-size: var(--font-size-12-5);
+  font-family: inherit;
+  padding: 0 var(--space-10);
+  width: 100%;
+  outline: none;
+}
+
+.new-session-modal__field--flex {
+  flex: 1;
+}
+
+/* `__field` above is an <input> look; a <select> wearing it also gets the
+   platform's own dropdown button drawn on top, which reads nothing like the
+   ModelPicker trigger sitting directly below it in the same form. Suppress it
+   and draw the caret ourselves — the same ▾ / --text-faint / 10px as
+   .model-picker__caret, as a real glyph so it follows the theme tokens. */
+.new-session-modal__select {
+  position: relative;
+}
+
+.new-session-modal__field--select {
+  appearance: none;
+  /* Room for the caret, which is positioned over the padding box. */
+  padding-right: var(--space-24);
+  cursor: pointer;
+  /* Chromium centers a select's text via the control's own metrics, not
+     line-height; without this the label sits a pixel high at height 32. */
+  line-height: normal;
+}
+
+/* The popup is UA-rendered (see color-scheme in styles.css); these keep the
+   closed row and the open list on the same panel color. */
+.new-session-modal__field--select option {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.new-session-modal__select-caret {
+  position: absolute;
+  right: var(--space-10);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.new-session-modal__row {
+  display: flex;
+  gap: var(--space-8);
+}
+
+.new-session-modal__hint {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  margin-top: var(--space-4);
+}
+
+.new-session-modal__hint--below-chips {
+  margin-top: var(--space-5);
+}
+
+.new-session-modal__hint--error {
+  color: var(--error);
+}
+
+.new-session-modal__chip-row {
+  display: flex;
+  gap: var(--space-6);
+}
+
+.new-session-modal__chip-row--wrap {
+  flex-wrap: wrap;
+}
+
+.new-session-modal__actions {
+  display: flex;
+  gap: var(--space-10);
+  margin-left: auto;
+}
+
+/* session-settings-sheet FR-7/FR-8/design 15a — PROJECT+NAME and MODEL+EFFORT
+   each share one row instead of stacking; the left field truncates rather
+   than wrapping, EFFORT holds a fixed 176px so its segmented track never
+   reflows the row beside it. */
+.session-settings-sheet__pair {
+  display: flex;
+  gap: var(--space-10);
+  align-items: flex-start;
+}
+.session-settings-sheet__pair > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.session-settings-sheet__pair--effort > :last-child {
+  flex: 0 0 176px;
+}
+/* PROJECT/NAME have no natural fixed width (unlike EFFORT's segmented track) — split evenly. */
+.session-settings-sheet__pair--even > :last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* design 15a — the create header's title left, `defaults from <project>` right. */
+.session-settings-sheet__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+/* design 15a — the edit-mode header: the session's own StatusDot, its name,
+   `ses_xxxx` and the word `settings`, packed left. */
+.session-settings-sheet__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.session-settings-sheet__header-name {
+  font-size: var(--font-size-14);
+  color: var(--text-strong);
+}
+.session-settings-sheet__header-id {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11-5);
+  color: var(--text-faint);
+}
+.session-settings-sheet__header-word {
+  font-size: var(--font-size-11-5);
+  color: var(--text-faint);
+}
+
+/* design 15a — "not four disabled inputs": a recessed read-only block, not a form. */
+.session-settings-sheet__fixed {
+  background: var(--bg-deep);
+  border-radius: 7px;
+  padding: 10px 12px 11px;
+}
+.session-settings-sheet__fixed-heading {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  letter-spacing: 0.12em;
+  color: var(--text-faint);
+  margin-bottom: var(--space-8);
+}
+.session-settings-sheet__fixed-row {
+  display: flex;
+  gap: var(--space-8);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  line-height: 1.5;
+}
+.session-settings-sheet__fixed-row + .session-settings-sheet__fixed-row {
+  margin-top: var(--space-6);
+}
+.session-settings-sheet__fixed-label {
+  flex: 0 0 62px;
+  color: var(--text-faint);
+}
+.session-settings-sheet__fixed-value {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-hint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.session-settings-sheet__fixed-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-10);
+  margin-top: var(--space-10);
+  padding-top: var(--space-9);
+  border-top: 1px solid var(--border-emphasis);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.session-settings-sheet__fixed-carry {
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.session-settings-sheet__fixed-carry:hover {
+  color: var(--accent-bright, var(--accent));
+}
+
+/* design 15a — the changed-row treatment: the ONLY stroke this feature adds. A
+   tonal step alone can't say "this one differs" when the row beside it shares
+   the same fill. Reuses the existing field components' own classes (NameField,
+   ModelPicker, Chip) rather than teaching them a `changed` prop each — this
+   wrapper is the one new piece the design brief calls for. */
+.session-settings-sheet__field--changed .new-session-modal__label {
+  color: var(--text-hint);
+}
+.session-settings-sheet__field--changed .new-session-modal__label::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: var(--space-6);
+  vertical-align: middle;
+}
+.session-settings-sheet__field--changed .new-session-modal__field,
+.session-settings-sheet__field--changed .model-picker__trigger,
+.session-settings-sheet__field--changed .chip--selected {
+  box-shadow: inset 0 0 0 1px var(--accent-soft-edge);
+}
+.session-settings-sheet__was {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+  margin-top: var(--space-5);
+}
+
+/* the edit-mode foot: the change counter + timing line, "Set as project
+   default", Cancel, Apply — and the inline discard-confirm it can turn into. */
+.session-settings-sheet__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  width: 100%;
+}
+.session-settings-sheet__foot-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.session-settings-sheet__foot-count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11-5);
+  color: var(--accent);
+}
+.session-settings-sheet__foot-timing {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.session-settings-sheet__foot-default {
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.session-settings-sheet__foot-default:hover {
+  color: var(--text-strong);
+}
+.session-settings-sheet__foot-actions {
+  display: flex;
+  gap: var(--space-10);
+}
+.session-settings-sheet__foot-hint {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.session-settings-sheet__confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  width: 100%;
+  color: var(--warn);
+  font-size: var(--font-size-11-5);
+}
+
+/* session-worktree §8 screen 1 — the "Isolate in worktree" group's expanded
+   body (branch / base ref / path preview / inline notice). */
+.worktree-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  margin-top: var(--space-10);
+}
+
+.worktree-field__mono {
+  font-family: var(--font-mono);
+}
+
+.worktree-field__mono--disabled {
+  opacity: 0.5;
+}
+
+/* FR-9 path preview. design brief §"Narrow window": middle-/left-truncate
+   rather than losing the meaningful tail to a trailing ellipsis. */
+.worktree-field__preview {
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+/* FR-5 recovery offer — amber, and the ONLY action shown when the branch is
+   already checked out elsewhere. */
+.worktree-field__recovery {
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-11);
+  color: var(--warn);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.worktree-field__recovery-action {
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 600;
+  align-self: flex-start;
+}
+
+.worktree-field__recovery-action--disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* attach-to-worktree §8 "Picker" — the repo's linked worktrees, replacing the
+   branch/base-ref/preview block while the WORKTREE group is in `attach` mode.
+   max-height ~5 rows; the modal's own body already scrolls, so this is an
+   inner scroll region that must never push Cancel/Create off-screen (the
+   round-8 regression on session-worktree). */
+.worktree-field__picker {
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-base);
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.worktree-field__row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-10);
+  border-bottom: 1px solid var(--border-2);
+  border-left: 2px solid transparent;
+}
+
+.worktree-field__row:last-child {
+  border-bottom: none;
+}
+
+/* Accent discipline (design brief): the chip already carries the mode's
+   accent, so the row reads selection with a neutral raised background
+   (list-row--selected, shared) plus an accent LEFT EDGE only — never a
+   second accent fill competing with the chip. */
+.worktree-field__row.list-row--selected {
+  border-left-color: var(--accent);
+}
+
+.worktree-field__row-line1 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.worktree-field__row-label {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+  color: var(--text);
+}
+
+.worktree-field__row-note {
+  font-size: var(--font-size-10);
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.worktree-field__row-path {
+  font-size: var(--font-size-10-5);
+}
+
+/* FR-10: a warning, not a gate — bare `--warn`, no dead fallback, per the
+   design brief. */
+.worktree-field__caution {
+  color: var(--warn);
+  font-size: var(--font-size-10-5);
+}
+
+.worktree-field__resolved-cwd {
+  color: var(--text-faint);
+}

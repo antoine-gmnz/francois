@@ -37,6 +37,7 @@ const META: SessionMeta = {
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
   responseMode: 'concise',
+  allowGit: false,
 };
 
 beforeEach(() => invokeMock.mockReset());

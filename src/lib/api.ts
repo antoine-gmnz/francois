@@ -62,6 +62,7 @@ import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessio
 import type { SessionCreateInput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
 import type { SessionRenameRequest, SessionRenameResponse } from '../../contract/session-rename';
+import type { SessionUpdateSettingsRequest, SessionUpdateSettingsResponse } from '../../contract/session-settings-sheet';
 import type { EditorListData, OpenInEditorRequest } from '../../contract/open-in-vscode';
 import type {
   Attachment,
@@ -175,6 +176,12 @@ export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('sessio
 // session-rename §5: mutate a session's display name. The core validates/cleans it
 // (FR-1) and emits session.meta — the frontend's single update path (FR-13).
 export const sessionRename = (req: SessionRenameRequest) => ipc<SessionRenameResponse>('session_rename', req);
+// session-settings-sheet §5: one atomic patch of changed keys — validate all →
+// write all → persist once → emit ONE session.meta (FR-2). The frontend's
+// single update path is that event, same as every switch verb; this Result is
+// read only to surface a failure (or the no-op-success meta on an empty patch).
+export const sessionUpdateSettings = (req: SessionUpdateSettingsRequest) =>
+  ipc<SessionUpdateSettingsResponse>('session_update_settings', req);
 // session-worktree §5: probe a candidate cwd for worktree isolation (FR-1).
 export const sessionWorktreeProbe = (req: WorktreeProbeRequest) =>
   ipc<Result<WorktreeProbeData>>('session_worktree_probe', req);

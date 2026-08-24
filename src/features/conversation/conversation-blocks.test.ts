@@ -1071,6 +1071,7 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
       agentRuntime: 'claude-code' as const,
       protocol: 'anthropic' as const,
       responseMode: 'default' as const,
+      allowGit: false,
     };
     applySessionEvent(dispatch, setters, { type: 'session.meta', meta });
     expect(setters.setStatus).toHaveBeenCalledWith('error');

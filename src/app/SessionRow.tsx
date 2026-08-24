@@ -83,7 +83,7 @@ export default function SessionRow({
   const showLeftPane = useStore((s) => s.showLeftPane);
   const toggleLeftPane = useStore((s) => s.toggleLeftPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
-  const setRenameSessionId = useStore((s) => s.setRenameSessionId);
+  const setSessionSettingsId = useStore((s) => s.setSessionSettingsId);
   // split-session: the two panes carry their own strips, so this row's view
   // control would be a third, ambiguous one. It steps aside while split.
   const split = useStore((s) => s.extraPanes.length > 0);
@@ -139,8 +139,8 @@ export default function SessionRow({
           {/* The one elastic element in the row. */}
           <span
             className="session-row__name truncate"
-            title={`${active.name} — click to rename`}
-            onClick={() => setRenameSessionId(active.id)}
+            title={`${active.name} — click for session settings`}
+            onClick={() => setSessionSettingsId(active.id)}
           >
             {active.name}
           </span>

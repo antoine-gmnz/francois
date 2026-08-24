@@ -15,8 +15,8 @@ import PermissionsModal from '../features/permissions/PermissionsModal';
 import ProfilesModal from '../features/profiles/ProfilesModal';
 import { loadProfiles } from '../features/profiles/profiles';
 import ProjectsModal from '../features/projects/ProjectsModal';
-import NewSessionModal from '../features/sessions/NewSessionModal';
-import RenameSessionModal from '../features/sessions/RenameSessionModal';
+import SessionSettingsSheet from '../features/sessions/SessionSettingsSheet';
+import type { SessionSettingsCarryOver } from '../features/sessions/session-settings';
 import Sidebar from '../features/sessions/Sidebar';
 import { initShellEvents } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
@@ -76,9 +76,13 @@ export default function App() {
   // Stable identity: the modal keys effects (its landing hand-off, its keydown
   // subscription) off this callback, and App re-renders on every store tick.
   const closeAdoptCloud = useCallback(() => setAdoptCloudOpen(false), [setAdoptCloudOpen]);
-  // session-rename FR-12/FR-14: opened from the sidebar context menu AND the palette.
-  const renameSessionId = useStore((s) => s.renameSessionId);
-  const setRenameSessionId = useStore((s) => s.setRenameSessionId);
+  // session-settings-sheet FR-19: opened from the run chip, the sidebar context
+  // menu, the palette and ⌘,/Ctrl+,.
+  const sessionSettingsId = useStore((s) => s.sessionSettingsId);
+  const setSessionSettingsId = useStore((s) => s.setSessionSettingsId);
+  // FR-13: "New session from these ↗" hands the edit sheet's session over to the
+  // create sheet — App owns both, so it owns the handoff between them too.
+  const [newSessionSeed, setNewSessionSeed] = useState<SessionSettingsCarryOver | undefined>(undefined);
   const activeProjectId = useStore((s) => s.activeProjectId);
   // projects FR-39: a switch into an empty project auto-opens the new-session
   // modal — these two settle what cancelling vs. creating does to the scope.
@@ -266,7 +270,7 @@ export default function App() {
     permissionsOpen,
     projectsOpen,
     accountsOpen,
-    renameOpen: renameSessionId !== null,
+    sessionSettingsOpen: sessionSettingsId !== null,
     updateModalOpen,
     extensionsOpen,
     setNewSessionOpen,
@@ -465,9 +469,12 @@ export default function App() {
           modal's own `onClose`, so clearing there is what makes the rollback
           below stand down once a session actually exists. */}
       {newSessionOpen && (
-        <NewSessionModal
+        <SessionSettingsSheet
+          mode="create"
+          seed={newSessionSeed}
           onClose={() => {
             setNewSessionOpen(false);
+            setNewSessionSeed(undefined);
             rollbackProjectSwitch();
           }}
           onCreated={(m) => {
@@ -491,19 +498,23 @@ export default function App() {
           what brings one into the fleet — so it is gated on the flag alone. */}
       {adoptCloudOpen && <AdoptCloudSessionModal onClose={closeAdoptCloud} />}
 
-      {/* session-rename FR-8: the rename modal, keyed to the session so a second
-          open always restarts from that session's current name. Rendered here
-          because all three entry points (row context menu, the session row's
-          breadcrumb, ⌘K) open the same one. */}
-      {/* Gated on the id alone, never on the session still existing: a session
-          removed while the modal is up must stay renameable-looking until the
-          commit answers SESSION_NOT_FOUND (§7), not vanish under the cursor. */}
-      {renameSessionId !== null && (
-        <RenameSessionModal
-          key={renameSessionId}
-          sessionId={renameSessionId}
-          currentName={sessions.find((s) => s.id === renameSessionId)?.name ?? ''}
-          onClose={() => setRenameSessionId(null)}
+      {/* session-settings-sheet FR-19: the settings sheet in EDIT mode, keyed to
+          the session so a second open always restarts from its current values.
+          Rendered here because every entry point (run chip, row context menu,
+          ⌘,/Ctrl+,, ⌘K) opens the same one. session-settings-sheet FR-13: "New
+          session from these ↗" closes this and reopens the create sheet above,
+          pre-filled. */}
+      {sessionSettingsId !== null && (
+        <SessionSettingsSheet
+          key={sessionSettingsId}
+          mode="edit"
+          sessionId={sessionSettingsId}
+          onClose={() => setSessionSettingsId(null)}
+          onCarryOver={(seed) => {
+            setSessionSettingsId(null);
+            setNewSessionSeed(seed);
+            setNewSessionOpen(true);
+          }}
         />
       )}
 

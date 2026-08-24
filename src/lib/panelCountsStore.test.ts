@@ -25,6 +25,7 @@ function meta(id: string): SessionMeta {
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
     responseMode: 'default',
+    allowGit: false,
   };
 }
 
