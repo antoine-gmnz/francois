@@ -1,6 +1,6 @@
 [package]
 name = "francois"
-version = "0.34.7"
+version = "0.35.0"
 description = "Francois — Claude Code session orchestrator (preview)"
 edition = "2021"
 license = "AGPL-3.0-only"
