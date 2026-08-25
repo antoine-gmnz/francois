@@ -143,9 +143,29 @@ fn fresh_shared() -> Arc<Mutex<Shared>> {
     }))
 }
 
+/// How long the flusher waits after output first arrives before emitting it —
+/// long enough to fold a flood (a build, a `git log`) from one event per 8 KiB
+/// `read()` into a handful of events per second, short enough that interactive
+/// echo stays imperceptible.
+const SHELL_EMIT_COALESCE: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// The pending output shared between the PTY read loop and the flusher thread.
+struct PendingOutput {
+    data: String,
+    reader_done: bool,
+}
+
 /// The shell reader thread's body: pump PTY output into the ring buffer + emit
 /// `shell.data` events until the child's side closes, then emit `shell.exit`.
 /// Both events carry `shellId` and `owner` (FR-10, FR-14, unbound-panes §5).
+///
+/// Emission is COALESCED: the read loop appends into `PendingOutput` and a
+/// flusher thread drains it at most once per `SHELL_EMIT_COALESCE` window.
+/// Emitting straight from the read loop (the previous shape) meant one webview
+/// event per `read()` return — a flood from any single shell (multiplied by
+/// every mounted terminal's listener) starved the renderer enough to lag
+/// typing once a few sessions were open. The ring is still fed per chunk, so
+/// scrollback replay is unchanged; only the live event stream is batched.
 fn run_shell_reader(
     app: AppHandle,
     shell_id: String,
@@ -154,12 +174,52 @@ fn run_shell_reader(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     shared: Arc<Mutex<Shared>>,
 ) {
+    let pending = Arc::new((
+        Mutex::new(PendingOutput {
+            data: String::new(),
+            reader_done: false,
+        }),
+        std::sync::Condvar::new(),
+    ));
+
+    let flusher = {
+        let pending = Arc::clone(&pending);
+        let app = app.clone();
+        let shell_id = shell_id.clone();
+        let owner = owner.clone();
+        std::thread::spawn(move || {
+            let (lock, cvar) = &*pending;
+            loop {
+                let mut guard = lock.lock().unwrap();
+                while guard.data.is_empty() && !guard.reader_done {
+                    guard = cvar.wait(guard).unwrap();
+                }
+                if guard.data.is_empty() {
+                    return; // reader done and everything flushed
+                }
+                drop(guard);
+                // Accumulate window: whatever else the PTY produces in the next
+                // few ms rides in the same event.
+                std::thread::sleep(SHELL_EMIT_COALESCE);
+                let data = std::mem::take(&mut lock.lock().unwrap().data);
+                let _ = app.emit(
+                    EVENT_CHANNEL,
+                    ShellEvent::Data {
+                        shell_id: shell_id.clone(),
+                        owner: owner.clone(),
+                        data,
+                    },
+                );
+            }
+        })
+    };
+
     let mut buf = [0u8; 8192];
     loop {
         match reader.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                let chunk = String::from_utf8_lossy(&buf[..n]);
                 {
                     let mut state = shared.lock().unwrap();
                     if state.disposed {
@@ -167,17 +227,21 @@ fn run_shell_reader(
                     }
                     state.ring.push(&chunk);
                 }
-                let _ = app.emit(
-                    EVENT_CHANNEL,
-                    ShellEvent::Data {
-                        shell_id: shell_id.clone(),
-                        owner: owner.clone(),
-                        data: chunk,
-                    },
-                );
+                let (lock, cvar) = &*pending;
+                lock.lock().unwrap().data.push_str(&chunk);
+                cvar.notify_one();
             }
         }
     }
+    // Wake the flusher for a final drain and wait for it, so the last
+    // `shell.data` is on the wire before `shell.exit` follows it.
+    {
+        let (lock, cvar) = &*pending;
+        lock.lock().unwrap().reader_done = true;
+        cvar.notify_one();
+    }
+    let _ = flusher.join();
+
     let code = child.wait().map(|s| s.exit_code() as i32).unwrap_or(-1);
     let mut state = shared.lock().unwrap();
     state.alive = false;
