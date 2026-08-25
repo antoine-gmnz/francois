@@ -26,6 +26,7 @@ function meta(id: string): SessionMeta {
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
     responseMode: 'default',
+    allowGit: false,
   };
 }
 
@@ -140,6 +141,7 @@ describe('SessionMeta.agentRuntime/protocol are carried through the cache (multi
       agentRuntime,
       protocol,
       responseMode: 'default',
+      allowGit: false,
     };
   }
 

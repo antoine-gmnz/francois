@@ -130,6 +130,7 @@ fn main() {
             session::session_switch_effort,
             session::session_switch_response_mode,
             session::session_rename,
+            session::session_update_settings,
             session::session_compact,
             session::session_clear,
             session::session_list_commands,

@@ -13,15 +13,9 @@
 // Effort is a property of the MODEL, so it lives inside the selected model's row
 // rather than beside it, and only exists for models that advertise one.
 
-import type { ModelInfo, PermissionMode, ProjectDefaults, ResponseMode, SessionMeta } from '../../../contract/common';
+import type { ModelInfo, ResponseMode, SessionMeta } from '../../../contract/common';
 import { RESPONSE_MODE_OPTIONS, type ResponseModeOption } from '../../../contract/response-mode';
 import { permissionModeOption } from '../permissions/permission-mode';
-
-export const APPLIES_COPY = 'Applies from the next turn';
-export const SET_PROJECT_DEFAULT_COPY = 'Set as project default';
-/** response-mode FR-16: the action writes four values now, so it names four. */
-export const SET_PROJECT_DEFAULT_TITLE =
-  "write this model, effort, permission mode and response mode into the project's defaults";
 
 export interface RunChipParts {
   /** The model's display label — `Opus 5`. */
@@ -101,30 +95,3 @@ export function bypassNote(session: SessionMeta): string | null {
   return session.worktree ? `${since} · worktree ${session.worktree.branch}` : since;
 }
 
-/** The footer's second action needs somewhere to write to. */
-export function canSetProjectDefault(session: SessionMeta): boolean {
-  return typeof session.projectId === 'string' && session.projectId.length > 0;
-}
-
-/**
- * `defaults` REPLACES the whole object on the wire (ProjectUpdateRequest), so this
- * merges rather than patches. The four keys the panel owns are written from the
- * session; an absent effort DELETES the key rather than leaving the project's old
- * level behind — "make this project look like this session" has to include the
- * parts of this session that are unset, or the button quietly lies.
- */
-export function nextProjectDefaults(current: ProjectDefaults, session: SessionMeta): ProjectDefaults {
-  const next: ProjectDefaults = {
-    ...current,
-    modelId: session.model.id,
-    permissionMode: session.permissionMode as PermissionMode,
-    // response-mode FR-16: written unconditionally, 'default' included — it is a
-    // real member of the union rather than an unset field, so writing it is how
-    // "make this project look like this session" clears a project default of
-    // `concise` when the session is back on default.
-    responseMode: session.responseMode,
-  };
-  if (session.effort) next.effort = session.effort;
-  else delete next.effort;
-  return next;
-}

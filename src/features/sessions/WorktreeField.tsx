@@ -7,7 +7,7 @@
 import { Chip } from '../../ui/Chip';
 import type { UseWorktreeGroupResult } from './useWorktreeGroup';
 import { WorktreeAttachPicker } from './WorktreeAttachPicker';
-import './new-session-modal.css';
+import './session-settings-sheet.css';
 
 export interface WorktreeFieldProps {
   worktree: UseWorktreeGroupResult;

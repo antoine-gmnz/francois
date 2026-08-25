@@ -30,6 +30,7 @@ function session(over: Partial<SessionMeta> & { id: string; cwd: string }): Sess
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
     responseMode: 'default',
+    allowGit: false,
     ...over,
   };
 }

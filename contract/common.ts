@@ -281,6 +281,10 @@ export interface SessionMeta {
   /** How this session's NEXT turn is told to write. A persisted record without
    *  the key loads as 'default' (response-mode FR-1). */
   responseMode: ResponseMode;
+  /** Francois auto-approves direct `git`/`gh` Bash calls for this session
+   *  (session-settings-sheet FR-1). Read LIVE by the control channel, so a change
+   *  applies to the very next permission request. Pre-feature records load `false`. */
+  allowGit: boolean;
 }
 
 /** The id of a Claude Code on the web session — `'session_…'` or `'cse_…'`. */

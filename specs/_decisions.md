@@ -86,6 +86,10 @@
 - 2026-08-23 · api · A change-only injection channel must emit an explicit REVERT instruction when returning to the neutral value, never fall silent — because the previous instruction survives in the thread's own history · response-mode
 - 2026-08-23 · api · Instruction/prompt text the core injects never crosses the IPC boundary; the frontend gets the enum plus a label/hint table only — because text the webview can read is text it will be asked to edit, and that is a registry feature, not a setting · response-mode
 
+- 2026-08-24 · api · A verb that accepts a multi-field patch validates EVERY key before writing any; one bad key rejects the whole patch — because a best-effort loop leaves the session in a state neither the user nor the caller asked for · session-settings-sheet
+- 2026-08-24 · ui · When settings in one form take effect at different moments, the form names WHICH ones are deferred and stays silent when none are — never a blanket timing claim — because one immediate field makes a blanket claim false, and the user reads the claim, not the field list · session-settings-sheet
+- 2026-08-24 · ui · A value fixed at creation renders as a read-only line in a labelled block, never a disabled input — because a disabled input still reads as clickable and costs a full row to say nothing · session-settings-sheet
+
 ## Superseded
 
 - 2026-08-12 · naming · A session's provider names the RUNNER (`claude-code` | `openai-compatible`), never the vendor — because an Anthropic-API-through-our-own-loop path would make a vendor name a lie the day it lands · multi-provider-seam

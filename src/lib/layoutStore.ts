@@ -720,11 +720,13 @@ export interface LayoutSlice {
   setNewSessionOpen: (o: boolean) => void;
   newAgentOpen: boolean;
   setNewAgentOpen: (o: boolean) => void;
-  // session-rename FR-12/FR-14: the session whose name is being edited, or null
-  // when the rename modal is closed. Lifted here — like newSessionOpen — because
-  // both the sidebar context menu and the ⌘K palette open the same modal.
-  renameSessionId: string | null;
-  setRenameSessionId: (sessionId: string | null) => void;
+  // session-settings-sheet FR-19: the session whose settings sheet is open in
+  // EDIT mode, or null when it is closed. Lifted here — like newSessionOpen —
+  // because the run chip, the sidebar context menu, ⌘, and the ⌘K palette all
+  // open the same sheet. Supersedes session-rename's renameSessionId — the
+  // rename modal it tracked is gone; NAME is now one row of this sheet.
+  sessionSettingsId: string | null;
+  setSessionSettingsId: (sessionId: string | null) => void;
   // cloud-sessions FR-14: the "Adopt cloud session" modal. Lifted here — like
   // newSessionOpen — because both the pane [1] action beside "New session" and
   // the ⌘K command open the same one. Never persisted: a modal is not layout.
@@ -904,8 +906,8 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
   setNewSessionOpen: (newSessionOpen) => set({ newSessionOpen }),
   newAgentOpen: false,
   setNewAgentOpen: (newAgentOpen) => set({ newAgentOpen }),
-  renameSessionId: null,
-  setRenameSessionId: (renameSessionId) => set({ renameSessionId }),
+  sessionSettingsId: null,
+  setSessionSettingsId: (sessionSettingsId) => set({ sessionSettingsId }),
   adoptCloudOpen: false,
   setAdoptCloudOpen: (adoptCloudOpen) => set({ adoptCloudOpen }),
   mcpAttachOpen: false,

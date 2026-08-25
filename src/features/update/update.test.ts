@@ -58,6 +58,7 @@ const session = (id: string, status: SessionMeta['status']): SessionMeta => ({
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
   responseMode: 'default',
+  allowGit: false,
 });
 
 /** Flush the microtask queue so promise chains inside the actions settle. */
