@@ -4,7 +4,7 @@
 // by appliedRef), so a manual edit afterwards always wins.
 
 import { useEffect, useRef } from 'react';
-import type { AccountId, ClaudeRuntime, ModelInfo, PermissionMode } from '../../../contract/common';
+import type { AccountId, ClaudeRuntime, ModelInfo, PermissionMode, ResponseMode } from '../../../contract/common';
 import { isWslUncPath } from '../../../contract/wsl-filesystem';
 import type { Account } from '../../../contract/multi-account';
 import type { ProjectMeta } from '../../../contract/projects';
@@ -25,6 +25,8 @@ export interface UseProjectDefaultsParams {
   setModelId: (id: string) => void;
   setEffort: (effort: string) => void;
   setPermissionMode: (mode: PermissionMode) => void;
+  /** response-mode FR-17: pre-filled from ProjectDefaults.responseMode; absent ⇒ 'default'. */
+  setResponseMode: (mode: ResponseMode) => void;
   setAllowGit: (allow: boolean) => void;
   setStaleModelId: (id: string | null) => void;
   setRuntime: (runtime: ClaudeRuntime) => void;
@@ -58,6 +60,7 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     setModelId,
     setEffort,
     setPermissionMode,
+    setResponseMode,
     setAllowGit,
     setStaleModelId,
     setRuntime,
@@ -89,6 +92,7 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     setModelId(applied.values.modelId);
     setEffort(applied.values.effort);
     setPermissionMode(applied.values.permissionMode);
+    setResponseMode(applied.values.responseMode);
     setAllowGit(applied.values.allowGit);
     setStaleModelId(applied.staleModelId);
 

@@ -728,6 +728,10 @@ pub struct SessionSeed {
     pub runtime: Option<String>,
     pub allow_git: Option<bool>,
     pub account_id: Option<String>,
+    /// response-mode FR-16: carried like every other default, so an adopted
+    /// session opens on the mode the project asks for rather than on one the
+    /// user never chose. Verbatim; the caller re-validates it.
+    pub response_mode: Option<String>,
 }
 
 /// `None` ⇔ the id is not in the registry (`PROJECT_NOT_FOUND` at the call
@@ -746,6 +750,7 @@ pub(crate) fn seed_of(projects: &[Project], project_id: &str) -> Option<SessionS
         runtime: p.defaults.runtime.clone(),
         allow_git: p.defaults.allow_git,
         account_id: p.defaults.account_id.clone(),
+        response_mode: p.defaults.response_mode.clone(),
     })
 }
 
@@ -997,6 +1002,7 @@ mod tests {
             allow_git: Some(true),
             account_id: Some("a1".into()),
             profile_id: None,
+            response_mode: None,
         };
         let v = serde_json::to_value(meta_of(&p)).unwrap();
         assert_eq!(v["id"], "p1");
@@ -1138,6 +1144,7 @@ mod tests {
             allow_git: Some(true),
             account_id: Some("acct-2".into()),
             profile_id: Some("pr1".into()),
+            response_mode: Some("concise".into()),
         };
         let root = p.root.clone();
         let projects = vec![p];
@@ -1150,6 +1157,7 @@ mod tests {
         assert_eq!(seed.runtime.as_deref(), Some("wsl"));
         assert_eq!(seed.allow_git, Some(true));
         assert_eq!(seed.account_id.as_deref(), Some("acct-2"));
+        assert_eq!(seed.response_mode.as_deref(), Some("concise"));
 
         // An all-inherit project seeds every default as absent rather than as a
         // value the core invented.

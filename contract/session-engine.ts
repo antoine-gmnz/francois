@@ -19,6 +19,7 @@ import type {
   PermissionMode,
   ClaudeRuntime,
   ProfileId,
+  ResponseMode,
 } from './common';
 import type { WorktreeCreateOptions } from './session-worktree';
 
@@ -41,6 +42,8 @@ export interface SessionCreateInput {
   extraArgs?: string[];
   /** The profile the values came from; the core snapshots its name itself (session-profiles FR-15). */
   profileId?: ProfileId;
+  /** omit for 'default'. Applied to every turn incl. --resume (response-mode FR-7). */
+  responseMode?: ResponseMode;
 }
 // invoke('session_create', req: SessionCreateInput): Promise<Result<SessionMeta>>
 // Added error codes for session-profiles: 'PROFILE_NOT_FOUND' | 'PROFILE_ARG_DENIED'.

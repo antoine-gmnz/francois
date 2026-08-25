@@ -187,6 +187,7 @@ pub fn session_compact(
         account_id,
         system_prompt,
         extra_args,
+        turn_response_mode,
     ) = {
         let mut map = engine.sessions.lock().unwrap();
         let Some(s) = map.get_mut(&session_id) else {
@@ -215,6 +216,10 @@ pub fn session_compact(
             // this session like any other turn — both ride along.
             s.system_prompt.clone(),
             s.extra_args.clone(),
+            // response-mode FR-7: EVERY claude invocation carries the directive,
+            // and /compact is a claude spawn on behalf of this session like any
+            // other turn — it rides along with the two above.
+            s.response_mode,
         )
     };
     // multi-account FR-21: a /compact turn is a claude spawn on behalf of the
@@ -262,6 +267,7 @@ pub fn session_compact(
         account_config_dir.as_deref(),
         system_prompt.as_deref(),
         &extra_args,
+        turn_response_mode,
     ) {
         // session-questions FR-5: /compact rides the stdin path like any turn, but a
         // compaction can never park on a question — close the pipe right away; the
@@ -351,6 +357,9 @@ pub(crate) fn apply_clear(map: &mut HashMap<String, Session>, session_id: &str) 
     }
     s.block_buffer.clear();
     s.claude_session_id = None;
+    // response-mode FR-10: the thread anchor is gone, so nothing has been told
+    // to the thread the next turn will start — the directive is re-sent there.
+    s.response_mode_sent = None;
     s.context_used_tokens = 0;
     s.last_activity_at = now_ms();
     ClearOutcome::Cleared {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { AppError, ClaudeRuntime, PermissionMode, SessionMeta } from '../../../contract/common';
+import type { AppError, ClaudeRuntime, PermissionMode, ResponseMode, SessionMeta } from '../../../contract/common';
+import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
 import { isWslUncPath } from '../../../contract/wsl-filesystem';
 import { sessionCreate } from '../../lib/api';
@@ -36,6 +37,14 @@ const PERMISSION_CHIP_OPTIONS: ChipOption<PermissionMode>[] = PERMISSION_MODE_OP
   danger: opt.danger,
 }));
 
+// response-mode FR-13/FR-17: the same contract table the run chip's panel reads.
+// The chips carry the label only — the hints belong to the panel, not to a field
+// that would have to teach four modes in a modal nobody opened to read.
+const RESPONSE_CHIP_OPTIONS: ChipOption<ResponseMode>[] = RESPONSE_MODE_OPTIONS.map((opt) => ({
+  value: opt.mode,
+  label: opt.label,
+}));
+
 const RUNTIME_CHIP_OPTIONS: ChipOption<ClaudeRuntime>[] = (['native', 'wsl'] as const).map((runtime) => ({
   value: runtime,
   label: runtime,
@@ -57,6 +66,8 @@ export default function NewSessionModal({
   const [staleModelId, setStaleModelId] = useState<string | null>(null);
   const [effort, setEffort] = useState(''); // '' = model default
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
+  // response-mode FR-17: 'default' until a project default says otherwise.
+  const [responseMode, setResponseMode] = useState<ResponseMode>('default');
   const [allowGit, setAllowGit] = useState(false);
   const [runtime, setRuntime] = useState<ClaudeRuntime>('native');
   // Reset each modal open (component remounts per open — see App.tsx). Tracks
@@ -126,6 +137,7 @@ export default function NewSessionModal({
     setModelId,
     setEffort,
     setPermissionMode,
+    setResponseMode,
     setAllowGit,
     setStaleModelId,
     setRuntime,
@@ -188,6 +200,9 @@ export default function NewSessionModal({
       modelId,
       effort: effort || undefined,
       permissionMode: permissionMode !== 'default' ? permissionMode : undefined,
+      // response-mode FR-1: optional on the wire, and 'default' IS the absence of
+      // an instruction — so it is omitted rather than sent.
+      responseMode: responseMode !== 'default' ? responseMode : undefined,
       runtime: runtime !== 'native' ? runtime : undefined,
       allowGit: allowGit || undefined,
       // FR-19: sent verbatim; the core does no default merging, so what is on
@@ -366,6 +381,13 @@ export default function NewSessionModal({
           </div>
           <div className="new-session-modal__hint new-session-modal__hint--below-chips">
             {PERMISSION_MODE_OPTIONS.find((opt) => opt.mode === permissionMode)?.hint}
+          </div>
+        </div>
+
+        <div>
+          <label className="new-session-modal__label">RESPONSE</label>
+          <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
+            <ChipGroup options={RESPONSE_CHIP_OPTIONS} value={responseMode} onChange={setResponseMode} />
           </div>
         </div>
 

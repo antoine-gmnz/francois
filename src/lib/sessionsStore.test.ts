@@ -25,6 +25,7 @@ function meta(id: string): SessionMeta {
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
+    responseMode: 'default',
   };
 }
 
@@ -138,6 +139,7 @@ describe('SessionMeta.agentRuntime/protocol are carried through the cache (multi
       accountId: 'default',
       agentRuntime,
       protocol,
+      responseMode: 'default',
     };
   }
 

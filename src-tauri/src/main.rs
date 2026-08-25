@@ -128,6 +128,7 @@ fn main() {
             session::session_switch_model,
             session::session_switch_permission_mode,
             session::session_switch_effort,
+            session::session_switch_response_mode,
             session::session_rename,
             session::session_compact,
             session::session_clear,

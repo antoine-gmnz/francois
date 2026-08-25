@@ -64,13 +64,23 @@ pub(super) fn thread_tool_call(call: &wire::ToolCall) -> thread::ThreadToolCall 
 /// FR-3/FR-23: the request's `messages` array — the persisted wire messages,
 /// with the (never-persisted, FR-25) skill system block prepended when one
 /// was injected.
+///
+/// response-mode FR-8: the response directive is a second `role: "system"`
+/// message, AFTER the skill block and BEFORE the thread's own messages. Like
+/// the skill block it is never persisted to the thread file and is rebuilt per
+/// request, so a mode change takes effect on the very next call — and
+/// `Default`, being the absence of an instruction, pushes nothing.
 pub(super) fn build_request_messages(
     skill_text: &str,
+    response_mode: crate::session::ResponseMode,
     messages: &[thread::ThreadMessage],
 ) -> Vec<Value> {
-    let mut out = Vec::with_capacity(messages.len() + 1);
+    let mut out = Vec::with_capacity(messages.len() + 2);
     if !skill_text.is_empty() {
         out.push(json!({ "role": "system", "content": skill_text }));
+    }
+    if let Some(directive) = response_mode.directive() {
+        out.push(json!({ "role": "system", "content": directive }));
     }
     for m in messages {
         out.push(serde_json::to_value(m).unwrap_or(Value::Null));
@@ -272,7 +282,7 @@ mod tests {
             tool_calls: None,
             tool_call_id: None,
         }];
-        let out = build_request_messages("", &messages);
+        let out = build_request_messages("", crate::session::ResponseMode::Default, &messages);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["role"], "user");
     }
@@ -285,12 +295,56 @@ mod tests {
             tool_calls: None,
             tool_call_id: None,
         }];
-        let out = build_request_messages("skill: do the thing\n", &messages);
+        let out = build_request_messages(
+            "skill: do the thing\n",
+            crate::session::ResponseMode::Default,
+            &messages,
+        );
         assert_eq!(out.len(), 2);
         assert_eq!(out[0]["role"], "system");
         assert_eq!(out[0]["content"], "skill: do the thing\n");
         assert_eq!(out[1]["role"], "user");
         // The caller's `messages` slice — what gets persisted — is untouched.
+        assert_eq!(messages.len(), 1);
+    }
+
+    // ---------- response-mode FR-8 (the francois loop) ----------
+
+    #[test]
+    fn the_default_response_mode_pushes_no_system_message() {
+        // FR-8: 'default' is the absence of an instruction, so nothing is pushed.
+        let messages = vec![thread::ThreadMessage {
+            role: "user".into(),
+            content: Some("hi".into()),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let out = build_request_messages("", crate::session::ResponseMode::Default, &messages);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["role"], "user");
+    }
+
+    #[test]
+    fn the_response_directive_sits_after_the_skill_block_and_before_the_thread() {
+        use crate::session::ResponseMode;
+        let messages = vec![thread::ThreadMessage {
+            role: "user".into(),
+            content: Some("hi".into()),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let out =
+            build_request_messages("skill: do the thing\n", ResponseMode::Learning, &messages);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0]["content"], "skill: do the thing\n");
+        assert_eq!(out[1]["role"], "system");
+        assert_eq!(
+            out[1]["content"],
+            ResponseMode::Learning.directive().unwrap()
+        );
+        assert_eq!(out[2]["role"], "user");
+        // FR-8: rebuilt per request and NEVER persisted — the caller's slice,
+        // which is what gets written to the thread file, is untouched.
         assert_eq!(messages.len(), 1);
     }
 }

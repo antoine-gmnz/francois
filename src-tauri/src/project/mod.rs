@@ -80,6 +80,16 @@ pub struct ProjectDefaults {
     /// written before the sweep existed.
     #[serde(rename = "profileId", default, skip_serializing_if = "Option::is_none")]
     profile_id: Option<String>,
+    /// response-mode FR-16: the response mode a new session under this project
+    /// opens on. Stored VERBATIM like every other default here — `session_create`
+    /// is the gate that rejects a value outside the enum, and the modal reads an
+    /// unknown one as 'default' (§7).
+    #[serde(
+        rename = "responseMode",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    response_mode: Option<String>,
 }
 
 /// One registry entry, exactly as persisted in projects.json (FR-1). `rootExists`

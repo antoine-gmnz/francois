@@ -86,6 +86,7 @@ function meta(id: string, lastActivityAt: number, status: SessionMeta['status'] 
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
+    responseMode: 'default',
   };
 }
 

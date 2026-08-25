@@ -35,6 +35,11 @@ mod models;
 mod persistence;
 mod remote;
 mod remote_discovery;
+/// response-mode FR-6: the closed `ResponseMode` enum and the CORE-OWNED
+/// directive text. A child module rather than a top-level one because the
+/// enum is a `Session`/`SessionMeta` field and nothing outside this domain
+/// names it.
+mod response_mode;
 mod skills;
 mod slash;
 mod spawn;
@@ -78,6 +83,7 @@ pub(crate) use models::*;
 pub(crate) use persistence::*;
 pub(crate) use remote::*;
 pub(crate) use remote_discovery::*;
+pub(crate) use response_mode::*;
 pub(crate) use skills::*;
 pub(crate) use slash::*;
 pub(crate) use spawn::*;
@@ -195,6 +201,11 @@ pub(crate) struct SessionMeta {
     /// session-profiles FR-16: present ⇔ created from a profile; snapshot-only.
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<SessionProfileRef>,
+    /// response-mode FR-1: how this session's NEXT turn is told to write.
+    /// REQUIRED on the wire (never omitted, like `accountId`): every session has
+    /// one, and a persisted record without the key loads as `default`.
+    #[serde(rename = "responseMode")]
+    response_mode: ResponseMode,
 }
 
 #[derive(Serialize, Clone)]
@@ -503,6 +514,18 @@ pub(crate) struct Session {
     /// session-profiles FR-16: the profile identity this session was created
     /// from, if any — snapshot-only, never re-resolved.
     profile: Option<SessionProfileRef>,
+    /// response-mode FR-1/FR-4: the mode the NEXT turn spawns with. Changing it
+    /// signals no process and writes nothing to a running child — a turn keeps
+    /// the mode it was snapshotted with (`TurnContext.response_mode`).
+    response_mode: ResponseMode,
+    /// response-mode FR-10: the mode the CURRENT thread has already been told
+    /// about — CORE-PRIVATE state, never in `SessionMeta`, never in any payload,
+    /// never in diagnostics. Only `codex`/`grok` read or write it (their threads
+    /// carry history, so a directive already sent must not be repeated and a
+    /// withdrawn one must be explicitly cleared, FR-11); `claude-code` and
+    /// `francois` rebuild their directive per turn/request and leave this `None`
+    /// forever. Reset to `None` whenever the thread anchor is cleared.
+    response_mode_sent: Option<ResponseMode>,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     /// multi-provider-seam FR-2: the live turn, reached only through
@@ -611,6 +634,7 @@ impl Session {
         system_prompt: Option<String>,
         extra_args: Vec<String>,
         profile: Option<SessionProfileRef>,
+        response_mode: ResponseMode,
     ) -> Session {
         Session {
             id,
@@ -638,6 +662,11 @@ impl Session {
             system_prompt,
             extra_args,
             profile,
+            response_mode,
+            // response-mode FR-10: a brand-new session's thread has been told
+            // nothing yet — the first turn is a fresh thread and sends whatever
+            // the mode asks for.
+            response_mode_sent: None,
             queue: VecDeque::new(),
             claude_session_id,
             current: None,
@@ -704,6 +733,7 @@ impl Session {
             agent_runtime: self.agent_runtime,
             protocol: self.protocol,
             profile: self.profile.clone(),
+            response_mode: self.response_mode,
         }
     }
 

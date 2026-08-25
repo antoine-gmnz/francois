@@ -48,6 +48,15 @@
 .run-chip__mode--danger {
   color: var(--error-bright);
 }
+/* response-mode FR-15: the face carries the mode's short only when it is not
+   `default`, so the common case never widens the row. Quieter than the permission
+   mode beside it — how the answer READS matters less at a glance than what the
+   session is allowed to do. */
+.run-chip__response {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-muted);
+}
 .run-chip__caret {
   font-size: var(--font-size-9);
   color: var(--text-muted);

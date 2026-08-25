@@ -43,6 +43,7 @@ pub(crate) fn turn_args(
     permission_mode: &str,
     system_prompt: Option<&str>,
     extra_args: &[String],
+    response_mode: crate::session::ResponseMode,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-p".into(),
@@ -65,6 +66,13 @@ pub(crate) fn turn_args(
     // including a --resume turn (--resume itself carries neither).
     if let Some(sp) = system_prompt {
         args.extend(["--system-prompt".into(), sp.into()]);
+    }
+    // response-mode FR-7: the directive rides EVERY invocation, --resume path
+    // included, and is APPENDED AFTER a profile's replace-mode prompt — the
+    // profile says who the model is, the mode says how it writes. 'default'
+    // omits the flag entirely rather than appending an empty instruction.
+    if let Some(directive) = response_mode.directive() {
+        args.extend(["--append-system-prompt".into(), directive.into()]);
     }
     if let Some(r) = resume {
         args.extend(["--resume".into(), r.into()]);
@@ -98,6 +106,7 @@ pub(crate) fn spawn_claude(
     account_config_dir: Option<&str>,
     system_prompt: Option<&str>,
     extra_args: &[String],
+    response_mode: crate::session::ResponseMode,
 ) -> std::io::Result<Child> {
     let args = turn_args(
         model_id,
@@ -106,6 +115,7 @@ pub(crate) fn spawn_claude(
         permission_mode,
         system_prompt,
         extra_args,
+        response_mode,
     );
     let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
     let mut cmd = Command::new(program);
@@ -299,6 +309,7 @@ impl SessionAdapter for ClaudeCodeAdapter {
             account_config_dir.as_deref(),
             ctx.system_prompt.as_deref(),
             &ctx.extra_args,
+            ctx.response_mode,
         )
         .map_err(|e| AppError {
             code: "SPAWN_FAILED".into(),
@@ -382,7 +393,15 @@ mod tests {
 
     #[test]
     fn turn_args_enable_stdio_control_channel_without_positional_prompt() {
-        let args = turn_args("sonnet", Some("thread-1"), Some("high"), "plan", None, &[]);
+        let args = turn_args(
+            "sonnet",
+            Some("thread-1"),
+            Some("high"),
+            "plan",
+            None,
+            &[],
+            ResponseMode::Default,
+        );
         assert_eq!(args[0], "-p");
         assert!(
             args[1].starts_with("--"),
@@ -402,14 +421,30 @@ mod tests {
 
     #[test]
     fn turn_args_omit_system_prompt_and_extra_args_when_absent() {
-        let args = turn_args("sonnet", None, None, "default", None, &[]);
+        let args = turn_args(
+            "sonnet",
+            None,
+            None,
+            "default",
+            None,
+            &[],
+            ResponseMode::Default,
+        );
         assert!(!args.iter().any(|a| a == "--system-prompt"));
         assert_eq!(args.last().unwrap(), "sonnet"); // nothing appended past --model
     }
 
     #[test]
     fn turn_args_append_a_present_system_prompt() {
-        let args = turn_args("sonnet", None, None, "default", Some("be terse"), &[]);
+        let args = turn_args(
+            "sonnet",
+            None,
+            None,
+            "default",
+            Some("be terse"),
+            &[],
+            ResponseMode::Default,
+        );
         let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
         assert!(has_pair("--system-prompt", "be terse"));
     }
@@ -424,9 +459,68 @@ mod tests {
             "plan",
             Some("be terse"),
             &extra,
+            ResponseMode::Default,
         );
         // FR-12: extra_args are LAST, after everything Francois builds — including resume.
         assert_eq!(&args[args.len() - 2..], &["--add-dir", "/tmp"]);
+    }
+
+    // ---------- response-mode FR-7 (claude-code) ----------
+
+    #[test]
+    fn turn_args_omit_the_append_system_prompt_on_the_default_response_mode() {
+        // FR-7: 'default' is the ABSENCE of an instruction, not an empty one.
+        let args = turn_args(
+            "sonnet",
+            None,
+            None,
+            "default",
+            None,
+            &[],
+            ResponseMode::Default,
+        );
+        assert!(!args.iter().any(|a| a == "--append-system-prompt"));
+    }
+
+    #[test]
+    fn turn_args_append_the_response_directive_after_a_profiles_system_prompt() {
+        // §7: a session created from a profile with a replace-mode prompt
+        // carries BOTH — `--system-prompt <profile>` then
+        // `--append-system-prompt <directive>`, in that order.
+        let args = turn_args(
+            "sonnet",
+            None,
+            None,
+            "default",
+            Some("you are a reviewer"),
+            &[],
+            ResponseMode::Concise,
+        );
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert!(at("--system-prompt") < at("--append-system-prompt"));
+        assert_eq!(
+            args[at("--append-system-prompt") + 1],
+            ResponseMode::Concise.directive().unwrap()
+        );
+    }
+
+    #[test]
+    fn turn_args_carry_the_response_directive_on_the_resume_path_too() {
+        // FR-7: EVERY turn, including --resume — the flag rides the invocation,
+        // and --resume carries none of it.
+        for mode in [
+            ResponseMode::Concise,
+            ResponseMode::Explanatory,
+            ResponseMode::Learning,
+        ] {
+            let args = turn_args("sonnet", Some("thread-1"), None, "default", None, &[], mode);
+            let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
+            assert!(has_pair("--resume", "thread-1"));
+            assert!(has_pair(
+                "--append-system-prompt",
+                mode.directive().unwrap()
+            ));
+        }
     }
 
     #[test]
@@ -440,6 +534,7 @@ mod tests {
             "default",
             Some("be terse"),
             &extra,
+            ResponseMode::Default,
         );
         let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
         assert!(has_pair("--system-prompt", "be terse"));

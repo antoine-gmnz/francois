@@ -215,8 +215,19 @@ pub fn session_create(
     system_prompt: Option<String>,
     extra_args: Option<Vec<String>>,
     profile_id: Option<String>,
+    // response-mode FR-1/FR-17: absent ⇒ 'default'. Re-validated here for the
+    // same reason the switch verb re-validates (FR-3) — the frontend's
+    // narrowing is not the gate.
+    response_mode: Option<String>,
 ) -> IpcResult<Value> {
     let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
+    let response_mode = match response_mode {
+        Some(raw) => match ResponseMode::parse(&raw) {
+            Some(mode) => mode,
+            None => return err("INVALID_INPUT", "unknown response mode"),
+        },
+        None => ResponseMode::Default,
+    };
     let (model_id, permission_mode, runtime) =
         match validate_create_input(&cwd, model_id, permission_mode, runtime, adopt) {
             Ok(v) => v,
@@ -383,6 +394,7 @@ pub fn session_create(
         system_prompt,
         extra_args,
         profile_ref,
+        response_mode,
     );
     let meta_before = session.meta();
     engine.sessions.lock().unwrap().insert(id.clone(), session);
@@ -641,6 +653,63 @@ pub fn session_switch_permission_mode(
     ok(serde_json::to_value(meta).unwrap())
 }
 
+/// response-mode FR-2/FR-3: the engine half of `session_switch_response_mode` —
+/// the twin of `switch_permission_mode_in_engine` (same terminal-status guard,
+/// same purity: persist + emit stay in the handler, which needs the AppHandle).
+/// Re-picking the mode the session already has is deliberately NOT special-cased
+/// (FR-3): same mutation, same `Ok`, same emission.
+///
+/// `response_mode_sent` is left alone here on purpose. It records what the
+/// CURRENT codex/grok thread has been told, and a switch tells the thread
+/// nothing — the next turn's prefix decision (FR-10/FR-11) is exactly the
+/// comparison between the two.
+pub(crate) fn switch_response_mode_in_engine(
+    engine: &Engine,
+    session_id: &str,
+    mode: ResponseMode,
+) -> Result<SessionMeta, (&'static str, &'static str)> {
+    match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
+        None => return Err(("SESSION_NOT_FOUND", "no such session")),
+        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        Some(true) => {}
+    }
+    engine
+        .with_session_mut(session_id, |s| {
+            s.response_mode = mode;
+            s.meta()
+        })
+        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+}
+
+/// response-mode FR-2: `francois:session:switchResponseMode`. Semantics and code
+/// shape mirror `session_switch_permission_mode` — set the field, persist with
+/// the existing atomic write, emit one `session.meta`, resolve the same snapshot
+/// that event carries. FR-3's error ladder: `INVALID_INPUT` for a `mode` outside
+/// `ResponseMode` (re-validated here, never trusted from the frontend's
+/// narrowing), `SESSION_NOT_FOUND` / `SESSION_NOT_RUNNING` from the engine half.
+///
+/// FR-4: no process is signalled and nothing is written to a running child — a
+/// turn keeps the mode it was spawned with, because `TurnContext` carries its
+/// own snapshot (session/turn.rs). The switch only ever reaches the NEXT turn.
+#[tauri::command(async)]
+pub fn session_switch_response_mode(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    mode: String,
+) -> IpcResult<Value> {
+    let Some(mode) = ResponseMode::parse(&mode) else {
+        return err("INVALID_INPUT", "unknown response mode");
+    };
+    let meta = match switch_response_mode_in_engine(&engine, &session_id, mode) {
+        Ok(meta) => meta,
+        Err((code, msg)) => return err(code, msg),
+    };
+    persist(&app, &engine);
+    emit(&app, SessionEvent::Meta { meta: meta.clone() });
+    ok(serde_json::to_value(meta).unwrap())
+}
+
 /// session-rename FR-3/FR-4/FR-5: `francois:session:rename`. Validates the raw
 /// input (FR-1), swaps the name, persists with the existing atomic write and emits
 /// `session.meta` — the frontend's single update path. Accepted in EVERY status:
@@ -809,6 +878,78 @@ mod tests {
         engine.with_session_mut("s1", |s| s.permission_mode_since = first - 5_000);
         let again = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
         assert!(again.permission_mode_since >= first);
+    }
+
+    // ---------- response-mode: the response-mode switch (FR-2/FR-3) ----------
+
+    #[test]
+    fn switch_response_mode_in_engine_mutates_and_returns_the_updated_meta() {
+        let engine = test_engine_with(test_session());
+
+        let meta = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Concise).unwrap();
+        assert_eq!(meta.response_mode, ResponseMode::Concise);
+        assert_eq!(
+            engine.with_session("s1", |s| s.response_mode),
+            Some(ResponseMode::Concise)
+        );
+        // FR-2: the resolved snapshot is the very one `session.meta` carries.
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["responseMode"], "concise");
+    }
+
+    #[test]
+    fn switch_response_mode_in_engine_is_a_no_op_success_for_the_current_mode() {
+        // FR-3: re-picking the current mode is a no-op SUCCESS — not special-cased.
+        let engine = test_engine_with(test_session());
+        let meta = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Default).unwrap();
+        assert_eq!(meta.response_mode, ResponseMode::Default);
+    }
+
+    #[test]
+    fn switch_response_mode_in_engine_never_touches_what_the_thread_was_told() {
+        // FR-10: `response_mode_sent` records what reached the CHILD; a switch
+        // reaches no child (FR-4), so it must leave the field alone — that
+        // difference is exactly what the next turn's prefix decision reads.
+        let mut session = test_session();
+        session.response_mode_sent = Some(ResponseMode::Concise);
+        let engine = test_engine_with(session);
+
+        switch_response_mode_in_engine(&engine, "s1", ResponseMode::Default).unwrap();
+        assert_eq!(
+            engine.with_session("s1", |s| s.response_mode_sent),
+            Some(Some(ResponseMode::Concise))
+        );
+    }
+
+    #[test]
+    fn switch_response_mode_in_engine_rejects_an_unknown_session() {
+        let engine = test_engine_with(test_session());
+        let Err(err) = switch_response_mode_in_engine(&engine, "nope", ResponseMode::Concise)
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.0, "SESSION_NOT_FOUND");
+    }
+
+    #[test]
+    fn switch_response_mode_in_engine_rejects_a_terminal_session() {
+        // FR-3: a session that can take no further turn has nothing for a
+        // next-turn setting to act on.
+        for status in ["done", "error"] {
+            let mut session = test_session();
+            session.status = status.into();
+            let engine = test_engine_with(session);
+            let Err(err) = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Concise)
+            else {
+                panic!("expected an error");
+            };
+            assert_eq!(err.0, "SESSION_NOT_RUNNING");
+            // The session is untouched.
+            assert_eq!(
+                engine.with_session("s1", |s| s.response_mode),
+                Some(ResponseMode::Default)
+            );
+        }
     }
 
     // ---------- rework-top-bar: the effort switch (design 11c) ----------
