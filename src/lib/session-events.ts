@@ -14,9 +14,15 @@ import { onSessionEvent } from './api';
 type Handler = (e: SessionEvent) => void;
 
 /** FR-19: `e.meta.id` for `session.meta`, `e.sessionId` otherwise — mirrors
- *  the rule already duplicated at every former call site. */
+ *  the rule already duplicated at every former call site. `agent.update` and
+ *  `workflow.update` carry their session id INSIDE the payload rather than on
+ *  the envelope; reading it there keeps these two high-frequency events (one
+ *  per subagent step) from fanning out to every open pane's handlers, which
+ *  each re-filtered them out again after delivery. */
 function eventSessionId(e: SessionEvent): SessionId | null {
   if (e.type === 'session.meta') return e.meta.id;
+  if (e.type === 'agent.update') return e.agent.sessionId;
+  if (e.type === 'workflow.update') return e.run.sessionId;
   if ('sessionId' in e) return e.sessionId;
   return null;
 }

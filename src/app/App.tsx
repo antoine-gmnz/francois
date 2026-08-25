@@ -23,7 +23,6 @@ import SkillsPanel from '../features/skills/SkillsPanel';
 import UpdateModal from '../features/update/UpdateModal';
 import { checkUpdateOnLaunch } from '../features/update/update';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
-import { isBusyStatus } from '../../contract/fleet-board';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { useWindowWidth } from '../lib/hooks/useWindowWidth';
 import { focusedSessionId, layoutRegime, paneCount, paneSlotAt } from '../lib/layoutStore';
@@ -55,8 +54,6 @@ const PANELS = {
 } as const;
 
 export default function App() {
-  const [clockNow, setClockNow] = useState(() => Date.now());
-  const sessions = useStore((s) => s.sessions);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
@@ -165,8 +162,12 @@ export default function App() {
   });
 
   // design 7a: the session row describes what you are LOOKING at, so it follows
-  // the focused pane rather than the left one.
-  const active = sessions.find((session) => session.id === paneSessionId) ?? null;
+  // the focused pane rather than the left one. Selected narrowly — App is the
+  // ROOT of the tree, so subscribing to the whole `sessions` array here meant
+  // any session's status/usage churn re-rendered everything down to the
+  // composer's textarea. The patch actions only replace the touched entry, so
+  // this reference only changes when the focused session itself does.
+  const active = useStore((s) => s.sessions.find((session) => session.id === paneSessionId) ?? null);
   const activeAgentId = agentIdFromTab(mainTab);
   // Which of the four dissolved panes is on screen, if any.
   const panelTab = isPanelTab(mainTab);
@@ -252,17 +253,6 @@ export default function App() {
   // hook also feeds, hence the FOCUSED session (FR-7).
   const diffCount = useDiffBadge(paneSessionId);
 
-  // Elapsed clock ticks while the focused session's turn is in flight (FR-6) —
-  // isBusyStatus, so it keeps counting while the turn sits on an approval. That
-  // wait is part of the turn's wall clock, and freezing it there would read as
-  // the turn having finished. Unlike before 7a this runs while split too: the
-  // session row is always mounted and always shows the readout.
-  useEffect(() => {
-    if (!(active && isBusyStatus(active.status))) return;
-    const id = setInterval(() => setClockNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [active?.id, active?.status]);
-
   useAppShortcuts({
     newSessionOpen,
     adoptCloudOpen,
@@ -308,12 +298,6 @@ export default function App() {
 
   const mainFocused = focusedPane === 'main';
 
-  const elapsedMs = active
-    ? isBusyStatus(active.status)
-      ? clockNow - active.startedAt
-      : Math.max(0, active.lastActivityAt - active.startedAt)
-    : 0;
-
   return (
     <div className="app-root">
       {/* design 7a: two tiers of chrome, both full-bleed under the native OS
@@ -327,7 +311,6 @@ export default function App() {
         agentTabs={agentTabs}
         closeAgentTab={closeAgentTab}
         openExtTab={openExtTab}
-        elapsedMs={elapsedMs}
         home={home}
       />
 

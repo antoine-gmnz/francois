@@ -120,20 +120,42 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       next[i] = m; // update in place, position preserved
       return { sessions: next };
     }),
+  // The three patches bail without minting a new `sessions` array when the
+  // patch changes nothing (unknown id, or the value already cached) — the same
+  // no-op guard rosterStore/overviewStore carry. Without it every duplicate
+  // status/usage event from ANY session invalidated the array reference and
+  // re-rendered all whole-array subscribers (App, Sidebar, UsageMeters), which
+  // is what made typing lag once several sessions streamed at once. Only the
+  // touched entry is replaced, so per-session `find` selectors stay
+  // reference-stable for everyone else.
   patchStatus: (id, status) =>
-    set((s) => ({
-      sessions: s.sessions.map((x) => (x.id === id ? { ...x, status: status as SessionMeta['status'] } : x)),
-    })),
+    set((s) => {
+      const i = s.sessions.findIndex((x) => x.id === id);
+      if (i === -1 || s.sessions[i].status === status) return {};
+      const next = s.sessions.slice();
+      next[i] = { ...next[i], status: status as SessionMeta['status'] };
+      return { sessions: next };
+    }),
   patchError: (id, message) =>
-    set((s) => ({
-      sessions: s.sessions.map((x) => (x.id === id ? { ...x, errorMessage: message } : x)),
-    })),
+    set((s) => {
+      const i = s.sessions.findIndex((x) => x.id === id);
+      if (i === -1 || s.sessions[i].errorMessage === message) return {};
+      const next = s.sessions.slice();
+      next[i] = { ...next[i], errorMessage: message };
+      return { sessions: next };
+    }),
   patchUsage: (id, used, limit) =>
-    set((s) => ({
-      sessions: s.sessions.map((x) =>
-        x.id === id ? { ...x, contextUsedTokens: used, contextLimitTokens: limit, lastActivityAt: Date.now() } : x,
-      ),
-    })),
+    set((s) => {
+      const i = s.sessions.findIndex((x) => x.id === id);
+      if (i === -1) return {};
+      const cur = s.sessions[i];
+      // Identical figures = a duplicate event, not a turn — skip the
+      // lastActivityAt stamp too, or the "idle Xh" readout would reset on noise.
+      if (cur.contextUsedTokens === used && cur.contextLimitTokens === limit) return {};
+      const next = s.sessions.slice();
+      next[i] = { ...cur, contextUsedTokens: used, contextLimitTokens: limit, lastActivityAt: Date.now() };
+      return { sessions: next };
+    }),
   removeSession: (id) =>
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id);

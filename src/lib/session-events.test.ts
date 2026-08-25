@@ -129,6 +129,38 @@ describe('subscribeSessionEvents (transcript-scale FR-17..20)', () => {
     expect(s2Events).toHaveLength(0);
   });
 
+  it('agent.update routes by agent.sessionId — it must NOT fan out to every open pane (FR-19)', async () => {
+    const { subscribeSessionEvents } = await import('./session-events');
+    const agentUpdate = {
+      type: 'agent.update',
+      agent: { id: 'a1', sessionId: 's1', name: 'x', task: 't', status: 'running', startedAt: 0, background: false, stepCount: 0 },
+    } as unknown as SessionEvent;
+    const s1Events: SessionEvent[] = [];
+    const s2Events: SessionEvent[] = [];
+    void subscribeSessionEvents('s1', (e) => s1Events.push(e));
+    void subscribeSessionEvents('s2', (e) => s2Events.push(e));
+    await tick();
+    sessionHandler?.({ payload: agentUpdate });
+    expect(s1Events).toHaveLength(1);
+    expect(s2Events).toHaveLength(0);
+  });
+
+  it('workflow.update routes by run.sessionId — it must NOT fan out to every open pane (FR-19)', async () => {
+    const { subscribeSessionEvents } = await import('./session-events');
+    const workflowUpdate = {
+      type: 'workflow.update',
+      run: { id: 'w1', sessionId: 's2', name: 'wf', description: '', status: 'running', startedAt: 0, phases: [] },
+    } as unknown as SessionEvent;
+    const s1Events: SessionEvent[] = [];
+    const s2Events: SessionEvent[] = [];
+    void subscribeSessionEvents('s1', (e) => s1Events.push(e));
+    void subscribeSessionEvents('s2', (e) => s2Events.push(e));
+    await tick();
+    sessionHandler?.({ payload: workflowUpdate });
+    expect(s1Events).toHaveLength(0);
+    expect(s2Events).toHaveLength(1);
+  });
+
   it('a handler that throws is caught and never blocks a later handler (FR-20)', async () => {
     const { subscribeSessionEvents } = await import('./session-events');
     const calls: string[] = [];
