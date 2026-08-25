@@ -153,6 +153,33 @@ const SHELL_EMIT_COALESCE: std::time::Duration = std::time::Duration::from_milli
 struct PendingOutput {
     data: String,
     reader_done: bool,
+    /// Set when the read loop stopped because the shell was disposed: whatever
+    /// is still buffered is dropped instead of emitted, so a disposed shell
+    /// never gets a late `shell.data` — its `shell.exit` is suppressed too.
+    discarded: bool,
+}
+
+/// Lock `PendingOutput` without caring about poisoning. It guards a string and
+/// two flags that are only ever swapped wholesale, so a panic elsewhere cannot
+/// leave it half-written — and unwrapping here would turn one panic into a
+/// flusher thread stranded on the condvar.
+fn lock_pending(lock: &Mutex<PendingOutput>) -> std::sync::MutexGuard<'_, PendingOutput> {
+    lock.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Sets `reader_done` and wakes the flusher when the read loop is left — on the
+/// normal path *and* on an unwind. Without it a panic inside the loop (a
+/// poisoned `shared.lock().unwrap()`, say) would skip the hand-off below and
+/// leave the flusher waiting on the condvar forever: one leaked thread per
+/// affected shell.
+struct ReaderDone(Arc<(Mutex<PendingOutput>, std::sync::Condvar)>);
+
+impl Drop for ReaderDone {
+    fn drop(&mut self) {
+        let (lock, cvar) = &*self.0;
+        lock_pending(lock).reader_done = true;
+        cvar.notify_one();
+    }
 }
 
 /// The shell reader thread's body: pump PTY output into the ring buffer + emit
@@ -178,6 +205,7 @@ fn run_shell_reader(
         Mutex::new(PendingOutput {
             data: String::new(),
             reader_done: false,
+            discarded: false,
         }),
         std::sync::Condvar::new(),
     ));
@@ -190,18 +218,24 @@ fn run_shell_reader(
         std::thread::spawn(move || {
             let (lock, cvar) = &*pending;
             loop {
-                let mut guard = lock.lock().unwrap();
+                let mut guard = lock_pending(lock);
                 while guard.data.is_empty() && !guard.reader_done {
-                    guard = cvar.wait(guard).unwrap();
+                    guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
                 }
-                if guard.data.is_empty() {
-                    return; // reader done and everything flushed
+                if guard.discarded || guard.data.is_empty() {
+                    return; // disposed, or reader done and everything flushed
                 }
                 drop(guard);
                 // Accumulate window: whatever else the PTY produces in the next
                 // few ms rides in the same event.
                 std::thread::sleep(SHELL_EMIT_COALESCE);
-                let data = std::mem::take(&mut lock.lock().unwrap().data);
+                let data = {
+                    let mut guard = lock_pending(lock);
+                    if guard.discarded {
+                        return;
+                    }
+                    std::mem::take(&mut guard.data)
+                };
                 let _ = app.emit(
                     EVENT_CHANNEL,
                     ShellEvent::Data {
@@ -213,7 +247,9 @@ fn run_shell_reader(
             }
         })
     };
+    let reader_done = ReaderDone(Arc::clone(&pending));
 
+    let mut disposed = false;
     let mut buf = [0u8; 8192];
     loop {
         match reader.read(&mut buf) {
@@ -223,23 +259,25 @@ fn run_shell_reader(
                 {
                     let mut state = shared.lock().unwrap();
                     if state.disposed {
+                        disposed = true;
                         break;
                     }
                     state.ring.push(&chunk);
                 }
                 let (lock, cvar) = &*pending;
-                lock.lock().unwrap().data.push_str(&chunk);
+                lock_pending(lock).data.push_str(&chunk);
                 cvar.notify_one();
             }
         }
     }
     // Wake the flusher for a final drain and wait for it, so the last
-    // `shell.data` is on the wire before `shell.exit` follows it.
-    {
-        let (lock, cvar) = &*pending;
-        lock.lock().unwrap().reader_done = true;
-        cvar.notify_one();
+    // `shell.data` is on the wire before `shell.exit` follows it. A disposed
+    // shell drops that drain instead — `shell.exit` is suppressed for it below,
+    // so one more `shell.data` after teardown would contradict that guard.
+    if disposed {
+        lock_pending(&pending.0).discarded = true;
     }
+    drop(reader_done);
     let _ = flusher.join();
 
     let code = child.wait().map(|s| s.exit_code() as i32).unwrap_or(-1);
