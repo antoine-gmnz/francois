@@ -52,6 +52,14 @@ export interface ComposerPaneProps {
   sessionId: string;
   /** split-session FR-6: see ConversationViewProps.inert. */
   inert: boolean;
+  /**
+   * Whether this composer is ON SCREEN — see ConversationViewProps.visible. It
+   * gates exactly what `inert` gates and for the same reason: the two
+   * document/webview-level attachment gestures. The main pane now holds up to
+   * three transcripts mounted at once, so without this a single paste would
+   * stage the image into all three sessions.
+   */
+  visible: boolean;
   onFocusRequest?: () => void;
   inertFooter?: ReactNode;
   status: SessionStatus;
@@ -69,6 +77,7 @@ export interface ComposerPaneProps {
 export default function ComposerPane({
   sessionId,
   inert,
+  visible,
   onFocusRequest,
   inertFooter,
   status,
@@ -132,7 +141,10 @@ export default function ComposerPane({
   }, [inert]);
 
   // ---------- session-attachments ----------
-  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow, active: !inert });
+  // `active` is what claims the two GLOBAL gestures (document paste, the
+  // webview drag-drop channel), so it must name the one composer a gesture
+  // could have been meant for: focused (not inert) AND on screen.
+  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow, active: !inert && visible });
 
   // ---------- slash-menu popup (FR-5..FR-9/12) ----------
 

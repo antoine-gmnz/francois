@@ -25,6 +25,8 @@ function meta(id: string): SessionMeta {
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
+    responseMode: 'default',
+    allowGit: false,
   };
 }
 
@@ -138,6 +140,8 @@ describe('SessionMeta.agentRuntime/protocol are carried through the cache (multi
       accountId: 'default',
       agentRuntime,
       protocol,
+      responseMode: 'default',
+      allowGit: false,
     };
   }
 
@@ -163,5 +167,52 @@ describe('SessionMeta.agentRuntime/protocol are carried through the cache (multi
     useStore.getState().upsertSession(full('s2', 'francois', 'openai'));
     expect(useStore.getState().sessions.map((x) => x.agentRuntime)).toEqual(['francois', 'francois']);
     expect(useStore.getState().sessions.map((x) => x.protocol)).toEqual(['openai', 'openai']);
+  });
+});
+
+// Perf guard (fix-bug-on-too-many-sessions): a patch that changes nothing must
+// not mint a new `sessions` array — the array reference is what every
+// whole-array subscriber (App, Sidebar, UsageMeters) keys its re-render on, and
+// duplicate status/usage events arrive at event-stream cadence once several
+// sessions run at once. A REAL patch must replace only the touched entry, so
+// per-session `find` selectors stay reference-stable for the others.
+describe('patchStatus/patchError/patchUsage no-op bails', () => {
+  it('keeps the sessions array reference on a duplicate patch (status / error / usage)', () => {
+    useStore.getState().setSessions([meta('s1')]);
+    useStore.getState().patchStatus('s1', 'running');
+    useStore.getState().patchError('s1', 'boom');
+    useStore.getState().patchUsage('s1', 10, 100);
+    const before = useStore.getState().sessions;
+    useStore.getState().patchStatus('s1', 'running');
+    useStore.getState().patchError('s1', 'boom');
+    useStore.getState().patchUsage('s1', 10, 100);
+    expect(useStore.getState().sessions).toBe(before);
+  });
+
+  it('keeps the sessions array reference when the id matches no session', () => {
+    useStore.getState().setSessions([meta('s1')]);
+    const before = useStore.getState().sessions;
+    useStore.getState().patchStatus('ghost', 'running');
+    useStore.getState().patchError('ghost', 'boom');
+    useStore.getState().patchUsage('ghost', 10, 100);
+    expect(useStore.getState().sessions).toBe(before);
+  });
+
+  it('a real patch replaces only the touched entry — the sibling keeps its reference', () => {
+    useStore.getState().setSessions([meta('s1'), meta('s2')]);
+    const s2Before = useStore.getState().sessions[1];
+    useStore.getState().patchStatus('s1', 'running');
+    useStore.getState().patchUsage('s1', 10, 100);
+    expect(useStore.getState().sessions[0].status).toBe('running');
+    expect(useStore.getState().sessions[0].contextUsedTokens).toBe(10);
+    expect(useStore.getState().sessions[1]).toBe(s2Before);
+  });
+
+  it('a duplicate usage patch does not restamp lastActivityAt', () => {
+    useStore.getState().setSessions([meta('s1')]);
+    useStore.getState().patchUsage('s1', 10, 100);
+    const stamped = useStore.getState().sessions[0].lastActivityAt;
+    useStore.getState().patchUsage('s1', 10, 100);
+    expect(useStore.getState().sessions[0].lastActivityAt).toBe(stamped);
   });
 });

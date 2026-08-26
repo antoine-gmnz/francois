@@ -160,6 +160,8 @@ pub fn test_session() -> Session {
         system_prompt: None,
         extra_args: Vec::new(),
         profile: None,
+        response_mode: ResponseMode::Default,
+        response_mode_sent: None,
         queue: VecDeque::new(),
         claude_session_id: None,
         current: None,

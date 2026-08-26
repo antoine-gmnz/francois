@@ -116,6 +116,8 @@ pub enum ErrorCode {
     ShellNotFound,
     /// multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
     ShellLimitReached,
+    /// command-inspect FR-11: no record for that blockId (never captured, or swept)
+    StepDetailNotFound,
     /// session-engine: the turn died on the plan's usage limit (or an API rate
     /// limit). Carried by `session.error` and NOT terminal — the core sends the
     /// session back to `idle` because the window resets on its own clock and emits
@@ -236,6 +238,7 @@ impl ErrorCode {
         ErrorCode::EditorLaunchFailed,
         ErrorCode::ShellNotFound,
         ErrorCode::ShellLimitReached,
+        ErrorCode::StepDetailNotFound,
         ErrorCode::UsageLimit,
         ErrorCode::CloudAuthRequired,
         ErrorCode::CloudAuthExpired,
@@ -324,6 +327,7 @@ impl ErrorCode {
             ErrorCode::EditorLaunchFailed => "EDITOR_LAUNCH_FAILED",
             ErrorCode::ShellNotFound => "SHELL_NOT_FOUND",
             ErrorCode::ShellLimitReached => "SHELL_LIMIT_REACHED",
+            ErrorCode::StepDetailNotFound => "STEP_DETAIL_NOT_FOUND",
             ErrorCode::UsageLimit => "USAGE_LIMIT",
             ErrorCode::CloudAuthRequired => "CLOUD_AUTH_REQUIRED",
             ErrorCode::CloudAuthExpired => "CLOUD_AUTH_EXPIRED",

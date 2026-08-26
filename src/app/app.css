@@ -509,21 +509,45 @@
 .session-row__overflow-btn--on {
   background: var(--bg-hover);
 }
+/* session-settings-sheet FR-20: the run chip's panel is gone, so `⋯` owns its
+   own floating chrome now — background/radius/shadow it used to borrow from
+   the run chip's (bare) panel. */
 .session-row__overflow-panel {
   position: absolute;
   top: calc(100% + var(--space-6));
   right: 0;
   z-index: 60;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-9) var(--space-11);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+}
+.session-row__overflow-readout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.session-row__overflow-readout-label {
+  flex: 1;
+  font-size: var(--font-size-10-5);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.session-row__overflow-readout-value {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-2);
 }
 .session-row__overflow-layout {
   display: flex;
   align-items: center;
   gap: var(--space-9);
-  margin-top: var(--space-4);
-  padding: var(--space-8) var(--space-11);
-  background: var(--bg-elevated);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-dropdown);
 }
 .session-row__overflow-layout-label {
   font-size: var(--font-size-10-5);

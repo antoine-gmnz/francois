@@ -14,6 +14,7 @@ import type {
   ModelInfo,
   PermissionMode,
   ProjectDefaults,
+  ResponseMode,
   ProjectId,
   Result,
   SessionMeta,
@@ -68,7 +69,7 @@ export function reconcileActiveProjectId(
 
 // ---------- new-session defaults (FR-21/FR-22) ----------
 
-/** The five new-session fields a project can pre-fill. */
+/** The six new-session fields a project can pre-fill. */
 export interface SessionFormValues {
   modelId: string;
   /** '' = the model's own default effort. */
@@ -76,6 +77,8 @@ export interface SessionFormValues {
   permissionMode: PermissionMode;
   runtime: ClaudeRuntime;
   allowGit: boolean;
+  /** response-mode FR-17: an absent project default means 'default', never unset. */
+  responseMode: ResponseMode;
 }
 
 /** What the modal can actually honor right now: the live catalog + this OS. */
@@ -93,6 +96,7 @@ export function baseFormValues(models: ModelInfo[]): SessionFormValues {
     permissionMode: 'default',
     runtime: 'native',
     allowGit: false,
+    responseMode: 'default',
   };
 }
 
@@ -130,6 +134,7 @@ export function applyProjectDefaults(
     else staleModelId = defaults.modelId;
   }
   if (defaults.permissionMode !== undefined) values.permissionMode = defaults.permissionMode;
+  if (defaults.responseMode !== undefined) values.responseMode = defaults.responseMode;
   if (defaults.runtime !== undefined) {
     values.runtime = defaults.runtime === 'wsl' && !env.allowWsl ? 'native' : defaults.runtime;
   }

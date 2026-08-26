@@ -417,6 +417,10 @@ fn create_adopted_session(
         None,
         Vec::new(),
         None,
+        // response-mode FR-16: an adoption has no modal to read the project's
+        // defaults from, so the core applies its snapshot here — an unknown
+        // persisted value reads as 'default' (§7), never as a failure.
+        ResponseMode::parse_or_default(seed.response_mode.as_deref()),
     );
     // FR-10/FR-16: presence is the whole provenance signal. Set here rather than
     // through `Session::new` so no other creation path can accidentally carry it.

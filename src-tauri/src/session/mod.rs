@@ -35,6 +35,11 @@ mod models;
 mod persistence;
 mod remote;
 mod remote_discovery;
+/// response-mode FR-6: the closed `ResponseMode` enum and the CORE-OWNED
+/// directive text. A child module rather than a top-level one because the
+/// enum is a `Session`/`SessionMeta` field and nothing outside this domain
+/// names it.
+mod response_mode;
 mod skills;
 mod slash;
 mod spawn;
@@ -43,6 +48,11 @@ mod spawn;
 // readable. The glob still brings the module path itself into scope.
 pub(crate) mod status;
 mod stdio;
+/// command-inspect: the `StepDetail` capture record, its sidecar, and the
+/// `conversation_step_detail` command — see the module doc for why capture is
+/// adapter-agnostic (built through `build_step_detail`, written through
+/// `SessionEnv::append_step_detail`).
+mod step_detail;
 mod stream;
 mod teardown;
 mod tools;
@@ -122,7 +132,8 @@ pub use commands::{
     __cmd__session_create, __cmd__session_interrupt, __cmd__session_list,
     __cmd__session_pick_directory, __cmd__session_remove, __cmd__session_rename,
     __cmd__session_send, __cmd__session_switch_effort, __cmd__session_switch_model,
-    __cmd__session_switch_permission_mode, __cmd__session_unqueue,
+    __cmd__session_switch_permission_mode, __cmd__session_switch_response_mode,
+    __cmd__session_unqueue, __cmd__session_update_settings,
     __tauri_command_name_conversation_get_transcript, __tauri_command_name_permissions_decide,
     __tauri_command_name_session_answer_question, __tauri_command_name_session_clear,
     __tauri_command_name_session_compact, __tauri_command_name_session_create,
@@ -130,11 +141,14 @@ pub use commands::{
     __tauri_command_name_session_pick_directory, __tauri_command_name_session_remove,
     __tauri_command_name_session_rename, __tauri_command_name_session_send,
     __tauri_command_name_session_switch_effort, __tauri_command_name_session_switch_model,
-    __tauri_command_name_session_switch_permission_mode, __tauri_command_name_session_unqueue,
-    apply_model_switch, conversation_get_transcript, do_send, permissions_decide,
-    session_answer_question, session_clear, session_compact, session_create, session_interrupt,
-    session_list, session_pick_directory, session_remove, session_rename, session_send,
-    session_switch_effort, session_switch_model, session_switch_permission_mode, session_unqueue,
+    __tauri_command_name_session_switch_permission_mode,
+    __tauri_command_name_session_switch_response_mode, __tauri_command_name_session_unqueue,
+    __tauri_command_name_session_update_settings, apply_model_switch, conversation_get_transcript,
+    do_send, permissions_decide, session_answer_question, session_clear, session_compact,
+    session_create, session_interrupt, session_list, session_pick_directory, session_remove,
+    session_rename, session_send, session_switch_effort, session_switch_model,
+    session_switch_permission_mode, session_switch_response_mode, session_unqueue,
+    session_update_settings, SessionSettingsPatch,
 };
 #[cfg(test)]
 pub(crate) use control::QuestionOption;
@@ -199,6 +213,7 @@ pub(crate) use remote_discovery::{blocking_prompt, extract_url_from_output};
 pub use remote_discovery::{
     feed, normalize_pty, project_slug, sanitize_name, scan_dir_for_url, tail_for_url, ReaderAction,
 };
+pub(crate) use response_mode::{mark_sent, pending_prefix, prefixed_prompt, ResponseMode};
 #[cfg(test)]
 pub(crate) use skills::skill_entry;
 pub use skills::{
@@ -218,12 +233,28 @@ pub(crate) use stdio::{
     claim_pending, close_or_hold_channel, handle_control_request, resolve_permission,
     resolve_question, write_control_line,
 };
+pub(crate) use step_detail::{
+    append_step_detail, build_step_detail, remove_step_detail_sidecar,
+    sweep_orphaned_step_detail_sidecars,
+};
+// Only the adapters' own tests destructure a captured body; production code
+// builds one and hands it straight to `append_step_detail`.
+#[cfg(test)]
+pub(crate) use step_detail::StepBody;
+// core-architecture-wave3 FR-3: `pub` because `SessionEnv::append_step_detail`
+// takes one and that trait is `pub` (benches/ drive it) — the type may not be
+// less visible than the method carrying it.
+pub use step_detail::StepDetail;
+pub use step_detail::{
+    __cmd__conversation_step_detail, __tauri_command_name_conversation_step_detail,
+    conversation_step_detail,
+};
 pub(crate) use stream::{extract_result_text, finalize_text_block, run_reader};
 // core-architecture-wave3 FR-3: the turn-orchestration entry point the
 // integration target drives. Already `pub` in `stream`; this is the re-export
 // that makes it reachable as `francois::session::parse_stream`.
 pub use stream::parse_stream;
-pub(crate) use tools::{tool_meta, tool_summary, truncate};
+pub(crate) use tools::{line_count, tool_meta, tool_summary, truncate};
 pub(crate) use transcript_cap::{trim_transcript, TRANSCRIPT_BUFFER_CAP};
 pub(crate) use turn::{
     begin_turn, fail_session, finish_turn, is_resume_fail, mark_stream_live, refresh_parked_status,
@@ -366,6 +397,18 @@ pub struct SessionMeta {
     /// session-profiles FR-16: present ⇔ created from a profile; snapshot-only.
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<SessionProfileRef>,
+    /// response-mode FR-1: how this session's NEXT turn is told to write.
+    /// REQUIRED on the wire (never omitted, like `accountId`): every session has
+    /// one, and a persisted record without the key loads as `default`.
+    #[serde(rename = "responseMode")]
+    response_mode: ResponseMode,
+    /// session-settings-sheet FR-1: Francois auto-approves direct `git`/`gh`
+    /// Bash calls for this session. REQUIRED on the wire (never omitted, like
+    /// `accountId`/`responseMode`) — a persisted record without the key loads
+    /// as `false`. Already persisted under this name (`session/persistence.rs`);
+    /// this only widens `meta()` to project the field that was already there.
+    #[serde(rename = "allowGit")]
+    allow_git: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -564,6 +607,12 @@ pub struct BufBlock {
     /// transcript written before the field existed — and is serialized as an
     /// ABSENT key rather than as an epoch that would render as 01:00.
     at: u64,
+    /// command-inspect FR-1/FR-10: true iff a `StepDetail` record was written
+    /// for this block at settle time. Only ever set on a `Tool` block —
+    /// `classify_block` is what decides whether the kind even has a slot for
+    /// it (`ToolConversationBlock` only; a `Subagent` block's contract type
+    /// carries no `hasDetail` field, so the value there is inert).
+    has_detail: bool,
 }
 
 impl BufBlock {
@@ -587,6 +636,7 @@ impl BufBlock {
             card: None,
             streaming: false,
             at: now_ms(),
+            has_detail: false,
         }
     }
 }
@@ -683,6 +733,18 @@ pub struct Session {
     /// session-profiles FR-16: the profile identity this session was created
     /// from, if any — snapshot-only, never re-resolved.
     profile: Option<SessionProfileRef>,
+    /// response-mode FR-1/FR-4: the mode the NEXT turn spawns with. Changing it
+    /// signals no process and writes nothing to a running child — a turn keeps
+    /// the mode it was snapshotted with (`TurnContext.response_mode`).
+    response_mode: ResponseMode,
+    /// response-mode FR-10: the mode the CURRENT thread has already been told
+    /// about — CORE-PRIVATE state, never in `SessionMeta`, never in any payload,
+    /// never in diagnostics. Only `codex`/`grok` read or write it (their threads
+    /// carry history, so a directive already sent must not be repeated and a
+    /// withdrawn one must be explicitly cleared, FR-11); `claude-code` and
+    /// `francois` rebuild their directive per turn/request and leave this `None`
+    /// forever. Reset to `None` whenever the thread anchor is cleared.
+    response_mode_sent: Option<ResponseMode>,
     queue: VecDeque<(String, String)>, // (client blockId, text)
     claude_session_id: Option<String>,
     /// multi-provider-seam FR-2: the live turn, reached only through
@@ -791,6 +853,7 @@ impl Session {
         system_prompt: Option<String>,
         extra_args: Vec<String>,
         profile: Option<SessionProfileRef>,
+        response_mode: ResponseMode,
     ) -> Session {
         Session {
             id,
@@ -818,6 +881,11 @@ impl Session {
             system_prompt,
             extra_args,
             profile,
+            response_mode,
+            // response-mode FR-10: a brand-new session's thread has been told
+            // nothing yet — the first turn is a fresh thread and sends whatever
+            // the mode asks for.
+            response_mode_sent: None,
             queue: VecDeque::new(),
             claude_session_id,
             current: None,
@@ -892,6 +960,8 @@ impl Session {
             agent_runtime,
             protocol,
             profile: self.profile.clone(),
+            response_mode: self.response_mode,
+            allow_git: self.allow_git,
         }
     }
 
@@ -1150,7 +1220,17 @@ impl Session {
     /// transcript-scale FR-2 rationale as `buf_command_output`: the clone is
     /// taken BEFORE `trim_block_buffer` runs, so a tool/subagent block that was
     /// itself pinning eviction is never evicted before its caller can persist it.
-    fn buf_tool_done(&mut self, block_id: &str, meta: String) -> Option<BufBlock> {
+    ///
+    /// `has_detail`: command-inspect FR-1/FR-10 — the caller must have already
+    /// written the `StepDetail` sidecar record (if any) BEFORE calling this, so
+    /// the finalized block and the `tool.done` event it feeds both carry the
+    /// right flag on the FIRST — and only — line ever persisted for it.
+    fn buf_tool_done(
+        &mut self,
+        block_id: &str,
+        meta: String,
+        has_detail: bool,
+    ) -> Option<BufBlock> {
         let out = self
             .block_buffer
             .iter_mut()
@@ -1158,6 +1238,7 @@ impl Session {
             .map(|b| {
                 b.meta = Some(meta);
                 b.streaming = false;
+                b.has_detail = has_detail;
                 b.clone()
             });
         // transcript-scale FR-2: settling this tool/subagent block may unblock
@@ -1589,7 +1670,7 @@ mod tests {
         assert!(s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP);
         assert_eq!(s.block_buffer[0].block_id, "tool-1");
 
-        let done = s.buf_tool_done("tool-1", "3 lines".into());
+        let done = s.buf_tool_done("tool-1", "3 lines".into(), false);
         assert_eq!(done.as_ref().map(|b| b.block_id.as_str()), Some("tool-1"));
         assert_eq!(done.unwrap().meta.as_deref(), Some("3 lines"));
         // Settling it unpins eviction, which catches back up to the cap in the

@@ -13,8 +13,8 @@ export interface AppShortcutState {
   projectsOpen: boolean;
   /** multi-account FR-34: the Accounts modal owns a/r/Del/Enter while it is up. */
   accountsOpen: boolean;
-  /** session-rename FR-8: the rename modal suppresses the globals like every other modal. */
-  renameOpen: boolean;
+  /** session-settings-sheet FR-19: the sheet suppresses the globals like every other modal. */
+  sessionSettingsOpen: boolean;
   /** self-update FR-10: the update modal suppresses the globals like every other modal. */
   updateModalOpen: boolean;
   /** extensions FR-56: the Extensions modal suppresses the globals like every other modal. */
@@ -23,6 +23,26 @@ export interface AppShortcutState {
   setNewAgentOpen: (open: boolean) => void;
   setFocusedPane: (pane: Pane) => void;
   setMainTab: (tab: MainTab) => void;
+}
+
+/**
+ * session-settings-sheet FR-19: true when this keydown is the ⌘,/Ctrl+, shortcut
+ * — a modified key, so it reaches the focused session from any focus, including
+ * the terminal, exactly like ⌘1–⌘9 above.
+ */
+export function isSessionSettingsShortcut(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'key'>): boolean {
+  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key === ',';
+}
+
+/**
+ * session-settings-sheet FR-19: the session id the ⌘,/Ctrl+, branch should open,
+ * or null when a modal/the palette owns the keyboard or no pane has focus.
+ * Split out of the capture-phase listener below so it is exercisable without a
+ * DOM/component renderer — see useDismiss.test.ts for the same pattern.
+ */
+export function sessionSettingsShortcutTarget(modalOpen: boolean, paletteOpen: boolean, sessionId: string | null): string | null {
+  if (modalOpen || paletteOpen) return null;
+  return sessionId;
 }
 
 /**
@@ -46,7 +66,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
     permissionsOpen,
     projectsOpen,
     accountsOpen,
-    renameOpen,
+    sessionSettingsOpen,
     updateModalOpen,
     extensionsOpen,
     setNewSessionOpen,
@@ -61,7 +81,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
   // they live on the capture listener beside ⌘K rather than on the bubble one,
   // which returns early on every modifier.
   const modalOpen =
-    newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || accountsOpen || renameOpen || updateModalOpen;
+    newSessionOpen || newAgentOpen || permissionsOpen || projectsOpen || accountsOpen || sessionSettingsOpen || updateModalOpen;
   const modalOpenRef = useRef(modalOpen);
   modalOpenRef.current = modalOpen;
 
@@ -92,6 +112,14 @@ export function useAppShortcuts(state: AppShortcutState): void {
           e.preventDefault();
           e.stopPropagation();
           st.focusNextWaitingPane();
+        }
+      } else if (isSessionSettingsShortcut(e)) {
+        const st = useStore.getState();
+        const sid = sessionSettingsShortcutTarget(modalOpenRef.current, isPaletteOpen(), focusedSessionId(st));
+        if (sid) {
+          e.preventDefault();
+          e.stopPropagation();
+          st.setSessionSettingsId(sid);
         }
       }
     };
@@ -135,7 +163,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
         projectsOpen ||
         accountsOpen ||
         extensionsOpen ||
-        renameOpen ||
+        sessionSettingsOpen ||
         updateModalOpen ||
         inInput ||
         inTerminal
@@ -167,7 +195,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
     permissionsOpen,
     projectsOpen,
     accountsOpen,
-    renameOpen,
+    sessionSettingsOpen,
     updateModalOpen,
     extensionsOpen,
     setNewSessionOpen,

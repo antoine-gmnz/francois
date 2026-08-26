@@ -90,6 +90,8 @@ export interface ExtensionsSlice {
   /** The open call itself refused — there is no streamId to address it by. */
   failExtStreamPanel: (panelId: PanelId, error: AppError) => void;
   dropExtStream: (panelId: PanelId) => void;
+  /** Session removal: drops every stream this session owned (fleet panels carry sessionId null, so they are untouched). */
+  dropSessionExtStreams: (sessionId: string) => void;
 }
 
 /** The panel a streamId currently belongs to, or null — FR-44's ownership check. */
@@ -242,4 +244,19 @@ export const createExtensionsSlice: StateCreator<AppState, [], [], ExtensionsSli
       return { extStreams: { ...s.extStreams, [panelId]: { ...prev, streamId: null, starting: false, error } } };
     }),
   dropExtStream: (panelId) => set((s) => ({ extStreams: withoutPanels(s.extStreams, (id) => id !== panelId) })),
+  // Session removal: every stream the session owned is closed on the core and
+  // dropped, the same discipline as closeExtTab/setActiveSessionId's own
+  // cleanup — otherwise a capped log buffer sits retained under a panel id
+  // that gets reused. Mirrors overviewStore's dropDerived: bail without
+  // touching extStreams's reference when the session held none.
+  dropSessionExtStreams: (sessionId) =>
+    set((s) => {
+      if (!Object.values(s.extStreams).some((entry) => entry.sessionId === sessionId)) return {};
+      return {
+        extStreams: closeStreamsForRemovedPanels(
+          s.extStreams,
+          (panelId) => s.extStreams[panelId]?.sessionId === sessionId,
+        ),
+      };
+    }),
 });

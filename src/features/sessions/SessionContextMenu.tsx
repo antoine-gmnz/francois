@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { Check, CircleAlert, Columns2, Copy, ExternalLink, Pencil, Trash2, TriangleAlert } from 'lucide-react';
+import { Check, CircleAlert, Columns2, Copy, ExternalLink, Settings, Trash2, TriangleAlert } from 'lucide-react';
 import type { AppError, SessionId, SessionWorktree } from '../../../contract/common';
 import type { EditorId, EditorInfo } from '../../../contract/open-in-vscode';
 import { editorMenuLabel } from '../../../contract/open-in-vscode';
@@ -49,8 +49,8 @@ export interface SessionContextMenuProps {
   onOpenInNewPane?: (sessionId: SessionId) => void;
   /** `Open in right pane` at one pane, `Open in new pane` above — FR-18. */
   openInNewPaneLabel?: string;
-  /** session-rename FR-12: closes the menu and opens the rename modal for this row. */
-  onRename: () => void;
+  /** session-settings-sheet FR-19: closes the menu and opens the settings sheet (edit mode) for this row. */
+  onOpenSettings: () => void;
   onCopyPath: () => void;
   onCancel: () => void;
   onToggleRemoveWorktree: () => void;
@@ -79,7 +79,7 @@ export function SessionContextMenu({
   onStartConfirm,
   onOpenInNewPane,
   openInNewPaneLabel = 'Open in new pane',
-  onRename,
+  onOpenSettings,
   onCopyPath,
   onCancel,
   onToggleRemoveWorktree,
@@ -150,11 +150,11 @@ export function SessionContextMenu({
               <span className="context-menu__label">{openInNewPaneLabel}</span>
             </button>
           )}
-          <button type="button" className="context-menu__item" onClick={onRename}>
+          <button type="button" className="context-menu__item" onClick={onOpenSettings}>
             <span className="context-menu__glyph">
-              <Pencil {...ICON} />
+              <Settings {...ICON} />
             </span>
-            <span className="context-menu__label">Rename session</span>
+            <span className="context-menu__label">Settings…</span>
           </button>
           <button type="button" className="context-menu__item" onClick={onCopyPath}>
             <span className={menu.copied ? 'context-menu__glyph context-menu__glyph--ok' : 'context-menu__glyph'}>

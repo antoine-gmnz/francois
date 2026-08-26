@@ -143,7 +143,7 @@ export type TranscriptAction =
   | { t: 'deltaBatch'; blockId: string; chunks: DeltaChunk[] }
   | { t: 'assistantDone'; blockId: string; text: string }
   | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string }
-  | { t: 'toolDone'; blockId: string; meta: string }
+  | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean } // hasDetail: command-inspect FR-10
   | { t: 'commandStarted'; blockId: string; command: string } // interactive-commands FR-20
   | { t: 'commandOutput'; blockId: string; card: CommandCard } // interactive-commands FR-20
   | { t: 'questionAsked'; blockId: string; questions: SessionQuestion[] } // session-questions FR-16
@@ -330,8 +330,12 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       const i = idx(a.blockId);
       if (i === -1) return state;
       const b = state.blocks[i];
-      if (b.kind !== 'tool' && b.kind !== 'subagent') return state;
-      return replace(i, { ...b, meta: a.meta, isStreaming: false });
+      if (b.kind === 'subagent') return replace(i, { ...b, meta: a.meta, isStreaming: false });
+      if (b.kind !== 'tool') return state;
+      // command-inspect FR-10/FR-12: the chevron exists iff core wrote a StepDetail
+      // record. `??` keeps an established flag when a later done omits it; a
+      // subagent block never carries one (FR-8).
+      return replace(i, { ...b, meta: a.meta, isStreaming: false, hasDetail: a.hasDetail ?? b.hasDetail });
     }
     case 'commandStarted': {
       // FR-20: insert a pending command block (loading card); replay is a no-op.
@@ -493,6 +497,24 @@ export function pushDelta(buffer: Map<string, DeltaChunk[]>, blockId: string, te
 }
 
 /**
+ * Whether a buffered delta should also SCHEDULE the animation-frame flush that
+ * applies it.
+ *
+ * Two independent reasons not to. `framePending` is the coalescer itself — one
+ * frame already owns the whole buffer, which is what makes a burst of deltas
+ * one reducer pass (FR-5). `visible` is the held-transcript case: the main
+ * pane's `SessionViewHost` keeps the last few sessions' transcripts mounted
+ * behind `display: none`, and a frame scheduled for a subtree nobody can see
+ * spends the VISIBLE session's frame budget re-rendering markdown off screen.
+ * Buffering without scheduling defers that work to the moment the session comes
+ * back (or to the next non-delta event, which flushes unconditionally) — the
+ * text is identical either way, since every chunk carries its own offset.
+ */
+export function shouldScheduleDeltaFlush(visible: boolean, framePending: boolean): boolean {
+  return visible && !framePending;
+}
+
+/**
  * Drains the buffer into one `deltaBatch` action per blockId (first-seen
  * order) and empties it. Called on the animation-frame flush, on any
  * non-delta event (FR-6), and on unmount/session switch (FR-7).
@@ -586,7 +608,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId, text: e.text }),
   'tool.start': (dispatch, _setters, e) =>
     dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model }),
-  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta }),
+  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail }),
   // interactive-commands FR-20: pending command block (loading card)
   'command.started': (dispatch, _setters, e) => dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command }),
   // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)

@@ -145,6 +145,9 @@ fn build_turn_context(
             // snapshotted at creation — never re-read from the profile.
             system_prompt: s.system_prompt.clone(),
             extra_args: s.extra_args.clone(),
+            // response-mode FR-5: snapshotted at spawn like everything else
+            // here — a switch mid-turn cannot reach the running turn (FR-4).
+            response_mode: s.response_mode,
         }
     })
 }

@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { demoInvoke, demoListen } from '../demo/demo';
-import type { AccountId, BlockId, Result, SessionMeta, ModelInfo, PermissionMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, BlockId, Result, SessionMeta, ModelInfo, PermissionMode, ResponseMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
   WorkflowDetail,
@@ -62,6 +62,7 @@ import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessio
 import type { SessionCreateInput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
 import type { SessionRenameRequest, SessionRenameResponse } from '../../contract/session-rename';
+import type { SessionUpdateSettingsRequest, SessionUpdateSettingsResponse } from '../../contract/session-settings-sheet';
 import type { EditorListData, OpenInEditorRequest } from '../../contract/open-in-vscode';
 import type {
   Attachment,
@@ -71,6 +72,7 @@ import type {
   PickAttachmentsResponse,
 } from '../../contract/session-attachments';
 import type { GetTranscriptRequest, TranscriptPage } from '../../contract/conversation-view';
+import type { StepDetail, StepDetailPayload } from '../../contract/command-inspect';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpApprovalState, McpDecision, McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
 import type {
@@ -164,15 +166,23 @@ export const sessionModels = (accountId?: AccountId) =>
 // session-profiles FR-15: session_create also gained systemPrompt/extraArgs/profileId —
 // the frontend sends the RESOLVED (post-edit) values plus the profile id, and the core
 // snapshots the profile's name from the registry itself.
+// response-mode FR-17: and an optional responseMode — omitted for 'default', which
+// IS the absence of an instruction rather than an instruction to be normal.
 export const sessionCreate = (
   req: NewSessionRequest &
     Pick<ProjectAwareSessionCreateRequest, 'projectId'> &
-    Pick<SessionCreateInput, 'worktree' | 'systemPrompt' | 'extraArgs' | 'profileId'>,
+    Pick<SessionCreateInput, 'worktree' | 'systemPrompt' | 'extraArgs' | 'profileId' | 'responseMode'>,
 ) => ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
 // session-rename §5: mutate a session's display name. The core validates/cleans it
 // (FR-1) and emits session.meta — the frontend's single update path (FR-13).
 export const sessionRename = (req: SessionRenameRequest) => ipc<SessionRenameResponse>('session_rename', req);
+// session-settings-sheet §5: one atomic patch of changed keys — validate all →
+// write all → persist once → emit ONE session.meta (FR-2). The frontend's
+// single update path is that event, same as every switch verb; this Result is
+// read only to surface a failure (or the no-op-success meta on an empty patch).
+export const sessionUpdateSettings = (req: SessionUpdateSettingsRequest) =>
+  ipc<SessionUpdateSettingsResponse>('session_update_settings', req);
 // session-worktree §5: probe a candidate cwd for worktree isolation (FR-1).
 export const sessionWorktreeProbe = (req: WorktreeProbeRequest) =>
   ipc<Result<WorktreeProbeData>>('session_worktree_probe', req);
@@ -228,6 +238,10 @@ export const sessionOpenInEditor = (req: OpenInEditorRequest) =>
 // 1..=500 (default 200) — never an INVALID_INPUT.
 export const getTranscript = (sessionId: SessionId, page?: { before?: BlockId; limit?: number }) =>
   ipc<Result<TranscriptPage>>('conversation_get_transcript', { sessionId, ...page } satisfies GetTranscriptRequest);
+// command-inspect FR-11: resolves one settled step's record by (sessionId, blockId). Never rides
+// an event — pulled lazily on first open (FR-13), and memoized by the caller for the session's life.
+export const stepDetail = (sessionId: SessionId, blockId: BlockId) =>
+  ipc<Result<StepDetail>>('conversation_step_detail', { sessionId, blockId } satisfies StepDetailPayload);
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
   ipc<Result<null>>('session_answer_question', { sessionId, blockId, answers });
 // permission-guardrails (§5.1). decide answers a parked approval card; the other
@@ -305,6 +319,14 @@ export const sessionSwitchPermissionMode = (sessionId: SessionId, mode: Permissi
 // accompanying session.meta event, never the Result.
 export const sessionSwitchEffort = (sessionId: SessionId, effort: string | null) =>
   ipc<Result<SessionMeta>>('session_switch_effort', { sessionId, effort });
+// response-mode FR-2: the fourth member of the switch family — HOW the model is
+// told to write, from the next turn on (FR-4: a running turn is unaffected). The
+// `mode` is re-validated by the core, so this wrapper's narrowing is a convenience
+// and never the check (FR-3). Same single update path as its siblings: the
+// accompanying session.meta event, never this Result (FR-18) — which is read only
+// to surface a failure inline.
+export const sessionSwitchResponseMode = (sessionId: SessionId, mode: ResponseMode) =>
+  ipc<Result<SessionMeta>>('session_switch_response_mode', { sessionId, mode });
 export const sessionCompact = (sessionId: SessionId) => ipc<Result<null>>('session_compact', { sessionId });
 export const sessionClear = (sessionId: SessionId) => ipc<Result<null>>('session_clear', { sessionId });
 

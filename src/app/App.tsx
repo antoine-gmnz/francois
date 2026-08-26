@@ -15,15 +15,14 @@ import PermissionsModal from '../features/permissions/PermissionsModal';
 import ProfilesModal from '../features/profiles/ProfilesModal';
 import { loadProfiles } from '../features/profiles/profiles';
 import ProjectsModal from '../features/projects/ProjectsModal';
-import NewSessionModal from '../features/sessions/NewSessionModal';
-import RenameSessionModal from '../features/sessions/RenameSessionModal';
+import SessionSettingsSheet from '../features/sessions/SessionSettingsSheet';
+import type { SessionSettingsCarryOver } from '../features/sessions/session-settings';
 import Sidebar from '../features/sessions/Sidebar';
 import { initShellEvents } from '../features/shell/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
 import UpdateModal from '../features/update/UpdateModal';
 import { checkUpdateOnLaunch } from '../features/update/update';
 import WorkflowsPanel from '../features/workflows/WorkflowsPanel';
-import { isBusyStatus } from '../../contract/fleet-board';
 import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { useWindowWidth } from '../lib/hooks/useWindowWidth';
 import { focusedSessionId, layoutRegime, paneCount, paneSlotAt } from '../lib/layoutStore';
@@ -55,8 +54,6 @@ const PANELS = {
 } as const;
 
 export default function App() {
-  const [clockNow, setClockNow] = useState(() => Date.now());
-  const sessions = useStore((s) => s.sessions);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
@@ -76,9 +73,13 @@ export default function App() {
   // Stable identity: the modal keys effects (its landing hand-off, its keydown
   // subscription) off this callback, and App re-renders on every store tick.
   const closeAdoptCloud = useCallback(() => setAdoptCloudOpen(false), [setAdoptCloudOpen]);
-  // session-rename FR-12/FR-14: opened from the sidebar context menu AND the palette.
-  const renameSessionId = useStore((s) => s.renameSessionId);
-  const setRenameSessionId = useStore((s) => s.setRenameSessionId);
+  // session-settings-sheet FR-19: opened from the run chip, the sidebar context
+  // menu, the palette and ⌘,/Ctrl+,.
+  const sessionSettingsId = useStore((s) => s.sessionSettingsId);
+  const setSessionSettingsId = useStore((s) => s.setSessionSettingsId);
+  // FR-13: "New session from these ↗" hands the edit sheet's session over to the
+  // create sheet — App owns both, so it owns the handoff between them too.
+  const [newSessionSeed, setNewSessionSeed] = useState<SessionSettingsCarryOver | undefined>(undefined);
   const activeProjectId = useStore((s) => s.activeProjectId);
   // projects FR-39: a switch into an empty project auto-opens the new-session
   // modal — these two settle what cancelling vs. creating does to the scope.
@@ -161,8 +162,12 @@ export default function App() {
   });
 
   // design 7a: the session row describes what you are LOOKING at, so it follows
-  // the focused pane rather than the left one.
-  const active = sessions.find((session) => session.id === paneSessionId) ?? null;
+  // the focused pane rather than the left one. Selected narrowly — App is the
+  // ROOT of the tree, so subscribing to the whole `sessions` array here meant
+  // any session's status/usage churn re-rendered everything down to the
+  // composer's textarea. The patch actions only replace the touched entry, so
+  // this reference only changes when the focused session itself does.
+  const active = useStore((s) => s.sessions.find((session) => session.id === paneSessionId) ?? null);
   const activeAgentId = agentIdFromTab(mainTab);
   // Which of the four dissolved panes is on screen, if any.
   const panelTab = isPanelTab(mainTab);
@@ -248,17 +253,6 @@ export default function App() {
   // hook also feeds, hence the FOCUSED session (FR-7).
   const diffCount = useDiffBadge(paneSessionId);
 
-  // Elapsed clock ticks while the focused session's turn is in flight (FR-6) —
-  // isBusyStatus, so it keeps counting while the turn sits on an approval. That
-  // wait is part of the turn's wall clock, and freezing it there would read as
-  // the turn having finished. Unlike before 7a this runs while split too: the
-  // session row is always mounted and always shows the readout.
-  useEffect(() => {
-    if (!(active && isBusyStatus(active.status))) return;
-    const id = setInterval(() => setClockNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [active?.id, active?.status]);
-
   useAppShortcuts({
     newSessionOpen,
     adoptCloudOpen,
@@ -266,7 +260,7 @@ export default function App() {
     permissionsOpen,
     projectsOpen,
     accountsOpen,
-    renameOpen: renameSessionId !== null,
+    sessionSettingsOpen: sessionSettingsId !== null,
     updateModalOpen,
     extensionsOpen,
     setNewSessionOpen,
@@ -304,12 +298,6 @@ export default function App() {
 
   const mainFocused = focusedPane === 'main';
 
-  const elapsedMs = active
-    ? isBusyStatus(active.status)
-      ? clockNow - active.startedAt
-      : Math.max(0, active.lastActivityAt - active.startedAt)
-    : 0;
-
   return (
     <div className="app-root">
       {/* design 7a: two tiers of chrome, both full-bleed under the native OS
@@ -323,7 +311,6 @@ export default function App() {
         agentTabs={agentTabs}
         closeAgentTab={closeAgentTab}
         openExtTab={openExtTab}
-        elapsedMs={elapsedMs}
         home={home}
       />
 
@@ -366,7 +353,14 @@ export default function App() {
         <div className="app-main-cell">
           {/* The four dissolved panes. ALWAYS mounted — their feeds publish the
               counts the roster rows read, and re-subscribing on every tab switch
-              would both flicker the counts and double the IPC. */}
+              would both flicker the counts and double the IPC.
+              …and always mounted across a SESSION switch too: each panel is
+              handed `sessionId` as a prop rather than keyed by it, because a key
+              here contradicted the sentence above — every switch remounted all
+              four and re-ran four hydrations. Each of them resets its own
+              per-session state off that prop (the feed hooks' `[sessionId]`
+              effects plus the panels' own selection/overlay resets), which is
+              what makes the key unnecessary. */}
           <section
             className="app-main-section app-panel-host"
             style={{ display: panelTab ? undefined : 'none', borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
@@ -376,7 +370,7 @@ export default function App() {
               const Panel = PANELS[pane];
               return (
                 <div key={pane} className="app-panel-slot" style={{ display: mainTab === pane ? undefined : 'none' }}>
-                  <Panel key={paneSessionId ?? 'none'} sessionId={paneSessionId} />
+                  <Panel sessionId={paneSessionId} />
                 </div>
               );
             })}
@@ -465,9 +459,12 @@ export default function App() {
           modal's own `onClose`, so clearing there is what makes the rollback
           below stand down once a session actually exists. */}
       {newSessionOpen && (
-        <NewSessionModal
+        <SessionSettingsSheet
+          mode="create"
+          seed={newSessionSeed}
           onClose={() => {
             setNewSessionOpen(false);
+            setNewSessionSeed(undefined);
             rollbackProjectSwitch();
           }}
           onCreated={(m) => {
@@ -491,19 +488,23 @@ export default function App() {
           what brings one into the fleet — so it is gated on the flag alone. */}
       {adoptCloudOpen && <AdoptCloudSessionModal onClose={closeAdoptCloud} />}
 
-      {/* session-rename FR-8: the rename modal, keyed to the session so a second
-          open always restarts from that session's current name. Rendered here
-          because all three entry points (row context menu, the session row's
-          breadcrumb, ⌘K) open the same one. */}
-      {/* Gated on the id alone, never on the session still existing: a session
-          removed while the modal is up must stay renameable-looking until the
-          commit answers SESSION_NOT_FOUND (§7), not vanish under the cursor. */}
-      {renameSessionId !== null && (
-        <RenameSessionModal
-          key={renameSessionId}
-          sessionId={renameSessionId}
-          currentName={sessions.find((s) => s.id === renameSessionId)?.name ?? ''}
-          onClose={() => setRenameSessionId(null)}
+      {/* session-settings-sheet FR-19: the settings sheet in EDIT mode, keyed to
+          the session so a second open always restarts from its current values.
+          Rendered here because every entry point (run chip, row context menu,
+          ⌘,/Ctrl+,, ⌘K) opens the same one. session-settings-sheet FR-13: "New
+          session from these ↗" closes this and reopens the create sheet above,
+          pre-filled. */}
+      {sessionSettingsId !== null && (
+        <SessionSettingsSheet
+          key={sessionSettingsId}
+          mode="edit"
+          sessionId={sessionSettingsId}
+          onClose={() => setSessionSettingsId(null)}
+          onCarryOver={(seed) => {
+            setSessionSettingsId(null);
+            setNewSessionSeed(seed);
+            setNewSessionOpen(true);
+          }}
         />
       )}
 

@@ -82,6 +82,15 @@
 - 2026-08-20 · ui · A pane [1] grouping tier nests INSIDE a state band, never above it — because state-first order is what keeps a blocked session off row four · roster-group-tier
 - 2026-08-20 · ui · A derived grouping heading is suppressed when the band resolves to ONE group — because a heading that partitions nothing costs a row and teaches nothing · roster-group-tier
 - 2026-08-20 · data · Group membership is hand-assigned only, never inferred from a name or path prefix — because a prefix misses members and silently reclassifies on rename · roster-group-tier
+- 2026-08-23 · api · A change-only injection channel must emit an explicit REVERT instruction when returning to the neutral value, never fall silent — because the previous instruction survives in the thread's own history · response-mode
+- 2026-08-23 · api · Instruction/prompt text the core injects never crosses the IPC boundary; the frontend gets the enum plus a label/hint table only — because text the webview can read is text it will be asked to edit, and that is a registry feature, not a setting · response-mode
+
+- 2026-08-24 · api · A verb that accepts a multi-field patch validates EVERY key before writing any; one bad key rejects the whole patch — because a best-effort loop leaves the session in a state neither the user nor the caller asked for · session-settings-sheet
+- 2026-08-24 · ui · When settings in one form take effect at different moments, the form names WHICH ones are deferred and stays silent when none are — never a blanket timing claim — because one immediate field makes a blanket claim false, and the user reads the claim, not the field list · session-settings-sheet
+- 2026-08-24 · ui · A value fixed at creation renders as a read-only line in a labelled block, never a disabled input — because a disabled input still reads as clickable and costs a full row to say nothing · session-settings-sheet
+
+- 2026-08-25 · data · A derived-summary row carries only a `has<X>` BOOLEAN for its fat record; the record is fetched lazily by id from a sidecar and never inlined into the list payload or an event — because the summary list is the hot path and a fat field taxes every page read to serve a rare click · command-inspect
+- 2026-08-25 · data · Truncation at CAPTURE must store the true pre-truncation totals and the panel must state what was dropped — a capped slice is never presented as complete — because a bound that lies about its own bound is worse than no bound · command-inspect
 
 ## Superseded
 

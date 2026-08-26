@@ -2,18 +2,9 @@
 // effort levels a model row offers, and the second line `bypass` earns.
 
 import { describe, expect, it } from 'vitest';
-import type { ModelInfo, SessionMeta } from '../../../contract/common';
-import {
-  APPLIES_COPY,
-  SET_PROJECT_DEFAULT_COPY,
-  bypassNote,
-  canSetProjectDefault,
-  effortHint,
-  effortLevels,
-  formatClock,
-  nextProjectDefaults,
-  runChipParts,
-} from './run-chip';
+import type { ModelInfo, ResponseMode, SessionMeta } from '../../../contract/common';
+import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
+import { bypassNote, effortHint, effortLevels, formatClock, responseModeOption, runChipParts } from './run-chip';
 
 const OPUS: ModelInfo = { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh'] };
 const SONNET: ModelInfo = { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['low', 'medium', 'high'] };
@@ -36,6 +27,7 @@ function session(over: Partial<SessionMeta> = {}): SessionMeta {
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
+    responseMode: 'default',
     ...over,
   } as SessionMeta;
 }
@@ -52,6 +44,16 @@ describe('runChipParts', () => {
     expect(runChipParts(session({ permissionMode: 'plan' })).danger).toBe(false);
     expect(runChipParts(session()).mode).toBe('default');
     expect(runChipParts(session()).danger).toBe(false);
+  });
+
+  // response-mode FR-15: the face carries the mode's `short` ONLY when it is not
+  // 'default' — the same rule the model chip already applies, so the common case
+  // never widens the row.
+  it('carries the response mode short only when it is not default', () => {
+    expect(runChipParts(session()).response).toBe(null);
+    expect(runChipParts(session({ responseMode: 'concise' })).response).toBe('concise');
+    expect(runChipParts(session({ responseMode: 'explanatory' })).response).toBe('explain');
+    expect(runChipParts(session({ responseMode: 'learning' })).response).toBe('learn');
   });
 
   it('appends the effort only when the session has one', () => {
@@ -75,6 +77,25 @@ describe('effortLevels / effortHint', () => {
     expect(effortHint(SONNET)).toBe('low → high');
     expect(effortHint(HAIKU)).toBe('no effort');
     expect(effortHint({ id: 'x', label: 'X', efforts: ['high'] })).toBe('high');
+  });
+});
+
+// response-mode FR-13: RESPONSE_MODE_OPTIONS (contract) is the single source for
+// every presentation of a mode; nothing maps a mode to a string on its own.
+describe('responseModeOption', () => {
+  it('resolves every member of the union to its own row', () => {
+    expect(responseModeOption('default').label).toBe('default');
+    expect(responseModeOption('concise').short).toBe('concise');
+    expect(responseModeOption('explanatory').short).toBe('explain');
+    expect(responseModeOption('learning').short).toBe('learn');
+  });
+
+  it('carries a hint for every mode, so no panel row is ever blank', () => {
+    for (const opt of RESPONSE_MODE_OPTIONS) expect(opt.hint.length).toBeGreaterThan(0);
+  });
+
+  it('falls back to the first row for a value the union does not carry', () => {
+    expect(responseModeOption('shouty' as ResponseMode).mode).toBe('default');
   });
 });
 
@@ -116,33 +137,6 @@ describe('bypassNote', () => {
   });
 });
 
-describe('the footer', () => {
-  it('states the one thing that is true of every pick in the panel', () => {
-    expect(APPLIES_COPY).toBe('Applies from the next turn');
-    expect(SET_PROJECT_DEFAULT_COPY).toBe('Set as project default');
-  });
-
-  it('offers the project default only for a session that has a project', () => {
-    expect(canSetProjectDefault(session())).toBe(false);
-    expect(canSetProjectDefault(session({ projectId: 'p1' }))).toBe(true);
-  });
-
-  it('writes the three settings the panel owns and leaves the rest of the defaults alone', () => {
-    const s = session({ projectId: 'p1', permissionMode: 'plan', effort: 'high' });
-    expect(nextProjectDefaults({ runtime: 'wsl', allowGit: true }, s)).toEqual({
-      runtime: 'wsl',
-      allowGit: true,
-      modelId: 'claude-opus-5',
-      effort: 'high',
-      permissionMode: 'plan',
-    });
-  });
-
-  it('CLEARS the effort default when the session has none, rather than leaving a stale one', () => {
-    const s = session({ projectId: 'p1' });
-    expect(nextProjectDefaults({ effort: 'xhigh' }, s)).toEqual({
-      modelId: 'claude-opus-5',
-      permissionMode: 'default',
-    });
-  });
-});
+// session-settings-sheet FR-17/FR-20: the footer's "Set as project default" and
+// its nextProjectDefaults/canSetProjectDefault helpers moved to
+// session-settings.ts/.test.ts with the run chip's popover — see there.

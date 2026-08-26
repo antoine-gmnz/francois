@@ -9,14 +9,19 @@
 // agent trail keep saying the same thing the same way; only the container
 // around them differs.
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { toolBody, type ConversationBlock, type SubagentConversationBlock, type ToolConversationBlock, type UserConversationBlock } from '../../../contract/conversation-view';
 import type { AssistantConversationBlock } from '../../../contract/conversation-view';
+import type { SessionId } from '../../../contract/common';
+import type { StepDetail } from '../../../contract/command-inspect';
 import CommandBlock from '../commands/CommandCard';
 import { toneVar } from '../../lib/tone';
+import { stepDetail as fetchStepDetail } from '../../lib/api';
+import { useMounted } from '../../lib/hooks/useMounted';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
+import StepDetailPanel from './StepDetailPanel';
 import { StatusDot } from '../../ui/StatusDot';
 import { toolResultChips } from './transcript-turns';
 import './conversation.css';
@@ -26,7 +31,16 @@ import './conversation.css';
 // from a useMemo keyed on state.blocks), so the default shallow React.memo
 // comparison is enough to bail a render that has nothing new to draw.
 
-function BlockImpl({ b: block, sessionId }: { b: ConversationBlock; sessionId: string }) {
+function BlockImpl({
+  b: block,
+  sessionId,
+  onOpenShell,
+}: {
+  b: ConversationBlock;
+  sessionId: string;
+  /** command-inspect FR-16: threaded to a tool row's StepDetailPanel — see ConversationView. */
+  onOpenShell?: () => void;
+}) {
   // interactive-commands: command cards (and notice one-liners) have their own renderer (§8)
   if (block.kind === 'command') {
     return <CommandBlock b={block} sessionId={sessionId} />;
@@ -78,7 +92,7 @@ function BlockImpl({ b: block, sessionId }: { b: ConversationBlock; sessionId: s
   // design 9a: a lone tool call is a bare row — the same object a session turn
   // renders, without the rail. An agent trail is a flat list, so a rail per
   // block would draw a 1px stub beside every row and join nothing.
-  return <ToolRow b={block} />;
+  return <ToolRow b={block} sessionId={sessionId} onOpenShell={onOpenShell} />;
 }
 
 const Block = memo(BlockImpl);
@@ -134,32 +148,96 @@ export const SubagentBanner = memo(SubagentBannerImpl);
  * result. The result stopped being a ` · 14 failed` tail on the end of a
  * sentence and became chips at the right edge, so a column of calls can be
  * scanned for the one that went wrong without reading any of them.
+ *
+ * command-inspect (design 16a): a row with `hasDetail` also carries a chevron
+ * — the ONLY thing that makes it clickable (FR-12). Open/loading/fetched-detail
+ * state lives here, local to the row: a settled step is fetched once per mount
+ * and never re-fetched (FR-13), and unmounting (session switch, transcript
+ * eviction) drops it for free, which is exactly FR-18's "cleared on session
+ * switch, never persisted". An agent-tab/workflow trail's lone-row usage never
+ * carries `hasDetail` (FR-8) — regardless of `sessionId`, which AgentView and
+ * WorkflowView do pass — so the chevron/click path below is never reachable
+ * there.
  */
-function ToolRowImpl({ b }: { b: ToolConversationBlock }) {
+function ToolRowImpl({
+  b,
+  sessionId,
+  onOpenShell,
+}: {
+  b: ToolConversationBlock;
+  sessionId?: SessionId;
+  /** command-inspect FR-16: threaded to the mounted StepDetailPanel. */
+  onOpenShell?: () => void;
+}) {
   const chips = toolResultChips(b.meta);
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<StepDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const mountedRef = useMounted();
+
+  function handleClick() {
+    if (!b.hasDetail || !sessionId) return;
+    const next = !open;
+    setOpen(next);
+    // FR-13: fetched once per mount, never re-fetched — a settled step is
+    // immutable. Runs as an ordinary side effect (not inside the `setOpen`
+    // updater, which StrictMode double-invokes) so `fetchStepDetail` fires
+    // exactly once per open.
+    if (next && detail === null && !loading) {
+      setLoading(true);
+      setFetchError(null);
+      void fetchStepDetail(sessionId, b.blockId).then((res) => {
+        if (!mountedRef.current) return;
+        setLoading(false);
+        if (res.ok) setDetail(res.data);
+        else setFetchError(res.error.message);
+      });
+    }
+  }
+
   return (
-    <div className={'toolrow' + (b.isStreaming ? ' toolrow--live' : '')}>
-      <span className="toolrow__glyph" style={{ color: toneVar(b.glyphColor) }}>
-        {b.glyph}
-      </span>
-      <span className="toolrow__name">{b.tool}</span>
-      {/* The full call stays reachable on hover — the target column truncates,
-          and a truncated path is exactly when you want the whole one. */}
-      <span className="toolrow__target" title={toolBody(b.tool, b.summary)}>
-        {b.summary}
-      </span>
-      <span className="toolrow__chips">
-        {b.isStreaming && chips.length === 0 ? (
-          <StatusDot color="var(--accent)" size={5} pulsing />
-        ) : (
-          chips.map((c) => (
-            <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`}>
-              {c.text}
-            </span>
-          ))
+    <>
+      <div
+        className={
+          'toolrow' + (b.isStreaming ? ' toolrow--live' : '') + (b.hasDetail ? ' toolrow--expandable' : '') + (open ? ' toolrow--open' : '')
+        }
+        onClick={b.hasDetail ? handleClick : undefined}
+      >
+        <span className="toolrow__glyph" style={{ color: toneVar(b.glyphColor) }}>
+          {b.glyph}
+        </span>
+        <span className="toolrow__name">{b.tool}</span>
+        {/* The full call stays reachable on hover — the target column truncates,
+            and a truncated path is exactly when you want the whole one. */}
+        <span className="toolrow__target" title={toolBody(b.tool, b.summary)}>
+          {b.summary}
+        </span>
+        <span className="toolrow__chips">
+          {b.isStreaming && chips.length === 0 ? (
+            <StatusDot color="var(--accent)" size={5} pulsing />
+          ) : (
+            chips.map((c) => (
+              <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`}>
+                {c.text}
+              </span>
+            ))
+          )}
+        </span>
+        {b.hasDetail && (
+          <span className="toolrow__disclosure">
+            open <span className="toolrow__chevron">⌄</span>
+          </span>
         )}
-      </span>
-    </div>
+      </div>
+      {open && sessionId && (
+        <div className="step-detail-wrap">
+          {loading && <div className="step-detail__loading">loading…</div>}
+          {fetchError && <div className="step-detail__error">{fetchError}</div>}
+          {detail && <StepDetailPanel detail={detail} sessionId={sessionId} onOpenShell={onOpenShell} />}
+        </div>
+      )}
+    </>
   );
 }
 export const ToolRow = memo(ToolRowImpl);
@@ -170,11 +248,20 @@ export const ToolRow = memo(ToolRowImpl);
  * card — under the flat treatment a card would be a second surface floating in
  * the turn, where the rail reads as "this is what that paragraph did".
  */
-function ToolRailImpl({ blocks }: { blocks: ToolConversationBlock[] }) {
+function ToolRailImpl({
+  blocks,
+  sessionId,
+  onOpenShell,
+}: {
+  blocks: ToolConversationBlock[];
+  sessionId: SessionId;
+  /** command-inspect FR-16: threaded to every row's StepDetailPanel — see ConversationView. */
+  onOpenShell?: () => void;
+}) {
   return (
     <div className="toolrail">
       {blocks.map((b) => (
-        <ToolRow key={b.blockId} b={b} />
+        <ToolRow key={b.blockId} b={b} sessionId={sessionId} onOpenShell={onOpenShell} />
       ))}
     </div>
   );

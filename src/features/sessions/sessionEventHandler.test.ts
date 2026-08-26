@@ -41,6 +41,8 @@ const meta: SessionMeta = {
   accountId: 'default',
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
+  responseMode: 'default',
+  allowGit: false,
 };
 
 const agent: AgentInfo = {

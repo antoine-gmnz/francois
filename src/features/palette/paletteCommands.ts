@@ -98,17 +98,19 @@ export function registerBuiltinCommands(): void {
     },
   });
 
-  // 1b — Rename session (session-rename FR-14): opens the same modal the sidebar
-  // row's context menu opens, for the ACTIVE session. Not a SecondaryStep — it
-  // acts on one session, so it just opens the modal and closes the palette.
+  // 1b — Session settings… (session-settings-sheet FR-19): opens the same sheet
+  // the run chip and the sidebar row's context menu open, in EDIT mode, for the
+  // ACTIVE session. Not a SecondaryStep — it acts on one session, so it just
+  // opens the sheet and closes the palette. Supersedes session-rename's
+  // dedicated "Rename session" entry — renaming is now the sheet's NAME row.
   registerPaletteCommand({
-    id: 'rename-session',
-    glyph: '✎',
-    name: 'Rename session',
+    id: 'session-settings',
+    glyph: '⚙',
+    name: 'Session settings…',
     // design brief §3: this row carries no right-aligned hint.
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: (ctx) => {
-      if (ctx.activeSessionId) useStore.getState().setRenameSessionId(ctx.activeSessionId);
+      if (ctx.activeSessionId) useStore.getState().setSessionSettingsId(ctx.activeSessionId);
     },
   });
 

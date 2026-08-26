@@ -208,8 +208,19 @@ pub fn session_create(
     system_prompt: Option<String>,
     extra_args: Option<Vec<String>>,
     profile_id: Option<String>,
+    // response-mode FR-1/FR-17: absent ⇒ 'default'. Re-validated here for the
+    // same reason the switch verb re-validates (FR-3) — the frontend's
+    // narrowing is not the gate.
+    response_mode: Option<String>,
 ) -> IpcResult<Value> {
     let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
+    let response_mode = match response_mode {
+        Some(raw) => match ResponseMode::parse(&raw) {
+            Some(mode) => mode,
+            None => return err(ErrorCode::InvalidInput, "unknown response mode"),
+        },
+        None => ResponseMode::Default,
+    };
     let (model_id, permission_mode, runtime) =
         match validate_create_input(&cwd, model_id, permission_mode, runtime, adopt) {
             Ok(v) => v,
@@ -388,6 +399,7 @@ pub fn session_create(
         system_prompt,
         extra_args,
         profile_ref,
+        response_mode,
     );
     let meta_before = session.meta(&app);
     engine
@@ -460,9 +472,12 @@ pub fn session_remove(
             if let Some(path) = transcript_path(&app, &session_id) {
                 let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)
             }
+            remove_step_detail_sidecar(&app, &session_id); // command-inspect FR-7
+
             crate::diff::unwatch_session(&session_id, &session.cwd); // FR-15: dispose the watcher
                                                                      // workflow-details FR-6: the run directories of a removed session are
                                                                      // no longer watched, and the asks attributed to its runs go with it.
+
             unwatch_session_workflows(&engine, &session.workflow_order);
             // wsl-filesystem FR-13 / multiple-shells FR-9: dispose every shell.
             // core-architecture-wave3 FR-9: through the teardown seam, so this
@@ -666,6 +681,69 @@ pub fn session_switch_permission_mode(
     ok(serde_json::to_value(meta).unwrap())
 }
 
+/// response-mode FR-2/FR-3: the engine half of `session_switch_response_mode` —
+/// the twin of `switch_permission_mode_in_engine` (same terminal-status guard,
+/// same purity: persist + emit stay in the handler, which needs the AppHandle).
+/// Re-picking the mode the session already has is deliberately NOT special-cased
+/// (FR-3): same mutation, same `Ok`, same emission.
+///
+/// `response_mode_sent` is left alone here on purpose. It records what the
+/// CURRENT codex/grok thread has been told, and a switch tells the thread
+/// nothing — the next turn's prefix decision (FR-10/FR-11) is exactly the
+/// comparison between the two.
+pub(crate) fn switch_response_mode_in_engine(
+    engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
+    session_id: &str,
+    mode: ResponseMode,
+) -> Result<SessionMeta, AppError> {
+    match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
+        None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
+        Some(false) => {
+            return Err(AppError::new(
+                ErrorCode::SessionNotRunning,
+                "session has ended",
+            ))
+        }
+        Some(true) => {}
+    }
+    engine
+        .with_session_mut(session_id, |s| {
+            s.response_mode = mode;
+            s.meta(accounts)
+        })
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))
+}
+
+/// response-mode FR-2: `francois:session:switchResponseMode`. Semantics and code
+/// shape mirror `session_switch_permission_mode` — set the field, persist with
+/// the existing atomic write, emit one `session.meta`, resolve the same snapshot
+/// that event carries. FR-3's error ladder: `INVALID_INPUT` for a `mode` outside
+/// `ResponseMode` (re-validated here, never trusted from the frontend's
+/// narrowing), `SESSION_NOT_FOUND` / `SESSION_NOT_RUNNING` from the engine half.
+///
+/// FR-4: no process is signalled and nothing is written to a running child — a
+/// turn keeps the mode it was spawned with, because `TurnContext` carries its
+/// own snapshot (session/turn.rs). The switch only ever reaches the NEXT turn.
+#[tauri::command(async)]
+pub fn session_switch_response_mode(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    mode: String,
+) -> IpcResult<Value> {
+    let Some(mode) = ResponseMode::parse(&mode) else {
+        return err(ErrorCode::InvalidInput, "unknown response mode");
+    };
+    let meta = match switch_response_mode_in_engine(&engine, &app, &session_id, mode) {
+        Ok(meta) => meta,
+        Err(e) => return e.into(),
+    };
+    persist(&app, &engine);
+    emit(&app, SessionEvent::Meta { meta: meta.clone() });
+    ok(serde_json::to_value(meta).unwrap())
+}
+
 /// session-rename FR-3/FR-4/FR-5: `francois:session:rename`. Validates the raw
 /// input (FR-1), swaps the name, persists with the existing atomic write and emits
 /// `session.meta` — the frontend's single update path. Accepted in EVERY status:
@@ -690,6 +768,235 @@ pub fn session_rename(
     persist(&app, &engine);
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
     ok(serde_json::to_value(meta).unwrap())
+}
+
+// ---------- session-settings-sheet ----------
+
+/// session-settings-sheet §5: the wire shape of `francois:session:updateSettings`'s
+/// `patch` — changed keys only, never null. `effort: Some("")` is FR's "clears
+/// back to the model's own default" (mirrors `session_switch_effort`'s absent/
+/// blank rule).
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSettingsPatch {
+    pub name: Option<String>,
+    pub model_id: Option<String>,
+    pub effort: Option<String>,
+    pub permission_mode: Option<String>,
+    pub response_mode: Option<String>,
+    pub allow_git: Option<bool>,
+}
+
+impl SessionSettingsPatch {
+    /// §7 case 2: everything but `name` touches a process/turn concern, so a
+    /// terminal session accepts a name-only patch (matching `session_rename`)
+    /// and rejects any patch that carries one of these.
+    pub(crate) fn touches_run_key(&self) -> bool {
+        self.model_id.is_some()
+            || self.effort.is_some()
+            || self.permission_mode.is_some()
+            || self.response_mode.is_some()
+            || self.allow_git.is_some()
+    }
+
+    /// FR-3: no key at all.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.name.is_none() && !self.touches_run_key()
+    }
+}
+
+/// The changed-keys-only patch after FR-6's re-validation, ready to write.
+/// `effort: Some(None)` is the FR-3-style clear; `None` (outer) means the key
+/// was absent from the patch, i.e. "leave alone".
+#[derive(Debug)]
+pub(crate) struct ValidatedSettingsPatch {
+    name: Option<String>,
+    model_id: Option<String>,
+    effort: Option<Option<String>>,
+    permission_mode: Option<&'static str>,
+    response_mode: Option<ResponseMode>,
+    allow_git: Option<bool>,
+}
+
+/// session-settings-sheet FR-6/§7 cases 3-5: the core's OWN re-validation of
+/// every key `SessionSettingsPatch` carries — the frontend's narrowing (a
+/// picker/toggle that cannot itself produce a bad value) is never trusted. The
+/// FIRST bad key stops the whole patch, so nothing partial is ever written.
+/// `advertised_models` is the session's ACCOUNT catalog (case 4) — pass an
+/// empty slice when the patch carries no `modelId` (the model call is skipped
+/// entirely, sparing sessions with no live catalog from needing one for an
+/// unrelated field).
+pub(crate) fn validate_settings_patch(
+    patch: &SessionSettingsPatch,
+    advertised_models: &[String],
+) -> Result<ValidatedSettingsPatch, AppError> {
+    let name = match &patch.name {
+        Some(raw) => Some(validate_session_name(raw)?),
+        None => None,
+    };
+    let model_id = match &patch.model_id {
+        Some(raw) => {
+            if !advertised_models.iter().any(|m| m == raw) {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "model is not advertised for this session's account",
+                ));
+            }
+            Some(raw.clone())
+        }
+        None => None,
+    };
+    let effort = match &patch.effort {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                Some(None)
+            } else if valid_effort(trimmed) {
+                Some(Some(trimmed.to_string()))
+            } else {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown effort level",
+                ));
+            }
+        }
+        None => None,
+    };
+    let permission_mode = match &patch.permission_mode {
+        Some(raw) => match parse_permission_mode(raw) {
+            Some(mode) => Some(mode),
+            None => {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown permission mode",
+                ))
+            }
+        },
+        None => None,
+    };
+    let response_mode = match &patch.response_mode {
+        Some(raw) => match ResponseMode::parse(raw) {
+            Some(mode) => Some(mode),
+            None => {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown response mode",
+                ))
+            }
+        },
+        None => None,
+    };
+    Ok(ValidatedSettingsPatch {
+        name,
+        model_id,
+        effort,
+        permission_mode,
+        response_mode,
+        allow_git: patch.allow_git,
+    })
+}
+
+/// session-settings-sheet FR-2/FR-3/§7 case 2: the engine half of
+/// `session_update_settings` — SESSION_NOT_FOUND, FR-3's empty-patch no-op,
+/// the terminal+run-key guard, FR-6's re-validation and the batched mutation,
+/// all pure (no `AppHandle`) like `switch_permission_mode_in_engine` — persist
+/// + emit stay in the handler, which also owns the model-catalog fetch this
+/// needs for FR-6's `modelId` check. `Ok((meta, false))` is FR-3: the caller
+/// must not persist or emit for it.
+pub(crate) fn update_settings_in_engine(
+    engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
+    session_id: &str,
+    patch: &SessionSettingsPatch,
+    advertised_models: &[String],
+) -> Result<(SessionMeta, bool), AppError> {
+    if patch.is_empty() {
+        let meta = engine
+            .with_session(session_id, |s| s.meta(accounts))
+            .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+        return Ok((meta, false));
+    }
+    let terminal = engine
+        .with_session(session_id, |s| status::is_terminal(&s.status))
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+    if terminal && patch.touches_run_key() {
+        return Err(AppError::new(
+            ErrorCode::SessionNotRunning,
+            "session has ended",
+        ));
+    }
+    let validated = validate_settings_patch(patch, advertised_models)?;
+    let meta = engine
+        .with_session_mut(session_id, |s| {
+            if let Some(name) = validated.name {
+                s.name = name;
+            }
+            if let Some(model_id) = validated.model_id {
+                s.context_limit_tokens = context_limit(&model_id);
+                s.model_id = model_id;
+            }
+            if let Some(effort) = validated.effort {
+                s.effort = effort;
+            }
+            if let Some(mode) = validated.permission_mode {
+                // FR-4: stamped on EVERY write, including a no-op re-pick —
+                // mirrors switch_permission_mode_in_engine's rationale.
+                s.permission_mode = mode.to_string();
+                s.permission_mode_since = now_ms();
+            }
+            if let Some(mode) = validated.response_mode {
+                s.response_mode = mode;
+            }
+            if let Some(allow_git) = validated.allow_git {
+                s.allow_git = allow_git;
+            }
+            s.meta(accounts)
+        })
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+    Ok((meta, true))
+}
+
+/// session-settings-sheet FR-2: `francois:session:updateSettings` /
+/// `session_update_settings`. Validates every changed key in ONE pass (§7
+/// cases 3-5: one bad key writes NONE of them), applies them in ONE pass,
+/// persists once and emits exactly one `session.meta` — the same shape as the
+/// single-setting switch verbs above, batched. FR-5: no verb here reaches into
+/// a running turn — `name`/`allowGit` land immediately because they touch no
+/// `TurnContext` snapshot, and the rest reach only the session's next turn,
+/// exactly like the switch verbs they replace in this sheet.
+#[tauri::command(async)]
+pub fn session_update_settings(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    patch: SessionSettingsPatch,
+) -> IpcResult<Value> {
+    // The model catalog is fetched only when the patch actually carries a
+    // modelId — sparing a settings-only edit the round trip and the account
+    // lookup it needs.
+    let advertised_models: Vec<String> = if patch.model_id.is_some() {
+        let Some((account_id, agent_runtime)) =
+            engine.with_session(&session_id, |s| (s.account_id.clone(), s.agent_runtime))
+        else {
+            return err(ErrorCode::SessionNotFound, "no such session");
+        };
+        adapter_for(agent_runtime)
+            .models(&app, &account_id)
+            .into_iter()
+            .map(|m| m.id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    match update_settings_in_engine(&engine, &app, &session_id, &patch, &advertised_models) {
+        Ok((meta, true)) => {
+            persist(&app, &engine);
+            emit(&app, SessionEvent::Meta { meta: meta.clone() });
+            ok(serde_json::to_value(meta).unwrap())
+        }
+        Ok((meta, false)) => ok(serde_json::to_value(meta).unwrap()),
+        Err(e) => e.into(),
+    }
 }
 
 #[tauri::command(async)]
@@ -845,6 +1152,91 @@ mod tests {
         assert!(again.permission_mode_since >= first);
     }
 
+    // ---------- response-mode: the response-mode switch (FR-2/FR-3) ----------
+
+    #[test]
+    fn switch_response_mode_in_engine_mutates_and_returns_the_updated_meta() {
+        let engine = test_engine_with(test_session());
+
+        let meta =
+            switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Concise)
+                .unwrap();
+        assert_eq!(meta.response_mode, ResponseMode::Concise);
+        assert_eq!(
+            engine.with_session("s1", |s| s.response_mode),
+            Some(ResponseMode::Concise)
+        );
+        // FR-2: the resolved snapshot is the very one `session.meta` carries.
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["responseMode"], "concise");
+    }
+
+    #[test]
+    fn switch_response_mode_in_engine_is_a_no_op_success_for_the_current_mode() {
+        // FR-3: re-picking the current mode is a no-op SUCCESS — not special-cased.
+        let engine = test_engine_with(test_session());
+        let meta =
+            switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Default)
+                .unwrap();
+        assert_eq!(meta.response_mode, ResponseMode::Default);
+    }
+
+    #[test]
+    fn switch_response_mode_in_engine_never_touches_what_the_thread_was_told() {
+        // FR-10: `response_mode_sent` records what reached the CHILD; a switch
+        // reaches no child (FR-4), so it must leave the field alone — that
+        // difference is exactly what the next turn's prefix decision reads.
+        let mut session = test_session();
+        session.response_mode_sent = Some(ResponseMode::Concise);
+        let engine = test_engine_with(session);
+
+        switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Default)
+            .unwrap();
+        assert_eq!(
+            engine.with_session("s1", |s| s.response_mode_sent),
+            Some(Some(ResponseMode::Concise))
+        );
+    }
+
+    #[test]
+    fn switch_response_mode_in_engine_rejects_an_unknown_session() {
+        let engine = test_engine_with(test_session());
+        let Err(err) = switch_response_mode_in_engine(
+            &engine,
+            &fake_accounts(),
+            "nope",
+            ResponseMode::Concise,
+        ) else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
+    }
+
+    #[test]
+    fn switch_response_mode_in_engine_rejects_a_terminal_session() {
+        // FR-3: a session that can take no further turn has nothing for a
+        // next-turn setting to act on.
+        for status in ["done", "error"] {
+            let mut session = test_session();
+            session.status = status.into();
+            let engine = test_engine_with(session);
+            let Err(err) = switch_response_mode_in_engine(
+                &engine,
+                &fake_accounts(),
+                "s1",
+                ResponseMode::Concise,
+            ) else {
+                panic!("expected an error");
+            };
+            assert_eq!(err.code, ErrorCode::SessionNotRunning);
+            // The session is untouched.
+            assert_eq!(
+                engine.with_session("s1", |s| s.response_mode),
+                Some(ResponseMode::Default)
+            );
+        }
+    }
+
     // ---------- rework-top-bar: the effort switch (design 11c) ----------
 
     #[test]
@@ -978,6 +1370,302 @@ mod tests {
                 Some(true)
             );
         }
+    }
+
+    // ---------- session-settings-sheet ----------
+
+    fn patch_with_name(name: &str) -> SessionSettingsPatch {
+        SessionSettingsPatch {
+            name: Some(name.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_empty_patch_touches_no_run_key_and_is_empty() {
+        let patch = SessionSettingsPatch::default();
+        assert!(patch.is_empty());
+        assert!(!patch.touches_run_key());
+    }
+
+    #[test]
+    fn a_name_only_patch_is_not_empty_but_touches_no_run_key() {
+        let patch = patch_with_name("new name");
+        assert!(!patch.is_empty());
+        assert!(!patch.touches_run_key());
+    }
+
+    #[test]
+    fn any_other_key_touches_a_run_key() {
+        let allow_git = SessionSettingsPatch {
+            allow_git: Some(true),
+            ..Default::default()
+        };
+        assert!(allow_git.touches_run_key());
+        assert!(!allow_git.is_empty());
+
+        let model = SessionSettingsPatch {
+            model_id: Some("opus".into()),
+            ..Default::default()
+        };
+        assert!(model.touches_run_key());
+    }
+
+    // ---------- validate_settings_patch (FR-6, §7 cases 3-5) ----------
+
+    #[test]
+    fn validate_settings_patch_accepts_every_field_when_well_formed() {
+        let patch = SessionSettingsPatch {
+            name: Some("renamed".into()),
+            model_id: Some("opus".into()),
+            effort: Some("high".into()),
+            permission_mode: Some("acceptEdits".into()),
+            response_mode: Some("concise".into()),
+            allow_git: Some(true),
+        };
+        let validated =
+            validate_settings_patch(&patch, &["sonnet".to_string(), "opus".to_string()]).unwrap();
+        assert_eq!(validated.name.as_deref(), Some("renamed"));
+        assert_eq!(validated.model_id.as_deref(), Some("opus"));
+        assert_eq!(validated.effort, Some(Some("high".to_string())));
+        assert_eq!(validated.permission_mode, Some("acceptEdits"));
+        assert_eq!(validated.response_mode, Some(ResponseMode::Concise));
+        assert_eq!(validated.allow_git, Some(true));
+    }
+
+    #[test]
+    fn validate_settings_patch_clears_effort_on_a_blank_value() {
+        // §5: '' clears back to the model's own default, mirroring
+        // session_switch_effort's absent/blank rule.
+        let patch = SessionSettingsPatch {
+            effort: Some("".into()),
+            ..Default::default()
+        };
+        let validated = validate_settings_patch(&patch, &[]).unwrap();
+        assert_eq!(validated.effort, Some(None));
+    }
+
+    #[test]
+    fn validate_settings_patch_rejects_a_blank_name() {
+        let patch = patch_with_name("   ");
+        let err = validate_settings_patch(&patch, &[]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn validate_settings_patch_rejects_a_model_the_account_does_not_advertise() {
+        // §7 case 4: the picker cannot produce it, so this is the
+        // tampered-payload path.
+        let patch = SessionSettingsPatch {
+            model_id: Some("claude-nonexistent".into()),
+            ..Default::default()
+        };
+        let err = validate_settings_patch(&patch, &["sonnet".to_string()]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn validate_settings_patch_rejects_unknown_effort_permission_and_response_modes() {
+        let bad_effort = SessionSettingsPatch {
+            effort: Some("turbo".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_settings_patch(&bad_effort, &[]).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+
+        let bad_permission = SessionSettingsPatch {
+            permission_mode: Some("yolo".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_settings_patch(&bad_permission, &[])
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+
+        let bad_response = SessionSettingsPatch {
+            response_mode: Some("terse".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_settings_patch(&bad_response, &[])
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+    }
+
+    // ---------- update_settings_in_engine (FR-2/FR-3/FR-4/§7 cases 1-5) ----------
+
+    #[test]
+    fn update_settings_in_engine_rejects_an_unknown_session() {
+        let engine = test_engine_with(test_session());
+        let Err(err) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "nope",
+            &patch_with_name("x"),
+            &[],
+        ) else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
+    }
+
+    #[test]
+    fn an_empty_patch_is_a_no_op_success_that_the_caller_must_not_persist_or_emit() {
+        // FR-3.
+        let engine = test_engine_with(test_session());
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &SessionSettingsPatch::default(),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(meta.name, "n");
+        assert!(!should_persist);
+    }
+
+    #[test]
+    fn a_name_only_patch_succeeds_on_a_terminal_session() {
+        // §7 case 2: matches session_rename — name touches no process.
+        let mut session = test_session();
+        session.status = status::DONE.into();
+        let engine = test_engine_with(session);
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch_with_name("renamed"),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(meta.name, "renamed");
+        assert!(should_persist);
+    }
+
+    #[test]
+    fn adding_a_run_key_to_a_terminal_session_is_rejected_whole() {
+        // §7 case 2: adding modelId to a name patch on a done session rejects
+        // the WHOLE patch — the name does not silently apply either.
+        let mut session = test_session();
+        session.status = status::DONE.into();
+        let engine = test_engine_with(session);
+        let patch = SessionSettingsPatch {
+            name: Some("renamed".into()),
+            model_id: Some("sonnet".into()),
+            ..Default::default()
+        };
+        let Err(err) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch,
+            &["sonnet".to_string()],
+        ) else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.code, ErrorCode::SessionNotRunning);
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("n".into())
+        );
+    }
+
+    #[test]
+    fn a_patch_with_one_invalid_key_writes_none_of_its_keys() {
+        // §7 cases 3-5: validate all, write all — nothing partial.
+        let engine = test_engine_with(test_session());
+        let patch = SessionSettingsPatch {
+            name: Some("renamed".into()),
+            allow_git: Some(true),
+            permission_mode: Some("not-a-mode".into()),
+            ..Default::default()
+        };
+        let Err(err) = update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[])
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("n".into())
+        );
+        assert_eq!(engine.with_session("s1", |s| s.allow_git), Some(false));
+    }
+
+    #[test]
+    fn four_changed_keys_apply_in_one_pass() {
+        // FR-2: validate all -> write all in a single mutation.
+        let engine = test_engine_with(test_session());
+        let patch = SessionSettingsPatch {
+            model_id: Some("opus".into()),
+            permission_mode: Some("acceptEdits".into()),
+            response_mode: Some("concise".into()),
+            allow_git: Some(true),
+            ..Default::default()
+        };
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch,
+            &["opus".to_string()],
+        )
+        .unwrap();
+        assert!(should_persist);
+        assert_eq!(meta.model.id, "opus");
+        assert_eq!(meta.permission_mode, "acceptEdits");
+        assert_eq!(meta.response_mode, ResponseMode::Concise);
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["allowGit"], true);
+        assert!(meta.permission_mode_since > 0);
+    }
+
+    #[test]
+    fn permission_mode_stamps_since_even_on_a_no_op_re_pick() {
+        // FR-4: mirrors switch_permission_mode_in_engine's rule exactly.
+        let mut session = test_session();
+        session.permission_mode_since = 1;
+        let engine = test_engine_with(session);
+        let patch = SessionSettingsPatch {
+            permission_mode: Some("default".into()),
+            ..Default::default()
+        };
+        let (meta, _) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[]).unwrap();
+        assert!(meta.permission_mode_since > 1);
+    }
+
+    #[test]
+    fn re_sending_the_current_value_is_an_idempotent_success() {
+        // FR-3: not special-cased — same mutation, same persist+emit signal.
+        let engine = test_engine_with(test_session()); // name "n"
+        let (meta, should_persist) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch_with_name("n"), &[])
+                .unwrap();
+        assert_eq!(meta.name, "n");
+        assert!(should_persist);
+    }
+
+    #[test]
+    fn effort_clears_through_the_full_pipeline() {
+        let mut session = test_session();
+        session.effort = Some("high".into());
+        let engine = test_engine_with(session);
+        let patch = SessionSettingsPatch {
+            effort: Some("".into()),
+            ..Default::default()
+        };
+        let (meta, _) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[]).unwrap();
+        assert_eq!(meta.effort, None);
+        assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
     }
 
     // ---------- session-profiles: session_create's profile resolution ----------

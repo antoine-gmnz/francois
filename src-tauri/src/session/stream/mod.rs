@@ -1,7 +1,8 @@
 //! the per-turn NDJSON reader and its stream-event handlers, split by
 //! concern: `lines` (top-level NDJSON line dispatch + turn teardown),
 //! `blocks` (`content_block_*` stream events), `tool_results` (`tool_result`
-//! reconciliation). `mod.rs` owns the shared per-turn bookkeeping types
+//! reconciliation), `coalesce` (the `assistant.delta` emission window).
+//! `mod.rs` owns the shared per-turn bookkeeping types
 //! (`ToolRec`, `BlockKind`), `parse_stream` (multi-provider-seam FR-5/FR-6:
 //! the whole per-line parse loop over a `BufRead` source and a `SessionEnv` —
 //! no `Child`, no `AppHandle`, which is what makes a golden replay of a
@@ -16,10 +17,12 @@
 //! lets `agents.rs` reach `extract_result_text` as a bare name.
 
 mod blocks;
+mod coalesce;
 mod lines;
 mod tool_results;
 
 pub(crate) use blocks::*;
+pub(crate) use coalesce::*;
 pub(crate) use lines::*;
 pub(crate) use tool_results::*;
 
@@ -42,6 +45,9 @@ pub struct ToolRec {
     /// workflow-panel FR-2: this call is a `Workflow` dispatch, so its input and
     /// its tool_result feed pane [6] as well as the transcript.
     is_workflow: bool,
+    /// command-inspect FR-2: when the `tool_use` was first seen
+    /// (`content_block_start`) — `StepDetail.startedAt`.
+    started_at: u64,
 }
 
 /// What kind of content block a stream index is carrying.
@@ -285,15 +291,27 @@ pub fn run_reader(
     // here so both the parse loop and the FR-18 fallback below agree on it.
     let turn_cmd: Option<String> = parse_command(&text).map(|(c, _)| c);
 
-    let outcome = parse_stream(
-        &app,
-        &session_id,
-        reader,
-        &stdin,
-        &pending_questions,
-        &pending_permissions,
-        turn_cmd.as_deref(),
-    );
+    // The parse path emits through the coalescing wrapper (coalesce.rs): one
+    // webview event per run of `assistant.delta` instead of one per NDJSON
+    // `text_delta` line. Scoped, because EVERY emission below this point uses
+    // the bare `&app` and so bypasses the wrapper — `close_open_block`,
+    // `finish_reader_turn` and the resume-fail notice all emit directly, and a
+    // buffered tail arriving after any of them would land outside the block it
+    // belongs to. The explicit flush is what makes that impossible.
+    let outcome = {
+        let env = CoalescingEnv::new(&app, ASSISTANT_DELTA_COALESCE);
+        let outcome = parse_stream(
+            &env,
+            &session_id,
+            reader,
+            &stdin,
+            &pending_questions,
+            &pending_permissions,
+            turn_cmd.as_deref(),
+        );
+        env.flush();
+        outcome
+    };
 
     // session-questions FR-2: stdout is gone (result, child death, or interrupt) —
     // drop the stdin writer before wait() so the CLI can never linger on an open pipe.
@@ -351,6 +369,7 @@ mod golden_replay_tests {
     use crate::session::testenv::TestEnv;
     use crate::session::testutil::test_session;
     use std::io::Cursor;
+    use std::time::Duration;
 
     /// `specs/multi-provider-seam.md` FR-17. **A real capture**, not a
     /// hand-built one: 103 raw stdout lines of a live `claude` 2.1.228 turn,
@@ -461,15 +480,24 @@ mod golden_replay_tests {
         let stdin = Arc::new(Mutex::new(None));
         let pending_questions = Arc::new(Mutex::new(HashMap::new()));
         let pending_permissions = Arc::new(Mutex::new(HashMap::new()));
-        parse_stream(
-            &env,
-            "s1",
-            Cursor::new(FIXTURE.as_bytes()),
-            &stdin,
-            &pending_questions,
-            &pending_permissions,
-            None,
-        );
+        {
+            // The same wrapper `run_reader` puts in front of the parse path
+            // (coalesce.rs), with the window pinned OPEN: what merges is then a
+            // function of the capture's line order alone, never of how fast the
+            // machine replayed it. The expected list is locked accordingly —
+            // one `assistant.delta` per run of same-block chunks.
+            let coalesced = CoalescingEnv::new(&env, Duration::MAX);
+            parse_stream(
+                &coalesced,
+                "s1",
+                Cursor::new(FIXTURE.as_bytes()),
+                &stdin,
+                &pending_questions,
+                &pending_permissions,
+                None,
+            );
+            coalesced.flush(); // the reader's own post-loop flush
+        }
         env
     }
 
@@ -501,6 +529,40 @@ mod golden_replay_tests {
                 "event #{i} diverged from the locked expected list"
             );
         }
+    }
+
+    #[test]
+    fn golden_replay_merges_each_blocks_deltas_without_losing_a_character() {
+        // coalesce.rs, on the real capture: with the window pinned open every
+        // run of same-block chunks is ONE event, and what it carries still adds
+        // up — offset 0, and text equal to the `assistant.done` that settles
+        // the block. That equality is the merge being indistinguishable from a
+        // single bigger delta; the count is the whole point of the window.
+        let env = run_fixture();
+        let events = env.session_events.lock().unwrap();
+        let mut done = 0;
+        for ev in events.iter() {
+            let SessionEvent::AssistantDone { block_id, text, .. } = ev else {
+                continue;
+            };
+            done += 1;
+            let deltas: Vec<(&String, usize)> = events
+                .iter()
+                .filter_map(|other| match other {
+                    SessionEvent::AssistantDelta {
+                        block_id: id,
+                        text,
+                        offset,
+                        ..
+                    } if id == block_id => Some((text, *offset)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(deltas.len(), 1, "block {block_id} should emit one delta");
+            assert_eq!(deltas[0].0, text, "merged text must equal the final text");
+            assert_eq!(deltas[0].1, 0, "a whole-block run starts at offset 0");
+        }
+        assert_eq!(done, 3, "the capture settles three text blocks");
     }
 
     #[test]

@@ -258,10 +258,13 @@ pub fn close_open_block(
             let text = text_accum.get(&block_id).cloned().unwrap_or_default();
             finalize_text_block(env, session_id, &block_id, text);
         }
+        // command-inspect: a block closed here never settled through a real
+        // tool_result, so FR-1 never ran for it — no record, no chevron.
         BlockKind::Tool => env.emit_session(SessionEvent::ToolDone {
             session_id: session_id.to_string(),
             block_id,
             meta: "interrupted".into(),
+            has_detail: None,
         }),
     }
 }

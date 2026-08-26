@@ -1,17 +1,11 @@
-/* design 11c — the run chip and its menu.
-   Same panel shell, width and footer grammar as 11a's `◈` menu: the bar speaks one
-   menu language rather than four bespoke popovers. */
+/* design 11c, amended by session-settings-sheet FR-20 — the run chip is now a
+   thin, stateless readout: clicking it opens the session settings sheet
+   (SessionSettingsSheet.tsx) rather than a popover of its own. */
 
 .run-chip {
-  position: relative;
   display: flex;
   align-items: center;
   flex-shrink: 0;
-}
-/* Bare = the panel without its chip, which is how `⋯` hosts it at the narrowest
-   width: the panel opens unchanged, anchored elsewhere. */
-.run-chip--bare {
-  position: static;
 }
 .run-chip__chip {
   display: flex;
@@ -24,8 +18,7 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.run-chip__chip:hover,
-.run-chip__chip--on {
+.run-chip__chip:hover {
   background: var(--bg-hover);
 }
 .run-chip__model {
@@ -48,227 +41,12 @@
 .run-chip__mode--danger {
   color: var(--error-bright);
 }
-.run-chip__caret {
-  font-size: var(--font-size-9);
-  color: var(--text-muted);
-}
-
-.run-chip__panel {
-  position: absolute;
-  top: calc(100% + var(--space-6));
-  right: 0;
-  z-index: 60;
-  width: 306px;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-elevated);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-dropdown);
-  overflow: hidden;
-}
-.run-chip--bare .run-chip__panel {
-  position: static;
-  width: 306px;
-}
-
-/* 11c at the narrowest width: what the bar stopped showing is STATED here, above
-   the first heading. Readouts, so they sit outside both option lists — context and
-   branch are not settings, and a panel that mixes the two teaches you to click
-   things that cannot be clicked. */
-.run-chip__readouts {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-9) var(--space-11);
-  background: var(--bg-deep);
-}
-.run-chip__readout {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-}
-.run-chip__readout-label {
-  flex: 1;
-  font-size: var(--font-size-10-5);
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.run-chip__readout-value {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-2);
-}
-
-.run-chip__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  padding: var(--space-9) var(--space-11) var(--space-5);
-}
-.run-chip__head-label {
-  font-size: var(--font-size-10-5);
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.run-chip__head-hint {
+/* response-mode FR-15: the face carries the mode's short only when it is not
+   `default`, so the common case never widens the row. Quieter than the permission
+   mode beside it — how the answer READS matters less at a glance than what the
+   session is allowed to do. */
+.run-chip__response {
   font-family: var(--font-mono);
   font-size: var(--font-size-9-5);
-  color: var(--text-faint);
-}
-.run-chip__group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-bottom: var(--space-4);
-}
-.run-chip__rule {
-  height: 1px;
-  background: var(--border-emphasis);
-  opacity: 0.5;
-}
-
-.run-chip__option {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-7);
-  padding: var(--space-7) var(--space-11);
-  cursor: pointer;
-}
-.run-chip__option:hover {
-  background: var(--bg-raised);
-}
-.run-chip__option--on,
-.run-chip__option--on:hover {
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
-}
-/* Only bypass gets a tinted row — and it gets it because the tint is the warning,
-   not because every mode deserves a colour. */
-.run-chip__option--danger,
-.run-chip__option--danger:hover {
-  background: color-mix(in srgb, var(--error) 12%, var(--bg-elevated));
-}
-.run-chip__option-line {
-  display: flex;
-  /* Top-aligned, not centred: a permission hint that wraps to two lines would
-     otherwise drag the radio dot down beside the HINT, and the dot belongs to
-     the label. Single-line model rows are unaffected — everything in them is
-     one line tall, so top and centre are the same place. */
-  align-items: flex-start;
-  gap: var(--space-9);
-}
-/* Radio, not switch: one mode is always in force, and a switch would imply the
-   others could be off at the same time. */
-.run-chip__dot {
-  font-size: var(--font-size-10);
-  line-height: 19px;
-  color: var(--text-disabled);
-  flex-shrink: 0;
-}
-.run-chip__dot--on {
-  color: var(--accent);
-}
-.run-chip__dot--danger {
-  color: var(--error-bright);
-}
-.run-chip__option-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  flex: 1;
-  min-width: 0;
-}
-.run-chip__option-label {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-12-5);
-  line-height: 19px;
-  color: var(--text-strong);
-}
-.run-chip__option-sub {
-  font-size: var(--font-size-11);
   color: var(--text-muted);
-}
-.run-chip__option-sub--danger {
-  color: color-mix(in srgb, var(--error-bright) 70%, var(--text-muted));
-}
-.run-chip__option-hint {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
-  line-height: 19px;
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
-.run-chip__option-hint--danger {
-  color: var(--error-bright);
-}
-/* The "how long, and where" line. The information you would want before walking
-   away from a session, which is exactly when nobody goes looking for it. */
-.run-chip__note {
-  margin-left: 19px;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
-  color: color-mix(in srgb, var(--error-bright) 55%, var(--text-muted));
-}
-
-/* Effort lives INSIDE the selected model's row, indented under its label, and only
-   for models that advertise one. Picking another model moves the track with it. */
-.run-chip__effort {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  width: max-content;
-  margin-left: 19px;
-  padding: var(--space-2);
-  background: var(--bg-raised);
-  border-radius: var(--radius-base);
-}
-.run-chip__effort-step {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 20px;
-  padding: 0 var(--space-9);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.run-chip__effort-step:hover {
-  color: var(--text-strong);
-}
-.run-chip__effort-step--on,
-.run-chip__effort-step--on:hover {
-  background: var(--bg-hover-2);
-  color: var(--text-bright);
-}
-
-.run-chip__error {
-  padding: var(--space-6) var(--space-11);
-  font-size: var(--font-size-11);
-  color: var(--error-bright);
-}
-.run-chip__foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  padding: var(--space-8) var(--space-11);
-  background: var(--bg-deep);
-}
-.run-chip__foot-copy {
-  font-size: var(--font-size-11-5);
-  color: var(--text-muted);
-}
-.run-chip__foot-action {
-  font-size: var(--font-size-11-5);
-  color: var(--text-hint);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.run-chip__foot-action:hover {
-  color: var(--text-strong);
 }

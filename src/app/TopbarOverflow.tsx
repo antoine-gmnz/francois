@@ -5,9 +5,10 @@
 // from taste. Its tooltip names its contents, which is what makes "where did the
 // model chip go" answerable without opening it.
 //
-// design 11c: the run chip's own panel opens from here UNCHANGED, with the context
-// and branch readouts stacked above its Model heading — one menu language, not a
-// second, smaller model picker that would then have to be kept in step.
+// session-settings-sheet FR-20: the run chip's own panel is gone — clicking it
+// (from here or from the bar) opens the settings sheet instead. `⋯` still states
+// the context and branch readouts the bar dropped, and hosts the run chip and
+// the layout control as its own two rows.
 
 import { useRef, useState } from 'react';
 import type { SessionMeta } from '../../contract/common';
@@ -57,8 +58,13 @@ export default function TopbarOverflow({ session, readouts, layout }: TopbarOver
 
       {open && (
         <div className="session-row__overflow-panel">
-          {/* The run chip's panel, bare — same shell, same footer, anchored here. */}
-          <RunChip session={session} readouts={readouts} bare />
+          {readouts.map((r) => (
+            <div key={r.label} className="session-row__overflow-readout">
+              <span className="session-row__overflow-readout-label">{r.label}</span>
+              <span className="session-row__overflow-readout-value">{r.value}</span>
+            </div>
+          ))}
+          <RunChip session={session} onOpen={() => setOpen(false)} />
           <div className="session-row__overflow-layout">
             <span className="session-row__overflow-layout-label">Layout</span>
             {layout}

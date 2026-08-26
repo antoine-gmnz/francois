@@ -794,6 +794,41 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
       expect(b.isStreaming).toBe(false);
     });
 
+    // command-inspect FR-10/FR-12: the chevron only exists because tool.done said
+    // a StepDetail record was written.
+    it('carries hasDetail onto the tool block when the event set it', () => {
+      const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts' });
+      const s2 = transcriptReducer(s1, { t: 'toolDone', blockId: 't1', meta: '412 lines', hasDetail: true });
+      const b = s2.blocks[0];
+      if (b.kind !== 'tool') throw new Error('expected tool block');
+      expect(b.hasDetail).toBe(true);
+    });
+
+    it('leaves hasDetail unset when the event omitted it (pre-feature step)', () => {
+      const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts' });
+      const s2 = transcriptReducer(s1, { t: 'toolDone', blockId: 't1', meta: '412 lines' });
+      const b = s2.blocks[0];
+      if (b.kind !== 'tool') throw new Error('expected tool block');
+      expect(b.hasDetail).toBeUndefined();
+    });
+
+    it('a later meta-only tool.done never erases an established hasDetail', () => {
+      const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts' });
+      const s2 = transcriptReducer(s1, { t: 'toolDone', blockId: 't1', meta: '412 lines', hasDetail: true });
+      const s3 = transcriptReducer(s2, { t: 'toolDone', blockId: 't1', meta: '412 lines' });
+      const b = s3.blocks[0];
+      if (b.kind !== 'tool') throw new Error('expected tool block');
+      expect(b.hasDetail).toBe(true);
+    });
+
+    it('never puts hasDetail on a subagent block (FR-8)', () => {
+      const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Task', summary: 'explorer' });
+      const s2 = transcriptReducer(s1, { t: 'toolDone', blockId: 't1', meta: 'done in 4s', hasDetail: true });
+      const b = s2.blocks[0];
+      if (b.kind !== 'subagent') throw new Error('expected subagent block');
+      expect('hasDetail' in b).toBe(false);
+    });
+
     it('is idempotent on replay', () => {
       const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts' });
       const s2 = transcriptReducer(s1, { t: 'toolDone', blockId: 't1', meta: '412 lines' });
@@ -1070,6 +1105,8 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
       accountId: 'default',
       agentRuntime: 'claude-code' as const,
       protocol: 'anthropic' as const,
+      responseMode: 'default' as const,
+      allowGit: false,
     };
     applySessionEvent(dispatch, setters, { type: 'session.meta', meta });
     expect(setters.setStatus).toHaveBeenCalledWith('error');
@@ -1153,7 +1190,10 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     applySessionEvent(dispatch, setters, { type: 'tool.start', sessionId: 'x', blockId: 't2', tool: 'Agent', summary: 'reviewer', model: 'haiku' });
     expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolStart', blockId: 't2', tool: 'Agent', summary: 'reviewer', model: 'haiku' });
     applySessionEvent(dispatch, setters, { type: 'tool.done', sessionId: 'x', blockId: 't1', meta: '10 lines' });
-    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolDone', blockId: 't1', meta: '10 lines' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolDone', blockId: 't1', meta: '10 lines', hasDetail: undefined });
+    // command-inspect FR-10: hasDetail rides the same event when core wrote a record
+    applySessionEvent(dispatch, setters, { type: 'tool.done', sessionId: 'x', blockId: 't2', meta: '10 lines', hasDetail: true });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolDone', blockId: 't2', meta: '10 lines', hasDetail: true });
   });
 
   it('command.started / command.output forward to the reducer (interactive-commands FR-20)', () => {

@@ -134,6 +134,9 @@ fn buf_block(
         // design 9a: an agent tab's blocks are timed the same as a session's —
         // the tab renders the same turn header, so the clock has to be real.
         at: now_ms(),
+        // command-inspect FR-8: an agent tab's transcript is in-memory-only
+        // and never captures — always false, never set anywhere else here.
+        has_detail: false,
     }
 }
 
