@@ -232,6 +232,48 @@ describe('log-tail streams', () => {
   });
 });
 
+describe('dropSessionExtStreams (session removal)', () => {
+  it('closes live streams on the core and drops every entry the session owned', () => {
+    useStore.getState().startExtStream('docker:logs', '/repo', 's-1', 'web_1');
+    useStore.getState().attachExtStream('docker:logs', 's1');
+    // Still opening — no streamId minted yet, so there is nothing to close on
+    // the core, but the entry must still be dropped.
+    useStore.getState().startExtStream('docker:build', '/repo', 's-1', null);
+
+    useStore.getState().dropSessionExtStreams('s-1');
+
+    expect(useStore.getState().extStreams['docker:logs']).toBeUndefined();
+    expect(useStore.getState().extStreams['docker:build']).toBeUndefined();
+    expect(closeStreamCalls).toEqual([{ streamId: 's1' }]);
+  });
+
+  it('leaves another session’s streams and a fleet-scoped stream (sessionId null) untouched', () => {
+    useStore.getState().startExtStream('docker:logs', '/repo', 's-1', 'web_1');
+    useStore.getState().attachExtStream('docker:logs', 's1');
+    useStore.getState().startExtStream('docker:other', '/repo', 's-2', 'web_1');
+    useStore.getState().attachExtStream('docker:other', 's2');
+    useStore.getState().startExtStream('cohorte:loop-log', null, null, null);
+    useStore.getState().attachExtStream('cohorte:loop-log', 's3');
+
+    useStore.getState().dropSessionExtStreams('s-1');
+
+    expect(useStore.getState().extStreams['docker:logs']).toBeUndefined();
+    expect(useStore.getState().extStreams['docker:other']).toBeDefined();
+    expect(useStore.getState().extStreams['cohorte:loop-log']).toBeDefined();
+    expect(closeStreamCalls).toEqual([{ streamId: 's1' }]);
+  });
+
+  it('is a no-op — same extStreams reference, nothing closed — when the session held no streams', () => {
+    useStore.getState().startExtStream('docker:other', '/repo', 's-2', 'web_1');
+    const before = useStore.getState().extStreams;
+
+    useStore.getState().dropSessionExtStreams('s-1');
+
+    expect(useStore.getState().extStreams).toBe(before);
+    expect(closeStreamCalls).toEqual([]);
+  });
+});
+
 // ---------- rework-top-bar (design 11a): the pin set ----------
 
 describe('the pinned extensions', () => {

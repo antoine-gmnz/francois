@@ -52,9 +52,26 @@ export interface ConversationViewProps {
    * always targeted pane 0 regardless of which pane was actually open here).
    */
   onOpenShell: () => void;
+  /**
+   * Whether this transcript is the one ON SCREEN. False for a mount the main
+   * pane's `SessionViewHost` is holding behind `display: none` — another
+   * session's transcript, or this one while the pane shows DIFF/SHELL. It stays
+   * subscribed either way (that is the point of holding it); what it gates is
+   * the work that only pays off on a visible subtree — see
+   * `useConversationTranscript`. Defaults to true for every call site that
+   * mounts one view at a time (`SplitPane`).
+   */
+  visible?: boolean;
 }
 
-export default function ConversationView({ sessionId, inert = false, onFocusRequest, inertFooter, onOpenShell }: ConversationViewProps) {
+export default function ConversationView({
+  sessionId,
+  inert = false,
+  onFocusRequest,
+  inertFooter,
+  onOpenShell,
+  visible = true,
+}: ConversationViewProps) {
   const meta = useSessionMeta(sessionId);
   const {
     state,
@@ -75,7 +92,7 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
     jumpToLatest,
     earlierRow,
     activateEarlier,
-  } = useConversationTranscript(sessionId);
+  } = useConversationTranscript(sessionId, visible);
 
   // design 9a: a streaming turn's header counts its duration up. Gated on the
   // session being busy, so a transcript of finished turns re-renders never —
@@ -198,6 +215,7 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
       <ComposerPane
         sessionId={sessionId}
         inert={inert}
+        visible={visible}
         onFocusRequest={onFocusRequest}
         inertFooter={inertFooter}
         status={status}

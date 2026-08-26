@@ -52,7 +52,7 @@ export interface ShellStoreState {
   removeSession: (sessionId: SessionId) => void;
 }
 
-export const useShellStore = create<ShellStoreState>((set) => ({
+export const useShellStore = create<ShellStoreState>((set, get) => ({
   shells: {},
   activeShellId: {},
   unread: {},
@@ -97,7 +97,14 @@ export const useShellStore = create<ShellStoreState>((set) => ({
       return { activeShellId: next };
     }),
 
-  markUnread: (shellId) => set((s) => (s.unread[shellId] ? {} : { unread: { ...s.unread, [shellId]: true } })),
+  // Bail BEFORE calling set on the no-op path: initShellEvents calls this for
+  // EVERY shell.data chunk of every non-displayed shell (up to ~125/s for a
+  // noisy hidden shell), and `set` notifies every subscriber even when the
+  // returned patch is `{}` — the hot path must never reach it once already true.
+  markUnread: (shellId) => {
+    if (get().unread[shellId]) return;
+    set((s) => ({ unread: { ...s.unread, [shellId]: true } }));
+  },
 
   clearUnread: (shellId) =>
     set((s) => {

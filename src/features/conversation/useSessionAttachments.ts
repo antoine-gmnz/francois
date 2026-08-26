@@ -11,10 +11,15 @@
 // is all that is left untestable without a DOM renderer.
 //
 // State lives here rather than in a store because it is per-composer and must
-// die with it: ConversationView is keyed by sessionId, so a session switch drops
+// die with it: ConversationView is keyed by sessionId, so losing that view drops
 // the staged list — exactly what FR-17's start-up sweep treats those records as
 // (abandoned). Chips are recomputed from (input, staged) on every render (FR-12),
 // so nothing here can disagree with the prompt.
+//
+// The main pane HOLDS the last few sessions' views mounted (SessionViewHost), so
+// "losing the view" is no longer the same thing as looking at another session:
+// inside that window a staged image survives the round trip, like the draft text
+// it was staged beside. Past it, the view unmounts and the sweep applies as before.
 
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -252,9 +257,11 @@ export function subscribeDragDrop(handlers: DragDropHandlers): Promise<() => voi
 //
 // Ownership rule: a paste that landed on some OTHER editable element belongs to
 // that element (the palette field, a modal input) and is left strictly alone.
-// Anything else — body, a plain div, the composer textarea itself — is ours. The
-// listener is scoped in time by the SESSION tab: MainPaneBody unmounts
-// ConversationView when another tab is active.
+// Anything else — body, a plain div, the composer textarea itself — is ours.
+// Scoping the listener in TIME is the caller's job, through `active` below:
+// MainPaneBody no longer unmounts ConversationView on a tab or session switch,
+// it hides it (SessionViewHost), so only the composer that is both focused and
+// on screen may install this.
 
 export interface PasteTargetLike {
   tagName?: string;
