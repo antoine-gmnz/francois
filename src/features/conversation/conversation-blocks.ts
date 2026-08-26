@@ -497,6 +497,24 @@ export function pushDelta(buffer: Map<string, DeltaChunk[]>, blockId: string, te
 }
 
 /**
+ * Whether a buffered delta should also SCHEDULE the animation-frame flush that
+ * applies it.
+ *
+ * Two independent reasons not to. `framePending` is the coalescer itself — one
+ * frame already owns the whole buffer, which is what makes a burst of deltas
+ * one reducer pass (FR-5). `visible` is the held-transcript case: the main
+ * pane's `SessionViewHost` keeps the last few sessions' transcripts mounted
+ * behind `display: none`, and a frame scheduled for a subtree nobody can see
+ * spends the VISIBLE session's frame budget re-rendering markdown off screen.
+ * Buffering without scheduling defers that work to the moment the session comes
+ * back (or to the next non-delta event, which flushes unconditionally) — the
+ * text is identical either way, since every chunk carries its own offset.
+ */
+export function shouldScheduleDeltaFlush(visible: boolean, framePending: boolean): boolean {
+  return visible && !framePending;
+}
+
+/**
  * Drains the buffer into one `deltaBatch` action per blockId (first-seen
  * order) and empties it. Called on the animation-frame flush, on any
  * non-delta event (FR-6), and on unmount/session switch (FR-7).

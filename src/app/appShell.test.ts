@@ -3,6 +3,7 @@ import {
   buildShortcutActions,
   clampToPaneTab,
   dividerGridArea,
+  hostedTab,
   mainPaneBranch,
   paneGridArea,
   paneMenuEntries,
@@ -128,6 +129,31 @@ describe('mainPaneBranch', () => {
   // workflow-details FR-11: the second dynamic tab kind gets its own branch.
   it('routes a workflow:<id> tab to the workflow branch', () => {
     expect(mainPaneBranch('workflow:run-1')).toBe('workflow');
+  });
+});
+
+// SESSION and SHELL are rendered by the persistent SessionViewHost, which is
+// mounted on EVERY branch — this says which one it shows.
+describe('hostedTab', () => {
+  it('names the two bodies the host owns', () => {
+    expect(hostedTab('session')).toBe('session');
+    expect(hostedTab('shell')).toBe('shell');
+  });
+
+  it('answers null on every other branch — the host stays mounted, showing nothing', () => {
+    for (const branch of ['overview', 'diff', 'panel', 'agent', 'workflow', 'ext'] as const) {
+      expect(hostedTab(branch)).toBeNull();
+    }
+  });
+
+  // The two are read off the same `mainPaneBranch`, so a tab can never display
+  // one body while the branch table renders the other.
+  it('agrees with mainPaneBranch for the tabs that reach it', () => {
+    expect(hostedTab(mainPaneBranch('session'))).toBe('session');
+    expect(hostedTab(mainPaneBranch('shell'))).toBe('shell');
+    expect(hostedTab(mainPaneBranch('diff'))).toBeNull();
+    expect(hostedTab(mainPaneBranch('agents'))).toBeNull();
+    expect(hostedTab(mainPaneBranch('agent:abc-123'))).toBeNull();
   });
 });
 

@@ -131,6 +131,9 @@ export function useSessionFleetSync(): SessionFleetSync {
     clearRosterSignals(id); // design 12b: activity line / turn clock / parked ask
     // split-session: the rail badges' per-session counts go with it.
     useStore.getState().dropPanelCounts(id);
+    // …and any extension log-tail streams this session owned, so a capped log
+    // buffer never sits retained under a panel id that later gets reused.
+    useStore.getState().dropSessionExtStreams(id);
     // multiple-shells FR-9: purge the session's shell roster/active-id/unread
     // bookkeeping too, mirroring the core's own dispose_session_shells.
     useShellStore.getState().removeSession(id);

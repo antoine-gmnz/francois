@@ -353,7 +353,14 @@ export default function App() {
         <div className="app-main-cell">
           {/* The four dissolved panes. ALWAYS mounted — their feeds publish the
               counts the roster rows read, and re-subscribing on every tab switch
-              would both flicker the counts and double the IPC. */}
+              would both flicker the counts and double the IPC.
+              …and always mounted across a SESSION switch too: each panel is
+              handed `sessionId` as a prop rather than keyed by it, because a key
+              here contradicted the sentence above — every switch remounted all
+              four and re-ran four hydrations. Each of them resets its own
+              per-session state off that prop (the feed hooks' `[sessionId]`
+              effects plus the panels' own selection/overlay resets), which is
+              what makes the key unnecessary. */}
           <section
             className="app-main-section app-panel-host"
             style={{ display: panelTab ? undefined : 'none', borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
@@ -363,7 +370,7 @@ export default function App() {
               const Panel = PANELS[pane];
               return (
                 <div key={pane} className="app-panel-slot" style={{ display: mainTab === pane ? undefined : 'none' }}>
-                  <Panel key={paneSessionId ?? 'none'} sessionId={paneSessionId} />
+                  <Panel sessionId={paneSessionId} />
                 </div>
               );
             })}

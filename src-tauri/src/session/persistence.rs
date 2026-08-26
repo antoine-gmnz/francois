@@ -245,12 +245,20 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
 /// Fold persisted lines into blocks, upserting by blockId: the LAST line wins, at
 /// the FIRST occurrence's position. Question resolutions re-append their block
 /// (session-questions FR-15); everything else appends exactly once.
+///
+/// A `blockId -> out` index keeps this O(n): a linear `find` per line would be
+/// O(n²) over the file (this runs per session at startup, and again on every
+/// scroll-up page — a 10k-line transcript is ~10M comparisons the naive way).
 pub(crate) fn parse_transcript(content: &str) -> Vec<BufBlock> {
     let mut out: Vec<BufBlock> = Vec::new();
+    let mut positions: HashMap<String, usize> = HashMap::new();
     for b in content.lines().filter_map(parse_persisted_block) {
-        match out.iter_mut().find(|e| e.block_id == b.block_id) {
-            Some(slot) => *slot = b,
-            None => out.push(b),
+        match positions.get(&b.block_id).copied() {
+            Some(idx) => out[idx] = b,
+            None => {
+                positions.insert(b.block_id.clone(), out.len());
+                out.push(b);
+            }
         }
     }
     out
@@ -1260,7 +1268,10 @@ mod tests {
     #[test]
     fn transcript_upserts_by_block_id_on_reload() {
         // FR-15: exactly one block per blockId — the LAST line wins, at the FIRST
-        // occurrence's position (the durable-sessions upsert rule).
+        // occurrence's position (the durable-sessions upsert rule). Also pins that
+        // the OTHER, distinct ids keep their own relative order around the
+        // upserted slot rather than just landing anywhere as long as the count
+        // matches — the exact thing an index-based fold could get wrong.
         let content = concat!(
             r#"{"blockId":"u1","kind":"user","text":"hi","tool":"","summary":"","meta":null}"#,
             "\n",
@@ -1273,7 +1284,9 @@ mod tests {
         );
         let blocks = parse_transcript(content);
         assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].block_id, "u1");
         assert_eq!(blocks[1].block_id, "q1"); // position of the first occurrence
+        assert_eq!(blocks[2].block_id, "a1");
         let q = classify_block(&blocks[1]);
         assert_eq!(q["state"], "answered");
         assert_eq!(q["answers"], json!({ "Q": "A" }));

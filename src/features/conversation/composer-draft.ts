@@ -1,7 +1,12 @@
 // Composer drafts — the unsent prompt text, kept per session across a session
-// switch. ConversationView is keyed by sessionId, so switching away unmounts it
-// and its `input` useState dies with it; without this map a half-typed prompt
-// vanishes the moment the user looks at another session.
+// switch. ConversationView is keyed by sessionId, so switching away eventually
+// unmounts it and its `input` useState dies with it; without this map a
+// half-typed prompt would vanish the moment the user looks at another session.
+//
+// "Eventually", since the main pane's `SessionViewHost` now HOLDS the last few
+// sessions' views mounted — inside that window the composer's own state
+// survives and this map is never consulted. It is what covers everything past
+// it: the fourth session back, and any session whose view was evicted.
 //
 // Same shape as ./message-history's store, and for the same reasons: a plain
 // module map rather than a zustand slice (nothing renders from it — the composer

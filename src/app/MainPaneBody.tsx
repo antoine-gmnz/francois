@@ -2,7 +2,6 @@ import { useCallback, type ReactNode } from 'react';
 import type { SessionMeta } from '../../contract/common';
 import AgentView from '../features/agents/AgentView';
 import { workflowIdFromTab } from '../features/agents/agent-tab';
-import ConversationView from '../features/conversation/ConversationView';
 import DiffView from '../features/diff/DiffView';
 import type { ExtensionId } from '../../contract/extensions';
 import ExtensionView from '../features/extensions/ExtensionView';
@@ -10,9 +9,9 @@ import { extIdFromTab } from '../features/extensions/extensions';
 import WorkflowView from '../features/workflows/WorkflowView';
 import OverviewView from '../features/overview/OverviewView';
 import type { MainTab } from '../lib/store';
-import { mainPaneBranch, type MainPaneBranch } from './appShell';
+import { hostedTab, mainPaneBranch, type MainPaneBranch } from './appShell';
 import EmptyPaneMessage from './EmptyPaneMessage';
-import ShellTabView from './ShellTabView';
+import SessionViewHost from './SessionViewHost';
 
 export interface MainPaneBodyProps {
   mainTab: MainTab;
@@ -27,13 +26,50 @@ export interface MainPaneBodyProps {
 
 /** The main pane's body: one renderer per `MainTab` (Phase 5 dispatch table),
  * with the dynamic `agent:<id>` tabs handled explicitly since they are not a
- * plain `MainTab` key the table can be built over. */
+ * plain `MainTab` key the table can be built over.
+ *
+ * Two of those renderers are gone from the table: SESSION and SHELL are
+ * rendered by the persistent `SessionViewHost` below, which is mounted on EVERY
+ * branch. Keying them by session here (`<ConversationView key={active.id}>`)
+ * meant a session switch — and a tab switch away and back — re-ran hydration
+ * over IPC, re-parsed every markdown block, and destroyed and replayed every
+ * xterm. The table still owns their EMPTY states, which need no host. */
 export default function MainPaneBody({ mainTab, activeAgentId, active, home, setMainTab, projectName }: MainPaneBodyProps) {
   const branch = mainPaneBranch(mainTab);
   // quality fix: a stable callback so ConversationView's `onOpenShell` prop
   // does not break the Turn/Block/ToolRow shallow-memo chain on every render.
   const openShell = useCallback(() => setMainTab('shell'), [setMainTab]);
 
+  return (
+    <>
+      {/* Never unmounted — see the component's own note. Rendered before the
+          branch so DOM order matches the visual order of the one visible
+          child; the host is `display: none` on every branch but these two. */}
+      <SessionViewHost sessionId={active?.id ?? null} tab={hostedTab(branch)} home={home} onOpenShell={openShell} />
+      <MainPaneBranchBody
+        branch={branch}
+        mainTab={mainTab}
+        activeAgentId={activeAgentId}
+        active={active}
+        home={home}
+        setMainTab={setMainTab}
+        projectName={projectName}
+      />
+    </>
+  );
+}
+
+/** Everything the host does NOT hold: the six other branches, plus the empty
+ *  states of the two it does. */
+function MainPaneBranchBody({
+  branch,
+  mainTab,
+  activeAgentId,
+  active,
+  home,
+  setMainTab,
+  projectName,
+}: MainPaneBodyProps & { branch: MainPaneBranch }) {
   if (branch === 'ext') {
     // extensions FR-15: keyed by extension id, so switching extension tabs
     // remounts rather than leaking the previous one's sections. Unlike the two
@@ -85,28 +121,23 @@ export default function MainPaneBody({ mainTab, activeAgentId, active, home, set
     // publish the counts the roster rows read).
     panel: () => null,
     overview: () => <OverviewView home={home} />,
+    // SESSION/SHELL: the body itself is the host's (see MainPaneBody above) —
+    // only the sessionless prompt is rendered here.
     session: () =>
-      active ? (
-        // command-inspect FR-16: this IS the `main` pane, so its own setMainTab
-        // is the pane-scoped switch — no global setFocusedPane needed here.
-        <ConversationView key={active.id} sessionId={active.id} onOpenShell={openShell} />
-      ) : (
+      active ? null : (
         <EmptyPaneMessage>
           select a session, or press <span className="app-inline-key">n</span> to start one
         </EmptyPaneMessage>
       ),
+    // DIFF stays keyed by session: it re-reads `git diff` on mount either way,
+    // so holding it would buy nothing and hold a stale tree.
     diff: () =>
       active ? (
         <DiffView key={active.id} sessionId={active.id} />
       ) : (
         <EmptyPaneMessage>select a session to review its changes</EmptyPaneMessage>
       ),
-    shell: () =>
-      active ? (
-        <ShellTabView key={active.id} sessionId={active.id} home={home} />
-      ) : (
-        <EmptyPaneMessage>select a session to open its shell</EmptyPaneMessage>
-      ),
+    shell: () => (active ? null : <EmptyPaneMessage>select a session to open its shell</EmptyPaneMessage>),
   };
 
   return renderers[branch]();
