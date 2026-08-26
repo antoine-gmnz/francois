@@ -5,10 +5,11 @@
 // the fetch/open/loading state — this component only ever sees a resolved
 // `StepDetail`.
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SessionId } from '../../../contract/common';
 import type { StepDetail, StepOutput } from '../../../contract/command-inspect';
 import { shellEnsure, shellWrite } from '../../lib/api';
+import { useMounted } from '../../lib/hooks/useMounted';
 import {
   stepHeaderGroups,
   stepOutputFooter,
@@ -73,13 +74,19 @@ function CommandLine({ command, sessionId, onOpenShell }: { command: string; ses
   const [copied, setCopied] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout>>();
+  const mounted = useMounted();
+
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(command);
+      if (!mounted.current) return;
       setCopied(true);
       clearTimeout(copyTimer.current);
-      copyTimer.current = setTimeout(() => setCopied(false), 1200);
+      copyTimer.current = setTimeout(() => {
+        if (mounted.current) setCopied(false);
+      }, 1200);
     } catch {
       /* clipboard denied — the command is on screen to copy by hand */
     }
@@ -95,11 +102,13 @@ function CommandLine({ command, sessionId, onOpenShell }: { command: string; ses
     setShellError(null);
     onOpenShell?.();
     const ensured = await shellEnsure({ owner: { kind: 'session', sessionId } });
+    if (!mounted.current) return;
     if (!ensured.ok) {
       setShellError(ensured.error.message);
       return;
     }
     const written = await shellWrite(ensured.data.shellId, command);
+    if (!mounted.current) return;
     if (!written.ok) setShellError(written.error.message);
   }
 

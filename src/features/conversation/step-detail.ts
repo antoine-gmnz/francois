@@ -43,7 +43,11 @@ export function stepRuntimeLabel(runtime: ClaudeRuntime, distro?: string): strin
 /** FR-15/FR-4: `exit N` when the runtime stated one, `failed` when errored
  *  without one, or null on a clean success — nothing renders for it. */
 export function stepOutcome(detail: Pick<StepDetail, 'isError' | 'exitCode'>): string | null {
-  if (detail.exitCode !== undefined) return `exit ${detail.exitCode}`;
+  if (detail.exitCode !== undefined) {
+    // A clean exit 0 is a success — no outcome segment (design brief: absent on success).
+    if (detail.exitCode === 0 && !detail.isError) return null;
+    return `exit ${detail.exitCode}`;
+  }
   if (detail.isError) return 'failed';
   return null;
 }

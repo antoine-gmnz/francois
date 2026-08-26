@@ -79,7 +79,7 @@ describe('stepRuntimeLabel', () => {
 describe('stepOutcome', () => {
   it('prefers exit N when an exit code is known', () => {
     expect(stepOutcome({ isError: true, exitCode: 1 })).toBe('exit 1');
-    expect(stepOutcome({ isError: false, exitCode: 0 })).toBe('exit 0');
+    expect(stepOutcome({ isError: false, exitCode: 0 })).toBeNull();
   });
 
   it('falls back to "failed" when errored without a code', () => {
