@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "francois"
-version = "0.35.1"
+version = "0.36.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
