@@ -795,6 +795,11 @@
 .toolrow {
   display: grid;
   grid-template-columns: 16px 46px minmax(0, 1fr) auto;
+  /* The row is one line, always — design 16a's disclosure costs no height. An
+     overflowing child spills into an implicit COLUMN rather than opening a
+     second row, which is what used to put the chevron on its own line under
+     the glyph and make an expandable row taller than an inert one. */
+  grid-auto-flow: column;
   align-items: center;
   column-gap: var(--space-10);
   padding: var(--space-4) var(--space-8);
@@ -818,12 +823,23 @@
 .toolrow--open .toolrow__target {
   color: var(--text-bright);
 }
+/* The right edge, as one grid cell: meta chips, then the disclosure. */
+.toolrow__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  min-width: 0;
+}
 .toolrow__disclosure {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   font-size: var(--font-size-10-5);
+  line-height: 1;
   color: var(--text-faint);
+  white-space: nowrap;
+  /* Hidden, not absent: the width stays reserved so hovering a row never
+     shifts the chips it sits beside. */
   opacity: 0;
 }
 .toolrow--expandable:hover .toolrow__disclosure,
@@ -1100,6 +1116,12 @@
   text-transform: uppercase;
   letter-spacing: 0.14em;
 }
+/* The tool input's own `description` — prose in a row of metadata, so it reads
+   a shade brighter than the cwd and runtime it sits between, and keeps its own
+   capitalisation (it is a sentence the model wrote, not a field name). */
+.step-detail__header-seg--description {
+  color: var(--text-dim);
+}
 .step-detail__header-seg--outcome {
   color: var(--error-bright);
 }
@@ -1121,18 +1143,24 @@
   font-size: var(--font-size-12-5);
 }
 .step-detail__cmd-line {
-  color: var(--text);
+  color: var(--text-bright);
+  line-height: var(--terminal-line-height);
   overflow-wrap: anywhere;
   min-width: 0;
 }
 .step-detail__prompt {
   color: var(--logo-slab-dim);
 }
+/* Pretty-printed input reads as a terminal too. `pre-wrap` keeps the leading
+   indentation that carries the nesting; a value too wide for the band wraps
+   onto the next line rather than hiding behind a horizontal scrollbar. */
 .step-detail__json {
   background: var(--bg-canvas);
-  color: var(--text-2);
+  color: var(--text-bright);
   padding: var(--space-10) var(--space-11);
-  font-size: var(--font-size-11-5);
+  font-size: var(--font-size-12-5);
+  line-height: var(--terminal-line-height);
+  tab-size: 8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1159,14 +1187,30 @@
   font-size: var(--font-size-9-5);
   padding: var(--space-5) var(--space-11);
 }
+/* Captured output is terminal output, so it is set as terminal output: the
+   SHELL tab's own font, size, line height and foreground (ShellTerminal.tsx),
+   and `tab-size: 8` so an indented log keeps the columns it was written with.
+   Colour comes from the bytes themselves (./ansi.ts + the .ansi-* palette
+   below); this is only the ground it lands on.
+
+   A line too wide for the band WRAPS — it does not scroll. The record is read
+   in the flow of the transcript, and a horizontal scrollbar there asks you to
+   drag a band sideways to find out why a command failed, with no hint that
+   there was anything to the right in the first place. `pre-wrap` keeps the
+   leading whitespace that carries the log's structure; `anywhere` is what
+   breaks the one case wrapping alone cannot, an unbroken path or hash wider
+   than the whole band. */
 .step-detail__output-body {
   background: var(--bg-canvas);
-  color: var(--text-dim);
-  font-size: var(--font-size-11-5);
+  color: var(--text-bright);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12-5);
+  line-height: var(--terminal-line-height);
+  tab-size: 8;
   padding: var(--space-9) var(--space-11);
   margin: 0;
-  white-space: pre;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .step-detail__fold {
   background: var(--bg-canvas);
@@ -1194,4 +1238,120 @@
   padding: var(--space-7) var(--space-11);
   font-size: var(--font-size-10-5);
   color: var(--text-faint);
+}
+
+/* ── the SGR palette (./ansi.ts) ────────────────────────────────────────────
+   The sixteen ANSI colours, resolved to the SAME tokens
+   features/shell/xterm-theme.ts hands xterm — a log read here and the same log
+   watched live in the SHELL tab must colour the same bytes the same way. Keep
+   the two lists in step: xterm cannot read CSS, so this is a mirror, not a
+   source. 256-colour and truecolour have no token to land on and arrive as an
+   `rgb()` on the span itself. */
+.ansi-bold {
+  font-weight: 500;
+}
+.ansi-dim {
+  opacity: 0.65;
+}
+.ansi-italic {
+  font-style: italic;
+}
+.ansi-underline {
+  text-decoration: underline;
+}
+.ansi-fg-black {
+  color: var(--bg-panel);
+}
+.ansi-fg-red {
+  color: var(--error);
+}
+.ansi-fg-green {
+  color: var(--success);
+}
+.ansi-fg-yellow {
+  color: var(--accent);
+}
+.ansi-fg-blue {
+  color: var(--text-hint);
+}
+.ansi-fg-magenta {
+  color: var(--hue-purple-soft);
+}
+.ansi-fg-cyan {
+  color: var(--hue-teal);
+}
+.ansi-fg-white {
+  color: var(--text);
+}
+.ansi-fg-bright-black {
+  color: var(--text-muted);
+}
+.ansi-fg-bright-red {
+  color: var(--error-bright);
+}
+.ansi-fg-bright-green {
+  color: var(--success-bright);
+}
+.ansi-fg-bright-yellow {
+  color: var(--accent-2);
+}
+.ansi-fg-bright-blue {
+  color: var(--text-strong);
+}
+.ansi-fg-bright-magenta {
+  color: var(--hue-purple-soft);
+}
+.ansi-fg-bright-cyan {
+  color: var(--hue-teal);
+}
+.ansi-fg-bright-white {
+  color: var(--text-bright);
+}
+.ansi-bg-black {
+  background: var(--bg-panel);
+}
+.ansi-bg-red {
+  background: var(--error);
+}
+.ansi-bg-green {
+  background: var(--success);
+}
+.ansi-bg-yellow {
+  background: var(--accent);
+}
+.ansi-bg-blue {
+  background: var(--text-hint);
+}
+.ansi-bg-magenta {
+  background: var(--hue-purple-soft);
+}
+.ansi-bg-cyan {
+  background: var(--hue-teal);
+}
+.ansi-bg-white {
+  background: var(--text);
+}
+.ansi-bg-bright-black {
+  background: var(--text-muted);
+}
+.ansi-bg-bright-red {
+  background: var(--error-bright);
+}
+.ansi-bg-bright-green {
+  background: var(--success-bright);
+}
+.ansi-bg-bright-yellow {
+  background: var(--accent-2);
+}
+.ansi-bg-bright-blue {
+  background: var(--text-strong);
+}
+.ansi-bg-bright-magenta {
+  background: var(--hue-purple-soft);
+}
+.ansi-bg-bright-cyan {
+  background: var(--hue-teal);
+}
+.ansi-bg-bright-white {
+  background: var(--text-bright);
 }
