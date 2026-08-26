@@ -119,6 +119,12 @@ pub(super) fn emit_tool_block(
     );
 }
 
+/// `has_detail` (command-inspect FR-1/FR-10): whether the caller already
+/// wrote a `StepDetail` sidecar record for this block — decided (and, if so,
+/// written) by the caller BEFORE this settles the block, so the flag is right
+/// on the first line ever persisted for it. `process_tool_call` is the only
+/// caller with the raw input/result this needs; the pre-execution
+/// error/cancelled paths pass `false` (no completion data exists to capture).
 pub(super) fn finish_tool_block(
     app: &AppHandle,
     session_id: &str,
@@ -126,13 +132,16 @@ pub(super) fn finish_tool_block(
     cwd: &str,
     tool: &str,
     meta: &str,
+    has_detail: bool,
 ) {
     // transcript-scale CRITICAL fix: use the clone `buf_tool_done` returns
     // (captured before its internal trim runs) instead of re-`find`ing by id
     // — a re-find can miss a block that settling itself just evicted.
     let block = app
         .state::<Engine>()
-        .with_session_mut(session_id, |s| s.buf_tool_done(block_id, meta.to_string()))
+        .with_session_mut(session_id, |s| {
+            s.buf_tool_done(block_id, meta.to_string(), has_detail)
+        })
         .flatten();
     if let Some(b) = &block {
         append_transcript(app, session_id, b);
@@ -148,6 +157,7 @@ pub(super) fn finish_tool_block(
             session_id: session_id.to_string(),
             block_id: block_id.to_string(),
             meta: meta.to_string(),
+            has_detail: has_detail.then_some(true),
         },
     );
 }

@@ -158,6 +158,7 @@ fn main() {
             profiles::profiles_update,
             profiles::profiles_remove,
             session::conversation_get_transcript,
+            session::conversation_step_detail,
             session::agents_list,
             session::agents_dispatch,
             session::agents_kill,

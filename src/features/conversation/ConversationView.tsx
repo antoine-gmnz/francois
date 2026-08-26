@@ -44,9 +44,17 @@ export interface ConversationViewProps {
    * the default `click to focus this pane` strip.
    */
   inertFooter?: ReactNode;
+  /**
+   * command-inspect FR-16: what a tool row's `shell ↗` does — switch THIS
+   * pane's main tab to SHELL. Mirrors `SplitPane`'s own `onTab` prop, so a
+   * split pane's inspect action can never reach across into another pane
+   * (round-2 fix: it used to call the global `setFocusedPane('main')`, which
+   * always targeted pane 0 regardless of which pane was actually open here).
+   */
+  onOpenShell: () => void;
 }
 
-export default function ConversationView({ sessionId, inert = false, onFocusRequest, inertFooter }: ConversationViewProps) {
+export default function ConversationView({ sessionId, inert = false, onFocusRequest, inertFooter, onOpenShell }: ConversationViewProps) {
   const meta = useSessionMeta(sessionId);
   const {
     state,
@@ -163,9 +171,15 @@ export default function ConversationView({ sessionId, inert = false, onFocusRequ
                     // turn actually streaming; every settled turn gets a frozen
                     // value `turnSpanMs` never reads, so Turn's memo bails and a
                     // 1s tick re-renders exactly one Turn.
-                    <Turn turn={item} model={meta?.model.label} now={turnIsStreaming(item) ? transcriptClock : 0} />
+                    <Turn
+                      turn={item}
+                      model={meta?.model.label}
+                      now={turnIsStreaming(item) ? transcriptClock : 0}
+                      sessionId={sessionId}
+                      onOpenShell={onOpenShell}
+                    />
                   ) : (
-                    <Block b={item.block} sessionId={sessionId} />
+                    <Block b={item.block} sessionId={sessionId} onOpenShell={onOpenShell} />
                   )}
                 </div>
               ))}

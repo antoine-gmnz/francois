@@ -90,6 +90,9 @@
 - 2026-08-24 · ui · When settings in one form take effect at different moments, the form names WHICH ones are deferred and stays silent when none are — never a blanket timing claim — because one immediate field makes a blanket claim false, and the user reads the claim, not the field list · session-settings-sheet
 - 2026-08-24 · ui · A value fixed at creation renders as a read-only line in a labelled block, never a disabled input — because a disabled input still reads as clickable and costs a full row to say nothing · session-settings-sheet
 
+- 2026-08-25 · data · A derived-summary row carries only a `has<X>` BOOLEAN for its fat record; the record is fetched lazily by id from a sidecar and never inlined into the list payload or an event — because the summary list is the hot path and a fat field taxes every page read to serve a rare click · command-inspect
+- 2026-08-25 · data · Truncation at CAPTURE must store the true pre-truncation totals and the panel must state what was dropped — a capped slice is never presented as complete — because a bound that lies about its own bound is worse than no bound · command-inspect
+
 ## Superseded
 
 - 2026-08-12 · naming · A session's provider names the RUNNER (`claude-code` | `openai-compatible`), never the vendor — because an Anthropic-API-through-our-own-loop path would make a vendor name a lie the day it lands · multi-provider-seam

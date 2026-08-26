@@ -59,6 +59,12 @@ pub(crate) fn classify_block(b: &BufBlock) -> Value {
             if let Some(m) = &b.meta {
                 o["meta"] = Value::String(m.clone());
             }
+            // command-inspect FR-10: present (always `true`) iff FR-1 wrote a
+            // record for this block; absent — never `false` — otherwise, so a
+            // pre-feature or record-less block is byte-identical to today.
+            if b.has_detail {
+                o["hasDetail"] = Value::Bool(true);
+            }
             with_at(o, b)
         }
         BlockKind::Subagent => {

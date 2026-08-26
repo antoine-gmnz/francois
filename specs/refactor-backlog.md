@@ -278,6 +278,7 @@ filtering relative PATH entries is right for extension spawns, it is right every
 - [ ] MEDIUM · src/lib/layoutStore.ts:1012-1013,1169-1174 · quality · closePane disposes the dropped shell then unsplitPatch re-disposes s.extraPanes — pass the filtered pane list into unsplitPatch (or skip the early dispose when keep.length===1) · deferred:unbound-panes
 
 ## core
+- [ ] LOW · specs/reports/command-inspect.core.diff:1 · quality · Regenerate the per-surface diff against the correct base commit so it holds only command-inspect's hunks. · deferred:command-inspect
 - [ ] LOW · src-tauri/src/shell/commands.rs:536 · quality · section comment for project-owner target resolution sits above mod tests instead of above struct OwnerTarget — move or drop it · deferred:unbound-panes
 - [ ] LOW · src-tauri/src/shell/commands.rs:447-454 · complexity · shell_restart re-implements the is_wsl_unc_path runtime branch already in project_owner_target — extract a shared runtime_of_root helper · deferred:unbound-panes
 
@@ -314,3 +315,10 @@ filtering relative PATH entries is right for extension spawns, it is right every
 - [ ] LOW · src/app/useAppShortcuts.ts:83 · quality · `modalOpen` omits `extensionsOpen` and `adoptCloudOpen`, so the new `⌘,`/`Ctrl+,` settings shortcut (and every other capture-listener shortcut sharing that gate) can layer a sheet on top of either modal — add both flags to `modalOpen`'s composition · deferred:session-settings-sheet
 - [ ] LOW · src/features/sessions/SessionSettingsSheet.tsx:607 · quality · the "New session from these ↗" and "Set as project default" (line 701) `role="button"` spans carry `onClick` + `tabIndex={0}` but no `onKeyDown`, so Enter/Space cannot activate them — add an Enter/Space `onKeyDown` handler (or make them real `<button>`s) here and at the other relocated `role="button"` spans · deferred:session-settings-sheet
 - [ ] LOW · src-tauri/src/session/commands/lifecycle.rs:926 · quality · the model catalog is fetched via `adapter_for(...).models(...)` before `update_settings_in_engine` checks whether the session is terminal, so a `modelId` patch on a `done`/`error` session pays the catalog round-trip only to be rejected with `SESSION_NOT_RUNNING` — check `status::is_terminal` before fetching `advertised_models`, or move the fetch inside the engine function behind the same terminal guard · deferred:session-settings-sheet
+
+- [ ] LOW · src-tauri/src/session/adapter/openai/tools.rs:460 · quality · Thread the real exit code and separate stderr byte count out of bash()/execute() so command-inspect can capture them structurally instead of always passing None/None. · deferred:command-inspect
+
+## deferred:command-inspect
+
+- [ ] MEDIUM · src-tauri/src/session/adapter/openai/runner.rs:370 · quality · build_step_detail is called with is_error hardcoded false for every francois/openai capture, so a failed Bash always records as succeeded rather than FR-15's failed outcome chip — thread a real success/failure signal out of tools::bash()/execute() (same signature change refactor-backlog.md:319 already defers) · deferred:command-inspect
+- [ ] LOW · src/features/conversation/step-detail.ts:93 · quality · `stepOutputTotals` reuses `formatFileSize` (whole-KB rounding: 8100 B → `8 KB`), but spec §3 and design brief §8 both give the worked example `8.1 KB` — add a one-decimal-at-KB-scale formatter for step output totals, or correct the spec/design prose to `8 KB` · deferred:command-inspect

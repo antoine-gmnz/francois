@@ -45,6 +45,7 @@
 mod args;
 mod models;
 mod runner;
+mod translate;
 mod wire;
 
 use super::*;

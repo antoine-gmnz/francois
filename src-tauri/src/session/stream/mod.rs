@@ -42,6 +42,9 @@ pub(crate) struct ToolRec {
     /// workflow-panel FR-2: this call is a `Workflow` dispatch, so its input and
     /// its tool_result feed pane [6] as well as the transcript.
     is_workflow: bool,
+    /// command-inspect FR-2: when the `tool_use` was first seen
+    /// (`content_block_start`) — `StepDetail.startedAt`.
+    started_at: u64,
 }
 
 /// What kind of content block a stream index is carrying.

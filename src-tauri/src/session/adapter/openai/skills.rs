@@ -213,6 +213,7 @@ mod tests {
             fn emit_workflow_detail(&self, _ev: WorkflowDetailEvent) {}
             fn persist(&self) {}
             fn append_transcript(&self, _session_id: &str, _block: &BufBlock) {}
+            fn append_step_detail(&self, _session_id: &str, _detail: &StepDetail) {}
             fn note_file_diff(&self, _session_id: &str, _cwd: &str) {}
             fn discover_commands(&self, _cwd: &str) -> Vec<SkillInfo> {
                 self.0
@@ -273,6 +274,7 @@ mod tests {
             fn emit_workflow_detail(&self, _ev: WorkflowDetailEvent) {}
             fn persist(&self) {}
             fn append_transcript(&self, _session_id: &str, _block: &BufBlock) {}
+            fn append_step_detail(&self, _session_id: &str, _detail: &StepDetail) {}
             fn note_file_diff(&self, _session_id: &str, _cwd: &str) {}
             fn discover_commands(&self, _cwd: &str) -> Vec<SkillInfo> {
                 self.0
