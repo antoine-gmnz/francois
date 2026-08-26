@@ -13,7 +13,8 @@
 //! (`retention::clear_session` carries the argument).
 
 use super::*;
-use crate::ipc::{err, err_detail, ok, IpcResult};
+use crate::ipc::ErrorCode;
+use crate::ipc::{err, ok, IpcResult};
 use crate::session::{now_ms, persist};
 use serde::Serialize;
 use serde_json::Value;
@@ -30,11 +31,10 @@ fn json_of<T: Serialize>(value: &T) -> Value {
 }
 
 /// Turn a pipeline refusal into the IPC envelope, keeping FR-8's `detail`.
+/// core-architecture-wave3 FR-6: one `From` hop, not a detail-present /
+/// detail-absent split.
 fn refuse<T: Serialize>(e: AttachError) -> IpcResult<T> {
-    match e.detail {
-        Some(detail) => err_detail(e.code, e.message, detail),
-        None => err(e.code, e.message),
-    }
+    crate::ipc::AppError::from(e).into()
 }
 
 /// Record freshly ingested refs and persist. `false` when the session vanished
@@ -76,7 +76,7 @@ fn stage_one(
     if record_staged(app, engine, session_id, std::slice::from_ref(&attachment)) {
         ok(value)
     } else {
-        err("SESSION_NOT_FOUND", NO_SESSION)
+        err(ErrorCode::SessionNotFound, NO_SESSION)
     }
 }
 
@@ -89,7 +89,7 @@ pub fn session_attach_file(
     path: String,
 ) -> IpcResult<Value> {
     let Some(cwd) = engine.cwd_of(&session_id) else {
-        return err("SESSION_NOT_FOUND", NO_SESSION);
+        return err(ErrorCode::SessionNotFound, NO_SESSION);
     };
     match ingest_path(&session_id, &cwd, &path, now_ms()) {
         Ok(a) => stage_one(&app, &engine, &session_id, a),
@@ -107,7 +107,7 @@ pub fn session_attach_clipboard_image(
     data_base64: String,
 ) -> IpcResult<Value> {
     let Some(cwd) = engine.cwd_of(&session_id) else {
-        return err("SESSION_NOT_FOUND", NO_SESSION);
+        return err(ErrorCode::SessionNotFound, NO_SESSION);
     };
     match ingest_clipboard_image(&session_id, &cwd, &mime, &data_base64, now_ms()) {
         Ok(a) => stage_one(&app, &engine, &session_id, a),
@@ -131,7 +131,7 @@ pub async fn session_pick_attachments(app: AppHandle, session_id: String) -> Ipc
     use tauri_plugin_dialog::DialogExt;
     let engine = app.state::<Engine>();
     let Some(cwd) = engine.cwd_of(&session_id) else {
-        return err("SESSION_NOT_FOUND", NO_SESSION);
+        return err(ErrorCode::SessionNotFound, NO_SESSION);
     };
     let dialog_app = app.clone();
     let picks = match tauri::async_runtime::spawn_blocking(move || {
@@ -144,7 +144,7 @@ pub async fn session_pick_attachments(app: AppHandle, session_id: String) -> Ipc
         Ok(None) => return ok(json_of(&PickAttachmentsResponse::default())),
         Err(e) => {
             return err(
-                "ATTACHMENT_IO_FAILED",
+                ErrorCode::AttachmentIoFailed,
                 format!("the file picker failed: {e}"),
             )
         }
@@ -155,7 +155,7 @@ pub async fn session_pick_attachments(app: AppHandle, session_id: String) -> Ipc
     if !response.attached.is_empty()
         && !record_staged(&app, &engine, &session_id, &response.attached)
     {
-        return err("SESSION_NOT_FOUND", NO_SESSION);
+        return err(ErrorCode::SessionNotFound, NO_SESSION);
     }
     ok(json_of(&response))
 }
@@ -202,7 +202,7 @@ pub fn session_release_attachment(
 ) -> IpcResult<Option<()>> {
     let Some(taken) = engine.with_session_mut(&session_id, |s| s.take_attachment(&attachment_id))
     else {
-        return err("SESSION_NOT_FOUND", NO_SESSION);
+        return err(ErrorCode::SessionNotFound, NO_SESSION);
     };
     let Some(attachment) = taken else {
         return refuse(AttachError::not_found());
@@ -223,7 +223,7 @@ pub fn session_commit_attachments(
     let Some((result, dropped)) =
         engine.with_session_mut(&session_id, |s| s.commit_attachments(&text))
     else {
-        return err("SESSION_NOT_FOUND", NO_SESSION);
+        return err(ErrorCode::SessionNotFound, NO_SESSION);
     };
     for a in &dropped {
         delete_stored(a);
@@ -242,14 +242,14 @@ pub fn session_clear_attachments(
     let targets = match &scope {
         ClearScope::Session { session_id } => match engine.cwd_of(session_id) {
             Some(cwd) => vec![(session_id.clone(), cwd)],
-            None => return err("SESSION_NOT_FOUND", NO_SESSION),
+            None => return err(ErrorCode::SessionNotFound, NO_SESSION),
         },
         ClearScope::Project { project_id } => {
             // FR-18: the sweep is driven by the SESSION REGISTRY, which is what
             // includes sessions running in worktrees (their cwd is nowhere near
             // the project root, so a filesystem crawl would miss them).
             if !crate::project::known_ids(&app).contains(project_id) {
-                return err("PROJECT_NOT_FOUND", "no such project");
+                return err(ErrorCode::ProjectNotFound, "no such project");
             }
             engine.sessions_of_project(project_id)
         }
@@ -308,7 +308,7 @@ mod tests {
         assert!(paths.is_empty());
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].name, "1234", "the refusal names the file");
-        assert_eq!(failed[0].error.code, "ATTACHMENT_IO_FAILED");
+        assert_eq!(failed[0].error.code, ErrorCode::AttachmentIoFailed);
         assert!(failed[0].error.detail.is_some(), "detail carries the path");
     }
 }

@@ -18,12 +18,12 @@ pub(crate) const AWAITING_APPROVAL: &str = "awaiting_approval";
 /// Parked on an AskUserQuestion (session-questions FR-6).
 pub(crate) const AWAITING_INPUT: &str = "awaiting_input";
 /// No turn in flight; ready for the next message.
-pub(crate) const IDLE: &str = "idle";
+pub const IDLE: &str = "idle";
 /// Terminal: the session was closed out.
 #[cfg(test)]
 pub(crate) const DONE: &str = "done";
 /// Terminal: the session failed.
-pub(crate) const ERROR: &str = "error";
+pub const ERROR: &str = "error";
 
 /// A turn is in flight — the claude child is alive, whether it is streaming or
 /// parked on the user. The guard for "can this session accept a new turn?".
@@ -35,7 +35,7 @@ pub(crate) fn is_busy(status: &str) -> bool {
 }
 
 /// The session is over for good and accepts no further turns.
-pub(crate) fn is_terminal(status: &str) -> bool {
+pub fn is_terminal(status: &str) -> bool {
     matches!(status, "done" | ERROR)
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn is_terminal(status: &str) -> bool {
 /// Best-effort wording match, like `account::is_credential_failure`: the CLI
 /// carries no machine-readable code for this on the stream, only the result
 /// string (e.g. `Claude AI usage limit reached|1753272000`).
-pub(crate) fn is_transient_failure(message: &str) -> bool {
+pub fn is_transient_failure(message: &str) -> bool {
     let m = message.to_lowercase();
     ["usage limit", "rate limit", "rate_limit"]
         .iter()
@@ -64,10 +64,7 @@ pub(crate) fn is_transient_failure(message: &str) -> bool {
 /// Approval outranks question deliberately: a permission ask blocks a concrete
 /// tool call the assistant is mid-way through, while a question can sit behind
 /// it. With both pending the user wants to see the more specific one.
-pub(crate) fn parked_status(
-    pending_permissions: usize,
-    pending_questions: usize,
-) -> Option<&'static str> {
+pub fn parked_status(pending_permissions: usize, pending_questions: usize) -> Option<&'static str> {
     if pending_permissions > 0 {
         Some(AWAITING_APPROVAL)
     } else if pending_questions > 0 {
@@ -87,7 +84,7 @@ pub(crate) fn parked_status(
 ///    `running`;
 ///  - an unchanged status yields `None` so no redundant `session.status` event
 ///    goes out on every decision.
-pub(crate) fn next_parked_status(
+pub fn next_parked_status(
     current: &str,
     pending_permissions: usize,
     pending_questions: usize,

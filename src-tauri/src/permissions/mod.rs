@@ -22,7 +22,7 @@ mod rules;
 mod settings;
 mod summarize;
 
-pub(crate) use commands::*;
+pub use commands::*;
 pub(crate) use patterns::*;
 pub(crate) use rules::*;
 pub(crate) use settings::*;

@@ -1,4 +1,6 @@
-//! Shared fixtures for the session module's unit tests.
+//! Shared fixtures for the session module's unit tests — and, under the
+//! `harness` feature (core-architecture-wave3 FR-3), for the `tests/` and
+//! `benches/` targets, which are separate crates and can reach nothing else.
 
 use super::*;
 
@@ -17,20 +19,20 @@ use serde_json::json;
 /// to it. Everything the engine does to a live turn goes through this trait, so
 /// a test can drive that path with an adapter the engine has never heard of;
 /// anything that stops working here is the seam leaking.
-pub(crate) struct FakeTurnControl {
+pub struct FakeTurnControl {
     questions: Mutex<Vec<String>>,
     /// `(blockId, rule pattern)` — the pattern half is what
     /// `pending_permission_pattern` peeks, and it disappears WITH the id the
     /// moment the ask is claimed, exactly as the real pending entry does.
     permissions: Mutex<Vec<(String, String)>>,
-    pub(crate) interrupted: AtomicBool,
-    pub(crate) killed: AtomicBool,
+    pub interrupted: AtomicBool,
+    pub killed: AtomicBool,
 }
 
 impl FakeTurnControl {
     /// A turn holding `questions` parked asks (`q1`, `q2`, …) and
     /// `permissions` parked approvals (`p1`, `p2`, …).
-    pub(crate) fn new(questions: usize, permissions: usize) -> Arc<FakeTurnControl> {
+    pub fn new(questions: usize, permissions: usize) -> Arc<FakeTurnControl> {
         Arc::new(FakeTurnControl {
             questions: Mutex::new((1..=questions).map(|i| format!("q{i}")).collect()),
             permissions: Mutex::new(
@@ -50,7 +52,7 @@ impl FakeTurnControl {
     /// The rule pattern the parked approval `id` carries — a real
     /// `permissions::build_ask` shape, so a rule written from it round-trips
     /// through the settings.json merge like any other.
-    pub(crate) fn pattern_of(id: &str) -> String {
+    pub fn pattern_of(id: &str) -> String {
         format!("Bash({id}:*)")
     }
 }
@@ -131,7 +133,7 @@ impl TurnControl for FakeTurnControl {
 
 // ---------- interactive-commands (specs/interactive-commands.md) ----------
 
-pub(crate) fn test_session() -> Session {
+pub fn test_session() -> Session {
     Session {
         id: "s1".into(),
         name: "n".into(),
@@ -186,7 +188,7 @@ pub(crate) fn test_session() -> Session {
 }
 
 /// workflow-panel: a minimal running run, for the event/serde shape tests.
-pub(crate) fn test_workflow_run() -> WorkflowRun {
+pub fn test_workflow_run() -> WorkflowRun {
     WorkflowRun {
         id: "w1".into(),
         session_id: "s1".into(),
@@ -203,7 +205,50 @@ pub(crate) fn test_workflow_run() -> WorkflowRun {
     }
 }
 
-pub(crate) fn test_engine_with(session: Session) -> Engine {
+/// The state a turn actually replays from: `do_send` sets `starting` before it
+/// spawns, so `system/init` has a status to promote. A fixture rather than a
+/// field poke, because `Session`'s fields are private and core-architecture-wave3
+/// FR-2 says to widen by name only what a caller genuinely needs — an external
+/// target needs this *state*, not the field.
+pub fn starting_session() -> Session {
+    let mut s = test_session();
+    s.status = "starting".into();
+    s
+}
+
+/// core-architecture-wave3 FR-11's stand-in for an `AppHandle`. Every session
+/// is a Claude Code account unless the test says otherwise, which matches
+/// `account::kind_of`'s own fallback for `default` and for an id that no longer
+/// resolves — a session whose account vanished runs as Claude Code, a working
+/// state, rather than as a provider whose credentials it does not have.
+#[derive(Default)]
+pub struct FakeAccounts {
+    kinds: HashMap<String, crate::account::AccountKind>,
+}
+
+impl FakeAccounts {
+    pub fn with(mut self, account_id: &str, kind: crate::account::AccountKind) -> Self {
+        self.kinds.insert(account_id.to_string(), kind);
+        self
+    }
+}
+
+impl crate::account::AccountKinds for FakeAccounts {
+    fn kind_of(&self, account_id: &str) -> crate::account::AccountKind {
+        self.kinds
+            .get(account_id)
+            .copied()
+            .unwrap_or(crate::account::AccountKind::ClaudeCodeOauth)
+    }
+}
+
+/// The no-configuration case, spelled once so the ~15 call sites that only need
+/// *an* account source do not each construct one.
+pub fn fake_accounts() -> FakeAccounts {
+    FakeAccounts::default()
+}
+
+pub fn test_engine_with(session: Session) -> Engine {
     let mut map = HashMap::new();
     map.insert(session.id.clone(), session);
     Engine {
@@ -214,7 +259,7 @@ pub(crate) fn test_engine_with(session: Session) -> Engine {
     }
 }
 
-pub(crate) fn ndjson(lines: &[Value]) -> Vec<String> {
+pub fn ndjson(lines: &[Value]) -> Vec<String> {
     lines
         .iter()
         .map(|v| serde_json::to_string(v).unwrap())
@@ -222,7 +267,7 @@ pub(crate) fn ndjson(lines: &[Value]) -> Vec<String> {
 }
 
 /// The §5.5 question-arrival fixture, verbatim.
-pub(crate) fn ask_fixture() -> Value {
+pub fn ask_fixture() -> Value {
     json!({
         "type": "control_request",
         "request_id": "req-1",
@@ -246,13 +291,13 @@ pub(crate) fn ask_fixture() -> Value {
 
 // ---------- permission-guardrails (specs/permission-guardrails.md) ----------
 
-pub(crate) fn perm_session() -> Session {
+pub fn perm_session() -> Session {
     let mut s = test_session();
     s.cwd = "/repo".into();
     s
 }
 
-pub(crate) fn sample_rule() -> PermissionRule {
+pub fn sample_rule() -> PermissionRule {
     PermissionRule {
         id: "local|allow|Bash(npm test:*)".into(),
         pattern: "Bash(npm test:*)".into(),
@@ -265,7 +310,7 @@ pub(crate) fn sample_rule() -> PermissionRule {
 
 // ---------- async-agents (specs/async-agents.md) ----------
 
-pub(crate) fn agent_fixture(id: &str, name: &str, background: bool) -> AgentInfo {
+pub fn agent_fixture(id: &str, name: &str, background: bool) -> AgentInfo {
     AgentInfo {
         id: id.into(),
         session_id: "s1".into(),
@@ -281,12 +326,12 @@ pub(crate) fn agent_fixture(id: &str, name: &str, background: bool) -> AgentInfo
 }
 
 /// Mint an agent with its FR-1 correlation key, as content_block_start does.
-pub(crate) fn mint_agent(s: &mut Session, id: &str, name: &str, tuid: &str, background: bool) {
+pub fn mint_agent(s: &mut Session, id: &str, name: &str, tuid: &str, background: bool) {
     s.insert_agent(agent_fixture(id, name, background));
     s.agent_by_tool.insert(tuid.into(), id.into());
 }
 
-pub(crate) fn emitted_steps(ems: &[AgentEmission]) -> Vec<AgentStep> {
+pub fn emitted_steps(ems: &[AgentEmission]) -> Vec<AgentStep> {
     ems.iter()
         .filter_map(|e| match e {
             AgentEmission::Step { step, .. } => Some(step.clone()),
@@ -296,7 +341,7 @@ pub(crate) fn emitted_steps(ems: &[AgentEmission]) -> Vec<AgentStep> {
 }
 
 /// agent-tab: the serialized AgentBlocks an emission list carries, in order.
-pub(crate) fn emitted_blocks(ems: &[AgentEmission]) -> Vec<Value> {
+pub fn emitted_blocks(ems: &[AgentEmission]) -> Vec<Value> {
     ems.iter()
         .filter_map(|e| match e {
             AgentEmission::Block { block, .. } => Some(block.clone()),
@@ -305,7 +350,7 @@ pub(crate) fn emitted_blocks(ems: &[AgentEmission]) -> Vec<Value> {
         .collect()
 }
 
-pub(crate) fn emitted_updates(ems: &[AgentEmission]) -> Vec<AgentInfo> {
+pub fn emitted_updates(ems: &[AgentEmission]) -> Vec<AgentInfo> {
     ems.iter()
         .filter_map(|e| match e {
             AgentEmission::Update { agent } => Some(agent.clone()),

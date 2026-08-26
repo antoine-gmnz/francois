@@ -23,9 +23,9 @@ mod commands;
 mod parse;
 mod registry;
 
-pub(crate) use commands::*;
+pub use commands::*;
 pub(crate) use parse::*;
-pub(crate) use registry::*;
+pub use registry::*;
 
 #[cfg(test)]
 mod testutil;
@@ -35,9 +35,9 @@ use std::sync::Mutex;
 
 // ---------- bounds (contract/session-profiles.ts, mirrored — FR-6) ----------
 
-pub(crate) const MAX_PROFILE_NAME: usize = 60;
-pub(crate) const MAX_SYSTEM_PROMPT: usize = 16384;
-pub(crate) const MAX_EXTRA_ARGS_RAW: usize = 4096;
+pub const MAX_PROFILE_NAME: usize = 60;
+pub const MAX_SYSTEM_PROMPT: usize = 16384;
+pub const MAX_EXTRA_ARGS_RAW: usize = 4096;
 
 // ---------- contract types (contract/session-profiles.ts, mirrored) ----------
 
@@ -95,8 +95,8 @@ pub struct ProfileRegistry {
 
 // ---------- shared messages ----------
 
-pub(crate) const NOT_FOUND_MSG: &str = "no such profile";
-pub(crate) const BAD_NAME_MSG: &str = "a profile name must be 1-60 characters";
-pub(crate) const BAD_PROMPT_MSG: &str = "the system prompt is too long";
-pub(crate) const BAD_EXTRA_ARGS_MSG: &str = "extra args are too long";
-pub(crate) const UNTERMINATED_QUOTE_MSG: &str = "extra args contain an unterminated quote";
+pub const NOT_FOUND_MSG: &str = "no such profile";
+pub const BAD_NAME_MSG: &str = "a profile name must be 1-60 characters";
+pub const BAD_PROMPT_MSG: &str = "the system prompt is too long";
+pub const BAD_EXTRA_ARGS_MSG: &str = "extra args are too long";
+pub const UNTERMINATED_QUOTE_MSG: &str = "extra args contain an unterminated quote";

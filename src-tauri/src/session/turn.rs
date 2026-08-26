@@ -4,6 +4,7 @@
 //! see `session/adapter/claude_code.rs`.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::AppError;
 use serde_json::Value;
@@ -28,7 +29,7 @@ fn output_side(usage: &Value) -> u64 {
 }
 
 /// Context size of ONE API request = what it read + what it produced.
-pub(crate) fn compute_used(usage: &Value) -> u64 {
+pub fn compute_used(usage: &Value) -> u64 {
     input_side(usage) + output_side(usage)
 }
 
@@ -42,7 +43,7 @@ pub(crate) fn compute_used(usage: &Value) -> u64 {
 /// cache reads "uses" 2M of a 200K window. So: take the per-request usage the
 /// stream carries and let the newest one win.
 #[derive(Default)]
-pub(crate) struct ContextTracker {
+pub struct ContextTracker {
     /// Input side of the request currently streaming, from its `message_start`.
     input: u64,
     /// Newest complete per-request figure — the context as of now.
@@ -53,7 +54,7 @@ impl ContextTracker {
     /// Feed the inner `event` object of one parent-turn `stream_event` line.
     /// Subagent lines are routed away before this (async-agents FR-8), which is
     /// what keeps a subagent's own window out of the parent's figure.
-    pub(crate) fn observe_stream_event(&mut self, ev: &Value) {
+    pub fn observe_stream_event(&mut self, ev: &Value) {
         match ev.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             // Opens a request: carries the full input side, output still ~0.
             "message_start" => {
@@ -98,7 +99,7 @@ impl ContextTracker {
 /// Detects a rejected `--resume`: the turn used resume but exited before starting a
 /// thread (no system/init, no result) and wasn't interrupted (FR-8). The retry runs
 /// with resume forced off, so it can never re-trigger this — at most one retry.
-pub(crate) fn is_resume_fail(
+pub fn is_resume_fail(
     resume_used: bool,
     got_init: bool,
     got_result: bool,
@@ -154,7 +155,7 @@ fn build_turn_context(
 /// Runtime-shaped behaviour (argv, env, the control-channel protocol, …)
 /// lives entirely behind that seam now — this function is the same for
 /// every runtime.
-pub(crate) fn begin_turn(
+pub fn begin_turn(
     app: &AppHandle,
     session_id: &str,
     block_id: String,
@@ -162,16 +163,22 @@ pub(crate) fn begin_turn(
     mode: TurnMode,
 ) {
     let engine = app.state::<Engine>();
-    let agent_runtime = engine
-        .with_session(session_id, |s| s.agent_runtime)
+    // FR-4: the runtime that decides which CLI spawns is DERIVED from the
+    // session's account kind, never read from the stored (and now
+    // non-authoritative) `Session.agent_runtime` field — that field can
+    // desync from the account when the account is removed (edge case #4).
+    let account_id = engine
+        .with_session(session_id, |s| s.account_id.clone())
         .unwrap_or_default();
+    let (agent_runtime, _protocol) =
+        AgentRuntime::from_account_kind(crate::account::kind_of(app, &account_id));
     let adapter = adapter_for(agent_runtime);
     let Some(ctx) = build_turn_context(&engine, session_id, block_id, text, mode) else {
         return;
     };
 
     if let Err(e) = adapter.preflight(app, &ctx) {
-        fail_session(app, session_id, &e.code, &e.message);
+        fail_session(app, session_id, e.code, &e.message);
         return;
     }
 
@@ -202,7 +209,7 @@ pub(crate) fn begin_turn(
                 s.current = Some(control);
             });
         }
-        Err(e) => fail_session(app, session_id, &e.code, &e.message),
+        Err(e) => fail_session(app, session_id, e.code, &e.message),
     }
 }
 
@@ -210,7 +217,7 @@ pub(crate) fn begin_turn(
 /// really under way. Idempotent and narrow — it ONLY promotes from `starting`, so
 /// a turn already parked on an approval when a later init arrives is never
 /// dragged back to `running`.
-pub(crate) fn mark_stream_live(env: &dyn SessionEnv, session_id: &str) {
+pub fn mark_stream_live(env: &dyn SessionEnv, session_id: &str) {
     let promoted = env
         .engine()
         .with_session_mut(session_id, |s| {
@@ -240,7 +247,7 @@ pub(crate) fn mark_stream_live(env: &dyn SessionEnv, session_id: &str) {
 /// Deliberately NOT called from the turn-end drains — a turn tearing down settles
 /// on idle/error via `finish_turn`, and a refresh there would flash `running`
 /// between the last resolution and the terminal status.
-pub(crate) fn refresh_parked_status(env: &dyn SessionEnv, session_id: &str) {
+pub fn refresh_parked_status(env: &dyn SessionEnv, session_id: &str) {
     let engine = env.engine();
     // Phase 1: snapshot the turn handle and RELEASE the sessions lock — the
     // same discipline decisions.rs follows, so a control-channel write can
@@ -279,12 +286,7 @@ pub(crate) fn refresh_parked_status(env: &dyn SessionEnv, session_id: &str) {
 /// Route turn completion (FR-20): drain the queue or go idle; or mark error —
 /// except for a transient (usage-limit) failure, which fails the turn but leaves
 /// the session idle and usable (see `end_status` below).
-pub(crate) fn finish_turn(
-    app: &AppHandle,
-    session_id: &str,
-    errored: bool,
-    error_msg: Option<String>,
-) {
+pub fn finish_turn(app: &AppHandle, session_id: &str, errored: bool, error_msg: Option<String>) {
     let engine = app.state::<Engine>();
     // A usage/rate-limit failure is TRANSIENT (status::is_transient_failure): the
     // plan window rolls over on its own and NOTHING is emitted at that moment, so
@@ -373,7 +375,11 @@ pub(crate) fn finish_turn(
             SessionEvent::Error {
                 session_id: session_id.into(),
                 error: AppError {
-                    code: if transient { "USAGE_LIMIT" } else { "INTERNAL" }.into(),
+                    code: if transient {
+                        ErrorCode::UsageLimit
+                    } else {
+                        ErrorCode::Internal
+                    },
                     message: msg,
                     detail: None,
                 },
@@ -408,7 +414,7 @@ pub(crate) fn finish_turn(
 /// BEFORE the terminal `session.status` / `session.error` (FR-16 ordering).
 /// workflow-panel FR-9 rides along: a dead session closes its `Workflow` runs
 /// for the same reason it closes its agents.
-pub(crate) fn apply_fail_session(
+pub fn apply_fail_session(
     s: &mut Session,
     msg: &str,
     at: u64,
@@ -423,7 +429,7 @@ pub(crate) fn apply_fail_session(
     )
 }
 
-pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &str) {
+pub fn fail_session(app: &AppHandle, session_id: &str, code: ErrorCode, msg: &str) {
     let engine = app.state::<Engine>();
     let (agent_ems, workflow_runs) = engine
         .with_session_mut(session_id, |s| apply_fail_session(s, msg, now_ms()))
@@ -443,7 +449,7 @@ pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &
         SessionEvent::Error {
             session_id: session_id.into(),
             error: AppError {
-                code: code.into(),
+                code,
                 message: msg.into(),
                 detail: None,
             },
@@ -458,7 +464,7 @@ pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &
     );
 }
 
-pub(crate) fn update_used(app: &AppHandle, session_id: &str, used: u64) {
+pub fn update_used(app: &AppHandle, session_id: &str, used: u64) {
     app.state::<Engine>().with_session_mut(session_id, |s| {
         s.context_used_tokens = used;
         s.last_activity_at = now_ms();
@@ -575,7 +581,13 @@ mod tests {
         assert!(permission_args(&ctx_before.permission_mode).is_empty());
 
         // FR-1: switch takes effect on the session immediately...
-        let meta = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        let meta = switch_permission_mode_in_engine(
+            &engine,
+            &crate::session::testutil::fake_accounts(),
+            "s1",
+            "bypassPermissions",
+        )
+        .unwrap();
         assert_eq!(meta.permission_mode, "bypassPermissions");
 
         // FR-6: ...but the already-built snapshot is an owned value — it never

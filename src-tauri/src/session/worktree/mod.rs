@@ -8,6 +8,7 @@
 //! handlers (quality remediation, §Conventions ~1000-line cap).
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use crate::diff::{git_routed, is_git_repo, repo_root, GitHost};
 use crate::ipc::{err, ok, IpcResult};
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 mod git;
-pub(crate) use git::path_exists;
+pub use git::path_exists;
 use git::{
     branch_checked_out_at, branch_exists, check_ref_format, compute_status, current_branch,
     default_branch, fetch_with_timeout, in_use_path_from_stderr, is_ancestor, norm_path,
@@ -30,7 +31,7 @@ const NOT_A_REPO_MSG: &str = "not a git repository — initialize with `git init
 /// contract/common.ts `SessionWorktree` exactly.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct SessionWorktree {
+pub struct SessionWorktree {
     pub(crate) branch: String,
     pub(crate) base_ref: String,
     /// FR-7b: the start point `git worktree add -b` actually got, when it differs from
@@ -114,7 +115,7 @@ pub struct WorktreeCreateInput {
 
 /// FR-9's placeholder for a branch whose slug collapses to the empty string.
 /// Mirrors `WORKTREE_SLUG_FALLBACK` in contract/session-worktree.ts.
-pub(crate) const WORKTREE_SLUG_FALLBACK: &str = "branch";
+pub const WORKTREE_SLUG_FALLBACK: &str = "branch";
 
 /// FR-9's slug: lowercase, every char outside `[a-z0-9._-]` -> `-`, runs
 /// collapsed, leading/trailing trimmed, truncated to 60 chars (trailing dashes
@@ -123,7 +124,7 @@ pub(crate) const WORKTREE_SLUG_FALLBACK: &str = "branch";
 /// placeholder the worktree would land on the parent directory itself rather
 /// than a named child). Mirrors `worktreeSlug` in contract/session-worktree.ts
 /// exactly — both are tested against the same table.
-pub(crate) fn worktree_slug(branch: &str) -> String {
+pub fn worktree_slug(branch: &str) -> String {
     let lower = branch.to_lowercase();
     let mut replaced = String::with_capacity(lower.len());
     for c in lower.chars() {
@@ -191,7 +192,7 @@ fn worktree_target(repo_root: &str, branch: &str) -> (String, char) {
 /// FR-9: append `-2`, `-3`, … until `exists` reports free. Pure — the exists
 /// probe is injected so the suffix search itself is unit-testable without a
 /// filesystem/wsl.exe round trip.
-pub(crate) fn suffix_until_free(base: &str, exists: impl Fn(&str) -> bool) -> String {
+pub fn suffix_until_free(base: &str, exists: impl Fn(&str) -> bool) -> String {
     if !exists(base) {
         return base.to_string();
     }
@@ -208,7 +209,7 @@ pub(crate) fn suffix_until_free(base: &str, exists: impl Fn(&str) -> bool) -> St
 /// for `Native`, `Some(distro)` for `Wsl(distro)`. The inverse of
 /// `host_from_distro`, used to snapshot the host resolved once at creation so
 /// later git-routing / turn-spawn call sites never re-derive it from `cwd`.
-pub(crate) fn host_distro(host: &GitHost) -> Option<String> {
+pub fn host_distro(host: &GitHost) -> Option<String> {
     match host {
         GitHost::Native => None,
         GitHost::Wsl(distro) => Some(distro.clone()),
@@ -219,7 +220,7 @@ pub(crate) fn host_distro(host: &GitHost) -> Option<String> {
 /// created under from its stored `worktree_distro`, rather than re-deriving it
 /// from `cwd`/`worktree.path` — which, once `cwd` is a bare Linux path (no
 /// `\\wsl$\<distro>\…` prefix), `GitHost::of` can no longer recognize as `Wsl`.
-pub(crate) fn host_from_distro(distro: &Option<String>) -> GitHost {
+pub fn host_from_distro(distro: &Option<String>) -> GitHost {
     match distro {
         Some(d) => GitHost::Wsl(d.clone()),
         None => GitHost::Native,
@@ -237,7 +238,7 @@ pub(crate) fn host_from_distro(distro: &Option<String>) -> GitHost {
 /// fallback `wsl::wsl_distro_name` uses for a non-UNC cwd — rather than
 /// misclassifying it as `Native` and failing every existence/git check against
 /// a Windows path that was never valid.
-pub(crate) fn adopt_host(cwd: &str, adopt: bool) -> GitHost {
+pub fn adopt_host(cwd: &str, adopt: bool) -> GitHost {
     if adopt && !std::path::Path::new(cwd).is_absolute() && !crate::wsl::is_wsl_unc_path(cwd) {
         if let Some(distro) = crate::wsl::wsl_distro_name(cwd) {
             return GitHost::Wsl(distro);
@@ -287,16 +288,16 @@ fn probe_branch(
     source_repo_root: &str,
     branch: &str,
     base_ref: &str,
-) -> Result<bool, (String, String)> {
+) -> Result<bool, AppError> {
     if let Some(path) = branch_checked_out_at(host, source_repo_root, branch) {
-        return Err(("WORKTREE_BRANCH_IN_USE".into(), path));
+        return Err(AppError::new(ErrorCode::WorktreeBranchInUse, path));
     }
     let exists = branch_exists(host, source_repo_root, branch);
     // LOW remediation: a blank `base_ref` would pass straight to `git worktree
     // add -b <branch> <path> ""`, producing an opaque git error. Only meaningful
     // for a NEW branch — an existing branch ignores `base_ref` entirely (FR-8).
     if !exists && base_ref.trim().is_empty() {
-        return Err(("INVALID_INPUT".into(), "base ref is empty".into()));
+        return Err(AppError::new(ErrorCode::InvalidInput, "base ref is empty"));
     }
     Ok(exists)
 }
@@ -349,10 +350,10 @@ fn resolve_base_start_point(
 /// SESSION's actual working directory + its `SessionWorktree` provenance.
 /// `adopt` performs NO git mutation (FR-5/FR-12); otherwise runs prune -> fetch
 /// (best-effort) -> add (FR-6), reversing what it did on failure (FR-11).
-pub(crate) fn resolve_worktree(
+pub fn resolve_worktree(
     cwd: &str,
     opts: &WorktreeCreateInput,
-) -> Result<(String, SessionWorktree, Option<String>), (String, String)> {
+) -> Result<(String, SessionWorktree, Option<String>), AppError> {
     let host = adopt_host(cwd, opts.adopt);
 
     if opts.adopt {
@@ -368,13 +369,13 @@ pub(crate) fn resolve_worktree(
         // reach that far. Handling it here, once, keeps the two checks from
         // drifting into two different error messages for the same condition.
         if !path_exists(&host, cwd) {
-            return Err((
-                "WORKTREE_NOT_FOUND".into(),
-                "that worktree's directory no longer exists".into(),
+            return Err(AppError::new(
+                ErrorCode::WorktreeNotFound,
+                "that worktree's directory no longer exists",
             ));
         }
         if !is_git_repo(&host, cwd) {
-            return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
+            return Err(AppError::new(ErrorCode::NotAGitRepo, NOT_A_REPO_MSG));
         }
         // MEDIUM remediation: spawned INSIDE `cwd` (not `repo_root`) — deliberately,
         // so `target.prunable` below can never fire (see the `path_exists` comment
@@ -393,9 +394,9 @@ pub(crate) fn resolve_worktree(
             .iter()
             .find(|e| norm_path(&e.path) == norm_path(cwd))
         else {
-            return Err((
-                "INVALID_INPUT".into(),
-                "no worktree is registered at that path".into(),
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "no worktree is registered at that path",
             ));
         };
         // attach-to-worktree FR-15: a detached HEAD is no longer an error — the
@@ -429,13 +430,14 @@ pub(crate) fn resolve_worktree(
     }
 
     if !is_git_repo(&host, cwd) {
-        return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
+        return Err(AppError::new(ErrorCode::NotAGitRepo, NOT_A_REPO_MSG));
     }
     let branch = opts.branch.trim();
     if branch.is_empty() {
-        return Err(("INVALID_INPUT".into(), "branch is empty".into()));
+        return Err(AppError::new(ErrorCode::InvalidInput, "branch is empty"));
     }
-    check_ref_format(&host, cwd, branch).map_err(|m| ("INVALID_INPUT".to_string(), m))?;
+    // core-architecture-wave3 FR-6: `check_ref_format` raises INVALID_INPUT itself.
+    check_ref_format(&host, cwd, branch)?;
     // security: `check-ref-format --branch` does NOT reject a leading `-` (it is
     // a syntactically legal ref character) — but `branch` is passed as the LAST
     // positional argument to `git worktree add <path> <branch>` / `git branch -D
@@ -443,9 +445,9 @@ pub(crate) fn resolve_worktree(
     // option rather than a branch name. Reject it explicitly, the same class of
     // fix as `base_ref` just below.
     if branch.starts_with('-') {
-        return Err((
-            "INVALID_INPUT".into(),
-            "branch must not start with '-'".into(),
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "branch must not start with '-'",
         ));
     }
     // security: `opts.base_ref` is passed as a positional revision to `git
@@ -453,9 +455,9 @@ pub(crate) fn resolve_worktree(
     // `-` would be parsed by git as an option rather than a revision. Reject it
     // the same way an invalid `branch` is rejected above.
     if opts.base_ref.starts_with('-') {
-        return Err((
-            "INVALID_INPUT".into(),
-            "base ref must not start with '-'".into(),
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "base ref must not start with '-'",
         ));
     }
     let source_repo_root = repo_root(&host, cwd);
@@ -464,8 +466,8 @@ pub(crate) fn resolve_worktree(
     match git_routed(&host, &source_repo_root, &["worktree", "prune"]) {
         Ok(o) if o.code == 0 => {}
         Ok(o) => {
-            return Err((
-                "WORKTREE_CREATE_FAILED".into(),
+            return Err(AppError::new(
+                ErrorCode::WorktreeCreateFailed,
                 if o.stderr.is_empty() {
                     "git worktree prune failed".into()
                 } else {
@@ -473,7 +475,12 @@ pub(crate) fn resolve_worktree(
                 },
             ))
         }
-        Err(e) => return Err(("WORKTREE_CREATE_FAILED".into(), e.to_string())),
+        Err(e) => {
+            return Err(AppError::new(
+                ErrorCode::WorktreeCreateFailed,
+                e.to_string(),
+            ))
+        }
     }
 
     // FR-5/§7, first window: refuse straight away if the branch is already held
@@ -491,9 +498,11 @@ pub(crate) fn resolve_worktree(
     let remote = remote_name(&host, &source_repo_root).filter(|r| !r.starts_with('-'));
     let (fetched, fetch_error) = match &remote {
         None => (false, None),
+        // FR-6: best-effort, so only the message crosses - it rides
+        // `SessionWorktree.fetchError`, which is a plain string on the wire.
         Some(r) => match fetch_with_timeout(&host, &source_repo_root, r) {
             Ok(()) => (true, None),
-            Err(e) => (false, Some(e)),
+            Err(e) => (false, Some(e.message)),
         },
     };
 
@@ -553,11 +562,11 @@ pub(crate) fn resolve_worktree(
             // delete a branch (`created_branch: false`).
             if let Some(path) = in_use_path_from_stderr(&o.stderr) {
                 reverse_create(&host, &source_repo_root, &worktree_path, branch, false);
-                return Err(("WORKTREE_BRANCH_IN_USE".into(), path));
+                return Err(AppError::new(ErrorCode::WorktreeBranchInUse, path));
             }
             reverse_create(&host, &source_repo_root, &worktree_path, branch, !exists);
-            return Err((
-                "WORKTREE_CREATE_FAILED".into(),
+            return Err(AppError::new(
+                ErrorCode::WorktreeCreateFailed,
                 if o.stderr.is_empty() {
                     "git worktree add failed".into()
                 } else {
@@ -567,7 +576,10 @@ pub(crate) fn resolve_worktree(
         }
         Err(e) => {
             reverse_create(&host, &source_repo_root, &worktree_path, branch, !exists);
-            return Err(("WORKTREE_CREATE_FAILED".into(), e.to_string()));
+            return Err(AppError::new(
+                ErrorCode::WorktreeCreateFailed,
+                e.to_string(),
+            ));
         }
     }
 
@@ -622,7 +634,7 @@ fn seed_worktree_consent(source_repo_root: &str, worktree_path: &str) {
 /// `pub(crate)` so cloud-sessions FR-11 (a failed adoption removes the worktree
 /// it created in this run, never one that already existed) reuses this exact
 /// rule rather than growing a second copy of it.
-pub(crate) fn reverse_create(
+pub fn reverse_create(
     host: &GitHost,
     repo_root: &str,
     path: &str,
@@ -651,11 +663,16 @@ pub fn session_worktree_probe(cwd: String, branch: Option<String>) -> IpcResult<
     // process cwd happens to be. A WSL UNC path (`\\wsl$\<distro>\…` /
     // `\\wsl.localhost\<distro>\…`) is absolute by construction.
     if !std::path::Path::new(&cwd).is_absolute() && !crate::wsl::is_wsl_unc_path(&cwd) {
-        return err("INVALID_INPUT", "cwd must be an absolute path");
+        return err(ErrorCode::InvalidInput, "cwd must be an absolute path");
     }
     match std::fs::metadata(&cwd) {
         Ok(m) if m.is_dir() => {}
-        _ => return err("INVALID_INPUT", "cwd does not exist or is not a directory"),
+        _ => {
+            return err(
+                ErrorCode::InvalidInput,
+                "cwd does not exist or is not a directory",
+            )
+        }
     }
     let host = GitHost::of(&cwd);
     if !is_git_repo(&host, &cwd) {
@@ -709,17 +726,14 @@ pub fn session_worktree_probe(cwd: String, branch: Option<String>) -> IpcResult<
 /// wrapper so the SESSION_NOT_FOUND / WORKTREE_NOT_FOUND branches are directly
 /// unit-testable against a plain `Engine` (built via `testutil::test_engine_with`)
 /// without a live Tauri `State`.
-pub(crate) fn worktree_status_impl(
-    engine: &Engine,
-    session_id: &str,
-) -> IpcResult<WorktreeStatusData> {
+pub fn worktree_status_impl(engine: &Engine, session_id: &str) -> IpcResult<WorktreeStatusData> {
     let (path, base_ref, created_branch, distro) = {
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let Some(s) = map.get(session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
+            return err(ErrorCode::SessionNotFound, "no such session");
         };
         let Some(wt) = &s.worktree else {
-            return err("WORKTREE_NOT_FOUND", "session has no worktree");
+            return err(ErrorCode::WorktreeNotFound, "session has no worktree");
         };
         (
             wt.path.clone(),
@@ -737,7 +751,7 @@ pub(crate) fn worktree_status_impl(
     let host = host_from_distro(&distro);
     if !path_exists(&host, &path) {
         return err(
-            "WORKTREE_NOT_FOUND",
+            ErrorCode::WorktreeNotFound,
             "the worktree directory no longer exists",
         );
     }
@@ -747,7 +761,7 @@ pub(crate) fn worktree_status_impl(
     let base_ref = created_branch.then_some(base_ref);
     match compute_status(&host, &path, base_ref.as_deref()) {
         Ok(data) => ok(data),
-        Err((code, msg)) => err(&code, msg),
+        Err(e) => e.into(),
     }
 }
 
@@ -793,14 +807,14 @@ fn removal_block_reason(status: &WorktreeStatusData) -> String {
 /// `session_remove`'s job; the frontend orchestrates both per its confirm step.
 /// Split from the `#[tauri::command]` wrapper for the same testability reason
 /// as `worktree_status_impl`.
-pub(crate) fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResult<Option<()>> {
+pub fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResult<Option<()>> {
     let (path, source_repo_root, base_ref, created_branch, distro) = {
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let Some(s) = map.get(session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
+            return err(ErrorCode::SessionNotFound, "no such session");
         };
         let Some(wt) = &s.worktree else {
-            return err("WORKTREE_NOT_FOUND", "session has no worktree");
+            return err(ErrorCode::WorktreeNotFound, "session has no worktree");
         };
         (
             wt.path.clone(),
@@ -817,17 +831,17 @@ pub(crate) fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResu
     let host = host_from_distro(&distro);
     if !path_exists(&host, &path) {
         return err(
-            "WORKTREE_NOT_FOUND",
+            ErrorCode::WorktreeNotFound,
             "the worktree directory no longer exists",
         );
     }
     let base_ref = created_branch.then_some(base_ref);
     match compute_status(&host, &path, base_ref.as_deref()) {
         Ok(status) if status.dirty || status.unpushed => {
-            return err("WORKTREE_DIRTY", removal_block_reason(&status));
+            return err(ErrorCode::WorktreeDirty, removal_block_reason(&status));
         }
         Ok(_) => {}
-        Err((code, msg)) => return err(&code, msg),
+        Err(e) => return e.into(),
     }
     match git_routed(&host, &source_repo_root, &["worktree", "remove", &path]) {
         Ok(o) if o.code == 0 => {
@@ -835,14 +849,14 @@ pub(crate) fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResu
             ok(None)
         }
         Ok(o) => err(
-            "GIT_ERROR",
+            ErrorCode::GitError,
             if o.stderr.is_empty() {
                 "git worktree remove failed".into()
             } else {
                 o.stderr
             },
         ),
-        Err(e) => err("GIT_ERROR", e.to_string()),
+        Err(e) => err(ErrorCode::GitError, e.to_string()),
     }
 }
 

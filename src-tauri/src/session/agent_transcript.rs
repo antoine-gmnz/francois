@@ -11,6 +11,7 @@
 //! per the file-wide rule that no emit happens while `Engine.sessions` is held.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
@@ -30,7 +31,7 @@ const AGENT_BLOCK_TEXT_CAP: usize = 8_000;
 
 #[derive(Serialize, Clone)]
 #[serde(tag = "type")]
-pub(crate) enum AgentEvent {
+pub enum AgentEvent {
     #[serde(rename = "agent.block")]
     Block {
         #[serde(rename = "sessionId")]
@@ -41,14 +42,14 @@ pub(crate) enum AgentEvent {
     },
 }
 
-pub(crate) fn emit_agent_event(app: &AppHandle, ev: AgentEvent) {
+pub fn emit_agent_event(app: &AppHandle, ev: AgentEvent) {
     let _ = app.emit(AGENT_EVENT_CHANNEL, ev);
 }
 
 // ---------- francois:agents:transcript (agent-tab §5) ----------
 
 #[derive(Serialize, Clone, PartialEq, Debug)]
-pub(crate) struct AgentTranscript {
+pub struct AgentTranscript {
     blocks: Vec<Value>,
     dropped: u32,
 }
@@ -56,10 +57,7 @@ pub(crate) struct AgentTranscript {
 /// §5 `francois:agents:transcript`: the agent's windowed blocks + the eviction
 /// count. None ⇔ the agentId matches no agent in ANY session (AGENT_NOT_FOUND),
 /// the same rule as `activity_of`.
-pub(crate) fn transcript_of(
-    map: &HashMap<String, Session>,
-    agent_id: &str,
-) -> Option<AgentTranscript> {
+pub fn transcript_of(map: &HashMap<String, Session>, agent_id: &str) -> Option<AgentTranscript> {
     map.values()
         .find(|s| s.agents.contains_key(agent_id))
         .map(|s| AgentTranscript {
@@ -76,7 +74,7 @@ pub(crate) fn transcript_of(
 
 /// A freshly appended block: its id (so a `tool_use` can be filled later by its
 /// `tool_result`) and the emission its caller owes the frontend.
-pub(crate) struct NewAgentBlock {
+pub struct NewAgentBlock {
     pub(crate) block_id: String,
     pub(crate) emission: AgentEmission,
 }
@@ -152,11 +150,7 @@ fn cap_chars(s: &str, n: usize) -> String {
 
 /// FR-1: the subagent said something — the FULL text (capped), not the step's
 /// 120-char first line. Blank after trimming ⇒ no block, matching FR-9 there.
-pub(crate) fn push_agent_text(
-    s: &mut Session,
-    agent_id: &str,
-    text: &str,
-) -> Option<NewAgentBlock> {
+pub fn push_agent_text(s: &mut Session, agent_id: &str, text: &str) -> Option<NewAgentBlock> {
     let text = cap_chars(text.trim(), AGENT_BLOCK_TEXT_CAP);
     if text.is_empty() {
         return None;
@@ -179,7 +173,7 @@ pub(crate) fn push_agent_text(
 /// until its `tool_result` fills the meta (FR-2).
 /// `model` names the one a NESTED dispatch asked for, and rides the block's
 /// `text` exactly as it does in the parent transcript (BufBlock field reuse).
-pub(crate) fn push_agent_tool(
+pub fn push_agent_tool(
     s: &mut Session,
     agent_id: &str,
     tool: &str,
@@ -211,11 +205,7 @@ pub(crate) fn push_agent_tool(
 
 /// FR-4: the block-level twin of a `notice` step. Minted from `push_step` so the
 /// two can never drift.
-pub(crate) fn push_agent_notice(
-    s: &mut Session,
-    agent_id: &str,
-    label: &str,
-) -> Option<NewAgentBlock> {
+pub fn push_agent_notice(s: &mut Session, agent_id: &str, label: &str) -> Option<NewAgentBlock> {
     if label.is_empty() {
         return None;
     }
@@ -235,7 +225,7 @@ pub(crate) fn push_agent_notice(
 /// FR-2/FR-3: a `tool_result` closes its block — fill `meta`, stop streaming and
 /// re-emit the SAME blockId. A block already evicted past the window (FR-5) is a
 /// no-op, exactly like `fill_step_meta` past the trail window.
-pub(crate) fn fill_agent_block_meta(
+pub fn fill_agent_block_meta(
     s: &mut Session,
     agent_id: &str,
     block_id: &str,
@@ -260,10 +250,10 @@ pub fn agents_transcript(
     engine: State<'_, Engine>,
     agent_id: String,
 ) -> IpcResult<AgentTranscript> {
-    let map = engine.sessions.lock().unwrap();
+    let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     match transcript_of(&map, &agent_id) {
         Some(t) => ok(t),
-        None => err("AGENT_NOT_FOUND", "no such agent"),
+        None => err(ErrorCode::AgentNotFound, "no such agent"),
     }
 }
 

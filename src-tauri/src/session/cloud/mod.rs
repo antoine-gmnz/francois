@@ -47,11 +47,11 @@ mod auth;
 mod detect;
 mod landing;
 
-pub(crate) use adopt::*;
-pub(crate) use api::*;
+pub use adopt::*;
+pub use api::*;
 pub(crate) use auth::*;
 pub(crate) use detect::*;
-pub(crate) use landing::*;
+pub use landing::*;
 
 /// francois:cloud:event → the physical Tauri channel (§5).
 const EVENT_CHANNEL_CLOUD: &str = "francois://cloud/event";
@@ -59,11 +59,11 @@ const EVENT_CHANNEL_CLOUD: &str = "francois://cloud/event";
 /// FR-9: spawn → `ready` budget. Teleport fetches a whole cloud event log, then
 /// checks out a branch (possibly fetching it first), then boots a full
 /// interactive REPL — so this is generous on purpose.
-pub(crate) const ADOPT_DEADLINE: Duration = Duration::from_secs(180);
+pub const ADOPT_DEADLINE: Duration = Duration::from_secs(180);
 /// How often the adoption loop re-reads its two signals (PTY verdict, transcript).
-pub(crate) const ADOPT_POLL: Duration = Duration::from_millis(250);
+pub const ADOPT_POLL: Duration = Duration::from_millis(250);
 /// FR-2: both REST calls are bounded — a hung endpoint must never wedge a command.
-pub(crate) const CLOUD_HTTP_TIMEOUT_SECS: u64 = 10;
+pub const CLOUD_HTTP_TIMEOUT_SECS: u64 = 10;
 
 // ---------- contract shapes (contract/cloud-sessions.ts, mirrored by hand) ----------
 
@@ -91,7 +91,7 @@ pub struct CloudListData {
 
 /// FR-2's degrade-to-empty result — the ONE shape every non-actionable list
 /// outcome (non-200, timeout, unparseable body, unexpected shape) resolves to.
-pub(crate) fn degraded_list() -> CloudListData {
+pub fn degraded_list() -> CloudListData {
     CloudListData {
         sessions: Vec::new(),
         degraded: true,
@@ -116,7 +116,7 @@ pub struct CloudAdoptData {
 /// contract `CloudAdoptPhase` — tagged on `phase` (FR-7).
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "phase", rename_all = "camelCase")]
-pub(crate) enum CloudAdoptPhase {
+pub enum CloudAdoptPhase {
     Resolving,
     Preparing,
     Teleporting,
@@ -132,7 +132,7 @@ pub(crate) enum CloudAdoptPhase {
 
 /// The phase name as `CLOUD_ADOPT_STALLED`'s `detail: { phase }` carries it
 /// (FR-9) — the last phase the adoption actually reached.
-pub(crate) fn phase_name(p: &CloudAdoptPhase) -> &'static str {
+pub fn phase_name(p: &CloudAdoptPhase) -> &'static str {
     match p {
         CloudAdoptPhase::Resolving => "resolving",
         CloudAdoptPhase::Preparing => "preparing",
@@ -177,26 +177,38 @@ pub struct CloudProvenance {
 /// spawn); its fields stay private, which is enough — a child can read an
 /// ancestor's private fields.
 #[derive(Debug)]
-pub(crate) struct AdoptError {
-    code: String,
+pub struct AdoptError {
+    code: ErrorCode,
     message: String,
     detail: Option<Value>,
 }
 
 impl AdoptError {
-    fn new(code: &str, message: impl Into<String>) -> AdoptError {
+    fn new(code: ErrorCode, message: impl Into<String>) -> AdoptError {
         AdoptError {
-            code: code.to_string(),
+            code,
             message: message.into(),
             detail: None,
         }
     }
 
-    fn detailed(code: &str, message: impl Into<String>, detail: Value) -> AdoptError {
+    fn detailed(code: ErrorCode, message: impl Into<String>, detail: Value) -> AdoptError {
         AdoptError {
-            code: code.to_string(),
+            code,
             message: message.into(),
             detail: Some(detail),
+        }
+    }
+}
+
+// core-architecture-wave3 FR-6: into the one error type the IPC boundary
+// speaks, `detail` included, so a command body converts with `.into()`.
+impl From<AdoptError> for crate::ipc::AppError {
+    fn from(e: AdoptError) -> Self {
+        crate::ipc::AppError {
+            code: e.code,
+            message: e.message,
+            detail: e.detail,
         }
     }
 }
@@ -204,7 +216,7 @@ impl AdoptError {
 impl From<CloudBlock> for AdoptError {
     fn from(b: CloudBlock) -> AdoptError {
         AdoptError {
-            code: b.code.to_string(),
+            code: b.code,
             message: b.message,
             detail: b.detail,
         }
@@ -215,7 +227,7 @@ impl From<CloudBlock> for AdoptError {
 
 /// A worktree THIS adoption created, kept so FR-11 can remove exactly what this
 /// run made — never one that already existed.
-pub(crate) struct CreatedWorktree {
+pub struct CreatedWorktree {
     pub(crate) host: crate::diff::GitHost,
     pub(crate) repo_root: String,
     pub(crate) path: String,
@@ -227,7 +239,7 @@ impl CreatedWorktree {
     /// FR-11: best-effort reversal, reusing session-worktree's own reversal (so
     /// the "remove the tree, delete the branch only if we created it" rule lives
     /// in exactly one place).
-    pub(crate) fn reverse(&self) {
+    pub fn reverse(&self) {
         reverse_create(
             &self.host,
             &self.repo_root,
@@ -238,7 +250,7 @@ impl CreatedWorktree {
     }
 }
 
-pub(crate) struct CloudAdoptEntry {
+pub struct CloudAdoptEntry {
     killer: Box<dyn ChildKiller + Send + Sync>,
     phase: Arc<Mutex<CloudAdoptPhase>>,
     /// Held so the master side stays open for the lifetime of the child.
@@ -260,7 +272,7 @@ pub struct CloudAdoptRegistry(Mutex<HashMap<String, CloudAdoptEntry>>);
 impl CloudAdoptRegistry {
     /// Reserve the slot for `key`. `false` ⇒ an adoption of that ref is already
     /// in flight and the caller must not spawn anything.
-    pub(crate) fn reserve(&self, key: &str, phase: Arc<Mutex<CloudAdoptPhase>>) -> bool {
+    pub fn reserve(&self, key: &str, phase: Arc<Mutex<CloudAdoptPhase>>) -> bool {
         let mut map = self.0.lock().unwrap();
         if map.contains_key(key) {
             return false;
@@ -336,7 +348,7 @@ pub fn kill_all_cloud_adoptions(app: &AppHandle) {
 
 // ---------- emission (FR-7) ----------
 
-pub(crate) fn emit_adopt(app: &AppHandle, r#ref: &str, state: &CloudAdoptPhase) {
+pub fn emit_adopt(app: &AppHandle, r#ref: &str, state: &CloudAdoptPhase) {
     let _ = app.emit(
         EVENT_CHANNEL_CLOUD,
         CloudEvent::Adopt {
@@ -350,14 +362,14 @@ pub(crate) fn emit_adopt(app: &AppHandle, r#ref: &str, state: &CloudAdoptPhase) 
 /// registry slot AND emit it, so a `cloud_adopt` that arrives for the same ref
 /// mid-flight reports the same phase the frontend last saw. A silent adoption is
 /// a bug report, so every transition goes through here.
-pub(crate) struct AdoptProgress {
+pub struct AdoptProgress {
     app: AppHandle,
     r#ref: String,
     phase: Arc<Mutex<CloudAdoptPhase>>,
 }
 
 impl AdoptProgress {
-    pub(crate) fn new(app: AppHandle, r#ref: String, phase: Arc<Mutex<CloudAdoptPhase>>) -> Self {
+    pub fn new(app: AppHandle, r#ref: String, phase: Arc<Mutex<CloudAdoptPhase>>) -> Self {
         AdoptProgress { app, r#ref, phase }
     }
 
@@ -384,7 +396,7 @@ impl AdoptProgress {
 /// be seconds is read as seconds: 1e11 milliseconds is 1973 and 1e11 seconds is
 /// the year 5138, so the boundary is unambiguous for every date this app can
 /// meet. Contract timestamps are epoch MILLISECONDS (§Conventions).
-pub(crate) fn normalize_epoch_ms(raw: u64) -> u64 {
+pub fn normalize_epoch_ms(raw: u64) -> u64 {
     if raw < 100_000_000_000 {
         raw.saturating_mul(1000)
     } else {
@@ -395,6 +407,7 @@ pub(crate) fn normalize_epoch_ms(raw: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::ErrorCode;
     use serde_json::json;
 
     #[test]
@@ -485,7 +498,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(CloudAdoptPhase::Failed {
                 error: AppError {
-                    code: "CLOUD_ADOPT_STALLED".into(),
+                    code: ErrorCode::CloudAdoptStalled,
                     message: "took too long".into(),
                     detail: Some(json!({ "phase": "teleporting" })),
                 }

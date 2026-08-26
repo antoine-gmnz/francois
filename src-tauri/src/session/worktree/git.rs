@@ -7,8 +7,8 @@
 
 use super::WorktreeStatusData;
 use crate::diff::{git_program, git_routed, wsl_cd_target, GitHost};
-use crate::process_util::no_window;
-use std::process::{Command, Stdio};
+use crate::ipc::{AppError, ErrorCode};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// FR-7: best-effort fetch budget.
@@ -19,19 +19,22 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 /// practice, so a much shorter budget than the fetch timeout is enough.
 const WSL_STAT_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub(crate) fn check_ref_format(host: &GitHost, dir: &str, branch: &str) -> Result<(), String> {
+pub fn check_ref_format(host: &GitHost, dir: &str, branch: &str) -> Result<(), AppError> {
+    // core-architecture-wave3 FR-6: INVALID_INPUT, the code the one call site
+    // (`worktree::mod`'s branch validation) used to stamp.
+    let invalid = |m: String| AppError::new(ErrorCode::InvalidInput, m);
     match git_routed(host, dir, &["check-ref-format", "--branch", branch]) {
         Ok(o) if o.code == 0 => Ok(()),
-        Ok(o) => Err(if o.stderr.is_empty() {
+        Ok(o) => Err(invalid(if o.stderr.is_empty() {
             format!("'{branch}' is not a valid branch name")
         } else {
             o.stderr
-        }),
-        Err(e) => Err(e.to_string()),
+        })),
+        Err(e) => Err(invalid(e.to_string())),
     }
 }
 
-pub(crate) fn branch_exists(host: &GitHost, repo_root: &str, branch: &str) -> bool {
+pub fn branch_exists(host: &GitHost, repo_root: &str, branch: &str) -> bool {
     matches!(
         git_routed(
             host,
@@ -47,7 +50,7 @@ pub(crate) fn branch_exists(host: &GitHost, repo_root: &str, branch: &str) -> bo
 /// Callers only ever pass a FULLY QUALIFIED ref (`refs/heads/…`, `refs/remotes/…`), so no
 /// value here can start with `-` and be mistaken for an option — `rev-parse` takes no `--`
 /// separator for revisions.
-pub(crate) fn rev_exists(host: &GitHost, repo_root: &str, rev: &str) -> bool {
+pub fn rev_exists(host: &GitHost, repo_root: &str, rev: &str) -> bool {
     matches!(
         git_routed(
             host,
@@ -60,19 +63,14 @@ pub(crate) fn rev_exists(host: &GitHost, repo_root: &str, rev: &str) -> bool {
 
 /// Whether `ancestor` is reachable from `descendant` (`git merge-base --is-ancestor`).
 /// Fully-qualified refs only, same reason as `rev_exists`.
-pub(crate) fn is_ancestor(
-    host: &GitHost,
-    repo_root: &str,
-    ancestor: &str,
-    descendant: &str,
-) -> bool {
+pub fn is_ancestor(host: &GitHost, repo_root: &str, ancestor: &str, descendant: &str) -> bool {
     matches!(
         git_routed(host, repo_root, &["merge-base", "--is-ancestor", ancestor, descendant]),
         Ok(o) if o.code == 0
     )
 }
 
-pub(crate) fn remote_name(host: &GitHost, repo_root: &str) -> Option<String> {
+pub fn remote_name(host: &GitHost, repo_root: &str) -> Option<String> {
     let o = git_routed(host, repo_root, &["remote"]).ok()?;
     if o.code != 0 {
         return None;
@@ -92,7 +90,7 @@ pub(crate) fn remote_name(host: &GitHost, repo_root: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn default_branch(host: &GitHost, repo_root: &str, remote: Option<&str>) -> String {
+pub fn default_branch(host: &GitHost, repo_root: &str, remote: Option<&str>) -> String {
     if let Some(r) = remote {
         if let Ok(o) = git_routed(
             host,
@@ -118,7 +116,7 @@ pub(crate) fn default_branch(host: &GitHost, repo_root: &str, remote: Option<&st
     "main".to_string()
 }
 
-pub(crate) fn current_branch(host: &GitHost, cwd: &str) -> Option<String> {
+pub fn current_branch(host: &GitHost, cwd: &str) -> Option<String> {
     let o = git_routed(host, cwd, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
     if o.code != 0 {
         return None;
@@ -132,7 +130,7 @@ pub(crate) fn current_branch(host: &GitHost, cwd: &str) -> Option<String> {
 /// attach-to-worktree FR-3: `head`/`detached`/`locked`/`prunable`/`bare` were added
 /// alongside `path`/`branch` — the porcelain lines the parser used to discard.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WtEntry {
+pub struct WtEntry {
     pub(crate) path: String,
     pub(crate) branch: Option<String>,
     /// Full sha; `None` when git reports no `HEAD <sha>` line (unborn HEAD).
@@ -150,7 +148,7 @@ pub(crate) struct WtEntry {
 /// `sourceRepoRoot` when adopting (FR-12) and excluded from the
 /// attach-to-worktree picker (FR-2). Pure; split out so it's directly
 /// unit-testable without a live git spawn.
-pub(crate) fn parse_worktree_porcelain(text: &str) -> Vec<WtEntry> {
+pub fn parse_worktree_porcelain(text: &str) -> Vec<WtEntry> {
     let mut entries = Vec::new();
     let mut cur: Option<WtEntry> = None;
     for line in text.lines() {
@@ -205,7 +203,7 @@ pub(crate) fn parse_worktree_porcelain(text: &str) -> Vec<WtEntry> {
     entries
 }
 
-pub(crate) fn worktree_list_entries(host: &GitHost, dir: &str) -> Vec<WtEntry> {
+pub fn worktree_list_entries(host: &GitHost, dir: &str) -> Vec<WtEntry> {
     let Ok(o) = git_routed(host, dir, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
@@ -215,7 +213,7 @@ pub(crate) fn worktree_list_entries(host: &GitHost, dir: &str) -> Vec<WtEntry> {
     parse_worktree_porcelain(&String::from_utf8_lossy(&o.stdout))
 }
 
-pub(crate) fn norm_path(p: &str) -> String {
+pub fn norm_path(p: &str) -> String {
     p.trim_end_matches(['/', '\\'])
         .replace('\\', "/")
         .to_lowercase()
@@ -232,7 +230,7 @@ pub(crate) fn norm_path(p: &str) -> String {
 ///
 /// Pure — unit-tested against both. `None` for any other failure, which stays a
 /// generic `WORKTREE_CREATE_FAILED`.
-pub(crate) fn in_use_path_from_stderr(stderr: &str) -> Option<String> {
+pub fn in_use_path_from_stderr(stderr: &str) -> Option<String> {
     const MARKERS: [&str; 2] = [
         "is already checked out at ",
         "is already used by worktree at ",
@@ -253,7 +251,7 @@ pub(crate) fn in_use_path_from_stderr(stderr: &str) -> Option<String> {
     None
 }
 
-pub(crate) fn branch_checked_out_at(host: &GitHost, dir: &str, branch: &str) -> Option<String> {
+pub fn branch_checked_out_at(host: &GitHost, dir: &str, branch: &str) -> Option<String> {
     worktree_list_entries(host, dir)
         .into_iter()
         .find(|e| e.branch.as_deref() == Some(branch))
@@ -269,50 +267,44 @@ pub(crate) fn branch_checked_out_at(host: &GitHost, dir: &str, branch: &str) -> 
 /// reaches the Linux `git` process — WSL does not forward the launcher's
 /// environment across the boundary. Pass it through the invocation itself via
 /// `env GIT_TERMINAL_PROMPT=0 git …`.
-pub(crate) fn fetch_with_timeout(
-    host: &GitHost,
-    repo_root: &str,
-    remote: &str,
-) -> Result<(), String> {
+pub fn fetch_with_timeout(host: &GitHost, repo_root: &str, remote: &str) -> Result<(), AppError> {
+    // core-architecture-wave3 FR-6: GIT_ERROR. Best-effort, so the caller keeps
+    // the MESSAGE (it rides `SessionWorktree.fetchError` on the wire) and drops
+    // the code — the fetch failing is not the operation failing.
+    let failed = |m: String| AppError::new(ErrorCode::GitError, m);
     // CRITICAL remediation: `remote` is a git remote *name*, sourced from
     // `git remote` output — for an adopted/hostile repo that can be an
     // attacker-controlled `.git/config` section name (e.g.
     // `--upload-pack=touch /tmp/pwned`). Callers reject a leading `-` before
     // calling in, but a `--` separator is added here too as defense in depth
     // so this helper is safe to call with any string.
-    let mut cmd = match host {
+    let cmd = match host {
         GitHost::Native => {
             let (program, argv) = git_program(host, repo_root, &["fetch", "--prune", "--", remote]);
-            let mut c = Command::new(program);
-            c.args(&argv)
+            crate::process_util::spawn(program)
+                .args(&argv)
                 .env("GIT_TERMINAL_PROMPT", "0")
-                .current_dir(repo_root);
-            c
+                .current_dir(repo_root)
         }
-        GitHost::Wsl(distro) => {
-            let mut c = Command::new("wsl.exe");
-            c.args([
-                "-d",
-                distro,
-                "--cd",
-                &wsl_cd_target(repo_root),
-                "--",
-                "env",
-                "GIT_TERMINAL_PROMPT=0",
-                "git",
-                "fetch",
-                "--prune",
-                "--",
-                remote,
-            ]);
-            c
-        }
+        GitHost::Wsl(distro) => crate::process_util::spawn("wsl.exe").args([
+            "-d",
+            distro,
+            "--cd",
+            &wsl_cd_target(repo_root),
+            "--",
+            "env",
+            "GIT_TERMINAL_PROMPT=0",
+            "git",
+            "fetch",
+            "--prune",
+            "--",
+            remote,
+        ]),
     };
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    no_window(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let mut child = cmd
+        .stderr(Stdio::piped())
+        .start()
+        .map_err(|e| failed(e.to_string()))?;
     let start = Instant::now();
     loop {
         match child.try_wait() {
@@ -326,21 +318,21 @@ pub(crate) fn fetch_with_timeout(
                     let _ = se.read_to_string(&mut stderr);
                 }
                 let stderr = stderr.trim();
-                return Err(if stderr.is_empty() {
+                return Err(failed(if stderr.is_empty() {
                     "git fetch failed".to_string()
                 } else {
                     stderr.to_string()
-                });
+                }));
             }
             Ok(None) => {
                 if start.elapsed() >= FETCH_TIMEOUT {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err("git fetch timed out".to_string());
+                    return Err(failed("git fetch timed out".to_string()));
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(failed(e.to_string())),
         }
     }
 }
@@ -357,7 +349,7 @@ pub(crate) fn fetch_with_timeout(
 /// `resolve_worktree`, so that rejected every WSL session creation with
 /// INVALID_INPUT, worktree or not. Translation is idempotent, so a bare Linux
 /// path (a cached repo root, FR-5's adopt cwd) passes straight through.
-pub(crate) fn wsl_test_argv(distro: &str, path: &str) -> Vec<String> {
+pub fn wsl_test_argv(distro: &str, path: &str) -> Vec<String> {
     vec![
         "-d".to_string(),
         distro.to_string(),
@@ -376,17 +368,14 @@ pub(crate) fn wsl_test_argv(distro: &str, path: &str) -> Vec<String> {
 /// no timeout, unlike `fetch_with_timeout`'s 20s budget — a wedged `wsl.exe`
 /// (cold-booting distro, etc.) would hang worktree creation/removal/status
 /// indefinitely. Same spawn+poll+timeout shape, a shorter budget.
-pub(crate) fn path_exists(host: &GitHost, path: &str) -> bool {
+pub fn path_exists(host: &GitHost, path: &str) -> bool {
     match host {
         GitHost::Native => std::path::Path::new(path).exists(),
         GitHost::Wsl(distro) => {
-            let mut c = Command::new("wsl.exe");
-            c.args(wsl_test_argv(distro, path))
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            no_window(&mut c);
-            let Ok(mut child) = c.spawn() else {
+            let Ok(mut child) = crate::process_util::spawn("wsl.exe")
+                .args(wsl_test_argv(distro, path))
+                .start()
+            else {
                 return false;
             };
             let start = Instant::now();
@@ -417,19 +406,19 @@ pub(crate) fn path_exists(host: &GitHost, path: &str) -> bool {
 /// reliable base we can't compute a real unpushed count — fail SAFE
 /// (`unpushed: true`) rather than silently reporting 0 and letting FR-19's
 /// removal guard sail through on an unreliable "clean" reading.
-pub(crate) fn compute_status(
+pub fn compute_status(
     host: &GitHost,
     path: &str,
     base_ref: Option<&str>,
-) -> Result<WorktreeStatusData, (String, String)> {
+) -> Result<WorktreeStatusData, AppError> {
     let dirty_count = match git_routed(host, path, &["status", "--porcelain"]) {
         Ok(o) if o.code == 0 => String::from_utf8_lossy(&o.stdout)
             .lines()
             .filter(|l| !l.is_empty())
             .count() as u32,
         Ok(o) => {
-            return Err((
-                "GIT_ERROR".into(),
+            return Err(AppError::new(
+                ErrorCode::GitError,
                 if o.stderr.is_empty() {
                     "git status failed".into()
                 } else {
@@ -437,7 +426,7 @@ pub(crate) fn compute_status(
                 },
             ))
         }
-        Err(e) => return Err(("GIT_ERROR".into(), e.to_string())),
+        Err(e) => return Err(AppError::new(ErrorCode::GitError, e.to_string())),
     };
     let upstream = git_routed(
         host,
@@ -485,7 +474,6 @@ pub(crate) fn compute_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command as Cmd;
 
     fn tmp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -500,7 +488,7 @@ mod tests {
     }
 
     fn git(dir: &std::path::Path, args: &[&str]) {
-        let status = Cmd::new("git")
+        let status = crate::process_util::spawn("git")
             .args(args)
             .current_dir(dir)
             .status()

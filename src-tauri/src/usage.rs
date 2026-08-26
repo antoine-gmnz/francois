@@ -14,13 +14,14 @@
 // watchdog, not the timers — so it can never participate in a lock cycle with the
 // engine. Keep it that way.
 
+use crate::ipc::ErrorCode;
 use crate::ipc::{ok, AppError, IpcResult};
-use crate::session::{account_env, claude_path_env, no_window, now_ms, PROBE_TIMEOUT_SECS};
+use crate::session::{account_env, now_ms, PROBE_TIMEOUT_SECS};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -205,7 +206,7 @@ struct UsageInner {
 
 fn unavailable(message: &str) -> AppError {
     AppError {
-        code: "USAGE_UNAVAILABLE".into(),
+        code: ErrorCode::UsageUnavailable,
         message: message.into(),
         detail: None,
     }
@@ -214,7 +215,7 @@ fn unavailable(message: &str) -> AppError {
 /// §5.4 row 1: `claude` could not be spawned.
 fn spawn_failed() -> AppError {
     AppError {
-        code: "SPAWN_FAILED".into(),
+        code: ErrorCode::SpawnFailed,
         message: MSG_SPAWN_FAILED.into(),
         detail: None,
     }
@@ -372,25 +373,17 @@ fn request_probe(app: &AppHandle, account_id: &str, manual: bool) -> bool {
     emit_snapshot(app, account_id, &inner.snapshot); // FR-17 — before the spawn
 
     let (program, args) = probe_invocation();
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-    if let Some(home) = probe_cwd() {
-        cmd.current_dir(home);
-    }
-    if let Some(path) = claude_path_env() {
-        cmd.env("PATH", path);
-    }
     // multi-account FR-28: each probe reports plan limits from ITS account's
     // perspective. The probe is always native (FR-6), so there is no WSLENV leg.
-    for (k, v) in account_env(config_dir.as_deref(), "native", &[]) {
-        cmd.env(k, v);
+    let mut cmd = crate::process_util::spawn(program)
+        .args(args)
+        .envs(account_env(config_dir.as_deref(), "native", &[]))
+        .stdout(Stdio::piped());
+    if let Some(home) = probe_cwd() {
+        cmd = cmd.current_dir(home);
     }
-    no_window(&mut cmd); // FR-10 — no console flash
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
 
-    let mut child = match cmd.spawn() {
+    let mut child = match cmd.start() {
         Ok(c) => c,
         Err(_) => {
             apply_outcome(
@@ -623,7 +616,7 @@ pub fn note_turn_ended(app: &AppHandle, account_id: &str) {
 pub fn app_get_usage(app: AppHandle, account_id: Option<String>) -> IpcResult<UsageSnapshot> {
     let account_id = resolve_usage_account(&app, account_id);
     let Some(state) = app.try_state::<UsageState>() else {
-        return crate::ipc::err("INTERNAL", "usage state is unavailable");
+        return crate::ipc::err(ErrorCode::Internal, "usage state is unavailable");
     };
     // The lock lives in a STATEMENT, never in the tail expression: a tail
     // expression's temporaries outlive the block's locals, so a guard borrowed
@@ -634,7 +627,7 @@ pub fn app_get_usage(app: AppHandle, account_id: Option<String>) -> IpcResult<Us
             .map(|i| i.snapshot.clone())
             .unwrap_or_default(),
         // §5.4: INTERNAL is reserved for a poisoned state lock.
-        Err(_) => return crate::ipc::err("INTERNAL", "usage state is unavailable"),
+        Err(_) => return crate::ipc::err(ErrorCode::Internal, "usage state is unavailable"),
     };
     ok(snapshot)
 }
@@ -845,14 +838,14 @@ mod tests {
         let ProbeOutcome::Failed(e) = probe_outcome(&[], true) else {
             panic!("expected a failure");
         };
-        assert_eq!(e.code, "USAGE_UNAVAILABLE");
+        assert_eq!(e.code, ErrorCode::UsageUnavailable);
         assert_eq!(e.message, "Timed out fetching usage.");
 
         // §5.4 row 3: exited with no answer text.
         let ProbeOutcome::Failed(e) = probe_outcome(&[], false) else {
             panic!("expected a failure");
         };
-        assert_eq!(e.code, "USAGE_UNAVAILABLE");
+        assert_eq!(e.code, ErrorCode::UsageUnavailable);
         assert_eq!(
             e.message,
             "The Claude Code CLI returned no answer. Run 'claude' once in a terminal to authenticate."
@@ -866,7 +859,7 @@ mod tests {
         let ProbeOutcome::Failed(e) = probe_outcome(&drifted, false) else {
             panic!("expected a failure");
         };
-        assert_eq!(e.code, "USAGE_UNAVAILABLE");
+        assert_eq!(e.code, ErrorCode::UsageUnavailable);
         assert_eq!(e.message, "Could not read the usage response.");
 
         // A truncated (killed) answer that parses to zero meters reports the real
@@ -881,7 +874,7 @@ mod tests {
     fn spawn_failure_carries_the_spec_code_and_message() {
         // §5.4 row 1 / §7 #1 — the actionable "not on PATH" wording.
         let e = spawn_failed();
-        assert_eq!(e.code, "SPAWN_FAILED");
+        assert_eq!(e.code, ErrorCode::SpawnFailed);
         assert_eq!(
             e.message,
             "Claude Code CLI not found. Install it and ensure 'claude' is on PATH."
@@ -908,7 +901,7 @@ mod tests {
         assert_eq!(snap.status, "error");
         assert_eq!(snap.meters.len(), 1);
         assert_eq!(snap.fetched_at, Some(1_000));
-        assert_eq!(snap.error.as_ref().unwrap().code, "SPAWN_FAILED");
+        assert_eq!(snap.error.as_ref().unwrap().code, ErrorCode::SpawnFailed);
 
         // FR-20: the next success clears the error and replaces the meters.
         apply_outcome(

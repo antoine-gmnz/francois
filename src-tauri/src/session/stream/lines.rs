@@ -15,18 +15,17 @@ use tauri::AppHandle;
 /// `type: "system"` lines: only `subtype: "init"` matters here. Returns
 /// whether this line was the init line, so the caller can set `got_init`
 /// (which feeds resume-fail detection).
-pub(crate) fn handle_system_line(
-    env: &dyn SessionEnv,
-    session_id: &str,
-    cwd: &str,
-    v: &Value,
-) -> bool {
+pub fn handle_system_line(env: &dyn SessionEnv, session_id: &str, cwd: &str, v: &Value) -> bool {
     if v.get("subtype").and_then(|subtype| subtype.as_str()) != Some("init") {
         return false;
     }
     if let Some(claude_session_id) = v.get("session_id").and_then(|id| id.as_str()) {
         {
-            let mut map = env.engine().sessions.lock().unwrap();
+            let mut map = env
+                .engine()
+                .sessions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             if let Some(s) = map.get_mut(session_id) {
                 s.claude_session_id = Some(claude_session_id.to_string());
             }
@@ -40,7 +39,11 @@ pub(crate) fn handle_system_line(
     // registry. Absent array → no change, identical set → silent.
     if let Some(names) = parse_init_slash_commands(v) {
         let changed = {
-            let mut map = env.engine().sessions.lock().unwrap();
+            let mut map = env
+                .engine()
+                .sessions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             map.get_mut(session_id)
                 .is_some_and(|s| capture_cli_commands(s, names.clone()))
         };
@@ -61,7 +64,7 @@ pub(crate) fn handle_system_line(
 /// command card here — real top-level assistant echoes stay ignored
 /// (stream_events carry those). Returns whether a synthetic message was
 /// seen, so the caller can set `saw_synthetic`.
-pub(crate) fn handle_assistant_line(
+pub fn handle_assistant_line(
     env: &dyn SessionEnv,
     session_id: &str,
     turn_cmd: Option<&str>,
@@ -111,7 +114,7 @@ fn parse_result_line(v: &Value) -> ResultLine {
 /// owns that decision now, because the CLI keeps working past its own
 /// `result` (see the module doc on the post-result close policy in
 /// `session/stdio.rs`).
-pub(crate) fn handle_result_line(
+pub fn handle_result_line(
     v: &Value,
     ctx_usage: &mut ContextTracker,
     result_error: &mut Option<String>,
@@ -136,7 +139,7 @@ pub(crate) fn handle_result_line(
 /// This is the signal the post-result close policy reads. It is authoritative
 /// and it always precedes the `result` line — a background subagent can only be
 /// dispatched by a tool call the turn already made.
-pub(crate) fn parse_background_tasks(v: &Value) -> Option<usize> {
+pub fn parse_background_tasks(v: &Value) -> Option<usize> {
     if v.get("subtype").and_then(|subtype| subtype.as_str()) != Some("background_tasks_changed") {
         return None;
     }
@@ -150,7 +153,7 @@ pub(crate) fn parse_background_tasks(v: &Value) -> Option<usize> {
 /// `type: "control_cancel_request"` lines: the CLI withdrew a parked
 /// question or permission ask (session-questions FR-10 /
 /// permission-guardrails FR-10). Unmatched ids are ignored.
-pub(crate) fn handle_control_cancel_line(
+pub fn handle_control_cancel_line(
     env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
@@ -206,7 +209,7 @@ fn take_pending_by_request_id<T>(
 /// resolves as cancelled, exactly once — this drain is the claim; kill_all's
 /// own drain and an in-flight answer can never double-resolve. No
 /// control_response: child is gone.
-pub(crate) fn drain_orphaned_questions(
+pub fn drain_orphaned_questions(
     env: &dyn SessionEnv,
     session_id: &str,
     pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
@@ -222,7 +225,7 @@ pub(crate) fn drain_orphaned_questions(
 
 /// permission-guardrails FR-10: identical drain for parked approval cards —
 /// an ask never outlives the turn it parked, and the claim is exactly-once.
-pub(crate) fn drain_orphaned_permissions(
+pub fn drain_orphaned_permissions(
     env: &dyn SessionEnv,
     session_id: &str,
     pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
@@ -241,7 +244,7 @@ pub(crate) fn drain_orphaned_permissions(
 /// A text block settles through the same path a `content_block_stop` takes, so
 /// the partial answer is buffered and persisted rather than living only in the
 /// deltas the UI happened to receive.
-pub(crate) fn close_open_block(
+pub fn close_open_block(
     env: &dyn SessionEnv,
     session_id: &str,
     open_block: Option<(String, BlockKind)>,
@@ -267,7 +270,7 @@ pub(crate) fn close_open_block(
 /// running context-usage estimate, fire the interactive-commands FR-18
 /// fallback card, and end the turn — success, interrupted, or crashed.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn finish_reader_turn(
+pub fn finish_reader_turn(
     app: &AppHandle,
     session_id: &str,
     model_id: &str,
@@ -328,7 +331,7 @@ pub(crate) fn finish_reader_turn(
     }
 }
 
-pub(crate) fn emit_mcp_from_init(env: &dyn SessionEnv, session_id: &str, init: &Value) {
+pub fn emit_mcp_from_init(env: &dyn SessionEnv, session_id: &str, init: &Value) {
     let tools: Vec<String> = init
         .get("tools")
         .and_then(|t| t.as_array())
@@ -382,7 +385,11 @@ pub(crate) fn emit_mcp_from_init(env: &dyn SessionEnv, session_id: &str, init: &
             scope: None,
         };
         {
-            let mut map = env.engine().sessions.lock().unwrap();
+            let mut map = env
+                .engine()
+                .sessions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             if let Some(s) = map.get_mut(session_id) {
                 s.mcp.insert(name.clone(), info.clone());
             }

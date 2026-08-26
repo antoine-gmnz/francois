@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 
 #[derive(Serialize, Clone)]
 #[serde(tag = "type")]
-pub(crate) enum SessionEvent {
+pub enum SessionEvent {
     #[serde(rename = "session.meta")]
     Meta { meta: SessionMeta },
     #[serde(rename = "session.status")]

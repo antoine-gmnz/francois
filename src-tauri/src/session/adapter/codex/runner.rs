@@ -13,12 +13,13 @@ use super::args::codex_invocation;
 use super::wire::{self, CodexEvent, ItemKind};
 use super::{CodexTurnHandle, CODEX_MISSING_HINT};
 use crate::ipc::AppError;
+use crate::ipc::ErrorCode;
 use crate::session::adapter::TurnContext;
 use crate::session::*;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write as _};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
@@ -374,43 +375,36 @@ pub(super) fn begin_turn(
         &ctx.permission_mode,
     );
 
-    let mut cmd = Command::new(program);
-    cmd.args(argv);
+    // The facade resolves PATH against the login shell for the same reason
+    // every `claude` spawn needs it: a GUI app launched from Finder/Dock
+    // inherits launchd's minimal PATH, so an npm/homebrew-installed `codex` is
+    // otherwise invisible. (On Windows that leg is a no-op — there the problem
+    // is the missing `.cmd` extension instead, handled by `codex_program`.)
+    //
     // FR-6: `codex exec resume` has no `--cd`, so the child's own working
     // directory is how BOTH forms learn the cwd. Set unconditionally.
-    cmd.current_dir(&ctx.cwd);
-    // Same reasoning as every `claude` spawn: a GUI app launched from
-    // Finder/Dock inherits launchd's minimal PATH, not the login shell's, so an
-    // npm/homebrew-installed `codex` is invisible to `Command::new`. The helper
-    // is named for claude but resolves the user's shell PATH, which is what both
-    // CLIs need. (On Windows it is a no-op — there the problem is the missing
-    // `.cmd` extension instead, handled by `codex_program`.)
-    if let Some(path) = claude_path_env() {
-        cmd.env("PATH", path);
-    }
     // FR-18: this turn runs under its session's account.
-    for (k, v) in account_env_for_kind(
-        config_dir.as_deref(),
-        crate::account::AccountKind::CodexCli,
-        &ctx.runtime,
-        &[],
-    ) {
-        cmd.env(k, v);
-    }
-    no_window(&mut cmd);
-    cmd.stdin(Stdio::piped())
+    let mut child = crate::process_util::spawn(program)
+        .args(argv)
+        .current_dir(&ctx.cwd)
+        .envs(account_env_for_kind(
+            config_dir.as_deref(),
+            crate::account::AccountKind::CodexCli,
+            &ctx.runtime,
+            &[],
+        ))
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-
-    let mut child = cmd.spawn().map_err(|e| AppError {
-        code: "SPAWN_FAILED".into(),
-        message: if e.kind() == std::io::ErrorKind::NotFound {
-            CODEX_MISSING_HINT.to_string()
-        } else {
-            format!("could not start codex: {e}")
-        },
-        detail: None,
-    })?;
+        .start()
+        .map_err(|e| AppError {
+            code: ErrorCode::SpawnFailed,
+            message: if e.kind() == std::io::ErrorKind::NotFound {
+                CODEX_MISSING_HINT.to_string()
+            } else {
+                format!("could not start codex: {e}")
+            },
+            detail: None,
+        })?;
 
     // The prompt, then EOF. A failure here means the child died before reading
     // it — a spawn failure in everything but name.
@@ -421,7 +415,7 @@ pub(super) fn begin_turn(
     if let Err(e) = wrote {
         let _ = child.kill();
         return Err(AppError {
-            code: "SPAWN_FAILED".into(),
+            code: ErrorCode::SpawnFailed,
             message: format!("could not send the prompt to codex: {e}"),
             detail: None,
         });

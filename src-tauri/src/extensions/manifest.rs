@@ -13,6 +13,7 @@ use super::{
     TokenSourceSpec, MANIFEST_MAX_BYTES, MANIFEST_VERSION, SHELL_ARGV0_BLOCKLIST,
 };
 use crate::ipc::AppError;
+use crate::ipc::ErrorCode;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -36,7 +37,7 @@ type VResult<T> = Result<T, Invalid>;
 
 fn manifest_invalid(err: Invalid, manifest_path: &Path) -> AppError {
     AppError {
-        code: "EXT_MANIFEST_INVALID".to_string(),
+        code: ErrorCode::ExtManifestInvalid,
         message: format!("unknown {} at {}", err.expected, err.pointer),
         detail: Some(json!({
             "pointer": err.pointer,
@@ -48,13 +49,13 @@ fn manifest_invalid(err: Invalid, manifest_path: &Path) -> AppError {
 
 fn manifest_unsupported(found: Value) -> AppError {
     AppError {
-        code: "EXT_MANIFEST_UNSUPPORTED".to_string(),
+        code: ErrorCode::ExtManifestUnsupported,
         message: format!("unsupported manifest version {found}"),
         detail: Some(json!({ "found": found, "supported": MANIFEST_VERSION })),
     }
 }
 
-pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex_encode(&hasher.finalize())
@@ -523,7 +524,7 @@ fn link_token_sources(ext_id: &str, panels: &mut [RawPanel]) -> VResult<()> {
 /// approving — a manifest-controlled bidi override or zero-width char could
 /// otherwise reorder or hide part of that line while it visually still reads
 /// as consented.
-pub(crate) fn sanitize_argv_element(input: &str) -> String {
+pub fn sanitize_argv_element(input: &str) -> String {
     super::schema::strip_bidi_and_zero_width(&super::schema::strip_control_sequences(input))
 }
 
@@ -563,7 +564,7 @@ fn declared_commands(panels: &[PanelDefinition], predicate: &DetectPredicate) ->
 /// Load and validate one `<dir>/extension.json`. `None` only for FR-4's
 /// silent case (no file, or unreadable) — every other outcome, success or
 /// failure, is a `LoadedExtension`.
-pub(crate) fn load_one(dir: &Path) -> Option<LoadedExtension> {
+pub fn load_one(dir: &Path) -> Option<LoadedExtension> {
     let dir_name = dir.file_name()?.to_string_lossy().to_string();
     let manifest_path = dir.join("extension.json");
     let bytes = std::fs::read(&manifest_path).ok()?;
@@ -726,7 +727,10 @@ mod tests {
         let huge = "x".repeat(MANIFEST_MAX_BYTES + 1);
         std::fs::write(dir.join("extension.json"), huge).unwrap();
         let ext = load_one(&dir).unwrap();
-        assert_eq!(ext.manifest_error.unwrap().code, "EXT_MANIFEST_INVALID");
+        assert_eq!(
+            ext.manifest_error.unwrap().code,
+            ErrorCode::ExtManifestInvalid
+        );
     }
 
     #[test]
@@ -739,7 +743,7 @@ mod tests {
         );
         let ext = load_one(&dir).unwrap();
         let err = ext.manifest_error.unwrap();
-        assert_eq!(err.code, "EXT_MANIFEST_UNSUPPORTED");
+        assert_eq!(err.code, ErrorCode::ExtManifestUnsupported);
         assert_eq!(err.detail.unwrap()["found"], json!(2));
     }
 
@@ -752,7 +756,10 @@ mod tests {
             r#"{"manifest":1,"detect":{"kind":"pathExists","path":"x"},"panels":[]}"#,
         );
         let ext = load_one(&dir).unwrap();
-        assert_eq!(ext.manifest_error.unwrap().code, "EXT_MANIFEST_INVALID");
+        assert_eq!(
+            ext.manifest_error.unwrap().code,
+            ErrorCode::ExtManifestInvalid
+        );
     }
 
     #[test]
@@ -765,7 +772,7 @@ mod tests {
         );
         let ext = load_one(&dir).unwrap();
         let err = ext.manifest_error.unwrap();
-        assert_eq!(err.code, "EXT_MANIFEST_INVALID");
+        assert_eq!(err.code, ErrorCode::ExtManifestInvalid);
         assert_eq!(err.detail.unwrap()["pointer"], json!("/id"));
     }
 
@@ -787,7 +794,7 @@ mod tests {
         );
         let ext = load_one(&dir).unwrap();
         let err = ext.manifest_error.unwrap();
-        assert_eq!(err.code, "EXT_MANIFEST_INVALID");
+        assert_eq!(err.code, ErrorCode::ExtManifestInvalid);
         assert_eq!(err.detail.unwrap()["pointer"], json!("/panels/0/primitive"));
         assert!(ext.panels.is_empty());
     }
@@ -858,7 +865,7 @@ mod tests {
             let ext = load_one(&dir).unwrap();
             assert_eq!(
                 ext.manifest_error.unwrap().code,
-                "EXT_MANIFEST_INVALID",
+                ErrorCode::ExtManifestInvalid,
                 "{name} must be refused"
             );
         }
@@ -894,7 +901,7 @@ mod tests {
             let ext = load_one(&dir).unwrap();
             assert_eq!(
                 ext.manifest_error.unwrap().code,
-                "EXT_MANIFEST_INVALID",
+                ErrorCode::ExtManifestInvalid,
                 "{name} must be refused"
             );
         }
@@ -926,7 +933,10 @@ mod tests {
             }"#,
         );
         let ext = load_one(&dir).unwrap();
-        assert_eq!(ext.manifest_error.unwrap().code, "EXT_MANIFEST_INVALID");
+        assert_eq!(
+            ext.manifest_error.unwrap().code,
+            ErrorCode::ExtManifestInvalid
+        );
     }
 
     // FR-38 (extensions): a tokenSource naming a non-sibling is refused.
@@ -948,7 +958,10 @@ mod tests {
             }"#,
         );
         let ext = load_one(&dir).unwrap();
-        assert_eq!(ext.manifest_error.unwrap().code, "EXT_MANIFEST_INVALID");
+        assert_eq!(
+            ext.manifest_error.unwrap().code,
+            ErrorCode::ExtManifestInvalid
+        );
     }
 
     // extension-install FR-51 (review round 3, CRITICAL): declared commands
@@ -1024,7 +1037,7 @@ mod tests {
         );
         let ext = load_one(&dir).unwrap();
         let err = ext.manifest_error.unwrap();
-        assert_eq!(err.code, "EXT_MANIFEST_INVALID");
+        assert_eq!(err.code, ErrorCode::ExtManifestInvalid);
         assert_eq!(
             err.detail.unwrap()["pointer"],
             json!("/panels/0/columns/0/weight")

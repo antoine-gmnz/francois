@@ -11,10 +11,7 @@ use std::path::Path;
 /// FR-15 (the decision half, pure): `(sent ids, released ids)` for the staged
 /// records, given the text that was just sent. Already-`sent` records are in
 /// neither list — they are terminal and untouched.
-pub(crate) fn partition_commit(
-    attachments: &[Attachment],
-    text: &str,
-) -> (Vec<String>, Vec<String>) {
+pub fn partition_commit(attachments: &[Attachment], text: &str) -> (Vec<String>, Vec<String>) {
     let mut sent = Vec::new();
     let mut released = Vec::new();
     for a in attachments.iter().filter(|a| a.is_staged()) {
@@ -30,7 +27,7 @@ pub(crate) fn partition_commit(
 /// FR-13: delete the bytes Francois wrote for an attachment. An in-place
 /// (`copied: false`) origin is left alone. Returns false only when a copy that
 /// still exists could not be removed.
-pub(crate) fn delete_stored(attachment: &Attachment) -> bool {
+pub fn delete_stored(attachment: &Attachment) -> bool {
     if !attachment.copied {
         return true;
     }
@@ -46,7 +43,7 @@ pub(crate) fn delete_stored(attachment: &Attachment) -> bool {
 /// persisted record still `staged` is by definition abandoned — its copy is
 /// deleted and the record dropped. `sent` records (and their files) survive:
 /// the transcript references them and Claude may re-read them.
-pub(crate) fn sweep_staged(attachments: Vec<Attachment>) -> Vec<Attachment> {
+pub fn sweep_staged(attachments: Vec<Attachment>) -> Vec<Attachment> {
     attachments
         .into_iter()
         .filter(|a| {
@@ -92,7 +89,7 @@ fn remove_counted(path: &Path, stats: &mut ClearAttachmentsResult) {
 /// FR-16: deleting a session deletes every file THAT SESSION created under its
 /// attachments dir (driven by its records, not by a crawl — §6's short-id
 /// collision note), then removes the dir if it is empty.
-pub(crate) fn purge_session(
+pub fn purge_session(
     cwd: &str,
     session_id: &str,
     attachments: &[Attachment],
@@ -112,7 +109,7 @@ pub(crate) fn purge_session(
 /// Unlike FR-16 this is a crawl — the palette command promises the folder is
 /// emptied, including bytes a previous run left behind. A missing dir is not an
 /// error: it reports zeros.
-pub(crate) fn clear_dir(cwd: &str, session_id: &str) -> ClearAttachmentsResult {
+pub fn clear_dir(cwd: &str, session_id: &str) -> ClearAttachmentsResult {
     let dir = attachments_dir(cwd, session_id);
     let mut stats = ClearAttachmentsResult::default();
     clear_tree(&dir, &mut stats);
@@ -136,11 +133,7 @@ pub(crate) fn clear_dir(cwd: &str, session_id: &str) -> ClearAttachmentsResult {
 /// The reverse race leaves a staged record whose file is gone, which is §7's
 /// benign "attachment file deleted outside Francois": the copy is already absent,
 /// so `delete_stored` reports success at commit and the record retires normally.
-pub(crate) fn clear_session(
-    engine: &Engine,
-    session_id: &str,
-    cwd: &str,
-) -> ClearAttachmentsResult {
+pub fn clear_session(engine: &Engine, session_id: &str, cwd: &str) -> ClearAttachmentsResult {
     // Every copied record's file is about to go; in-place refs still resolve.
     // `None` ⇒ the session vanished between the registry read and the lock —
     // there is simply no record left to reconcile, and the bytes still are.

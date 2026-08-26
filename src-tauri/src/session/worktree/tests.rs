@@ -7,6 +7,7 @@
 //! from `git.rs`).
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 // ================= former `mod tests` (pure helpers + command-layer, mocked) =================
 
@@ -212,7 +213,7 @@ fn session_with_worktree(path: &str) -> Session {
 fn worktree_status_impl_reports_session_not_found() {
     let engine = test_engine_with(session_without_worktree());
     match worktree_status_impl(&engine, "no-such-session") {
-        IpcResult::Err { error, .. } => assert_eq!(error.code, "SESSION_NOT_FOUND"),
+        IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::SessionNotFound),
         IpcResult::Ok { .. } => panic!("expected an error"),
     }
 }
@@ -221,7 +222,7 @@ fn worktree_status_impl_reports_session_not_found() {
 fn worktree_status_impl_reports_worktree_not_found_when_session_has_no_worktree() {
     let engine = test_engine_with(session_without_worktree());
     match worktree_status_impl(&engine, "s1") {
-        IpcResult::Err { error, .. } => assert_eq!(error.code, "WORKTREE_NOT_FOUND"),
+        IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::WorktreeNotFound),
         IpcResult::Ok { .. } => panic!("expected an error"),
     }
 }
@@ -230,7 +231,7 @@ fn worktree_status_impl_reports_worktree_not_found_when_session_has_no_worktree(
 fn worktree_status_impl_reports_worktree_not_found_when_directory_is_gone() {
     let engine = test_engine_with(session_with_worktree("/no/such/directory/at/all"));
     match worktree_status_impl(&engine, "s1") {
-        IpcResult::Err { error, .. } => assert_eq!(error.code, "WORKTREE_NOT_FOUND"),
+        IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::WorktreeNotFound),
         IpcResult::Ok { .. } => panic!("expected an error"),
     }
 }
@@ -239,7 +240,7 @@ fn worktree_status_impl_reports_worktree_not_found_when_directory_is_gone() {
 fn worktree_remove_impl_reports_session_not_found() {
     let engine = test_engine_with(session_without_worktree());
     match worktree_remove_impl(&engine, "no-such-session") {
-        IpcResult::Err { error, .. } => assert_eq!(error.code, "SESSION_NOT_FOUND"),
+        IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::SessionNotFound),
         IpcResult::Ok { .. } => panic!("expected an error"),
     }
 }
@@ -248,7 +249,7 @@ fn worktree_remove_impl_reports_session_not_found() {
 fn worktree_remove_impl_reports_worktree_not_found_when_session_has_no_worktree() {
     let engine = test_engine_with(session_without_worktree());
     match worktree_remove_impl(&engine, "s1") {
-        IpcResult::Err { error, .. } => assert_eq!(error.code, "WORKTREE_NOT_FOUND"),
+        IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::WorktreeNotFound),
         IpcResult::Ok { .. } => panic!("expected an error"),
     }
 }
@@ -268,8 +269,6 @@ fn adopt_host_routes_a_bare_linux_path_to_the_wsl_default_distro_when_adopting()
 }
 
 // ================= former `mod git_tests` (real-git integration, throwaway temp repos) =================
-
-use std::process::Command as Cmd;
 
 /// Windows CI runners can alias a long account name to its DOS 8.3 short form
 /// in `%TEMP%` (e.g. `runneradmin` -> `RUNNER~1`), while git resolves a repo
@@ -309,7 +308,7 @@ fn tmp_dir(tag: &str) -> std::path::PathBuf {
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) {
-    let status = Cmd::new("git")
+    let status = crate::process_util::spawn("git")
         .args(args)
         .current_dir(dir)
         .status()
@@ -509,7 +508,7 @@ fn adopting_a_prunable_worktree_is_worktree_not_found() {
         adopt: true,
     };
     let err = resolve_worktree(&worktree_path, &adopt_opts).unwrap_err();
-    assert_eq!(err.0, "WORKTREE_NOT_FOUND");
+    assert_eq!(err.code, ErrorCode::WorktreeNotFound);
 }
 
 #[test]
@@ -538,7 +537,7 @@ fn adopting_a_path_with_no_matching_worktree_entry_is_an_error() {
         adopt: true,
     };
     let err = resolve_worktree(&sub, &opts).unwrap_err();
-    assert_eq!(err.0, "INVALID_INPUT");
+    assert_eq!(err.code, ErrorCode::InvalidInput);
     let _ = bogus; // silence unused warning if the early exit above changes
 }
 
@@ -557,7 +556,7 @@ fn branch_already_checked_out_is_reported_instead_of_a_second_worktree() {
     // A second create for the SAME branch must fail with WORKTREE_BRANCH_IN_USE
     // rather than mutate git state again.
     let err = resolve_worktree(&cwd, &opts).unwrap_err();
-    assert_eq!(err.0, "WORKTREE_BRANCH_IN_USE");
+    assert_eq!(err.code, ErrorCode::WorktreeBranchInUse);
 }
 
 #[test]
@@ -573,7 +572,7 @@ fn probe_branch_is_re_runnable_and_reports_the_holding_worktree() {
 
     // Unknown branch, blank base ref: rejected before any git mutation.
     let err = probe_branch(&host, &cwd, "feat/nope", "  ").unwrap_err();
-    assert_eq!(err.0, "INVALID_INPUT");
+    assert_eq!(err.code, ErrorCode::InvalidInput);
     // Unknown branch with a base ref: free to create.
     assert!(!probe_branch(&host, &cwd, "feat/nope", "main").expect("free"));
 
@@ -589,8 +588,8 @@ fn probe_branch_is_re_runnable_and_reports_the_holding_worktree() {
     };
     let (held_path, _, _) = resolve_worktree(&cwd, &opts).expect("create ok");
     let err = probe_branch(&host, &cwd, "feat/held", "main").unwrap_err();
-    assert_eq!(err.0, "WORKTREE_BRANCH_IN_USE");
-    assert_eq!(norm_path(&err.1), norm_path(&held_path));
+    assert_eq!(err.code, ErrorCode::WorktreeBranchInUse);
+    assert_eq!(norm_path(&err.message), norm_path(&held_path));
 }
 
 #[test]
@@ -606,7 +605,7 @@ fn a_failed_add_leaves_no_directory_and_no_stray_branch() {
     };
     let result = resolve_worktree(&cwd, &opts);
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err().0, "WORKTREE_CREATE_FAILED");
+    assert_eq!(result.unwrap_err().code, ErrorCode::WorktreeCreateFailed);
 
     let host = GitHost::Native;
     // No stray branch left behind (FR-11).
@@ -629,7 +628,7 @@ fn blank_base_ref_is_rejected_before_calling_git() {
         adopt: false,
     };
     let err = resolve_worktree(&cwd, &opts).unwrap_err();
-    assert_eq!(err.0, "INVALID_INPUT");
+    assert_eq!(err.code, ErrorCode::InvalidInput);
 
     let host = GitHost::Native;
     assert!(!branch_exists(&host, &cwd, "feat/blank-base"));
@@ -646,7 +645,7 @@ fn base_ref_starting_with_dash_is_rejected() {
         adopt: false,
     };
     let err = resolve_worktree(&cwd, &opts).unwrap_err();
-    assert_eq!(err.0, "INVALID_INPUT");
+    assert_eq!(err.code, ErrorCode::InvalidInput);
 
     let host = GitHost::Native;
     assert!(!branch_exists(&host, &cwd, "feat/dash-base"));
@@ -657,7 +656,7 @@ fn base_ref_starting_with_dash_is_rejected() {
 /// `git` with its stdout captured, trimmed. Same spawn shape as `git`, which only asserts
 /// the status — FR-7b's tests need the commit a ref points at.
 fn git_out(dir: &std::path::Path, args: &[&str]) -> String {
-    let out = Cmd::new("git")
+    let out = crate::process_util::spawn("git")
         .args(args)
         .current_dir(dir)
         .output()
@@ -903,7 +902,7 @@ fn resolve_worktree_rejects_an_invalid_branch_name() {
         adopt: false,
     };
     let err = resolve_worktree(&cwd, &opts).unwrap_err();
-    assert_eq!(err.0, "INVALID_INPUT");
+    assert_eq!(err.code, ErrorCode::InvalidInput);
 }
 
 #[test]
@@ -922,7 +921,7 @@ fn branch_starting_with_dash_is_rejected() {
         adopt: false,
     };
     let err = resolve_worktree(&cwd, &opts).unwrap_err();
-    assert_eq!(err.0, "INVALID_INPUT");
+    assert_eq!(err.code, ErrorCode::InvalidInput);
 }
 
 #[test]
@@ -981,7 +980,7 @@ fn session_worktree_probe_reports_branch_existence_and_worktree_path() {
 #[test]
 fn session_worktree_probe_rejects_a_relative_cwd() {
     match session_worktree_probe("relative/path".into(), None) {
-        IpcResult::Err { error, .. } => assert_eq!(error.code, "INVALID_INPUT"),
+        IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::InvalidInput),
         IpcResult::Ok { .. } => panic!("expected a relative cwd to be rejected"),
     }
 }
@@ -1262,7 +1261,7 @@ fn worktree_remove_impl_refuses_a_dirty_worktree() {
     let engine = crate::session::testutil::test_engine_with(s);
 
     match worktree_remove_impl(&engine, "s1") {
-        IpcResult::Err { error, .. } => assert_eq!(error.code, "WORKTREE_DIRTY"),
+        IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::WorktreeDirty),
         IpcResult::Ok { .. } => panic!("expected the dirty refusal"),
     }
     // The worktree must still be there — refused, not removed.
@@ -1293,7 +1292,7 @@ fn worktree_remove_impl_says_unknown_rather_than_zero_commits_when_push_status_i
 
     match worktree_remove_impl(&engine, "s1") {
         IpcResult::Err { error, .. } => {
-            assert_eq!(error.code, "WORKTREE_DIRTY");
+            assert_eq!(error.code, ErrorCode::WorktreeDirty);
             assert!(
                 error.message.contains("push status unknown"),
                 "unexpected reason: {}",

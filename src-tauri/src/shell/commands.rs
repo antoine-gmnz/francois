@@ -6,6 +6,7 @@ use super::{
     ShellOwner, ShellRestartData, WriteOutcome, EVENT_CHANNEL,
 };
 use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::{AppError, ErrorCode};
 use crate::session;
 use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
 use std::io::{Read, Write};
@@ -15,7 +16,7 @@ use tauri::{AppHandle, Emitter, State};
 /// Open a PTY pair sized `cols`x`rows`. Split out of the spawn path (FR: keep
 /// the happy-path readable) — the only thing that can fail here is the OS PTY
 /// allocation itself.
-fn open_session_pty(cols: u16, rows: u16) -> Result<PtyPair, String> {
+fn open_session_pty(cols: u16, rows: u16) -> Result<PtyPair, AppError> {
     native_pty_system()
         .openpty(PtySize {
             rows,
@@ -23,7 +24,15 @@ fn open_session_pty(cols: u16, rows: u16) -> Result<PtyPair, String> {
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| format!("could not open a pty: {e}"))
+        .map_err(|e| pty_error(format!("could not open a pty: {e}")))
+}
+
+/// core-architecture-wave3 FR-6: PTY_ERROR is the one code the four command
+/// sites in this file stamped on every failure the spawn chain produced —
+/// raised at the failure now, so the chain carries `Result<T, AppError>` end to
+/// end and the commands convert with `.into()` instead of re-coding.
+fn pty_error(message: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::PtyError, message)
 }
 
 /// A freshly spawned shell child plus the handles the caller needs to keep
@@ -45,7 +54,7 @@ fn spawn_shell_child(
     spawn_cwd: Option<&str>,
     runtime: &str,
     account_config_dir: Option<&str>,
-) -> Result<SpawnedShell, String> {
+) -> Result<SpawnedShell, AppError> {
     let mut cmd = CommandBuilder::new(exe);
     for a in args {
         cmd.arg(a);
@@ -69,18 +78,18 @@ fn spawn_shell_child(
     let child = pair
         .slave
         .spawn_command(cmd)
-        .map_err(|e| format!("could not start {exe}: {e}"))?;
+        .map_err(|e| pty_error(format!("could not start {exe}: {e}")))?;
     drop(pair.slave);
 
     let killer = child.clone_killer();
     let writer = pair
         .master
         .take_writer()
-        .map_err(|e| format!("could not open shell input: {e}"))?;
+        .map_err(|e| pty_error(format!("could not open shell input: {e}")))?;
     let reader = pair
         .master
         .try_clone_reader()
-        .map_err(|e| format!("could not open shell output: {e}"))?;
+        .map_err(|e| pty_error(format!("could not open shell output: {e}")))?;
 
     Ok(SpawnedShell {
         master: pair.master,
@@ -107,7 +116,7 @@ fn open_and_spawn(
         Box<dyn Read + Send>,
         Box<dyn portable_pty::Child + Send + Sync>,
     ),
-    String,
+    AppError,
 > {
     let (exe, args, shell_name, spawn_cwd) = shell_spawn_target(runtime, cwd);
     let pair = open_session_pty(cols, rows)?;
@@ -211,10 +220,8 @@ struct OwnerTarget {
 /// `project::root_of`, surfaced here via `root_for_shell`) and the
 /// WSL-vs-native runtime pick are unit-testable without an `AppHandle` or a
 /// `ProjectRegistry` fixture.
-fn project_owner_target(
-    root_lookup: Result<String, (&'static str, &'static str)>,
-) -> Result<OwnerTarget, (&'static str, String)> {
-    let root = root_lookup.map_err(|(code, msg)| (code, msg.to_string()))?;
+fn project_owner_target(root_lookup: Result<String, AppError>) -> Result<OwnerTarget, AppError> {
+    let root = root_lookup?;
     let runtime = if crate::wsl::is_wsl_unc_path(&root) {
         "wsl".to_string()
     } else {
@@ -238,12 +245,13 @@ fn resolve_owner_target(
     app: &AppHandle,
     engine: &session::Engine,
     owner: &ShellOwner,
-) -> Result<OwnerTarget, (&'static str, String)> {
+) -> Result<OwnerTarget, AppError> {
     match owner {
         ShellOwner::Session { session_id } => {
-            let cwd = engine
-                .cwd_of(session_id)
-                .ok_or(("SESSION_NOT_FOUND", "no such session".to_string()))?;
+            let cwd = engine.cwd_of(session_id).ok_or(AppError::new(
+                ErrorCode::SessionNotFound,
+                "no such session".to_string(),
+            ))?;
             let runtime = engine
                 .runtime_of(session_id)
                 .unwrap_or_else(|| "native".to_string());
@@ -280,7 +288,7 @@ fn spawn_shell(
     cwd: &str,
     runtime: &str,
     account_config_dir: Option<&str>,
-) -> Result<(String, PtyHandles, Arc<Mutex<Shared>>), String> {
+) -> Result<(String, PtyHandles, Arc<Mutex<Shared>>), AppError> {
     let (cols, rows) = (80u16, 24u16);
     let (pty, reader, child) = open_and_spawn(cwd, runtime, account_config_dir, cols, rows)?;
 
@@ -307,7 +315,7 @@ fn spawn_and_register(
     cwd: &str,
     runtime: &str,
     account_config_dir: Option<&str>,
-) -> Result<ShellInfo, String> {
+) -> Result<ShellInfo, AppError> {
     let (shell_id, pty, shared) =
         spawn_shell(app, owner.clone(), cwd, runtime, account_config_dir)?;
     Ok(reg.insert(shell_id, owner, pty, shared))
@@ -326,7 +334,7 @@ pub fn shell_ensure(
         return match reg.belongs_to(sid, &owner) {
             Some(true) => {
                 let Some((cols, rows)) = reg.size(sid) else {
-                    return err("SHELL_NOT_FOUND", "no such shell");
+                    return err(ErrorCode::ShellNotFound, "no such shell");
                 };
                 let (replay, exit_code) = reg.replay(sid).unwrap_or_default();
                 ok(ShellEnsureData {
@@ -338,14 +346,14 @@ pub fn shell_ensure(
                     exit_code,
                 })
             }
-            _ => err("SHELL_NOT_FOUND", "no such shell"),
+            _ => err(ErrorCode::ShellNotFound, "no such shell"),
         };
     }
 
     // No shellId: attach to the owner's first shell, in creation order.
     if let Some(first) = reg.first_of_owner(&owner) {
         let Some((cols, rows)) = reg.size(&first) else {
-            return err("SHELL_NOT_FOUND", "no such shell");
+            return err(ErrorCode::ShellNotFound, "no such shell");
         };
         let (replay, exit_code) = reg.replay(&first).unwrap_or_default();
         return ok(ShellEnsureData {
@@ -365,7 +373,7 @@ pub fn shell_ensure(
     // whichever call wins instead of both spawning a shell.
     let target = match resolve_owner_target(&app, &engine, &owner) {
         Ok(t) => t,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     let shell_id = match reg.ensure_first(&owner, || {
         spawn_shell(
@@ -377,10 +385,10 @@ pub fn shell_ensure(
         )
     }) {
         Ok(id) => id,
-        Err(msg) => return err("PTY_ERROR", msg),
+        Err(e) => return e.into(),
     };
     let Some((cols, rows)) = reg.size(&shell_id) else {
-        return err("SHELL_NOT_FOUND", "no such shell");
+        return err(ErrorCode::ShellNotFound, "no such shell");
     };
     let (replay, exit_code) = reg.replay(&shell_id).unwrap_or_default();
     ok(ShellEnsureData {
@@ -402,26 +410,24 @@ pub fn shell_create(
 ) -> IpcResult<ShellInfo> {
     let target = match resolve_owner_target(&app, &engine, &owner) {
         Ok(t) => t,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     // FR-2: checked BEFORE spawning — a refused create spawns nothing.
     if reg.at_cap(&owner) {
         return err(
-            "SHELL_LIMIT_REACHED",
+            ErrorCode::ShellLimitReached,
             "at most 6 shells per session or project",
         );
     }
-    match spawn_and_register(
+    spawn_and_register(
         &app,
         &reg,
         owner,
         &target.cwd,
         &target.runtime,
         target.account_config_dir.as_deref(),
-    ) {
-        Ok(info) => ok(info),
-        Err(msg) => err("PTY_ERROR", msg),
-    }
+    )
+    .into()
 }
 
 #[tauri::command(async)]
@@ -432,10 +438,10 @@ pub fn shell_restart(
     shell_id: String,
 ) -> IpcResult<ShellRestartData> {
     let Some(info) = reg.get_info(&shell_id) else {
-        return err("SHELL_NOT_FOUND", "no such shell");
+        return err(ErrorCode::ShellNotFound, "no such shell");
     };
     let Some((cols, rows)) = reg.size(&shell_id) else {
-        return err("SHELL_NOT_FOUND", "no such shell");
+        return err(ErrorCode::ShellNotFound, "no such shell");
     };
     // The owner may have moved on (a project's root, an account) since this
     // shell was first spawned — re-resolve rather than reuse stale values,
@@ -466,7 +472,7 @@ pub fn shell_restart(
         rows,
     ) {
         Ok(v) => v,
-        Err(msg) => return err("PTY_ERROR", msg),
+        Err(e) => return e.into(),
     };
 
     // FR-7: fresh ring for the restarted PTY.
@@ -479,7 +485,7 @@ pub fn shell_restart(
         Some(size) => size,
         None => {
             let _ = child.kill();
-            return err("SHELL_NOT_FOUND", "no such shell"); // disposed racing the restart
+            return err(ErrorCode::ShellNotFound, "no such shell"); // disposed racing the restart
         }
     };
     {
@@ -499,7 +505,7 @@ pub fn shell_rename(
 ) -> IpcResult<ShellInfo> {
     match reg.rename(&shell_id, &name) {
         Some(info) => ok(info),
-        None => err("SHELL_NOT_FOUND", "no such shell"),
+        None => err(ErrorCode::ShellNotFound, "no such shell"),
     }
 }
 
@@ -508,7 +514,7 @@ pub fn shell_dispose(reg: State<'_, Registry>, shell_id: String) -> IpcResult<()
     if reg.dispose(&shell_id) {
         ok(())
     } else {
-        err("SHELL_NOT_FOUND", "no such shell")
+        err(ErrorCode::ShellNotFound, "no such shell")
     }
 }
 
@@ -516,8 +522,10 @@ pub fn shell_dispose(reg: State<'_, Registry>, shell_id: String) -> IpcResult<()
 pub fn shell_write(reg: State<'_, Registry>, shell_id: String, data: String) -> IpcResult<()> {
     match reg.write(&shell_id, &data) {
         WriteOutcome::Ok | WriteOutcome::Dropped => ok(()),
-        WriteOutcome::NotFound => err("SHELL_NOT_FOUND", "no such shell"),
-        WriteOutcome::Failed(e) => err("SHELL_NOT_FOUND", format!("shell input closed: {e}")),
+        WriteOutcome::NotFound => err(ErrorCode::ShellNotFound, "no such shell"),
+        WriteOutcome::Failed(e) => {
+            err(ErrorCode::ShellNotFound, format!("shell input closed: {e}"))
+        }
     }
 }
 
@@ -529,12 +537,12 @@ pub fn shell_resize(
     rows: u16,
 ) -> IpcResult<()> {
     if cols == 0 || rows == 0 {
-        return err("INVALID_INPUT", "cols and rows must be positive");
+        return err(ErrorCode::InvalidInput, "cols and rows must be positive");
     }
     if reg.resize(&shell_id, cols, rows) {
         ok(())
     } else {
-        err("SHELL_NOT_FOUND", "no such shell")
+        err(ErrorCode::ShellNotFound, "no such shell")
     }
 }
 
@@ -563,15 +571,23 @@ mod tests {
 
     #[test]
     fn project_owner_target_propagates_project_not_found_before_any_spawn() {
-        let err = project_owner_target(Err(("PROJECT_NOT_FOUND", "no such project"))).unwrap_err();
-        assert_eq!(err.0, "PROJECT_NOT_FOUND");
-        assert_eq!(err.1, "no such project");
+        let err = project_owner_target(Err(AppError::new(
+            ErrorCode::ProjectNotFound,
+            "no such project",
+        )))
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::ProjectNotFound);
+        assert_eq!(err.message, "no such project");
     }
 
     #[test]
     fn project_owner_target_propagates_project_root_missing_before_any_spawn() {
-        let err = project_owner_target(Err(("PROJECT_ROOT_MISSING", "root not set"))).unwrap_err();
-        assert_eq!(err.0, "PROJECT_ROOT_MISSING");
-        assert_eq!(err.1, "root not set");
+        let err = project_owner_target(Err(AppError::new(
+            ErrorCode::ProjectRootMissing,
+            "root not set",
+        )))
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::ProjectRootMissing);
+        assert_eq!(err.message, "root not set");
     }
 }

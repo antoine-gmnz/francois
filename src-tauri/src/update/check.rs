@@ -7,23 +7,32 @@ use super::{
     detect_install, is_newer, UpdateCheck, HTTP_TIMEOUT_SECS, REGISTRY_LATEST_URL, REPO,
     UPDATE_COMMAND,
 };
+use crate::ipc::{AppError, ErrorCode};
 use serde_json::Value;
 use std::time::Duration;
 
+/// core-architecture-wave3 FR-6: UPDATE_CHECK_FAILED is the one code
+/// `app_check_update` stamped on everything this module could fail with —
+/// raised at the failure instead, so `run_check` returns the same
+/// `Result<T, AppError>` as the rest of the core.
+fn check_failed(message: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::UpdateCheckFailed, message)
+}
+
 /// FR-1: the same value release.yml's `version` job writes into Cargo.toml, so it
 /// always names the build actually running.
-pub(crate) fn current_version() -> &'static str {
+pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
 /// The human release page for a version. Always populated, whether or not the
 /// body was fetched (FR-3).
-pub(crate) fn notes_url(latest: &str) -> String {
+pub fn notes_url(latest: &str) -> String {
     format!("https://github.com/{REPO}/releases/tag/v{latest}")
 }
 
 /// FR-3: the releases API endpoint the body is read from.
-pub(crate) fn release_api_url(latest: &str) -> String {
+pub fn release_api_url(latest: &str) -> String {
     format!("https://api.github.com/repos/{REPO}/releases/tags/v{latest}")
 }
 
@@ -35,37 +44,37 @@ fn http_agent() -> ureq::Agent {
         .build()
 }
 
-pub(crate) fn parse_registry_version(body: &Value) -> Option<String> {
+pub fn parse_registry_version(body: &Value) -> Option<String> {
     Some(body.get("version")?.as_str()?.to_string())
 }
 
 /// FR-3: `.body` off the release, trimmed. An empty body is ABSENT rather than an
 /// empty notes block — the modal shows `Release notes unavailable` either way.
-pub(crate) fn parse_release_notes(body: &Value) -> Option<String> {
+pub fn parse_release_notes(body: &Value) -> Option<String> {
     let text = body.get("body")?.as_str()?.trim();
     (!text.is_empty()).then(|| text.to_string())
 }
 
 /// FR-2: the newest version `npm i -g francois@latest` would install. The `Err`
 /// message is what `UPDATE_CHECK_FAILED` carries (FR-6).
-fn fetch_latest_version() -> Result<String, String> {
+fn fetch_latest_version() -> Result<String, AppError> {
     let resp = http_agent()
         .get(REGISTRY_LATEST_URL)
         .set("User-Agent", &format!("francois/{}", current_version()))
         .call()
-        .map_err(registry_call_error)?;
+        .map_err(|e| check_failed(registry_call_error(e)))?;
     let json: Value = resp
         .into_json()
-        .map_err(|e| format!("Could not read the npm registry response: {e}"))?;
+        .map_err(|e| check_failed(format!("Could not read the npm registry response: {e}")))?;
     parse_registry_version(&json)
-        .ok_or_else(|| "The npm registry returned no version for francois.".to_string())
+        .ok_or_else(|| check_failed("The npm registry returned no version for francois."))
 }
 
 /// FR-6: `ureq::Error::Status` (the registry answered, just not with 2xx) reads
 /// very differently from `ureq::Error::Transport` (the registry was never
 /// reached at all) — the `UPDATE_CHECK_FAILED` message a user sees should say
 /// which one happened rather than blaming reachability for both.
-pub(crate) fn registry_call_error(e: ureq::Error) -> String {
+pub fn registry_call_error(e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(code, _) => {
             format!("The npm registry responded with an error (HTTP {code}).")
@@ -91,15 +100,18 @@ fn fetch_release_notes(latest: &str) -> Option<String> {
 /// Everything the check reports besides the two fetches — kept separate so the
 /// assembly is proven without the network. `Err` when `latest` is unparseable
 /// (FR-4: never `updateAvailable: false`).
-pub(crate) fn check_from_parts(
+pub fn check_from_parts(
     current: &str,
     latest: &str,
     method: &str,
     notes: Option<String>,
     checked_at: u64,
-) -> Result<UpdateCheck, String> {
-    let update_available = is_newer(latest, current)
-        .ok_or_else(|| format!("The npm registry returned an unreadable version: {latest}"))?;
+) -> Result<UpdateCheck, AppError> {
+    let update_available = is_newer(latest, current).ok_or_else(|| {
+        check_failed(format!(
+            "The npm registry returned an unreadable version: {latest}"
+        ))
+    })?;
     Ok(UpdateCheck {
         current: current.to_string(),
         latest: latest.to_string(),
@@ -114,7 +126,7 @@ pub(crate) fn check_from_parts(
 
 /// One full check (FR-2, FR-3, FR-4, FR-5, FR-6). Blocking — the commands that
 /// call it are `#[tauri::command(async)]`, so this runs off the main thread.
-pub(crate) fn run_check() -> Result<UpdateCheck, String> {
+pub fn run_check() -> Result<UpdateCheck, AppError> {
     let latest = fetch_latest_version()?;
     let (method, _) = detect_install();
     // FR-3: the notes fetch happens AFTER the version is known and can only

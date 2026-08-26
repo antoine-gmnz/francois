@@ -24,15 +24,22 @@ pub(crate) const TRANSCRIPT_BUFFER_CAP: usize = 400;
 /// since eviction only ever runs on an already-finalized, already-appended
 /// block — and stays true forever once set, because the file is append-only).
 pub(crate) fn trim_transcript(blocks: &mut Vec<BufBlock>, cap: usize) -> bool {
-    let mut evicted = false;
-    while blocks.len() > cap {
-        if blocks[0].streaming {
+    // FR-3: compute the eviction count `k` in one forward scan, then evict it
+    // in one `drain` — O(n) instead of the O(n^2) `remove(0)` loop this
+    // replaces. The stop-at-the-oldest-unsettled rule is unchanged: scan
+    // stops at the first streaming block, exactly where the old loop broke.
+    let mut k = 0;
+    while k < blocks.len() && blocks.len() - k > cap {
+        if blocks[k].streaming {
             break;
         }
-        blocks.remove(0);
-        evicted = true;
+        k += 1;
     }
-    evicted
+    if k == 0 {
+        return false;
+    }
+    blocks.drain(0..k);
+    true
 }
 
 #[cfg(test)]

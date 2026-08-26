@@ -1,5 +1,6 @@
 //! turn-shaped commands: send (+ queueing/intercept), compact, clear.
 
+use crate::ipc::ErrorCode;
 use crate::ipc::{err, ok, IpcResult};
 use crate::session::*;
 use serde::Serialize;
@@ -16,7 +17,7 @@ pub struct SendOutput {
 
 /// Where a send originated — controls the interactive-commands intercept branch.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum SendSource {
+pub enum SendSource {
     /// Typed input (francois:session:send): slash commands in the intercept set
     /// are answered locally (interactive-commands FR-2).
     Typed,
@@ -27,7 +28,7 @@ pub(crate) enum SendSource {
 
 /// The intercept decision for a send (interactive-commands FR-1/2), honoring the
 /// skills passthrough. Pure; unit-tested.
-pub(crate) fn send_intercept(text: &str, source: SendSource) -> Option<(String, Option<String>)> {
+pub fn send_intercept(text: &str, source: SendSource) -> Option<(String, Option<String>)> {
     match source {
         SendSource::Typed => intercepted_command(text),
         SendSource::Skill => None,
@@ -36,7 +37,7 @@ pub(crate) fn send_intercept(text: &str, source: SendSource) -> Option<(String, 
 
 /// Shared send logic (used by session_send and skills_run): queue if a turn is
 /// running, else start a new turn. Assumes `text` is already non-empty.
-pub(crate) fn do_send(
+pub fn do_send(
     app: &AppHandle,
     session_id: &str,
     text: String,
@@ -44,12 +45,15 @@ pub(crate) fn do_send(
     source: SendSource,
 ) -> IpcResult<SendOutput> {
     let engine = app.state::<Engine>();
-    let mut map = engine.sessions.lock().unwrap();
+    let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     let Some(s) = map.get_mut(session_id) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     if status::is_terminal(&s.status) {
-        return err("SESSION_NOT_RUNNING", "session has ended; create a new one");
+        return err(
+            ErrorCode::SessionNotRunning,
+            "session has ended; create a new one",
+        );
     }
     // interactive-commands FR-1/2: an intercepted slash command never enqueues, never
     // changes SessionStatus, and works identically whether running or idle. It sits
@@ -82,7 +86,7 @@ pub(crate) fn do_send(
     // whose child is alive and will read this message once it is unparked. Enqueue.
     if status::is_busy(&s.status) {
         if s.queue.len() >= QUEUE_CAP {
-            return err("INVALID_INPUT", "send queue is full (20 pending)");
+            return err(ErrorCode::InvalidInput, "send queue is full (20 pending)");
         }
         s.queue.push_back((block_id, text));
         let pos = s.queue.len();
@@ -118,7 +122,7 @@ pub fn session_send(
     block_id: Option<String>,
 ) -> IpcResult<SendOutput> {
     if text.trim().is_empty() {
-        return err("INVALID_INPUT", "message is empty");
+        return err(ErrorCode::InvalidInput, "message is empty");
     }
     // The client generates the blockId so its optimistic block matches the
     // eventual message.user event (conversation-view FR-15/FR-21).
@@ -141,7 +145,7 @@ pub struct UnqueueOutput {
 /// queue — a lost race (already drained, or never queued) is not an error,
 /// just `removed: false`. Pure map mutation, split out like `apply_clear` so
 /// the command wrapper below is a one-line lock + call.
-pub(crate) fn apply_unqueue(
+pub fn apply_unqueue(
     map: &mut HashMap<String, Session>,
     session_id: &str,
     block_id: &str,
@@ -162,10 +166,10 @@ pub fn session_unqueue(
     session_id: String,
     block_id: String,
 ) -> IpcResult<UnqueueOutput> {
-    let mut map = engine.sessions.lock().unwrap();
+    let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     match apply_unqueue(&mut map, &session_id, &block_id) {
         Some(removed) => ok(UnqueueOutput { removed }),
-        None => err("SESSION_NOT_FOUND", "no such session"),
+        None => err(ErrorCode::SessionNotFound, "no such session"),
     }
 }
 
@@ -188,15 +192,18 @@ pub fn session_compact(
         system_prompt,
         extra_args,
     ) = {
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let Some(s) = map.get_mut(&session_id) else {
-            return err("SESSION_NOT_FOUND", "no such session");
+            return err(ErrorCode::SessionNotFound, "no such session");
         };
         if status::is_terminal(&s.status) {
-            return err("SESSION_NOT_RUNNING", "session has ended");
+            return err(ErrorCode::SessionNotRunning, "session has ended");
         }
         if status::is_busy(&s.status) {
-            return err("SESSION_ALREADY_RUNNING", "a turn is already running");
+            return err(
+                ErrorCode::SessionAlreadyRunning,
+                "a turn is already running",
+            );
         }
         // /compact is a synchronous side-spawn with its stdin closed immediately
         // (it can never park on an ask), so it goes straight to `running` — there
@@ -231,7 +238,7 @@ pub fn session_compact(
             fail_session(
                 &app,
                 &session_id,
-                "ACCOUNT_NOT_AUTHENTICATED",
+                ErrorCode::AccountNotAuthenticated,
                 "this session's account is not signed in — use Re-login in the Accounts modal",
             );
             return ok(None);
@@ -296,7 +303,7 @@ pub fn session_compact(
     }
     let used = ctx_usage.finish(limit);
     {
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(s) = map.get_mut(&session_id) {
             if let Some(u) = used {
                 s.context_used_tokens = u;
@@ -328,7 +335,7 @@ pub fn session_compact(
 }
 
 /// Outcome of the /clear full-reset mutation, applied under the sessions lock.
-pub(crate) enum ClearOutcome {
+pub enum ClearOutcome {
     NotFound,
     Running,
     /// Reset succeeded; carries `context_limit_tokens` for the follow-up usage event.
@@ -340,7 +347,7 @@ pub(crate) enum ClearOutcome {
 /// /clear FULL RESET, applied under `engine.sessions`: wipe the transcript buffer,
 /// drop the resume anchor (fresh Claude context next turn), and zero the context
 /// counter. Refuses while a turn is running so it never races the resume anchor.
-pub(crate) fn apply_clear(map: &mut HashMap<String, Session>, session_id: &str) -> ClearOutcome {
+pub fn apply_clear(map: &mut HashMap<String, Session>, session_id: &str) -> ClearOutcome {
     let Some(s) = map.get_mut(session_id) else {
         return ClearOutcome::NotFound;
     };
@@ -371,12 +378,12 @@ pub fn session_clear(
 ) -> IpcResult<Option<()>> {
     // Mutate under the lock, then release it before any fs / persist / emit work.
     let limit = {
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         match apply_clear(&mut map, &session_id) {
-            ClearOutcome::NotFound => return err("SESSION_NOT_FOUND", "no such session"),
+            ClearOutcome::NotFound => return err(ErrorCode::SessionNotFound, "no such session"),
             ClearOutcome::Running => {
                 return err(
-                    "SESSION_ALREADY_RUNNING",
+                    ErrorCode::SessionAlreadyRunning,
                     "finish or interrupt the current turn before clearing",
                 )
             }
@@ -422,12 +429,12 @@ mod tests {
 
         let engine = test_engine_with(s);
         let outcome = {
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             apply_clear(&mut map, "s1")
         };
         assert!(matches!(outcome, ClearOutcome::Cleared { limit: 200_000 }));
 
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let s = map.get("s1").unwrap();
         assert!(s.block_buffer.is_empty());
         assert_eq!(s.claude_session_id, None);
@@ -445,12 +452,12 @@ mod tests {
 
         let engine = test_engine_with(s);
         let outcome = {
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             apply_clear(&mut map, "s1")
         };
         assert!(matches!(outcome, ClearOutcome::Running));
 
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let s = map.get("s1").unwrap();
         assert_eq!(s.block_buffer.len(), 1); // untouched
         assert_eq!(s.claude_session_id.as_deref(), Some("abc-resume"));
@@ -460,7 +467,7 @@ mod tests {
     #[test]
     fn clear_missing_session_reports_not_found() {
         let engine = test_engine_with(test_session());
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         assert!(matches!(
             apply_clear(&mut map, "nope"),
             ClearOutcome::NotFound
@@ -477,12 +484,12 @@ mod tests {
         let engine = test_engine_with(s);
 
         let removed = {
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             apply_unqueue(&mut map, "s1", "b1")
         };
         assert_eq!(removed, Some(true));
 
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let s = map.get("s1").unwrap();
         assert_eq!(s.queue.len(), 1);
         assert_eq!(s.queue.front().unwrap().0, "b2");
@@ -499,26 +506,26 @@ mod tests {
         let engine = test_engine_with(s);
 
         let removed = {
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             apply_unqueue(&mut map, "s1", "b2")
         };
         assert_eq!(removed, Some(false));
 
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(map.get("s1").unwrap().queue.len(), 1);
     }
 
     #[test]
     fn unqueue_on_idle_session_with_empty_queue_is_not_an_error() {
         let engine = test_engine_with(test_session());
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(apply_unqueue(&mut map, "s1", "whatever"), Some(false));
     }
 
     #[test]
     fn unqueue_unknown_session_reports_not_found() {
         let engine = test_engine_with(test_session());
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(apply_unqueue(&mut map, "nope", "b1"), None);
     }
 

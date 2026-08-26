@@ -6,6 +6,7 @@
 //! across `Engine.sessions` — that is the LEAF discipline documented in mod.rs.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
@@ -21,7 +22,11 @@ impl<'de, R: Runtime> CommandArg<'de, R> for ModelIdsUpdate {
     fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
         match command.message.payload() {
             InvokeBody::Json(args) => {
-                model_ids_update_from(args, command.key).map_err(InvokeError::from)
+                // core-architecture-wave3 FR-6: the helper speaks `AppError`
+                // like the rest of the core; Tauri's own arg-decoding error
+                // only carries a string, so the message crosses and the code
+                // (INVALID_INPUT) is implicit in the rejection.
+                model_ids_update_from(args, command.key).map_err(|e| InvokeError::from(e.message))
             }
             // Every Francois command sends a JSON object; a raw-bytes payload
             // here would mean the call bypassed `invoke`'s normal JSON path —
@@ -49,14 +54,16 @@ fn commit(
     app: &AppHandle,
     inner: &mut AccountInner,
     previous: RegistrySnapshot,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     match persist(app, inner) {
         Ok(()) => Ok(()),
-        Err(msg) => {
+        Err(e) => {
             inner.records = previous.0;
             inner.default_account_id = previous.1;
             inner.auth_failed_at = previous.2;
-            Err(msg)
+            // core-architecture-wave3 FR-6: a rolled-back write is INTERNAL at
+            // this boundary, the code all three call sites used to stamp.
+            Err(AppError::new(ErrorCode::Internal, e.message))
         }
     }
 }
@@ -87,7 +94,7 @@ fn clear_login_pending(state: &State<'_, AccountState>) {
 pub fn account_list(state: State<'_, AccountState>) -> IpcResult<Vec<Account>> {
     match state.0.lock() {
         Ok(inner) => ok(build_list(&inner)),
-        Err(_) => err("INTERNAL", "account state is unavailable"),
+        Err(_) => err(ErrorCode::Internal, "account state is unavailable"),
     }
 }
 
@@ -102,7 +109,7 @@ pub fn account_add(
 ) -> IpcResult<AccountLoginStarted> {
     // FR-5: a supplied label must survive trimming.
     let label = match label.as_deref().map(validate_label) {
-        Some(Err(msg)) => return err("INVALID_INPUT", msg),
+        Some(Err(msg)) => return err(ErrorCode::InvalidInput, msg),
         Some(Ok(l)) => Some(l),
         None => None,
     };
@@ -117,14 +124,14 @@ pub fn account_add(
     // `start_login_threads` runs after that final registration.
     let (id, config_dir, existing) = {
         let Ok(inner) = state.0.lock() else {
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         // FR-16: at most one login at a time; the first one is untouched. The
         // mutex still serializes this check-then-reserve against a second
         // concurrent `account_add`, even though the flag itself lives outside
         // the mutex (see `AccountState`, mod.rs).
         if inner.login.is_some() || state.1.load(Ordering::SeqCst) {
-            return err("INVALID_INPUT", MSG_IN_FLIGHT);
+            return err(ErrorCode::InvalidInput, MSG_IN_FLIGHT);
         }
 
         // FR-17: re-login reuses the row AND its directory; a fresh login mints
@@ -132,12 +139,15 @@ pub fn account_add(
         let (id, config_dir, existing) = match account_id.as_deref() {
             Some(id) => match inner.records.iter().find(|r| r.id == id) {
                 Some(record) => (record.id.clone(), record.config_dir.clone(), true),
-                None => return err("INVALID_INPUT", NOT_FOUND_MSG),
+                None => return err(ErrorCode::InvalidInput, NOT_FOUND_MSG),
             },
             None => {
-                let id = crate::session::uuid();
+                let id = crate::ids::uuid();
                 let Some(dir) = accounts_dir(&app) else {
-                    return err("INTERNAL", "could not resolve the app data directory");
+                    return err(
+                        ErrorCode::Internal,
+                        "could not resolve the app data directory",
+                    );
                 };
                 (
                     id.clone(),
@@ -152,7 +162,10 @@ pub fn account_add(
 
     if let Err(e) = std::fs::create_dir_all(&config_dir) {
         clear_login_pending(&state);
-        return err("INTERNAL", format!("could not create {config_dir}: {e}"));
+        return err(
+            ErrorCode::Internal,
+            format!("could not create {config_dir}: {e}"),
+        );
     }
     // Seed the fresh dir from `~/.claude` BEFORE the login PTY starts, so the
     // `claude` process this account first meets already sees the user's
@@ -162,7 +175,7 @@ pub fn account_add(
 
     let spawn = match spawn_login(&id, &config_dir, label, existing) {
         Ok(spawn) => spawn,
-        Err((code, message)) => {
+        Err(AppError { code, message, .. }) => {
             if !existing {
                 let _ = std::fs::remove_dir_all(&config_dir); // no half-written dir
             }
@@ -183,7 +196,7 @@ pub fn account_add(
                 let _ = std::fs::remove_dir_all(&config_dir);
             }
             clear_login_pending(&state);
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         inner.login = Some(handle);
     }
@@ -202,7 +215,7 @@ pub fn account_add(
 pub fn account_login_write(app: AppHandle, login_id: String, data: String) -> IpcResult<()> {
     match write_login(&app, &login_id, &data) {
         Ok(()) => ok(()),
-        Err((code, msg)) => err(code, msg),
+        Err(e) => e.into(),
     }
 }
 
@@ -216,7 +229,7 @@ pub fn account_login_resize(
 ) -> IpcResult<()> {
     match resize_login(&app, &login_id, cols, rows) {
         Ok(()) => ok(()),
-        Err((code, msg)) => err(code, msg),
+        Err(e) => e.into(),
     }
 }
 
@@ -225,7 +238,7 @@ pub fn account_login_resize(
 pub fn account_login_cancel(app: AppHandle, login_id: String) -> IpcResult<()> {
     match cancel_login(&app, &login_id) {
         Ok(()) => ok(()),
-        Err((code, msg)) => err(code, msg),
+        Err(e) => e.into(),
     }
 }
 
@@ -239,18 +252,18 @@ pub fn account_rename(
 ) -> IpcResult<Vec<Account>> {
     let label = match validate_label(&label) {
         Ok(l) => l,
-        Err(msg) => return err("INVALID_INPUT", msg),
+        Err(msg) => return err(ErrorCode::InvalidInput, msg),
     };
     let accounts = {
         let Ok(mut inner) = state.0.lock() else {
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         let previous = snapshot(&inner);
-        if let Err((code, msg)) = apply_rename(&mut inner, &account_id, label) {
-            return err(code, msg);
+        if let Err(e) = apply_rename(&mut inner, &account_id, label) {
+            return e.into();
         }
-        if let Err(msg) = commit(&app, &mut inner, previous) {
-            return err("INTERNAL", msg);
+        if let Err(e) = commit(&app, &mut inner, previous) {
+            return e.into();
         }
         build_list(&inner)
     };
@@ -272,14 +285,14 @@ pub fn account_set_default(
 ) -> IpcResult<Vec<Account>> {
     let accounts = {
         let Ok(mut inner) = state.0.lock() else {
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         let previous = snapshot(&inner);
-        if let Err((code, msg)) = apply_set_default(&mut inner, &account_id) {
-            return err(code, msg);
+        if let Err(e) = apply_set_default(&mut inner, &account_id) {
+            return e.into();
         }
-        if let Err(msg) = commit(&app, &mut inner, previous) {
-            return err("INTERNAL", msg);
+        if let Err(e) = commit(&app, &mut inner, previous) {
+            return e.into();
         }
         build_list(&inner)
     };
@@ -303,15 +316,15 @@ pub fn account_remove(
 ) -> IpcResult<AccountRemoveData> {
     let (accounts, config_dir) = {
         let Ok(mut inner) = state.0.lock() else {
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         let previous = snapshot(&inner);
         let removed = match apply_remove(&mut inner, &account_id) {
             Ok(r) => r,
-            Err((code, msg)) => return err(code, msg),
+            Err(e) => return e.into(),
         };
-        if let Err(msg) = commit(&app, &mut inner, previous) {
-            return err("INTERNAL", msg);
+        if let Err(e) = commit(&app, &mut inner, previous) {
+            return e.into();
         }
         // A login in flight for the row just removed must not resurrect it.
         cancel_login_for_account(&mut inner, &account_id);
@@ -326,7 +339,10 @@ pub fn account_remove(
         eprintln!("accounts: could not remove {config_dir}: {e}");
     }
     // FR-9: driven from here, never from under the account lock.
-    let reassigned_sessions = crate::session::reassign_account_sessions(&app, &account_id);
+    // core-architecture-wave3 FR-9: through the removal-observer seam, so this
+    // domain does not name the session engine to say "the account you were on
+    // is gone".
+    let reassigned_sessions = notify_account_removed(&app, &account_id);
     // Same discipline one registry over: a removed account must not stay named as
     // any project's default account. Best-effort and after the row is gone — see
     // `project::clear_default_account`.
@@ -360,39 +376,42 @@ pub fn account_add_endpoint(
 ) -> IpcResult<Vec<Account>> {
     let label = match validate_label(&label) {
         Ok(l) => l,
-        Err(msg) => return err("INVALID_INPUT", msg),
+        Err(msg) => return err(ErrorCode::InvalidInput, msg),
     };
     let base_url = match validate_base_url(&base_url) {
         Ok(u) => u,
-        Err(msg) => return err("INVALID_INPUT", msg),
+        Err(e) => return e.into(),
     };
-    if let Err((code, msg)) = validate_model_ids_on_add(&model_ids) {
-        return err(code, msg);
+    if let Err(e) = validate_model_ids_on_add(&model_ids) {
+        return e.into();
     }
 
-    let id = crate::session::uuid();
+    let id = crate::ids::uuid();
     let Some(config_dir) = accounts_dir(&app).map(|d| d.join(&id)) else {
-        return err("INTERNAL", "could not resolve the app data directory");
+        return err(
+            ErrorCode::Internal,
+            "could not resolve the app data directory",
+        );
     };
     if let Err(e) = std::fs::create_dir_all(&config_dir) {
         return err(
-            "INTERNAL",
+            ErrorCode::Internal,
             format!("could not create {}: {e}", config_dir.display()),
         );
     }
     // §7: a key that cannot be written must leave no keyless row behind — the
     // dir goes with it, and the registry is never touched.
     if let Some(key) = api_key.as_deref().filter(|k| !k.is_empty()) {
-        if let Err(msg) = write_key(&config_dir.to_string_lossy(), key) {
+        if let Err(e) = write_key(&config_dir.to_string_lossy(), key) {
             let _ = std::fs::remove_dir_all(&config_dir);
-            return err("ACCOUNT_KEY_WRITE_FAILED", msg);
+            return e.into();
         }
     }
 
     let accounts = {
         let Ok(mut inner) = state.0.lock() else {
             let _ = std::fs::remove_dir_all(&config_dir);
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         apply_add_endpoint(
             &mut inner,
@@ -434,31 +453,34 @@ pub fn account_update_endpoint(
     model_ids: ModelIdsUpdate,
 ) -> IpcResult<Vec<Account>> {
     let clear_key = clear_key.unwrap_or(false);
-    if let Err((code, msg)) = validate_key_clear_conflict(&api_key, clear_key) {
+    if let Err(AppError {
+        code, message: msg, ..
+    }) = validate_key_clear_conflict(&api_key, clear_key)
+    {
         return err(code, msg);
     }
     let label = match label.as_deref().map(validate_label) {
-        Some(Err(msg)) => return err("INVALID_INPUT", msg),
+        Some(Err(msg)) => return err(ErrorCode::InvalidInput, msg),
         Some(Ok(l)) => Some(l),
         None => None,
     };
     let base_url = match base_url.as_deref().map(validate_base_url) {
-        Some(Err(msg)) => return err("INVALID_INPUT", msg),
+        Some(Err(e)) => return e.into(),
         Some(Ok(u)) => Some(u),
         None => None,
     };
-    if let Err((code, msg)) = validate_model_ids_on_update(&model_ids) {
-        return err(code, msg);
+    if let Err(e) = validate_model_ids_on_update(&model_ids) {
+        return e.into();
     }
 
     let config_dir = {
         let Ok(inner) = state.0.lock() else {
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         match inner.records.iter().find(|r| r.id == account_id) {
-            None => return err("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG),
+            None => return err(ErrorCode::AccountNotFound, NOT_FOUND_MSG),
             Some(r) if r.kind != AccountKind::OpenAiCompatible => {
-                return err("INVALID_INPUT", NOT_AN_ENDPOINT_MSG)
+                return err(ErrorCode::InvalidInput, NOT_AN_ENDPOINT_MSG)
             }
             Some(r) => r.config_dir.clone(),
         }
@@ -472,23 +494,21 @@ pub fn account_update_endpoint(
     // `account_add_endpoint` applies, so `apiKey: ""` never writes a 0-byte
     // key file that would make `hasKey` lie.
     if let Some(key) = api_key.as_deref().filter(|k| !k.is_empty()) {
-        if let Err(msg) = write_key(&config_dir, key) {
-            return err("ACCOUNT_KEY_WRITE_FAILED", msg);
+        if let Err(e) = write_key(&config_dir, key) {
+            return e.into();
         }
     } else if clear_key {
-        if let Err(msg) = remove_key(&config_dir) {
-            return err("ACCOUNT_KEY_WRITE_FAILED", msg);
+        if let Err(e) = remove_key(&config_dir) {
+            return e.into();
         }
     }
 
     let accounts = {
         let Ok(mut inner) = state.0.lock() else {
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
-        if let Err((code, msg)) =
-            apply_update_endpoint(&mut inner, &account_id, label, base_url, model_ids)
-        {
-            return err(code, msg);
+        if let Err(e) = apply_update_endpoint(&mut inner, &account_id, label, base_url, model_ids) {
+            return e.into();
         }
         if let Err(msg) = persist(&app, &inner) {
             eprintln!("accounts: could not persist accounts.json: {msg}");
@@ -516,7 +536,7 @@ pub fn account_test_endpoint(
 ) -> IpcResult<EndpointProbe> {
     let base_url = match validate_base_url(&base_url) {
         Ok(u) => u,
-        Err(msg) => return err("INVALID_INPUT", msg),
+        Err(e) => return e.into(),
     };
     let key = match api_key {
         Some(k) => Some(k),
@@ -524,7 +544,7 @@ pub fn account_test_endpoint(
             None => None,
             Some(id) => {
                 let Ok(inner) = state.0.lock() else {
-                    return err("INTERNAL", "account state is unavailable");
+                    return err(ErrorCode::Internal, "account state is unavailable");
                 };
                 // Mirrors `apply_update_endpoint`'s check: an `accountId` that
                 // does not resolve to an `openai-compatible` row (unknown id,
@@ -532,9 +552,9 @@ pub fn account_test_endpoint(
                 // a silent "no stored key" — pointing Test at the wrong kind
                 // of account must not read as "this endpoint needs no key".
                 match inner.records.iter().find(|r| r.id == id) {
-                    None => return err("INVALID_INPUT", NOT_FOUND_MSG),
+                    None => return err(ErrorCode::InvalidInput, NOT_FOUND_MSG),
                     Some(r) if r.kind != AccountKind::OpenAiCompatible => {
-                        return err("INVALID_INPUT", NOT_AN_ENDPOINT_MSG)
+                        return err(ErrorCode::InvalidInput, NOT_AN_ENDPOINT_MSG)
                     }
                     Some(r) => {
                         let dir = r.config_dir.clone();
@@ -547,7 +567,7 @@ pub fn account_test_endpoint(
     };
     match probe(&base_url, key.as_deref()) {
         Ok(p) => ok(p),
-        Err((code, msg)) => err(code, msg),
+        Err(e) => e.into(),
     }
 }
 
@@ -623,11 +643,13 @@ pub fn account_cli_tools() -> IpcResult<Vec<CliToolStatus>> {
 ///
 /// `tool` is an id, never a package name — the catalog in cli_tools.rs is what
 /// maps it, so nothing a caller sends can widen what reaches npm's argv.
-#[tauri::command]
+// FR-6: a process spawn (10-100 ms on Windows) run on a sync command blocks
+// the MAIN thread — same rationale as diff/commands.rs:48-56.
+#[tauri::command(async)]
 pub fn account_install_cli(app: AppHandle, tool: String) -> IpcResult<()> {
     match start_install(&app, &tool) {
         Ok(()) => ok(()),
-        Err(e) => err(&e.code, e.message),
+        Err(e) => e.into(),
     }
 }
 
@@ -643,24 +665,29 @@ pub fn account_install_cli(app: AppHandle, tool: String) -> IpcResult<()> {
 /// re-runnable action here — the row is useful the moment it exists, and a
 /// failed browser round-trip should not cost the user the account they just
 /// named.
-#[tauri::command]
-pub fn account_add_codex(
-    app: AppHandle,
-    state: State<'_, AccountState>,
-    label: String,
-) -> IpcResult<Vec<Account>> {
+// FR-6: a process spawn on this path (the config dir + registry write) run on
+// a sync command blocks the MAIN thread — same rationale as
+// diff/commands.rs:48-56. `state` becomes `app.state::<AccountState>()`
+// (diff/commands.rs's documented pattern): an async command's future must be
+// 'static, and a borrowed `State<'_, _>` param breaks that.
+#[tauri::command(async)]
+pub fn account_add_codex(app: AppHandle, label: String) -> IpcResult<Vec<Account>> {
+    let state = app.state::<AccountState>();
     let label = match validate_label(&label) {
         Ok(l) => l,
-        Err(msg) => return err("INVALID_INPUT", msg),
+        Err(msg) => return err(ErrorCode::InvalidInput, msg),
     };
 
-    let id = crate::session::uuid();
+    let id = crate::ids::uuid();
     let Some(config_dir) = accounts_dir(&app).map(|d| d.join(&id)) else {
-        return err("INTERNAL", "could not resolve the app data directory");
+        return err(
+            ErrorCode::Internal,
+            "could not resolve the app data directory",
+        );
     };
     if let Err(e) = std::fs::create_dir_all(&config_dir) {
         return err(
-            "INTERNAL",
+            ErrorCode::Internal,
             format!("could not create {}: {e}", config_dir.display()),
         );
     }
@@ -670,7 +697,7 @@ pub fn account_add_codex(
             // Same cleanup discipline as add-endpoint: a row that never reached
             // the registry must not leave a directory behind.
             let _ = std::fs::remove_dir_all(&config_dir);
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         apply_add_codex(
             &mut inner,
@@ -701,28 +728,33 @@ pub fn account_add_codex(
 /// `signedIn` flips when `auth.json` lands, published by the poller — the
 /// command does not block on it, because the user may take minutes in the
 /// browser and the modal must stay usable throughout.
-#[tauri::command]
-pub fn account_codex_login(
-    app: AppHandle,
-    state: State<'_, AccountState>,
-    account_id: String,
-) -> IpcResult<()> {
+// FR-6: spawns a process (10-100 ms on Windows) — same rationale as
+// diff/commands.rs:48-56. `app.state::<AccountState>()` replaces the borrowed
+// `State<'_, _>` param, which an async command's 'static future can't carry.
+#[tauri::command(async)]
+pub fn account_codex_login(app: AppHandle, account_id: String) -> IpcResult<()> {
+    let state = app.state::<AccountState>();
     // FR-16 (multi-account): one interactive login at a time, shared with the
     // Claude path — two browser tabs racing for one credential store is the same
     // hazard whichever CLI opened them.
     if codex_login_in_flight(&state) {
-        return err("INVALID_INPUT", MSG_IN_FLIGHT);
+        return err(ErrorCode::InvalidInput, MSG_IN_FLIGHT);
     }
 
     let config_dir = {
         let Ok(inner) = state.0.lock() else {
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         match inner.records.iter().find(|r| r.id == account_id) {
             Some(r) if r.kind == AccountKind::CodexCli => r.config_dir.clone(),
             // The built-in row and Claude/endpoint rows have no `codex login`.
-            Some(_) => return err("INVALID_INPUT", "this account is not a Codex account"),
-            None => return err("INVALID_INPUT", NOT_FOUND_MSG),
+            Some(_) => {
+                return err(
+                    ErrorCode::InvalidInput,
+                    "this account is not a Codex account",
+                )
+            }
+            None => return err(ErrorCode::InvalidInput, NOT_FOUND_MSG),
         }
     };
 
@@ -730,14 +762,17 @@ pub fn account_codex_login(
     // clean) — recreate rather than fail, since an empty CODEX_HOME is exactly
     // what a fresh login expects anyway.
     if let Err(e) = std::fs::create_dir_all(&config_dir) {
-        return err("INTERNAL", format!("could not create {config_dir}: {e}"));
+        return err(
+            ErrorCode::Internal,
+            format!("could not create {config_dir}: {e}"),
+        );
     }
 
     // The child is handed to the poller rather than dropped here: dropping it
     // leaves a zombie, and the poller uses its liveness to stop early.
     let child = match spawn_codex_login(&config_dir) {
         Ok(child) => child,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     start_codex_login_poller(&app, config_dir, child);
     ok(())
@@ -748,24 +783,25 @@ pub fn account_codex_login(
 /// francois:account:addGrok (multi-provider-grok FR-20): create a `grok-cli`
 /// account. Mirrors `account_add_codex` exactly — label only, empty dir,
 /// `account_grok_login` fills it in afterwards.
-#[tauri::command]
-pub fn account_add_grok(
-    app: AppHandle,
-    state: State<'_, AccountState>,
-    label: String,
-) -> IpcResult<Vec<Account>> {
+// FR-6: same rationale as account_add_codex above.
+#[tauri::command(async)]
+pub fn account_add_grok(app: AppHandle, label: String) -> IpcResult<Vec<Account>> {
+    let state = app.state::<AccountState>();
     let label = match validate_label(&label) {
         Ok(l) => l,
-        Err(msg) => return err("INVALID_INPUT", msg),
+        Err(msg) => return err(ErrorCode::InvalidInput, msg),
     };
 
-    let id = crate::session::uuid();
+    let id = crate::ids::uuid();
     let Some(config_dir) = accounts_dir(&app).map(|d| d.join(&id)) else {
-        return err("INTERNAL", "could not resolve the app data directory");
+        return err(
+            ErrorCode::Internal,
+            "could not resolve the app data directory",
+        );
     };
     if let Err(e) = std::fs::create_dir_all(&config_dir) {
         return err(
-            "INTERNAL",
+            ErrorCode::Internal,
             format!("could not create {}: {e}", config_dir.display()),
         );
     }
@@ -773,7 +809,7 @@ pub fn account_add_grok(
     let accounts = {
         let Ok(mut inner) = state.0.lock() else {
             let _ = std::fs::remove_dir_all(&config_dir);
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         apply_add_grok(
             &mut inner,
@@ -798,34 +834,40 @@ pub fn account_add_grok(
 /// francois:account:grokLogin (FR-21): run `grok login` against one account's
 /// `GROK_HOME`. Mirrors `account_codex_login` exactly, sharing its in-flight
 /// reservation flag (see `grok_login_in_flight`'s doc comment).
-#[tauri::command]
-pub fn account_grok_login(
-    app: AppHandle,
-    state: State<'_, AccountState>,
-    account_id: String,
-) -> IpcResult<()> {
+// FR-6: same rationale as account_codex_login above.
+#[tauri::command(async)]
+pub fn account_grok_login(app: AppHandle, account_id: String) -> IpcResult<()> {
+    let state = app.state::<AccountState>();
     if grok_login_in_flight(&state) {
-        return err("INVALID_INPUT", MSG_IN_FLIGHT);
+        return err(ErrorCode::InvalidInput, MSG_IN_FLIGHT);
     }
 
     let config_dir = {
         let Ok(inner) = state.0.lock() else {
-            return err("INTERNAL", "account state is unavailable");
+            return err(ErrorCode::Internal, "account state is unavailable");
         };
         match inner.records.iter().find(|r| r.id == account_id) {
             Some(r) if r.kind == AccountKind::GrokCli => r.config_dir.clone(),
-            Some(_) => return err("INVALID_INPUT", "this account is not a Grok account"),
-            None => return err("INVALID_INPUT", NOT_FOUND_MSG),
+            Some(_) => {
+                return err(
+                    ErrorCode::InvalidInput,
+                    "this account is not a Grok account",
+                )
+            }
+            None => return err(ErrorCode::InvalidInput, NOT_FOUND_MSG),
         }
     };
 
     if let Err(e) = std::fs::create_dir_all(&config_dir) {
-        return err("INTERNAL", format!("could not create {config_dir}: {e}"));
+        return err(
+            ErrorCode::Internal,
+            format!("could not create {config_dir}: {e}"),
+        );
     }
 
     let child = match spawn_grok_login(&config_dir) {
         Ok(child) => child,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     start_grok_login_poller(&app, config_dir, child);
     ok(())

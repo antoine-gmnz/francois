@@ -4,7 +4,7 @@ use super::*;
 
 use serde_json::Value;
 
-pub(crate) fn tool_glyph(tool: &str) -> (&'static str, &'static str) {
+pub fn tool_glyph(tool: &str) -> (&'static str, &'static str) {
     match tool {
         "Read" => ("\u{29C9}", "#8b93a3"),
         "Grep" | "Search" => ("\u{2315}", "#8b93a3"),
@@ -26,7 +26,7 @@ fn with_at(mut o: Value, b: &BufBlock) -> Value {
 
 /// Serialize a buffered block to the ConversationBlock JSON shape (§5 of
 /// conversation-view). Mirrors classifyToolStart in the TS contract.
-pub(crate) fn classify_block(b: &BufBlock) -> Value {
+pub fn classify_block(b: &BufBlock) -> Value {
     match b.kind {
         BlockKind::User => with_at(
             serde_json::json!({

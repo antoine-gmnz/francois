@@ -1,6 +1,7 @@
 //! per-session git serialization, the fs watcher, and event broadcast.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,9 +13,9 @@ use crate::wsl;
 
 // ---------- per-session git serialization (FR-14) ----------
 
-pub(crate) static GIT_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+pub static GIT_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 
-pub(crate) fn git_lock(session_id: &str) -> Arc<Mutex<()>> {
+pub fn git_lock(session_id: &str) -> Arc<Mutex<()>> {
     let mut m = GIT_LOCKS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -26,7 +27,7 @@ pub(crate) fn git_lock(session_id: &str) -> Arc<Mutex<()>> {
 
 // ---------- event broadcast (FR-17) ----------
 
-pub(crate) fn broadcast(app: &AppHandle, session_id: &str, file_count: usize) {
+pub fn broadcast(app: &AppHandle, session_id: &str, file_count: usize) {
     let _ = app.emit(
         "francois://diff/event",
         serde_json::json!({ "type": "diff.changed", "sessionId": session_id, "fileCount": file_count }),
@@ -35,12 +36,12 @@ pub(crate) fn broadcast(app: &AppHandle, session_id: &str, file_count: usize) {
 
 /// Recompute + broadcast under the session's git lock. Used by the watcher and
 /// tool.done trigger; a NOT_A_GIT_REPO result clears the badge (fileCount 0).
-pub(crate) fn recompute_and_broadcast(app: &AppHandle, session_id: &str, cwd: &str) {
+pub fn recompute_and_broadcast(app: &AppHandle, session_id: &str, cwd: &str) {
     let lock = git_lock(session_id);
     let _g = lock.lock().unwrap();
     match compute_summary(cwd) {
         Ok(s) => broadcast(app, session_id, s.files.len()),
-        Err((code, _)) if code == "NOT_A_GIT_REPO" => broadcast(app, session_id, 0),
+        Err(e) if e.code == ErrorCode::NotAGitRepo => broadcast(app, session_id, 0),
         Err(_) => {} // transient git error — don't zero the badge
     }
 }
@@ -50,13 +51,13 @@ pub(crate) fn recompute_and_broadcast(app: &AppHandle, session_id: &str, cwd: &s
 /// this, a burst of Edit/Write tool.done events (one per edit, undebounced) plus the
 /// watcher each spawn their own full `compute_summary` — a queue of O(burst) git
 /// storms that serialize on the git lock and strobe diff.changed at the frontend.
-pub(crate) struct RecomputeState {
+pub struct RecomputeState {
     running: bool,
     dirty: bool,
 }
-pub(crate) static RECOMPUTES: OnceLock<Mutex<HashMap<String, RecomputeState>>> = OnceLock::new();
+pub static RECOMPUTES: OnceLock<Mutex<HashMap<String, RecomputeState>>> = OnceLock::new();
 
-pub(crate) fn schedule_recompute(app: &AppHandle, session_id: &str, cwd: &str) {
+pub fn schedule_recompute(app: &AppHandle, session_id: &str, cwd: &str) {
     let states = RECOMPUTES.get_or_init(|| Mutex::new(HashMap::new()));
     {
         let mut m = states.lock().unwrap();
@@ -98,7 +99,7 @@ pub fn on_tool_done(app: &AppHandle, session_id: &str, cwd: &str) {
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
-pub(crate) static WATCHERS: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>> = OnceLock::new();
+pub static WATCHERS: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>> = OnceLock::new();
 
 /// Skip events inside `.git/` (our own index/ref writes) and inside well-known heavy
 /// build / dependency directories. Recursively watching a multi-GB `target/` or
@@ -108,7 +109,7 @@ pub(crate) static WATCHERS: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>>
 /// the summary; the only tradeoff is a *tracked* file living directly under a dir
 /// literally named one of these, whose live update would be missed (any other change,
 /// or reopening the tab, still refreshes it).
-pub(crate) fn is_ignored_path(p: &Path, root: &Path) -> bool {
+pub fn is_ignored_path(p: &Path, root: &Path) -> bool {
     // Match only the path *below* the watched root: a session whose cwd itself lives
     // under a dir named e.g. `build`/`vendor`/`.cache` must not have EVERY event
     // ignored — that would silently disable the watcher entirely (H1).
@@ -197,7 +198,11 @@ pub fn watch_session(app: &AppHandle, session_id: &str, cwd: &str) {
 
 /// Dispose a session's watcher (dropping it stops the fs events and ends the
 /// debounce thread via channel disconnect) and drop its git lock entry.
-pub fn unwatch_session(session_id: &str) {
+///
+/// FR-7: also evicts `REPO_CACHE`'s entry for the session's cwd, alongside its
+/// siblings above — without this the cache kept answering for a cwd whose
+/// repo moved or was re-initialised until the app restarted.
+pub fn unwatch_session(session_id: &str, cwd: &str) {
     if let Some(reg) = WATCHERS.get() {
         reg.lock().unwrap().remove(session_id);
     }
@@ -207,11 +212,32 @@ pub fn unwatch_session(session_id: &str) {
     if let Some(states) = RECOMPUTES.get() {
         states.lock().unwrap().remove(session_id); // in-flight loop sees the gap and stops
     }
+    if let Some(cache) = REPO_CACHE.get() {
+        cache.lock().unwrap_or_else(|p| p.into_inner()).remove(cwd);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unwatch_session_evicts_repo_cache_for_the_sessions_cwd() {
+        // FR-7: REPO_CACHE must be evicted alongside WATCHERS/GIT_LOCKS/RECOMPUTES.
+        let cwd = "/tmp/fr7-unwatch-repo-cache-test";
+        let cache = REPO_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        cache.lock().unwrap().insert(
+            cwd.to_string(),
+            (
+                GitHost::Native,
+                "/tmp/fr7-unwatch-repo-cache-test".into(),
+                Some("HEAD".into()),
+            ),
+        );
+        assert!(cache.lock().unwrap().contains_key(cwd));
+        unwatch_session("fr7-session", cwd);
+        assert!(!cache.lock().unwrap().contains_key(cwd));
+    }
 
     #[test]
     fn ignored_path_skips_git_and_heavy_dirs() {

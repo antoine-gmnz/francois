@@ -18,7 +18,7 @@
 //! collapses to an error string instead of `unwrap()`/`expect()`.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use regex::RegexBuilder;
@@ -26,7 +26,6 @@ use serde_json::Value;
 
 use super::FrancoisTool;
 use crate::fs_util::unique_temp_path;
-use crate::process_util::no_window;
 
 // ---------- caps ----------
 //
@@ -77,7 +76,7 @@ fn missing_arg(name: &str) -> String {
 /// capped at `READ_CAP_CHARS`. Never fails loudly: a missing file, a
 /// permission error, or invalid UTF-8 all come back as a string explaining
 /// what happened rather than propagating an `Err`/panic.
-pub(crate) fn read(path: &Path, _args: &Value) -> String {
+pub fn read(path: &Path, _args: &Value) -> String {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => return format!("Could not read {}: {e}", path.display()),
@@ -113,7 +112,7 @@ pub(crate) fn read(path: &Path, _args: &Value) -> String {
 /// helper today, only the user-only-file primitive, which exists for
 /// credentials and would wrongly restrict an ordinary project file's
 /// permissions if reused here.
-pub(crate) fn write(path: &Path, args: &Value) -> String {
+pub fn write(path: &Path, args: &Value) -> String {
     let Some(content) = args.get("content").and_then(Value::as_str) else {
         return missing_arg("content");
     };
@@ -141,7 +140,7 @@ pub(crate) fn write(path: &Path, args: &Value) -> String {
 /// `true`. The replacement is computed in memory first and the file is only
 /// ever touched once, after every validation has passed — so a failed call
 /// leaves the file byte-for-byte unchanged.
-pub(crate) fn edit(path: &Path, args: &Value) -> String {
+pub fn edit(path: &Path, args: &Value) -> String {
     let Some(old_string) = args.get("old_string").and_then(Value::as_str) else {
         return missing_arg("old_string");
     };
@@ -211,7 +210,7 @@ pub(crate) fn edit(path: &Path, args: &Value) -> String {
 /// this tool carries Claude Code's own name and a user's regex habits must
 /// transfer. Binary / non-UTF-8 files are skipped rather than failing the
 /// whole call.
-pub(crate) fn grep(path: &Path, args: &Value) -> String {
+pub fn grep(path: &Path, args: &Value) -> String {
     let Some(pattern) = args.get("pattern").and_then(Value::as_str) else {
         return missing_arg("pattern");
     };
@@ -278,7 +277,7 @@ pub(crate) fn grep(path: &Path, args: &Value) -> String {
 /// same three wildcards Claude Code's own Glob tool documents. Results are
 /// sorted alphabetically for determinism (this module has no reason to read
 /// mtimes) and capped at `GLOB_MAX_RESULTS`.
-pub(crate) fn glob(path: &Path, args: &Value) -> String {
+pub fn glob(path: &Path, args: &Value) -> String {
     let Some(pattern) = args.get("pattern").and_then(Value::as_str) else {
         return missing_arg("pattern");
     };
@@ -408,7 +407,7 @@ fn glob_segment_match(pattern: &str, segment: &str) -> bool {
 /// and stderr — concatenated in that order, not truly interleaved (real
 /// interleaving would need pty-level capture, out of scope here). The
 /// COMBINED string is what FR-14's 30_000-character cap applies to.
-pub(crate) fn bash(cwd: &Path, args: &Value) -> String {
+pub fn bash(cwd: &Path, args: &Value) -> String {
     let Some(command) = args.get("command").and_then(Value::as_str) else {
         return missing_arg("command");
     };
@@ -421,22 +420,23 @@ pub(crate) fn bash(cwd: &Path, args: &Value) -> String {
         .map(|t| t.clamp(1, BASH_MAX_TIMEOUT_SECS))
         .unwrap_or(BASH_DEFAULT_TIMEOUT_SECS);
 
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(command);
-        c
+    // core-architecture-fixes FR-20, now core-architecture-wave3 FR-7: this
+    // shell's own PATH decides what a bare binary name in `command` resolves to.
+    // Without the facade's login-shell PATH a GUI launch inherits launchd's
+    // minimal one (macOS) and a tool call carrying Claude Code's own `Bash` name
+    // resolves binaries against a DIFFERENT PATH than every other runtime,
+    // reintroducing exactly the bug ext-path-resolution fixed elsewhere.
+    let cmd = if cfg!(windows) {
+        crate::process_util::spawn("cmd").arg("/C").arg(command)
     } else {
-        let mut c = Command::new("/bin/sh");
-        c.arg("-c").arg(command);
-        c
+        crate::process_util::spawn("/bin/sh").arg("-c").arg(command)
     };
-    no_window(&mut cmd);
-    cmd.current_dir(cwd)
-        .stdin(Stdio::null())
+    let cmd = cmd
+        .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = match cmd.spawn() {
+    let mut child = match cmd.start() {
         Ok(c) => c,
         Err(e) => return format!("Could not start the shell: {e}"),
     };
@@ -507,7 +507,7 @@ fn read_all(mut pipe: impl std::io::Read) -> String {
 /// `Bash` (FR-13) — `gate::resolve_in_cwd` is responsible for producing it
 /// before this is ever reached; `None` for a path tool is a defensive
 /// fallback, not an expected path.
-pub(crate) fn execute(
+pub fn execute(
     tool: FrancoisTool,
     resolved_path: Option<&Path>,
     cwd: &Path,
@@ -678,6 +678,23 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let out = bash(&dir, &json!({ "command": "echo hi" }));
         assert!(out.contains("hi"), "{out}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // FR-20: the shell's PATH must be the login-shell one (when it resolves),
+    // not whatever the app inherited — otherwise a bare binary name in the
+    // Francois agent loop's Bash tool resolves differently than every other
+    // runtime's spawn. `echo $PATH` is the most direct way to pin the ACTUAL
+    // env a spawned child sees, rather than asserting the call was made.
+    #[cfg(unix)]
+    #[test]
+    fn bash_spawns_with_the_login_shell_path_when_it_resolves() {
+        let dir = tmp_dir("bash-path-env");
+        fs::create_dir_all(&dir).unwrap();
+        let out = bash(&dir, &json!({ "command": "echo -n $PATH" }));
+        let expected = crate::process_util::login_shell_path_env()
+            .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
+        assert_eq!(out.trim(), expected.trim());
         fs::remove_dir_all(&dir).ok();
     }
 

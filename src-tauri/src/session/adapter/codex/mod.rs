@@ -27,63 +27,31 @@ mod runner;
 mod wire;
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 use crate::session::*;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-/// The executable's base name, before any platform-specific extension.
-pub(crate) const CODEX_BIN: &str = "codex";
-
-/// The program string to actually spawn for `codex` (multi-provider-codex §7).
-///
-/// **Why this is not just `CODEX_BIN`.** `claude` installs as a real native
-/// binary, so `Command::new("claude")` finds it on any platform. `codex` is
-/// normally installed by npm, which on Windows ships **shims, not an exe**:
-/// `codex` (sh), `codex.cmd`, `codex.ps1`. Rust's `Command` resolves a bare name
-/// on Windows by appending `.exe` ONLY — so `Command::new("codex")` fails with
-/// `NotFound` even though `codex --version` works in every terminal, and the
-/// user gets told to install something that is already installed.
-///
-/// Verified on this platform: bare `codex` → `NotFound`; `codex.cmd` → runs.
-/// Rust executes `.cmd`/`.bat` targets fine once the extension is explicit (it
-/// applies its own batch-argument escaping, the CVE-2024-24576 fix), so naming
-/// the extension is the whole fix.
-///
-/// Returns a full path when one is found — unambiguous, and it cannot be
-/// re-resolved differently between the login spawn and the turn spawn. Falls
-/// back to the bare name so a genuinely missing CLI still produces `NotFound`
-/// and the "install it" message that is then correct.
-pub(crate) fn codex_program() -> String {
-    static RESOLVED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    RESOLVED.get_or_init(resolve_codex_program).clone()
-}
-
-fn resolve_codex_program() -> String {
-    // Non-Windows installs are a real binary (or a shebang script, which
-    // `execvp` handles); the bare name is correct and PATH does the work.
-    if !cfg!(windows) {
-        return CODEX_BIN.to_string();
-    }
-    // The PATH scan (and its `.exe` → `.cmd` → `.bat` order) is shared with the
-    // CLI-tools probe, which asks the same question for `claude` and `grok` —
-    // see process_util::resolve_program.
-    crate::process_util::resolve_program(CODEX_BIN)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| CODEX_BIN.to_string())
-}
+// core-architecture-wave3 FR-9: the name and the program resolver moved to
+// `process_util`, beside the PATH scan they were already delegating to — so
+// `account/codex.rs` can ask "which file is codex?" without naming the session
+// engine. Re-exported: every existing `codex_program()` / `CODEX_BIN` reference,
+// here and in `crate::session`, resolves unchanged.
+#[allow(unused_imports)] // CODEX_BIN is named by this module's own tests
+pub use crate::process_util::{codex_program, CODEX_BIN};
 
 /// FR-7 §7: what a user sees when the CLI is not installed. Names the package,
 /// because "could not start codex" alone sends people to the wrong search.
 const CODEX_MISSING_HINT: &str =
     "could not start codex — install it with `npm i -g @openai/codex`, then sign in from the Accounts modal";
 
-pub(crate) struct CodexAdapter;
+pub struct CodexAdapter;
 
 /// FR-10: the live turn. A `Child` and an interrupt flag, and **deliberately
 /// nothing else** — every other `TurnControl` member answers "nothing is
 /// pending", because on this transport nothing ever can be.
-pub(crate) struct CodexTurnHandle {
+pub struct CodexTurnHandle {
     child: Arc<Mutex<std::process::Child>>,
     interrupted: Arc<AtomicBool>,
 }
@@ -148,7 +116,7 @@ impl SessionAdapter for CodexAdapter {
             if !crate::account::codex_auth_file_exists(dir) {
                 crate::account::mark_auth_failed(app, &ctx.account_id);
                 return Err(AppError {
-                    code: "ACCOUNT_NOT_AUTHENTICATED".into(),
+                    code: ErrorCode::AccountNotAuthenticated,
                     message: "this session's account is not signed in to Codex — use Sign in in the Accounts modal"
                         .into(),
                     detail: None,
@@ -233,15 +201,13 @@ mod tests {
             // A process that is already finished — this test never touches it,
             // and `kill` on a dead child is a no-op by design.
             child: Arc::new(Mutex::new(
-                std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" })
+                crate::process_util::spawn(if cfg!(windows) { "cmd" } else { "true" })
                     .args(if cfg!(windows) {
                         vec!["/C", "exit"]
                     } else {
                         vec![]
                     })
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
+                    .start()
                     .expect("spawns a trivial process"),
             )),
             interrupted: Arc::new(AtomicBool::new(false)),

@@ -1,6 +1,7 @@
 //! summary and per-file diff computation.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use std::path::Path;
 
@@ -15,7 +16,7 @@ use crate::wsl;
 /// happy path — the whole point of the round-3 perf fix this preserves). If the
 /// FR-3 root couldn't be discovered, fall back to a per-file `wsl.exe` numstat
 /// spawn (§7 — correct, slower, WSL-only).
-pub(crate) fn untracked_counts(host: &GitHost, root: &str, path: &str) -> (u64, u64) {
+pub fn untracked_counts(host: &GitHost, root: &str, path: &str) -> (u64, u64) {
     match host {
         GitHost::Native => untracked_counts_in_process(&Path::new(root).join(path)),
         GitHost::Wsl(distro) => {
@@ -33,7 +34,7 @@ pub(crate) fn untracked_counts(host: &GitHost, root: &str, path: &str) -> (u64, 
 /// files paid over a second per recompute. Semantics match numstat: binary (NUL in the
 /// first 8 KiB) counts 0/0; a final line without a trailing newline still counts;
 /// empty/unreadable → 0/0.
-pub(crate) fn untracked_counts_in_process(file: &Path) -> (u64, u64) {
+pub fn untracked_counts_in_process(file: &Path) -> (u64, u64) {
     use std::io::Read;
     let Ok(f) = std::fs::File::open(file) else {
         return (0, 0);
@@ -66,7 +67,7 @@ pub(crate) fn untracked_counts_in_process(file: &Path) -> (u64, u64) {
 /// §7 fallback when the FR-3 UNC root is unavailable: one `git --no-index --numstat`
 /// spawn per untracked file, routed into the distro (correct, slower — the
 /// pre-round-3 shape, WSL-only; native repos always take the in-process path above).
-pub(crate) fn untracked_counts_wsl_fallback(distro: &str, root: &str, path: &str) -> (u64, u64) {
+pub fn untracked_counts_wsl_fallback(distro: &str, root: &str, path: &str) -> (u64, u64) {
     let Ok(out) = git_routed(
         &GitHost::Wsl(distro.to_string()),
         root,
@@ -89,11 +90,11 @@ pub(crate) fn untracked_counts_wsl_fallback(distro: &str, root: &str, path: &str
     )
 }
 
-pub(crate) fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
+pub fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
     // Cached host + root + base (run everything from the worktree top so paths
     // agree; wsl-filesystem FR-5 routes every call below on `host`).
     let Some((host, root, base)) = repo_info(cwd) else {
-        return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
+        return Err(AppError::new(ErrorCode::NotAGitRepo, NOT_A_REPO_MSG));
     };
     let st = git_routed(
         &host,
@@ -106,19 +107,19 @@ pub(crate) fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
             "--renames",
         ],
     )
-    .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    .map_err(|e| AppError::new(ErrorCode::GitError, e.to_string()))?;
     if st.code != 0 {
-        return Err((
-            "GIT_ERROR".into(),
+        return Err(AppError::new(
+            ErrorCode::GitError,
             if st.stderr.is_empty() {
-                "git status failed".into()
+                "git status failed".to_string()
             } else {
                 st.stderr
             },
         ));
     }
     let numstat = git_routed(&host, &root, &["diff", &base, "-M", "-z", "--numstat"])
-        .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+        .map_err(|e| AppError::new(ErrorCode::GitError, e.to_string()))?;
     let counts = parse_numstat_z(&numstat.stdout);
 
     let mut files: Vec<DiffFileSummary> = parse_porcelain_z(&st.stdout)
@@ -151,9 +152,9 @@ pub(crate) fn compute_summary(cwd: &str) -> Result<DiffSummary, GitErr> {
     })
 }
 
-pub(crate) fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
+pub fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
     let Some((host, root, base)) = repo_info(cwd) else {
-        return Err(("NOT_A_GIT_REPO".into(), NOT_A_REPO_MSG.into()));
+        return Err(AppError::new(ErrorCode::NotAGitRepo, NOT_A_REPO_MSG));
     };
     // Targeted status for just this path — avoids re-running the whole summary (which
     // costs a full `git status` + numstat + a diff per untracked file). Big win on a
@@ -170,12 +171,12 @@ pub(crate) fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitEr
             path,
         ],
     )
-    .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    .map_err(|e| AppError::new(ErrorCode::GitError, e.to_string()))?;
     if st.code != 0 {
-        return Err((
-            "GIT_ERROR".into(),
+        return Err(AppError::new(
+            ErrorCode::GitError,
             if st.stderr.is_empty() {
-                "git status failed".into()
+                "git status failed".to_string()
             } else {
                 st.stderr
             },
@@ -186,8 +187,8 @@ pub(crate) fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitEr
         .into_iter()
         .find(|(_, p)| p == path)
     else {
-        return Err((
-            "INVALID_INPUT".into(),
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
             format!("'{path}' is not in the current changes"),
         ));
     };
@@ -201,7 +202,7 @@ pub(crate) fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitEr
     } else {
         git_routed(&host, &root, &["diff", &base, "-M", "--", path])
     }
-    .map_err(|e| ("GIT_ERROR".to_string(), e.to_string()))?;
+    .map_err(|e| AppError::new(ErrorCode::GitError, e.to_string()))?;
 
     // `--no-index` exit 1 = "files differ" (success); only >=2 is a real failure (FR-8).
     let failed = if status == DiffFileStatus::Untracked {
@@ -210,10 +211,10 @@ pub(crate) fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitEr
         out.code != 0
     };
     if failed {
-        return Err((
-            "GIT_ERROR".into(),
+        return Err(AppError::new(
+            ErrorCode::GitError,
             if out.stderr.is_empty() {
-                "git diff failed".into()
+                "git diff failed".to_string()
             } else {
                 out.stderr
             },

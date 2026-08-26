@@ -1,6 +1,7 @@
 //! skill/plugin discovery and the skills-panel commands.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
@@ -30,17 +31,17 @@ pub struct SkillInfo {
     pub(crate) plugin_id: Option<String>, // '<plugin>@<marketplace>' — enabling target for available entries
 }
 
-pub(crate) fn commands_dir(base: &std::path::Path) -> std::path::PathBuf {
+pub fn commands_dir(base: &std::path::Path) -> std::path::PathBuf {
     base.join(".claude").join("commands")
 }
 
 /// Root that holds installed marketplaces: ~/.claude/plugins/marketplaces.
-pub(crate) fn marketplaces_root() -> Option<std::path::PathBuf> {
+pub fn marketplaces_root() -> Option<std::path::PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("plugins").join("marketplaces"))
 }
 
 /// Enabled plugin ids ("<plugin>@<marketplace>") from ~/.claude/settings.json.
-pub(crate) fn enabled_plugin_ids() -> std::collections::HashSet<String> {
+pub fn enabled_plugin_ids() -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
     let Some(home) = dirs::home_dir() else {
         return set;
@@ -64,7 +65,7 @@ pub(crate) fn enabled_plugin_ids() -> std::collections::HashSet<String> {
 
 /// Every plugin present on disk as ("<plugin>@<marketplace>", plugin_dir), scanning
 /// both plugins/ and external_plugins/ under each installed marketplace.
-pub(crate) fn all_plugins() -> Vec<(String, std::path::PathBuf)> {
+pub fn all_plugins() -> Vec<(String, std::path::PathBuf)> {
     let mut out = Vec::new();
     let Some(root) = marketplaces_root() else {
         return out;
@@ -100,7 +101,7 @@ pub(crate) fn all_plugins() -> Vec<(String, std::path::PathBuf)> {
 }
 
 /// Scan a dir of `*.md` slash-command files → (name = file stem, description).
-pub(crate) fn scan_commands(dir: &std::path::Path) -> Vec<(String, String)> {
+pub fn scan_commands(dir: &std::path::Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return out;
@@ -117,7 +118,7 @@ pub(crate) fn scan_commands(dir: &std::path::Path) -> Vec<(String, String)> {
     out
 }
 
-pub(crate) fn skill_entry(
+pub fn skill_entry(
     name: String,
     description: String,
     installed: bool,
@@ -138,7 +139,7 @@ pub(crate) fn skill_entry(
 /// Full skills+commands list for a cwd (FR-3/4): installed (project ∪ user ∪ enabled
 /// plugins, alpha) then available (non-enabled plugin skills, alpha). Project wins over
 /// user wins over plugin on a name collision; skill wins over command within a scope.
-pub(crate) fn discover_skills(cwd: &str) -> Vec<SkillInfo> {
+pub fn discover_skills(cwd: &str) -> Vec<SkillInfo> {
     let mut installed: std::collections::BTreeMap<String, SkillInfo> =
         std::collections::BTreeMap::new();
     let enabled = enabled_plugin_ids();
@@ -203,18 +204,18 @@ pub(crate) fn discover_skills(cwd: &str) -> Vec<SkillInfo> {
     out
 }
 
-pub(crate) fn skills_dir(base: &std::path::Path) -> std::path::PathBuf {
+pub fn skills_dir(base: &std::path::Path) -> std::path::PathBuf {
     base.join(".claude").join("skills")
 }
 
-pub(crate) fn parse_skill_description(skill_md: &std::path::Path) -> String {
+pub fn parse_skill_description(skill_md: &std::path::Path) -> String {
     std::fs::read_to_string(skill_md)
         .map(|c| parse_skill_description_str(&c))
         .unwrap_or_default()
 }
 
 /// Parse the `description:` from a SKILL.md frontmatter, first sentence, ≤100 chars (FR-4).
-pub(crate) fn parse_skill_description_str(content: &str) -> String {
+pub fn parse_skill_description_str(content: &str) -> String {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return String::new();
@@ -255,7 +256,7 @@ pub(crate) fn parse_skill_description_str(content: &str) -> String {
 }
 
 /// Scan a skills dir for immediate subdirs containing SKILL.md → (name, description).
-pub(crate) fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
+pub fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return out;
@@ -280,7 +281,7 @@ pub(crate) fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
 #[tauri::command(async)]
 pub fn skills_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<SkillInfo>> {
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     ok(discover_skills(&cwd))
 }
@@ -296,22 +297,25 @@ pub fn skills_install(
     name: String,
 ) -> IpcResult<Option<()>> {
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     let Some(target) = discover_skills(&cwd)
         .into_iter()
         .find(|s| s.name == name && !s.installed)
     else {
         return err(
-            "SKILL_ERROR",
+            ErrorCode::SkillError,
             format!("'{name}' is not an available plugin skill"),
         );
     };
     let Some(pid) = target.plugin_id else {
-        return err("SKILL_ERROR", format!("'{name}' has no plugin to enable"));
+        return err(
+            ErrorCode::SkillError,
+            format!("'{name}' has no plugin to enable"),
+        );
     };
     let Some(home) = dirs::home_dir() else {
-        return err("SKILL_ERROR", "could not resolve home directory");
+        return err(ErrorCode::SkillError, "could not resolve home directory");
     };
     let path = home.join(".claude").join("settings.json");
     // Parse the existing settings. Absent → start fresh; present-but-unparseable →
@@ -321,13 +325,18 @@ pub fn skills_install(
             Ok(v) if v.is_object() => v,
             _ => {
                 return err(
-                    "SKILL_ERROR",
+                    ErrorCode::SkillError,
                     "~/.claude/settings.json is not valid JSON — refusing to modify it",
                 )
             }
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
-        Err(e) => return err("SKILL_ERROR", format!("could not read settings.json: {e}")),
+        Err(e) => {
+            return err(
+                ErrorCode::SkillError,
+                format!("could not read settings.json: {e}"),
+            )
+        }
     };
     let ep = cfg
         .as_object_mut()
@@ -336,7 +345,7 @@ pub fn skills_install(
         .or_insert_with(|| serde_json::json!({}));
     let Some(ep) = ep.as_object_mut() else {
         return err(
-            "SKILL_ERROR",
+            ErrorCode::SkillError,
             "malformed settings.json (enabledPlugins is not an object)",
         );
     };
@@ -348,12 +357,15 @@ pub fn skills_install(
     let bytes = serde_json::to_vec_pretty(&cfg).unwrap_or_default();
     let tmp = path.with_extension("json.francois-tmp");
     if let Err(e) = std::fs::write(&tmp, &bytes) {
-        return err("SKILL_ERROR", format!("could not write settings.json: {e}"));
+        return err(
+            ErrorCode::SkillError,
+            format!("could not write settings.json: {e}"),
+        );
     }
     if let Err(e) = std::fs::rename(&tmp, &path) {
         let _ = std::fs::remove_file(&tmp);
         return err(
-            "SKILL_ERROR",
+            ErrorCode::SkillError,
             format!("could not replace settings.json: {e}"),
         );
     }
@@ -373,13 +385,16 @@ pub fn skills_run(
     args: Option<String>,
 ) -> IpcResult<Option<()>> {
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     if !discover_skills(&cwd)
         .iter()
         .any(|s| s.installed && s.name == name)
     {
-        return err("INVALID_INPUT", format!("'{name}' is not installed"));
+        return err(
+            ErrorCode::InvalidInput,
+            format!("'{name}' is not installed"),
+        );
     }
     let text = match args {
         Some(a) if !a.trim().is_empty() => format!("/{} {}", name, a.trim()),

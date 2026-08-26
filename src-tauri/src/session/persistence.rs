@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager};
 
 // ---------- persistence (FR-42/43) ----------
 
-pub(crate) fn sessions_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+pub fn sessions_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
@@ -20,11 +20,11 @@ pub(crate) fn sessions_json_path(app: &AppHandle) -> Option<std::path::PathBuf> 
 
 /// A session id must be a uuid-charset token so it can never escape the transcripts
 /// dir (no `/`, `\`, `..`). Defense-in-depth against a tampered/legacy sessions.json.
-pub(crate) fn valid_session_id(id: &str) -> bool {
+pub fn valid_session_id(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-pub(crate) fn transcript_path(app: &AppHandle, session_id: &str) -> Option<std::path::PathBuf> {
+pub fn transcript_path(app: &AppHandle, session_id: &str) -> Option<std::path::PathBuf> {
     if !valid_session_id(session_id) {
         return None;
     }
@@ -90,7 +90,7 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
 
 /// Append one finalized block as a JSON line to the session's transcript (FR-1/2).
 /// Best-effort: a write failure is ignored so it never breaks the turn (§7).
-pub(crate) fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
+pub fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
     use std::io::Write as _;
     let Some(path) = transcript_path(app, session_id) else {
         return;
@@ -111,7 +111,7 @@ pub(crate) fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBl
 
 /// /clear: remove the session's persisted transcript so a reload starts empty.
 /// Best-effort — a missing file or remove error is ignored.
-pub(crate) fn clear_transcript(app: &AppHandle, session_id: &str) {
+pub fn clear_transcript(app: &AppHandle, session_id: &str) {
     if let Some(path) = transcript_path(app, session_id) {
         let _ = std::fs::remove_file(&path);
     }
@@ -119,7 +119,7 @@ pub(crate) fn clear_transcript(app: &AppHandle, session_id: &str) {
 
 /// Parse one PersistedBlock line back into a BufBlock. Returns None for a malformed
 /// or partial line so reload can skip it (FR-15).
-pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
+pub fn parse_persisted_block(line: &str) -> Option<BufBlock> {
     let v: Value = serde_json::from_str(line).ok()?;
     let kind = match v.get("kind").and_then(|k| k.as_str())? {
         "user" => BlockKind::User,
@@ -226,7 +226,7 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
 /// Fold persisted lines into blocks, upserting by blockId: the LAST line wins, at
 /// the FIRST occurrence's position. Question resolutions re-append their block
 /// (session-questions FR-15); everything else appends exactly once.
-pub(crate) fn parse_transcript(content: &str) -> Vec<BufBlock> {
+pub fn parse_transcript(content: &str) -> Vec<BufBlock> {
     let mut out: Vec<BufBlock> = Vec::new();
     for b in content.lines().filter_map(parse_persisted_block) {
         match out.iter_mut().find(|e| e.block_id == b.block_id) {
@@ -237,25 +237,73 @@ pub(crate) fn parse_transcript(content: &str) -> Vec<BufBlock> {
     out
 }
 
+/// core-architecture-fixes FR-8: the tail-read window. Sized generously above
+/// `TRANSCRIPT_BUFFER_CAP` (400) blocks' worth of bytes so the tail reliably
+/// contains them even for large assistant-text blocks — a persisted line
+/// rarely exceeds a few KB, so 4 MiB is a wide margin over 400 lines. Boot
+/// cost is then bounded by this constant regardless of how large the whole
+/// transcript file has grown (a file shorter than it is read whole).
+const TRANSCRIPT_TAIL_BYTES: u64 = 4 * 1024 * 1024;
+
+/// FR-8: read at most the last `k` bytes of `path`, discarding the leading
+/// (necessarily partial, since we seeked mid-line) line — bounded work
+/// regardless of file size. Never surfaces an error: a transcript is a
+/// convenience, not a correctness input (edge case #5), so any failure here
+/// degrades to "nothing read" exactly as the old whole-file read did.
+fn read_tail(path: &std::path::Path, k: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let Ok(len) = f.metadata().map(|m| m.len()) else {
+        return String::new();
+    };
+    let start = len.saturating_sub(k);
+    if start > 0 && f.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    if f.read_to_end(&mut buf).is_err() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if start == 0 {
+        return text; // file shorter than k: read whole, no partial leading line
+    }
+    // Discard the leading partial line. If the whole tail turns out to be one
+    // (no newline at all — pathologically long single line), there is nothing
+    // safe to parse from it; that mirrors parse_transcript's existing
+    // skip-malformed-lines behaviour (FR-15) rather than inventing a new one.
+    match text.find('\n') {
+        Some(idx) => text[idx + 1..].to_string(),
+        None => String::new(),
+    }
+}
+
 /// Read a session's persisted transcript back into a block buffer (FR-5).
-pub(crate) fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
+/// FR-8: bounded to a tail read regardless of the file's total size.
+pub fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
     let Some(path) = transcript_path(app, session_id) else {
         return Vec::new();
     };
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
+    let content = read_tail(&path, TRANSCRIPT_TAIL_BYTES);
     parse_transcript(&content)
 }
 
-pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
+pub fn persist(app: &AppHandle, engine: &Engine) {
     // One writer at a time: persist() is called from commands (async runtime) AND
     // from run_reader threads, and every caller writes the SAME sessions.json.tmp
     // before the atomic rename — two concurrent writers could rename a torn file.
     static PERSIST_LOCK: Mutex<()> = Mutex::new(());
     let _w = PERSIST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let map = engine.sessions.lock().unwrap();
-    let list: Vec<Value> = map
+    // FR-1: the `MutexGuard` on `Engine.sessions` must not be live across the
+    // filesystem I/O below — it is scoped to this block, so serialization
+    // (building `list`) finishes and the guard drops before `to_vec_pretty` +
+    // `fs::write` + `fs::rename` run. `PERSIST_LOCK` still serialises
+    // concurrent writers; that invariant is unchanged.
+    let list: Vec<Value> = {
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        map
         .values()
         .map(|s| {
             let mut rec = serde_json::json!({
@@ -326,7 +374,8 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
             }
             rec
         })
-        .collect();
+        .collect()
+    }; // FR-1: `map`'s MutexGuard drops here — no lock held across the I/O below.
     if let Some(path) = sessions_json_path(app) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -344,7 +393,7 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
 /// Scalar fields parsed from a persisted session record. Backward-compatible:
 /// records from before durable-sessions lack claudeSessionId/lastActivityAt/
 /// contextUsedTokens → None / `now` / 0 (FR-3/4). Transcript is loaded separately.
-pub(crate) struct PersistedMeta {
+pub struct PersistedMeta {
     id: String,
     name: String,
     cwd: String,
@@ -430,7 +479,7 @@ fn parse_agent_runtime_and_protocol(rec: &Value) -> (AgentRuntime, ProviderProto
     }
 }
 
-pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
+pub fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
     let id = rec.get("id")?.as_str()?.to_string();
     let name = rec.get("name")?.as_str()?.to_string();
     let cwd = rec.get("cwd")?.as_str()?.to_string();
@@ -573,14 +622,14 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
 /// `None` in ⇒ `None` out (the pre-projects records). A link to a project the
 /// registry no longer knows is dropped, and the pruned value is written back by the
 /// next `persist` (§7 #14).
-pub(crate) fn resolve_link(persisted: Option<String>, known: &HashSet<String>) -> Option<String> {
+pub fn resolve_link(persisted: Option<String>, known: &HashSet<String>) -> Option<String> {
     persisted.filter(|id| known.contains(id))
 }
 
 /// multi-account FR-10: the same pruning discipline for `accountId`, except the
 /// field is REQUIRED — an absent or no-longer-resolving value loads as the
 /// built-in `default` account rather than as "unlinked".
-pub(crate) fn resolve_account(persisted: Option<String>, known: &HashSet<String>) -> String {
+pub fn resolve_account(persisted: Option<String>, known: &HashSet<String>) -> String {
     persisted
         .filter(|id| known.contains(id))
         .unwrap_or_else(|| crate::account::DEFAULT_ACCOUNT_ID.to_string())
@@ -595,7 +644,7 @@ pub(crate) fn resolve_account(persisted: Option<String>, known: &HashSet<String>
 /// released, so the engine lock is taken alone (multi-account §6 LOCK ORDER).
 pub fn reassign_account_sessions(app: &AppHandle, account_id: &str) -> Vec<String> {
     let engine = app.state::<Engine>();
-    let changed = engine.clear_account(account_id);
+    let changed = engine.clear_account(app, account_id);
     if changed.is_empty() {
         return Vec::new();
     }
@@ -607,9 +656,9 @@ pub fn reassign_account_sessions(app: &AppHandle, account_id: &str) -> Vec<Strin
     ids
 }
 
-pub(crate) fn unlink_project_sessions(app: &AppHandle, project_id: &str) {
+pub fn unlink_project_sessions(app: &AppHandle, project_id: &str) {
     let engine = app.state::<Engine>();
-    let changed = engine.clear_project(project_id);
+    let changed = engine.clear_project(app, project_id);
     if changed.is_empty() {
         return;
     }
@@ -619,6 +668,11 @@ pub(crate) fn unlink_project_sessions(app: &AppHandle, project_id: &str) {
     }
 }
 
+/// core-architecture-fixes FR-9: metadata only — `sessions.json` is cheap and
+/// bounded, and this keeps its documented position in `.setup()` and its
+/// ordering relative to projects/accounts. Every session loads with an EMPTY
+/// `block_buffer`; `spawn_transcript_hydration` fills it in afterward, off
+/// the main thread, so the window paints before any transcript read begins.
 pub fn load_persisted(app: &AppHandle) {
     let Some(path) = sessions_json_path(app) else {
         return;
@@ -637,17 +691,16 @@ pub fn load_persisted(app: &AppHandle) {
     // main.rs runs account::load_accounts before this too.
     let known_accounts = crate::account::known_ids(app);
     let mut watched: Vec<(String, String)> = Vec::new();
-    let mut map = engine.sessions.lock().unwrap();
+    let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     for rec in list {
         let now = now_ms();
         let Some(m) = parse_session_record(&rec, now) else {
             continue;
         };
-        let mut block_buffer = read_transcript(app, &m.id); // FR-5
-                                                            // transcript-scale FR-3: keep only the tail, same rule as a live
-                                                            // eviction (FR-1/2) — boot cost becomes `sessions × cap` rather
-                                                            // than paying each session's whole history in RAM.
-        let transcript_truncated = trim_transcript(&mut block_buffer, TRANSCRIPT_BUFFER_CAP);
+        // FR-9: no transcript read here — `block_buffer` starts empty and
+        // `spawn_transcript_hydration` fills it in on a background thread.
+        let block_buffer = Vec::new();
+        let transcript_truncated = false;
         // Only a window the catalog actually KNOWS is a ceiling — see
         // `loaded_context`. `load_model_cache` runs before this, so the mirror
         // from the last run is already in hand.
@@ -738,6 +791,114 @@ pub fn load_persisted(app: &AppHandle) {
     // Start a diff watcher per restored session (FR-15).
     for (id, cwd) in watched {
         crate::diff::watch_session(app, &id, &cwd);
+    }
+}
+
+/// core-architecture-fixes FR-9: hydrate every session's transcript on a
+/// background thread, one session at a time, emitting `session.meta` as each
+/// buffer lands. `Engine.sessions` is taken PER SESSION — never held across
+/// the loop — so a live session is never blocked waiting on this thread.
+///
+/// Edge case #6: a session interacted with before its transcript lands must
+/// not lose the buffer a live turn is building. If the session has left
+/// `idle` (a turn started) by the time this reaches it, hydration for that
+/// session is ABANDONED rather than merged — overwriting `block_buffer` here
+/// would clobber blocks the live turn already appended.
+pub fn spawn_transcript_hydration(app: AppHandle) {
+    std::thread::spawn(move || {
+        let engine = app.state::<Engine>();
+        let ids: Vec<String> = engine
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .keys()
+            .cloned()
+            .collect();
+        for id in ids {
+            // The read itself needs no lock — it is a filesystem read keyed by
+            // session id, same as the old inline call.
+            let mut block_buffer = read_transcript(&app, &id); // FR-5/FR-8
+            let transcript_truncated = trim_transcript(&mut block_buffer, TRANSCRIPT_BUFFER_CAP);
+
+            let meta = {
+                let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+                let Some(s) = map.get_mut(&id) else {
+                    continue; // removed before hydration reached it
+                };
+                if status::is_busy(&s.status) {
+                    // Edge case #6: abandon — a turn already started on this
+                    // session since boot (every persisted session loads as
+                    // `idle`, so leaving it means a real turn began).
+                    continue;
+                }
+                s.block_buffer = block_buffer;
+                s.transcript_truncated = transcript_truncated;
+                s.meta(&app)
+            };
+            emit(&app, SessionEvent::Meta { meta });
+        }
+    });
+}
+
+/// core-architecture-fixes FR-10: the on-disk transcript retention bound —
+/// matches `TRANSCRIPT_BUFFER_CAP` so a compacted file always satisfies the
+/// FR-8 tail read from a cold boot (it IS the tail already). `append_transcript`
+/// only ever appends, so without a disk-side counterpart to the RAM bound, the
+/// file grows for the whole life of every retained session.
+pub const TRANSCRIPT_COMPACT_CAP: usize = TRANSCRIPT_BUFFER_CAP;
+
+/// Compact one session's transcript file to its last `TRANSCRIPT_COMPACT_CAP`
+/// blocks. Best-effort, temp+rename: an interrupted compaction (process killed
+/// mid-write) leaves the ORIGINAL file intact — `fs::rename` never partially
+/// lands (edge case #7) — and any read/write failure here is silently ignored,
+/// the same discipline `append_transcript`/`persist` already use. Reads and
+/// re-serializes the whole file, so callers must never run this on a session
+/// mid-turn (edge case #7 — the caller filters that; see
+/// `compact_all_transcripts`).
+pub fn compact_transcript(app: &AppHandle, session_id: &str) {
+    let Some(path) = transcript_path(app, session_id) else {
+        return;
+    };
+    compact_transcript_file(&path);
+}
+
+/// The pure file-rewrite half of `compact_transcript`, over a plain path —
+/// split out so it is testable without an `AppHandle` (this crate wires up no
+/// such test harness; see `session/env.rs`).
+fn compact_transcript_file(path: &std::path::Path) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let mut blocks = parse_transcript(&content);
+    if !trim_transcript(&mut blocks, TRANSCRIPT_COMPACT_CAP) {
+        return; // already at or under the cap — nothing to rewrite
+    }
+    let mut out = String::new();
+    for b in &blocks {
+        out.push_str(&serde_json::to_string(&persisted_block_json(b)).unwrap_or_default());
+        out.push('\n');
+    }
+    let tmp = path.with_extension("jsonl.tmp");
+    if std::fs::write(&tmp, out.as_bytes()).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// FR-10: compact every session's transcript on a clean shutdown
+/// (`RunEvent::Exit`, main.rs). Skips a session mid-turn (edge case #7) — its
+/// transcript stays whatever `append_transcript` already wrote, uncompacted,
+/// until it next quits idle.
+pub fn compact_all_transcripts(app: &AppHandle) {
+    let engine = app.state::<Engine>();
+    let ids: Vec<String> = {
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        map.values()
+            .filter(|s| !status::is_busy(&s.status))
+            .map(|s| s.id.clone())
+            .collect()
+    };
+    for id in ids {
+        compact_transcript(app, &id);
     }
 }
 
@@ -1229,6 +1390,135 @@ mod tests {
     }
 
     #[test]
+    fn compact_transcript_file_trims_a_file_over_the_cap_to_its_tail() {
+        // FR-10: an over-cap transcript compacts to its last
+        // TRANSCRIPT_COMPACT_CAP blocks, oldest-first, exactly like the
+        // in-RAM trim.
+        let path = std::env::temp_dir().join(format!(
+            "francois-compact-test-{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut content = String::new();
+        for i in 0..(TRANSCRIPT_COMPACT_CAP + 50) {
+            content.push_str(&format!(
+                r#"{{"blockId":"b{i}","kind":"user","text":"m{i}","tool":"","summary":"","meta":null}}"#
+            ));
+            content.push('\n');
+        }
+        std::fs::write(&path, &content).unwrap();
+
+        compact_transcript_file(&path);
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        let blocks = parse_transcript(&after);
+        assert_eq!(blocks.len(), TRANSCRIPT_COMPACT_CAP);
+        assert_eq!(blocks[0].block_id, "b50");
+        assert_eq!(
+            blocks.last().unwrap().block_id,
+            format!("b{}", TRANSCRIPT_COMPACT_CAP + 49)
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compact_transcript_file_is_a_noop_under_the_cap() {
+        let path = std::env::temp_dir().join(format!(
+            "francois-compact-noop-test-{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let content = r#"{"blockId":"b1","kind":"user","text":"hi","tool":"","summary":"","meta":null}
+"#;
+        std::fs::write(&path, content).unwrap();
+
+        compact_transcript_file(&path);
+
+        // Untouched — a file already at/under the cap is never rewritten.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compact_transcript_file_missing_file_is_a_silent_noop() {
+        let path = std::env::temp_dir().join("francois-compact-missing-test.jsonl");
+        let _ = std::fs::remove_file(&path); // ensure it doesn't exist
+        compact_transcript_file(&path); // must not panic
+    }
+
+    #[test]
+    fn read_tail_bounds_work_regardless_of_file_size_and_yields_the_newest_blocks() {
+        // FR-8 acceptance: a huge transcript loads in bounded time and yields
+        // the last TRANSCRIPT_BUFFER_CAP blocks. This proves the mechanism
+        // (seek near EOF, discard the leading partial line) over a multi-MB
+        // fixture — large enough to exceed TRANSCRIPT_TAIL_BYTES several
+        // times over without a slow test writing the full 500 MB the
+        // acceptance criterion names.
+        let path = std::env::temp_dir().join(format!(
+            "francois-tail-read-test-{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&path).unwrap();
+            let filler = "x".repeat(2000);
+            for i in 0..5_000 {
+                writeln!(
+                    f,
+                    r#"{{"blockId":"b{i}","kind":"user","text":"{filler}","tool":"","summary":"","meta":null}}"#
+                )
+                .unwrap();
+            }
+        }
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            len > TRANSCRIPT_TAIL_BYTES,
+            "fixture must exceed the tail window to prove boundedness"
+        );
+
+        let tail = read_tail(&path, TRANSCRIPT_TAIL_BYTES);
+        assert!(
+            tail.len() as u64 <= TRANSCRIPT_TAIL_BYTES,
+            "tail must never exceed the requested window"
+        );
+        let mut blocks = parse_transcript(&tail);
+        assert_eq!(blocks.last().unwrap().block_id, "b4999");
+        assert!(trim_transcript(&mut blocks, TRANSCRIPT_BUFFER_CAP));
+        assert_eq!(blocks.len(), TRANSCRIPT_BUFFER_CAP);
+        assert_eq!(blocks.last().unwrap().block_id, "b4999");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_tail_reads_a_file_shorter_than_k_whole() {
+        let path = std::env::temp_dir().join(format!(
+            "francois-tail-read-small-test-{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            "{\"blockId\":\"b1\",\"kind\":\"user\",\"text\":\"hi\",\"tool\":\"\",\"summary\":\"\",\"meta\":null}\n",
+        )
+        .unwrap();
+        let blocks = parse_transcript(&read_tail(&path, TRANSCRIPT_TAIL_BYTES));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].block_id, "b1");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn permission_block_round_trips_through_the_transcript() {
         let mut s = perm_session();
         let ask = serde_json::to_value(crate::permissions::build_ask(
@@ -1312,12 +1602,13 @@ mod project_link_tests {
 
     #[test]
     fn session_meta_omits_project_id_entirely_when_unlinked() {
-        let v = serde_json::to_value(linked_session("s1", None).meta()).unwrap();
+        let v = serde_json::to_value(linked_session("s1", None).meta(&fake_accounts())).unwrap();
         assert!(
             v.get("projectId").is_none(),
             "FR-18: an unlinked session must OMIT the key, not send null: {v}"
         );
-        let v = serde_json::to_value(linked_session("s1", Some("p1")).meta()).unwrap();
+        let v =
+            serde_json::to_value(linked_session("s1", Some("p1")).meta(&fake_accounts())).unwrap();
         assert_eq!(v["projectId"], "p1");
     }
 
@@ -1326,7 +1617,7 @@ mod project_link_tests {
         // §9: "SessionMeta.projectId round-trips through sessions.json"
         for (project_id, expect) in [(None, None), (Some("p1"), Some("p1"))] {
             let engine = test_engine_with(linked_session("s1", project_id));
-            let map = engine.sessions.lock().unwrap();
+            let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             let s = map.get("s1").unwrap();
             let mut rec = serde_json::json!({ "id": s.id });
             if let Some(pid) = &s.project_id {
@@ -1362,19 +1653,19 @@ mod project_link_tests {
     fn clear_project_unlinks_only_matching_sessions_and_reports_them() {
         let engine = test_engine_with(linked_session("s1", Some("p1")));
         {
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             map.insert("s2".into(), linked_session("s2", Some("p2")));
             map.insert("s3".into(), linked_session("s3", None));
         }
 
-        let changed = engine.clear_project("p1");
+        let changed = engine.clear_project(&fake_accounts(), "p1");
 
         // exactly the p1 session is reported, already carrying the cleared value
         assert_eq!(changed.len(), 1);
         assert_eq!(changed[0].id, "s1");
         assert_eq!(changed[0].project_id, None);
 
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(map.get("s1").unwrap().project_id, None);
         // §7 #15: the other sessions keep running, untouched
         assert_eq!(map.get("s2").unwrap().project_id.as_deref(), Some("p2"));
@@ -1407,13 +1698,13 @@ mod project_link_tests {
     fn session_meta_always_carries_an_account_id() {
         // FR-19 / contract: `accountId` is REQUIRED on the wire — unlike
         // projectId it is never omitted, because a session always has an account.
-        let v = serde_json::to_value(test_session().meta()).unwrap();
+        let v = serde_json::to_value(test_session().meta(&fake_accounts())).unwrap();
         assert_eq!(v["accountId"], "default");
 
         let mut s = test_session();
         s.account_id = "a1".into();
         assert_eq!(
-            serde_json::to_value(s.meta()).unwrap()["accountId"],
+            serde_json::to_value(s.meta(&fake_accounts())).unwrap()["accountId"],
             "a1",
             "the stored value is reported verbatim, never re-derived"
         );
@@ -1421,16 +1712,27 @@ mod project_link_tests {
 
     #[test]
     fn session_meta_always_carries_agent_runtime_and_protocol() {
-        // multi-provider-seam FR-11a: required on the wire, reported
-        // verbatim — never re-derived from the (possibly since-changed) account.
-        let v = serde_json::to_value(test_session().meta()).unwrap();
+        // multi-provider-seam FR-11a: both are required on the wire, in the
+        // contract's spellings — that half is unchanged, and it is what a
+        // frontend built against today's contract depends on.
+        //
+        // core-architecture-wave3 FR-11 changed where the VALUES come from. They
+        // used to be reported verbatim off the session record; they are derived
+        // from the account's current kind now, which is why this test drives
+        // them through the registry rather than through the stored fields.
+        // (`the_stored_runtime_is_a_cache_and_no_longer_decides_anything`, below,
+        // is the test that pins the difference.)
+        use crate::account::AccountKind;
+        use crate::session::testutil::FakeAccounts;
+
+        let v = serde_json::to_value(test_session().meta(&fake_accounts())).unwrap();
         assert_eq!(v["agentRuntime"], "claude-code");
         assert_eq!(v["protocol"], "anthropic");
 
         let mut s = test_session();
-        s.agent_runtime = AgentRuntime::Francois;
-        s.protocol = ProviderProtocol::Openai;
-        let v = serde_json::to_value(s.meta()).unwrap();
+        s.account_id = "a1".into();
+        let endpoint = FakeAccounts::default().with("a1", AccountKind::OpenAiCompatible);
+        let v = serde_json::to_value(s.meta(&endpoint)).unwrap();
         assert_eq!(v["agentRuntime"], "francois");
         assert_eq!(v["protocol"], "openai");
     }
@@ -1465,7 +1767,7 @@ mod project_link_tests {
         // "adopted, details unknown".
         let mut s = test_session();
         assert!(
-            serde_json::to_value(s.meta())
+            serde_json::to_value(s.meta(&fake_accounts()))
                 .unwrap()
                 .get("cloud")
                 .is_none(),
@@ -1475,7 +1777,7 @@ mod project_link_tests {
             cloud_session_id: "session_01AB".into(),
             adopted_at: 1_784_573_689_516,
         });
-        let meta = serde_json::to_value(s.meta()).unwrap();
+        let meta = serde_json::to_value(s.meta(&fake_accounts())).unwrap();
         assert_eq!(meta["cloud"]["cloudSessionId"], "session_01AB");
         assert_eq!(meta["cloud"]["adoptedAt"], 1_784_573_689_516u64);
     }
@@ -1528,7 +1830,7 @@ mod project_link_tests {
         bound.account_id = "a1".into();
         let engine = test_engine_with(bound);
         {
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             let mut other = test_session();
             other.id = "s2".into();
             other.account_id = "a2".into();
@@ -1538,20 +1840,110 @@ mod project_link_tests {
             map.insert("s3".into(), plain);
         }
 
-        let changed = engine.clear_account("a1");
+        let changed = engine.clear_account(&fake_accounts(), "a1");
 
         assert_eq!(changed.len(), 1);
         assert_eq!(changed[0].id, "s1");
         assert_eq!(changed[0].account_id, "default");
 
         {
-            let map = engine.sessions.lock().unwrap();
+            let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             assert_eq!(map.get("s1").unwrap().account_id, "default");
             assert_eq!(map.get("s2").unwrap().account_id, "a2", "untouched");
             assert_eq!(map.get("s3").unwrap().account_id, "default");
             assert_eq!(map.len(), 3, "no session is ever removed by a repoint");
         }
-        assert!(engine.clear_account("nobody").is_empty());
+        assert!(engine.clear_account(&fake_accounts(), "nobody").is_empty());
+    }
+
+    #[test]
+    fn clear_account_reports_claude_code_for_a_removed_grok_account() {
+        // The parent wave's FR-4/FR-5 regression, kept: a session on a Grok
+        // account, the account removed. What the frontend receives must say
+        // ClaudeCode/Anthropic, or the roster shows a runtime whose credentials
+        // are gone and the next turn spawns `grok` against a Claude config dir.
+        // Flow #4 in §3.
+        //
+        // What CHANGED with core-architecture-wave3 FR-11 is why it holds. The
+        // parent made it true by resyncing `s.agent_runtime` in this same write;
+        // `meta()` derives the pair now, so `clear_account` moves the account and
+        // nothing else — and the stale field below proves the derivation is real
+        // rather than a resync under another name.
+        let mut grok = test_session();
+        grok.id = "s1".into();
+        grok.account_id = "grok-1".into();
+        grok.agent_runtime = AgentRuntime::Grok;
+        grok.protocol = ProviderProtocol::Openai;
+        let engine = test_engine_with(grok);
+
+        let changed = engine.clear_account(&fake_accounts(), "grok-1");
+
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].account_id, "default");
+        assert_eq!(changed[0].agent_runtime, AgentRuntime::ClaudeCode);
+        assert_eq!(changed[0].protocol, ProviderProtocol::Anthropic);
+        assert_eq!(
+            changed[0].agent_runtime,
+            AgentRuntime::from_account_kind(crate::account::AccountKind::ClaudeCodeOauth).0
+        );
+    }
+
+    #[test]
+    fn the_stored_runtime_is_a_cache_and_no_longer_decides_anything() {
+        // FR-11's actual claim. The stored field is left holding `Grok` on
+        // purpose: it round-trips the on-disk `agentRuntime` key and nothing
+        // else. If a future change starts reading it for dispatch, this test is
+        // where that shows up — the meta says ClaudeCode while the field says
+        // Grok, and only one of the two is allowed to be believed.
+        let mut grok = test_session();
+        grok.id = "s1".into();
+        grok.account_id = "grok-1".into();
+        grok.agent_runtime = AgentRuntime::Grok;
+        grok.protocol = ProviderProtocol::Openai;
+        let engine = test_engine_with(grok);
+
+        engine.clear_account(&fake_accounts(), "grok-1");
+
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let s = map.get("s1").unwrap();
+        assert_eq!(
+            s.agent_runtime,
+            AgentRuntime::Grok,
+            "FR-11 removed the resync — the field is a stale cache by design"
+        );
+        assert_eq!(
+            s.meta(&fake_accounts()).agent_runtime,
+            AgentRuntime::ClaudeCode,
+            "…and every reader that matters derives past it"
+        );
+    }
+
+    #[test]
+    fn meta_follows_the_accounts_current_kind_not_the_stored_field() {
+        // The class, not the instance (FR-11): the same session, the same stored
+        // field, two different account registries — the meta follows the
+        // registry. There is no mutation anywhere in this test, which is the
+        // point: nothing has to be resynced for the answer to be right.
+        use crate::account::AccountKind;
+        use crate::session::testutil::FakeAccounts;
+
+        let mut s = test_session();
+        s.account_id = "a1".into();
+        s.agent_runtime = AgentRuntime::ClaudeCode; // deliberately wrong below
+
+        let codex = FakeAccounts::default().with("a1", AccountKind::CodexCli);
+        assert_eq!(s.meta(&codex).agent_runtime, AgentRuntime::Codex);
+        assert_eq!(s.meta(&codex).protocol, ProviderProtocol::Openai);
+
+        let endpoint = FakeAccounts::default().with("a1", AccountKind::OpenAiCompatible);
+        assert_eq!(s.meta(&endpoint).agent_runtime, AgentRuntime::Francois);
+
+        // §7 #8: an account that no longer resolves falls back to Claude Code —
+        // a working state, rather than a provider whose credentials it lacks.
+        assert_eq!(
+            s.meta(&fake_accounts()).agent_runtime,
+            AgentRuntime::ClaudeCode
+        );
     }
 
     #[test]
@@ -1563,7 +1955,7 @@ mod project_link_tests {
         a.account_id = "a1".into();
         let engine = test_engine_with(a);
         {
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             let mut b = test_session();
             b.id = "s2".into();
             b.account_id = "a1".into();
@@ -1575,8 +1967,8 @@ mod project_link_tests {
     #[test]
     fn clear_project_for_an_unreferenced_project_changes_nothing() {
         let engine = test_engine_with(linked_session("s1", Some("p1")));
-        assert!(engine.clear_project("nobody").is_empty());
-        let map = engine.sessions.lock().unwrap();
+        assert!(engine.clear_project(&fake_accounts(), "nobody").is_empty());
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(map.get("s1").unwrap().project_id.as_deref(), Some("p1"));
     }
 }

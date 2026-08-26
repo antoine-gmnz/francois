@@ -1,6 +1,7 @@
 //! the per-session slash command registry (specs/slash-menu.md).
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
@@ -30,7 +31,7 @@ pub struct SlashCommandInfo {
 /// FR-1/FR-3 merge, pure: builtins first (help order), then installed skills
 /// (discovery order; both kinds — skills and command files are all invoked as
 /// /<name>), then cli names (init order). First occurrence of a name wins.
-pub(crate) fn merge_commands(
+pub fn merge_commands(
     builtins: &[HelpEntry],
     skills: &[SkillInfo],
     cli: &[String],
@@ -76,7 +77,7 @@ pub(crate) fn merge_commands(
 /// FR-2: an init event's slash_commands, normalized to bare names (a leading
 /// '/' is stripped — FR-3 stores without it; non-strings skipped). None when
 /// the array is absent (→ no change to the capture).
-pub(crate) fn parse_init_slash_commands(v: &Value) -> Option<Vec<String>> {
+pub fn parse_init_slash_commands(v: &Value) -> Option<Vec<String>> {
     let arr = v.get("slash_commands")?.as_array()?;
     Some(
         arr.iter()
@@ -88,7 +89,7 @@ pub(crate) fn parse_init_slash_commands(v: &Value) -> Option<Vec<String>> {
 
 /// FR-2 change detection: replace the in-memory capture; true iff it differed
 /// (→ the caller emits one session.commands with the merged registry).
-pub(crate) fn capture_cli_commands(session: &mut Session, names: Vec<String>) -> bool {
+pub fn capture_cli_commands(session: &mut Session, names: Vec<String>) -> bool {
     if session.cli_commands == names {
         return false;
     }
@@ -107,7 +108,7 @@ pub fn session_list_commands(
     let Some((cwd, cli)) =
         engine.with_session(&session_id, |s| (s.cwd.clone(), s.cli_commands.clone()))
     else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     ok(merge_commands(
         &help_entries(),

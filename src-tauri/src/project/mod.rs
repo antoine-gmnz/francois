@@ -26,9 +26,9 @@ mod registry;
 mod repo_brief;
 mod standards;
 
-pub(crate) use commands::*;
-pub(crate) use registry::*;
-pub(crate) use repo_brief::*;
+pub use commands::*;
+pub use registry::*;
+pub use repo_brief::*;
 pub(crate) use standards::*;
 
 #[cfg(test)]
@@ -176,7 +176,7 @@ pub struct ProjectRegistrySnapshot {
 /// earlier revisions of this file.
 #[derive(Default)]
 pub(crate) struct RegistryDocument {
-    pub(crate) projects: Vec<Project>,
+    pub projects: Vec<Project>,
     pub(crate) groups: Vec<ProjectGroup>,
 }
 
@@ -190,9 +190,9 @@ pub struct ProjectRegistry {
 
 // ---------- shared messages ----------
 
-pub(crate) const NOT_FOUND_MSG: &str = "no such project";
-pub(crate) const ROOT_MISSING_MSG: &str = "the project's root directory no longer exists";
-pub(crate) const BAD_ROOT_MSG: &str = "project root does not exist or is not a directory";
-pub(crate) const DUPLICATE_ROOT_MSG: &str = "another project already owns that directory";
-pub(crate) const GROUP_NOT_FOUND_MSG: &str = "no such project group";
-pub(crate) const BAD_GROUP_NAME_MSG: &str = "a group name must be 1–80 characters";
+pub const NOT_FOUND_MSG: &str = "no such project";
+pub const ROOT_MISSING_MSG: &str = "the project's root directory no longer exists";
+pub const BAD_ROOT_MSG: &str = "project root does not exist or is not a directory";
+pub const DUPLICATE_ROOT_MSG: &str = "another project already owns that directory";
+pub const GROUP_NOT_FOUND_MSG: &str = "no such project group";
+pub const BAD_GROUP_NAME_MSG: &str = "a group name must be 1–80 characters";

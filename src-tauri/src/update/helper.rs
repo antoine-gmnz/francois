@@ -13,6 +13,7 @@
 //! to parse JSON — node is guaranteed present, npm just ran through it.
 
 use super::{EXIT_WAIT_SECS, PACKAGE, UPDATE_COMMAND};
+use crate::ipc::{AppError, ErrorCode};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -27,13 +28,13 @@ const LOG_NAME: &str = "update.log";
 /// lose a race it will win a moment later — an on-access virus scanner opening
 /// the freshly-exited binary, a file watcher walking the package — and both
 /// present as `EBUSY` on the very rename npm needs.
-pub(crate) const NPM_TRIES: u32 = 3;
+pub const NPM_TRIES: u32 = 3;
 /// Seconds between those attempts.
-pub(crate) const NPM_RETRY_SECS: u32 = 5;
+pub const NPM_RETRY_SECS: u32 = 5;
 
 /// What `write_helper` laid down — the three absolute paths the spawn and the
 /// ack need (FR-15).
-pub(crate) struct HelperFiles {
+pub struct HelperFiles {
     /// The relauncher itself: `.cmd` on Windows, `.sh` elsewhere (FR-13).
     pub script: PathBuf,
     /// The node sidecar that prints the recorded `executable`.
@@ -265,7 +266,7 @@ exit 0
 /// FR-14 as text. `windows` is a parameter rather than a `cfg!` so both scripts
 /// are provable from either platform — the generated text is the whole contract
 /// between the app and its own relauncher.
-pub(crate) fn helper_script(pid: u32, exe: &Path, dir: &Path, windows: bool) -> String {
+pub fn helper_script(pid: u32, exe: &Path, dir: &Path, windows: bool) -> String {
     if windows {
         windows_script(pid, exe, dir)
     } else {
@@ -276,7 +277,7 @@ pub(crate) fn helper_script(pid: u32, exe: &Path, dir: &Path, windows: bool) -> 
 /// The node sidecar. Prints the recorded `executable` and NOTHING else — a
 /// missing, unreadable or unexpected record prints nothing, which both scripts
 /// read as "keep the pre-update path" (FR-17).
-pub(crate) fn reader_script() -> String {
+pub fn reader_script() -> String {
     String::from(
         r#"// francois self-update: print the executable the npm postinstall recorded.
 // Any failure prints nothing at all, so the helper falls back to the path baked
@@ -296,7 +297,7 @@ try {
 /// FR-13: a fresh directory per call, in the system temp dir — never inside the
 /// npm package, which the install replaces wholesale. The counter is what makes
 /// two calls in the same nanosecond distinct.
-pub(crate) fn fresh_helper_dir() -> std::io::Result<PathBuf> {
+pub fn fresh_helper_dir() -> std::io::Result<PathBuf> {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -320,7 +321,7 @@ pub(crate) fn fresh_helper_dir() -> std::io::Result<PathBuf> {
 }
 
 /// FR-13: lay the relauncher and its sidecar into `dir`, executable on unix.
-pub(crate) fn write_helper(dir: &Path, pid: u32, exe: &Path) -> std::io::Result<HelperFiles> {
+pub fn write_helper(dir: &Path, pid: u32, exe: &Path) -> std::io::Result<HelperFiles> {
     let windows = cfg!(windows);
     let script = dir.join(if windows {
         "francois-update.cmd"
@@ -363,14 +364,14 @@ fn detach(cmd: &mut Command) {
 // that `windows_creation_flags()` does NOT contain it. See the doc above.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const DETACHED_PROCESS: u32 = 0x0000_0008;
-pub(crate) const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// The flags `detach` passes on Windows — a free function so the invariant that
 /// matters (`CREATE_NO_WINDOW`, never `DETACHED_PROCESS`) is provable from any
 /// platform, like the script text itself.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn windows_creation_flags() -> u32 {
+pub fn windows_creation_flags() -> u32 {
     CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
 }
 
@@ -400,14 +401,17 @@ fn detach(cmd: &mut Command) {
 /// `EBUSY: resource busy or locked, rename '...\francois\vendor'`. The temp dir
 /// is the safe answer — NOT the helper's own directory, which `cleanup` has to
 /// be able to delete at the end.
-pub(crate) fn helper_working_dir() -> PathBuf {
+pub fn helper_working_dir() -> PathBuf {
     std::env::temp_dir()
 }
 
 /// FR-15: start the relauncher detached, stdout+stderr into `update.log`.
 /// Returns its pid for the ack. The `Err` string is what `UPDATE_APPLY_FAILED`
 /// carries (FR-18).
-pub(crate) fn spawn_helper(files: &HelperFiles) -> Result<u32, String> {
+pub fn spawn_helper(files: &HelperFiles) -> Result<u32, AppError> {
+    // core-architecture-wave3 FR-6: UPDATE_APPLY_FAILED (FR-18), raised here
+    // rather than re-stamped by the command two frames up.
+    let apply_failed = |m: String| AppError::new(ErrorCode::UpdateApplyFailed, m);
     // FR-17: a missing sidecar is not fatal — the helper still installs and
     // relaunches, it just cannot re-read the post-install record and falls back
     // to the executable baked in before the update. Worth saying out loud,
@@ -422,30 +426,29 @@ pub(crate) fn spawn_helper(files: &HelperFiles) -> Result<u32, String> {
         .create(true)
         .append(true)
         .open(&files.log)
-        .map_err(|e| format!("Could not open the update log: {e}"))?;
+        .map_err(|e| apply_failed(format!("Could not open the update log: {e}")))?;
     let errors = log
         .try_clone()
-        .map_err(|e| format!("Could not open the update log: {e}"))?;
+        .map_err(|e| apply_failed(format!("Could not open the update log: {e}")))?;
 
-    let mut cmd = if cfg!(windows) {
+    let cmd = if cfg!(windows) {
         // A .cmd is not an executable image — cmd.exe has to run it.
-        let mut c = Command::new("cmd");
-        c.arg("/c").arg(&files.script);
-        c
+        crate::process_util::spawn("cmd")
+            .arg("/c")
+            .arg(&files.script)
     } else {
-        let mut c = Command::new("/bin/sh");
-        c.arg(&files.script);
-        c
+        crate::process_util::spawn("/bin/sh").arg(&files.script)
     };
+    // `detach` REPLACES the facade's `CREATE_NO_WINDOW` with its own flag pair
+    // (which includes it) on Windows, and adds `setsid()` on unix — the one
+    // concern the facade deliberately does not own, named here.
     cmd.current_dir(helper_working_dir())
-        .stdin(Stdio::null())
         .stdout(Stdio::from(log))
-        .stderr(Stdio::from(errors));
-    detach(&mut cmd);
-
-    cmd.spawn()
+        .stderr(Stdio::from(errors))
+        .configure(detach)
+        .start()
         .map(|child| child.id())
-        .map_err(|e| format!("Could not start the update helper: {e}"))
+        .map_err(|e| apply_failed(format!("Could not start the update helper: {e}")))
 }
 
 #[cfg(test)]

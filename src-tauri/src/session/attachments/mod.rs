@@ -22,15 +22,16 @@ mod paths;
 mod retention;
 
 pub(crate) use asset_scope::*;
-pub(crate) use commands::*;
+pub use commands::*;
 pub(crate) use ingest::*;
 pub(crate) use paths::*;
-pub(crate) use retention::*;
+pub use retention::*;
 
 #[cfg(test)]
 mod testutil;
 
 use super::{Engine, Session};
+use crate::ipc::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -42,7 +43,7 @@ use serde_json::Value;
 /// string union and the core never branches on more than equality.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Attachment {
+pub struct Attachment {
     pub(crate) id: String,
     pub(crate) session_id: String,
     pub(crate) kind: String,
@@ -60,14 +61,14 @@ pub(crate) struct Attachment {
 }
 
 impl Attachment {
-    pub(crate) fn is_staged(&self) -> bool {
+    pub fn is_staged(&self) -> bool {
         self.state == "staged"
     }
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct CommitAttachmentsResult {
+pub struct CommitAttachmentsResult {
     /// attachment ids now in state 'sent'
     pub(crate) sent: Vec<String>,
     /// attachment ids dropped, copies deleted
@@ -80,7 +81,7 @@ pub(crate) struct CommitAttachmentsResult {
 /// identically.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct AttachFailure {
+pub struct AttachFailure {
     pub(crate) name: String,
     pub(crate) error: crate::ipc::AppError,
 }
@@ -91,14 +92,14 @@ pub(crate) struct AttachFailure {
 /// cancelled dialog is this shape with both arrays empty.
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PickAttachmentsResponse {
+pub struct PickAttachmentsResponse {
     pub(crate) attached: Vec<Attachment>,
     pub(crate) failed: Vec<AttachFailure>,
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ClearAttachmentsResult {
+pub struct ClearAttachmentsResult {
     pub(crate) removed_files: u32,
     pub(crate) removed_bytes: u64,
     /// files that could not be deleted (locked, permissions)
@@ -106,7 +107,7 @@ pub(crate) struct ClearAttachmentsResult {
 }
 
 impl ClearAttachmentsResult {
-    pub(crate) fn merge(&mut self, other: ClearAttachmentsResult) {
+    pub fn merge(&mut self, other: ClearAttachmentsResult) {
         self.removed_files += other.removed_files;
         self.removed_bytes += other.removed_bytes;
         self.failed += other.failed;
@@ -116,7 +117,7 @@ impl ClearAttachmentsResult {
 /// contract `ClearScope` — an internally tagged union on `kind`.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-pub(crate) enum ClearScope {
+pub enum ClearScope {
     Session {
         #[serde(rename = "sessionId")]
         session_id: String,
@@ -134,16 +135,30 @@ pub(crate) enum ClearScope {
 /// renders. Turned into an `IpcResult` by `commands.rs` — the pipeline itself
 /// stays free of Tauri types so it is testable against a temp dir.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AttachError {
-    pub(crate) code: &'static str,
+pub struct AttachError {
+    pub(crate) code: ErrorCode,
     pub(crate) message: String,
     pub(crate) detail: Option<Value>,
 }
 
+// core-architecture-wave3 FR-6: the pipeline stays free of Tauri types, but
+// the conversion into the one error type the IPC boundary speaks belongs here
+// rather than in a hand-written mapper in commands.rs - `detail` (FR-8's cap
+// payload) rides along instead of being re-split at every call site.
+impl From<AttachError> for crate::ipc::AppError {
+    fn from(e: AttachError) -> Self {
+        crate::ipc::AppError {
+            code: e.code,
+            message: e.message,
+            detail: e.detail,
+        }
+    }
+}
+
 impl AttachError {
-    pub(crate) fn invalid(message: impl Into<String>) -> AttachError {
+    pub fn invalid(message: impl Into<String>) -> AttachError {
         AttachError {
-            code: "INVALID_INPUT",
+            code: ErrorCode::InvalidInput,
             message: message.into(),
             detail: None,
         }
@@ -152,7 +167,7 @@ impl AttachError {
     /// FR-8: folders are refused, not walked.
     pub(crate) fn is_directory() -> AttachError {
         AttachError {
-            code: "ATTACHMENT_IS_DIRECTORY",
+            code: ErrorCode::AttachmentIsDirectory,
             message: "folders can't be attached — attach the files instead".into(),
             detail: None,
         }
@@ -161,7 +176,7 @@ impl AttachError {
     /// FR-8: over the 10 MiB cap. `detail: { bytes, cap }`.
     pub(crate) fn too_large(bytes: u64) -> AttachError {
         AttachError {
-            code: "ATTACHMENT_TOO_LARGE",
+            code: ErrorCode::AttachmentTooLarge,
             message: "that file is over the 10 MB attachment limit".into(),
             detail: Some(serde_json::json!({ "bytes": bytes, "cap": ATTACHMENT_MAX_BYTES })),
         }
@@ -170,7 +185,7 @@ impl AttachError {
     /// A copy/write/delete failure. `detail: { path }`.
     pub(crate) fn io(path: &std::path::Path, message: impl Into<String>) -> AttachError {
         AttachError {
-            code: "ATTACHMENT_IO_FAILED",
+            code: ErrorCode::AttachmentIoFailed,
             message: message.into(),
             detail: Some(serde_json::json!({ "path": path.to_string_lossy() })),
         }
@@ -178,7 +193,7 @@ impl AttachError {
 
     pub(crate) fn not_found() -> AttachError {
         AttachError {
-            code: "ATTACHMENT_NOT_FOUND",
+            code: ErrorCode::AttachmentNotFound,
             message: "no such attachment".into(),
             detail: None,
         }
@@ -189,7 +204,7 @@ impl AttachError {
     /// object by construction.
     pub(crate) fn to_app_error(&self) -> crate::ipc::AppError {
         crate::ipc::AppError {
-            code: self.code.to_string(),
+            code: self.code,
             message: self.message.clone(),
             detail: self.detail.clone(),
         }
@@ -200,7 +215,7 @@ impl AttachError {
 
 impl Session {
     /// Stage a freshly ingested ref.
-    pub(crate) fn stage_attachment(&mut self, attachment: Attachment) {
+    pub fn stage_attachment(&mut self, attachment: Attachment) {
         self.attachments.push(attachment);
     }
 
@@ -260,8 +275,8 @@ impl Engine {
     /// FR-18: `(sessionId, cwd)` of every session registered under a project —
     /// the sweep is driven by the session registry, not by a filesystem crawl,
     /// which is exactly what includes sessions running in worktrees.
-    pub(crate) fn sessions_of_project(&self, project_id: &str) -> Vec<(String, String)> {
-        let map = self.sessions.lock().unwrap();
+    pub fn sessions_of_project(&self, project_id: &str) -> Vec<(String, String)> {
+        let map = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.values()
             .filter(|s| s.project_id.as_deref() == Some(project_id))
             .map(|s| (s.id.clone(), s.cwd.clone()))
@@ -378,9 +393,15 @@ mod tests {
             ".francois/attachments/a3f9c1e2/a.png"
         );
         assert_eq!(v["failed"][0]["name"], "huge.bin");
-        assert_eq!(v["failed"][0]["error"]["code"], "ATTACHMENT_TOO_LARGE");
+        assert_eq!(
+            v["failed"][0]["error"]["code"],
+            json!(ErrorCode::AttachmentTooLarge)
+        );
         assert_eq!(v["failed"][0]["error"]["detail"]["bytes"], 99);
-        assert_eq!(v["failed"][1]["error"]["code"], "ATTACHMENT_IS_DIRECTORY");
+        assert_eq!(
+            v["failed"][1]["error"]["code"],
+            json!(ErrorCode::AttachmentIsDirectory)
+        );
         assert!(
             v["failed"][1]["error"].get("detail").is_none(),
             "a detail-less refusal omits the key, never null"
@@ -535,7 +556,7 @@ mod tests {
         a.project_id = Some("p1".into());
         let engine = test_engine_with(a);
         {
-            let mut map = engine.sessions.lock().unwrap();
+            let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             let mut b = test_session();
             b.id = "s2".into();
             b.cwd = "/worktrees/feat-x".into();

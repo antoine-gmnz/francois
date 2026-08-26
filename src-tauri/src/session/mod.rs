@@ -44,6 +44,7 @@ mod spawn;
 pub(crate) mod status;
 mod stdio;
 mod stream;
+mod teardown;
 mod tools;
 /// transcript-scale FR-1/FR-2: the `block_buffer` eviction concern — split out
 /// here per §Code layout once its logic + tests pushed this file past the
@@ -57,47 +58,218 @@ mod workflow_watch;
 mod workflows;
 mod worktree;
 
-pub(crate) use adapter::*;
-pub(crate) use agent_transcript::*;
-pub(crate) use agents::*;
-pub(crate) use attachments::*;
-pub(crate) use blocks::*;
+// ---------------------------------------------------------------------------
+// core-architecture-wave3 FR-1: the session domain's module map.
+//
+// Until this block existed, every child was glob-re-exported (`use child::*;`),
+// so nothing short of grep told you what one child module exposed to its
+// siblings versus what it kept to itself — the parent was a funnel through
+// which every child saw every other child's full public surface. Each
+// `pub(crate) use <child>::{...}` below is that child's complete crossing —
+// every name a sibling module, a test, or `main.rs`'s command table reaches
+// through `crate::session::<name>` — grouped one list per child, in the same
+// order as the `mod` declarations above. A name absent here is private to its
+// child. Widen a list by adding a name; never by turning it back into a glob
+// (edge case FR-1 in specs/core-architecture-wave3.md §7: a collision across
+// two children is a compile error here — resolve by qualifying at the use
+// site, not by re-adding the glob).
+// ---------------------------------------------------------------------------
+pub(crate) use adapter::{
+    adapter_for, child_stdout_lines, spawn_claude, AgentRuntime, ControlAck, PendingCounts,
+    PermissionDecision, ProviderProtocol, SessionAdapter, TurnContext, TurnControl, TurnMode,
+};
+pub use agent_transcript::{
+    AgentEvent, __cmd__agents_transcript, __tauri_command_name_agents_transcript,
+    agents_transcript, emit_agent_event, fill_agent_block_meta, push_agent_notice, push_agent_text,
+    push_agent_tool,
+};
+pub use agents::{
+    LineRoute, __cmd__agents_activity, __cmd__agents_dispatch, __cmd__agents_kill,
+    __cmd__agents_list, __tauri_command_name_agents_activity, __tauri_command_name_agents_dispatch,
+    __tauri_command_name_agents_kill, __tauri_command_name_agents_list, agent_identity,
+    agents_activity, agents_dispatch, agents_kill, agents_list, apply_dispatch_input,
+    apply_dispatch_result, attribute_inner_line, dispatch_model, emit_agent_emissions,
+    finalize_agents, finalize_tool_input, first_nonblank_line, handle_task_notification,
+    notice_is_error, resolve_background, route_line, user_line_text,
+};
+pub use attachments::{
+    Attachment, __cmd__session_attach_clipboard_image, __cmd__session_attach_file,
+    __cmd__session_clear_attachments, __cmd__session_commit_attachments,
+    __cmd__session_pick_attachments, __cmd__session_release_attachment,
+    __tauri_command_name_session_attach_clipboard_image, __tauri_command_name_session_attach_file,
+    __tauri_command_name_session_clear_attachments,
+    __tauri_command_name_session_commit_attachments, __tauri_command_name_session_pick_attachments,
+    __tauri_command_name_session_release_attachment, purge_session, session_attach_clipboard_image,
+    session_attach_file, session_clear_attachments, session_commit_attachments,
+    session_pick_attachments, session_release_attachment, sweep_staged,
+};
+pub(crate) use blocks::classify_block;
 // A glob like every other domain here: `generate_handler!` needs several hidden
 // items per command, so naming the three commands explicitly is not enough.
 // Every name this module exports is `cloud_`/`Cloud`-prefixed or otherwise
 // domain-specific for that reason — see cloud/mod.rs.
-pub(crate) use cloud::*;
-pub(crate) use commands::*;
-pub(crate) use control::*;
-pub(crate) use env::*;
-pub(crate) use events::*;
-pub(crate) use interactive::*;
-pub(crate) use mcp::*;
-pub(crate) use mcp_approval::*;
-pub(crate) use models::*;
-pub(crate) use persistence::*;
-pub(crate) use remote::*;
-pub(crate) use remote_discovery::*;
-pub(crate) use skills::*;
-pub(crate) use slash::*;
-pub(crate) use spawn::*;
-pub(crate) use stdio::*;
-pub(crate) use stream::*;
-pub(crate) use tools::*;
-pub(crate) use transcript_cap::*;
-pub(crate) use turn::*;
-pub(crate) use usage_probe::*;
-pub(crate) use workflow_details::*;
-pub(crate) use workflow_watch::*;
-pub(crate) use workflows::*;
-pub(crate) use worktree::*;
-
+pub use cloud::{
+    CloudAdoptRegistry, CloudProvenance, __cmd__cloud_adopt, __cmd__cloud_list,
+    __cmd__cloud_resolve, __tauri_command_name_cloud_adopt, __tauri_command_name_cloud_list,
+    __tauri_command_name_cloud_resolve, cloud_adopt, cloud_list, cloud_resolve,
+    kill_all_cloud_adoptions,
+};
 #[cfg(test)]
-mod testutil;
+pub(crate) use commands::switch_permission_mode_in_engine;
+pub use commands::{
+    SendSource, __cmd__conversation_get_transcript, __cmd__permissions_decide,
+    __cmd__session_answer_question, __cmd__session_clear, __cmd__session_compact,
+    __cmd__session_create, __cmd__session_interrupt, __cmd__session_list,
+    __cmd__session_pick_directory, __cmd__session_remove, __cmd__session_rename,
+    __cmd__session_send, __cmd__session_switch_effort, __cmd__session_switch_model,
+    __cmd__session_switch_permission_mode, __cmd__session_unqueue,
+    __tauri_command_name_conversation_get_transcript, __tauri_command_name_permissions_decide,
+    __tauri_command_name_session_answer_question, __tauri_command_name_session_clear,
+    __tauri_command_name_session_compact, __tauri_command_name_session_create,
+    __tauri_command_name_session_interrupt, __tauri_command_name_session_list,
+    __tauri_command_name_session_pick_directory, __tauri_command_name_session_remove,
+    __tauri_command_name_session_rename, __tauri_command_name_session_send,
+    __tauri_command_name_session_switch_effort, __tauri_command_name_session_switch_model,
+    __tauri_command_name_session_switch_permission_mode, __tauri_command_name_session_unqueue,
+    apply_model_switch, conversation_get_transcript, do_send, permissions_decide,
+    session_answer_question, session_clear, session_compact, session_create, session_interrupt,
+    session_list, session_pick_directory, session_remove, session_rename, session_send,
+    session_switch_effort, session_switch_model, session_switch_permission_mode, session_unqueue,
+};
+#[cfg(test)]
+pub(crate) use control::QuestionOption;
+pub use control::{
+    allow_response, allow_tool_response, decide_control_request, deny_response, ControlDecision,
+    SessionQuestion, PERMISSION_DENY_MSG,
+};
+// core-architecture-wave3 FR-3: `pub`, not `pub(crate)` — `parse_stream` takes
+// `&dyn SessionEnv` and is itself `pub`, so the trait was already part of the
+// crate's public interface in everything but name, and `tests/`/`benches/`
+// cannot call it without being able to name it.
+#[cfg(any(test, feature = "harness"))]
+pub use env::testenv;
+pub use env::SessionEnv;
+// core-architecture-wave3 FR-9: the teardown seam. `register_teardown` is
+// called once by the crate root; `dispose_session_resources` is what
+// `session_remove` calls instead of naming another domain.
+pub(crate) use events::emit;
+pub use events::SessionEvent;
+pub(crate) use interactive::{
+    classify_local_answer, command_fallback_fires, finalize_command_block, help_entries,
+    intercepted_command, parse_command, probe_card, run_intercepted_command, CommandCard,
+    HelpEntry,
+};
+pub use mcp::{
+    __cmd__mcp_attach, __cmd__mcp_detach, __cmd__mcp_detail, __cmd__mcp_list, __cmd__mcp_reconnect,
+    __cmd__mcp_registry, __tauri_command_name_mcp_attach, __tauri_command_name_mcp_detach,
+    __tauri_command_name_mcp_detail, __tauri_command_name_mcp_list,
+    __tauri_command_name_mcp_reconnect, __tauri_command_name_mcp_registry, mcp_attach, mcp_detach,
+    mcp_detail, mcp_list, mcp_reconnect, mcp_registry, mcp_servers_of, norm_path, project_node,
+    read_mcp_json,
+};
+pub use mcp_approval::{
+    McpApprovalState, __cmd__mcp_approvals, __cmd__mcp_decide, __tauri_command_name_mcp_approvals,
+    __tauri_command_name_mcp_decide, approval_state, mcp_approvals, mcp_decide,
+};
+pub use models::{
+    ModelInfo, __cmd__session_models, __tauri_command_name_session_models, catalog, context_limit,
+    label_for, load_model_cache, loaded_context, model, model_cache, refresh_models,
+    refresh_models_for, resolve_context_tokens, session_models, warm_model_cache,
+    DEFAULT_CONTEXT_LIMIT,
+};
+pub use teardown::{
+    dispose_session_resources, register_teardown, SessionAccountObserver, SessionTeardown,
+};
+// core-architecture-wave3 FR-3: `pub` and no longer `#[cfg(test)]` — the
+// boot-read bench is a separate crate, and this parse is the path FR-8 measured
+// (FR-8's tail read bounds its INPUT; the parse bounds nothing on its own).
+pub use persistence::parse_transcript;
+pub use persistence::{
+    append_transcript, clear_transcript, compact_all_transcripts, load_persisted, persist,
+    read_transcript, reassign_account_sessions, spawn_transcript_hydration, transcript_path,
+    unlink_project_sessions, valid_session_id,
+};
+pub use remote::{
+    RemoteRegistry, __cmd__remote_get, __cmd__remote_start, __cmd__remote_stop,
+    __tauri_command_name_remote_get, __tauri_command_name_remote_start,
+    __tauri_command_name_remote_stop, kill_all_remote, remote_get, remote_start, remote_stop,
+};
+#[cfg(test)]
+pub(crate) use remote_discovery::{blocking_prompt, extract_url_from_output};
+pub use remote_discovery::{
+    feed, normalize_pty, project_slug, sanitize_name, scan_dir_for_url, tail_for_url, ReaderAction,
+};
+#[cfg(test)]
+pub(crate) use skills::skill_entry;
+pub use skills::{
+    SkillInfo, __cmd__skills_install, __cmd__skills_list, __cmd__skills_run,
+    __tauri_command_name_skills_install, __tauri_command_name_skills_list,
+    __tauri_command_name_skills_run, discover_skills, skills_install, skills_list, skills_run,
+};
+pub use slash::{
+    SlashCommandInfo, __cmd__session_list_commands, __tauri_command_name_session_list_commands,
+    capture_cli_commands, merge_commands, parse_init_slash_commands, session_list_commands,
+};
+pub(crate) use spawn::{
+    account_env, account_env_for_kind, claude_invocation, claude_path_env, permission_args,
+    valid_effort, valid_permission_mode, valid_runtime,
+};
+pub(crate) use stdio::{
+    claim_pending, close_or_hold_channel, handle_control_request, resolve_permission,
+    resolve_question, write_control_line,
+};
+pub(crate) use stream::{extract_result_text, finalize_text_block, run_reader};
+// core-architecture-wave3 FR-3: the turn-orchestration entry point the
+// integration target drives. Already `pub` in `stream`; this is the re-export
+// that makes it reachable as `francois::session::parse_stream`.
+pub use stream::parse_stream;
+pub(crate) use tools::{tool_meta, tool_summary, truncate};
+pub(crate) use transcript_cap::{trim_transcript, TRANSCRIPT_BUFFER_CAP};
+pub(crate) use turn::{
+    begin_turn, fail_session, finish_turn, is_resume_fail, mark_stream_live, refresh_parked_status,
+    update_used, ContextTracker,
+};
+pub use usage_probe::start_usage_probe;
+#[cfg(test)]
+pub(crate) use workflow_details::{build_detail, ScanState};
+pub use workflow_details::{
+    ScanEntry, WorkflowDetail, WorkflowPendingAsk, __cmd__workflows_agent, __cmd__workflows_detail,
+    __cmd__workflows_script, __tauri_command_name_workflows_agent,
+    __tauri_command_name_workflows_detail, __tauri_command_name_workflows_script, attribute_ask,
+    compute_detail, drop_ask, push_ask, resolve_ack_paths, run_is_terminal, seen_agents,
+    set_pending_asks, workflows_agent, workflows_detail, workflows_script,
+};
+pub(crate) use workflow_watch::{
+    attribute_workflow_ask, emit_workflow_event, flush_workflow_detail, remove_workflow_ask,
+    start_workflow_watch, stop_all_workflow_watches, unwatch_session_workflows,
+    WorkflowDetailEvent,
+};
+pub use workflows::{
+    __cmd__workflows_list, __tauri_command_name_workflows_list, emit_workflow_updates,
+    finalize_workflows, handle_workflow_notification, is_workflow_tool,
+    on_workflow_dispatch_result, on_workflow_input_complete, on_workflow_start, workflows_list,
+};
+#[cfg(test)]
+pub(crate) use workflows::{apply_workflow_notice, mint_workflow};
+pub use worktree::{
+    SessionWorktree, WorktreeCreateInput, __cmd__session_worktree_probe,
+    __cmd__session_worktree_remove, __cmd__session_worktree_status,
+    __tauri_command_name_session_worktree_probe, __tauri_command_name_session_worktree_remove,
+    __tauri_command_name_session_worktree_status, adopt_host, host_from_distro, path_exists,
+    resolve_worktree, reverse_create, session_worktree_probe, session_worktree_remove,
+    session_worktree_status,
+};
+
+// core-architecture-wave3 FR-3: also published under the `harness` feature, so
+// `tests/` and `benches/` can seed an `Engine` without every field of `Session`
+// becoming `pub` for their sake.
+#[cfg(any(test, feature = "harness"))]
+pub mod testutil;
 
 // session-profiles §6: the snapshot-at-creation profile identity SessionMeta
 // carries (FR-16) — defined in the `profiles` domain, the same cross-domain
 // pattern `project::SessionSeed` follows.
+use crate::ipc::{AppError, ErrorCode};
 use crate::profiles::SessionProfileRef;
 // usage-bar §6: the /usage meter grammar + stream-json answer extraction now live
 // in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
@@ -109,7 +281,6 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Child;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 const EVENT_CHANNEL: &str = "francois://session/event";
@@ -129,7 +300,7 @@ const DEFAULT_MODEL: &str = "sonnet";
 pub(crate) const PROBE_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Serialize, Clone)]
-pub(crate) struct SessionMeta {
+pub struct SessionMeta {
     id: String,
     name: String,
     cwd: String,
@@ -244,7 +415,7 @@ const AGENT_TRAIL_CAP: usize = 200;
 /// `agent_inner_tools` value; `tool`/`input` ride along so the meta fill can reuse
 /// the exact same `tool_meta` derivation as a top-level tool.done (§5.4).
 #[derive(Clone)]
-pub(crate) struct InnerTool {
+pub struct InnerTool {
     seq: u32,
     tool: String,
     input: Value,
@@ -257,7 +428,7 @@ pub(crate) struct InnerTool {
 /// the mutation pure over `Session` is what makes the whole feature unit-testable:
 /// the AppHandle wrappers only lock → mutate → drop the lock → emit.
 #[derive(Clone)]
-pub(crate) enum AgentEmission {
+pub enum AgentEmission {
     Step {
         agent_id: String,
         step: AgentStep,
@@ -322,7 +493,7 @@ pub struct WorkflowPhaseInfo {
 }
 
 #[derive(Serialize, Clone)]
-pub(crate) struct McpServerInfo {
+pub struct McpServerInfo {
     name: String,
     status: String, // connected | connecting | error
     #[serde(rename = "toolCount", skip_serializing_if = "Option::is_none")]
@@ -336,7 +507,7 @@ pub(crate) struct McpServerInfo {
 /// A parked AskUserQuestion awaiting its answer, keyed by blockId in the turn's
 /// pending map (§6). `input` is the VERBATIM tool input — the allow response must
 /// echo it unmodified plus the answers map (FR-11/FR-12).
-pub(crate) struct PendingQuestion {
+pub struct PendingQuestion {
     request_id: String,
     input: Value,
 }
@@ -344,7 +515,7 @@ pub(crate) struct PendingQuestion {
 /// A parked permission ask awaiting its decision, keyed by blockId in the turn's
 /// pending map. `input` is the VERBATIM tool input — an allow response must echo
 /// it unmodified (permission-guardrails FR-3).
-pub(crate) struct PendingPermission {
+pub struct PendingPermission {
     request_id: String,
     input: Value,
     /// permission-guardrails FR-7: the rule pattern this ask was parked with —
@@ -360,7 +531,7 @@ pub(crate) struct PendingPermission {
 // In-memory transcript buffer (§6). Read by conversation-view's getTranscript
 // channel; mirrors the ConversationBlock shape in contract/conversation-view.ts.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum BlockKind {
+pub enum BlockKind {
     User,
     Assistant,
     Tool,
@@ -375,7 +546,7 @@ pub(crate) enum BlockKind {
 }
 
 #[derive(Clone)]
-pub(crate) struct BufBlock {
+pub struct BufBlock {
     block_id: String,
     kind: BlockKind,
     text: String,
@@ -422,7 +593,7 @@ impl BufBlock {
 
 /// The single in-flight /usage-/cost side-spawn of a session (interactive-commands
 /// FR-11). The child slot is filled once spawned; killed on session remove & app exit.
-pub(crate) struct ProbeHandle {
+pub struct ProbeHandle {
     block_id: String,
     child: Arc<Mutex<Option<Child>>>,
 }
@@ -435,7 +606,7 @@ impl ProbeHandle {
     }
 }
 
-pub(crate) struct Session {
+pub struct Session {
     id: String,
     name: String,
     cwd: String,
@@ -485,9 +656,18 @@ pub(crate) struct Session {
     /// `Session::new` parameter on purpose — `cloud/adopt.rs` is the single
     /// writer, so no other creation path can accidentally claim provenance.
     cloud: Option<CloudProvenance>,
-    /// multi-provider-seam FR-11a: DERIVED from the account's kind at creation
-    /// (FR-13a) and never re-derived afterward — see
-    /// `AgentRuntime::from_account_kind`.
+    /// multi-provider-seam FR-11a: derived from the account's kind at creation
+    /// (FR-13a) — see `AgentRuntime::from_account_kind`.
+    ///
+    /// **core-architecture-wave3 FR-11: this field is a persisted CACHE. It is
+    /// derived, non-authoritative, and must not be read for dispatch.** The
+    /// authority is `account::kind_of` at the point of use, which is what
+    /// `Session::meta` calls; this field exists so the on-disk record keeps
+    /// round-tripping its `agentRuntime` key (persistence.rs) for a Francois
+    /// that reads it before it writes it. It can be stale the instant the
+    /// account behind it changes kind or is removed — that used to be a bug
+    /// (a removed Grok account left its session spawning `grok` against a
+    /// Claude config dir) and is now merely a stale cache nothing consults.
     agent_runtime: AgentRuntime,
     /// multi-provider-seam FR-11a: the wire dialect, derived alongside
     /// `agent_runtime` from the same `from_account_kind` call and never
@@ -680,8 +860,16 @@ impl Session {
         true
     }
 
-    fn meta(&self) -> SessionMeta {
+    /// core-architecture-wave3 FR-11: `agent_runtime`/`protocol` are DERIVED
+    /// here, from the account's kind at the moment the meta is built — never
+    /// read off the stored fields. The parent wave closed the one known instance
+    /// of them desynchronising (a removed Grok account left its session claiming
+    /// Grok) by resyncing at the mutation; this closes the class, because there
+    /// is no longer a stored value that dispatch reads.
+    fn meta(&self, accounts: &dyn crate::account::AccountKinds) -> SessionMeta {
         let label = label_for(&self.model_id);
+        let (agent_runtime, protocol) =
+            AgentRuntime::from_account_kind(accounts.kind_of(&self.account_id));
         SessionMeta {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -701,8 +889,8 @@ impl Session {
             worktree: self.worktree.clone(),
             account_id: self.account_id.clone(),
             cloud: self.cloud.clone(),
-            agent_runtime: self.agent_runtime,
-            protocol: self.protocol,
+            agent_runtime,
+            protocol,
             profile: self.profile.clone(),
         }
     }
@@ -1042,13 +1230,17 @@ impl Engine {
     /// removed project. Returns the fresh meta of each session that changed — one
     /// `session.meta` emission each. Nothing under the project's root is touched;
     /// the sessions themselves keep running, merely unlinked (§7 #15).
-    pub(crate) fn clear_project(&self, project_id: &str) -> Vec<SessionMeta> {
+    pub fn clear_project(
+        &self,
+        accounts: &dyn crate::account::AccountKinds,
+        project_id: &str,
+    ) -> Vec<SessionMeta> {
         let mut map = self.sessions.lock().unwrap();
         map.values_mut()
             .filter(|s| s.project_id.as_deref() == Some(project_id))
             .map(|s| {
                 s.project_id = None;
-                s.meta()
+                s.meta(accounts)
             })
             .collect()
     }
@@ -1102,13 +1294,21 @@ impl Engine {
     /// onto `default`. Returns the fresh meta of each session that changed — one
     /// `session.meta` emission each. The sessions keep running; only their NEXT
     /// turn spawns on `default` (§7).
-    pub(crate) fn clear_account(&self, account_id: &str) -> Vec<SessionMeta> {
+    pub(crate) fn clear_account(
+        &self,
+        accounts: &dyn crate::account::AccountKinds,
+        account_id: &str,
+    ) -> Vec<SessionMeta> {
         let mut map = self.sessions.lock().unwrap();
         map.values_mut()
             .filter(|s| s.account_id == account_id)
             .map(|s| {
                 s.account_id = crate::account::DEFAULT_ACCOUNT_ID.to_string();
-                s.meta()
+                // core-architecture-wave3 FR-11: the parent wave resynced
+                // `agent_runtime`/`protocol` here, because `meta()` read the
+                // stored pair. `meta()` derives them now, so there is nothing
+                // left to resync — moving the account is the whole change.
+                s.meta(accounts)
             })
             .collect()
     }
@@ -1186,22 +1386,19 @@ pub fn kill_all(app: &AppHandle) {
 
 // ---------- helpers ----------
 
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-pub(crate) fn uuid() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
+// core-architecture-wave3 FR-9: both moved to `crate::ids` — reading a clock and
+// minting a uuid are not questions for the session engine, and `account/` asking
+// them here was half of what kept `session ↔ account` cyclic. Re-exported so
+// every `crate::session::now_ms()` / `super::*` user inside this domain resolves
+// exactly as it did.
+pub(crate) use crate::ids::now_ms;
+pub use crate::ids::uuid;
 
 /// session-rename FR-1 step 1+2: strip every C0/C1 control character (so a pasted
 /// newline or tab can never reach `sessions.json` or a tab label), then trim.
 /// Split out from the validator so `session_create` can ask "is this blank?"
 /// without turning the blank case into an error (FR-2).
-pub(crate) fn clean_session_name(raw: &str) -> String {
+pub fn clean_session_name(raw: &str) -> String {
     raw.chars()
         .filter(|c| !c.is_control() && !('\u{80}'..='\u{9f}').contains(c))
         .collect::<String>()
@@ -1213,13 +1410,19 @@ pub(crate) fn clean_session_name(raw: &str) -> String {
 /// (FR-2) and `session_rename` (FR-3). Cleans, then rejects an empty result or
 /// one over 80 Unicode scalar values — counted in `chars()`, never bytes, so an
 /// 80-emoji name is as valid as an 80-ascii one. All other Unicode is allowed.
-pub(crate) fn validate_session_name(raw: &str) -> Result<String, (&'static str, &'static str)> {
+pub fn validate_session_name(raw: &str) -> Result<String, AppError> {
     let name = clean_session_name(raw);
     if name.is_empty() {
-        return Err(("INVALID_INPUT", "session name cannot be empty"));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "session name cannot be empty",
+        ));
     }
     if name.chars().count() > 80 {
-        return Err(("INVALID_INPUT", "session name cannot exceed 80 characters"));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "session name cannot exceed 80 characters",
+        ));
     }
     Ok(name)
 }
@@ -1253,8 +1456,10 @@ mod tests {
     #[test]
     fn name_validator_rejects_an_empty_result() {
         for raw in ["", "   ", "\n\t\r", "\u{1}\u{9f}"] {
-            let (code, msg) = validate_session_name(raw).unwrap_err();
-            assert_eq!(code, "INVALID_INPUT");
+            let AppError {
+                code, message: msg, ..
+            } = validate_session_name(raw).unwrap_err();
+            assert_eq!(code, ErrorCode::InvalidInput);
             assert_eq!(msg, "session name cannot be empty");
         }
     }
@@ -1264,8 +1469,10 @@ mod tests {
         let eighty = "é".repeat(80); // 160 bytes, 80 chars — accepted
         assert_eq!(validate_session_name(&eighty).unwrap(), eighty);
 
-        let (code, msg) = validate_session_name(&"a".repeat(81)).unwrap_err();
-        assert_eq!(code, "INVALID_INPUT");
+        let AppError {
+            code, message: msg, ..
+        } = validate_session_name(&"a".repeat(81)).unwrap_err();
+        assert_eq!(code, ErrorCode::InvalidInput);
         assert_eq!(msg, "session name cannot exceed 80 characters");
 
         // The cap applies to the CLEANED name: 81 chars of padding trims to 79.

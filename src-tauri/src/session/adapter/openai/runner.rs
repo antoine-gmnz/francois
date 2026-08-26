@@ -21,6 +21,7 @@
 //! `ClaudeCodeAdapter::begin_turn` already uses for its NDJSON reader.
 
 use super::*;
+use crate::ipc::ErrorCode;
 use crate::session::*;
 
 use crate::ipc::AppError;
@@ -39,7 +40,7 @@ use tauri::{AppHandle, Manager};
 const FIRST_TURN_NOTICE: &str =
     "Francois runs its own agent loop on this provider — tool use and formatting differ from Claude Code.";
 
-pub(crate) struct OpenAiAdapter;
+pub struct OpenAiAdapter;
 
 impl SessionAdapter for OpenAiAdapter {
     fn agent_runtime(&self) -> AgentRuntime {
@@ -93,8 +94,8 @@ impl SessionAdapter for OpenAiAdapter {
         let key = crate::account::read_key(&config_dir);
         let fetched = match crate::account::probe(&endpoint.base_url, key.as_deref()) {
             Ok(probe) => probe.models,
-            Err((code, _msg)) => {
-                if code == "ACCOUNT_ENDPOINT_UNAUTHORIZED" {
+            Err(AppError { code, .. }) => {
+                if code == ErrorCode::AccountEndpointUnauthorized {
                     crate::account::mark_auth_failed(app, account_id);
                 }
                 Vec::new()
@@ -106,7 +107,7 @@ impl SessionAdapter for OpenAiAdapter {
 
 fn not_an_endpoint_error() -> AppError {
     AppError {
-        code: "INVALID_INPUT".into(),
+        code: ErrorCode::InvalidInput,
         message: "this session's account is not an OpenAI-compatible endpoint".into(),
         detail: None,
     }
@@ -434,7 +435,7 @@ enum LoopOutcome {
     CapHit,
     ContextExceeded,
     StreamCut,
-    Error(&'static str, String),
+    Error(ErrorCode, String),
 }
 
 /// FR-3..FR-8/FR-16/FR-17/FR-19/FR-23/FR-25: the whole turn, on its own
@@ -521,7 +522,7 @@ fn run_loop(
             Ok(r) => r,
             Err(e) => {
                 let (code, msg) = wire::map_http_error(e);
-                if code == "ACCOUNT_NOT_AUTHENTICATED" {
+                if code == ErrorCode::AccountNotAuthenticated {
                     crate::account::mark_auth_failed(&app, &account_id);
                 }
                 break LoopOutcome::Error(code, msg);
@@ -666,7 +667,7 @@ fn run_loop(
             fail_session(
                 &app,
                 &session_id,
-                "PROVIDER_REQUEST_FAILED",
+                ErrorCode::ProviderRequestFailed,
                 &format!(
                     "this turn hit its {}-round-trip cap without finishing.",
                     wire::MAX_ROUND_TRIPS
@@ -679,7 +680,7 @@ fn run_loop(
             fail_session(
                 &app,
                 &session_id,
-                "PROVIDER_CONTEXT_EXCEEDED",
+                ErrorCode::ProviderContextExceeded,
                 "this conversation is over the model's context window — start a new session to continue.",
             );
         }
@@ -689,7 +690,7 @@ fn run_loop(
             fail_session(
                 &app,
                 &session_id,
-                "PROVIDER_REQUEST_FAILED",
+                ErrorCode::ProviderRequestFailed,
                 "the connection was interrupted mid-response.",
             );
         }

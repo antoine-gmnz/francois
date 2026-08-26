@@ -8,7 +8,7 @@ use crate::session::*;
 use serde_json::Value;
 use std::collections::HashMap;
 
-pub(crate) fn handle_tool_results(
+pub fn handle_tool_results(
     env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
@@ -51,7 +51,11 @@ pub(crate) fn handle_tool_results(
         if rec.is_task {
             if let Some(aid) = rec.input.get("__agentId").and_then(|val| val.as_str()) {
                 let ems = {
-                    let mut map = env.engine().sessions.lock().unwrap();
+                    let mut map = env
+                        .engine()
+                        .sessions
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
                     match map.get_mut(session_id) {
                         Some(s) => apply_dispatch_result(s, aid, &result_text, is_error, now_ms()),
                         None => Vec::new(),
@@ -71,7 +75,11 @@ pub(crate) fn handle_tool_results(
         }
 
         let done_block = {
-            let mut map = env.engine().sessions.lock().unwrap();
+            let mut map = env
+                .engine()
+                .sessions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             match map.get_mut(session_id) {
                 // transcript-scale CRITICAL fix: use the clone `buf_tool_done`
                 // returns (captured before its internal trim runs) instead of
@@ -101,7 +109,7 @@ pub(crate) fn handle_tool_results(
     }
 }
 
-pub(crate) fn extract_result_text(content: Option<&Value>) -> String {
+pub fn extract_result_text(content: Option<&Value>) -> String {
     match content {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Array(arr)) => arr
