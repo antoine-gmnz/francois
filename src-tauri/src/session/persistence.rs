@@ -82,10 +82,19 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
     // design 9a: `at` rides the line so a reopened session states when each turn
     // actually happened. Only the four base kinds carry it — the card kinds
     // (command/question/permission) render their own chrome and never a clock.
-    serde_json::json!({
+    let mut o = serde_json::json!({
         "blockId": b.block_id, "kind": kind, "text": b.text,
         "tool": b.tool, "summary": b.summary, "meta": b.meta, "at": b.at,
-    })
+    });
+    // command-inspect FR-10: round-trips through the transcript file (never
+    // just in-memory) so a step's chevron survives quit/reopen exactly like
+    // its sidecar record does. Written ONLY for a `tool` line — the only kind
+    // whose contract type (`ToolConversationBlock`) has a slot for it — and
+    // only when true, so a pre-feature line stays byte-identical.
+    if kind == "tool" && b.has_detail {
+        o["hasDetail"] = Value::Bool(true);
+    }
+    o
 }
 
 /// Append one finalized block as a JSON line to the session's transcript (FR-1/2).
@@ -110,11 +119,14 @@ pub(crate) fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBl
 }
 
 /// /clear: remove the session's persisted transcript so a reload starts empty.
-/// Best-effort — a missing file or remove error is ignored.
+/// Best-effort — a missing file or remove error is ignored. command-inspect
+/// FR-7: its `.details.jsonl` sidecar is swept in the same call — it shadows
+/// the transcript this removes, so it goes with it.
 pub(crate) fn clear_transcript(app: &AppHandle, session_id: &str) {
     if let Some(path) = transcript_path(app, session_id) {
         let _ = std::fs::remove_file(&path);
     }
+    remove_step_detail_sidecar(app, session_id);
 }
 
 /// Parse one PersistedBlock line back into a BufBlock. Returns None for a malformed
@@ -219,6 +231,13 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
             .unwrap_or("")
             .to_string(),
         meta: v.get("meta").and_then(|m| m.as_str()).map(String::from),
+        // command-inspect FR-10: absent on every line written before this
+        // feature (and on every non-tool kind, which never writes the key) —
+        // reads back as `false`, exactly the "no chevron" default FR-12 asks for.
+        has_detail: v
+            .get("hasDetail")
+            .and_then(|h| h.as_bool())
+            .unwrap_or(false),
         ..BufBlock::new(&block_id, kind)
     })
 }
@@ -642,6 +661,10 @@ pub(crate) fn unlink_project_sessions(app: &AppHandle, project_id: &str) {
 }
 
 pub fn load_persisted(app: &AppHandle) {
+    // command-inspect FR-7: a `.details.jsonl` sidecar with no transcript
+    // beside it (its session was removed some other way, or a partial write
+    // left it behind) is swept once, up front — not on every read.
+    sweep_orphaned_step_detail_sidecars(app);
     let Some(path) = sessions_json_path(app) else {
         return;
     };
@@ -783,6 +806,7 @@ mod tests {
             card: None,
             streaming: true, // in-memory streaming flag must NOT round-trip
             at: 1_760_000_000_000,
+            has_detail: false,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         let back = parse_persisted_block(&line).expect("parse");
@@ -823,6 +847,7 @@ mod tests {
             card: None,
             streaming: false,
             at: 1_760_000_000_000,
+            has_detail: false,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         assert!(line.contains("\"meta\":null"));
@@ -852,6 +877,7 @@ mod tests {
             card: None,
             streaming: false,
             at: 1_760_000_000_000,
+            has_detail: false,
         };
         let back =
             parse_persisted_block(&serde_json::to_string(&persisted_block_json(&b)).unwrap())

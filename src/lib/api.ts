@@ -72,6 +72,7 @@ import type {
   PickAttachmentsResponse,
 } from '../../contract/session-attachments';
 import type { GetTranscriptRequest, TranscriptPage } from '../../contract/conversation-view';
+import type { StepDetail, StepDetailPayload } from '../../contract/command-inspect';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpApprovalState, McpDecision, McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
 import type {
@@ -237,6 +238,10 @@ export const sessionOpenInEditor = (req: OpenInEditorRequest) =>
 // 1..=500 (default 200) — never an INVALID_INPUT.
 export const getTranscript = (sessionId: SessionId, page?: { before?: BlockId; limit?: number }) =>
   ipc<Result<TranscriptPage>>('conversation_get_transcript', { sessionId, ...page } satisfies GetTranscriptRequest);
+// command-inspect FR-11: resolves one settled step's record by (sessionId, blockId). Never rides
+// an event — pulled lazily on first open (FR-13), and memoized by the caller for the session's life.
+export const stepDetail = (sessionId: SessionId, blockId: BlockId) =>
+  ipc<Result<StepDetail>>('conversation_step_detail', { sessionId, blockId } satisfies StepDetailPayload);
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
   ipc<Result<null>>('session_answer_question', { sessionId, blockId, answers });
 // permission-guardrails (§5.1). decide answers a parked approval card; the other

@@ -372,7 +372,8 @@
     "type": "tool.done",
     "sessionId": "s1",
     "blockId": "id-2",
-    "meta": "7 lines"
+    "meta": "7 lines",
+    "hasDetail": true
   },
   {
     "type": "agent.update",
@@ -465,7 +466,8 @@
     "type": "tool.done",
     "sessionId": "s1",
     "blockId": "id-4",
-    "meta": "The current directory contains README.md, notes.txt, and a .cartograph folder ho"
+    "meta": "The current directory contains README.md, notes.txt, and a .cartograph folder ho",
+    "hasDetail": true
   },
   {
     "type": "assistant.delta",
@@ -511,7 +513,8 @@
     "type": "tool.done",
     "sessionId": "s1",
     "blockId": "id-6",
-    "meta": "1 lines"
+    "meta": "1 lines",
+    "hasDetail": true
   },
   {
     "type": "question.asked",
@@ -546,7 +549,8 @@
     "type": "tool.done",
     "sessionId": "s1",
     "blockId": "id-9",
-    "meta": "done"
+    "meta": "done",
+    "hasDetail": true
   },
   {
     "type": "assistant.delta",

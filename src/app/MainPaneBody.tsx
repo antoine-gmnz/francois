@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import type { SessionMeta } from '../../contract/common';
 import AgentView from '../features/agents/AgentView';
 import { workflowIdFromTab } from '../features/agents/agent-tab';
@@ -30,6 +30,9 @@ export interface MainPaneBodyProps {
  * plain `MainTab` key the table can be built over. */
 export default function MainPaneBody({ mainTab, activeAgentId, active, home, setMainTab, projectName }: MainPaneBodyProps) {
   const branch = mainPaneBranch(mainTab);
+  // quality fix: a stable callback so ConversationView's `onOpenShell` prop
+  // does not break the Turn/Block/ToolRow shallow-memo chain on every render.
+  const openShell = useCallback(() => setMainTab('shell'), [setMainTab]);
 
   if (branch === 'ext') {
     // extensions FR-15: keyed by extension id, so switching extension tabs
@@ -84,7 +87,9 @@ export default function MainPaneBody({ mainTab, activeAgentId, active, home, set
     overview: () => <OverviewView home={home} />,
     session: () =>
       active ? (
-        <ConversationView key={active.id} sessionId={active.id} />
+        // command-inspect FR-16: this IS the `main` pane, so its own setMainTab
+        // is the pane-scoped switch — no global setFocusedPane needed here.
+        <ConversationView key={active.id} sessionId={active.id} onOpenShell={openShell} />
       ) : (
         <EmptyPaneMessage>
           select a session, or press <span className="app-inline-key">n</span> to start one

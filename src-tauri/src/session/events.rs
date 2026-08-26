@@ -76,6 +76,11 @@ pub(crate) enum SessionEvent {
         #[serde(rename = "blockId")]
         block_id: String,
         meta: String,
+        /// command-inspect FR-10: same flag as `ToolConversationBlock.hasDetail`
+        /// — `Some(true)` iff FR-1 wrote a `StepDetail` record for this block;
+        /// omitted (never `Some(false)`) otherwise.
+        #[serde(rename = "hasDetail", skip_serializing_if = "Option::is_none")]
+        has_detail: Option<bool>,
     },
     #[serde(rename = "command.started")]
     CommandStarted {

@@ -66,6 +66,13 @@ export interface ToolConversationBlock extends ConversationBlockBase {
   bodyColor: '#8b93a3';
   summary: string;
   meta?: string;
+  /**
+   * command-inspect FR-10: true ⇒ a StepDetail record exists at
+   * `francois:conversation:stepDetail`; the row renders a chevron and is
+   * clickable. Absent on every block captured before command-inspect, and on
+   * agent/workflow blocks (FR-8) — those never carry a record.
+   */
+  hasDetail?: boolean;
 }
 
 export interface SubagentConversationBlock extends ConversationBlockBase {

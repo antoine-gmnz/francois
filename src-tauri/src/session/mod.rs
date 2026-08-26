@@ -48,6 +48,11 @@ mod spawn;
 // readable. The glob still brings the module path itself into scope.
 pub(crate) mod status;
 mod stdio;
+/// command-inspect: the `StepDetail` capture record, its sidecar, and the
+/// `conversation_step_detail` command — see the module doc for why capture is
+/// adapter-agnostic (built through `build_step_detail`, written through
+/// `SessionEnv::append_step_detail`).
+mod step_detail;
 mod stream;
 mod tools;
 /// transcript-scale FR-1/FR-2: the `block_buffer` eviction concern — split out
@@ -88,6 +93,7 @@ pub(crate) use skills::*;
 pub(crate) use slash::*;
 pub(crate) use spawn::*;
 pub(crate) use stdio::*;
+pub(crate) use step_detail::*;
 pub(crate) use stream::*;
 pub(crate) use tools::*;
 pub(crate) use transcript_cap::*;
@@ -411,6 +417,12 @@ pub(crate) struct BufBlock {
     /// transcript written before the field existed — and is serialized as an
     /// ABSENT key rather than as an epoch that would render as 01:00.
     at: u64,
+    /// command-inspect FR-1/FR-10: true iff a `StepDetail` record was written
+    /// for this block at settle time. Only ever set on a `Tool` block —
+    /// `classify_block` is what decides whether the kind even has a slot for
+    /// it (`ToolConversationBlock` only; a `Subagent` block's contract type
+    /// carries no `hasDetail` field, so the value there is inert).
+    has_detail: bool,
 }
 
 impl BufBlock {
@@ -434,6 +446,7 @@ impl BufBlock {
             card: None,
             streaming: false,
             at: now_ms(),
+            has_detail: false,
         }
     }
 }
@@ -1000,7 +1013,17 @@ impl Session {
     /// transcript-scale FR-2 rationale as `buf_command_output`: the clone is
     /// taken BEFORE `trim_block_buffer` runs, so a tool/subagent block that was
     /// itself pinning eviction is never evicted before its caller can persist it.
-    fn buf_tool_done(&mut self, block_id: &str, meta: String) -> Option<BufBlock> {
+    ///
+    /// `has_detail`: command-inspect FR-1/FR-10 — the caller must have already
+    /// written the `StepDetail` sidecar record (if any) BEFORE calling this, so
+    /// the finalized block and the `tool.done` event it feeds both carry the
+    /// right flag on the FIRST — and only — line ever persisted for it.
+    fn buf_tool_done(
+        &mut self,
+        block_id: &str,
+        meta: String,
+        has_detail: bool,
+    ) -> Option<BufBlock> {
         let out = self
             .block_buffer
             .iter_mut()
@@ -1008,6 +1031,7 @@ impl Session {
             .map(|b| {
                 b.meta = Some(meta);
                 b.streaming = false;
+                b.has_detail = has_detail;
                 b.clone()
             });
         // transcript-scale FR-2: settling this tool/subagent block may unblock
@@ -1420,7 +1444,7 @@ mod tests {
         assert!(s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP);
         assert_eq!(s.block_buffer[0].block_id, "tool-1");
 
-        let done = s.buf_tool_done("tool-1", "3 lines".into());
+        let done = s.buf_tool_done("tool-1", "3 lines".into(), false);
         assert_eq!(done.as_ref().map(|b| b.block_id.as_str()), Some("tool-1"));
         assert_eq!(done.unwrap().meta.as_deref(), Some("3 lines"));
         // Settling it unpins eviction, which catches back up to the cap in the

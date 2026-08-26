@@ -1,5 +1,5 @@
 import { Maximize2, Plus, Terminal as TerminalIcon, X } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { ProjectId } from '../../contract/common';
 import type { ShellId } from '../../contract/shell-terminal';
 import { formatContextTokens } from '../../contract/conversation-view';
@@ -132,6 +132,9 @@ function SessionPaneSection({
   // exactly as MainPaneBody does for the single pane, so the two cannot drift.
   const agentId = agentIdFromTab(tab);
   const runId = workflowIdFromTab(tab);
+  // quality fix: a stable callback so ConversationView's `onOpenShell` prop
+  // does not break the Turn/Block/ToolRow shallow-memo chain on every render.
+  const openShell = useCallback(() => onTab('shell'), [onTab]);
 
   // toneVar: STATUS_COLOR is the contract's DARK hex map — the `active` tag would
   // otherwise stay acid lime on the light theme's white header (lib/tone.ts).
@@ -271,6 +274,10 @@ function SessionPaneSection({
             sessionId={session.id}
             inert={!focused}
             onFocusRequest={onFocus}
+            // command-inspect FR-16: THIS pane's own tab switch — the shell
+            // button's click bubbles to the section's onClick={onFocus} above,
+            // so opening the shell also focuses this pane, same as the tab strip.
+            onOpenShell={openShell}
             inertFooter={
               dense ? (
                 <PaneFooter

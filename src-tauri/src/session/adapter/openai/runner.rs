@@ -223,9 +223,12 @@ impl TurnControl for FrancoisTurnHandle {
 
 impl FrancoisTurnHandle {
     /// FR-9/FR-10/FR-12: evaluate the gate; `Ask` parks. Returns the tool
-    /// result string, or `None` when the turn was interrupted while parked —
-    /// the caller then abandons this call (FR-8: its `tool_calls` entry stays
-    /// unanswered and `drop_unanswered_tool_calls` removes it before save).
+    /// result string plus whether the call was denied (command-inspect FR-4:
+    /// a denial never runs the tool, so it is captured as an error step even
+    /// though this runtime never states a structured exit code) — or `None`
+    /// when the turn was interrupted while parked, the caller then abandons
+    /// this call (FR-8: its `tool_calls` entry stays unanswered and
+    /// `drop_unanswered_tool_calls` removes it before save).
     fn resolve_and_run(
         &self,
         app: &AppHandle,
@@ -234,14 +237,14 @@ impl FrancoisTurnHandle {
         permission_mode: &str,
         tool: FrancoisTool,
         input: &Value,
-    ) -> Option<String> {
+    ) -> Option<(String, bool)> {
         let rules = current_rules(app, session_id);
         match gate::evaluate(tool, input, cwd, permission_mode, &rules) {
-            gate::GateDecision::Allow => Some(self.execute(tool, input, cwd)),
-            gate::GateDecision::Deny(msg) => Some(msg),
+            gate::GateDecision::Allow => Some((self.execute(tool, input, cwd), false)),
+            gate::GateDecision::Deny(msg) => Some((msg, true)),
             gate::GateDecision::Ask => match self.park(app, session_id, cwd, tool, input) {
-                Some(PermissionDecision::Allow) => Some(self.execute(tool, input, cwd)),
-                Some(PermissionDecision::Deny) => Some(gate::DENY_MESSAGE.to_string()),
+                Some(PermissionDecision::Allow) => Some((self.execute(tool, input, cwd), false)),
+                Some(PermissionDecision::Deny) => Some((gate::DENY_MESSAGE.to_string(), true)),
                 None => None,
             },
         }
@@ -333,7 +336,9 @@ impl FrancoisTurnHandle {
         let block_id = uuid();
         if let Some(err) = super::blocks::tool_call_error(call) {
             super::blocks::emit_tool_block(app, session_id, &block_id, &call.name, "");
-            super::blocks::finish_tool_block(app, session_id, &block_id, cwd, &call.name, "error");
+            super::blocks::finish_tool_block(
+                app, session_id, &block_id, cwd, &call.name, "error", false,
+            );
             return Some(err);
         }
         // tool_call_error already proved both of these succeed.
@@ -344,11 +349,39 @@ impl FrancoisTurnHandle {
             .expect("checked by tool_call_error")
             .clone();
 
+        // command-inspect FR-2: when the tool_use was first seen.
+        let started_at = now_ms();
         let summary = tool_summary(tool.as_str(), &input, cwd);
         super::blocks::emit_tool_block(app, session_id, &block_id, tool.as_str(), &summary);
         match self.resolve_and_run(app, session_id, cwd, permission_mode, tool, &input) {
-            Some(result) => {
+            Some((result, is_error)) => {
                 let meta = tool_meta(tool.as_str(), &input, &result);
+                // command-inspect FR-1/FR-9: this runtime executes the tool
+                // itself and states neither a separate exit code nor split
+                // stderr (`tools::execute` returns one combined string) —
+                // both are `None` here, matching FR-4/FR-6's "absent when the
+                // runtime cannot state it". `is_error` DOES come from this
+                // call: a `GateDecision::Deny` (direct or parked) never runs
+                // the tool at all, so command-inspect FR-4 must still mark it
+                // a failed step even with no exit code to show.
+                let has_detail = match app.state::<Engine>().runtime_of(session_id) {
+                    Some(runtime) => {
+                        let detail = openai_step_detail(
+                            &block_id,
+                            tool.as_str(),
+                            cwd,
+                            &runtime,
+                            started_at,
+                            now_ms(),
+                            is_error,
+                            &input,
+                            &result,
+                        );
+                        append_step_detail(app, session_id, &detail);
+                        true
+                    }
+                    None => false,
+                };
                 super::blocks::finish_tool_block(
                     app,
                     session_id,
@@ -356,6 +389,7 @@ impl FrancoisTurnHandle {
                     cwd,
                     tool.as_str(),
                     &meta,
+                    has_detail,
                 );
                 Some(result)
             }
@@ -367,6 +401,7 @@ impl FrancoisTurnHandle {
                     cwd,
                     tool.as_str(),
                     "cancelled",
+                    false,
                 );
                 None
             }
@@ -379,6 +414,31 @@ impl FrancoisTurnHandle {
 // The round-trip cap / context refusal / tool-call-error / thread-shape /
 // request-message helpers live in `blocks.rs` alongside the transcript
 // block-emission helpers they pair with in the loop below.
+
+/// command-inspect FR-1/FR-9: assemble this runtime's own `StepDetail` for a
+/// settled tool call — pulled out of `process_tool_call` as its own pure
+/// function (mirroring codex/grok's `ToolCapture` split) so the exact record
+/// this runtime produces is unit-testable without an `AppHandle`. This
+/// runtime executes the tool itself and states neither a separate exit code
+/// nor split stderr (`tools::execute` returns one combined string) — both
+/// stay `None` here, matching FR-4/FR-6's "absent when the runtime cannot
+/// state it" — but `is_error` IS wired through from the caller's gate
+/// decision (FR-4: a denial is a failed step even with no exit code).
+fn openai_step_detail(
+    block_id: &str,
+    tool: &str,
+    cwd: &str,
+    runtime: &str,
+    started_at: u64,
+    ended_at: u64,
+    is_error: bool,
+    input: &Value,
+    result: &str,
+) -> StepDetail {
+    build_step_detail(
+        block_id, tool, cwd, runtime, started_at, ended_at, is_error, None, input, result, None,
+    )
+}
 
 /// The path-shaped argument of a call, using the same key names `gate.rs`'s
 /// own (private, unreachable from here) `path_arg` reads — both built on the
@@ -814,6 +874,87 @@ mod tests {
     fn a_failed_fetch_with_no_override_is_an_empty_list_not_the_anthropic_catalog() {
         let out = resolve_models(None, Vec::new());
         assert!(out.is_empty());
+    }
+
+    // ---------- openai_step_detail (command-inspect FR-1/FR-9) ----------
+
+    #[test]
+    fn a_bash_call_captures_a_verbatim_command_body_with_no_exit_code_or_stderr() {
+        let input = json!({ "command": "npm test", "description": "run the suite" });
+        let d = openai_step_detail(
+            "b1",
+            "Bash",
+            "/repo",
+            "native",
+            100,
+            200,
+            false,
+            &input,
+            "14 failed\n",
+        );
+        assert_eq!(d.block_id, "b1");
+        assert_eq!(d.tool, "Bash");
+        assert_eq!(d.cwd, "/repo");
+        assert_eq!(d.runtime, "native");
+        assert_eq!(d.started_at, 100);
+        assert_eq!(d.ended_at, Some(200));
+        assert!(!d.is_error);
+        assert_eq!(d.exit_code, None);
+        match d.body {
+            StepBody::Command { command, output } => {
+                assert_eq!(command.command, "npm test");
+                assert_eq!(command.description.as_deref(), Some("run the suite"));
+                assert_eq!(output.text, "14 failed\n");
+                assert_eq!(output.stderr_lines, None);
+            }
+            other => panic!("expected a command body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_read_call_captures_the_generic_pretty_printed_input() {
+        let input = json!({ "file_path": "src/x.ts" });
+        let d = openai_step_detail(
+            "b2",
+            "Read",
+            "/repo",
+            "native",
+            0,
+            1,
+            false,
+            &input,
+            "file contents",
+        );
+        assert_eq!(d.tool, "Read");
+        match d.body {
+            StepBody::Generic { input_json, output } => {
+                assert!(input_json.contains("\"file_path\""));
+                assert!(input_json.contains("src/x.ts"));
+                assert_eq!(output.text, "file contents");
+            }
+            other => panic!("expected a generic body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_denied_call_captures_is_error_true_with_no_exit_code() {
+        // command-inspect FR-4: a `GateDecision::Deny` never runs the tool,
+        // so there is no structured exit code to state — but the step must
+        // still read as failed rather than silently succeeding.
+        let input = json!({ "command": "rm -rf /" });
+        let d = openai_step_detail(
+            "b3",
+            "Bash",
+            "/repo",
+            "native",
+            0,
+            1,
+            true,
+            &input,
+            "Permission denied by a Francois rule.",
+        );
+        assert!(d.is_error);
+        assert_eq!(d.exit_code, None);
     }
 
     // ---------- OpenAiAdapter dispatch shape ----------
