@@ -77,9 +77,12 @@ sequence (transcript-scale) — is untouched.
 - **FR-2**: `cwd`, `runtime` and `distro` are read from the session at capture time — `distro` only
   when `runtime === 'wsl'` and the cwd parses as a WSL UNC path (`wslUncToLinux`, wsl-filesystem);
   absent otherwise. `startedAt` is when the `tool_use` was seen, `endedAt` when the `tool_result` was.
-- **FR-3**: `body.kind` is `'command'` for `Bash` and `'generic'` for every other tool, known or not.
+- **FR-3**: `body.kind` is `'command'` for a tool whose input IS a command line — `Bash` and
+  `PowerShell`, which share the `command` + `description` input shape — and `'generic'` for every
+  other tool, known or not.
   `'command'` takes `command` (and `description` when the input carried one) **verbatim** — never
-  re-quoted, re-escaped or normalized. `'generic'` takes the whole tool input, pretty-printed and
+  re-quoted, re-escaped or normalized. The `description` renders in the record's header (design
+  brief §2), not on the `$` line. `'generic'` takes the whole tool input, pretty-printed and
   truncated to 4000 chars — the same rule `PermissionAsk.inputJson` already uses.
 - **FR-4**: `isError` is the `tool_result`'s `is_error` (absent ⇒ `false`). `exitCode` is set **only**
   when the runtime states one in a structured wire field; the claude-code adapter never sets it, so
@@ -319,3 +322,37 @@ the outcome chip reads `failed` rather than `exit 1` for claude-code sessions (F
   real FR-8 guarantee (`hasDetail` is never set on agent-tab/workflow lone rows, regardless of
   `sessionId`) · LOW · step_detail.rs · `#[allow(clippy::too_many_arguments)]` now carries its
   why/clears-when comment)
+
+### 2026-08-26 — design-fidelity pass against turn 16a
+
+Three departures from the mock, found by reading the built surface next to it:
+
+- **The disclosure opened a second row.** `.toolrow` declares four grid columns; `ToolRow` rendered
+  the chevron as a fifth child, so auto-placement wrapped it onto an implicit second row — under the
+  glyph, and making an expandable row taller than an inert one. The chips and the disclosure now
+  share one `.toolrow__meta` cell, and the grid is `grid-auto-flow: column` so an extra child can
+  only ever spill sideways. (design brief §1)
+- **Captured output was set as prose, not as terminal output.** The body now carries the SHELL tab's
+  own metrics — `--font-mono`, 12.5px, the new `--terminal-line-height` token (1.35, the number
+  `ShellTerminal.tsx` hands xterm), `tab-size: 8`, foreground `--text-bright` — so a log keeps the
+  columns it was written with. The generic input-JSON band follows the same metrics. Neither band
+  scrolls horizontally: both are `pre-wrap`, so a line too wide for the record wraps rather than
+  hiding behind a scrollbar the reader has no reason to suspect. (design brief §2, §Responsive)
+- **Escape sequences rendered as litter.** A step's output is raw bytes; the mock's coloured failure
+  markers are what the tool's own SGR codes produce. `features/conversation/ansi.ts` resolves them
+  onto the same sixteen tokens `features/shell/xterm-theme.ts` hands xterm (`.ansi-*` in
+  conversation.css), swallows non-SGR CSI/OSC sequences, and treats `\r` as the line rewrite a cursor
+  return is — so a progress bar reads as its last frame rather than as every frame. 18 unit tests.
+  (design brief §2)
+
+### 2026-08-26 — PowerShell steps + the input's description
+
+- **PowerShell steps rendered as JSON.** `build_body` keyed the `'command'` body off `tool == "Bash"`
+  alone, so on Windows — where every shell step is a `PowerShell` step — no shell step ever got the
+  `$` line, the copy action or the `shell ↗` hand-off. The check is now a `COMMAND_TOOLS` set
+  (`Bash`, `PowerShell`): the two tools share the `command` + `description` input shape, and a
+  malformed call to either still falls back to `'generic'`. (FR-3)
+- **The captured `description` was never rendered.** `StepCommand.description` has been in the
+  contract and the capture since the feature shipped, and nothing read it. It is now a header segment
+  between the tool and the cwd, in its own capitalisation and `--text-dim` — absent outright when
+  blank or on a generic step, never a placeholder. (FR-3, FR-15, design brief §2)

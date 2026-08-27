@@ -25,7 +25,10 @@ so the rail's vertical line runs unbroken past it.
 - **Inert** — no record exists. Byte-identical to today: glyph · uppercase tool label · summary ·
   meta chips. No chevron, no pointer cursor, no hover fill.
 - **Closed, expandable** — hover fills the row `#101319` and reveals a dim `open` word plus a `⌄`
-  chevron in the right-hand slot, after the meta chips.
+  chevron in the right-hand slot, after the meta chips. **The disclosure shares the meta chips' grid
+  cell** — it is not a fifth column and never a second line. A row is the same height expandable,
+  open or inert; the chevron's width is reserved even while it is invisible, so hovering does not
+  shift the chips beside it.
 - **Open** — row fill `#141922`, summary text brightens to `#f2f4f8`, chevron rotates 180°. The
   summary and meta chips **stay** — the row does not become a header; it keeps being the row.
 
@@ -37,20 +40,30 @@ Tool label is 9.5px, `letter-spacing:.14em`, uppercase. Bash glyph `⌗` on `#c9
 
 - **Header** (`#11141a`, 7px/11px padding, 9.5px mono). Segments, `·`-separated by 10px gaps, each
   omitted entirely when its field is absent:
-  `bash` (uppercase, `letter-spacing:.14em`, `#8b6f96`) · cwd (`#6b7385`) · `wsl · Ubuntu-22.04`
+  `bash` (uppercase, `letter-spacing:.14em`, `#8b6f96`) · the input's own `description` when it
+  carried one, in its own capitalisation and a shade brighter than its neighbours (`--text-dim`) —
+  it answers the question the tool name raises, and sits before the cwd because the cwd is where the
+  step ran rather than what it was for · cwd (`#6b7385`) · `wsl · Ubuntu-22.04`
   (`#5d798f`) · then right-aligned: `12:06:41 · 4.2s` (`#6b7385`) · outcome. Outcome is `exit N`
   when known, `failed` when errored without a code, and **absent** on success — coloured `#d48b84`.
 - **The `$` line** (10px/11px padding, 12.5px mono). `$` in `#586c30`; the command wraps in the
   remaining width, executable segment `#e8ecf3`, arguments `#d6dae2`. Right-aligned: `copy` and
   `shell ↗` as 10.5px `#565e6e` words, `#c3c9d4` on hover. **`re-run` is not built** — do not draw
-  it. A generic (non-Bash) step replaces this whole band with pretty-printed input JSON at the same
-  metrics, and shows **no actions**.
+  it. A generic (non-Bash) step replaces this whole band with pretty-printed input JSON on the
+  output body's terminal metrics, and shows **no actions**. Its indentation is the whole shape of it,
+  so it is `pre-wrap`: leading whitespace survives, and a value too wide for the band wraps.
 - **Output strip** (`#0c0e12`, 5px/11px, 9.5px). `OUTPUT` uppercase `#565e6e`, then
   `214 lines · 8.1 KB` in normal case. When the runtime separates the streams, `12 on stderr` sits
   right-aligned in `#d48b84`; otherwise that chip does not exist.
-- **Output body** (`#08090c`, 9px/11px, 11.5px mono, `white-space:pre`, base `#8b93a3`). The last 15
-  lines of the captured slice. Failure markers `#d48b84`, error messages `#e0918a`, dim scaffolding
-  `#6b7385`, elided-run notes `#565e6e`.
+- **Output body** (`#08090c`, 9px/11px, `white-space:pre`). The last 15 lines of the captured slice,
+  **set as terminal output rather than as prose**: the SHELL tab's own metrics — `--font-mono`,
+  12.5px, `--terminal-line-height` (1.35), `tab-size: 8`, foreground `--text-bright` — so a log reads
+  at the same rhythm and keeps the same columns whether it is live or recalled. Colour comes from the
+  captured bytes: the ANSI SGR sequences in them are resolved (`features/conversation/ansi.ts`) onto
+  the **same sixteen tokens `features/shell/xterm-theme.ts` hands xterm**, so the mock's hand-drawn
+  failure markers / error messages / dim scaffolding are what the tool's own escape codes produce,
+  not a re-tint the record invents. Bytes carrying no colour stay on the plain foreground.
+  256-colour and truecolour, which no token names, arrive as a literal `rgb()` on the span.
 - **Fold footer** (`#0c0e12`, 7px/11px, 10.5px `#565e6e`). Left: `187 earlier lines folded` —
   or, when the capture cap bit, `27 lines dropped at capture`. Next to it, `show all` in `#8b93a3`,
   `#c3f53f` on hover; it is one-way and disappears once used. **The mock's right-aligned
@@ -75,15 +88,18 @@ Tool label is 9.5px, `letter-spacing:.14em`, uppercase. Bash glyph `⌗` on `#c9
 Desktop-only surface; the app's window floor is 720px (ranked-topbar 11c). The record inherits the
 transcript column's width and never has its own. The `$` line and the header **wrap** rather than
 crop — a mid-string crop of a path or a command is the exact failure the ranked topbar was rebuilt to
-remove. The output body does **not** wrap: it is `pre` and scrolls horizontally within its own band,
-because a wrapped log stops being readable as a log.
+remove. **Nothing in the record scrolls horizontally** — the output body and the input JSON wrap too
+(`pre-wrap`, so the leading whitespace that carries a log's structure survives, plus `anywhere` for
+the unbroken path or hash wider than the band). This departs from the mock deliberately: the record
+is read in the flow of the transcript, and a horizontal scrollbar there asks the reader to drag a
+band sideways to find out why a command failed, with no hint anything was to the right at all.
 
 ## Data shown
 
 Every value comes from `StepDetail` in `contract/command-inspect.ts` (spec §5) and nothing is
 synthesized: `tool` (lowercased), `cwd`, `runtime` + `distro`, `startedAt` (as wall clock),
 `endedAt − startedAt` (as duration), `exitCode` / `isError` (as outcome), `body.command.command`,
-`body.inputJson`, `output.text`, `output.totalLines`, `output.totalBytes`, `output.droppedLines`,
+`body.command.description` (in the header), `body.inputJson`, `output.text`, `output.totalLines`, `output.totalBytes`, `output.droppedLines`,
 `output.stderrLines`.
 
 ## Notes / constraints

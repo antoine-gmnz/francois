@@ -149,16 +149,23 @@ pub(crate) fn compute_output(full: &str, stderr_lines: Option<u64>) -> StepOutpu
     }
 }
 
-/// FR-3: `'command'` for `Bash` when its input carries a string `command` —
-/// verbatim, never re-quoted/re-escaped/normalized. Every other case
-/// (including a malformed Bash call) falls back to `'generic'`, matching §7's
-/// "unparseable input is never a capture failure". The generic path reuses
-/// `permissions::input_json` (same pretty-print + 4000-char cap
+/// The tools whose input IS a command line — they share the `command` +
+/// `description` input shape, so a record of one reads as a `$` line rather
+/// than as JSON. `PowerShell` is Claude Code's shell tool on Windows: without
+/// it here, the one platform where every shell step is a PowerShell step was
+/// the one platform where no shell step got the treatment.
+const COMMAND_TOOLS: &[&str] = &["Bash", "PowerShell"];
+
+/// FR-3: `'command'` for a `COMMAND_TOOLS` name whose input carries a string
+/// `command` — verbatim, never re-quoted/re-escaped/normalized. Every other
+/// case (including a malformed call to one of them) falls back to `'generic'`,
+/// matching §7's "unparseable input is never a capture failure". The generic
+/// path reuses `permissions::input_json` (same pretty-print + 4000-char cap
 /// `PermissionAsk.inputJson` already applies) once the `__`-prefixed keys are
 /// stripped, rather than re-implementing that truncation here.
 fn build_body(tool: &str, input: &Value, output: StepOutput) -> StepBody {
     let clean = strip_internal_keys(input);
-    if tool == "Bash" {
+    if COMMAND_TOOLS.contains(&tool) {
         if let Some(command) = clean.get("command").and_then(|v| v.as_str()) {
             let description = clean
                 .get("description")
@@ -441,6 +448,53 @@ mod tests {
                 assert_eq!(command.command, "npm  test"); // untouched double space
                 assert_eq!(command.description.as_deref(), Some("run the suite"));
             }
+            other => panic!("expected a command body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn powershell_input_becomes_a_command_body_the_same_way_bash_does() {
+        let input = json!({ "command": "Get-ChildItem -Force", "description": "List every file" });
+        let d = build_step_detail(
+            "b1",
+            "PowerShell",
+            "D:\\acme-api",
+            "native",
+            100,
+            200,
+            false,
+            None,
+            &input,
+            "ok\n",
+            None,
+        );
+        match d.body {
+            StepBody::Command { command, .. } => {
+                assert_eq!(command.command, "Get-ChildItem -Force");
+                assert_eq!(command.description.as_deref(), Some("List every file"));
+            }
+            other => panic!("expected a command body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_command_tool_with_no_description_carries_none_rather_than_an_empty_string() {
+        let input = json!({ "command": "pwd" });
+        let d = build_step_detail(
+            "b1",
+            "PowerShell",
+            "/x",
+            "native",
+            0,
+            0,
+            false,
+            None,
+            &input,
+            "",
+            None,
+        );
+        match d.body {
+            StepBody::Command { command, .. } => assert_eq!(command.description, None),
             other => panic!("expected a command body, got {other:?}"),
         }
     }
