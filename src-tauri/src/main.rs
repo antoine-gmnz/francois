@@ -253,6 +253,10 @@ fn main() {
                 // FR-10: compact every idle session's on-disk transcript to
                 // its retention bound — best-effort, skips a session mid-turn.
                 session::compact_all_transcripts(app);
+                // FR-10 counterpart for the step-detail sidecar: without this
+                // it grows unbounded for the whole life of every retained
+                // session — same best-effort, skips a session mid-turn.
+                session::compact_all_step_details(app);
             }
         });
 }

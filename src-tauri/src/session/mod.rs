@@ -89,21 +89,21 @@ pub(crate) use adapter::{
     PermissionDecision, ProviderProtocol, SessionAdapter, TurnContext, TurnControl, TurnMode,
 };
 pub use agent_transcript::{
-    AgentEvent, __cmd__agents_transcript, __tauri_command_name_agents_transcript,
-    agents_transcript, emit_agent_event, fill_agent_block_meta, push_agent_notice, push_agent_text,
-    push_agent_tool,
+    __cmd__agents_transcript, __tauri_command_name_agents_transcript, agents_transcript,
+    emit_agent_event, fill_agent_block_meta, push_agent_notice, push_agent_text, push_agent_tool,
+    AgentEvent,
 };
 pub use agents::{
-    LineRoute, __cmd__agents_activity, __cmd__agents_dispatch, __cmd__agents_kill,
-    __cmd__agents_list, __tauri_command_name_agents_activity, __tauri_command_name_agents_dispatch,
+    __cmd__agents_activity, __cmd__agents_dispatch, __cmd__agents_kill, __cmd__agents_list,
+    __tauri_command_name_agents_activity, __tauri_command_name_agents_dispatch,
     __tauri_command_name_agents_kill, __tauri_command_name_agents_list, agent_identity,
     agents_activity, agents_dispatch, agents_kill, agents_list, apply_dispatch_input,
     apply_dispatch_result, attribute_inner_line, dispatch_model, emit_agent_emissions,
     finalize_agents, finalize_tool_input, first_nonblank_line, handle_task_notification,
-    notice_is_error, resolve_background, route_line, user_line_text,
+    notice_is_error, resolve_background, route_line, user_line_text, LineRoute,
 };
 pub use attachments::{
-    Attachment, __cmd__session_attach_clipboard_image, __cmd__session_attach_file,
+    __cmd__session_attach_clipboard_image, __cmd__session_attach_file,
     __cmd__session_clear_attachments, __cmd__session_commit_attachments,
     __cmd__session_pick_attachments, __cmd__session_release_attachment,
     __tauri_command_name_session_attach_clipboard_image, __tauri_command_name_session_attach_file,
@@ -111,7 +111,7 @@ pub use attachments::{
     __tauri_command_name_session_commit_attachments, __tauri_command_name_session_pick_attachments,
     __tauri_command_name_session_release_attachment, purge_session, session_attach_clipboard_image,
     session_attach_file, session_clear_attachments, session_commit_attachments,
-    session_pick_attachments, session_release_attachment, sweep_staged,
+    session_pick_attachments, session_release_attachment, sweep_staged, Attachment,
 };
 pub(crate) use blocks::classify_block;
 // A glob like every other domain here: `generate_handler!` needs several hidden
@@ -119,21 +119,19 @@ pub(crate) use blocks::classify_block;
 // Every name this module exports is `cloud_`/`Cloud`-prefixed or otherwise
 // domain-specific for that reason — see cloud/mod.rs.
 pub use cloud::{
-    CloudAdoptRegistry, CloudProvenance, __cmd__cloud_adopt, __cmd__cloud_list,
-    __cmd__cloud_resolve, __tauri_command_name_cloud_adopt, __tauri_command_name_cloud_list,
-    __tauri_command_name_cloud_resolve, cloud_adopt, cloud_list, cloud_resolve,
-    kill_all_cloud_adoptions,
+    __cmd__cloud_adopt, __cmd__cloud_list, __cmd__cloud_resolve, __tauri_command_name_cloud_adopt,
+    __tauri_command_name_cloud_list, __tauri_command_name_cloud_resolve, cloud_adopt, cloud_list,
+    cloud_resolve, kill_all_cloud_adoptions, CloudAdoptRegistry, CloudProvenance,
 };
 #[cfg(test)]
 pub(crate) use commands::switch_permission_mode_in_engine;
 pub use commands::{
-    SendSource, __cmd__conversation_get_transcript, __cmd__permissions_decide,
-    __cmd__session_answer_question, __cmd__session_clear, __cmd__session_compact,
-    __cmd__session_create, __cmd__session_interrupt, __cmd__session_list,
-    __cmd__session_pick_directory, __cmd__session_remove, __cmd__session_rename,
-    __cmd__session_send, __cmd__session_switch_effort, __cmd__session_switch_model,
-    __cmd__session_switch_permission_mode, __cmd__session_switch_response_mode,
-    __cmd__session_unqueue, __cmd__session_update_settings,
+    __cmd__conversation_get_transcript, __cmd__permissions_decide, __cmd__session_answer_question,
+    __cmd__session_clear, __cmd__session_compact, __cmd__session_create, __cmd__session_interrupt,
+    __cmd__session_list, __cmd__session_pick_directory, __cmd__session_remove,
+    __cmd__session_rename, __cmd__session_send, __cmd__session_switch_effort,
+    __cmd__session_switch_model, __cmd__session_switch_permission_mode,
+    __cmd__session_switch_response_mode, __cmd__session_unqueue, __cmd__session_update_settings,
     __tauri_command_name_conversation_get_transcript, __tauri_command_name_permissions_decide,
     __tauri_command_name_session_answer_question, __tauri_command_name_session_clear,
     __tauri_command_name_session_compact, __tauri_command_name_session_create,
@@ -148,7 +146,7 @@ pub use commands::{
     session_create, session_interrupt, session_list, session_pick_directory, session_remove,
     session_rename, session_send, session_switch_effort, session_switch_model,
     session_switch_permission_mode, session_switch_response_mode, session_unqueue,
-    session_update_settings, SessionSettingsPatch,
+    session_update_settings, SendSource, SessionSettingsPatch,
 };
 #[cfg(test)]
 pub(crate) use control::QuestionOption;
@@ -182,14 +180,13 @@ pub use mcp::{
     read_mcp_json,
 };
 pub use mcp_approval::{
-    McpApprovalState, __cmd__mcp_approvals, __cmd__mcp_decide, __tauri_command_name_mcp_approvals,
-    __tauri_command_name_mcp_decide, approval_state, mcp_approvals, mcp_decide,
+    __cmd__mcp_approvals, __cmd__mcp_decide, __tauri_command_name_mcp_approvals,
+    __tauri_command_name_mcp_decide, approval_state, mcp_approvals, mcp_decide, McpApprovalState,
 };
 pub use models::{
-    ModelInfo, __cmd__session_models, __tauri_command_name_session_models, catalog, context_limit,
-    label_for, load_model_cache, loaded_context, model, model_cache, refresh_models,
-    refresh_models_for, resolve_context_tokens, session_models, warm_model_cache,
-    DEFAULT_CONTEXT_LIMIT,
+    __cmd__session_models, __tauri_command_name_session_models, catalog, context_limit, label_for,
+    load_model_cache, loaded_context, model, model_cache, refresh_models, refresh_models_for,
+    resolve_context_tokens, session_models, warm_model_cache, ModelInfo, DEFAULT_CONTEXT_LIMIT,
 };
 pub use teardown::{
     dispose_session_resources, register_teardown, SessionAccountObserver, SessionTeardown,
@@ -204,9 +201,9 @@ pub use persistence::{
     unlink_project_sessions, valid_session_id,
 };
 pub use remote::{
-    RemoteRegistry, __cmd__remote_get, __cmd__remote_start, __cmd__remote_stop,
-    __tauri_command_name_remote_get, __tauri_command_name_remote_start,
-    __tauri_command_name_remote_stop, kill_all_remote, remote_get, remote_start, remote_stop,
+    __cmd__remote_get, __cmd__remote_start, __cmd__remote_stop, __tauri_command_name_remote_get,
+    __tauri_command_name_remote_start, __tauri_command_name_remote_stop, kill_all_remote,
+    remote_get, remote_start, remote_stop, RemoteRegistry,
 };
 #[cfg(test)]
 pub(crate) use remote_discovery::{blocking_prompt, extract_url_from_output};
@@ -217,13 +214,14 @@ pub(crate) use response_mode::{mark_sent, pending_prefix, prefixed_prompt, Respo
 #[cfg(test)]
 pub(crate) use skills::skill_entry;
 pub use skills::{
-    SkillInfo, __cmd__skills_install, __cmd__skills_list, __cmd__skills_run,
+    __cmd__skills_install, __cmd__skills_list, __cmd__skills_run,
     __tauri_command_name_skills_install, __tauri_command_name_skills_list,
     __tauri_command_name_skills_run, discover_skills, skills_install, skills_list, skills_run,
+    SkillInfo,
 };
 pub use slash::{
-    SlashCommandInfo, __cmd__session_list_commands, __tauri_command_name_session_list_commands,
-    capture_cli_commands, merge_commands, parse_init_slash_commands, session_list_commands,
+    __cmd__session_list_commands, __tauri_command_name_session_list_commands, capture_cli_commands,
+    merge_commands, parse_init_slash_commands, session_list_commands, SlashCommandInfo,
 };
 pub(crate) use spawn::{
     account_env, account_env_for_kind, claude_invocation, claude_path_env, permission_args,
@@ -237,6 +235,9 @@ pub(crate) use step_detail::{
     append_step_detail, build_step_detail, remove_step_detail_sidecar,
     sweep_orphaned_step_detail_sidecars,
 };
+// FR-10 counterpart for the sidecar — called from main.rs alongside
+// `compact_all_transcripts` on a clean shutdown.
+pub use step_detail::compact_all_step_details;
 // Only the adapters' own tests destructure a captured body; production code
 // builds one and hands it straight to `append_step_detail`.
 #[cfg(test)]
@@ -261,15 +262,15 @@ pub(crate) use turn::{
     update_used, ContextTracker,
 };
 pub use usage_probe::start_usage_probe;
+pub use workflow_details::{
+    __cmd__workflows_agent, __cmd__workflows_detail, __cmd__workflows_script,
+    __tauri_command_name_workflows_agent, __tauri_command_name_workflows_detail,
+    __tauri_command_name_workflows_script, attribute_ask, compute_detail, drop_ask, push_ask,
+    resolve_ack_paths, run_is_terminal, seen_agents, set_pending_asks, workflows_agent,
+    workflows_detail, workflows_script, ScanEntry, WorkflowDetail, WorkflowPendingAsk,
+};
 #[cfg(test)]
 pub(crate) use workflow_details::{build_detail, ScanState};
-pub use workflow_details::{
-    ScanEntry, WorkflowDetail, WorkflowPendingAsk, __cmd__workflows_agent, __cmd__workflows_detail,
-    __cmd__workflows_script, __tauri_command_name_workflows_agent,
-    __tauri_command_name_workflows_detail, __tauri_command_name_workflows_script, attribute_ask,
-    compute_detail, drop_ask, push_ask, resolve_ack_paths, run_is_terminal, seen_agents,
-    set_pending_asks, workflows_agent, workflows_detail, workflows_script,
-};
 pub(crate) use workflow_watch::{
     attribute_workflow_ask, emit_workflow_event, flush_workflow_detail, remove_workflow_ask,
     start_workflow_watch, stop_all_workflow_watches, unwatch_session_workflows,
@@ -283,12 +284,11 @@ pub use workflows::{
 #[cfg(test)]
 pub(crate) use workflows::{apply_workflow_notice, mint_workflow};
 pub use worktree::{
-    SessionWorktree, WorktreeCreateInput, __cmd__session_worktree_probe,
-    __cmd__session_worktree_remove, __cmd__session_worktree_status,
+    __cmd__session_worktree_probe, __cmd__session_worktree_remove, __cmd__session_worktree_status,
     __tauri_command_name_session_worktree_probe, __tauri_command_name_session_worktree_remove,
     __tauri_command_name_session_worktree_status, adopt_host, host_from_distro, path_exists,
     resolve_worktree, reverse_create, session_worktree_probe, session_worktree_remove,
-    session_worktree_status,
+    session_worktree_status, SessionWorktree, WorktreeCreateInput,
 };
 
 // core-architecture-wave3 FR-3: also published under the `harness` feature, so
