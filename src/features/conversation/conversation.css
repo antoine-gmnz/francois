@@ -147,6 +147,231 @@
   padding: var(--space-24) var(--space-18) var(--space-18);
 }
 
+/* ── session-switch-loader (specs/design/session-switch-loader.md · design
+   turn 18a "TRANSCRIPT LOADING") ────────────────────────────────────────────
+   The third branch a cold session switch renders while its transcript is
+   still in flight (ConversationView, gated on useConversationTranscript's
+   `showSkeleton` — FR-2's 140ms delay, FR-3's known-empty suppression): a
+   creeping hairline above the column, and two turns pinned to the same
+   bottom edge the real transcript lands at. Every `.conv-skel-*` bar below is
+   a STATIC fill — no `@keyframes` touches one anywhere in this file, matching
+   the precedent documented at the top of cloud-sessions.css: a skeleton that
+   moves reads as activity happening in the thing it stands for, and here the
+   only thing actually happening is the hairline.
+
+   Every colour here is an EXISTING token (design brief §8) — no raw hex, so
+   the block follows the light theme like the rest of the pane. The brief's
+   "bar fills step darker with depth, from --border-emphasis down" is that
+   token ramp, brightest first:
+     --border-emphasis → --bg-hover → --bg-raised → --bg-elevated
+   and the two hairlines borrow the real geometry's own tokens so the skeleton
+   and the transcript that replaces it draw the same lines: the header rule
+   from `.turn__rule` (--bg-elevated), the tool rail from `.toolrail::before`
+   (--bg-raised). The gutter glyphs take a fill token rather than a text one on
+   purpose: they are part of the bar ramp, not type that says anything. */
+
+.conv-hydrating-bar {
+  position: relative;
+  height: 2px;
+  background: var(--bg-panel);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.conv-hydrating-bar__thumb {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  background: var(--accent);
+  animation: conv-hydrating-creep 1.5s ease-in-out infinite;
+}
+@keyframes conv-hydrating-creep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conv-hydrating-bar__thumb {
+    animation: none;
+    transform: translateX(0);
+  }
+}
+
+/* FR-5: bottom-pinned in the SAME scroll container the real transcript uses —
+   `justify-content: flex-end` is what lands two short turns at the bottom
+   edge instead of the top, so swapping this stack for the real items map
+   never scrolls the container or shifts the composer. */
+.conv-skel-stack {
+  width: 100%;
+  max-width: 820px;
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--space-20);
+  padding: var(--space-18) var(--space-18) var(--space-16);
+}
+.conv-skel-turn {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  column-gap: var(--space-12);
+}
+.conv-skel-turn--older {
+  opacity: 0.55;
+}
+.conv-skel-gutter {
+  font-family: var(--font-mono);
+  text-align: center;
+  line-height: 1.5;
+}
+.conv-skel-turn--older .conv-skel-gutter {
+  color: var(--bg-hover);
+}
+.conv-skel-turn--latest .conv-skel-gutter {
+  color: var(--border-emphasis);
+}
+.conv-skel-gutter--user {
+  font-size: var(--font-size-13);
+}
+.conv-skel-gutter--assistant {
+  font-size: var(--font-size-9);
+  line-height: 2.1;
+}
+.conv-skel-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+}
+.conv-skel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 8px;
+}
+.conv-skel-rule {
+  flex: 1;
+  min-width: var(--space-8);
+  height: 1px;
+  background: var(--bg-elevated);
+}
+.conv-skel-bar {
+  display: block;
+  height: 8px;
+  border-radius: var(--radius-xs);
+}
+.conv-skel-head-bar--user-a {
+  width: 26px;
+  background: var(--border-emphasis);
+}
+.conv-skel-head-bar--user-b {
+  width: 24px;
+  background: var(--bg-hover);
+}
+.conv-skel-head-bar--asst-a {
+  width: 52px;
+  background: var(--border-emphasis);
+}
+.conv-skel-head-bar--asst-extra {
+  width: 30px;
+  background: var(--bg-hover);
+}
+.conv-skel-head-bar--asst-b {
+  width: 22px;
+  background: var(--bg-raised);
+}
+.conv-skel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+}
+.conv-skel-line {
+  height: 10px;
+  border-radius: var(--radius-sm);
+}
+.conv-skel-line--older-user {
+  width: 64%;
+  background: var(--bg-raised);
+}
+.conv-skel-line--latest-1 {
+  width: 100%;
+  background: var(--bg-hover);
+}
+.conv-skel-line--latest-2 {
+  width: 94%;
+  background: var(--bg-raised);
+}
+.conv-skel-line--latest-3 {
+  width: 58%;
+  background: var(--bg-raised);
+}
+.conv-skel-line--tail-1 {
+  width: 88%;
+  background: var(--bg-elevated);
+}
+.conv-skel-line--tail-2 {
+  width: 34%;
+  background: var(--bg-elevated);
+}
+.conv-skel-rail {
+  position: relative;
+  padding-left: var(--space-14);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.conv-skel-rail::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--bg-raised);
+}
+.conv-skel-rail__row {
+  display: grid;
+  grid-template-columns: 12px 40px 1fr 52px;
+  column-gap: var(--space-10);
+  align-items: center;
+  height: 11px;
+}
+.conv-skel-rail__square {
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+}
+.conv-skel-rail__bar {
+  width: 40px;
+  height: 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+}
+.conv-skel-rail__name {
+  height: 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-raised);
+}
+.conv-skel-rail__name--1 {
+  width: 56%;
+}
+.conv-skel-rail__name--2 {
+  width: 73%;
+}
+.conv-skel-rail__name--3 {
+  width: 41%;
+}
+.conv-skel-rail__tail {
+  width: 52px;
+  height: 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+}
+
 /* design 9a: the FRAMED welcome block becomes a FILLED one. The frame and its
    notched legend went together — a notch only exists to interrupt a border —
    so with the border gone the block takes a surface (--bg-deep, the mock’s

@@ -117,3 +117,6 @@
 - 2026-08-20 · data · A bounded in-memory buffer evicts from the head but never past the oldest UNSETTLED entry — because an entry evicted then upserted by a later event re-appends at the tail and silently reorders what the user reads · transcript-scale
 - 2026-08-20 · data · Page an append-with-upsert log over the FOLDED sequence, never raw line offsets, re-folding per request — because a line index is not a block index, and a parse cache re-grows the memory the cap was added to remove · transcript-scale
 - 2026-08-20 · surfaces · Exactly ONE Tauri session listener exists in the webview; every consumer subscribes through the session-keyed router and none calls onSessionEvent directly — because per-consumer JS filtering makes event cost scale with panes × fleet · extends 2026-08-17 surfaces · transcript-scale
+
+- 2026-08-26 · ui · A loading affordance is gated on a perception threshold AND suppressed when the app already knows the resource is empty — because below the threshold it is a flash, and for an empty resource it is a lie · session-switch-loader
+- 2026-08-26 · ui · Skeleton bars are static fills; a loading surface gets at most ONE indeterminate element, and it names the fetch, not the content — because motion on the placeholder reads as activity inside the thing it stands for · session-switch-loader

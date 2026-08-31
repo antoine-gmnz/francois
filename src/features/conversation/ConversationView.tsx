@@ -18,6 +18,7 @@ import './conversation.css';
 import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
 import WorktreeNotice from './WorktreeNotice';
 import WelcomeBlock from './WelcomeBlock';
+import TranscriptSkeleton from './TranscriptSkeleton';
 
 // transcript-perf: this component now owns ONLY the transcript's own state
 // (the reducer, hydration, the worktree/resume/limit banners) plus the
@@ -92,6 +93,7 @@ export default function ConversationView({
     jumpToLatest,
     earlierRow,
     activateEarlier,
+    showSkeleton,
   } = useConversationTranscript(sessionId, visible);
 
   // design 9a: a streaming turn's header counts its duration up. Gated on the
@@ -150,6 +152,15 @@ export default function ConversationView({
       {/* plan usage-limit notice — the session stays live behind it */}
       {limitNotice !== null && <UsageLimitBanner message={limitNotice} onDismiss={dismissLimitNotice} />}
 
+      {/* session-switch-loader FR-7: the ONLY motion in the pane besides the
+          composer caret — mounts/unmounts with the skeleton below (same gate,
+          same suppression). Indeterminate: no aria-valuenow. */}
+      {showSkeleton && (
+        <div className="conv-hydrating-bar" role="progressbar" aria-label="restoring transcript">
+          <div className="conv-hydrating-bar__thumb" />
+        </div>
+      )}
+
       {/* transcript */}
       <div className="conv-transcript-wrap">
         <div
@@ -165,6 +176,12 @@ export default function ConversationView({
             <Centered>
               <span className="conv-error-text">{hydrationError}</span>
             </Centered>
+          ) : showSkeleton ? (
+            // session-switch-loader FR-1: the third branch — ordered after the
+            // error branch and before the welcome branch (FR-1's literal
+            // ordering), so a session that later resolves EMPTY still shows
+            // the welcome header, not a frozen skeleton.
+            <TranscriptSkeleton />
           ) : hydrated && state.blocks.length === 0 ? (
             // design 7a: the framed welcome block stands in for the transcript
             // until the first turn — see WelcomeBlock for what it states.
@@ -226,6 +243,7 @@ export default function ConversationView({
         meta={meta}
         dispatch={dispatch}
         setPinned={setPinned}
+        showSkeleton={showSkeleton}
       />
     </div>
   );

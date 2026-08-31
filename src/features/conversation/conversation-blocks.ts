@@ -758,3 +758,43 @@ export async function switchModelFromCard(a: ModelSwitchArgs): Promise<void> {
     a.schedule(() => a.setError(null), 4000);
   }
 }
+
+// ---------- session-switch-loader (FR-2/FR-3/FR-8/FR-9) ----------
+
+/**
+ * FR-3 — "known-empty" suppression: a session whose SessionMeta reports zero
+ * used context tokens, or that has no SessionMeta in the roster at all, is a
+ * session this pane cannot prove has any history to restore. `undefined`
+ * covers both "no SessionMeta" (useSessionMeta-style lookups return no match)
+ * and the field itself being absent from a stale roster entry.
+ */
+export function isKnownEmptySession(contextUsedTokens: number | undefined): boolean {
+  return contextUsedTokens === undefined || contextUsedTokens === 0;
+}
+
+/**
+ * FR-2/FR-3/FR-11 combined: whether ConversationView's third branch (the
+ * skeleton + hairline) should render. `delayedActive` already encodes the
+ * 140ms gate (useDelayedFlag); `hydrated`/`hydrationError` are checked again
+ * here (not just folded into `delayedActive`) so a session that resolves — or
+ * errors — the instant the delay elapses never renders the skeleton for even
+ * one extra frame (§7 edge cases).
+ */
+export function deriveShowSkeleton(
+  delayedActive: boolean,
+  hydrated: boolean,
+  hydrationError: string | null,
+  knownEmpty: boolean,
+): boolean {
+  return delayedActive && !hydrated && hydrationError === null && !knownEmpty;
+}
+
+/** FR-8: the composer placeholder while the skeleton is up — never a literal
+ *  duplicated at the call site. */
+export const RESTORING_PLACEHOLDER = 'restoring transcript — you can start typing';
+
+/** FR-9: the hint-bar's right slot while the skeleton is up, derived from
+ *  RENDER_WINDOW rather than a literal `200`. */
+export function readingWindowHint(): string {
+  return `reading last ${RENDER_WINDOW} of the session`;
+}

@@ -276,6 +276,8 @@ filtering relative PATH entries is right for extension spawns, it is right every
 ## frontend
 - [ ] LOW · src/app/app.css:963-969 · quality · pane header ⋯ button is opacity:0 until .split-pane:hover/:focus-within — add :focus-visible on the button itself as a redundant reveal trigger · deferred:unbound-panes
 - [ ] MEDIUM · src/lib/layoutStore.ts:1012-1013,1169-1174 · quality · closePane disposes the dropped shell then unsplitPatch re-disposes s.extraPanes — pass the filtered pane list into unsplitPatch (or skip the early dispose when keep.length===1) · deferred:unbound-panes
+- [ ] LOW · src/features/sessions/useSessionFleetSync.ts:134 · quality · dropSessionExtStreams (and its extensionsStore.ts implementation) fixes a real log-tail stream leak on session removal, unrelated to any session-switch-loader FR — land it under the extensions feature's own remediation/changelog rather than riding along here. · deferred:session-switch-loader
+- [ ] LOW · src/features/conversation/TranscriptSkeleton.tsx:247 · complexity · the three .conv-skel-rail__row blocks are hand-repeated identical JSX differing only by the --1/--2/--3 name-width modifier — map over [1,2,3] to emit the rail rows, same static output in fewer lines · deferred:session-switch-loader
 
 ## core
 - [ ] LOW · specs/reports/command-inspect.core.diff:1 · quality · Regenerate the per-surface diff against the correct base commit so it holds only command-inspect's hunks. · deferred:command-inspect

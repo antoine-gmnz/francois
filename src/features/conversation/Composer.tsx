@@ -54,6 +54,12 @@ export interface ComposerProps {
    */
   contextPercent: number | null;
   /**
+   * session-switch-loader FR-9: "reading last N of the session", non-null only
+   * while the skeleton is up. Takes over the same right-aligned slot
+   * `contextPercent` closes the hint row with — the two never show at once.
+   */
+  readingHint: string | null;
+  /**
    * split-session FR-6: this pane is not the focused one. The composer renders
    * IDENTICALLY — same bar, same buttons, same hint row, same height — because
    * a layout that reflows when focus moves is harder to read than one that does
@@ -104,6 +110,7 @@ export default function Composer({
   onRemoveAttachment,
   attachError,
   contextPercent,
+  readingHint,
   inert = false,
   onInertClick,
   pending,
@@ -263,7 +270,14 @@ export default function Composer({
           <span>
             <span className="composer-hint__key">⇧⏎</span> newline
           </span>
-          {contextPercent !== null && <span className="composer-hint__ctx">{contextPercent}% context</span>}
+          {/* session-switch-loader FR-9: while the skeleton is up this replaces
+              the context readout — the real figure is not yet meaningful for a
+              transcript still restoring. */}
+          {readingHint !== null ? (
+            <span className="composer-hint__ctx">{readingHint}</span>
+          ) : (
+            contextPercent !== null && <span className="composer-hint__ctx">{contextPercent}% context</span>
+          )}
         </span>
       </div>
     </div>

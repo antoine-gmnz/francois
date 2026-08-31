@@ -19,7 +19,7 @@ import type { SessionMeta, SessionStatus, SlashCommandInfo } from '../../../cont
 import { isBusyStatus, isTerminalStatus } from '../../../contract/fleet-board';
 import { sessionClear, sessionInterrupt, sessionSend, sessionUnqueue } from '../../lib/api';
 import Composer from './Composer';
-import { isClearCommand, type TranscriptDispatch } from './conversation-blocks';
+import { isClearCommand, readingWindowHint, RESTORING_PLACEHOLDER, type TranscriptDispatch } from './conversation-blocks';
 import { getDraft, setDraft } from './composer-draft';
 import { documentHasSelection, shouldFocusComposer } from './composer-focus';
 import {
@@ -72,6 +72,13 @@ export interface ComposerPaneProps {
   dispatch: TranscriptDispatch;
   /** FR-20: an idle send still pins the transcript to the bottom. */
   setPinned: (value: boolean) => void;
+  /**
+   * session-switch-loader FR-8/FR-9: whether this session's transcript is
+   * still showing the loading skeleton — swaps the placeholder and the
+   * hint-bar's right slot for as long as it is true. The composer's
+   * `disabled` gate (above, from `status`) is untouched by this.
+   */
+  showSkeleton: boolean;
 }
 
 export default function ComposerPane({
@@ -88,6 +95,7 @@ export default function ComposerPane({
   meta,
   dispatch,
   setPinned,
+  showSkeleton,
 }: ComposerPaneProps) {
   const disabled = isTerminalStatus(status);
 
@@ -325,7 +333,17 @@ export default function ComposerPane({
     autoGrow(el);
   }, [input]);
 
-  const placeholder = composerPlaceholder(status, errorMessage, hasPendingQuestion, hasPendingPermission);
+  // session-switch-loader FR-8: while the skeleton is up this wins over every
+  // other placeholder (question/permission/error/done) — the transcript is not
+  // hydrated, so none of those states can be genuine yet anyway (they all key
+  // off `state.blocks`, which is still empty).
+  const placeholder = showSkeleton
+    ? RESTORING_PLACEHOLDER
+    : composerPlaceholder(status, errorMessage, hasPendingQuestion, hasPendingPermission);
+  // FR-9: derived from RENDER_WINDOW, never a literal — replaces the context
+  // percent slot for as long as the skeleton is up (the figure a real session
+  // would show is not yet meaningful for one still restoring).
+  const readingHint = showSkeleton ? readingWindowHint() : null;
 
   // split-by-4 FR-11: at 3-4 panes the grid substitutes a PaneFooter for the
   // whole composer — a density decision, not a focus one (see
@@ -361,6 +379,7 @@ export default function ComposerPane({
             ? Math.min(100, Math.round((meta.contextUsedTokens / meta.contextLimitTokens) * 100))
             : null
         }
+        readingHint={readingHint}
         onAttachClick={attachments.onAttachClick}
         onRemoveAttachment={attachments.onRemoveAttachment}
         onInputChange={(e) => {
