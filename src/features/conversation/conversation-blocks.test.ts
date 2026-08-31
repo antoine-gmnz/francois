@@ -15,16 +15,20 @@ import {
   commandFromCard,
   compactBlocks,
   decideEarlierActivation,
+  deriveShowSkeleton,
   drainDeltas,
   earlierRowLabel,
   earlierRowState,
   isClearCommand,
+  isKnownEmptySession,
   isTranscriptRelevantEvent,
   liveCurrentModelId,
   mergeDelta,
   meterFillColor,
   pushDelta,
+  readingWindowHint,
   RENDER_WINDOW,
+  RESTORING_PLACEHOLDER,
   switchModelFromCard,
   transcriptReducer,
   TRANSCRIPT_TEXT_SELECT_STYLE,
@@ -1454,5 +1458,55 @@ describe('compactBlocks preserves block identity for untouched blocks (mac-text-
     const out = compactBlocks([user, assistant]);
     expect(out[0]).toBe(user);
     expect(out[1]).toBe(assistant);
+  });
+});
+
+describe('isKnownEmptySession (session-switch-loader FR-3)', () => {
+  it('is known-empty when contextUsedTokens is 0', () => {
+    expect(isKnownEmptySession(0)).toBe(true);
+  });
+
+  it('is known-empty when no SessionMeta reached this pane (undefined)', () => {
+    expect(isKnownEmptySession(undefined)).toBe(true);
+  });
+
+  it('is NOT known-empty for any positive token count', () => {
+    expect(isKnownEmptySession(1)).toBe(false);
+    expect(isKnownEmptySession(48_000)).toBe(false);
+  });
+});
+
+describe('deriveShowSkeleton (session-switch-loader FR-2/FR-3/FR-11 — one case per input)', () => {
+  it('false before the 140ms gate elapses (delayedActive false)', () => {
+    expect(deriveShowSkeleton(false, false, null, false)).toBe(false);
+  });
+
+  it('false once hydrated, even if delayedActive has not caught up yet', () => {
+    expect(deriveShowSkeleton(true, true, null, false)).toBe(false);
+  });
+
+  it('false the instant hydrationError is set', () => {
+    expect(deriveShowSkeleton(true, false, 'spawn failed', false)).toBe(false);
+  });
+
+  it('false for a known-empty session however long hydration takes', () => {
+    expect(deriveShowSkeleton(true, false, null, true)).toBe(false);
+  });
+
+  it('true only when every gate is open: past the delay, not hydrated, no error, not known-empty', () => {
+    expect(deriveShowSkeleton(true, false, null, false)).toBe(true);
+  });
+});
+
+describe('RESTORING_PLACEHOLDER (session-switch-loader FR-8)', () => {
+  it('is the exact copy the design brief specifies', () => {
+    expect(RESTORING_PLACEHOLDER).toBe('restoring transcript — you can start typing');
+  });
+});
+
+describe('readingWindowHint (session-switch-loader FR-9 — never a literal 200)', () => {
+  it('interpolates RENDER_WINDOW', () => {
+    expect(readingWindowHint()).toBe(`reading last ${RENDER_WINDOW} of the session`);
+    expect(readingWindowHint()).toContain(String(RENDER_WINDOW));
   });
 });

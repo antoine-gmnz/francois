@@ -16,6 +16,7 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type RefObjec
 import type { TranscriptPage } from '../../../contract/conversation-view';
 import type { SessionEvent, SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { getTranscript, sessionListCommands } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
 import { subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
@@ -23,8 +24,10 @@ import { getSessionCommands, setSessionCommands } from '../commands/slash-menu';
 import {
   applySessionEvent,
   decideEarlierActivation,
+  deriveShowSkeleton,
   drainDeltas,
   earlierRowState,
+  isKnownEmptySession,
   isTranscriptRelevantEvent,
   pushDelta,
   RENDER_WINDOW,
@@ -36,6 +39,10 @@ import {
   type TranscriptAction,
   type TranscriptState,
 } from './conversation-blocks';
+
+/** session-switch-loader FR-2: the skeleton/hairline never fire for a load
+ *  short enough to be imperceptible. */
+const SKELETON_DELAY_MS = 140;
 
 export interface ConversationTranscript {
   state: TranscriptState;
@@ -60,6 +67,12 @@ export interface ConversationTranscript {
   earlierRow: EarlierRowState;
   /** transcript-scale FR-13: activate the earlier-blocks row. */
   activateEarlier: () => void;
+  /**
+   * session-switch-loader FR-1..FR-3: whether ConversationView's loading
+   * branch (skeleton + hairline) should render — past the 140ms gate, still
+   * unhydrated, no hydration error, and this session is not known-empty.
+   */
+  showSkeleton: boolean;
 }
 
 /**
@@ -297,6 +310,18 @@ export function useConversationTranscript(sessionId: string, visible = true): Co
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   };
 
+  // session-switch-loader FR-2: "hydration in flight for this sessionId" —
+  // true from mount (this hook runs fresh per session, see the top-of-file
+  // note) until `hydrated` flips or `hydrationError` is set, both of which
+  // flip this false and so cancel/reset the delay gate below.
+  const hydrating = !hydrated && hydrationError === null;
+  const delayedHydrating = useDelayedFlag(hydrating, SKELETON_DELAY_MS);
+  // FR-3: read only the one field the known-empty check needs — the full
+  // SessionMeta object (useSessionMeta) would re-render this hook's owner on
+  // every roster field, not just this one.
+  const contextUsedTokens = useStore((s) => s.sessions.find((session) => session.id === sessionId)?.contextUsedTokens);
+  const showSkeleton = deriveShowSkeleton(delayedHydrating, hydrated, hydrationError, isKnownEmptySession(contextUsedTokens));
+
   return {
     state,
     dispatch,
@@ -317,5 +342,6 @@ export function useConversationTranscript(sessionId: string, visible = true): Co
     jumpToLatest,
     earlierRow: earlierRowState(state, hasMore),
     activateEarlier,
+    showSkeleton,
   };
 }
