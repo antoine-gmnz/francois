@@ -3,7 +3,6 @@
 use super::*;
 
 use crate::ipc::{ok, IpcResult};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
@@ -15,7 +14,7 @@ use tauri::{AppHandle, Manager};
 // each tier — robust across releases and account tiers. (Made-up full IDs like
 // `claude-opus-4` are rejected by the CLI.)
 
-pub(crate) fn catalog() -> Vec<ModelInfo> {
+pub fn catalog() -> Vec<ModelInfo> {
     vec![
         model("sonnet", "Sonnet"),
         model("opus", "Opus"),
@@ -25,9 +24,9 @@ pub(crate) fn catalog() -> Vec<ModelInfo> {
 
 /// What to SHOW when the catalog does not (yet) know a model's window. It is a
 /// display placeholder, never a ceiling — see `loaded_context`.
-pub(crate) const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
+pub const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
 
-pub(crate) fn context_limit(model_id: &str) -> u64 {
+pub fn context_limit(model_id: &str) -> u64 {
     resolve_context_tokens(model_id).unwrap_or(DEFAULT_CONTEXT_LIMIT)
 }
 
@@ -39,7 +38,7 @@ pub(crate) fn context_limit(model_id: &str) -> u64 {
 /// yet, and clamping against that placeholder destroyed the figure permanently —
 /// the next persist wrote the clamped 200000 back over the true count, so an
 /// Opus 5 session that had used 340K reloaded as "200K/200K, full".
-pub(crate) fn loaded_context(known: Option<u64>, persisted_used: u64) -> (u64, u64) {
+pub fn loaded_context(known: Option<u64>, persisted_used: u64) -> (u64, u64) {
     match known {
         Some(limit) => (limit, persisted_used.min(limit)),
         None => (DEFAULT_CONTEXT_LIMIT, persisted_used),
@@ -50,7 +49,7 @@ pub(crate) fn loaded_context(known: Option<u64>, persisted_used: u64) -> (u64, u
 /// aliases and bare family words (`opus`, `sonnet`, …) to the newest cached model
 /// of that family — so a session created with the `opus` alias still reports the
 /// current Opus context window (e.g. 1M) rather than the 200K default.
-pub(crate) fn resolve_context_tokens(model_id: &str) -> Option<u64> {
+pub fn resolve_context_tokens(model_id: &str) -> Option<u64> {
     let cache = model_cache().lock().unwrap();
     if let Some(c) = cache
         .iter()
@@ -72,7 +71,7 @@ pub(crate) fn resolve_context_tokens(model_id: &str) -> Option<u64> {
         .max()
 }
 
-pub(crate) fn fmt_tokens(n: u64) -> String {
+pub fn fmt_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         let m = n as f64 / 1_000_000.0;
         if (m - m.round()).abs() < 0.05 {
@@ -87,7 +86,7 @@ pub(crate) fn fmt_tokens(n: u64) -> String {
 
 /// Order model families so versions of the same model group together, flagship
 /// tiers first (spec: "sort the model versions by model").
-pub(crate) fn tier_rank(id: &str) -> u8 {
+pub fn tier_rank(id: &str) -> u8 {
     let l = id.to_lowercase();
     if l.contains("fable") || l.contains("mythos") {
         0
@@ -111,12 +110,12 @@ pub(crate) fn tier_rank(id: &str) -> u8 {
 // models released after this build). Falls back to the tier aliases if the
 // token/network is unavailable.
 
-pub(crate) static MODEL_CACHE: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
-pub(crate) fn model_cache() -> &'static Mutex<Vec<ModelInfo>> {
+pub static MODEL_CACHE: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
+pub fn model_cache() -> &'static Mutex<Vec<ModelInfo>> {
     MODEL_CACHE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-pub(crate) fn read_oauth_token() -> Option<String> {
+pub fn read_oauth_token() -> Option<String> {
     parse_access_token(&read_credentials_json()?)
 }
 
@@ -134,7 +133,7 @@ fn read_credentials_json() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn keychain_credentials_json() -> Option<String> {
-    let out = std::process::Command::new("security")
+    let out = crate::process_util::spawn("security")
         .args([
             "find-generic-password",
             "-s",
@@ -159,7 +158,7 @@ fn parse_access_token(json: &str) -> Option<String> {
         .map(String::from)
 }
 
-pub(crate) fn fetch_live_models() -> Option<Vec<ModelInfo>> {
+pub fn fetch_live_models() -> Option<Vec<ModelInfo>> {
     let token = read_oauth_token()?;
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(5))
@@ -265,10 +264,7 @@ pub(crate) fn fetch_live_models() -> Option<Vec<ModelInfo>> {
 /// places at bootstrap, all racing `warm_model_cache`, so a single transient
 /// failure among them was enough. Fall back only when nothing is known yet, so the
 /// model picker is never empty.
-pub(crate) fn refreshed_cache(
-    fetched: Option<Vec<ModelInfo>>,
-    cached: &[ModelInfo],
-) -> Vec<ModelInfo> {
+pub fn refreshed_cache(fetched: Option<Vec<ModelInfo>>, cached: &[ModelInfo]) -> Vec<ModelInfo> {
     match fetched {
         Some(live) => live,
         None if cached.is_empty() => catalog(),
@@ -285,7 +281,7 @@ pub(crate) fn refreshed_cache(
 // them at all. Mirroring the last successful fetch to disk makes the windows
 // survive the process: the second launch on a machine starts warm.
 
-pub(crate) fn models_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+pub fn models_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
@@ -344,7 +340,7 @@ fn adopt_live(app: &AppHandle, live: Vec<ModelInfo>) {
 
 /// Fetch the live list (updating the cache) or keep what we already know. With
 /// an `app` in hand a live fetch also mirrors + reconciles (`adopt_live`).
-pub(crate) fn refresh_models_for(app: Option<&AppHandle>) -> Vec<ModelInfo> {
+pub fn refresh_models_for(app: Option<&AppHandle>) -> Vec<ModelInfo> {
     let fetched = fetch_live_models(); // network first — never under the cache lock
     if let (Some(live), Some(app)) = (&fetched, app) {
         adopt_live(app, live.clone());
@@ -356,7 +352,7 @@ pub(crate) fn refresh_models_for(app: Option<&AppHandle>) -> Vec<ModelInfo> {
     next
 }
 
-pub(crate) fn refresh_models() -> Vec<ModelInfo> {
+pub fn refresh_models() -> Vec<ModelInfo> {
     refresh_models_for(None)
 }
 
@@ -396,13 +392,13 @@ pub fn warm_model_cache(app: AppHandle) {
 fn reconcile_context_limits(app: &AppHandle) {
     let updated: Vec<SessionMeta> = {
         let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.values_mut()
             .filter_map(|s| {
                 let limit = context_limit(&s.model_id);
                 (limit != s.context_limit_tokens).then(|| {
                     s.context_limit_tokens = limit;
-                    s.meta()
+                    s.meta(app)
                 })
             })
             .collect()
@@ -414,14 +410,14 @@ fn reconcile_context_limits(app: &AppHandle) {
 
 /// Human label for a model id: the cached display name, else a best-effort
 /// humanization of the id (e.g. `claude-opus-4-8` → `Opus 4.8`).
-pub(crate) fn label_for(id: &str) -> String {
+pub fn label_for(id: &str) -> String {
     if let Some(m) = model_cache().lock().unwrap().iter().find(|m| m.id == id) {
         return m.label.clone();
     }
     humanize(id)
 }
 
-pub(crate) fn humanize(id: &str) -> String {
+pub fn humanize(id: &str) -> String {
     let s = id.strip_prefix("claude-").unwrap_or(id);
     let parts: Vec<&str> = s.split('-').collect();
     let Some(tier) = parts.first() else {
@@ -452,35 +448,12 @@ pub(crate) fn humanize(id: &str) -> String {
 
 // ---------- serialized public shapes (contract/common.ts) ----------
 
-/// `Deserialize` is not part of the wire contract — it exists so the catalog can
-/// round-trip through the on-disk mirror (`models.json`). Every field but `id`
-/// and `label` is `default`ed, so a mirror written by an older build still loads.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ModelInfo {
-    pub id: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub brief: Option<String>,
-    #[serde(
-        rename = "contextTokens",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub context_tokens: Option<u64>,
-    /// Effort levels this model supports (subset of low/medium/high/xhigh/max).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub efforts: Vec<String>,
-}
-
-pub(crate) fn model(id: &str, label: &str) -> ModelInfo {
-    ModelInfo {
-        id: id.into(),
-        label: label.into(),
-        brief: None,
-        context_tokens: None,
-        efforts: Vec::new(),
-    }
-}
+// core-architecture-wave3 FR-9: the TYPE moved to `crate::ipc::model` — it is a
+// contract payload two domains build, and `account/endpoint.rs` had to name this
+// module to build one. The CATALOG (everything else in this file) stays here,
+// which is the split that was missing. Re-exported so the catalog's own call
+// sites, and `crate::session::ModelInfo`, are unchanged.
+pub use crate::ipc::{model, ModelInfo};
 
 /// multi-provider-openai FR-18/FR-21's account-keyed wire fix: `accountId` is
 /// OPTIONAL, not `sessionId` — the model picker's only mount is the New

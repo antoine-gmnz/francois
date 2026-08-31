@@ -32,7 +32,7 @@ use tauri::{AppHandle, Manager};
 /// the records just staged. The frontend builds a chip — and therefore an
 /// `<img>` — only for `kind: 'image'`, so exposing a `file` would widen the
 /// scope for a thumbnail nobody renders.
-pub(crate) fn thumbnail_paths(attachments: &[Attachment]) -> Vec<&str> {
+pub fn thumbnail_paths(attachments: &[Attachment]) -> Vec<&str> {
     attachments
         .iter()
         .filter(|a| a.kind == "image")
@@ -45,7 +45,7 @@ pub(crate) fn thumbnail_paths(attachments: &[Attachment]) -> Vec<&str> {
 /// Best effort: a refused grant costs a thumbnail (the chip falls back to its
 /// `▣` state) and never the attachment, which is already staged and already
 /// referenced by the prompt.
-pub(crate) fn allow_thumbnails(app: &AppHandle, attachments: &[Attachment]) {
+pub fn allow_thumbnails(app: &AppHandle, attachments: &[Attachment]) {
     let scope = app.asset_protocol_scope();
     for path in thumbnail_paths(attachments) {
         let _ = scope.allow_file(path);

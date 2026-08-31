@@ -52,7 +52,7 @@ mod toggles;
 #[cfg(test)]
 mod testutil;
 
-pub(crate) use commands::*;
+pub use commands::*;
 
 use crate::ipc::AppError;
 use serde::Serialize;
@@ -62,17 +62,17 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 /// francois:extensions:event → `francois://extensions/event` (§5).
-pub(crate) const EVENT_CHANNEL: &str = "francois://extensions/event";
+pub const EVENT_CHANNEL: &str = "francois://extensions/event";
 
 // ---------- caps (mirror the constants in contract/extensions.ts) ----------
 
-pub(crate) const EXT_TIMEOUT_MS: u64 = 10_000;
-pub(crate) const EXT_OUTPUT_CAP_BYTES: usize = 4 * 1024 * 1024;
-pub(crate) const EXT_CONCURRENCY: usize = 4;
-pub(crate) const EXT_REFRESH_FLOOR_MS: u64 = 2_000;
-pub(crate) const EXT_PAGE_SIZE: u32 = 100;
-pub(crate) const EXT_LOG_MAX_LINES: usize = 2_000;
-pub(crate) const EXT_FIELD_MAX_CHARS: usize = 512;
+pub const EXT_TIMEOUT_MS: u64 = 10_000;
+pub const EXT_OUTPUT_CAP_BYTES: usize = 4 * 1024 * 1024;
+pub const EXT_CONCURRENCY: usize = 4;
+pub const EXT_REFRESH_FLOOR_MS: u64 = 2_000;
+pub const EXT_PAGE_SIZE: u32 = 100;
+pub const EXT_LOG_MAX_LINES: usize = 2_000;
+pub const EXT_FIELD_MAX_CHARS: usize = 512;
 /// Mirrors the contract constant of the same name. `extensions_probe`/
 /// `extensions_launch` are GONE (FR-24 — the dashboard action left with
 /// cohorte), so nothing in the core reads this any more; it stays only so
@@ -80,14 +80,14 @@ pub(crate) const EXT_FIELD_MAX_CHARS: usize = 512;
 /// exports.
 #[allow(dead_code)]
 pub(crate) const EXT_PROBE_TIMEOUT_MS: u64 = 2_000;
-pub(crate) const EXT_STDERR_MAX_CHARS: usize = 2_000;
+pub const EXT_STDERR_MAX_CHARS: usize = 2_000;
 /// FR-5: `extension.json` is refused past this size.
-pub(crate) const MANIFEST_MAX_BYTES: usize = 256 * 1024;
+pub const MANIFEST_MAX_BYTES: usize = 256 * 1024;
 /// FR-5.
-pub(crate) const MANIFEST_VERSION: u64 = 1;
+pub const MANIFEST_VERSION: u64 = 1;
 
 /// FR-3: `^[a-z][a-z0-9-]{0,31}$` — an extension's id is its directory name.
-pub(crate) fn valid_extension_id(id: &str) -> bool {
+pub fn valid_extension_id(id: &str) -> bool {
     let mut chars = id.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -109,7 +109,7 @@ pub(crate) fn valid_extension_id(id: &str) -> bool {
 }
 
 /// FR-9: `^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$` — argv[0] is a bare binary name.
-pub(crate) fn valid_argv0(argv0: &str) -> bool {
+pub fn valid_argv0(argv0: &str) -> bool {
     let mut chars = argv0.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -131,7 +131,7 @@ pub(crate) fn valid_argv0(argv0: &str) -> bool {
 }
 
 /// FR-10: the compiled-in shell blocklist — a load-time refusal, not a filter.
-pub(crate) const SHELL_ARGV0_BLOCKLIST: &[&str] = &[
+pub const SHELL_ARGV0_BLOCKLIST: &[&str] = &[
     "sh",
     "bash",
     "zsh",
@@ -149,7 +149,7 @@ pub(crate) const SHELL_ARGV0_BLOCKLIST: &[&str] = &[
 /// trailing `.exe` suffix stripped. Keeps `SHELL_ARGV0_BLOCKLIST` itself as the canonical
 /// lowercase bare-name list while still catching Windows executable-suffix / case variants
 /// (e.g. `"bash.exe"`, `"SH"`, `"CMD.EXE"`).
-pub(crate) fn normalize_argv0_for_blocklist(argv0: &str) -> String {
+pub fn normalize_argv0_for_blocklist(argv0: &str) -> String {
     let lower = argv0.to_ascii_lowercase();
     lower.strip_suffix(".exe").unwrap_or(&lower).to_string()
 }
@@ -158,14 +158,14 @@ pub(crate) fn normalize_argv0_for_blocklist(argv0: &str) -> String {
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum PanelScope {
+pub enum PanelScope {
     Fleet,
     Project,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum PrimitiveKind {
+pub enum PrimitiveKind {
     KeyValue,
     Table,
     StatRow,
@@ -174,7 +174,7 @@ pub(crate) enum PrimitiveKind {
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum StatusTone {
+pub enum StatusTone {
     Ok,
     Warn,
     Error,
@@ -183,7 +183,7 @@ pub(crate) enum StatusTone {
 }
 
 impl StatusTone {
-    pub(crate) fn from_wire(s: &str) -> Option<StatusTone> {
+    pub fn from_wire(s: &str) -> Option<StatusTone> {
         match s {
             "ok" => Some(StatusTone::Ok),
             "warn" => Some(StatusTone::Warn),
@@ -197,7 +197,7 @@ impl StatusTone {
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum ColumnKind {
+pub enum ColumnKind {
     Text,
     Status,
     Number,
@@ -206,7 +206,7 @@ pub(crate) enum ColumnKind {
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub(crate) struct ColumnDef {
+pub struct ColumnDef {
     pub key: String,
     pub label: String,
     pub kind: ColumnKind,
@@ -216,7 +216,7 @@ pub(crate) struct ColumnDef {
 
 /// Mirrors `PanelInfo.tokenSource`.
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub(crate) struct TokenSourceInfo {
+pub struct TokenSourceInfo {
     #[serde(rename = "panelId")]
     pub panel_id: String,
     #[serde(rename = "rowKey")]
@@ -225,7 +225,7 @@ pub(crate) struct TokenSourceInfo {
 
 /// Mirrors `PanelInfo`. FR-24: `action` is GONE — no panel mutates anything.
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub(crate) struct PanelInfo {
+pub struct PanelInfo {
     pub id: String,
     pub label: String,
     pub scope: PanelScope,
@@ -243,7 +243,7 @@ pub(crate) struct PanelInfo {
 /// Mirrors `DetectPredicate` — tagged by `kind`.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind")]
-pub(crate) enum DetectPredicate {
+pub enum DetectPredicate {
     #[serde(rename = "pathExists")]
     PathExists { path: String },
     #[serde(rename = "pathJsonEquals")]
@@ -259,7 +259,7 @@ pub(crate) enum DetectPredicate {
 /// Mirrors `ConsentState` — tagged unit variants, `{ "state": "granted" }`.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(tag = "state")]
-pub(crate) enum ConsentState {
+pub enum ConsentState {
     #[serde(rename = "granted")]
     Granted,
     #[serde(rename = "never")]
@@ -270,7 +270,7 @@ pub(crate) enum ConsentState {
 
 /// Mirrors `ExtensionSource`.
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub(crate) struct ExtensionSource {
+pub struct ExtensionSource {
     pub dir: String,
     /// FR-18: the sha256 of the manifest's raw bytes, hex-encoded — the value
     /// the consent dialog echoes back in `ConsentRequest.manifestSha256`, so
@@ -286,7 +286,7 @@ pub(crate) struct ExtensionSource {
 
 /// Mirrors `ExtensionInfo`.
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub(crate) struct ExtensionInfo {
+pub struct ExtensionInfo {
     pub id: String,
     pub label: String,
     pub enabled: bool,
@@ -304,21 +304,21 @@ pub(crate) struct ExtensionInfo {
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub(crate) struct KeyValueRow {
+pub struct KeyValueRow {
     pub key: String,
     pub value: String,
     pub tone: StatusTone,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub(crate) struct TableRow {
+pub struct TableRow {
     pub id: String,
     pub cells: HashMap<String, String>,
     pub tone: StatusTone,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub(crate) struct StatTile {
+pub struct StatTile {
     pub label: String,
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -327,7 +327,7 @@ pub(crate) struct StatTile {
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(tag = "primitive", rename_all = "kebab-case")]
-pub(crate) enum PanelData {
+pub enum PanelData {
     KeyValue {
         rows: Vec<KeyValueRow>,
     },
@@ -345,7 +345,7 @@ pub(crate) enum PanelData {
 /// Mirrors `ExtensionEvent` → `francois://extensions/event`.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type")]
-pub(crate) enum ExtensionEvent {
+pub enum ExtensionEvent {
     #[serde(rename = "ext.stream.started")]
     StreamStarted {
         #[serde(rename = "streamId")]
@@ -375,7 +375,7 @@ pub(crate) enum ExtensionEvent {
     },
 }
 
-pub(crate) fn emit(app: &AppHandle, ev: ExtensionEvent) {
+pub fn emit(app: &AppHandle, ev: ExtensionEvent) {
     let _ = app.emit(EVENT_CHANNEL, ev);
 }
 
@@ -384,10 +384,10 @@ pub(crate) fn emit(app: &AppHandle, ev: ExtensionEvent) {
 /// One line-oriented field of a `lines`-adapted panel (FR-21/FR-23). A field
 /// literally named `tone` decides the row's tone; every other field lands in
 /// `cells` verbatim (after FR-51 sanitization).
-pub(crate) type LineFields = Vec<String>;
+pub type LineFields = Vec<String>;
 
 /// How a provider's stdout becomes a `PanelData` (FR-21).
-pub(crate) enum OutputFormat {
+pub enum OutputFormat {
     /// One JSON document already in the primitive's payload shape.
     Json,
     /// FR-21/FR-22/FR-23 — `table`-only.
@@ -402,7 +402,7 @@ pub(crate) enum OutputFormat {
 /// elements; `${offset}`/`${limit}` are substituted in-place by `provider.rs`
 /// (Rust-rendered numbers, never provider- or user-supplied text) — no shell,
 /// no `sh -c`, one argv element per element (FR-19 of `extensions`, unchanged).
-pub(crate) struct ProviderSpec {
+pub struct ProviderSpec {
     pub argv0: String,
     pub args: Vec<String>,
     /// Appended only for a paginated request.
@@ -413,7 +413,7 @@ pub(crate) struct ProviderSpec {
 /// A `log-tail` panel's source. FR-38 of `extensions`: these two, and nothing
 /// else, may carry the single `token` slot in the system — `${token}`
 /// substituted with a value that has ALREADY passed `TOKEN_PATTERN`.
-pub(crate) enum Source {
+pub enum Source {
     /// Relative path under the panel's root; may contain `${token}` once.
     File {
         path_template: String,
@@ -424,19 +424,19 @@ pub(crate) enum Source {
     },
 }
 
-pub(crate) struct TokenSourceSpec {
+pub struct TokenSourceSpec {
     pub panel_id: String,
     pub row_key: String,
 }
 
-pub(crate) struct ColumnSpec {
+pub struct ColumnSpec {
     pub key: String,
     pub label: String,
     pub kind: ColumnKind,
     pub weight: Option<u32>,
 }
 
-pub(crate) struct PanelDefinition {
+pub struct PanelDefinition {
     /// `<extensionId>:<slug>` (FR-8) — minted here, never read from the
     /// manifest.
     pub id: String,
@@ -456,7 +456,7 @@ pub(crate) struct PanelDefinition {
 }
 
 impl PanelDefinition {
-    pub(crate) fn to_info(&self) -> PanelInfo {
+    pub fn to_info(&self) -> PanelInfo {
         PanelInfo {
             id: self.id.clone(),
             label: self.label.clone(),
@@ -487,14 +487,14 @@ impl PanelDefinition {
 }
 
 /// FR-28 (`extensions`): the floor is applied ONCE, in the core, silently.
-pub(crate) fn clamp_refresh_ms(declared: Option<u64>) -> Option<u64> {
+pub fn clamp_refresh_ms(declared: Option<u64>) -> Option<u64> {
     declared.map(|ms| ms.max(EXT_REFRESH_FLOOR_MS))
 }
 
 /// One manifest, loaded and validated (or not). Present in the registry EVEN
 /// when it failed to load (FR-3/FR-6) — `extensions` still lists it, with
 /// `manifest_error` set and `panels` empty (never partial, FR-6).
-pub(crate) struct LoadedExtension {
+pub struct LoadedExtension {
     /// The directory name — the id, valid or not (FR-3). Always present, even
     /// for a directory whose name fails `EXTENSION_ID_PATTERN`.
     pub id: String,
@@ -514,7 +514,7 @@ pub(crate) struct LoadedExtension {
 }
 
 impl LoadedExtension {
-    pub(crate) fn panel(&self, panel_id: &str) -> Option<&PanelDefinition> {
+    pub fn panel(&self, panel_id: &str) -> Option<&PanelDefinition> {
         self.panels.iter().find(|p| p.id == panel_id)
     }
 }
@@ -526,7 +526,7 @@ impl LoadedExtension {
 /// persisted, mutable input (FR-15..FR-20); the detection cache and every
 /// stream rebuild on restart.
 #[derive(Default)]
-pub(crate) struct ExtensionState {
+pub struct ExtensionState {
     pub(crate) registry: Mutex<Vec<LoadedExtension>>,
     pub(crate) toggles: Mutex<toggles::Toggles>,
     pub(crate) detect: Mutex<detect::DetectCache>,
@@ -536,7 +536,7 @@ pub(crate) struct ExtensionState {
 /// App exit: a `log-tail` process source is a real child process, and leaking
 /// one past the window closing is the orphan this feature promises never to
 /// leave behind.
-pub(crate) fn kill_all_streams(app: &AppHandle) {
+pub fn kill_all_streams(app: &AppHandle) {
     if let Some(state) = app.try_state::<ExtensionState>() {
         state.streams.lock().unwrap().close_all();
     }
@@ -545,7 +545,7 @@ pub(crate) fn kill_all_streams(app: &AppHandle) {
 /// Called once at app setup, mirroring `project::load_projects` — loads the
 /// registry from `~/.francois/extensions/` and reconciles the persisted
 /// toggles against it (FR-13, FR-18, FR-19).
-pub(crate) fn load_registry(app: &AppHandle) {
+pub fn load_registry(app: &AppHandle) {
     if let Some(state) = app.try_state::<ExtensionState>() {
         commands::refresh_registry(app, &state);
     }
@@ -554,6 +554,7 @@ pub(crate) fn load_registry(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::ErrorCode;
     use serde_json::{json, Value};
 
     fn to_json<T: Serialize>(v: &T) -> Value {
@@ -657,7 +658,7 @@ mod tests {
             to_json(&ExtensionEvent::StreamError {
                 stream_id: "s1".into(),
                 error: AppError {
-                    code: "EXT_PROVIDER_MISSING".into(),
+                    code: ErrorCode::ExtProviderMissing,
                     message: "docker not found on PATH".into(),
                     detail: None,
                 }

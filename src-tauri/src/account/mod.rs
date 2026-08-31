@@ -50,16 +50,17 @@ mod registry;
 
 pub(crate) use cli_tools::*;
 pub(crate) use codex::*;
-pub(crate) use commands::*;
+pub use commands::*;
 pub(crate) use endpoint::*;
 pub(crate) use grok::*;
-pub(crate) use login::*;
+pub use login::*;
 pub(crate) use mirror::*;
-pub(crate) use registry::*;
+pub use registry::*;
 
 #[cfg(test)]
 mod testutil;
 
+use crate::ipc::{AppError, ErrorCode};
 use portable_pty::{ChildKiller, MasterPty};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -227,7 +228,7 @@ pub(crate) fn emit(app: &AppHandle, ev: AccountEvent) {
 /// One persisted account row (registry.rs owns the shape). `default` is NEVER
 /// one of these — it is synthesized at every read (FR-2).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct AccountRecord {
+pub struct AccountRecord {
     id: String,
     label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -254,7 +255,7 @@ pub(crate) struct AccountRecord {
 /// The persisted half of an `openai-compatible` account (multi-provider-endpoint
 /// FR-1). `base_url` is already normalized (FR-4) by the time it lands here.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct EndpointRecord {
+pub struct EndpointRecord {
     #[serde(rename = "baseUrl")]
     pub(crate) base_url: String,
     #[serde(rename = "modelIds", default, skip_serializing_if = "Option::is_none")]
@@ -264,7 +265,7 @@ pub(crate) struct EndpointRecord {
 /// The single in-flight login (FR-16). Lives in mod.rs because both login.rs
 /// (which drives it) and commands.rs (which reserves the slot) touch its fields,
 /// and a child module can read its ancestor's private fields.
-pub(crate) struct LoginHandle {
+pub struct LoginHandle {
     pub(crate) login_id: String,
     /// The row this login will register — a fresh uuid, or the id of the row a
     /// Re-login is refreshing (FR-17).
@@ -292,7 +293,7 @@ pub(crate) struct LoginHandle {
 /// respect to a second concurrent `account_add`.
 pub struct AccountState(Mutex<AccountInner>, AtomicBool);
 
-pub(crate) struct AccountInner {
+pub struct AccountInner {
     records: Vec<AccountRecord>,
     /// "default" or a live record id — ALWAYS resolves (FR-4).
     default_account_id: String,
@@ -370,6 +371,72 @@ pub fn claude_config_dir_of(app: &AppHandle, account_id: &str) -> Option<String>
 /// session's `provider` at creation. The built-in `default` account and any
 /// id the registry no longer knows are `ClaudeCodeOauth` (`AccountKind`'s
 /// `Default`) — the same "falls back to default" path FR-13 names.
+/// core-architecture-wave3 FR-11: the one question the session domain asks the
+/// account domain every time it builds a `SessionMeta` — *what kind is this
+/// account right now?* A trait rather than the free `kind_of` below for one
+/// reason: the answer has to be suppliable without an `AppHandle`.
+///
+/// **Why not thread `AppHandle` itself**, as the spec's FR-11 text says. Tauri's
+/// only test handle is `AppHandle<MockRuntime>`, and every signature in this
+/// crate says `AppHandle` = `AppHandle<Wry>` — a different type. So a unit test
+/// cannot construct one at all (`session/env.rs` has said as much since the
+/// seam landed), and the ~15 tests that call `meta()` would have had to be
+/// deleted rather than fixed. This trait is the same derivation with a seam a
+/// test can stand on; `impl AccountKinds for AppHandle` is what the production
+/// path uses, and it is one line, so the two cannot diverge.
+/// core-architecture-wave3 FR-9: the last thing `account` needed from
+/// `session`. Removing an account has a side-effect on sessions bound to it —
+/// they are repointed at `default` (multi-account FR-9) — and `account_remove`
+/// used to reach across and call `session::reassign_account_sessions` by name.
+///
+/// Inverted the same way `session::SessionTeardown` is: this domain declares
+/// what has to happen and knows nothing about who does it, the domain that owns
+/// the affected state implements it, and the crate root wires the two together
+/// at startup. The return value is what `AccountRemoveData.reassignedSessions`
+/// carries, so the wire payload is unchanged.
+///
+/// **No new lock edge**: observers are called with the account lock already
+/// RELEASED (multi-account §6 LOCK ORDER), exactly as the direct call was, and
+/// the observer list itself is a write-once `OnceLock` with no mutex at all.
+pub trait AccountRemovalObserver: Send + Sync {
+    fn account_removed(&self, app: &AppHandle, account_id: &str) -> Vec<String>;
+}
+
+static REMOVAL_OBSERVERS: std::sync::OnceLock<Vec<Box<dyn AccountRemovalObserver>>> =
+    std::sync::OnceLock::new();
+
+/// Called ONCE, from the crate root's `.setup()`. A second call is ignored —
+/// see `session::register_teardown` for why that is not a panic.
+pub fn register_removal_observers(observers: Vec<Box<dyn AccountRemovalObserver>>) {
+    let _ = REMOVAL_OBSERVERS.set(observers);
+}
+
+/// Notify every registered observer that `account_id` is gone, and collect the
+/// ids they repointed. Empty when nothing is registered, which is the case in
+/// every unit test and is correct there: a test with no session registry has no
+/// session to repoint.
+pub fn notify_account_removed(app: &AppHandle, account_id: &str) -> Vec<String> {
+    REMOVAL_OBSERVERS
+        .get()
+        .map(|observers| {
+            observers
+                .iter()
+                .flat_map(|o| o.account_removed(app, account_id))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub trait AccountKinds {
+    fn kind_of(&self, account_id: &str) -> AccountKind;
+}
+
+impl AccountKinds for AppHandle {
+    fn kind_of(&self, account_id: &str) -> AccountKind {
+        kind_of(self, account_id)
+    }
+}
+
 pub fn kind_of(app: &AppHandle, account_id: &str) -> AccountKind {
     if account_id == DEFAULT_ACCOUNT_ID {
         return AccountKind::ClaudeCodeOauth;
@@ -406,7 +473,7 @@ pub fn kind_of(app: &AppHandle, account_id: &str) -> AccountKind {
 /// `pub(crate)` rather than `pub` like its two neighbours: it hands back
 /// `EndpointRecord`, which is itself `pub(crate)`, and a `pub` fn leaking a
 /// private type is a `private_interfaces` warning.
-pub(crate) fn endpoint_of(app: &AppHandle, account_id: &str) -> Option<(EndpointRecord, String)> {
+pub fn endpoint_of(app: &AppHandle, account_id: &str) -> Option<(EndpointRecord, String)> {
     if account_id == DEFAULT_ACCOUNT_ID {
         return None;
     }
@@ -449,17 +516,20 @@ pub fn known_ids(app: &AppHandle) -> std::collections::HashSet<String> {
 pub fn resolve_new_session_account(
     app: &AppHandle,
     requested: Option<&str>,
-) -> Result<String, (&'static str, &'static str)> {
+) -> Result<String, AppError> {
     let Some(state) = app.try_state::<AccountState>() else {
         return Ok(DEFAULT_ACCOUNT_ID.to_string());
     };
     let Ok(inner) = state.0.lock() else {
-        return Err(("INTERNAL", "account state is unavailable"));
+        return Err(AppError::new(
+            ErrorCode::Internal,
+            "account state is unavailable",
+        ));
     };
     match requested.map(str::trim).filter(|s| !s.is_empty()) {
         None => Ok(inner.default_account_id.clone()),
         Some(id) if exists(&inner, id) => Ok(id.to_string()),
-        Some(_) => Err(("ACCOUNT_NOT_FOUND", "no such account")),
+        Some(_) => Err(AppError::new(ErrorCode::AccountNotFound, "no such account")),
     }
 }
 
@@ -478,7 +548,7 @@ pub fn default_account_id(app: &AppHandle) -> String {
 /// FR-25: an account `configDir` a `wsl.exe` spawn can reach. Only a
 /// drive-letter Windows path is (wsl.exe maps it to `/mnt/...` itself); a UNC
 /// path (including a `\\wsl$\...`/`\\wsl.localhost\...` one) is not.
-pub(crate) fn wsl_translatable_config_dir(path: &str) -> bool {
+pub fn wsl_translatable_config_dir(path: &str) -> bool {
     !path.trim_start().starts_with("\\\\") && !path.trim_start().starts_with("//")
 }
 
@@ -521,7 +591,7 @@ pub fn mark_auth_failed(app: &AppHandle, account_id: &str) {
     };
     inner
         .auth_failed_at
-        .insert(account_id.to_string(), crate::session::now_ms());
+        .insert(account_id.to_string(), crate::ids::now_ms());
     let list = build_list(&inner);
     drop(inner);
     emit(app, AccountEvent::List { accounts: list });
@@ -531,7 +601,7 @@ pub fn mark_auth_failed(app: &AppHandle, account_id: &str) {
 /// credential/authentication failure (as opposed to any other turn error)?
 /// Best-effort — the CLI does not carry a machine-readable auth-failure code
 /// on this path, so this matches on the wording it is known to use.
-pub(crate) fn is_credential_failure(message: &str) -> bool {
+pub fn is_credential_failure(message: &str) -> bool {
     let m = message.to_lowercase();
     [
         "unauthorized",
@@ -587,7 +657,7 @@ mod tests {
         let failed = serde_json::to_value(AccountEvent::LoginFailed {
             login_id: "l1".into(),
             error: crate::ipc::AppError {
-                code: "ACCOUNT_DUPLICATE".into(),
+                code: ErrorCode::AccountDuplicate,
                 message: "already registered".into(),
                 detail: None,
             },

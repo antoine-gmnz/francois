@@ -11,11 +11,12 @@ use super::translate::{Effect, ToolCapture, Translator};
 use super::wire::{self, GrokEvent};
 use super::{GrokTurnHandle, GROK_MISSING_HINT};
 use crate::ipc::AppError;
+use crate::ipc::ErrorCode;
 use crate::session::adapter::TurnContext;
 use crate::session::*;
 
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
@@ -226,40 +227,32 @@ pub(super) fn begin_turn(
         &ctx.permission_mode,
     );
 
-    let mut cmd = Command::new(program);
-    cmd.args(argv);
     // FR-5: the child's own working directory, not a `--cwd` flag — see
     // args.rs's module doc for why.
-    cmd.current_dir(&ctx.cwd);
-    if let Some(path) = claude_path_env() {
-        cmd.env("PATH", path);
-    }
     // FR-19: this turn runs under its session's account.
-    for (k, v) in account_env_for_kind(
-        config_dir.as_deref(),
-        crate::account::AccountKind::GrokCli,
-        &ctx.runtime,
-        &[],
-    ) {
-        cmd.env(k, v);
-    }
-    no_window(&mut cmd);
-    // FR-5: nothing is ever written to stdin (the prompt is argv), so it is
-    // closed rather than piped — an inherited or piped-with-no-writer stdin
+    // FR-5 again: nothing is ever written to stdin (the prompt is argv), so the
+    // facade's null stdin stands — an inherited or piped-with-no-writer stdin
     // risks the child blocking on a read that will never resolve.
-    cmd.stdin(Stdio::null())
+    let child = crate::process_util::spawn(program)
+        .args(argv)
+        .current_dir(&ctx.cwd)
+        .envs(account_env_for_kind(
+            config_dir.as_deref(),
+            crate::account::AccountKind::GrokCli,
+            &ctx.runtime,
+            &[],
+        ))
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-
-    let child = cmd.spawn().map_err(|e| AppError {
-        code: "SPAWN_FAILED".into(),
-        message: if e.kind() == std::io::ErrorKind::NotFound {
-            GROK_MISSING_HINT.to_string()
-        } else {
-            format!("could not start grok: {e}")
-        },
-        detail: None,
-    });
+        .start()
+        .map_err(|e| AppError {
+            code: ErrorCode::SpawnFailed,
+            message: if e.kind() == std::io::ErrorKind::NotFound {
+                GROK_MISSING_HINT.to_string()
+            } else {
+                format!("could not start grok: {e}")
+            },
+            detail: None,
+        });
     let mut child = child?;
 
     // FR-10: the prompt rode the argv of a child that started, so the thread now

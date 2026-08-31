@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::ipc::{err, err_detail, ok, IpcResult};
+use crate::ipc::{AppError, ErrorCode};
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +20,7 @@ use tauri::{AppHandle, State};
 /// thread (so the conversation is continuous from Francois to the phone); otherwise
 /// we mint the id ourselves with `--session-id` so the transcript path is known
 /// before the child has said anything.
-pub(crate) fn remote_args(thread_id: &str, resume: bool, name: &str) -> Vec<String> {
+pub fn remote_args(thread_id: &str, resume: bool, name: &str) -> Vec<String> {
     vec![
         if resume { "--resume" } else { "--session-id" }.to_string(),
         thread_id.to_string(),
@@ -31,7 +32,7 @@ pub(crate) fn remote_args(thread_id: &str, resume: bool, name: &str) -> Vec<Stri
 /// Resolves the caller-supplied Remote Control name: trims and falls back to
 /// the session's own name when blank, then sanitizes so it can never be read
 /// as a CLI flag (M2: a leading '-' would turn the name into one).
-pub(crate) fn resolve_host_name(name: Option<String>, session_name: &str) -> String {
+pub fn resolve_host_name(name: Option<String>, session_name: &str) -> String {
     let name = name
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
@@ -44,7 +45,7 @@ pub(crate) fn resolve_host_name(name: Option<String>, session_name: &str) -> Str
 /// (durable-sessions persists `claudeSessionId`, so this survives an app
 /// restart). Otherwise mints a fresh id so the transcript path is known
 /// before the child has said anything.
-pub(crate) fn resolve_thread_id(claude_session_id: Option<String>) -> (String, bool) {
+pub fn resolve_thread_id(claude_session_id: Option<String>) -> (String, bool) {
     match claude_session_id {
         Some(id) if !id.is_empty() => (id, true),
         _ => (uuid::Uuid::new_v4().to_string(), false),
@@ -104,7 +105,7 @@ fn spawn_host_process(
     cwd: &str,
     runtime: &str,
     account_config_dir: Option<&str>,
-) -> Result<SpawnedHost, (&'static str, String)> {
+) -> Result<SpawnedHost, AppError> {
     let pair = native_pty_system()
         .openpty(PtySize {
             // Wide enough that the CLI's footer/notice carrying the URL is not
@@ -114,7 +115,9 @@ fn spawn_host_process(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|err| ("PTY_ERROR", format!("could not open a pty: {err}")))?;
+        .map_err(|err| {
+            AppError::new(ErrorCode::PtyError, format!("could not open a pty: {err}"))
+        })?;
 
     let mut cmd = CommandBuilder::new(exe);
     for arg in argv {
@@ -140,10 +143,12 @@ fn spawn_host_process(
         cmd.env(k, v);
     }
 
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|err| ("SPAWN_FAILED", format!("could not start {exe}: {err}")))?;
+    let child = pair.slave.spawn_command(cmd).map_err(|err| {
+        AppError::new(
+            ErrorCode::SpawnFailed,
+            format!("could not start {exe}: {err}"),
+        )
+    })?;
     drop(pair.slave);
     let mut guard = KillOnErr(Some(child));
 
@@ -151,8 +156,8 @@ fn spawn_host_process(
     // early return drops it and reaps the child.
     let killer = guard.0.as_mut().unwrap().clone_killer();
     let reader = pair.master.try_clone_reader().map_err(|err| {
-        (
-            "PTY_ERROR",
+        AppError::new(
+            ErrorCode::PtyError,
             format!("could not read the host output: {err}"),
         )
     })?;
@@ -352,7 +357,7 @@ pub fn remote_start(
     let Some((cwd, runtime, session_name, claude_session_id, worktree_distro, account_id)) =
         engine.remote_target_of(&session_id)
     else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     let account_config_dir = crate::account::claude_config_dir_of(&app, &account_id);
 
@@ -385,7 +390,7 @@ pub fn remote_start(
             )
         };
         return err_detail(
-            "MCP_APPROVAL_REQUIRED",
+            ErrorCode::McpApprovalRequired,
             format!("Remote Control cannot start: {what}."),
             serde_json::to_value(&approvals).unwrap_or(serde_json::Value::Null),
         );
@@ -410,7 +415,7 @@ pub fn remote_start(
     let host = match spawn_host_process(&exe, &argv, &cwd, &runtime, account_config_dir.as_deref())
     {
         Ok(host) => host,
-        Err((code, message)) => return err(code, message),
+        Err(e) => return e.into(),
     };
 
     let started_at = now_ms();

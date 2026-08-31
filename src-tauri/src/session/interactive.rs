@@ -21,7 +21,7 @@ use tauri::{AppHandle, Manager};
 
 /// contract HelpEntry — one /help card row.
 #[derive(Serialize, Clone)]
-pub(crate) struct HelpEntry {
+pub struct HelpEntry {
     pub(crate) command: &'static str,
     pub(crate) description: &'static str,
 }
@@ -29,7 +29,7 @@ pub(crate) struct HelpEntry {
 /// contract CommandCard — the tagged payload of command.output.
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "lowercase")]
-pub(crate) enum CommandCard {
+pub enum CommandCard {
     /// /usage & /cost, parsed (FR-9). meters non-empty; tail preformatted.
     Usage {
         command: String,
@@ -70,10 +70,10 @@ pub(crate) enum CommandCard {
 // mirror spec §5 (probed against claude 2.1.217, 2026-07-22).
 
 /// FR-2 intercept set — mirrors INTERCEPTED_COMMANDS. These never spawn a turn.
-pub(crate) const INTERCEPTED_COMMANDS: [&str; 5] = ["usage", "cost", "model", "status", "help"];
+pub const INTERCEPTED_COMMANDS: [&str; 5] = ["usage", "cost", "model", "status", "help"];
 
 /// /help card contents — mirrors HELP_ENTRIES (FR-15), in display order.
-pub(crate) fn help_entries() -> Vec<HelpEntry> {
+pub fn help_entries() -> Vec<HelpEntry> {
     vec![
         HelpEntry {
             command: "usage",
@@ -109,7 +109,7 @@ pub(crate) fn help_entries() -> Vec<HelpEntry> {
 /// FR-1 grammar — mirrors parseCommand: the trimmed text is a command iff it is a
 /// single line matching `^/([A-Za-z][A-Za-z0-9_-]*)(\s+\S.*)?$`. Returns
 /// (token lowercased, arg trimmed). None → normal passthrough turn.
-pub(crate) fn parse_command(text: &str) -> Option<(String, Option<String>)> {
+pub fn parse_command(text: &str) -> Option<(String, Option<String>)> {
     let t = text.trim();
     if t.contains('\n') {
         return None;
@@ -142,13 +142,13 @@ pub(crate) fn parse_command(text: &str) -> Option<(String, Option<String>)> {
 }
 
 /// FR-2: parse + filter to the intercept set. None → normal passthrough turn.
-pub(crate) fn intercepted_command(text: &str) -> Option<(String, Option<String>)> {
+pub fn intercepted_command(text: &str) -> Option<(String, Option<String>)> {
     parse_command(text).filter(|(c, _)| INTERCEPTED_COMMANDS.contains(&c.as_str()))
 }
 
 /// FR-9: parse a /usage//cost answer. ≥1 meter → usage card (meters + tail: the
 /// non-meter lines, blank runs collapsed to one, trimmed); else a raw text card.
-pub(crate) fn usage_card(command: &str, answer: &str) -> CommandCard {
+pub fn usage_card(command: &str, answer: &str) -> CommandCard {
     let mut meters: Vec<UsageMeter> = Vec::new();
     let mut tail_lines: Vec<&str> = Vec::new();
     for line in answer.lines() {
@@ -186,7 +186,7 @@ pub(crate) fn usage_card(command: &str, answer: &str) -> CommandCard {
 
 /// FR-19: first match of `\*\*Tokens:\*\*\s*(\S+)\s*/\s*(\S+)\s*\((\d+)%\)` →
 /// (usedLabel, limitLabel, percentUsed). None on drift → body-only context card.
-pub(crate) fn parse_context_tokens(text: &str) -> Option<(String, String, u64)> {
+pub fn parse_context_tokens(text: &str) -> Option<(String, String, u64)> {
     let mut search = text;
     while let Some(pos) = search.find("**Tokens:**") {
         let after = &search[pos + 11..];
@@ -198,7 +198,7 @@ pub(crate) fn parse_context_tokens(text: &str) -> Option<(String, String, u64)> 
     None
 }
 
-pub(crate) fn parse_context_tokens_tail(after: &str) -> Option<(String, String, u64)> {
+pub fn parse_context_tokens_tail(after: &str) -> Option<(String, String, u64)> {
     let s = after.trim_start();
     let slash = s.find('/')?;
     let used = s[..slash].trim_end();
@@ -227,7 +227,7 @@ pub(crate) fn parse_context_tokens_tail(after: &str) -> Option<(String, String, 
 
 /// FR-19 body normalization: remove `**` bold markers; strip leading `#`-runs
 /// (plus one space) from heading lines; table pipes kept verbatim.
-pub(crate) fn normalize_context_body(text: &str) -> String {
+pub fn normalize_context_body(text: &str) -> String {
     text.lines()
         .map(|line| {
             let line = line.replace("**", "");
@@ -243,7 +243,7 @@ pub(crate) fn normalize_context_body(text: &str) -> String {
 }
 
 /// FR-19: build the /context card from the synthetic answer.
-pub(crate) fn context_card(answer: &str) -> CommandCard {
+pub fn context_card(answer: &str) -> CommandCard {
     let body = normalize_context_body(answer);
     match parse_context_tokens(answer) {
         Some((used, limit, pct)) => CommandCard::Context {
@@ -267,7 +267,7 @@ pub(crate) fn context_card(answer: &str) -> CommandCard {
 /// FR-9/10 probe verdict (pure; unit-tested). A fully-parsed answer always wins —
 /// even when the 30s watchdog fired while the final bytes were being read — so
 /// `timed_out` is consulted only in the no-parsed-answer arm.
-pub(crate) fn probe_card(command: &str, lines: &[String], timed_out: bool) -> CommandCard {
+pub fn probe_card(command: &str, lines: &[String], timed_out: bool) -> CommandCard {
     match probe_answer(lines) {
         Some(answer) if !answer.is_empty() => usage_card(command, &answer),
         _ if timed_out => CommandCard::Notice { text: "couldn't fetch usage \u{2014} timed out".into() },
@@ -279,7 +279,7 @@ pub(crate) fn probe_card(command: &str, lines: &[String], timed_out: bool) -> Co
 
 /// FR-17: classify a CLI-local answer into a card, in order: (a) context turn →
 /// context card; (b) unknown/unavailable → notice verbatim; (c) text card.
-pub(crate) fn classify_local_answer(turn_command: Option<&str>, answer: &str) -> CommandCard {
+pub fn classify_local_answer(turn_command: Option<&str>, answer: &str) -> CommandCard {
     if turn_command == Some("context") {
         return context_card(answer);
     }
@@ -298,7 +298,7 @@ pub(crate) fn classify_local_answer(turn_command: Option<&str>, answer: &str) ->
 
 /// FR-18 predicate: fire the defensive fallback? (turn succeeded, no synthetic
 /// message seen, zero assistant/tool blocks, non-empty result string).
-pub(crate) fn command_fallback_fires(
+pub fn command_fallback_fires(
     success: bool,
     saw_synthetic: bool,
     saw_blocks: bool,
@@ -309,7 +309,7 @@ pub(crate) fn command_fallback_fires(
 
 /// FR-13: resolve a /model argument against the catalog — exact id match first,
 /// else case-insensitive label match.
-pub(crate) fn resolve_model_arg<'a>(models: &'a [ModelInfo], arg: &str) -> Option<&'a ModelInfo> {
+pub fn resolve_model_arg<'a>(models: &'a [ModelInfo], arg: &str) -> Option<&'a ModelInfo> {
     models
         .iter()
         .find(|m| m.id == arg)
@@ -320,7 +320,7 @@ pub(crate) fn resolve_model_arg<'a>(models: &'a [ModelInfo], arg: &str) -> Optio
 /// francois:session:models (the warmed cache). FR-12/13 require instant: a cold
 /// cache serves the tier-alias fallback immediately and kicks a background
 /// refresh — never a synchronous fetch on the intercepted-send path.
-pub(crate) fn model_catalog_snapshot() -> Vec<ModelInfo> {
+pub fn model_catalog_snapshot() -> Vec<ModelInfo> {
     let cached = model_cache().lock().unwrap().clone();
     let (models, needs_refresh) = snapshot_from_cache(cached);
     if needs_refresh {
@@ -333,7 +333,7 @@ pub(crate) fn model_catalog_snapshot() -> Vec<ModelInfo> {
 
 /// Pure snapshot decision (unit-tested): a warm cache is served as-is; a cold
 /// cache yields the tier-alias catalog plus a background-refresh request.
-pub(crate) fn snapshot_from_cache(cached: Vec<ModelInfo>) -> (Vec<ModelInfo>, bool) {
+pub fn snapshot_from_cache(cached: Vec<ModelInfo>) -> (Vec<ModelInfo>, bool) {
     if cached.is_empty() {
         (catalog(), true)
     } else {
@@ -343,7 +343,7 @@ pub(crate) fn snapshot_from_cache(cached: Vec<ModelInfo>) -> (Vec<ModelInfo>, bo
 
 /// Upsert + persist a finalized command block and emit its command.output
 /// (FR-9/10/12–18, FR-24). No-op if the session is gone (session-engine FR-14).
-pub(crate) fn finalize_command_block(
+pub fn finalize_command_block(
     env: &dyn SessionEnv,
     session_id: &str,
     block_id: &str,
@@ -352,7 +352,11 @@ pub(crate) fn finalize_command_block(
 ) {
     let card_json = serde_json::to_value(card).unwrap_or(Value::Null);
     let block = {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let Some(s) = map.get_mut(session_id) else {
             return;
         };
@@ -376,7 +380,7 @@ pub(crate) fn finalize_command_block(
 
 /// Per-command flow for an intercepted command (FR-5..FR-15). The user block is
 /// already buffered and message.user emitted (FR-4).
-pub(crate) fn run_intercepted_command(
+pub fn run_intercepted_command(
     app: &AppHandle,
     session_id: &str,
     command: &str,
@@ -390,8 +394,8 @@ pub(crate) fn run_intercepted_command(
             // FR-14: instant snapshot card
             let meta = {
                 let engine = app.state::<Engine>();
-                let map = engine.sessions.lock().unwrap();
-                map.get(session_id).map(|s| s.meta())
+                let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+                map.get(session_id).map(|s| s.meta(app))
             };
             if let Some(meta) = meta {
                 finalize_command_block(
@@ -420,12 +424,12 @@ pub(crate) fn run_intercepted_command(
 
 /// /model — bare: catalog card (FR-12); with an argument: resolve + switch or an
 /// unknown-model notice (FR-13). Instant either way; no status change.
-pub(crate) fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&str>) {
+pub fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&str>) {
     let models = model_catalog_snapshot();
     let Some(arg) = arg else {
         let current_id = {
             let engine = app.state::<Engine>();
-            let map = engine.sessions.lock().unwrap();
+            let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
             let Some(s) = map.get(session_id) else { return };
             s.model_id.clone()
         };
@@ -801,7 +805,7 @@ mod tests {
         );
 
         let status = serde_json::to_value(CommandCard::Status {
-            meta: test_session().meta(),
+            meta: test_session().meta(&crate::session::testutil::fake_accounts()),
         })
         .unwrap();
         assert_eq!(status["kind"], "status");

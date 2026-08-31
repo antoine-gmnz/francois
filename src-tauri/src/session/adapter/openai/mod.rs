@@ -43,7 +43,7 @@ use std::str::FromStr;
 /// `permissions::build_ask` is handed. One string, three roles, no mapping
 /// table to drift.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum FrancoisTool {
+pub enum FrancoisTool {
     Read,
     Write,
     Edit,
@@ -55,7 +55,7 @@ pub(crate) enum FrancoisTool {
 impl FrancoisTool {
     /// Declaration order matches `FRANCOIS_TOOLS` in the contract, and the
     /// parity test below is what keeps the two lists from drifting.
-    pub(crate) const ALL: [FrancoisTool; 6] = [
+    pub const ALL: [FrancoisTool; 6] = [
         FrancoisTool::Read,
         FrancoisTool::Write,
         FrancoisTool::Edit,

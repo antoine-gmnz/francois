@@ -2,6 +2,7 @@
 //! decide a gated permission ask.
 
 use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::{AppError, ErrorCode};
 use crate::permissions::PermissionRule;
 use crate::session::*;
 use std::collections::HashMap;
@@ -20,7 +21,7 @@ pub fn session_answer_question(
     answers: HashMap<String, String>,
 ) -> IpcResult<Option<()>> {
     if answers.is_empty() {
-        return err("INVALID_INPUT", "answers is empty");
+        return err(ErrorCode::InvalidInput, "answers is empty");
     }
     // multi-provider-seam FR-8: reached only through `TurnControl` — no
     // Child/ChildStdin/pending map named here. Snapshot the handle, then
@@ -28,21 +29,30 @@ pub fn session_answer_question(
     // and must never stall every other command.
     let outer = engine.with_session(&session_id, |s| s.current.clone());
     let Some(outer) = outer else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     let Some(control) = outer else {
         // No turn in flight ⇒ nothing can be pending (turn over).
-        return err("QUESTION_NOT_PENDING", "that question is no longer pending");
+        return err(
+            ErrorCode::QuestionNotPending,
+            "that question is no longer pending",
+        );
     };
     let answers_value = serde_json::to_value(&answers).unwrap_or_else(|_| serde_json::json!({}));
     match control.answer_question(&block_id, &answers_value) {
-        ControlAck::NotPending => err("QUESTION_NOT_PENDING", "that question is no longer pending"),
+        ControlAck::NotPending => err(
+            ErrorCode::QuestionNotPending,
+            "that question is no longer pending",
+        ),
         ControlAck::ChannelClosed => {
             // §5.4: the child died between park and answer — FR-13 cancels the
             // question, and the caller learns it is no longer pending.
             resolve_question(&app, &session_id, &block_id, "cancelled", None);
             refresh_parked_status(&app, &session_id);
-            err("QUESTION_NOT_PENDING", "that question is no longer pending")
+            err(
+                ErrorCode::QuestionNotPending,
+                "that question is no longer pending",
+            )
         }
         ControlAck::Applied => {
             resolve_question(
@@ -79,11 +89,11 @@ fn remember_rule(
     block_id: &str,
     tier: Option<String>,
     allow: bool,
-) -> Result<PermissionRule, (&'static str, String)> {
+) -> Result<PermissionRule, AppError> {
     let Some(pattern) = control.pending_permission_pattern(block_id) else {
-        return Err((
-            "PERMISSION_NOT_PENDING",
-            "that request is no longer pending".into(),
+        return Err(AppError::new(
+            ErrorCode::PermissionNotPending,
+            "that request is no longer pending",
         ));
     };
     // FR-6: local by default. VALIDATED — `tier_path` treats anything ≠
@@ -93,12 +103,13 @@ fn remember_rule(
     // could never act on that rule).
     let tier = tier.unwrap_or_else(|| "local".into());
     if !crate::permissions::is_valid_tier(&tier) {
-        return Err(("INVALID_INPUT", "unknown tier".into()));
+        return Err(AppError::new(ErrorCode::InvalidInput, "unknown tier"));
     }
     let path = crate::permissions::tier_path(engine, session_id, &tier)?;
     let effect = if allow { "allow" } else { "deny" };
+    // core-architecture-wave3 FR-6: `write_rule` already raises
+    // SETTINGS_WRITE_FAILED, so the re-code this used to carry is gone.
     crate::permissions::write_rule(&path, &tier, effect, &pattern)
-        .map_err(|msg| ("SETTINGS_WRITE_FAILED", msg))
 }
 
 /// francois:permissions:decide (permission-guardrails FR-6..FR-9, §5.4).
@@ -117,7 +128,7 @@ pub fn permissions_decide(
     tier: Option<String>,
 ) -> IpcResult<Option<()>> {
     let Some((allow, remember)) = crate::permissions::decide_outcome(&decision) else {
-        return err("INVALID_INPUT", "unknown decision");
+        return err(ErrorCode::InvalidInput, "unknown decision");
     };
     // multi-provider-seam FR-8: reached only through `TurnControl` — no
     // Child/ChildStdin/pending map named here. Snapshot the handle, then
@@ -125,12 +136,12 @@ pub fn permissions_decide(
     // and must never stall every other command.
     let outer = engine.with_session(&session_id, |s| s.current.clone());
     let Some(outer) = outer else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     let Some(control) = outer else {
         // No turn in flight ⇒ nothing can be pending (§7 #16).
         return err(
-            "PERMISSION_NOT_PENDING",
+            ErrorCode::PermissionNotPending,
             "that request is no longer pending",
         );
     };
@@ -150,7 +161,7 @@ pub fn permissions_decide(
             allow,
         ) {
             Ok(r) => rule = Some(r),
-            Err((code, msg)) => return err(code, msg),
+            Err(e) => return e.into(),
         }
     }
 
@@ -174,7 +185,7 @@ pub fn permissions_decide(
                 );
             }
             err(
-                "PERMISSION_NOT_PENDING",
+                ErrorCode::PermissionNotPending,
                 "that request is no longer pending",
             )
         }
@@ -187,7 +198,7 @@ pub fn permissions_decide(
             resolve_permission(&app, &session_id, &block_id, "cancelled", rule.as_ref());
             refresh_parked_status(&app, &session_id);
             err(
-                "PERMISSION_NOT_PENDING",
+                ErrorCode::PermissionNotPending,
                 "that request is no longer pending",
             )
         }
@@ -276,9 +287,10 @@ mod tests {
             ControlAck::Applied
         );
         buffer_card(&engine, "p1", Some("allowed"));
-        let (code, _) = remember_rule(&engine, control.as_ref(), "s1", "p1", None, true)
-            .expect_err("that request is no longer pending");
-        assert_eq!(code, "PERMISSION_NOT_PENDING");
+        let code = remember_rule(&engine, control.as_ref(), "s1", "p1", None, true)
+            .expect_err("that request is no longer pending")
+            .code;
+        assert_eq!(code, ErrorCode::PermissionNotPending);
         assert!(
             !dir.join(".claude").exists(),
             "write_rule must never run for an ask that is no longer pending"
@@ -297,9 +309,10 @@ mod tests {
         let engine = engine_at(&dir);
         buffer_card(&engine, "p1", None);
         let control = FakeTurnControl::new(0, 0); // the ask was claimed elsewhere
-        let (code, _) = remember_rule(&engine, control.as_ref(), "s1", "p1", None, false)
-            .expect_err("the transcript buffer is not the authority");
-        assert_eq!(code, "PERMISSION_NOT_PENDING");
+        let code = remember_rule(&engine, control.as_ref(), "s1", "p1", None, false)
+            .expect_err("the transcript buffer is not the authority")
+            .code;
+        assert_eq!(code, ErrorCode::PermissionNotPending);
         assert!(!dir.join(".claude").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -309,7 +322,7 @@ mod tests {
         let dir = tmpdir("tier");
         let engine = engine_at(&dir);
         let control = FakeTurnControl::new(0, 1);
-        let (code, _) = remember_rule(
+        let code = remember_rule(
             &engine,
             control.as_ref(),
             "s1",
@@ -317,8 +330,9 @@ mod tests {
             Some("root".into()),
             true,
         )
-        .expect_err("unknown tier");
-        assert_eq!(code, "INVALID_INPUT");
+        .expect_err("unknown tier")
+        .code;
+        assert_eq!(code, ErrorCode::InvalidInput);
         assert!(!dir.join(".claude").exists());
         assert_eq!(control.pending_counts().permissions, 1);
         std::fs::remove_dir_all(&dir).ok();

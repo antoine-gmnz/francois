@@ -12,6 +12,7 @@
 //! not engine-shaped.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 // `super::*` only brings in this module's own siblings (AgentRuntime, TurnContext,
 // TurnControl, …) — the shared session data model (Session, Engine,
@@ -23,11 +24,11 @@ use crate::session::*;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write as _};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub(crate) struct ClaudeCodeAdapter;
+pub struct ClaudeCodeAdapter;
 
 // ---------- argv / spawn (moved from turn.rs, unchanged) ----------
 
@@ -36,7 +37,7 @@ pub(crate) struct ClaudeCodeAdapter;
 /// channel (`--input-format stream-json --permission-prompt-tool stdio`).
 /// Pure; unit-tested.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn turn_args(
+pub fn turn_args(
     model_id: &str,
     resume: Option<&str>,
     effort: Option<&str>,
@@ -83,7 +84,7 @@ pub(crate) fn turn_args(
 }
 
 /// The §5.5 NDJSON user line carrying a turn's text over stdin (FR-1).
-pub(crate) fn user_line(text: &str) -> String {
+pub fn user_line(text: &str) -> String {
     let mut line = serde_json::json!({
         "type": "user",
         "message": { "role": "user", "content": [{ "type": "text", "text": text }] }
@@ -94,7 +95,7 @@ pub(crate) fn user_line(text: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_claude(
+pub fn spawn_claude(
     cwd: &str,
     model_id: &str,
     resume: Option<&str>,
@@ -118,26 +119,20 @@ pub(crate) fn spawn_claude(
         response_mode,
     );
     let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
-    let mut cmd = Command::new(program);
-    cmd.args(argv);
-    if runtime != "wsl" {
-        cmd.current_dir(cwd); // wsl turns get their cwd via `--cd` inside the distro
-    }
-    if let Some(path) = claude_path_env() {
-        cmd.env("PATH", path);
-    }
     // multi-account FR-21/FR-24: this turn runs under its session's account.
-    for (k, v) in account_env(account_config_dir, runtime, &[]) {
-        cmd.env(k, v);
-    }
-    no_window(&mut cmd);
     // session-questions FR-1: stdin is piped — the turn text goes down it as one
     // NDJSON user line, and the stdio control channel (question answers /
-    // permission denies) rides the same pipe for the rest of the turn.
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = cmd.spawn()?;
+    // permission denies) rides the same pipe for the rest of the turn. It is the
+    // one spawn in the tree that overrides the facade's null stdin.
+    let mut cmd = crate::process_util::spawn(program)
+        .args(argv)
+        .envs(account_env(account_config_dir, runtime, &[]))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    if runtime != "wsl" {
+        cmd = cmd.current_dir(cwd); // wsl turns get their cwd via `--cd` inside the distro
+    }
+    let mut child = cmd.start()?;
     let wrote = match child.stdin.as_mut() {
         Some(w) => w
             .write_all(user_line(text).as_bytes())
@@ -152,7 +147,7 @@ pub(crate) fn spawn_claude(
     Ok(child)
 }
 
-pub(crate) fn child_stdout_lines(mut child: Child) -> Option<Vec<String>> {
+pub fn child_stdout_lines(mut child: Child) -> Option<Vec<String>> {
     let stdout = child.stdout.take()?;
     let reader = BufReader::new(stdout);
     let mut lines = Vec::new();
@@ -168,7 +163,7 @@ pub(crate) fn child_stdout_lines(mut child: Child) -> Option<Vec<String>> {
 
 // ---------- the concrete turn handle (FR-2) ----------
 
-pub(crate) struct TurnHandle {
+pub struct TurnHandle {
     child: Arc<Mutex<Child>>,
     interrupted: Arc<AtomicBool>,
     /// session-questions FR-2: the turn's stdin writer. Lives for the whole turn;
@@ -280,7 +275,7 @@ impl SessionAdapter for ClaudeCodeAdapter {
             if !crate::account::identity_file_exists(dir) {
                 crate::account::mark_auth_failed(app, &ctx.account_id);
                 return Err(AppError {
-                    code: "ACCOUNT_NOT_AUTHENTICATED".into(),
+                    code: ErrorCode::AccountNotAuthenticated,
                     message:
                         "this session's account is not signed in — use Re-login in the Accounts modal"
                             .into(),
@@ -312,7 +307,7 @@ impl SessionAdapter for ClaudeCodeAdapter {
             ctx.response_mode,
         )
         .map_err(|e| AppError {
-            code: "SPAWN_FAILED".into(),
+            code: ErrorCode::SpawnFailed,
             message: format!("could not start claude: {e}"),
             detail: None,
         })?;

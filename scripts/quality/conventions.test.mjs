@@ -4,9 +4,16 @@
 import { describe, it, expect } from 'vitest';
 import {
   MAX_FILE_LINES,
+  SPAWN_FACADE,
   oversizedFindings,
   barrelFindings,
   crossFeatureFindings,
+  bareSpawnFindings,
+  domainCycleFindings,
+  domainOf,
+  crateRefsOf,
+  spawnSitesOf,
+  stripRustComments,
   summarize,
   importsOf,
   allFindings,
@@ -155,17 +162,159 @@ describe('summarize', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// core-architecture-wave3 FR-8 / FR-10
+// ---------------------------------------------------------------------------
+
+const rs = (path, over) => ({ path, lines: 10, imports: [], spawnSites: [], crateRefs: [], ...over });
+
+describe('spawnSitesOf', () => {
+  it('finds a bare Command::new and reports its 1-based line', () => {
+    expect(spawnSitesOf('fn a() {\n    let c = Command::new("git");\n}')).toEqual([2]);
+  });
+
+  it('finds an ALIASED construction — the bypass that hid from the first sweep', () => {
+    const src = 'use std::process::Command as Cmd;\nlet c = Cmd::new("git");';
+    expect(spawnSitesOf(src)).toEqual([2]);
+  });
+
+  it('ignores a comment: the facade\'s own docs explain why Command::new is wrong', () => {
+    expect(spawnSitesOf('// `Command::new("codex")` fails on Windows.\n')).toEqual([]);
+    expect(spawnSitesOf('    /// so Command::new(x) is not how a spawn finds it\n')).toEqual([]);
+  });
+
+  it('counts a site once even when several aliases are in scope', () => {
+    const src = 'use std::process::Command as Cmd;\nlet c = Command::new("git");';
+    expect(spawnSitesOf(src)).toEqual([2]);
+  });
+});
+
+describe('bareSpawnFindings', () => {
+  it('errors on a Rust source that constructs a Command with no allowance', () => {
+    const found = bareSpawnFindings([rs('src-tauri/src/diff/git.rs', { spawnSites: [14] })], {});
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe('error');
+    expect(found[0].rule).toBe('bare-spawn');
+    expect(found[0].message).toMatch(/process_util::spawn/);
+  });
+
+  it('only warns while a file is within its baselined allowance', () => {
+    const files = [rs('src-tauri/src/a/b.rs', { spawnSites: [1, 2] })];
+    expect(bareSpawnFindings(files, { 'src-tauri/src/a/b.rs': 2 })[0].severity).toBe('warn');
+  });
+
+  // The ratchet: baselined debt is a ceiling, not a licence.
+  it('errors again as soon as a baselined file gains one more site', () => {
+    const files = [rs('src-tauri/src/a/b.rs', { spawnSites: [1, 2, 3] })];
+    expect(bareSpawnFindings(files, { 'src-tauri/src/a/b.rs': 2 })[0].severity).toBe('error');
+  });
+
+  it('exempts the facade itself — it is the one place a Command is constructed', () => {
+    expect(bareSpawnFindings([rs(SPAWN_FACADE, { spawnSites: [1, 2, 3] })], {})).toEqual([]);
+  });
+
+  it('says nothing about the frontend', () => {
+    expect(bareSpawnFindings([{ path: 'src/lib/api.ts', spawnSites: [3] }], {})).toEqual([]);
+  });
+});
+
+describe('domainOf', () => {
+  it('reads the first segment under src-tauri/src', () => {
+    expect(domainOf('src-tauri/src/session/adapter/codex/runner.rs')).toBe('session');
+    expect(domainOf('src-tauri/src/usage.rs')).toBe('usage');
+    expect(domainOf('src/lib/api.ts')).toBeNull();
+  });
+});
+
+describe('stripRustComments', () => {
+  it('drops a whole-line comment and a trailing one, keeping the code', () => {
+    expect(stripRustComments('// crate::session\nlet a = 1; // crate::diff\n')).toBe('\nlet a = 1;\n');
+  });
+
+  it('drops a block comment', () => {
+    expect(stripRustComments('a /* crate::session */ b')).toBe('a  b');
+  });
+});
+
+describe('crateRefsOf', () => {
+  it('reads plain and braced crate:: references', () => {
+    expect(crateRefsOf('use crate::account::AccountKind;')).toEqual(['account']);
+    expect(crateRefsOf('use crate::{account::A, session::B};')).toEqual(['account', 'session']);
+  });
+
+  it('reports each domain once', () => {
+    expect(crateRefsOf('crate::session::a; crate::session::b;')).toEqual(['session']);
+  });
+
+  // The bug this caught for real: `ids.rs` and `ipc/model.rs` exist precisely to
+  // depend on nothing, and their doc comments say so by NAMING the domain they
+  // no longer depend on. Counting those made both read as cyclic with `session`.
+  it('ignores a domain named only in a comment', () => {
+    expect(crateRefsOf('//! moved out of crate::session\npub fn now_ms() {}')).toEqual([]);
+    expect(crateRefsOf('/// see crate::session::models\nlet a = 1;')).toEqual([]);
+  });
+});
+
+describe('domainCycleFindings', () => {
+  const mutual = [
+    rs('src-tauri/src/account/mod.rs', { crateRefs: ['session'] }),
+    rs('src-tauri/src/session/mod.rs', { crateRefs: ['account'] }),
+  ];
+
+  it('errors on a NEW mutual pair', () => {
+    const found = domainCycleFindings(mutual, []);
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe('error');
+    expect(found[0].message).toMatch(/NEW module cycle/);
+  });
+
+  it('reports the pair once, not once per direction', () => {
+    expect(domainCycleFindings(mutual, [])).toHaveLength(1);
+  });
+
+  it('only warns for a cycle that is already on the baseline', () => {
+    expect(domainCycleFindings(mutual, ['account<->session'])[0].severity).toBe('warn');
+  });
+
+  // The rule that keeps it usable: ordinary layering is not a finding, so
+  // nobody has a reason to route around it.
+  it('says nothing about a one-directional reference', () => {
+    const layered = [
+      rs('src-tauri/src/session/mod.rs', { crateRefs: ['account'] }),
+      rs('src-tauri/src/account/mod.rs', { crateRefs: [] }),
+    ];
+    expect(domainCycleFindings(layered, [])).toEqual([]);
+  });
+
+  // `crate::dispose_session_shells` is a crate-root re-export, not a module.
+  it('ignores a crate:: reference that names no domain', () => {
+    const files = [
+      rs('src-tauri/src/session/mod.rs', { crateRefs: ['dispose_session_shells'] }),
+      rs('src-tauri/src/shell/mod.rs', { crateRefs: ['session'] }),
+    ];
+    expect(domainCycleFindings(files, [])).toEqual([]);
+  });
+});
+
 describe('allFindings', () => {
   it('runs every rule in one pass', () => {
     const found = allFindings(
       [
         { path: 'src/features/a/index.ts', lines: 10, imports: ['../b/thing'] },
         { path: 'src/big.ts', lines: big, imports: [] },
+        rs('src-tauri/src/a/one.rs', { spawnSites: [4], crateRefs: ['b'] }),
+        rs('src-tauri/src/b/two.rs', { crateRefs: ['a'] }),
       ],
-      [],
+      {},
     );
     expect(new Set(found.map((f) => f.rule))).toEqual(
-      new Set(['no-barrel', 'cross-feature-import', 'file-size']),
+      new Set(['no-barrel', 'cross-feature-import', 'file-size', 'bare-spawn', 'domain-cycle']),
     );
+  });
+
+  // The pre-FR-8 call shape — a bare oversized list — still means what it did.
+  it('accepts a plain array as the oversized baseline', () => {
+    const files = [{ path: 'src/old.ts', lines: big, imports: [] }];
+    expect(allFindings(files, ['src/old.ts'])[0].severity).toBe('warn');
   });
 });

@@ -15,12 +15,13 @@
 //!   dependency for the update-check and cloud-sessions probes).
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub(crate) const KEY_FILE_NAME: &str = "endpoint-key";
-pub(crate) const NOT_AN_ENDPOINT_MSG: &str = "not an endpoint account";
+pub const KEY_FILE_NAME: &str = "endpoint-key";
+pub const NOT_AN_ENDPOINT_MSG: &str = "not an endpoint account";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ---------- FR-2: the sidecar key file ----------
@@ -39,25 +40,34 @@ pub(crate) fn key_file_exists(config_dir: &str) -> bool {
 
 /// FR-2: the file holds the raw key and nothing else — no JSON, no trailing
 /// newline.
-pub(crate) fn write_key(config_dir: &str, key: &str) -> Result<(), String> {
-    crate::fs_util::write_user_only_file(&key_path(config_dir), key.as_bytes())
-        .map_err(|e| format!("could not write the key file: {e}"))
+pub fn write_key(config_dir: &str, key: &str) -> Result<(), AppError> {
+    crate::fs_util::write_user_only_file(&key_path(config_dir), key.as_bytes()).map_err(|e| {
+        // core-architecture-wave3 FR-6: the code both call sites used to stamp,
+        // raised where the write actually fails.
+        AppError::new(
+            ErrorCode::AccountKeyWriteFailed,
+            format!("could not write the key file: {e}"),
+        )
+    })
 }
 
 /// FR-5/FR-7 (`clearKey`): a missing file is success, not a failure — the
 /// caller's intent ("no key here") is already satisfied.
-pub(crate) fn remove_key(config_dir: &str) -> Result<(), String> {
+pub fn remove_key(config_dir: &str) -> Result<(), AppError> {
     match std::fs::remove_file(key_path(config_dir)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("could not remove the key file: {e}")),
+        Err(e) => Err(AppError::new(
+            ErrorCode::AccountKeyWriteFailed,
+            format!("could not remove the key file: {e}"),
+        )),
     }
 }
 
 /// FR-9: the stored key for an account that already has one — an empty file
 /// (should never happen, `write_key` never writes one) reads as no key,
 /// exactly like a missing file, rather than sending an empty bearer token.
-pub(crate) fn read_key(config_dir: &str) -> Option<String> {
+pub fn read_key(config_dir: &str) -> Option<String> {
     std::fs::read_to_string(key_path(config_dir))
         .ok()
         .filter(|s| !s.is_empty())
@@ -80,27 +90,32 @@ pub(crate) fn account_endpoint(record: &EndpointRecord, config_dir: &str) -> Acc
 /// query, no fragment, trailing slashes trimmed. Returns the normalized
 /// value. No `url` crate: the rule set is narrow enough that hand-rolling it
 /// avoids a new dependency for five checks.
-pub(crate) fn validate_base_url(raw: &str) -> Result<String, String> {
+pub fn validate_base_url(raw: &str) -> Result<String, AppError> {
+    // core-architecture-wave3 FR-6: every rejection here is the INVALID_INPUT
+    // its three call sites used to stamp by hand.
+    let invalid = |m: &str| AppError::new(ErrorCode::InvalidInput, m);
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err("base URL cannot be empty".to_string());
+        return Err(invalid("base URL cannot be empty"));
     }
     let Some((scheme, rest)) = trimmed.split_once("://") else {
-        return Err("base URL must be absolute (missing a scheme)".to_string());
+        return Err(invalid("base URL must be absolute (missing a scheme)"));
     };
     if scheme != "https" && scheme != "http" {
-        return Err("base URL must use https or http".to_string());
+        return Err(invalid("base URL must use https or http"));
     }
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_end];
     if authority.is_empty() {
-        return Err("base URL is missing a host".to_string());
+        return Err(invalid("base URL is missing a host"));
     }
     if rest[authority_end..].contains('?') || rest[authority_end..].contains('#') {
-        return Err("base URL must not contain a query or fragment".to_string());
+        return Err(invalid("base URL must not contain a query or fragment"));
     }
     if scheme == "http" && !is_loopback_authority(authority) {
-        return Err("base URL must be https (http is allowed on localhost only)".to_string());
+        return Err(invalid(
+            "base URL must be https (http is allowed on localhost only)",
+        ));
     }
     Ok(trimmed.trim_end_matches('/').to_string())
 }
@@ -127,7 +142,7 @@ fn is_loopback_authority(authority: &str) -> bool {
 /// validated the base URL (FR-4), minted `id`, created `config_dir` on disk
 /// and written the key file if one was supplied — this only touches the
 /// in-memory registry. Returns the row's contract shape.
-pub(crate) fn apply_add_endpoint(
+pub fn apply_add_endpoint(
     inner: &mut AccountInner,
     id: String,
     config_dir: String,
@@ -141,7 +156,7 @@ pub(crate) fn apply_add_endpoint(
         email: None,
         organization: None,
         config_dir,
-        created_at: crate::session::now_ms(),
+        created_at: crate::ids::now_ms(),
         kind: AccountKind::OpenAiCompatible,
         endpoint: Some(EndpointRecord {
             base_url,
@@ -168,7 +183,7 @@ pub(crate) fn apply_add_endpoint(
 /// half of that, so the distinction is unit-testable without a live Tauri app
 /// (this crate doesn't enable tauri's `test` feature, see account/mod.rs).
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ModelIdsUpdate {
+pub enum ModelIdsUpdate {
     /// The key was absent from the invoke payload — leave the stored override
     /// alone.
     Unset,
@@ -182,16 +197,21 @@ pub(crate) enum ModelIdsUpdate {
 /// Pure half of the `ModelIdsUpdate` `CommandArg` impl (commands.rs): given
 /// the whole invoke args object and this argument's key, decide which of the
 /// three states applies.
-pub(crate) fn model_ids_update_from(
+pub fn model_ids_update_from(
     args: &serde_json::Value,
     key: &str,
-) -> Result<ModelIdsUpdate, String> {
+) -> Result<ModelIdsUpdate, AppError> {
     match args.get(key) {
         None => Ok(ModelIdsUpdate::Unset),
         Some(serde_json::Value::Null) => Ok(ModelIdsUpdate::Clear),
         Some(v) => serde_json::from_value::<Vec<String>>(v.clone())
             .map(ModelIdsUpdate::Set)
-            .map_err(|e| format!("modelIds must be an array of strings: {e}")),
+            .map_err(|e| {
+                AppError::new(
+                    ErrorCode::InvalidInput,
+                    format!("modelIds must be an array of strings: {e}"),
+                )
+            }),
     }
 }
 
@@ -199,25 +219,29 @@ pub(crate) fn model_ids_update_from(
 /// intent (write a new key vs remove the key in the same call). Same
 /// (code, message) convention as `apply_update_endpoint` below, so
 /// `commands.rs` can handle every one of these guards with the same
-/// `Err((code, msg)) => return err(code, msg)` shape.
-pub(crate) fn validate_key_clear_conflict(
+/// `Err(e) => return err(e.code, e.message)` shape.
+pub fn validate_key_clear_conflict(
     api_key: &Option<String>,
     clear_key: bool,
-) -> Result<(), (&'static str, &'static str)> {
+) -> Result<(), AppError> {
     if api_key.is_some() && clear_key {
-        return Err(("INVALID_INPUT", "apiKey and clearKey cannot both be set"));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "apiKey and clearKey cannot both be set",
+        ));
     }
     Ok(())
 }
 
 /// FR-7: `modelIds: []` on add is refused — a present-but-empty override
 /// would claim the account allows no models at all.
-pub(crate) fn validate_model_ids_on_add(
-    model_ids: &Option<Vec<String>>,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn validate_model_ids_on_add(model_ids: &Option<Vec<String>>) -> Result<(), AppError> {
     if let Some(ids) = model_ids {
         if ids.is_empty() {
-            return Err(("INVALID_INPUT", "modelIds cannot be empty when present"));
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "modelIds cannot be empty when present",
+            ));
         }
     }
     Ok(())
@@ -226,12 +250,13 @@ pub(crate) fn validate_model_ids_on_add(
 /// FR-7: `modelIds` present-but-empty on update is refused the same way —
 /// only the `Set` arm of the tri-state can be empty; `Unset`/`Clear` are
 /// always fine.
-pub(crate) fn validate_model_ids_on_update(
-    model_ids: &ModelIdsUpdate,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn validate_model_ids_on_update(model_ids: &ModelIdsUpdate) -> Result<(), AppError> {
     if let ModelIdsUpdate::Set(ids) = model_ids {
         if ids.is_empty() {
-            return Err(("INVALID_INPUT", "modelIds cannot be empty"));
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "modelIds cannot be empty",
+            ));
         }
     }
     Ok(())
@@ -242,20 +267,20 @@ pub(crate) fn validate_model_ids_on_update(
 /// account is `INVALID_INPUT`, not `ACCOUNT_NOT_FOUND` — the account exists,
 /// the operation does not apply to it (same reasoning as `apply_rename`'s
 /// built-in-account refusal in registry.rs).
-pub(crate) fn apply_update_endpoint(
+pub fn apply_update_endpoint(
     inner: &mut AccountInner,
     id: &str,
     label: Option<String>,
     base_url: Option<String>,
     model_ids: ModelIdsUpdate,
-) -> Result<(), (&'static str, &'static str)> {
+) -> Result<(), AppError> {
     let record = inner
         .records
         .iter_mut()
         .find(|r| r.id == id)
-        .ok_or(("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG))?;
+        .ok_or(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG))?;
     if record.kind != AccountKind::OpenAiCompatible {
-        return Err(("INVALID_INPUT", NOT_AN_ENDPOINT_MSG));
+        return Err(AppError::new(ErrorCode::InvalidInput, NOT_AN_ENDPOINT_MSG));
     }
     if let Some(l) = label {
         record.label = l;
@@ -281,10 +306,10 @@ pub(crate) fn apply_update_endpoint(
 // ---------- FR-8/FR-9/FR-10: the stateless probe ----------
 
 #[derive(serde::Serialize, Debug)]
-pub(crate) struct EndpointProbe {
-    pub(crate) models: Vec<crate::session::ModelInfo>,
+pub struct EndpointProbe {
+    pub(crate) models: Vec<crate::ipc::ModelInfo>,
     #[serde(rename = "modelCount")]
-    pub(crate) model_count: usize,
+    pub model_count: usize,
 }
 
 fn http_agent() -> ureq::Agent {
@@ -297,10 +322,7 @@ fn http_agent() -> ureq::Agent {
 /// FR-8: `GET <baseUrl>/models`, `Authorization: Bearer <key>` when a key is
 /// in play, 10s timeout, no retry (a single `.call()`). FR-9: takes form
 /// values only — writes nothing, never touches the registry.
-pub(crate) fn probe(
-    base_url: &str,
-    api_key: Option<&str>,
-) -> Result<EndpointProbe, (&'static str, String)> {
+pub fn probe(base_url: &str, api_key: Option<&str>) -> Result<EndpointProbe, AppError> {
     let url = format!("{base_url}/models");
     let mut req = http_agent().get(&url);
     if let Some(key) = api_key {
@@ -309,28 +331,28 @@ pub(crate) fn probe(
     match req.call() {
         Ok(resp) => {
             let json: serde_json::Value = resp.into_json().map_err(|e| {
-                (
-                    "ACCOUNT_ENDPOINT_UNREACHABLE",
+                AppError::new(
+                    ErrorCode::AccountEndpointUnreachable,
                     format!("the endpoint's response could not be read: {e}"),
                 )
             })?;
             parse_probe_response(&json).ok_or_else(|| {
-                (
-                    "ACCOUNT_ENDPOINT_UNREACHABLE",
+                AppError::new(
+                    ErrorCode::AccountEndpointUnreachable,
                     "the endpoint did not return the expected model list shape".to_string(),
                 )
             })
         }
-        Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => Err((
-            "ACCOUNT_ENDPOINT_UNAUTHORIZED",
+        Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => Err(AppError::new(
+            ErrorCode::AccountEndpointUnauthorized,
             "the endpoint rejected the API key".to_string(),
         )),
-        Err(ureq::Error::Status(code, _)) => Err((
-            "ACCOUNT_ENDPOINT_UNREACHABLE",
+        Err(ureq::Error::Status(code, _)) => Err(AppError::new(
+            ErrorCode::AccountEndpointUnreachable,
             format!("the endpoint returned HTTP {code}"),
         )),
-        Err(ureq::Error::Transport(t)) => Err((
-            "ACCOUNT_ENDPOINT_UNREACHABLE",
+        Err(ureq::Error::Transport(t)) => Err(AppError::new(
+            ErrorCode::AccountEndpointUnreachable,
             format!("could not reach the endpoint: {t}"),
         )),
     }
@@ -344,10 +366,10 @@ pub(crate) fn probe(
 /// (`{"data": []}`, which succeeds with `modelCount: 0`, §7).
 fn parse_probe_response(json: &serde_json::Value) -> Option<EndpointProbe> {
     let data = json.get("data")?.as_array()?;
-    let models: Vec<crate::session::ModelInfo> = data
+    let models: Vec<crate::ipc::ModelInfo> = data
         .iter()
         .filter_map(|entry| entry.get("id")?.as_str())
-        .map(|id| crate::session::model(id, id))
+        .map(|id| crate::ipc::model(id, id))
         .collect();
     Some(EndpointProbe {
         model_count: models.len(),
@@ -385,9 +407,9 @@ mod tests {
             validate_base_url("http://[::1]:8000/v1"),
             Ok("http://[::1]:8000/v1".to_string())
         );
-        assert!(validate_base_url("http://example.com/v1")
-            .unwrap_err()
-            .contains("https"));
+        let rejected = validate_base_url("http://example.com/v1").unwrap_err();
+        assert_eq!(rejected.code, ErrorCode::InvalidInput);
+        assert!(rejected.message.contains("https"));
     }
 
     #[test]
@@ -471,10 +493,11 @@ mod tests {
         std::fs::write(&blocker, b"not a directory").unwrap();
         let blocker_str = blocker.to_string_lossy().into_owned();
 
-        let msg = write_key(&blocker_str, "sk-should-never-appear-anywhere").unwrap_err();
-        assert!(!msg.contains("sk-should-never-appear-anywhere"));
+        let failure = write_key(&blocker_str, "sk-should-never-appear-anywhere").unwrap_err();
+        assert_eq!(failure.code, ErrorCode::AccountKeyWriteFailed);
+        assert!(!failure.message.contains("sk-should-never-appear-anywhere"));
 
-        let ipc_err: crate::ipc::IpcResult<()> = crate::ipc::err("ACCOUNT_KEY_WRITE_FAILED", msg);
+        let ipc_err: crate::ipc::IpcResult<()> = failure.into();
         let v = serde_json::to_value(&ipc_err).unwrap();
         // `err()` never attaches a `detail` — the `AppError` struct skips a
         // `None` one on serialization, so it must be entirely absent here.
@@ -573,13 +596,13 @@ mod tests {
                 ModelIdsUpdate::Unset
             )
             .unwrap_err(),
-            ("INVALID_INPUT", NOT_AN_ENDPOINT_MSG)
+            AppError::new(ErrorCode::InvalidInput, NOT_AN_ENDPOINT_MSG)
         );
         // Unknown id.
         assert_eq!(
             apply_update_endpoint(&mut inner, "nope", None, None, ModelIdsUpdate::Unset)
                 .unwrap_err(),
-            ("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG)
+            AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG)
         );
 
         // Label only — base URL and model_ids untouched.
@@ -671,7 +694,10 @@ mod tests {
     fn key_clear_conflict_is_rejected_only_when_both_are_set() {
         assert_eq!(
             validate_key_clear_conflict(&Some("sk-x".to_string()), true).unwrap_err(),
-            ("INVALID_INPUT", "apiKey and clearKey cannot both be set")
+            AppError::new(
+                ErrorCode::InvalidInput,
+                "apiKey and clearKey cannot both be set"
+            )
         );
         assert!(validate_key_clear_conflict(&Some("sk-x".to_string()), false).is_ok());
         assert!(validate_key_clear_conflict(&None, true).is_ok());
@@ -682,7 +708,10 @@ mod tests {
     fn model_ids_on_add_rejects_an_empty_array_but_allows_absent_or_populated() {
         assert_eq!(
             validate_model_ids_on_add(&Some(vec![])).unwrap_err(),
-            ("INVALID_INPUT", "modelIds cannot be empty when present")
+            AppError::new(
+                ErrorCode::InvalidInput,
+                "modelIds cannot be empty when present"
+            )
         );
         assert!(validate_model_ids_on_add(&None).is_ok());
         assert!(validate_model_ids_on_add(&Some(vec!["gpt-4o".to_string()])).is_ok());
@@ -692,7 +721,7 @@ mod tests {
     fn model_ids_on_update_rejects_an_empty_set_but_allows_unset_clear_and_populated() {
         assert_eq!(
             validate_model_ids_on_update(&ModelIdsUpdate::Set(vec![])).unwrap_err(),
-            ("INVALID_INPUT", "modelIds cannot be empty")
+            AppError::new(ErrorCode::InvalidInput, "modelIds cannot be empty")
         );
         assert!(validate_model_ids_on_update(&ModelIdsUpdate::Unset).is_ok());
         assert!(validate_model_ids_on_update(&ModelIdsUpdate::Clear).is_ok());
@@ -768,8 +797,8 @@ mod tests {
         let (base_url, handle) = spawn_stub_server(
             "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         );
-        let (code, _) = probe(&base_url, Some("sk-bad")).unwrap_err();
-        assert_eq!(code, "ACCOUNT_ENDPOINT_UNAUTHORIZED");
+        let code = probe(&base_url, Some("sk-bad")).unwrap_err().code;
+        assert_eq!(code, ErrorCode::AccountEndpointUnauthorized);
         handle.join().unwrap();
     }
 
@@ -778,8 +807,8 @@ mod tests {
         let (base_url, handle) = spawn_stub_server(
             "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         );
-        let (code, _) = probe(&base_url, None).unwrap_err();
-        assert_eq!(code, "ACCOUNT_ENDPOINT_UNAUTHORIZED");
+        let code = probe(&base_url, None).unwrap_err().code;
+        assert_eq!(code, ErrorCode::AccountEndpointUnauthorized);
         handle.join().unwrap();
     }
 
@@ -788,8 +817,10 @@ mod tests {
         let (base_url, handle) = spawn_stub_server(
             "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         );
-        let (code, msg) = probe(&base_url, None).unwrap_err();
-        assert_eq!(code, "ACCOUNT_ENDPOINT_UNREACHABLE");
+        let AppError {
+            code, message: msg, ..
+        } = probe(&base_url, None).unwrap_err();
+        assert_eq!(code, ErrorCode::AccountEndpointUnreachable);
         assert!(
             msg.contains("500"),
             "message should carry the status: {msg}"
@@ -805,8 +836,8 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener);
-        let (code, _) = probe(&format!("http://{addr}"), None).unwrap_err();
-        assert_eq!(code, "ACCOUNT_ENDPOINT_UNREACHABLE");
+        let code = probe(&format!("http://{addr}"), None).unwrap_err().code;
+        assert_eq!(code, ErrorCode::AccountEndpointUnreachable);
     }
 
     #[test]
@@ -850,7 +881,7 @@ mod tests {
     #[test]
     fn probe_serializes_to_the_contract_shape() {
         let probe = EndpointProbe {
-            models: vec![crate::session::model("gpt-4o", "gpt-4o")],
+            models: vec![crate::ipc::model("gpt-4o", "gpt-4o")],
             model_count: 1,
         };
         let v = serde_json::to_value(&probe).unwrap();

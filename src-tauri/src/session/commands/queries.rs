@@ -1,5 +1,6 @@
 //! read-only / misc commands: transcript fetch, directory picker, session list.
 
+use crate::ipc::ErrorCode;
 use crate::ipc::{err, ok, IpcResult};
 use crate::session::*;
 use serde_json::Value;
@@ -69,7 +70,7 @@ pub fn conversation_get_transcript(
     let limit = clamp_limit(limit);
     match before {
         None => match transcript_tail(&engine, &session_id, limit) {
-            None => err("SESSION_NOT_FOUND", "no such session"),
+            None => err(ErrorCode::SessionNotFound, "no such session"),
             Some(page) => ok(page),
         },
         Some(before_id) => {
@@ -80,7 +81,7 @@ pub fn conversation_get_transcript(
             // more to load"), and matches the "file missing" edge case §7
             // already documents for a transcript read after removal.
             if engine.with_session(&session_id, |_| ()).is_none() {
-                return err("SESSION_NOT_FOUND", "no such session");
+                return err(ErrorCode::SessionNotFound, "no such session");
             }
             let folded = read_transcript(&app, &session_id);
             ok(page_before(&folded, &before_id, limit))
@@ -100,7 +101,7 @@ pub fn session_pick_directory(app: AppHandle) -> IpcResult<Option<Value>> {
         Some(fp) => match fp.as_path().map(|p| p.to_string_lossy().to_string()) {
             Some(path) => ok(Some(serde_json::json!({ "path": path }))),
             None => err(
-                "INVALID_INPUT",
+                ErrorCode::InvalidInput,
                 "that location has no filesystem path — pick a folder inside it, or paste its path (e.g. \\\\wsl$\\<distro>\\…) into the directory field",
             ),
         },
@@ -112,8 +113,8 @@ pub fn session_pick_directory(app: AppHandle) -> IpcResult<Option<Value>> {
 pub fn session_list(app: AppHandle, engine: State<'_, Engine>) -> IpcResult<Vec<Value>> {
     // FR-12: re-emit one session.meta per entry (registry order) before resolving.
     let metas: Vec<SessionMeta> = {
-        let map = engine.sessions.lock().unwrap();
-        map.values().map(|s| s.meta()).collect()
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        map.values().map(|s| s.meta(&app)).collect()
     };
     for m in &metas {
         emit(&app, SessionEvent::Meta { meta: m.clone() });

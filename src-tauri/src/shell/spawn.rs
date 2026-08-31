@@ -6,7 +6,7 @@ fn on_path(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn resolve_shell() -> (String, Vec<String>, String) {
+pub fn resolve_shell() -> (String, Vec<String>, String) {
     if cfg!(target_os = "windows") {
         let exe = if on_path("pwsh.exe") {
             "pwsh.exe"
@@ -56,7 +56,7 @@ fn basename_no_ext(p: &str) -> String {
 /// and the raw cwd string (UNC or Linux) is meaningless as wsl.exe's own
 /// Windows-side working directory. `shellName` is the cwd's distro when the path
 /// names one, else the default distro (FR-3), else the literal "wsl" (spec §7).
-pub(crate) fn shell_spawn_target(
+pub fn shell_spawn_target(
     runtime: &str,
     cwd: &str,
 ) -> (String, Vec<String>, String, Option<String>) {

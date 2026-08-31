@@ -1,6 +1,7 @@
 //! FR-1..FR-8: projects.json, root normalization, duplicate detection, ordering.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use serde_json::Value;
 use std::collections::HashSet;
@@ -9,15 +10,15 @@ use tauri::{AppHandle, Manager};
 
 /// FR-8: the platform's own separator — the normalized form a root is STORED in.
 #[cfg(windows)]
-pub(crate) const SEP: char = '\\';
+pub const SEP: char = '\\';
 #[cfg(not(windows))]
-pub(crate) const SEP: char = '/';
+pub const SEP: char = '/';
 
 /// FR-6: trimmed name bounds (contract MAX_PROJECT_NAME_LENGTH).
 const MAX_NAME_LENGTH: usize = 80;
 
 /// FR-6: an empty-after-trim or over-long name. Both are `INVALID_INPUT`.
-pub(crate) const BAD_NAME_MSG: &str = "a project name must be 1–80 characters";
+pub const BAD_NAME_MSG: &str = "a project name must be 1–80 characters";
 
 /// Windows extended-length / device path prefixes, stripped by `normalize_root` so
 /// a verbatim spelling and a plain one compare equal (FR-8).
@@ -35,7 +36,7 @@ const DEVICE_PREFIX: &str = r"\\.\";
 ///
 /// Off Windows a backslash is a legal filename character, never a separator —
 /// `Path::components` already draws that line per platform, so it does the work.
-pub(crate) fn normalize_root(input: &str) -> String {
+pub fn normalize_root(input: &str) -> String {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -93,7 +94,7 @@ pub(crate) fn normalize_root(input: &str) -> String {
 ///
 /// The root marker (`D:\`, `\\share\`, `/`) is its own leading component, so two
 /// paths on different drives can never share a prefix.
-pub(crate) fn root_components(root: &str) -> Vec<String> {
+pub fn root_components(root: &str) -> Vec<String> {
     let norm = normalize_root(root);
     if norm.is_empty() {
         return Vec::new();
@@ -129,20 +130,20 @@ pub(crate) fn root_components(root: &str) -> Vec<String> {
 
 /// True when two roots name the SAME directory. An empty (invalid) root never
 /// matches anything — two unusable values must not collide in the duplicate check.
-pub(crate) fn same_root(a: &str, b: &str) -> bool {
+pub fn same_root(a: &str, b: &str) -> bool {
     let (ca, cb) = (root_components(a), root_components(b));
     !ca.is_empty() && ca == cb
 }
 
 /// FR-2: `rootExists` — false when the path is absent or is not a directory.
-pub(crate) fn root_exists(root: &str) -> bool {
+pub fn root_exists(root: &str) -> bool {
     !root.is_empty() && Path::new(root).is_dir()
 }
 
 // ---------- FR-6: validation ----------
 
 /// FR-6 step 1. Returns the NORMALIZED root to store.
-pub(crate) fn validate_root(raw: &str) -> Result<String, &'static str> {
+pub fn validate_root(raw: &str) -> Result<String, &'static str> {
     let norm = normalize_root(raw);
     // Order matters only for the message: every failure here is the same code.
     if norm.is_empty() || !Path::new(&norm).is_absolute() || !root_exists(&norm) {
@@ -153,7 +154,7 @@ pub(crate) fn validate_root(raw: &str) -> Result<String, &'static str> {
 
 /// FR-6: `name` defaults to the basename of `root`; a supplied name is trimmed and
 /// must be non-empty and ≤ 80 chars. Names are NOT unique (§7 #25).
-pub(crate) fn resolve_name(name: Option<&str>, root: &str) -> Result<String, &'static str> {
+pub fn resolve_name(name: Option<&str>, root: &str) -> Result<String, &'static str> {
     let candidate = match name {
         Some(n) => n.trim().to_string(),
         // A bare root (`D:\`) has no basename — fall back to the root itself so the
@@ -178,7 +179,7 @@ pub(crate) fn resolve_name(name: Option<&str>, root: &str) -> Result<String, &'s
 
 // ---------- FR-2/FR-5: listing ----------
 
-pub(crate) fn meta_of(p: &Project) -> ProjectMeta {
+pub fn meta_of(p: &Project) -> ProjectMeta {
     ProjectMeta {
         id: p.id.clone(),
         name: p.name.clone(),
@@ -194,7 +195,7 @@ pub(crate) fn meta_of(p: &Project) -> ProjectMeta {
 
 /// FR-5: `lastUsedAt` descending, ties broken by `name` ascending
 /// (case-insensitive), with `rootExists` derived per entry (FR-2).
-pub(crate) fn list_metas(projects: &[Project]) -> Vec<ProjectMeta> {
+pub fn list_metas(projects: &[Project]) -> Vec<ProjectMeta> {
     let mut metas: Vec<ProjectMeta> = projects.iter().map(meta_of).collect();
     metas.sort_by(|a, b| {
         b.last_used_at
@@ -210,7 +211,7 @@ pub(crate) fn list_metas(projects: &[Project]) -> Vec<ProjectMeta> {
 const MAX_GROUP_NAME_LENGTH: usize = 80;
 
 /// FR-4: trimmed, 1–80 chars. Names are NOT unique — groups are keyed by id.
-pub(crate) fn resolve_group_name(name: &str) -> Result<String, &'static str> {
+pub fn resolve_group_name(name: &str) -> Result<String, &'static str> {
     let candidate = name.trim().to_string();
     if candidate.is_empty() || candidate.chars().count() > MAX_GROUP_NAME_LENGTH {
         return Err(BAD_GROUP_NAME_MSG);
@@ -220,7 +221,7 @@ pub(crate) fn resolve_group_name(name: &str) -> Result<String, &'static str> {
 
 /// FR-5: `createdAt` ascending, ties broken by `name` ascending (case-insensitive,
 /// plain lowercase — matching the projects tie-break byte-for-byte).
-pub(crate) fn list_groups(groups: &[ProjectGroup]) -> Vec<ProjectGroup> {
+pub fn list_groups(groups: &[ProjectGroup]) -> Vec<ProjectGroup> {
     let mut out = groups.to_vec();
     out.sort_by(|a, b| {
         a.created_at
@@ -231,12 +232,8 @@ pub(crate) fn list_groups(groups: &[ProjectGroup]) -> Vec<ProjectGroup> {
 }
 
 /// FR-1: name validation + entry construction. Not unique (FR-4).
-pub(crate) fn create_group_entry(
-    name: &str,
-    id: String,
-    now: u64,
-) -> Result<ProjectGroup, (&'static str, &'static str)> {
-    let name = resolve_group_name(name).map_err(|m| ("INVALID_INPUT", m))?;
+pub fn create_group_entry(name: &str, id: String, now: u64) -> Result<ProjectGroup, AppError> {
+    let name = resolve_group_name(name).map_err(|m| AppError::new(ErrorCode::InvalidInput, m))?;
     Ok(ProjectGroup {
         id,
         name,
@@ -245,40 +242,41 @@ pub(crate) fn create_group_entry(
 }
 
 /// Rename: returns `(index, patched)`, mirroring `patch_entry`'s shape.
-pub(crate) fn rename_group_entry(
+pub fn rename_group_entry(
     groups: &[ProjectGroup],
     group_id: &str,
     name: &str,
-) -> Result<(usize, ProjectGroup), (&'static str, &'static str)> {
+) -> Result<(usize, ProjectGroup), AppError> {
     let idx = groups
         .iter()
         .position(|g| g.id == group_id)
-        .ok_or(("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG))?;
+        .ok_or(AppError::new(ErrorCode::GroupNotFound, GROUP_NOT_FOUND_MSG))?;
     let mut patched = groups[idx].clone();
-    patched.name = resolve_group_name(name).map_err(|m| ("INVALID_INPUT", m))?;
+    patched.name =
+        resolve_group_name(name).map_err(|m| AppError::new(ErrorCode::InvalidInput, m))?;
     Ok((idx, patched))
 }
 
-pub(crate) fn group_exists(groups: &[ProjectGroup], group_id: &str) -> bool {
+pub fn group_exists(groups: &[ProjectGroup], group_id: &str) -> bool {
     groups.iter().any(|g| g.id == group_id)
 }
 
 /// FR-7: sets or clears a project's `groupId`. A `groupId` naming an unknown
 /// group is rejected — the core re-validates against the live registry rather
 /// than trusting the frontend's list.
-pub(crate) fn assign_group_entry(
+pub fn assign_group_entry(
     projects: &[Project],
     groups: &[ProjectGroup],
     project_id: &str,
     group_id: Option<&str>,
-) -> Result<(usize, Project), (&'static str, &'static str)> {
+) -> Result<(usize, Project), AppError> {
     let idx = projects
         .iter()
         .position(|p| p.id == project_id)
-        .ok_or(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))?;
+        .ok_or(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG))?;
     if let Some(gid) = group_id {
         if !group_exists(groups, gid) {
-            return Err(("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG));
+            return Err(AppError::new(ErrorCode::GroupNotFound, GROUP_NOT_FOUND_MSG));
         }
     }
     let mut patched = projects[idx].clone();
@@ -288,7 +286,7 @@ pub(crate) fn assign_group_entry(
 
 /// FR-8: the delete sweep — clears `groupId` on every member. Pure half, so it
 /// is unit-testable without an AppHandle (mirrors `clear_default_from`).
-pub(crate) fn clear_group_from(projects: &mut [Project], group_id: &str) -> usize {
+pub fn clear_group_from(projects: &mut [Project], group_id: &str) -> usize {
     let mut cleared = 0;
     for p in projects.iter_mut() {
         if p.group_id.as_deref() == Some(group_id) {
@@ -303,7 +301,7 @@ pub(crate) fn clear_group_from(projects: &mut [Project], group_id: &str) -> usiz
 /// committed (mirrors `clear_default`'s "memory and disk agree" contract). A
 /// persist failure here is logged and rolled back in memory; the group's
 /// removal already stands regardless (FR-8 applies verbatim).
-pub(crate) fn clear_group(app: &AppHandle, group_id: &str) {
+pub fn clear_group(app: &AppHandle, group_id: &str) {
     let Some(state) = app.try_state::<ProjectRegistry>() else {
         return;
     };
@@ -329,18 +327,21 @@ pub(crate) fn clear_group(app: &AppHandle, group_id: &str) {
 // stall every other project command while holding the mutex.
 
 /// FR-6: the duplicate check + name resolution + entry construction.
-pub(crate) fn create_entry(
+pub fn create_entry(
     projects: &[Project],
     root: &str,
     name: Option<&str>,
     defaults: Option<ProjectDefaults>,
     id: String,
     now: u64,
-) -> Result<Project, (&'static str, &'static str)> {
+) -> Result<Project, AppError> {
     if projects.iter().any(|p| same_root(&p.root, root)) {
-        return Err(("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG)); // §7 #2
+        return Err(AppError::new(
+            ErrorCode::ProjectDuplicateRoot,
+            DUPLICATE_ROOT_MSG,
+        )); // §7 #2
     }
-    let name = resolve_name(name, root).map_err(|m| ("INVALID_INPUT", m))?;
+    let name = resolve_name(name, root).map_err(|m| AppError::new(ErrorCode::InvalidInput, m))?;
     Ok(Project {
         id,
         name,
@@ -354,17 +355,17 @@ pub(crate) fn create_entry(
 
 /// FR-7: patch only the present fields, returning `(index, patched)`.
 /// A present `defaults` REPLACES the whole object — that is how "inherit" is restored.
-pub(crate) fn patch_entry(
+pub fn patch_entry(
     projects: &[Project],
     id: &str,
     name: Option<&str>,
     root: Option<&str>,
     defaults: Option<ProjectDefaults>,
-) -> Result<(usize, Project), (&'static str, &'static str)> {
+) -> Result<(usize, Project), AppError> {
     let idx = projects
         .iter()
         .position(|p| p.id == id)
-        .ok_or(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))?;
+        .ok_or(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG))?;
     let mut patched = projects[idx].clone();
     if let Some(root) = root {
         // The duplicate check EXCLUDES the project itself, so re-saving a project
@@ -374,13 +375,17 @@ pub(crate) fn patch_entry(
             .enumerate()
             .any(|(i, p)| i != idx && same_root(&p.root, root))
         {
-            return Err(("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG));
+            return Err(AppError::new(
+                ErrorCode::ProjectDuplicateRoot,
+                DUPLICATE_ROOT_MSG,
+            ));
         }
         patched.root = root.to_string();
     }
     if let Some(raw) = name {
         // Names are not unique (§7 #25) — only shape is validated.
-        patched.name = resolve_name(Some(raw), &patched.root).map_err(|m| ("INVALID_INPUT", m))?;
+        patched.name = resolve_name(Some(raw), &patched.root)
+            .map_err(|m| AppError::new(ErrorCode::InvalidInput, m))?;
     }
     if let Some(d) = defaults {
         patched.defaults = d;
@@ -390,39 +395,39 @@ pub(crate) fn patch_entry(
 
 /// The root a standards read/write should target. `PROJECT_NOT_FOUND` takes
 /// precedence over `PROJECT_ROOT_MISSING` (§7 #13).
-pub(crate) fn root_of(
-    projects: &[Project],
-    id: &str,
-) -> Result<String, (&'static str, &'static str)> {
+pub fn root_of(projects: &[Project], id: &str) -> Result<String, AppError> {
     let p = projects
         .iter()
         .find(|p| p.id == id)
-        .ok_or(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))?;
+        .ok_or(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG))?;
     if !root_exists(&p.root) {
-        return Err(("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG));
+        return Err(AppError::new(
+            ErrorCode::ProjectRootMissing,
+            ROOT_MISSING_MSG,
+        ));
     }
     Ok(p.root.clone())
 }
 
 // ---------- FR-19: the session link check ----------
 
-pub(crate) fn validate_link(
-    projects: &[Project],
-    id: &str,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn validate_link(projects: &[Project], id: &str) -> Result<(), AppError> {
     // §7 #13: an id removed a moment earlier reports NOT_FOUND, not ROOT_MISSING.
     let Some(p) = projects.iter().find(|p| p.id == id) else {
-        return Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG));
+        return Err(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG));
     };
     if !root_exists(&p.root) {
-        return Err(("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG));
+        return Err(AppError::new(
+            ErrorCode::ProjectRootMissing,
+            ROOT_MISSING_MSG,
+        ));
     }
     Ok(())
 }
 
 // ---------- FR-1/FR-3: persistence ----------
 
-pub(crate) fn projects_json_path(app: &AppHandle) -> Option<PathBuf> {
+pub fn projects_json_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
@@ -431,7 +436,7 @@ pub(crate) fn projects_json_path(app: &AppHandle) -> Option<PathBuf> {
 
 /// FR-3: a missing, empty or unparseable document yields an EMPTY registry and is
 /// not an error; a single undeserializable entry is skipped, not fatal.
-pub(crate) fn parse_registry(bytes: &[u8]) -> Vec<Project> {
+pub fn parse_registry(bytes: &[u8]) -> Vec<Project> {
     // Anything that is not our `{ version, projects: [...] }` shape — including a
     // bare array from some other tool — reads as empty rather than throwing.
     let Ok(doc) = serde_json::from_slice::<Value>(bytes) else {
@@ -445,7 +450,7 @@ pub(crate) fn parse_registry(bytes: &[u8]) -> Vec<Project> {
         .collect()
 }
 
-pub(crate) fn load_from(path: &Path) -> Vec<Project> {
+pub fn load_from(path: &Path) -> Vec<Project> {
     std::fs::read(path)
         .map(|b| parse_registry(&b))
         .unwrap_or_default()
@@ -454,7 +459,7 @@ pub(crate) fn load_from(path: &Path) -> Vec<Project> {
 /// project-groups FR-3: a document with no `groups` key loads as an empty list
 /// and is not an error; a single undeserializable entry is skipped, not fatal —
 /// mirroring `parse_registry` byte-for-byte.
-pub(crate) fn parse_groups(bytes: &[u8]) -> Vec<ProjectGroup> {
+pub fn parse_groups(bytes: &[u8]) -> Vec<ProjectGroup> {
     let Ok(doc) = serde_json::from_slice::<Value>(bytes) else {
         return Vec::new();
     };
@@ -466,7 +471,7 @@ pub(crate) fn parse_groups(bytes: &[u8]) -> Vec<ProjectGroup> {
         .collect()
 }
 
-pub(crate) fn load_groups_from(path: &Path) -> Vec<ProjectGroup> {
+pub fn load_groups_from(path: &Path) -> Vec<ProjectGroup> {
     std::fs::read(path)
         .map(|b| parse_groups(&b))
         .unwrap_or_default()
@@ -475,24 +480,24 @@ pub(crate) fn load_groups_from(path: &Path) -> Vec<ProjectGroup> {
 /// FR-1/project-groups FR-2: `{ "version": 1, "projects": [ … ], "groups": [ … ] }`,
 /// written atomically through the same helper permission-guardrails uses — one
 /// document, one writer, one whole-document save for both arrays.
-pub(crate) fn save_to(
-    path: &Path,
-    projects: &[Project],
-    groups: &[ProjectGroup],
-) -> Result<(), String> {
+pub fn save_to(path: &Path, projects: &[Project], groups: &[ProjectGroup]) -> Result<(), AppError> {
     let doc = serde_json::json!({ "version": 1, "projects": projects, "groups": groups });
     crate::permissions::write_json_atomic(path, &doc)
 }
 
 /// Writes the WHOLE registry atomically (FR-10) — the only I/O half every
 /// mutation, project or group, funnels through.
-pub(crate) fn persist(
+pub fn persist(
     app: &AppHandle,
     projects: &[Project],
     groups: &[ProjectGroup],
-) -> Result<(), String> {
-    let path = projects_json_path(app)
-        .ok_or_else(|| "could not resolve the app data directory".to_string())?;
+) -> Result<(), AppError> {
+    let path = projects_json_path(app).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::Internal,
+            "could not resolve the app data directory",
+        )
+    })?;
     save_to(&path, projects, groups)
 }
 
@@ -501,16 +506,16 @@ pub(crate) fn persist(
 /// drift between call sites (project and group commits, plus the cross-domain
 /// sweeps below), and so it is unit-testable with a real, failing `write` without
 /// needing a Tauri AppHandle (see the tests module).
-pub(crate) fn commit_with<T, F>(slot: &mut Vec<T>, next: Vec<T>, write: F) -> Result<(), String>
+pub fn commit_with<T, F>(slot: &mut Vec<T>, next: Vec<T>, write: F) -> Result<(), AppError>
 where
-    F: FnOnce(&[T]) -> Result<(), String>,
+    F: FnOnce(&[T]) -> Result<(), AppError>,
 {
     let previous = std::mem::replace(slot, next);
     match write(slot) {
         Ok(()) => Ok(()),
-        Err(msg) => {
+        Err(e) => {
             *slot = previous;
-            Err(msg)
+            Err(e)
         }
     }
 }
@@ -654,7 +659,7 @@ pub fn clear_default_account(app: &AppHandle, account_id: &str) {
 /// Pure half. `None` for a set means "this registry could not be trusted this
 /// run" and its field is left completely alone — see `reconcile_defaults` for
 /// why that distinction is load-bearing. Returns how many fields were cleared.
-pub(crate) fn reconcile_defaults_in(
+pub fn reconcile_defaults_in(
     projects: &mut [Project],
     profile_ids: Option<&HashSet<String>>,
     account_ids: Option<&HashSet<String>>,
@@ -740,7 +745,7 @@ pub struct SessionSeed {
 ///
 /// Pure half, per this file's rule (see FR-6/FR-7 above): the decision is
 /// unit-tested without a Tauri AppHandle, the wrapper below is lock-and-delegate.
-pub(crate) fn seed_of(projects: &[Project], project_id: &str) -> Option<SessionSeed> {
+pub fn seed_of(projects: &[Project], project_id: &str) -> Option<SessionSeed> {
     let p = projects.iter().find(|p| p.id == project_id)?;
     Some(SessionSeed {
         root: p.root.clone(),
@@ -761,7 +766,7 @@ pub fn session_seed(app: &AppHandle, project_id: &str) -> Option<SessionSeed> {
 }
 
 /// `(id, root)` for every registered project, in registry order.
-pub(crate) fn roots_of(projects: &[Project]) -> Vec<(String, String)> {
+pub fn roots_of(projects: &[Project]) -> Vec<(String, String)> {
     projects
         .iter()
         .map(|p| (p.id.clone(), p.root.clone()))
@@ -777,13 +782,10 @@ pub fn project_roots(app: &AppHandle) -> Vec<(String, String)> {
 }
 
 /// FR-19: validate a `session_create` link against the live registry.
-pub fn check_session_link(
-    app: &AppHandle,
-    project_id: &str,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn check_session_link(app: &AppHandle, project_id: &str) -> Result<(), AppError> {
     match app.try_state::<ProjectRegistry>() {
         Some(state) => validate_link(&state.doc.lock().unwrap().projects, project_id),
-        None => Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG)),
+        None => Err(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG)),
     }
 }
 
@@ -791,13 +793,10 @@ pub fn check_session_link(
 /// `PROJECT_NOT_FOUND` takes precedence over `PROJECT_ROOT_MISSING`, both
 /// checked before the `shell` domain spawns anything — wraps `root_of` with
 /// the app-handle lookup the `shell` domain (a different domain) needs.
-pub fn root_for_shell(
-    app: &AppHandle,
-    project_id: &str,
-) -> Result<String, (&'static str, &'static str)> {
+pub fn root_for_shell(app: &AppHandle, project_id: &str) -> Result<String, AppError> {
     match app.try_state::<ProjectRegistry>() {
         Some(state) => root_of(&state.doc.lock().unwrap().projects, project_id),
-        None => Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG)),
+        None => Err(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG)),
     }
 }
 
@@ -1113,12 +1112,15 @@ mod tests {
         assert_eq!(validate_link(&projects, "p1"), Ok(()));
         assert_eq!(
             validate_link(&projects, "p2"),
-            Err(("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG))
+            Err(AppError::new(
+                ErrorCode::ProjectRootMissing,
+                ROOT_MISSING_MSG
+            ))
         );
         // §7 #13: removed a moment earlier
         assert_eq!(
             validate_link(&projects, "nope"),
-            Err(("PROJECT_NOT_FOUND", NOT_FOUND_MSG))
+            Err(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG))
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1327,7 +1329,10 @@ mod decision_tests {
 
         // section 9: "Two projects cannot share a root"
         let err = create_entry(&existing, &root, None, None, "new".into(), 5).unwrap_err();
-        assert_eq!(err, ("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG));
+        assert_eq!(
+            err,
+            AppError::new(ErrorCode::ProjectDuplicateRoot, DUPLICATE_ROOT_MSG)
+        );
 
         // a DIFFERENT root is fine, and names are not unique (section 7 #25)
         let other = format!("{root}{SEP}sub");
@@ -1344,7 +1349,7 @@ mod decision_tests {
         let existing = vec![project_fixture("p1", "a", "D:\\Repo", 1)];
         assert_eq!(
             create_entry(&existing, "D:\\repo", None, None, "n".into(), 0).unwrap_err(),
-            ("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG)
+            AppError::new(ErrorCode::ProjectDuplicateRoot, DUPLICATE_ROOT_MSG)
         );
     }
 
@@ -1378,7 +1383,7 @@ mod decision_tests {
         let root = if cfg!(windows) { "D:\\a" } else { "/a" };
         assert_eq!(
             create_entry(&[], root, Some("   "), None, "i".into(), 0).unwrap_err(),
-            ("INVALID_INPUT", BAD_NAME_MSG)
+            AppError::new(ErrorCode::InvalidInput, BAD_NAME_MSG)
         );
         assert!(create_entry(&[], root, Some(&"x".repeat(81)), None, "i".into(), 0).is_err());
         assert!(create_entry(&[], root, Some(&"x".repeat(80)), None, "i".into(), 0).is_ok());
@@ -1429,7 +1434,7 @@ mod decision_tests {
         // but taking ANOTHER project's root is still rejected
         assert_eq!(
             patch_entry(&list, "p1", None, Some(other), None).unwrap_err(),
-            ("PROJECT_DUPLICATE_ROOT", DUPLICATE_ROOT_MSG)
+            AppError::new(ErrorCode::ProjectDuplicateRoot, DUPLICATE_ROOT_MSG)
         );
     }
 
@@ -1437,7 +1442,7 @@ mod decision_tests {
     fn patch_reports_not_found_for_an_unknown_id() {
         assert_eq!(
             patch_entry(&[], "nope", Some("x"), None, None).unwrap_err(),
-            ("PROJECT_NOT_FOUND", NOT_FOUND_MSG)
+            AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG)
         );
     }
 
@@ -1456,12 +1461,12 @@ mod decision_tests {
         );
         assert_eq!(
             root_of(&list, "p2").unwrap_err(),
-            ("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG)
+            AppError::new(ErrorCode::ProjectRootMissing, ROOT_MISSING_MSG)
         );
         // section 7 #13: an id removed a moment earlier is NOT_FOUND, not ROOT_MISSING
         assert_eq!(
             root_of(&list, "nope").unwrap_err(),
-            ("PROJECT_NOT_FOUND", NOT_FOUND_MSG)
+            AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG)
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1764,7 +1769,7 @@ mod decision_tests {
 
         assert_eq!(
             create_group_entry("   ", "g3".into(), 0).unwrap_err(),
-            ("INVALID_INPUT", BAD_GROUP_NAME_MSG)
+            AppError::new(ErrorCode::InvalidInput, BAD_GROUP_NAME_MSG)
         );
         assert!(create_group_entry(&"x".repeat(80), "g4".into(), 0).is_ok());
         assert!(create_group_entry(&"x".repeat(81), "g5".into(), 0).is_err());
@@ -1785,11 +1790,11 @@ mod decision_tests {
 
         assert_eq!(
             rename_group_entry(&groups, "g1", "   ").unwrap_err(),
-            ("INVALID_INPUT", BAD_GROUP_NAME_MSG)
+            AppError::new(ErrorCode::InvalidInput, BAD_GROUP_NAME_MSG)
         );
         assert_eq!(
             rename_group_entry(&groups, "nope", "x").unwrap_err(),
-            ("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG)
+            AppError::new(ErrorCode::GroupNotFound, GROUP_NOT_FOUND_MSG)
         );
     }
 
@@ -1809,7 +1814,7 @@ mod decision_tests {
         // (2026-08-17 · security — the core re-validates, never trusts the frontend)
         assert_eq!(
             assign_group_entry(&projects, &groups, "p1", Some("ghost")).unwrap_err(),
-            ("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG)
+            AppError::new(ErrorCode::GroupNotFound, GROUP_NOT_FOUND_MSG)
         );
 
         // clear (explicit None)
@@ -1821,7 +1826,7 @@ mod decision_tests {
         // unknown project
         assert_eq!(
             assign_group_entry(&projects, &groups, "nope", Some("g1")).unwrap_err(),
-            ("PROJECT_NOT_FOUND", NOT_FOUND_MSG)
+            AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG)
         );
     }
 

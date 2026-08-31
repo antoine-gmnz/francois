@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn handle_stream_event(
+pub fn handle_stream_event(
     env: &dyn SessionEnv,
     session_id: &str,
     cwd: &str,
@@ -17,6 +17,10 @@ pub(crate) fn handle_stream_event(
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
     tools: &mut HashMap<String, ToolRec>,
     text_accum: &mut HashMap<String, String>,
+    // FR-2: the streamed UTF-16 offset, tracked incrementally alongside
+    // `text_accum` — same key lifecycle (inserted at the same line
+    // `start_text_block` seeds `text_accum`, read/updated in `handle_text_delta`).
+    text_utf16: &mut HashMap<String, usize>,
     open_block: &mut Option<(String, BlockKind)>,
     ctx_usage: &mut ContextTracker,
 ) {
@@ -24,11 +28,11 @@ pub(crate) fn handle_stream_event(
     let event_type = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match event_type {
         "content_block_start" => {
-            handle_content_block_start(env, session_id, ev, blocks, tools, text_accum)
+            handle_content_block_start(env, session_id, ev, blocks, tools, text_accum, text_utf16)
         }
-        "content_block_delta" => {
-            handle_content_block_delta(env, session_id, ev, blocks, tools, text_accum, open_block)
-        }
+        "content_block_delta" => handle_content_block_delta(
+            env, session_id, ev, blocks, tools, text_accum, text_utf16, open_block,
+        ),
         "content_block_stop" => handle_content_block_stop(
             env, session_id, cwd, ev, blocks, tools, text_accum, open_block,
         ),
@@ -38,6 +42,7 @@ pub(crate) fn handle_stream_event(
 
 /// `content_block_start`: opens the bookkeeping slot for a new text or
 /// tool_use block. Other block types (e.g. `thinking`) are ignored.
+#[allow(clippy::too_many_arguments)]
 fn handle_content_block_start(
     env: &dyn SessionEnv,
     session_id: &str,
@@ -45,6 +50,7 @@ fn handle_content_block_start(
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
     tools: &mut HashMap<String, ToolRec>,
     text_accum: &mut HashMap<String, String>,
+    text_utf16: &mut HashMap<String, usize>,
 ) {
     let idx = ev.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
     let content_block = ev.get("content_block").cloned().unwrap_or(Value::Null);
@@ -53,7 +59,7 @@ fn handle_content_block_start(
         .and_then(|t| t.as_str())
         .unwrap_or("");
     match block_type {
-        "text" => start_text_block(idx, blocks, text_accum),
+        "text" => start_text_block(idx, blocks, text_accum, text_utf16),
         "tool_use" => start_tool_use_block(env, session_id, idx, &content_block, blocks, tools),
         _ => {} // thinking etc. — ignored
     }
@@ -64,10 +70,15 @@ fn start_text_block(
     idx: u64,
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
     text_accum: &mut HashMap<String, String>,
+    text_utf16: &mut HashMap<String, usize>,
 ) {
     let block_id = uuid();
     blocks.insert(idx, (block_id.clone(), BlockKind::Text, String::new()));
-    text_accum.insert(block_id, String::new());
+    text_accum.insert(block_id.clone(), String::new());
+    // FR-2: same key lifecycle as `text_accum` — seeded 0 here, incremented in
+    // `handle_text_delta`, so the two maps can never disagree on which block ids
+    // they know about.
+    text_utf16.insert(block_id, 0);
 }
 
 /// Parse the `content_block` payload of a `tool_use` block start into its
@@ -164,7 +175,11 @@ fn mint_subagent(
         step_count: 0,
     };
     {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         if let Some(s) = map.get_mut(session_id) {
             s.insert_agent(agent.clone());
             // async-agents FR-1: the correlation key. Session-scoped
@@ -181,6 +196,7 @@ fn mint_subagent(
     env.emit_session(SessionEvent::AgentUpdate { agent });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_content_block_delta(
     env: &dyn SessionEnv,
     session_id: &str,
@@ -188,20 +204,22 @@ fn handle_content_block_delta(
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
     tools: &mut HashMap<String, ToolRec>,
     text_accum: &mut HashMap<String, String>,
+    text_utf16: &mut HashMap<String, usize>,
     open_block: &mut Option<(String, BlockKind)>,
 ) {
     let idx = ev.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
     let delta = ev.get("delta").cloned().unwrap_or(Value::Null);
     let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match delta_type {
-        "text_delta" => {
-            handle_text_delta(env, session_id, idx, &delta, blocks, text_accum, open_block)
-        }
+        "text_delta" => handle_text_delta(
+            env, session_id, idx, &delta, blocks, text_accum, text_utf16, open_block,
+        ),
         "input_json_delta" => handle_input_json_delta(idx, &delta, blocks, tools),
         _ => {} // thinking_delta / signature_delta — ignored
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_text_delta(
     env: &dyn SessionEnv,
     session_id: &str,
@@ -209,6 +227,7 @@ fn handle_text_delta(
     delta: &Value,
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
     text_accum: &mut HashMap<String, String>,
+    text_utf16: &mut HashMap<String, usize>,
     open_block: &mut Option<(String, BlockKind)>,
 ) {
     let Some((block_id, kind, _)) = blocks.get(&idx).cloned() else {
@@ -223,10 +242,15 @@ fn handle_text_delta(
         .unwrap_or("")
         .to_string();
     let accum = text_accum.entry(block_id.clone()).or_default();
-    // The prefix already streamed for this block, counted the way the webview
-    // counts a JS string — this is what lets the frontend recognise a chunk it
-    // already has (hydration overlap) instead of appending it twice.
-    let offset = accum.encode_utf16().count();
+    // FR-2: the prefix already streamed for this block, tracked incrementally
+    // instead of re-derived by re-encoding the whole accumulated string every
+    // delta (that re-derivation was O(accumulated length) per delta, i.e.
+    // O(n^2) over a long response). `or_default()` mirrors `text_accum`'s own
+    // fallback (edge case: a delta arriving without its `content_block_start`),
+    // so the two maps fail the same way.
+    let slot = text_utf16.entry(block_id.clone()).or_insert(0);
+    let offset = *slot;
+    *slot += text.encode_utf16().count();
     accum.push_str(&text);
     // Keep the transcript buffer current with the partial text, so a view that
     // hydrates mid-block seeds the opening it would otherwise never receive.
@@ -234,7 +258,11 @@ fn handle_text_delta(
     // allocation/serialization of the full block text happens inside it; the
     // chunk (`text`) is what gets appended, `accum` only seeds a fresh block.
     {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         if let Some(s) = map.get_mut(session_id) {
             s.buf_assistant_streaming(&block_id, &text, accum);
         }
@@ -317,14 +345,13 @@ fn finish_text_block(
 /// Shared with `close_open_block` (lines.rs), which reaches this same path when
 /// the reader dies with a block still open — an interrupted answer used to
 /// never reach the buffer at all, so it vanished from the transcript on reload.
-pub(crate) fn finalize_text_block(
-    env: &dyn SessionEnv,
-    session_id: &str,
-    block_id: &str,
-    text: String,
-) {
+pub fn finalize_text_block(env: &dyn SessionEnv, session_id: &str, block_id: &str, text: String) {
     let block = {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         map.get_mut(session_id)
             .and_then(|s| s.finish_assistant(block_id, text.clone()))
     };
@@ -383,7 +410,11 @@ fn finish_tool_block(
         None
     };
     let dispatch_emissions = {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let mut ems = Vec::new();
         if let Some(s) = map.get_mut(session_id) {
             s.buf_tool(
@@ -454,10 +485,78 @@ mod tests {
     fn start_text_block_inserts_text_kind_and_empty_accum() {
         let mut blocks = HashMap::new();
         let mut text_accum = HashMap::new();
-        start_text_block(0, &mut blocks, &mut text_accum);
+        let mut text_utf16 = HashMap::new();
+        start_text_block(0, &mut blocks, &mut text_accum, &mut text_utf16);
         let (block_id, kind, slot) = blocks.get(&0).cloned().expect("block inserted");
         assert_eq!(kind, BlockKind::Text);
         assert_eq!(slot, "");
         assert_eq!(text_accum.get(&block_id), Some(&String::new()));
+        // FR-2: text_utf16 shares text_accum's exact key lifecycle.
+        assert_eq!(text_utf16.get(&block_id), Some(&0));
+    }
+
+    // ---------- handle_text_delta (FR-2: incremental UTF-16 offset) ----------
+
+    #[test]
+    fn handle_text_delta_tracks_offset_incrementally_without_reencoding() {
+        let env = crate::session::testenv::TestEnv::default();
+        let mut blocks = HashMap::new();
+        let mut text_accum = HashMap::new();
+        let mut text_utf16 = HashMap::new();
+        let mut open_block = None;
+        start_text_block(0, &mut blocks, &mut text_accum, &mut text_utf16);
+
+        // Multi-byte / surrogate-pair content: "é" (1 UTF-16 unit) then "😀"
+        // (2 UTF-16 units, a surrogate pair) — a naive byte-length offset would
+        // be wrong for either.
+        handle_text_delta(
+            &env,
+            "s1",
+            0,
+            &json!({ "type": "text_delta", "text": "é" }),
+            &mut blocks,
+            &mut text_accum,
+            &mut text_utf16,
+            &mut open_block,
+        );
+        handle_text_delta(
+            &env,
+            "s1",
+            0,
+            &json!({ "type": "text_delta", "text": "😀" }),
+            &mut blocks,
+            &mut text_accum,
+            &mut text_utf16,
+            &mut open_block,
+        );
+
+        let block_id = blocks.get(&0).unwrap().0.clone();
+        // Offset after both deltas equals the total UTF-16 length streamed so far.
+        assert_eq!(text_utf16.get(&block_id), Some(&3));
+        assert_eq!(text_accum.get(&block_id).unwrap(), "é😀");
+    }
+
+    #[test]
+    fn handle_text_delta_missing_offset_entry_defaults_to_zero() {
+        // FR-2 edge case: a delta arriving without its content_block_start has
+        // no text_utf16 entry — treat it as 0, exactly as text_accum's
+        // or_default() does, so the two maps fail the same way.
+        let env = crate::session::testenv::TestEnv::default();
+        let mut blocks = HashMap::new();
+        blocks.insert(0u64, ("b1".to_string(), BlockKind::Text, String::new()));
+        let mut text_accum = HashMap::new();
+        let mut text_utf16 = HashMap::new();
+        let mut open_block = None;
+        handle_text_delta(
+            &env,
+            "s1",
+            0,
+            &json!({ "type": "text_delta", "text": "hi" }),
+            &mut blocks,
+            &mut text_accum,
+            &mut text_utf16,
+            &mut open_block,
+        );
+        assert_eq!(text_utf16.get("b1"), Some(&2));
     }
 }

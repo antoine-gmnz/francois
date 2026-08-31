@@ -1,6 +1,7 @@
 //! async subagent lifecycle + activity trail (specs/async-agents.md).
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
@@ -15,8 +16,50 @@ use tauri::{AppHandle, State};
 // only lock → mutate → drop the lock → emit, so no emit ever happens while
 // Engine.sessions is held (the file-wide lock rule).
 
+/// core-architecture-fixes FR-11: how many of the most-recently-dispatched
+/// agents keep their FULL per-agent state (`agent_blocks`/`agent_steps`/
+/// `agent_inner_tools`). Beyond this, a COMPLETED agent's heavy state is
+/// evicted down to its `AgentInfo` summary row (what the roster renders) —
+/// same order of magnitude as `AGENT_TRAIL_CAP` (200), a different dimension
+/// (agents, not steps). A 50-agent workflow otherwise retains full state
+/// (worst case ~3.2 MB/agent, `AGENT_BLOCK_CAP` × 8,000 chars) for agents
+/// that finished hours ago.
+const AGENT_RETAIN_COUNT: usize = 20;
+
+/// FR-11: evict the heavy per-agent state of every agent beyond the
+/// `AGENT_RETAIN_COUNT` most recent (`agent_order` is first-seen order, so
+/// the retained set is the tail) — but ONLY if that agent is COMPLETED
+/// (`done`/`error`). A still-`running` agent is never evicted, however old —
+/// the same stop-at-unsettled discipline `trim_transcript` applies to the
+/// block dimension. Idempotent: called after every state transition that can
+/// newly complete an agent, so a long-running workflow never accumulates more
+/// than `AGENT_RETAIN_COUNT` agents' worth of full state at a time.
+pub fn evict_old_agents(s: &mut Session) {
+    let total = s.agent_order.len();
+    if total <= AGENT_RETAIN_COUNT {
+        return;
+    }
+    let evictable = total - AGENT_RETAIN_COUNT;
+    for id in &s.agent_order[..evictable] {
+        let completed = s
+            .agents
+            .get(id)
+            .map(|a| matches!(a.status.as_str(), "done" | "error"))
+            .unwrap_or(false);
+        if !completed {
+            continue; // never evict a running agent, however old (edge case #8)
+        }
+        s.agent_blocks.remove(id);
+        s.agent_block_seq.remove(id);
+        s.agent_blocks_dropped.remove(id);
+        s.agent_steps.remove(id);
+        s.agent_step_seq.remove(id);
+        s.agent_inner_tools.remove(id);
+    }
+}
+
 /// FR-8: the correlation key carried by an inner line, when non-null.
-pub(crate) fn parent_tool_use_id(v: &Value) -> Option<String> {
+pub fn parent_tool_use_id(v: &Value) -> Option<String> {
     v.get("parent_tool_use_id")
         .and_then(|p| p.as_str())
         .filter(|s| !s.is_empty())
@@ -25,7 +68,7 @@ pub(crate) fn parent_tool_use_id(v: &Value) -> Option<String> {
 
 /// FR-8/FR-9 + FR-13's routing decision for one top-level stream line, computed
 /// BEFORE any per-type dispatch.
-pub(crate) enum LineRoute {
+pub enum LineRoute {
     /// Attributed to a subagent (FR-8): carries its `parent_tool_use_id`
     /// correlation key. Only `assistant`/`user`/`stream_event` can be
     /// attributed — FR-9 assigns no meaning to any other type, so e.g. a
@@ -40,7 +83,7 @@ pub(crate) enum LineRoute {
 }
 
 /// Pure classifier used by the NDJSON reader before its per-type `match`.
-pub(crate) fn route_line(v: &Value) -> LineRoute {
+pub fn route_line(v: &Value) -> LineRoute {
     let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
     if matches!(ty, "assistant" | "user" | "stream_event") {
         if let Some(ptuid) = parent_tool_use_id(v) {
@@ -56,7 +99,7 @@ pub(crate) fn route_line(v: &Value) -> LineRoute {
 /// FR-2 ladder: an explicit `run_in_background` boolean wins; otherwise the tool
 /// name decides — the stock `Task` tool is synchronous, the harness's `Agent` tool
 /// runs in the background unless told otherwise. FR-11 is the safety net.
-pub(crate) fn resolve_background(input: &Value, tool: &str) -> bool {
+pub fn resolve_background(input: &Value, tool: &str) -> bool {
     match input.get("run_in_background").and_then(|b| b.as_bool()) {
         Some(b) => b,
         None => tool == "Agent",
@@ -69,7 +112,7 @@ pub(crate) fn resolve_background(input: &Value, tool: &str) -> bool {
 /// input is still empty and both fall back to the placeholder, and again at
 /// `content_block_stop` once `__acc` has parsed — which is the only point the
 /// real name exists (without the second pass every agent reads "subagent").
-pub(crate) fn agent_identity(input: &Value) -> (String, String) {
+pub fn agent_identity(input: &Value) -> (String, String) {
     let task = str_input(input, "description").unwrap_or_else(|| "subagent".into());
     let name = str_input(input, "subagent_type").unwrap_or_else(|| task.clone());
     (name, task)
@@ -79,7 +122,7 @@ pub(crate) fn agent_identity(input: &Value) -> (String, String) {
 /// run on a different one from the session that spawned it. `None` when the
 /// dispatch named none: it inherits the session's, and the banner says nothing
 /// rather than restating what the session already shows.
-pub(crate) fn dispatch_model(input: &Value) -> Option<String> {
+pub fn dispatch_model(input: &Value) -> Option<String> {
     str_input(input, "model")
 }
 
@@ -100,7 +143,7 @@ fn str_input(input: &Value, key: &str) -> Option<String> {
 /// and would otherwise be lost, silently completing every `Agent` dispatch
 /// as `background: false` (the exact bug this feature fixes). A missing or
 /// unparsable `__acc` leaves `input` unchanged.
-pub(crate) fn finalize_tool_input(input: &Value) -> Value {
+pub fn finalize_tool_input(input: &Value) -> Value {
     let Some(acc) = input.get("__acc").and_then(|a| a.as_str()) else {
         return input.clone();
     };
@@ -122,7 +165,7 @@ pub(crate) fn finalize_tool_input(input: &Value) -> Value {
 }
 
 /// First non-blank line of `text`, trimmed and truncated to `n` chars.
-pub(crate) fn first_nonblank_line(text: &str, n: usize) -> String {
+pub fn first_nonblank_line(text: &str, n: usize) -> String {
     let line = text
         .lines()
         .map(str::trim)
@@ -134,7 +177,7 @@ pub(crate) fn first_nonblank_line(text: &str, n: usize) -> String {
 /// FR-10/FR-12: append one step to an agent's trail. Sets `lastActivity`,
 /// increments `stepCount`, drops the oldest step past the window, and asks for
 /// `agent.step` then `agent.update`. A blank label or an unknown agent is a no-op.
-pub(crate) fn push_step(
+pub fn push_step(
     s: &mut Session,
     agent_id: &str,
     kind: &str,
@@ -199,7 +242,7 @@ pub(crate) fn push_step(
 
 /// FR-9/FR-10: fill an existing step's `meta` and re-emit that same `seq` — no new
 /// step, `lastActivity`/`stepCount` unchanged, so no `agent.update`.
-pub(crate) fn fill_step_meta(
+pub fn fill_step_meta(
     s: &mut Session,
     agent_id: &str,
     tool_use_id: &str,
@@ -229,7 +272,7 @@ pub(crate) fn fill_step_meta(
 
 /// FR-11 liveness self-heal: observed inner activity outranks an inferred
 /// completion. Emitted BEFORE the steps of the line that triggered it.
-pub(crate) fn revive_agent(s: &mut Session, agent_id: &str) -> Vec<AgentEmission> {
+pub fn revive_agent(s: &mut Session, agent_id: &str) -> Vec<AgentEmission> {
     match s.agents.get_mut(agent_id) {
         Some(a) if a.status != "running" => {
             a.status = "running".into();
@@ -244,7 +287,7 @@ pub(crate) fn revive_agent(s: &mut Session, agent_id: &str) -> Vec<AgentEmission
 /// and with it the FR-37 identity, which the record minted at
 /// `content_block_start` could not yet know. One emission, not two: the panel
 /// sees the kind and the name land together.
-pub(crate) fn apply_dispatch_input(
+pub fn apply_dispatch_input(
     s: &mut Session,
     agent_id: &str,
     background: bool,
@@ -269,7 +312,7 @@ pub(crate) fn apply_dispatch_input(
 /// FR-4 / FR-5: the dispatch's own `tool_result`. For a synchronous dispatch it is
 /// the completion; for a background dispatch it is only a spawn acknowledgement and
 /// MUST NOT stop the clock (the regression this feature exists for).
-pub(crate) fn apply_dispatch_result(
+pub fn apply_dispatch_result(
     s: &mut Session,
     agent_id: &str,
     result_text: &str,
@@ -289,7 +332,7 @@ pub(crate) fn apply_dispatch_result(
     }
     // FR-4: synchronous completion (session-engine FR-39 + the new is_error mapping).
     let excerpt = truncate(result_text.lines().next().unwrap_or(""), 80);
-    match s.agents.get_mut(agent_id) {
+    let out = match s.agents.get_mut(agent_id) {
         Some(a) => {
             a.status = if is_error { "error" } else { "done" }.into();
             a.ended_at = Some(at);
@@ -299,11 +342,13 @@ pub(crate) fn apply_dispatch_result(
             vec![AgentEmission::Update { agent: a.clone() }]
         }
         None => Vec::new(),
-    }
+    };
+    evict_old_agents(s); // FR-11: this transition may have newly completed an agent
+    out
 }
 
 /// FR-9/FR-10/FR-11: turn one attributed stream line into trail steps.
-pub(crate) fn apply_attributed_line(
+pub fn apply_attributed_line(
     s: &mut Session,
     agent_id: &str,
     v: &Value,
@@ -432,7 +477,7 @@ pub(crate) fn apply_attributed_line(
 
 /// The text content of a `user` line: a plain string body, or the concatenation of
 /// its `text` blocks. tool_result payloads are deliberately excluded (FR-13).
-pub(crate) fn user_line_text(v: &Value) -> String {
+pub fn user_line_text(v: &Value) -> String {
     match v.get("message").and_then(|m| m.get("content")) {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Array(arr)) => arr
@@ -445,7 +490,7 @@ pub(crate) fn user_line_text(v: &Value) -> String {
     }
 }
 
-pub(crate) fn has_tool_result(v: &Value) -> bool {
+pub fn has_tool_result(v: &Value) -> bool {
     v.get("message")
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_array())
@@ -458,7 +503,7 @@ pub(crate) fn has_tool_result(v: &Value) -> bool {
 
 /// FR-13: a top-level `user` line whose TEXT content carries the marker. A line
 /// bearing a tool_result is never a notice — it must reach the transcript.
-pub(crate) fn is_task_notification(v: &Value) -> bool {
+pub fn is_task_notification(v: &Value) -> bool {
     if v.get("type").and_then(|t| t.as_str()) != Some("user") || has_tool_result(v) {
         return false;
     }
@@ -468,14 +513,14 @@ pub(crate) fn is_task_notification(v: &Value) -> bool {
 }
 
 /// FR-15: `/\b(fail(ed|ure)?|error)\b/i`, hand-rolled (no regex dependency).
-pub(crate) fn notice_is_error(text: &str) -> bool {
+pub fn notice_is_error(text: &str) -> bool {
     text.to_lowercase()
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .any(|w| matches!(w, "fail" | "failed" | "failure" | "error"))
 }
 
 /// FR-14 ladder: backendRef verbatim → name → the single running background agent.
-pub(crate) fn resolve_notice_agent(s: &Session, text: &str) -> Option<String> {
+pub fn resolve_notice_agent(s: &Session, text: &str) -> Option<String> {
     let candidates: Vec<&AgentInfo> = s
         .agent_order
         .iter()
@@ -501,12 +546,7 @@ pub(crate) fn resolve_notice_agent(s: &Session, text: &str) -> Option<String> {
 }
 
 /// FR-15: a resolved notice closes its agent — agent.step, then agent.update.
-pub(crate) fn apply_notice(
-    s: &mut Session,
-    agent_id: &str,
-    text: &str,
-    at: u64,
-) -> Vec<AgentEmission> {
+pub fn apply_notice(s: &mut Session, agent_id: &str, text: &str, at: u64) -> Vec<AgentEmission> {
     if !s.agents.contains_key(agent_id) {
         return Vec::new();
     }
@@ -530,13 +570,15 @@ pub(crate) fn apply_notice(
         }
     }
     // push_step's own agent.update carries the terminal state — exactly one of each.
-    push_step(s, agent_id, "notice", None, &label, at)
+    let out = push_step(s, agent_id, "notice", None, &label, at);
+    evict_old_agents(s); // FR-11: this notice may have newly completed an agent
+    out
 }
 
 /// FR-16 turn-end finalization: nothing of this session is left `running`. Runs
 /// BEFORE the turn's terminal session.status is emitted, and is the backstop that
 /// makes the elapsed clock independent of FR-13's string match.
-pub(crate) fn finalize_agents(s: &mut Session, errored: bool, at: u64) -> Vec<AgentEmission> {
+pub fn finalize_agents(s: &mut Session, errored: bool, at: u64) -> Vec<AgentEmission> {
     let running: Vec<String> = s
         .agent_order
         .iter()
@@ -556,12 +598,13 @@ pub(crate) fn finalize_agents(s: &mut Session, errored: bool, at: u64) -> Vec<Ag
         }
         out.extend(push_step(s, &id, "notice", None, "ended with the turn", at));
     }
+    evict_old_agents(s); // FR-11: any of the above may have newly completed
     out
 }
 
 /// FR-18: kill is local bookkeeping — the harness-side agent is not interrupted,
 /// so FR-11 may legitimately resurrect the card. That is the honest reading.
-pub(crate) fn apply_kill(s: &mut Session, agent_id: &str, at: u64) -> Vec<AgentEmission> {
+pub fn apply_kill(s: &mut Session, agent_id: &str, at: u64) -> Vec<AgentEmission> {
     if !s.agents.contains_key(agent_id) {
         return Vec::new();
     }
@@ -569,15 +612,14 @@ pub(crate) fn apply_kill(s: &mut Session, agent_id: &str, at: u64) -> Vec<AgentE
         a.status = "error".into();
         a.ended_at = Some(at);
     }
-    push_step(s, agent_id, "notice", None, "killed from the panel", at)
+    let out = push_step(s, agent_id, "notice", None, "killed from the panel", at);
+    evict_old_agents(s); // FR-11: kill always completes the agent
+    out
 }
 
 /// §5 `francois:agents:activity`: the agent's trail, ordered by seq. None ⇔ the
 /// agentId matches no agent in ANY session's registry (AGENT_NOT_FOUND).
-pub(crate) fn activity_of(
-    map: &HashMap<String, Session>,
-    agent_id: &str,
-) -> Option<Vec<AgentStep>> {
+pub fn activity_of(map: &HashMap<String, Session>, agent_id: &str) -> Option<Vec<AgentStep>> {
     map.values()
         .find(|s| s.agents.contains_key(agent_id))
         .map(|s| {
@@ -588,11 +630,7 @@ pub(crate) fn activity_of(
         })
 }
 
-pub(crate) fn emit_agent_emissions(
-    env: &dyn SessionEnv,
-    session_id: &str,
-    ems: Vec<AgentEmission>,
-) {
+pub fn emit_agent_emissions(env: &dyn SessionEnv, session_id: &str, ems: Vec<AgentEmission>) {
     for e in ems {
         match e {
             AgentEmission::Step { agent_id, step } => {
@@ -619,7 +657,7 @@ pub(crate) fn emit_agent_emissions(
 /// FR-8: divert one attributed line to its agent. A `parent_tool_use_id` matching
 /// no known dispatch is ignored entirely — either way the line never reaches the
 /// parent-turn handlers, so the SESSION transcript stays the parent turn's record.
-pub(crate) fn attribute_inner_line(
+pub fn attribute_inner_line(
     env: &dyn SessionEnv,
     session_id: &str,
     parent_tuid: &str,
@@ -641,7 +679,7 @@ pub(crate) fn attribute_inner_line(
 
 /// FR-13/FR-14/FR-15. Returns true when the line was a notice and is consumed —
 /// an unresolved notice is consumed too (it is harness-injected, not user content).
-pub(crate) fn handle_task_notification(env: &dyn SessionEnv, session_id: &str, v: &Value) -> bool {
+pub fn handle_task_notification(env: &dyn SessionEnv, session_id: &str, v: &Value) -> bool {
     if !is_task_notification(v) {
         return false;
     }
@@ -677,7 +715,7 @@ pub fn agents_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<V
             .collect::<Vec<_>>()
     });
     match agents {
-        None => err("SESSION_NOT_FOUND", "no such session"),
+        None => err(ErrorCode::SessionNotFound, "no such session"),
         Some(agents) => ok(agents),
     }
 }
@@ -697,7 +735,7 @@ pub fn agents_dispatch(
 ) -> IpcResult<DispatchOutput> {
     let task = task.trim().to_string();
     if task.is_empty() {
-        return err("INVALID_INPUT", "task is empty");
+        return err(ErrorCode::InvalidInput, "task is empty");
     }
     let agent_id = uuid();
     let dispatched = engine.with_session_mut(&session_id, |s| {
@@ -722,8 +760,8 @@ pub fn agents_dispatch(
         Some(agent)
     });
     let agent = match dispatched {
-        None => return err("SESSION_NOT_FOUND", "no such session"),
-        Some(None) => return err("SESSION_NOT_RUNNING", "session has ended"),
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
+        Some(None) => return err(ErrorCode::SessionNotRunning, "session has ended"),
         Some(Some(agent)) => agent,
     };
     emit(&app, SessionEvent::AgentUpdate { agent });
@@ -740,7 +778,7 @@ pub fn agents_kill(
     // notice step. The harness-side background agent is NOT interrupted (v1), so
     // FR-11 may legitimately resurrect the card if it keeps emitting.
     let found = {
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let mut found = None;
         for s in map.values_mut() {
             if s.agents.contains_key(&agent_id) {
@@ -752,7 +790,7 @@ pub fn agents_kill(
         found
     };
     match found {
-        None => err("AGENT_NOT_FOUND", "no such agent"),
+        None => err(ErrorCode::AgentNotFound, "no such agent"),
         Some((session_id, ems)) => {
             emit_agent_emissions(&app, &session_id, ems);
             ok(None)
@@ -764,10 +802,10 @@ pub fn agents_kill(
 /// trail, ordered by `seq`. AGENT_NOT_FOUND when the id is unknown everywhere.
 #[tauri::command(async)]
 pub fn agents_activity(engine: State<'_, Engine>, agent_id: String) -> IpcResult<Vec<AgentStep>> {
-    let map = engine.sessions.lock().unwrap();
+    let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     match activity_of(&map, &agent_id) {
         Some(steps) => ok(steps),
-        None => err("AGENT_NOT_FOUND", "no such agent"),
+        None => err(ErrorCode::AgentNotFound, "no such agent"),
     }
 }
 
@@ -801,6 +839,66 @@ mod tests {
         assert_eq!(v["endedAt"], 9_000);
         assert_eq!(v["lastActivity"], "Read src/session.rs");
         assert_eq!(v["stepCount"], 7);
+    }
+
+    #[test]
+    fn evict_old_agents_trims_completed_agents_beyond_the_retain_count() {
+        // FR-11: a 25-agent session, retain count 20 — the oldest 5 are
+        // evictable. Only the COMPLETED ones among them actually lose their
+        // heavy state; a still-running one, however old, never does.
+        let mut s = test_session();
+        for i in 0..25 {
+            let id = format!("a{i}");
+            mint_agent(&mut s, &id, "explorer", &format!("toolu_{i}"), false);
+            s.agent_blocks
+                .insert(id.clone(), std::collections::VecDeque::new());
+            s.agent_steps
+                .insert(id.clone(), std::collections::VecDeque::new());
+            s.agent_inner_tools.insert(id.clone(), HashMap::new());
+            // a0..a3 completed, a4 still running (an old-but-live agent), the
+            // rest (a5..a24, the retained tail) also completed for realism.
+            let status = if i == 4 { "running" } else { "done" };
+            s.agents.get_mut(&id).unwrap().status = status.into();
+        }
+
+        evict_old_agents(&mut s);
+
+        for i in 0..4 {
+            let id = format!("a{i}");
+            assert!(
+                !s.agent_blocks.contains_key(&id),
+                "{id} is completed and beyond the retain count — must be evicted"
+            );
+            assert!(!s.agent_steps.contains_key(&id));
+            assert!(!s.agent_inner_tools.contains_key(&id));
+            // The summary row survives — only the heavy state is gone.
+            assert!(s.agents.contains_key(&id));
+        }
+        assert!(
+            s.agent_blocks.contains_key("a4"),
+            "a running agent is never evicted, however old"
+        );
+        for i in 5..25 {
+            let id = format!("a{i}");
+            assert!(
+                s.agent_blocks.contains_key(&id),
+                "{id} is within the retain count — must keep its full state"
+            );
+        }
+    }
+
+    #[test]
+    fn evict_old_agents_is_a_noop_at_or_under_the_retain_count() {
+        let mut s = test_session();
+        for i in 0..AGENT_RETAIN_COUNT {
+            let id = format!("a{i}");
+            mint_agent(&mut s, &id, "explorer", &format!("toolu_{i}"), false);
+            s.agent_blocks
+                .insert(id.clone(), std::collections::VecDeque::new());
+            s.agents.get_mut(&id).unwrap().status = "done".into();
+        }
+        evict_old_agents(&mut s);
+        assert_eq!(s.agent_blocks.len(), AGENT_RETAIN_COUNT);
     }
 
     #[test]
@@ -1539,7 +1637,7 @@ mod tests {
         });
         apply_attributed_line(&mut s, "a1", &line, "/x", 5_000);
         let engine = test_engine_with(s);
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let trail = activity_of(&map, "a1").expect("known agent");
         assert_eq!(trail.len(), 2);
         assert_eq!(trail[0].seq, 1);

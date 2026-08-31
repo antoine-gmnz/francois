@@ -13,6 +13,7 @@
 //! branch checkout and no hydration.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use crate::ipc::{err, err_detail, ok, IpcResult};
 use portable_pty::{native_pty_system, Child, CommandBuilder, PtySize};
@@ -53,7 +54,7 @@ const EXITED_MSG: &str =
 /// FR-5's argv after `claude`. Interactive on purpose — `-p` would give a print
 /// run with no checkout and no hydration, which is the same silent no-op Remote
 /// Control has under print mode.
-pub(crate) fn teleport_args(cloud_id: &str, session_uuid: &str) -> Vec<String> {
+pub fn teleport_args(cloud_id: &str, session_uuid: &str) -> Vec<String> {
     vec![
         "--teleport".to_string(),
         cloud_id.to_string(),
@@ -66,7 +67,7 @@ pub(crate) fn teleport_args(cloud_id: &str, session_uuid: &str) -> Vec<String> {
 /// defaults, because this creation path has no modal to read them from; an
 /// unknown value, or `wsl` off Windows, falls back to native rather than
 /// failing an adoption over a stale default.
-pub(crate) fn adopt_runtime(project_default: Option<&str>) -> String {
+pub fn adopt_runtime(project_default: Option<&str>) -> String {
     match project_default {
         Some(r) if valid_runtime(r) && (cfg!(windows) || r != "wsl") => r.to_string(),
         _ => "native".to_string(),
@@ -80,22 +81,25 @@ pub(crate) fn adopt_runtime(project_default: Option<&str>) -> String {
 /// The destructive landing is checked BEFORE the ref: an unconfirmed `checkout`
 /// reported as a bad ref would send the user to fix the ref and then stash their
 /// uncommitted work on the retry.
-pub(crate) fn validate_adopt_request(
+pub fn validate_adopt_request(
     destination: &str,
     confirmed: Option<bool>,
     r#ref: &str,
-) -> Result<(String, String), (&'static str, &'static str)> {
+) -> Result<(String, String), AppError> {
     let destination = destination.trim();
     if destination != "worktree" && destination != "checkout" {
-        return Err(("INVALID_INPUT", UNKNOWN_DESTINATION_MSG));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            UNKNOWN_DESTINATION_MSG,
+        ));
     }
     // FR-12: the core never stashes on the user's behalf — teleport does, and
     // this flag is what makes that consented.
     if destination == "checkout" && confirmed != Some(true) {
-        return Err(("INVALID_INPUT", CONFIRM_MSG));
+        return Err(AppError::new(ErrorCode::InvalidInput, CONFIRM_MSG));
     }
     let Some(cloud_id) = normalize_cloud_ref(r#ref) else {
-        return Err(("INVALID_INPUT", BAD_REF_MSG));
+        return Err(AppError::new(ErrorCode::InvalidInput, BAD_REF_MSG));
     };
     Ok((destination.to_string(), cloud_id))
 }
@@ -107,7 +111,7 @@ pub(crate) fn validate_adopt_request(
 /// land "within seconds, not a spinner" (story 5), and a 404 means there is
 /// nothing to adopt at all. Both are in `cloud_adopt`'s contract error union and
 /// are unreachable if the verdict is flattened to an `Option` here.
-pub(crate) fn adopt_meta(
+pub fn adopt_meta(
     verdict: CloudLookup,
     cloud_id: &str,
 ) -> Result<Option<CloudSession>, AdoptError> {
@@ -116,7 +120,7 @@ pub(crate) fn adopt_meta(
         CloudLookup::Unknown => Ok(None),
         CloudLookup::Actionable(code, message) => Err(AdoptError::new(code, message)),
         CloudLookup::NotFound => {
-            let (code, message) = session_not_found(cloud_id);
+            let AppError { code, message, .. } = session_not_found(cloud_id);
             Err(AdoptError::new(code, message))
         }
     }
@@ -126,7 +130,7 @@ pub(crate) fn adopt_meta(
 /// usable session name, else the landing directory's basename — the same
 /// fallback `session_create` uses. Never synthesized from the id (spec §7 #3:
 /// an invented title is worse than none).
-pub(crate) fn adopt_name(title: Option<&str>, cwd: &str) -> String {
+pub fn adopt_name(title: Option<&str>, cwd: &str) -> String {
     title
         .and_then(|t| validate_session_name(t).ok())
         .unwrap_or_else(|| basename(cwd))
@@ -136,7 +140,7 @@ pub(crate) fn adopt_name(title: Option<&str>, cwd: &str) -> String {
 /// explains a stall — the dialog currently on screen — and the start is boot
 /// noise. Counted in CHARACTERS, not bytes: a TUI window is full of box-drawing
 /// glyphs and a byte cut would land inside one.
-pub(crate) fn last_chars(text: &str, n: usize) -> String {
+pub fn last_chars(text: &str, n: usize) -> String {
     let count = text.chars().count();
     if count <= n {
         return text.to_string();
@@ -204,7 +208,7 @@ fn spawn_teleport(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| AdoptError::new("PTY_ERROR", format!("could not open a pty: {e}")))?;
+        .map_err(|e| AdoptError::new(ErrorCode::PtyError, format!("could not open a pty: {e}")))?;
 
     let mut cmd = CommandBuilder::new(exe);
     for arg in argv {
@@ -227,17 +231,19 @@ fn spawn_teleport(
         cmd.env(k, v);
     }
 
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| AdoptError::new("SPAWN_FAILED", format!("could not start {exe}: {e}")))?;
+    let child = pair.slave.spawn_command(cmd).map_err(|e| {
+        AdoptError::new(
+            ErrorCode::SpawnFailed,
+            format!("could not start {exe}: {e}"),
+        )
+    })?;
     drop(pair.slave);
     let mut guard = KillOnErr(Some(child));
 
     let killer = guard.0.as_mut().unwrap().clone_killer();
     let reader = pair.master.try_clone_reader().map_err(|e| {
         AdoptError::new(
-            "PTY_ERROR",
+            ErrorCode::PtyError,
             format!("could not read teleport's output: {e}"),
         )
     })?;
@@ -422,8 +428,12 @@ fn create_adopted_session(
         cloud_session_id: cloud_id.to_string(),
         adopted_at: now,
     });
-    let meta = session.meta();
-    engine.sessions.lock().unwrap().insert(id.clone(), session);
+    let meta = session.meta(app);
+    engine
+        .sessions
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(id.clone(), session);
     persist(app, engine);
     crate::project::touch_last_used(app, project_id);
     emit(app, SessionEvent::Meta { meta });
@@ -460,14 +470,14 @@ pub fn cloud_adopt(
     // the ref has to be a cloud session at all.
     let (destination, cloud_id) = match validate_adopt_request(&destination, confirmed, &r#ref) {
         Ok(parts) => parts,
-        Err((code, message)) => return err(code, message),
+        Err(e) => return e.into(),
     };
     // §7 #9: not re-entrant. Report the phase the in-flight run has reached
     // rather than spawning a second PTY against the same cloud session.
     if let Some(phase) = reg.phase_of(&r#ref) {
         emit_adopt(&app, &r#ref, &phase);
         return err_detail(
-            "INVALID_INPUT",
+            ErrorCode::InvalidInput,
             ALREADY_MSG,
             serde_json::json!({ "phase": phase_name(&phase) }),
         );
@@ -476,7 +486,7 @@ pub fn cloud_adopt(
     let slot = Arc::new(Mutex::new(CloudAdoptPhase::Resolving));
     let registry: &CloudAdoptRegistry = &reg;
     if !registry.reserve(&r#ref, slot.clone()) {
-        return err("INVALID_INPUT", ALREADY_MSG);
+        return err(ErrorCode::InvalidInput, ALREADY_MSG);
     }
     let mut guard = AdoptGuard::new(registry, r#ref.clone());
     let progress = AdoptProgress::new(app.clone(), r#ref.clone(), slot);
@@ -499,15 +509,12 @@ pub fn cloud_adopt(
         Err(e) => {
             progress.set(CloudAdoptPhase::Failed {
                 error: crate::ipc::AppError {
-                    code: e.code.clone(),
+                    code: e.code,
                     message: e.message.clone(),
                     detail: e.detail.clone(),
                 },
             });
-            match e.detail {
-                Some(detail) => err_detail(&e.code, e.message, detail),
-                None => err(&e.code, e.message),
-            }
+            crate::ipc::AppError::from(e).into()
         }
     }
 }
@@ -521,7 +528,7 @@ fn run_adoption(
     input: &AdoptInput<'_>,
 ) -> Result<String, AdoptError> {
     let Some(seed) = crate::project::session_seed(app, input.project_id) else {
-        return Err(AdoptError::new("PROJECT_NOT_FOUND", PROJECT_MSG));
+        return Err(AdoptError::new(ErrorCode::ProjectNotFound, PROJECT_MSG));
     };
     let runtime = adopt_runtime(seed.runtime.as_deref());
 
@@ -534,7 +541,7 @@ fn run_adoption(
     let account_id = cloud_account_id(app, input.account_id.or(seed.account_id.as_deref()));
     let config_dir = crate::account::claude_config_dir_of(app, &account_id);
     let token = cloud_access_token(config_dir.as_deref())
-        .map_err(|(code, message)| AdoptError::new(code, message))?;
+        .map_err(|e| AdoptError::new(e.code, e.message))?;
 
     // FR-3/FR-4: the branch (and the title) the cloud session carries, when the
     // lookup answers. An unhelpful answer is not fatal; an actionable refusal (an
@@ -618,7 +625,7 @@ fn run_adoption(
             if since.elapsed() >= EXIT_GRACE {
                 return Err(explain(
                     app,
-                    AdoptError::new("CLOUD_ADOPT_FAILED", EXITED_MSG),
+                    AdoptError::new(ErrorCode::CloudAdoptFailed, EXITED_MSG),
                     &pty,
                     input.cloud_id,
                 ));
@@ -629,7 +636,7 @@ fn run_adoption(
             return Err(explain(
                 app,
                 AdoptError::detailed(
-                    "CLOUD_ADOPT_STALLED",
+                    ErrorCode::CloudAdoptStalled,
                     format!(
                         "Adoption did not finish within {}s (it stopped at: {phase}).",
                         ADOPT_DEADLINE.as_secs()
@@ -765,9 +772,9 @@ mod tests {
         // INVALID_INPUT". The core never stashes on the user's behalf — teleport
         // does, and this flag is what makes that consented.
         for confirmed in [None, Some(false)] {
-            let (code, message) =
+            let AppError { code, message, .. } =
                 validate_adopt_request("checkout", confirmed, "session_01AB").unwrap_err();
-            assert_eq!(code, "INVALID_INPUT");
+            assert_eq!(code, ErrorCode::InvalidInput);
             assert!(
                 message.contains("stashes") && message.contains("worktree"),
                 "the refusal has to say what it would destroy and what to do instead: {message}"
@@ -796,12 +803,14 @@ mod tests {
 
     #[test]
     fn an_unknown_destination_or_an_unparseable_ref_is_refused() {
-        let (code, _) = validate_adopt_request("home", Some(true), "session_01AB").unwrap_err();
-        assert_eq!(code, "INVALID_INPUT");
-        let (code, message) =
+        let code = validate_adopt_request("home", Some(true), "session_01AB")
+            .unwrap_err()
+            .code;
+        assert_eq!(code, ErrorCode::InvalidInput);
+        let AppError { code, message, .. } =
             validate_adopt_request("worktree", None, "https://evil.example/session_01AB")
                 .unwrap_err();
-        assert_eq!(code, "INVALID_INPUT");
+        assert_eq!(code, ErrorCode::InvalidInput);
         assert!(message.contains("claude.ai/code"), "actionable: {message}");
     }
 
@@ -809,7 +818,9 @@ mod tests {
     fn the_destructive_landing_is_caught_even_when_the_ref_is_also_bad() {
         // Order matters: an unconfirmed checkout must never be reported as a bad
         // ref, or a retry would "fix" the ref and then stash the user's work.
-        let (_, message) = validate_adopt_request("checkout", None, "nonsense").unwrap_err();
+        let message = validate_adopt_request("checkout", None, "nonsense")
+            .unwrap_err()
+            .message;
         assert!(message.contains("stashes"), "{message}");
     }
 
@@ -843,9 +854,9 @@ mod tests {
         // them unreachable, and the user waiting out the FR-9 deadline for a
         // generic stall instead.
         for (code, message) in [
-            ("CLOUD_DEVICE_UNTRUSTED", DEVICE_UNTRUSTED_MSG),
-            ("CLOUD_POLICY_DENIED", POLICY_DENIED_MSG),
-            ("CLOUD_AUTH_EXPIRED", AUTH_EXPIRED_MSG),
+            (ErrorCode::CloudDeviceUntrusted, DEVICE_UNTRUSTED_MSG),
+            (ErrorCode::CloudPolicyDenied, POLICY_DENIED_MSG),
+            (ErrorCode::CloudAuthExpired, AUTH_EXPIRED_MSG),
         ] {
             let e = adopt_meta(CloudLookup::Actionable(code, message), "session_01AB")
                 .expect_err("must refuse");
@@ -853,7 +864,7 @@ mod tests {
             assert_eq!(e.message, message);
         }
         let e = adopt_meta(CloudLookup::NotFound, "session_01AB").expect_err("must refuse");
-        assert_eq!(e.code, "CLOUD_SESSION_NOT_FOUND");
+        assert_eq!(e.code, ErrorCode::CloudSessionNotFound);
         assert!(e.message.contains("session_01AB"), "{}", e.message);
     }
 
@@ -871,15 +882,9 @@ mod tests {
     /// the parse verdict is in.
     #[test]
     fn the_teleport_flags_are_still_accepted_by_the_cli() {
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
 
-        let mut probe = Command::new("claude");
-        probe
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        crate::process_util::no_window(&mut probe);
+        let probe = crate::process_util::spawn("claude").arg("--version");
         if !matches!(probe.status(), Ok(s) if s.success()) {
             eprintln!("FR-13 canary skipped: no `claude` on PATH");
             return;
@@ -889,13 +894,12 @@ mod tests {
             "session_00000000000000000000000000",
             &uuid::Uuid::new_v4().to_string(),
         );
-        let mut cmd = Command::new("claude");
-        cmd.args(&args)
-            .stdin(Stdio::null())
+        let Ok(mut child) = crate::process_util::spawn("claude")
+            .args(&args)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        crate::process_util::no_window(&mut cmd);
-        let Ok(mut child) = cmd.spawn() else {
+            .stderr(Stdio::piped())
+            .start()
+        else {
             eprintln!("FR-13 canary skipped: could not spawn `claude`");
             return;
         };

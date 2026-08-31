@@ -16,7 +16,7 @@ use crate::session::*;
 
 /// FR-24: the block's hard ceiling, in characters (not bytes) — skills past
 /// this are dropped rather than truncated mid-line.
-pub(crate) const SKILL_BLOCK_CAP: usize = 8_000;
+pub const SKILL_BLOCK_CAP: usize = 8_000;
 
 /// FR-24: the fixed preamble every injected block opens with.
 const PREAMBLE: &str = "The following named procedures are available for this session. \
@@ -28,7 +28,7 @@ When one's description matches what the user is asking for, follow it.\n\n";
 /// `injected`/`dropped` are the counts FR-26 needs to know whether anything
 /// made it in and how much the 8_000-char cap cost.
 #[derive(Debug, PartialEq)]
-pub(crate) struct SkillBlock {
+pub struct SkillBlock {
     pub(crate) text: String,
     pub(crate) injected: usize,
     pub(crate) dropped: usize,
@@ -36,7 +36,7 @@ pub(crate) struct SkillBlock {
 
 impl SkillBlock {
     /// FR-26: at least one skill made it into `text`.
-    pub(crate) fn is_available(&self) -> bool {
+    pub fn is_available(&self) -> bool {
         self.injected > 0
     }
 }
@@ -44,7 +44,7 @@ impl SkillBlock {
 /// FR-23/FR-25: rebuilt per turn from a fresh `SessionEnv::discover_commands`
 /// read — no second filesystem walk, and never persisted (FR-25), so a skill
 /// added mid-session takes effect on the very next call.
-pub(crate) fn build_skill_block(env: &dyn SessionEnv, cwd: &str) -> SkillBlock {
+pub fn build_skill_block(env: &dyn SessionEnv, cwd: &str) -> SkillBlock {
     let mut skills: Vec<SkillInfo> = env
         .discover_commands(cwd)
         .into_iter()

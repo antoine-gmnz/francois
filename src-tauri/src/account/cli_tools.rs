@@ -23,6 +23,7 @@
 
 use super::{emit, AccountEvent};
 use crate::ipc::AppError;
+use crate::ipc::ErrorCode;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashSet;
@@ -80,7 +81,7 @@ fn spec(id: &str) -> Option<&'static CliToolSpec> {
 
 /// Mirrors `CliToolStatus` in contract/multi-account.ts.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub(crate) struct CliToolStatus {
+pub struct CliToolStatus {
     pub(crate) id: String,
     pub(crate) bin: String,
     pub(crate) installed: bool,
@@ -127,7 +128,7 @@ fn release_install(id: &str) {
 /// Probe all three. Sequential rather than threaded: the version probes are the
 /// only slow part and they are bounded, so three at 4s worst case beats the
 /// join machinery — and the common case is three sub-100ms answers.
-pub(crate) fn probe_all() -> Vec<CliToolStatus> {
+pub fn probe_all() -> Vec<CliToolStatus> {
     TOOLS.iter().map(probe).collect()
 }
 
@@ -151,19 +152,14 @@ fn probe(spec: &CliToolSpec) -> CliToolStatus {
 /// executable is on PATH, and a CLI that is slow to print a banner (or that
 /// decides to check for its own update first) has not stopped being installed.
 fn probe_version(program: &std::path::Path) -> Option<String> {
-    let mut cmd = std::process::Command::new(program);
-    cmd.arg("--version");
-    if let Some(path) = crate::session::claude_path_env() {
-        cmd.env("PATH", path);
-    }
-    // A version probe must never inherit the app's stdin: `grok` with no
-    // arguments is a TUI, and a CLI that mis-parses the flag could otherwise sit
-    // waiting on a terminal that will never answer.
-    cmd.stdin(std::process::Stdio::null())
+    // The facade's null stdin is load-bearing here: `grok` with no arguments is
+    // a TUI, and a CLI that mis-parses the flag would otherwise sit waiting on a
+    // terminal that will never answer.
+    let mut child = crate::process_util::spawn(program)
+        .arg("--version")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-    crate::process_util::no_window(&mut cmd);
-    let mut child = cmd.spawn().ok()?;
+        .start()
+        .ok()?;
 
     let deadline = std::time::Instant::now() + VERSION_TIMEOUT;
     loop {
@@ -188,7 +184,7 @@ fn probe_version(program: &std::path::Path) -> Option<String> {
 /// The pure half: pick the line a user would recognise as a version out of
 /// whatever the CLI printed. Leading blank lines and banner padding are common
 /// enough to be worth skipping rather than reporting as an empty version.
-pub(crate) fn first_version_line(output: &str) -> Option<String> {
+pub fn first_version_line(output: &str) -> Option<String> {
     output
         .lines()
         .map(str::trim)
@@ -202,13 +198,16 @@ pub(crate) fn first_version_line(output: &str) -> Option<String> {
 /// Returns once the child is SPAWNED. A global install routinely takes tens of
 /// seconds, and blocking the command would freeze the modal for all of it — the
 /// same trade `account_codex_login` makes with the browser round-trip.
-pub(crate) fn start_install(app: &AppHandle, id: &str) -> Result<(), AppError> {
+pub fn start_install(app: &AppHandle, id: &str) -> Result<(), AppError> {
     let Some(spec) = spec(id) else {
-        return Err(error("INVALID_INPUT", format!("unknown CLI tool '{id}'")));
+        return Err(error(
+            ErrorCode::InvalidInput,
+            format!("unknown CLI tool '{id}'"),
+        ));
     };
     if !claim_install(spec.id) {
         return Err(error(
-            "INVALID_INPUT",
+            ErrorCode::InvalidInput,
             format!("an install of {} is already running", spec.bin),
         ));
     }
@@ -227,38 +226,32 @@ pub(crate) fn start_install(app: &AppHandle, id: &str) -> Result<(), AppError> {
 
 /// `npm i -g <package>`, output merged into one pipe.
 ///
-/// npm is invoked through `npm_program()` rather than `Command::new("npm")` for
+/// npm is invoked through `npm_program()` rather than by bare name for
 /// the reason `codex_program` documents: npm ships as `npm.cmd` on Windows and
 /// bare `npm` fails with `NotFound` there even though it works in every shell.
 fn spawn_npm_install(package: &str) -> Result<std::process::Child, AppError> {
     let Some(npm) = npm_program() else {
         return Err(error(
-            "CLI_INSTALL_UNAVAILABLE",
+            ErrorCode::CliInstallUnavailable,
             "npm could not be found on PATH, so Francois cannot install this CLI. \
              Install Node.js (which ships npm), or install the CLI yourself.",
         ));
     };
 
-    let mut cmd = std::process::Command::new(npm);
     // `--no-fund --no-audit`: neither produces anything the user can act on
     // here, and both add seconds and noise to the stream this UI renders.
-    cmd.args(["install", "--global", "--no-fund", "--no-audit", package]);
-    if let Some(path) = crate::session::claude_path_env() {
-        cmd.env("PATH", path);
-    }
-    if let Some(home) = dirs::home_dir() {
-        cmd.current_dir(home);
-    }
-    // `null` stdin, piped output: npm prompts for nothing under `-g`, and a
-    // pipe with no writer would turn any prompt into an immediate EOF rather
-    // than a hang. Both streams are piped because npm splits progress and
-    // warnings across them and the user needs one readable transcript.
-    cmd.stdin(std::process::Stdio::null())
+    // Piped output on BOTH streams because npm splits progress and warnings
+    // across them and the user needs one readable transcript; the facade's null
+    // stdin turns any prompt into an immediate EOF rather than a hang.
+    let mut cmd = crate::process_util::spawn(npm)
+        .args(["install", "--global", "--no-fund", "--no-audit", package])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    crate::process_util::no_window(&mut cmd);
-    cmd.spawn()
-        .map_err(|e| error("SPAWN_FAILED", format!("could not start npm: {e}")))
+    if let Some(home) = dirs::home_dir() {
+        cmd = cmd.current_dir(home);
+    }
+    cmd.start()
+        .map_err(|e| error(ErrorCode::SpawnFailed, format!("could not start npm: {e}")))
 }
 
 /// npm's executable, Windows shim included. Deliberately not `update`'s
@@ -309,7 +302,7 @@ fn watch_install(app: AppHandle, id: &'static str, mut child: std::process::Chil
             Ok(s) if s.success() || installed => None,
             Ok(s) => Some(install_failure(s.code(), &tail)),
             Err(e) => Some(error(
-                "CLI_INSTALL_FAILED",
+                ErrorCode::CliInstallFailed,
                 format!("npm did not finish: {e}"),
             )),
         };
@@ -358,7 +351,7 @@ fn pump(app: &AppHandle, id: &'static str, mut stream: Box<dyn Read + Send>, tai
 fn install_failure(code: Option<i32>, tail: &Mutex<String>) -> AppError {
     let tail = tail.lock().map(|t| t.clone()).unwrap_or_default();
     AppError {
-        code: "CLI_INSTALL_FAILED".into(),
+        code: ErrorCode::CliInstallFailed,
         message: match code {
             Some(c) => format!("npm exited with code {c}"),
             None => "npm was terminated before it finished".into(),
@@ -367,9 +360,9 @@ fn install_failure(code: Option<i32>, tail: &Mutex<String>) -> AppError {
     }
 }
 
-fn error(code: &str, message: impl Into<String>) -> AppError {
+fn error(code: ErrorCode, message: impl Into<String>) -> AppError {
     AppError {
-        code: code.into(),
+        code,
         message: message.into(),
         detail: None,
     }
@@ -488,7 +481,7 @@ mod tests {
             }
         }
         let err = install_failure(Some(1), &tail);
-        assert_eq!(err.code, "CLI_INSTALL_FAILED");
+        assert_eq!(err.code, ErrorCode::CliInstallFailed);
         assert_eq!(err.message, "npm exited with code 1");
         let detail = err.detail.unwrap();
         assert_eq!(detail["code"], 1);

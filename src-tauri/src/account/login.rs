@@ -13,6 +13,7 @@
 //! state, so a second finisher finds nothing.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, PtySize};
 use std::io::{Read, Write};
@@ -23,22 +24,22 @@ use std::time::{Duration, SystemTime};
 /// The geometry the login terminal starts at; the frontend resizes it to its
 /// own once mounted (FR-12). Wide enough that the CLI's onboarding TUI is not
 /// wrapped mid-box before the first resize arrives.
-pub(crate) const LOGIN_COLS: u16 = 100;
-pub(crate) const LOGIN_ROWS: u16 = 30;
+pub const LOGIN_COLS: u16 = 100;
+pub const LOGIN_ROWS: u16 = 30;
 /// FR-15: a login that neither succeeds nor is cancelled within 5 minutes fails.
-pub(crate) const LOGIN_TIMEOUT_SECS: u64 = 300;
+pub const LOGIN_TIMEOUT_SECS: u64 = 300;
 /// FR-13: how often `<configDir>/.claude.json` is checked for an identity.
 const IDENTITY_POLL: Duration = Duration::from_secs(1);
 
 // §7 — the exact user-facing message for each failure condition.
-pub(crate) const MSG_TIMED_OUT: &str = "The login timed out before an account was authenticated.";
-pub(crate) const MSG_EXITED: &str = "The login ended before an account was authenticated.";
-pub(crate) const MSG_IN_FLIGHT: &str = "a login is already in progress";
-pub(crate) const MSG_NO_LOGIN: &str = "no login is in progress";
+pub const MSG_TIMED_OUT: &str = "The login timed out before an account was authenticated.";
+pub const MSG_EXITED: &str = "The login ended before an account was authenticated.";
+pub const MSG_IN_FLIGHT: &str = "a login is already in progress";
+pub const MSG_NO_LOGIN: &str = "no login is in progress";
 
 /// FR-14: the duplicate identity is the feature's isolation check — it must fail
 /// LOUDLY and say WHY, rather than silently bill the wrong account.
-pub(crate) fn duplicate_message(email: &str) -> String {
+pub fn duplicate_message(email: &str) -> String {
     format!(
         "{email} is already registered in Francois. This platform's Claude Code credential \
          store may be shared between configuration directories, so this account cannot be \
@@ -51,7 +52,7 @@ pub(crate) fn duplicate_message(email: &str) -> String {
 /// A freshly spawned login, before its handle reaches the state. The reader and
 /// the child are handed to the reader thread; everything else becomes the
 /// `LoginHandle`.
-pub(crate) struct LoginSpawn {
+pub struct LoginSpawn {
     handle: LoginHandle,
     threads: LoginThreads,
 }
@@ -60,7 +61,7 @@ pub(crate) struct LoginSpawn {
 /// handle so the caller can register the handle UNDER the same lock that
 /// reserved the single-login slot (FR-16), and only then start the threads —
 /// no finisher can then race a login the state does not know about yet.
-pub(crate) struct LoginThreads {
+pub struct LoginThreads {
     login_id: String,
     config_dir: String,
     /// Round-5 CRITICAL: the identity file's mtime at the moment this login was
@@ -78,7 +79,7 @@ pub(crate) struct LoginThreads {
 impl LoginSpawn {
     /// `(login_id, handle, threads)` — the id is handed back separately because
     /// the handle moves into the state before the ack is built.
-    pub(crate) fn split(self) -> (String, LoginHandle, LoginThreads) {
+    pub fn split(self) -> (String, LoginHandle, LoginThreads) {
         (self.handle.login_id.clone(), self.handle, self.threads)
     }
 }
@@ -87,12 +88,12 @@ impl LoginSpawn {
 /// `TERM=xterm-256color`, cwd = the user's home and the resolved claude PATH.
 /// The runtime is ALWAYS native — one Windows-side config dir serves WSL too
 /// (FR-24), so there is no `wsl.exe` wrapper here.
-pub(crate) fn spawn_login(
+pub fn spawn_login(
     account_id: &str,
     config_dir: &str,
     label: Option<String>,
     existing: bool,
-) -> Result<LoginSpawn, (&'static str, String)> {
+) -> Result<LoginSpawn, AppError> {
     // Round-5 CRITICAL: snapshot BEFORE the child spawns, so nothing the new
     // login itself writes can be mistaken for the pre-existing state.
     let baseline_mtime = crate::account::identity_mtime(config_dir);
@@ -104,7 +105,7 @@ pub(crate) fn spawn_login(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| ("PTY_ERROR", format!("could not open a pty: {e}")))?;
+        .map_err(|e| AppError::new(ErrorCode::PtyError, format!("could not open a pty: {e}")))?;
 
     let mut cmd = CommandBuilder::new("claude");
     for (k, v) in std::env::vars() {
@@ -112,30 +113,36 @@ pub(crate) fn spawn_login(
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("CLAUDE_CONFIG_DIR", config_dir);
-    if let Some(path) = crate::session::claude_path_env() {
+    if let Some(path) = crate::process_util::login_shell_path_env() {
         cmd.env("PATH", path);
     }
     if let Some(home) = dirs::home_dir() {
         cmd.cwd(home);
     }
 
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| ("SPAWN_FAILED", format!("could not start claude: {e}")))?;
+    let child = pair.slave.spawn_command(cmd).map_err(|e| {
+        AppError::new(
+            ErrorCode::SpawnFailed,
+            format!("could not start claude: {e}"),
+        )
+    })?;
     drop(pair.slave);
 
     let killer = child.clone_killer();
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| ("PTY_ERROR", format!("could not open login input: {e}")))?;
-    let reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| ("PTY_ERROR", format!("could not read the login output: {e}")))?;
+    let writer = pair.master.take_writer().map_err(|e| {
+        AppError::new(
+            ErrorCode::PtyError,
+            format!("could not open login input: {e}"),
+        )
+    })?;
+    let reader = pair.master.try_clone_reader().map_err(|e| {
+        AppError::new(
+            ErrorCode::PtyError,
+            format!("could not read the login output: {e}"),
+        )
+    })?;
 
-    let login_id = crate::session::uuid();
+    let login_id = crate::ids::uuid();
     let settled = Arc::new(AtomicBool::new(false));
     Ok(LoginSpawn {
         handle: LoginHandle {
@@ -164,7 +171,7 @@ pub(crate) fn spawn_login(
 /// `account.login.data`, and owns the FR-15 "exited without an identity" path)
 /// and the identity poller (FR-13 success, FR-15 deadline). Called AFTER the
 /// handle is in the state, so neither can settle a login nothing knows about.
-pub(crate) fn start_login_threads(app: &AppHandle, threads: LoginThreads) {
+pub fn start_login_threads(app: &AppHandle, threads: LoginThreads) {
     let LoginThreads {
         login_id,
         config_dir,
@@ -246,7 +253,12 @@ fn spawn_reader_thread(
         // Re-login's config dir may already have held.
         match fresh_identity(&config_dir, baseline_mtime) {
             Some((email, organization)) => settle_success(&app, &login_id, email, organization),
-            None => settle_failure(&app, &login_id, "ACCOUNT_LOGIN_FAILED", MSG_EXITED.into()),
+            None => settle_failure(
+                &app,
+                &login_id,
+                ErrorCode::AccountLoginFailed,
+                MSG_EXITED.into(),
+            ),
         }
     });
 }
@@ -259,7 +271,7 @@ fn spawn_identity_poller(
     settled: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
-        let deadline = crate::session::now_ms() + LOGIN_TIMEOUT_SECS * 1_000;
+        let deadline = crate::ids::now_ms() + LOGIN_TIMEOUT_SECS * 1_000;
         loop {
             std::thread::sleep(IDENTITY_POLL);
             if settled.load(Ordering::SeqCst) {
@@ -269,11 +281,11 @@ fn spawn_identity_poller(
                 settle_success(&app, &login_id, email, organization);
                 return;
             }
-            if crate::session::now_ms() >= deadline {
+            if crate::ids::now_ms() >= deadline {
                 settle_failure(
                     &app,
                     &login_id,
-                    "ACCOUNT_LOGIN_FAILED",
+                    ErrorCode::AccountLoginFailed,
                     MSG_TIMED_OUT.into(),
                 );
                 return;
@@ -334,7 +346,7 @@ fn settle_success(app: &AppHandle, login_id: &str, email: String, organization: 
             AccountEvent::LoginFailed {
                 login_id: login_id.to_string(),
                 error: crate::ipc::AppError {
-                    code: "INTERNAL".into(),
+                    code: ErrorCode::Internal,
                     message: "account state is unavailable".into(),
                     detail: None,
                 },
@@ -347,7 +359,10 @@ fn settle_success(app: &AppHandle, login_id: &str, email: String, organization: 
         // expected to report that row's own identity, so it skips itself.
         let skip = handle.existing.then(|| handle.account_id.clone());
         if duplicate_email(&inner, &email, skip.as_deref()) {
-            Err(("ACCOUNT_DUPLICATE", duplicate_message(&email)))
+            Err(AppError::new(
+                ErrorCode::AccountDuplicate,
+                duplicate_message(&email),
+            ))
         } else {
             match register(
                 &mut inner,
@@ -365,8 +380,8 @@ fn settle_success(app: &AppHandle, login_id: &str, email: String, organization: 
                 // Round-4 CRITICAL: the re-login's target row was removed
                 // (FR-8) while this login was still in flight — refuse rather
                 // than resurrecting it; the caller discards the handle below.
-                None => Err((
-                    "ACCOUNT_NOT_FOUND",
+                None => Err(AppError::new(
+                    ErrorCode::AccountNotFound,
                     "the account was removed before the login finished".to_string(),
                 )),
             }
@@ -374,14 +389,14 @@ fn settle_success(app: &AppHandle, login_id: &str, email: String, organization: 
     };
 
     match outcome {
-        Err((code, message)) => {
+        Err(AppError { code, message, .. }) => {
             discard(&mut handle); // FR-14: the dir is deleted
             emit(
                 app,
                 AccountEvent::LoginFailed {
                     login_id: login_id.to_string(),
                     error: crate::ipc::AppError {
-                        code: code.into(),
+                        code,
                         message,
                         detail: None,
                     },
@@ -407,7 +422,7 @@ fn settle_success(app: &AppHandle, login_id: &str, email: String, organization: 
 }
 
 /// FR-15: no identity — kill the PTY, delete the dir, report it inline.
-fn settle_failure(app: &AppHandle, login_id: &str, code: &str, message: String) {
+fn settle_failure(app: &AppHandle, login_id: &str, code: ErrorCode, message: String) {
     let Some(mut handle) = claim(app, login_id) else {
         return;
     };
@@ -417,7 +432,7 @@ fn settle_failure(app: &AppHandle, login_id: &str, code: &str, message: String) 
         AccountEvent::LoginFailed {
             login_id: login_id.to_string(),
             error: crate::ipc::AppError {
-                code: code.into(),
+                code,
                 message,
                 detail: None,
             },
@@ -473,7 +488,7 @@ fn register(
                 email: Some(email),
                 organization,
                 config_dir: config_dir.to_string(),
-                created_at: crate::session::now_ms(),
+                created_at: crate::ids::now_ms(),
                 // multi-provider-seam FR-12: every login this module drives is
                 // the Claude Code CLI OAuth flow — the only kind reachable here.
                 kind: AccountKind::ClaudeCodeOauth,
@@ -490,49 +505,49 @@ fn register(
 
 // ---------- the passthrough surface (FR-12/FR-16) ----------
 
-pub(crate) fn write_login(
-    app: &AppHandle,
-    login_id: &str,
-    data: &str,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn write_login(app: &AppHandle, login_id: &str, data: &str) -> Result<(), AppError> {
     let state = app
         .try_state::<AccountState>()
-        .ok_or(("INVALID_INPUT", MSG_NO_LOGIN))?;
+        .ok_or(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN))?;
     // `AccountLoginAck` (contract/multi-account.ts) documents only
     // `INVALID_INPUT`/`PTY_ERROR` for this ack — a poisoned lock reads as the
     // login terminal being gone, same as any other PTY failure on this path.
     let Ok(mut inner) = state.0.lock() else {
-        return Err(("PTY_ERROR", "the login terminal is closed"));
+        return Err(AppError::new(
+            ErrorCode::PtyError,
+            "the login terminal is closed",
+        ));
     };
     let Some(login) = inner.login.as_mut().filter(|l| l.login_id == login_id) else {
-        return Err(("INVALID_INPUT", MSG_NO_LOGIN));
+        return Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN));
     };
     login
         .writer
         .write_all(data.as_bytes())
         .and_then(|_| login.writer.flush())
-        .map_err(|_| ("PTY_ERROR", "the login terminal is closed"))
+        .map_err(|_| AppError::new(ErrorCode::PtyError, "the login terminal is closed"))
 }
 
-pub(crate) fn resize_login(
-    app: &AppHandle,
-    login_id: &str,
-    cols: u16,
-    rows: u16,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn resize_login(app: &AppHandle, login_id: &str, cols: u16, rows: u16) -> Result<(), AppError> {
     if cols == 0 || rows == 0 {
-        return Err(("INVALID_INPUT", "cols and rows must be positive"));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "cols and rows must be positive",
+        ));
     }
     let state = app
         .try_state::<AccountState>()
-        .ok_or(("INVALID_INPUT", MSG_NO_LOGIN))?;
+        .ok_or(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN))?;
     // Same normalization as `write_login`: the ack's contract shape has no
     // `INTERNAL` arm, so a poisoned lock reads as a PTY failure.
     let Ok(inner) = state.0.lock() else {
-        return Err(("PTY_ERROR", "the login terminal is closed"));
+        return Err(AppError::new(
+            ErrorCode::PtyError,
+            "the login terminal is closed",
+        ));
     };
     let Some(login) = inner.login.as_ref().filter(|l| l.login_id == login_id) else {
-        return Err(("INVALID_INPUT", MSG_NO_LOGIN));
+        return Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN));
     };
     login
         .master
@@ -542,28 +557,25 @@ pub(crate) fn resize_login(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|_| ("PTY_ERROR", "could not resize the login terminal"))
+        .map_err(|_| AppError::new(ErrorCode::PtyError, "could not resize the login terminal"))
 }
 
 /// FR-16: cancel — kill the PTY, delete the dir. No event: the caller asked for
 /// this, and the modal returns to the list on its own ack.
-pub(crate) fn cancel_login(
-    app: &AppHandle,
-    login_id: &str,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn cancel_login(app: &AppHandle, login_id: &str) -> Result<(), AppError> {
     match claim(app, login_id) {
         Some(mut handle) => {
             discard(&mut handle);
             Ok(())
         }
-        None => Err(("INVALID_INPUT", MSG_NO_LOGIN)),
+        None => Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN)),
     }
 }
 
 /// FR-8 + FR-16: an account removed while a login into THAT row is in flight
 /// cancels it, so a late success cannot resurrect the row that was just removed.
 /// Called with the account lock already held (the removal's critical section).
-pub(crate) fn cancel_login_for_account(inner: &mut AccountInner, account_id: &str) {
+pub fn cancel_login_for_account(inner: &mut AccountInner, account_id: &str) {
     let targeted = inner
         .login
         .as_ref()

@@ -5,6 +5,16 @@ description = "Francois — Claude Code session orchestrator (preview)"
 edition = "2021"
 license = "AGPL-3.0-only"
 
+[features]
+# core-architecture-wave3 FR-3: `tests/` and `benches/` are SEPARATE crates, so
+# they reach only what the lib makes `pub`. Rather than widen the whole session
+# model for them — the exact thing FR-2 says to avoid — this feature publishes
+# the fixture harness the in-crate unit tests already use (`session::testutil`,
+# `session::testenv`). The self dev-dependency below is what turns it on, and it
+# turns it on for `cargo test` / `cargo bench` only: a release build (and
+# therefore every shipped binary) never compiles a line of it.
+harness = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -49,6 +59,11 @@ toml = "1.1"
 # self-update FR-15: the relauncher is spawned DETACHED so it outlives the app.
 # On unix that means `setsid()` in a pre_exec hook — there is no std API for it,
 # and the `setsid(1)` binary does not exist on macOS.
+# The self-reference is deliberate and is the documented way to enable a feature
+# for test/bench targets without enabling it for the library itself.
+[dev-dependencies]
+francois = { path = ".", features = ["harness"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
@@ -58,6 +73,19 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphic
 [profile.release]
 strip = true
 lto = true
+
+# core-architecture-wave3 FR-3: the two paths the parent spec measured and could
+# not prove, because nothing outside the crate could call them. `harness = false`
+# — these are plain `fn main()` programs, not libtest benches: `#[bench]` is
+# nightly-only, and a criterion dependency would be the largest thing in this
+# tree for two measurements CI does not gate on.
+[[bench]]
+name = "stream_delta"
+harness = false
+
+[[bench]]
+name = "transcript_read"
+harness = false
 
 # ── lint policy ─────────────────────────────────────────────────────────────
 # Owned HERE rather than as `cargo clippy -- -D warnings` in CI, deliberately:

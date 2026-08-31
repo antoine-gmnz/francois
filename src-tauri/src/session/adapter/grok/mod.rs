@@ -49,42 +49,28 @@ mod translate;
 mod wire;
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 use crate::session::*;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-/// The executable's base name, before any platform-specific extension.
-pub(crate) const GROK_BIN: &str = "grok";
-
-/// The program string to actually spawn for `grok` — same Windows-shim trap
-/// `codex_program` documents (`npm i -g @xai-official/grok` ships `grok.cmd`
-/// on Windows, and `Command::new("grok")` resolves a bare name there by
-/// appending `.exe` only, never finding the shim).
-pub(crate) fn grok_program() -> String {
-    static RESOLVED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    RESOLVED.get_or_init(resolve_grok_program).clone()
-}
-
-fn resolve_grok_program() -> String {
-    if !cfg!(windows) {
-        return GROK_BIN.to_string();
-    }
-    crate::process_util::resolve_program(GROK_BIN)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| GROK_BIN.to_string())
-}
+// core-architecture-wave3 FR-9: moved to `process_util` alongside
+// `codex_program`, for the reason documented there. Re-exported, so nothing
+// that already says `grok_program()` or `GROK_BIN` changes.
+#[allow(unused_imports)] // GROK_BIN is named by this module's own tests
+pub use crate::process_util::{grok_program, GROK_BIN};
 
 /// FR-24: what a user sees when the CLI is not installed.
 const GROK_MISSING_HINT: &str =
     "could not start grok — install it with `npm i -g @xai-official/grok`, then sign in from the Accounts modal";
 
-pub(crate) struct GrokAdapter;
+pub struct GrokAdapter;
 
 /// FR-10: the live turn. A `Child` and an interrupt flag, and deliberately
 /// nothing else — `grok -p` is one-shot and non-interactive (`--always-approve`
 /// on every invocation, FR-6), so nothing on this transport is ever pending.
-pub(crate) struct GrokTurnHandle {
+pub struct GrokTurnHandle {
     child: Arc<Mutex<std::process::Child>>,
     interrupted: Arc<AtomicBool>,
 }
@@ -139,7 +125,7 @@ impl SessionAdapter for GrokAdapter {
             if !crate::account::grok_auth_file_exists(dir) {
                 crate::account::mark_auth_failed(app, &ctx.account_id);
                 return Err(AppError {
-                    code: "ACCOUNT_NOT_AUTHENTICATED".into(),
+                    code: ErrorCode::AccountNotAuthenticated,
                     message: "this session's account is not signed in to Grok — use Sign in in the Accounts modal"
                         .into(),
                     detail: None,
@@ -214,15 +200,13 @@ mod tests {
     fn a_grok_turn_never_has_anything_pending() {
         let handle = GrokTurnHandle {
             child: Arc::new(Mutex::new(
-                std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" })
+                crate::process_util::spawn(if cfg!(windows) { "cmd" } else { "true" })
                     .args(if cfg!(windows) {
                         vec!["/C", "exit"]
                     } else {
                         vec![]
                     })
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
+                    .start()
                     .expect("spawns a trivial process"),
             )),
             interrupted: Arc::new(AtomicBool::new(false)),

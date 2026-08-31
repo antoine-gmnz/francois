@@ -36,7 +36,7 @@ fn is_false(b: &bool) -> bool {
 /// Mirrors SessionQuestion in contract/common.ts. multiSelect defaults to false
 /// when absent (FR-7); everything renders verbatim.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(crate) struct SessionQuestion {
+pub struct SessionQuestion {
     #[serde(default)]
     pub(crate) question: String,
     #[serde(default)]
@@ -50,14 +50,14 @@ pub(crate) struct SessionQuestion {
 /// permission-guardrails FR-12: what the CLI is told when the user denies a call.
 /// (Replaces session-questions' blanket "not supported yet" deny — every gated
 /// call now parks on an approval card instead.)
-pub(crate) const PERMISSION_DENY_MSG: &str = "Francois: the user denied this tool call.";
+pub const PERMISSION_DENY_MSG: &str = "Francois: the user denied this tool call.";
 
 /// design 13c: the AskUserQuestion convention for "I recommend this one" is a
 /// `(Recommended)` suffix appended to the option's own label. True iff the label
 /// ends in that marker, case- and spacing-insensitive. The label is NOT rewritten
 /// — it stays the canonical answer value the CLI matches against (FR-12), so
 /// only the frontend's rendering drops the marker.
-pub(crate) fn is_recommended_label(label: &str) -> bool {
+pub fn is_recommended_label(label: &str) -> bool {
     let t = label.trim_end();
     let Some(open) = t.rfind('(') else {
         return false;
@@ -70,7 +70,7 @@ pub(crate) fn is_recommended_label(label: &str) -> bool {
 
 /// FR-7: parse the AskUserQuestion input leniently. None ⇔ no non-empty
 /// `questions` array (or unparseable entries) → auto-deny, no card.
-pub(crate) fn parse_questions(input: &Value) -> Option<Vec<SessionQuestion>> {
+pub fn parse_questions(input: &Value) -> Option<Vec<SessionQuestion>> {
     let arr = input.get("questions")?.as_array()?;
     if arr.is_empty() {
         return None;
@@ -90,7 +90,7 @@ pub(crate) fn parse_questions(input: &Value) -> Option<Vec<SessionQuestion>> {
 }
 
 /// §5.5 allow response: `updatedInput` = verbatim original input + the answers map.
-pub(crate) fn allow_response(request_id: &str, input: &Value, answers: &Value) -> Value {
+pub fn allow_response(request_id: &str, input: &Value, answers: &Value) -> Value {
     let mut updated = input.clone();
     if let Some(obj) = updated.as_object_mut() {
         obj.insert("answers".into(), answers.clone());
@@ -101,21 +101,21 @@ pub(crate) fn allow_response(request_id: &str, input: &Value, answers: &Value) -
 }
 
 /// §5.5 deny response (FR-7 malformed / FR-8 other tools / FR-13 best-effort).
-pub(crate) fn deny_response(request_id: &str, message: &str) -> Value {
+pub fn deny_response(request_id: &str, message: &str) -> Value {
     serde_json::json!({ "type": "control_response", "response": {
         "subtype": "success", "request_id": request_id,
         "response": { "behavior": "deny", "message": message } } })
 }
 
 /// §5.5 error response for unsupported control_request subtypes (FR-9).
-pub(crate) fn error_response(request_id: &str) -> Value {
+pub fn error_response(request_id: &str) -> Value {
     serde_json::json!({ "type": "control_response", "response": {
         "subtype": "error", "request_id": request_id, "error": "unsupported control request" } })
 }
 
 /// Allow response for a non-question tool (the `allowGit` auto-approve path):
 /// echo the original input verbatim as `updatedInput` with behavior "allow".
-pub(crate) fn allow_tool_response(request_id: &str, input: &Value) -> Value {
+pub fn allow_tool_response(request_id: &str, input: &Value) -> Value {
     serde_json::json!({ "type": "control_response", "response": {
         "subtype": "success", "request_id": request_id,
         "response": { "behavior": "allow", "updatedInput": input } } })
@@ -125,7 +125,7 @@ pub(crate) fn allow_tool_response(request_id: &str, input: &Value) -> Value {
 /// whitespace token of `input.command` is `git` or `gh`. Compound commands
 /// (`cd x && git …`) are intentionally NOT matched: only the leading program
 /// counts, so nothing else can ride along on an auto-approval.
-pub(crate) fn is_git_command(input: &Value) -> bool {
+pub fn is_git_command(input: &Value) -> bool {
     input
         .get("command")
         .and_then(|c| c.as_str())
@@ -134,7 +134,7 @@ pub(crate) fn is_git_command(input: &Value) -> bool {
 }
 
 /// What to do with an inbound `control_request` line. Pure; unit-tested.
-pub(crate) enum ControlDecision {
+pub enum ControlDecision {
     /// AskUserQuestion with well-formed input: park it (session-questions FR-6).
     Ask {
         request_id: String,
@@ -152,7 +152,7 @@ pub(crate) enum ControlDecision {
     Respond(Value),
 }
 
-pub(crate) fn decide_control_request(v: &Value, allow_git: bool) -> ControlDecision {
+pub fn decide_control_request(v: &Value, allow_git: bool) -> ControlDecision {
     let request_id = v
         .get("request_id")
         .and_then(|r| r.as_str())

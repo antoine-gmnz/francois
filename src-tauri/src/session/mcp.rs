@@ -1,6 +1,7 @@
 //! MCP server discovery, attach/detach, and the mcp-panel commands.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde_json::Value;
@@ -14,11 +15,11 @@ use tauri::{AppHandle, State};
 // connection state resolves on the session's next turn. The panel shows
 // project-scope servers merged with the last runtime status.
 
-pub(crate) fn mcp_json_path(cwd: &str) -> std::path::PathBuf {
+pub fn mcp_json_path(cwd: &str) -> std::path::PathBuf {
     std::path::Path::new(cwd).join(".mcp.json")
 }
 
-pub(crate) fn read_mcp_json(cwd: &str) -> Value {
+pub fn read_mcp_json(cwd: &str) -> Value {
     std::fs::read(mcp_json_path(cwd))
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
@@ -28,20 +29,24 @@ pub(crate) fn read_mcp_json(cwd: &str) -> Value {
 /// Read `.mcp.json` for a WRITE path: absent → `{}`, valid object → it, present-but-
 /// unparseable → Err so attach/detach never clobber a malformed file (parity with
 /// skills_install's settings.json guard).
-pub(crate) fn read_mcp_json_for_write(cwd: &str) -> Result<Value, String> {
+pub fn read_mcp_json_for_write(cwd: &str) -> Result<Value, AppError> {
+    // core-architecture-wave3 FR-6: MCP_ERROR, the code both call sites stamped.
+    let failed = |m: String| AppError::new(ErrorCode::McpError, m);
     match std::fs::read(mcp_json_path(cwd)) {
         Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
             Ok(v) if v.is_object() => Ok(v),
-            _ => Err("refusing to overwrite .mcp.json — it is not valid JSON".into()),
+            _ => Err(failed(
+                "refusing to overwrite .mcp.json — it is not valid JSON".into(),
+            )),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
-        Err(e) => Err(format!("could not read .mcp.json: {e}")),
+        Err(e) => Err(failed(format!("could not read .mcp.json: {e}"))),
     }
 }
 
 /// Read `~/.claude.json` (the CLI's user store; holds user-scope `mcpServers` and
 /// per-project `projects[path].mcpServers` = local scope). `{}` if missing/unreadable.
-pub(crate) fn read_claude_json() -> Value {
+pub fn read_claude_json() -> Value {
     dirs::home_dir()
         .map(|h| h.join(".claude.json"))
         .and_then(|p| std::fs::read(p).ok())
@@ -51,12 +56,12 @@ pub(crate) fn read_claude_json() -> Value {
 
 /// Normalize a path for matching `~/.claude.json` `projects` keys (forward slashes,
 /// no trailing separator). Case is preserved — CLI keys are stored verbatim.
-pub(crate) fn norm_path(p: &str) -> String {
+pub fn norm_path(p: &str) -> String {
     p.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
 /// The `mcpServers` object from a `~/.claude.json` node, as name→config pairs.
-pub(crate) fn mcp_servers_of(node: Option<&Value>) -> Vec<(String, Value)> {
+pub fn mcp_servers_of(node: Option<&Value>) -> Vec<(String, Value)> {
     node.and_then(|n| n.get("mcpServers"))
         .and_then(|m| m.as_object())
         .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -66,7 +71,7 @@ pub(crate) fn mcp_servers_of(node: Option<&Value>) -> Vec<(String, Value)> {
 /// Compare two paths after normalization — case-insensitively on Windows, where the
 /// filesystem is case-insensitive so `~/.claude.json` keys may differ in case (e.g.
 /// drive letter) from a session's cwd.
-pub(crate) fn path_eq(a: &str, b: &str) -> bool {
+pub fn path_eq(a: &str, b: &str) -> bool {
     #[cfg(windows)]
     {
         norm_path(a).eq_ignore_ascii_case(&norm_path(b))
@@ -79,21 +84,21 @@ pub(crate) fn path_eq(a: &str, b: &str) -> bool {
 
 /// Look up the local-scope project node in `~/.claude.json` for a cwd, matching
 /// on normalized path (CLI stores keys with forward slashes on Windows).
-pub(crate) fn project_node<'a>(cj: &'a Value, cwd: &str) -> Option<&'a Value> {
+pub fn project_node<'a>(cj: &'a Value, cwd: &str) -> Option<&'a Value> {
     cj.get("projects")?
         .as_object()?
         .iter()
         .find_map(|(k, v)| path_eq(k, cwd).then_some(v))
 }
 
-pub(crate) fn write_mcp_json(cwd: &str, v: &Value) -> std::io::Result<()> {
+pub fn write_mcp_json(cwd: &str, v: &Value) -> std::io::Result<()> {
     std::fs::write(
         mcp_json_path(cwd),
         serde_json::to_vec_pretty(v).unwrap_or_default(),
     )
 }
 
-pub(crate) fn transport_of(cfg: &Value) -> &'static str {
+pub fn transport_of(cfg: &Value) -> &'static str {
     let t = cfg.get("type").and_then(|t| t.as_str()).unwrap_or("");
     if t == "http" || t == "sse" || cfg.get("url").is_some() {
         "http"
@@ -102,7 +107,7 @@ pub(crate) fn transport_of(cfg: &Value) -> &'static str {
     }
 }
 
-pub(crate) fn command_of(cfg: &Value) -> String {
+pub fn command_of(cfg: &Value) -> String {
     let cmd = cfg.get("command").and_then(|c| c.as_str()).unwrap_or("");
     let args: Vec<String> = cfg
         .get("args")
@@ -120,7 +125,7 @@ pub(crate) fn command_of(cfg: &Value) -> String {
     }
 }
 
-pub(crate) fn connecting_info(name: &str) -> McpServerInfo {
+pub fn connecting_info(name: &str) -> McpServerInfo {
     McpServerInfo {
         name: name.to_string(),
         status: "connecting".into(),
@@ -131,7 +136,7 @@ pub(crate) fn connecting_info(name: &str) -> McpServerInfo {
 }
 
 /// v1 curated registry (static; no network). Mirrors McpRegistryEntry.
-pub(crate) fn registry() -> Vec<Value> {
+pub fn registry() -> Vec<Value> {
     use serde_json::json;
     vec![
         json!({ "name": "filesystem", "description": "Local filesystem access", "transport": "stdio",
@@ -159,7 +164,7 @@ pub fn mcp_registry() -> IpcResult<Vec<Value>> {
 /// All MCP servers visible to a cwd, in the same precedence the CLI uses:
 /// local (project node in ~/.claude.json) > project (.mcp.json) > user
 /// (~/.claude.json top-level). Returns (name, scope) with each name appearing once.
-pub(crate) fn merged_mcp_scopes(cwd: &str) -> Vec<(String, String)> {
+pub fn merged_mcp_scopes(cwd: &str) -> Vec<(String, String)> {
     let cj = read_claude_json();
     let sources: [(&str, Vec<(String, Value)>); 3] = [
         ("local", mcp_servers_of(project_node(&cj, cwd))),
@@ -179,7 +184,7 @@ pub(crate) fn merged_mcp_scopes(cwd: &str) -> Vec<(String, String)> {
 }
 
 /// Find a server's raw config + scope across all scopes (local > project > user).
-pub(crate) fn find_mcp_config(cwd: &str, name: &str) -> Option<(Value, String)> {
+pub fn find_mcp_config(cwd: &str, name: &str) -> Option<(Value, String)> {
     let cj = read_claude_json();
     if let Some(v) = project_node(&cj, cwd)
         .and_then(|n| n.get("mcpServers"))
@@ -212,7 +217,7 @@ pub(crate) fn find_mcp_config(cwd: &str, name: &str) -> Option<(Value, String)> 
 /// is checked into the repo, and a name the user ALSO declared locally or globally
 /// resolves to that config first (see `find_mcp_config`'s precedence) — the CLI
 /// never asks about it, so neither do we.
-pub(crate) fn approval_status(
+pub fn approval_status(
     name: &str,
     scope: &str,
     approvals: &McpApprovalState,
@@ -249,7 +254,7 @@ pub fn mcp_list(
             s.mcp.clone(),
         )
     }) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     let config_dir = crate::account::config_dir_of(&app, &account_id);
     let approvals = approval_state(&cwd, &claude_runtime, config_dir.as_deref());
@@ -292,11 +297,11 @@ pub fn mcp_detail(
             s.mcp.get(&name).cloned(),
         )
     }) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     let Some((entry, scope)) = find_mcp_config(&cwd, &name) else {
         return err(
-            "MCP_ERROR",
+            ErrorCode::McpError,
             format!("'{name}' is not configured for this session"),
         );
     };
@@ -339,7 +344,7 @@ pub fn mcp_reconnect(
         s.mcp.insert(name.clone(), info.clone());
         info
     }) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     emit(
         &app,
@@ -358,13 +363,13 @@ pub fn mcp_detach(
     name: String,
 ) -> IpcResult<Option<()>> {
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     // Only project-scope servers live in this project's .mcp.json. Refuse to silently
     // edit the user's global ~/.claude.json for local/user-scope servers.
     if let Some((_, scope)) = find_mcp_config(&cwd, &name) {
         if scope != "project" {
-            return err("MCP_ERROR", format!("'{name}' is {scope}-scoped (managed globally) — remove it with `claude mcp remove {name}`"));
+            return err(ErrorCode::McpError, format!("'{name}' is {scope}-scoped (managed globally) — remove it with `claude mcp remove {name}`"));
         }
     }
     engine.with_session_mut(&session_id, |s| {
@@ -372,13 +377,16 @@ pub fn mcp_detach(
     });
     let mut cfg = match read_mcp_json_for_write(&cwd) {
         Ok(v) => v,
-        Err(e) => return err("MCP_ERROR", e),
+        Err(e) => return e.into(),
     };
     if let Some(servers) = cfg.get_mut("mcpServers").and_then(|m| m.as_object_mut()) {
         servers.remove(&name);
     }
     if let Err(e) = write_mcp_json(&cwd, &cfg) {
-        return err("MCP_ERROR", format!("could not write .mcp.json: {e}"));
+        return err(
+            ErrorCode::McpError,
+            format!("could not write .mcp.json: {e}"),
+        );
     }
     ok(None)
 }
@@ -397,19 +405,19 @@ pub fn mcp_attach(
         .trim()
         .to_string();
     if name.is_empty() {
-        return err("INVALID_INPUT", "server name is required");
+        return err(ErrorCode::InvalidInput, "server name is required");
     }
     let transport = entry
         .get("transport")
         .and_then(|t| t.as_str())
         .unwrap_or("stdio");
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
 
     let mut cfg = match read_mcp_json_for_write(&cwd) {
         Ok(v) => v,
-        Err(e) => return err("MCP_ERROR", e),
+        Err(e) => return e.into(),
     };
     let servers = cfg
         .as_object_mut()
@@ -419,13 +427,13 @@ pub fn mcp_attach(
         .as_object_mut();
     let Some(servers) = servers else {
         return err(
-            "MCP_ERROR",
+            ErrorCode::McpError,
             "malformed .mcp.json (mcpServers is not an object)",
         );
     };
     if servers.contains_key(&name) {
         return err(
-            "INVALID_INPUT",
+            ErrorCode::InvalidInput,
             format!("'{name}' already exists in this project's .mcp.json"),
         );
     }
@@ -438,7 +446,10 @@ pub fn mcp_attach(
             .unwrap_or("")
             .trim();
         if url.is_empty() {
-            return err("INVALID_INPUT", "url is required for an http server");
+            return err(
+                ErrorCode::InvalidInput,
+                "url is required for an http server",
+            );
         }
         let mut o = serde_json::json!({ "type": "http", "url": url });
         if let Some(sec) = secret {
@@ -454,7 +465,10 @@ pub fn mcp_attach(
             .unwrap_or("")
             .trim();
         if cmdline.is_empty() {
-            return err("INVALID_INPUT", "command is required for a stdio server");
+            return err(
+                ErrorCode::InvalidInput,
+                "command is required for a stdio server",
+            );
         }
         let mut parts = cmdline.split_whitespace();
         let cmd = parts.next().unwrap_or("");
@@ -470,7 +484,10 @@ pub fn mcp_attach(
 
     servers.insert(name.clone(), server);
     if let Err(e) = write_mcp_json(&cwd, &cfg) {
-        return err("MCP_ERROR", format!("could not write .mcp.json: {e}"));
+        return err(
+            ErrorCode::McpError,
+            format!("could not write .mcp.json: {e}"),
+        );
     }
 
     let info = connecting_info(&name);

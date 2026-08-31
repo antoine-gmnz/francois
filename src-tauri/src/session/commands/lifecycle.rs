@@ -1,9 +1,9 @@
 //! session lifecycle: create, remove, switch model, interrupt (specs/session-engine.md).
 
 use crate::ipc::{err, err_detail, ok, IpcResult};
+use crate::ipc::{AppError, ErrorCode};
 use crate::session::*;
 use serde_json::Value;
-use std::process::{Command, Stdio};
 use tauri::{AppHandle, Manager, State};
 
 /// projects: the decision half of `session_create`'s post-insert TOCTOU re-check.
@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager, State};
 ///
 /// Pure so the branching is testable: the handler owns the two lock acquisitions,
 /// this owns the decision. Returns the project id to KEEP, or `None` to unlink.
-pub(crate) fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> Option<String> {
+pub fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> Option<String> {
     project_id.filter(|_| still_linked)
 }
 
@@ -23,9 +23,7 @@ pub(crate) fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> 
 /// so the fallback branching is testable. `Ok(None)` means "no usable name was
 /// given" — the caller falls back to `basename(cwd)`, which is why a blank name
 /// never fails creation. A non-blank name is cleaned and capped like any rename.
-pub(crate) fn create_name(
-    name: Option<String>,
-) -> Result<Option<String>, (&'static str, &'static str)> {
+pub fn create_name(name: Option<String>) -> Result<Option<String>, AppError> {
     match name.filter(|n| !clean_session_name(n).is_empty()) {
         Some(raw) => validate_session_name(&raw).map(Some),
         None => Ok(None),
@@ -36,14 +34,15 @@ pub(crate) fn create_name(
 /// under the lock and hand back the updated snapshot. `None` when the id is
 /// unknown, in which case nothing was mutated. Persist + emit stay in the handler
 /// (they need the AppHandle), mirroring `apply_model_switch`.
-pub(crate) fn rename_in_engine(
+pub fn rename_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     name: String,
 ) -> Option<SessionMeta> {
     engine.with_session_mut(session_id, |s| {
         s.name = name;
-        s.meta()
+        s.meta(accounts)
     })
 }
 
@@ -54,13 +53,13 @@ pub(crate) fn rename_in_engine(
 /// `adopt` is session-worktree's `WorktreeCreateInput::adopt` (false when the
 /// session carries no worktree input) — it only steers how the FR-7 check
 /// resolves `cwd`, see below.
-pub(crate) fn validate_create_input(
+pub fn validate_create_input(
     cwd: &str,
     model_id: Option<String>,
     permission_mode: Option<String>,
     runtime: Option<String>,
     adopt: bool,
-) -> Result<(String, String, String), (&'static str, &'static str)> {
+) -> Result<(String, String, String), AppError> {
     // FR-7: cwd must exist and be a directory.
     //
     // CRITICAL remediation: the FR-5 "already checked out" recovery flow calls
@@ -77,8 +76,8 @@ pub(crate) fn validate_create_input(
         crate::diff::GitHost::Wsl(_) => path_exists(&precheck_host, cwd),
     };
     if !cwd_ok {
-        return Err((
-            "INVALID_INPUT",
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
             "working directory does not exist or is not a directory",
         ));
     }
@@ -91,15 +90,18 @@ pub(crate) fn validate_create_input(
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
     let permission_mode = permission_mode.unwrap_or_else(|| "default".to_string());
     if !valid_permission_mode(&permission_mode) {
-        return Err(("INVALID_INPUT", "unknown permission mode"));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "unknown permission mode",
+        ));
     }
     let runtime = runtime.unwrap_or_else(|| "native".to_string());
     if !valid_runtime(&runtime) {
-        return Err(("INVALID_INPUT", "unknown runtime"));
+        return Err(AppError::new(ErrorCode::InvalidInput, "unknown runtime"));
     }
     if runtime == "wsl" && !cfg!(windows) {
-        return Err((
-            "INVALID_INPUT",
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
             "the WSL runtime is only available on Windows",
         ));
     }
@@ -114,31 +116,21 @@ pub(crate) fn validate_create_input(
 /// `config_dir` (multi-account FR-21): the chosen account's `CLAUDE_CONFIG_DIR`,
 /// so the create-time probe runs under the very configuration the session's
 /// turns will use — `None` for the built-in `default` account (no override).
-pub(crate) fn probe_claude_binary(
+pub fn probe_claude_binary(
     runtime: &str,
     cwd: &str,
     config_dir: Option<&str>,
-) -> Result<(), (&'static str, &'static str)> {
+) -> Result<(), AppError> {
     let (probe, probe_args) = claude_invocation(runtime, cwd, vec!["--version".to_string()], None);
-    let mut probe_cmd = Command::new(&probe);
-    probe_cmd
+    let probe_cmd = crate::process_util::spawn(&probe)
         .args(&probe_args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(path) = claude_path_env() {
-        probe_cmd.env("PATH", path);
-    }
-    for (k, v) in account_env(config_dir, runtime, &[]) {
-        probe_cmd.env(k, v);
-    }
-    crate::process_util::no_window(&mut probe_cmd);
+        .envs(account_env(config_dir, runtime, &[]));
     match probe_cmd.status() {
         Ok(s) if s.success() => Ok(()),
-        Ok(_) if runtime == "wsl" => Err(("SPAWN_FAILED", "Claude Code CLI failed inside WSL. Run `claude` once in your WSL distro to install and authenticate it.")),
-        Ok(_) => Err(("SPAWN_FAILED", "Claude Code CLI exited with an error. Run `claude` once in a terminal to authenticate.")),
-        Err(_) if runtime == "wsl" => Err(("SPAWN_FAILED", "WSL not found. Install it (wsl --install) or use the native runtime.")),
-        Err(_) => Err(("SPAWN_FAILED", "Claude Code CLI not found. Install it and ensure `claude` is on PATH.")),
+        Ok(_) if runtime == "wsl" => Err(AppError::new(ErrorCode::SpawnFailed, "Claude Code CLI failed inside WSL. Run `claude` once in your WSL distro to install and authenticate it.")),
+        Ok(_) => Err(AppError::new(ErrorCode::SpawnFailed, "Claude Code CLI exited with an error. Run `claude` once in a terminal to authenticate.")),
+        Err(_) if runtime == "wsl" => Err(AppError::new(ErrorCode::SpawnFailed, "WSL not found. Install it (wsl --install) or use the native runtime.")),
+        Err(_) => Err(AppError::new(ErrorCode::SpawnFailed, "Claude Code CLI not found. Install it and ensure `claude` is on PATH.")),
     }
 }
 
@@ -148,12 +140,12 @@ pub(crate) fn probe_claude_binary(
 /// `crate::profiles::find` at the call site (injected here so a test can stub
 /// the registry); it's asked only when a `profile_id` was actually given.
 #[derive(Debug)]
-pub(crate) enum ProfileResolveError {
+pub enum ProfileResolveError {
     ArgDenied { flag: String, reason: &'static str },
     NotFound,
 }
 
-pub(crate) fn resolve_profile_ref(
+pub fn resolve_profile_ref(
     extra_args: &[String],
     profile_id: Option<&str>,
     system_prompt_present: bool,
@@ -186,11 +178,12 @@ pub(crate) fn resolve_profile_ref(
 /// oversized prompt directly. Re-applying the same char-count bound here
 /// means that case surfaces as `INVALID_INPUT` at creation instead of a
 /// confusing `SPAWN_FAILED` once the CLI itself balks at the argv.
-pub(crate) fn check_system_prompt_bound(
-    system_prompt: &str,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn check_system_prompt_bound(system_prompt: &str) -> Result<(), AppError> {
     if system_prompt.chars().count() > crate::profiles::MAX_SYSTEM_PROMPT {
-        return Err(("INVALID_INPUT", crate::profiles::BAD_PROMPT_MSG));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            crate::profiles::BAD_PROMPT_MSG,
+        ));
     }
     Ok(())
 }
@@ -224,14 +217,14 @@ pub fn session_create(
     let response_mode = match response_mode {
         Some(raw) => match ResponseMode::parse(&raw) {
             Some(mode) => mode,
-            None => return err("INVALID_INPUT", "unknown response mode"),
+            None => return err(ErrorCode::InvalidInput, "unknown response mode"),
         },
         None => ResponseMode::Default,
     };
     let (model_id, permission_mode, runtime) =
         match validate_create_input(&cwd, model_id, permission_mode, runtime, adopt) {
             Ok(v) => v,
-            Err((code, msg)) => return err(code, msg),
+            Err(e) => return e.into(),
         };
     // session-rename FR-2: validate the name here — pure, and BEFORE anything is
     // spawned or a worktree is created, so an over-cap name orphans no git state.
@@ -239,7 +232,7 @@ pub fn session_create(
     // cwd, which is why this only decides the "a name was given" case.
     let name = match create_name(name) {
         Ok(n) => n,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
 
     // multi-account FR-18: resolve the account BEFORE anything is spawned or
@@ -248,7 +241,7 @@ pub fn session_create(
     let account_id = match crate::account::resolve_new_session_account(&app, account_id.as_deref())
     {
         Ok(id) => id,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     let account_config_dir = crate::account::config_dir_of(&app, &account_id);
     // FR-25: a WSL session reaches its config dir through `WSLENV`'s `/p` path
@@ -263,7 +256,7 @@ pub fn session_create(
             let label =
                 crate::account::label_of(&app, &account_id).unwrap_or_else(|| account_id.clone());
             return err(
-                "INVALID_INPUT",
+                ErrorCode::InvalidInput,
                 format!(
                     "account {label} keeps its Claude Code configuration at {dir}, which WSL \
                      cannot translate — use the native runtime for this account"
@@ -280,7 +273,9 @@ pub fn session_create(
     // created. Each runtime's own preflight is its adapter's
     // (`SessionAdapter::preflight`), which is where the Codex auth check lives.
     if crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::ClaudeCodeOauth {
-        if let Err((code, msg)) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref())
+        if let Err(AppError {
+            code, message: msg, ..
+        }) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref())
         {
             return err(code, msg);
         }
@@ -292,7 +287,10 @@ pub fn session_create(
     // A blank string is treated as "unlinked" rather than as a bad id.
     let project_id = project_id.filter(|p| !p.trim().is_empty());
     if let Some(pid) = &project_id {
-        if let Err((code, msg)) = crate::project::check_session_link(&app, pid) {
+        if let Err(AppError {
+            code, message: msg, ..
+        }) = crate::project::check_session_link(&app, pid)
+        {
             return err(code, msg);
         }
     }
@@ -304,7 +302,10 @@ pub fn session_create(
     // reached this command directly rather than through the profile editor
     // (see `check_system_prompt_bound`).
     if let Some(sp) = &system_prompt {
-        if let Err((code, msg)) = check_system_prompt_bound(sp) {
+        if let Err(AppError {
+            code, message: msg, ..
+        }) = check_system_prompt_bound(sp)
+        {
             return err(code, msg);
         }
     }
@@ -325,12 +326,14 @@ pub fn session_create(
         Ok(profile_ref) => profile_ref,
         Err(ProfileResolveError::ArgDenied { flag, reason }) => {
             return err_detail(
-                "PROFILE_ARG_DENIED",
+                ErrorCode::ProfileArgDenied,
                 format!("{flag} is not allowed in a session's extra args: {reason}"),
                 serde_json::json!({ "flag": flag, "reason": reason }),
             )
         }
-        Err(ProfileResolveError::NotFound) => return err("PROFILE_NOT_FOUND", "no such profile"),
+        Err(ProfileResolveError::NotFound) => {
+            return err(ErrorCode::ProfileNotFound, "no such profile")
+        }
     };
 
     // session-worktree FR-5/FR-6/FR-11/FR-12: resolve LAST, only once every other
@@ -349,14 +352,16 @@ pub fn session_create(
                 session_worktree = Some(sw);
                 worktree_distro = distro;
             }
-            Err((code, msg)) if code == "WORKTREE_BRANCH_IN_USE" => {
+            Err(AppError {
+                code, message: msg, ..
+            }) if code == ErrorCode::WorktreeBranchInUse => {
                 return err_detail(
-                    &code,
+                    code,
                     "that branch is already checked out at another path",
                     serde_json::json!({ "path": msg }),
                 )
             }
-            Err((code, msg)) => return err(&code, msg),
+            Err(e) => return e.into(),
         }
     }
 
@@ -396,8 +401,12 @@ pub fn session_create(
         profile_ref,
         response_mode,
     );
-    let meta_before = session.meta();
-    engine.sessions.lock().unwrap().insert(id.clone(), session);
+    let meta_before = session.meta(&app);
+    engine
+        .sessions
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(id.clone(), session);
 
     // projects: close the TOCTOU window. `project_remove` can commit and run its
     // unlink between the link check above and this insert, leaving a session
@@ -414,7 +423,7 @@ pub fn session_create(
         engine.with_session_mut(&id, |s| s.project_id = None);
     }
     let meta = engine
-        .with_session(&id, |s| s.meta())
+        .with_session(&id, |s| s.meta(&app))
         .unwrap_or(meta_before);
 
     persist(&app, &engine);
@@ -435,11 +444,11 @@ pub fn session_remove(
     session_id: String,
 ) -> IpcResult<Option<()>> {
     let removed = {
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.remove(&session_id)
     };
     match removed {
-        None => err("SESSION_NOT_FOUND", "no such session"),
+        None => err(ErrorCode::SessionNotFound, "no such session"),
         Some(session) => {
             if let Some(turn) = session.current {
                 // multi-provider-seam FR-8: reached only through TurnControl.
@@ -465,11 +474,16 @@ pub fn session_remove(
             }
             remove_step_detail_sidecar(&app, &session_id); // command-inspect FR-7
 
-            crate::diff::unwatch_session(&session_id); // FR-15: dispose the watcher
-                                                       // workflow-details FR-6: the run directories of a removed session are
-                                                       // no longer watched, and the asks attributed to its runs go with it.
+            crate::diff::unwatch_session(&session_id, &session.cwd); // FR-15: dispose the watcher
+                                                                     // workflow-details FR-6: the run directories of a removed session are
+                                                                     // no longer watched, and the asks attributed to its runs go with it.
+
             unwatch_session_workflows(&engine, &session.workflow_order);
-            crate::dispose_session_shells(&app, &session_id); // wsl-filesystem FR-13/multiple-shells FR-9: dispose every shell
+            // wsl-filesystem FR-13 / multiple-shells FR-9: dispose every shell.
+            // core-architecture-wave3 FR-9: through the teardown seam, so this
+            // domain neither names `shell` nor reaches it through a crate-root
+            // re-export that only moved the import path.
+            crate::session::dispose_session_resources(&app, &session_id);
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)
         }
@@ -484,23 +498,23 @@ pub fn session_switch_model(
     model_id: String,
 ) -> IpcResult<Value> {
     if model_id.trim().is_empty() {
-        return err("INVALID_INPUT", "model is empty");
+        return err(ErrorCode::InvalidInput, "model is empty");
     }
     match engine.with_session(&session_id, |s| !status::is_terminal(&s.status)) {
-        None => return err("SESSION_NOT_FOUND", "no such session"),
-        Some(false) => return err("SESSION_NOT_RUNNING", "session has ended"),
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
+        Some(false) => return err(ErrorCode::SessionNotRunning, "session has ended"),
         Some(true) => {}
     }
     match apply_model_switch(&app, &session_id, &model_id) {
         Some(meta) => ok(serde_json::to_value(meta).unwrap()),
-        None => err("SESSION_NOT_FOUND", "no such session"),
+        None => err(ErrorCode::SessionNotFound, "no such session"),
     }
 }
 
 /// Shared switch semantics (francois:session:switchModel and `/model <arg>` —
 /// interactive-commands FR-13): update the model + context limit, persist, emit
 /// session.meta. The in-flight turn is unaffected. None if the session is gone.
-pub(crate) fn apply_model_switch(
+pub fn apply_model_switch(
     app: &AppHandle,
     session_id: &str,
     model_id: &str,
@@ -509,7 +523,7 @@ pub(crate) fn apply_model_switch(
     let meta = engine.with_session_mut(session_id, |s| {
         s.model_id = model_id.to_string();
         s.context_limit_tokens = context_limit(model_id);
-        s.meta()
+        s.meta(app)
     })?;
     persist(app, &engine);
     emit(app, SessionEvent::Meta { meta: meta.clone() });
@@ -523,7 +537,7 @@ pub(crate) fn apply_model_switch(
 /// back to `default`. Mirrors `valid_permission_mode` (session/spawn.rs), which
 /// stays the create-time check; this one hands back the canonical `&'static
 /// str` the switch stores, matching the shape the spec names.
-pub(crate) fn parse_permission_mode(mode: &str) -> Option<&'static str> {
+pub fn parse_permission_mode(mode: &str) -> Option<&'static str> {
     match mode {
         "default" => Some("default"),
         "plan" => Some("plan"),
@@ -540,14 +554,20 @@ pub(crate) fn parse_permission_mode(mode: &str) -> Option<&'static str> {
 /// testable without an `AppHandle` (persist + emit stay in the handler).
 /// Setting the mode the session already has is deliberately NOT special-cased
 /// (FR-3): same mutation, same `Ok`.
-pub(crate) fn switch_permission_mode_in_engine(
+pub fn switch_permission_mode_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     mode: &str,
-) -> Result<SessionMeta, (&'static str, &'static str)> {
+) -> Result<SessionMeta, AppError> {
     match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
-        None => return Err(("SESSION_NOT_FOUND", "no such session")),
-        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
+        Some(false) => {
+            return Err(AppError::new(
+                ErrorCode::SessionNotRunning,
+                "session has ended",
+            ))
+        }
         Some(true) => {}
     }
     engine
@@ -559,9 +579,9 @@ pub(crate) fn switch_permission_mode_in_engine(
             // original one would understate how long it has been live.
             s.permission_mode = mode.to_string();
             s.permission_mode_since = now_ms();
-            s.meta()
+            s.meta(accounts)
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))
 }
 
 /// rework-top-bar (design 11c): the engine half of `session_switch_effort` — the
@@ -575,22 +595,28 @@ pub(crate) fn switch_permission_mode_in_engine(
 /// older frontend, the CLI, an extension), and an unknown level would otherwise
 /// reach the CLI as `--effort <garbage>` and fail the whole turn instead of one
 /// command.
-pub(crate) fn switch_effort_in_engine(
+pub fn switch_effort_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     effort: Option<&str>,
-) -> Result<SessionMeta, (&'static str, &'static str)> {
+) -> Result<SessionMeta, AppError> {
     match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
-        None => return Err(("SESSION_NOT_FOUND", "no such session")),
-        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
+        Some(false) => {
+            return Err(AppError::new(
+                ErrorCode::SessionNotRunning,
+                "session has ended",
+            ))
+        }
         Some(true) => {}
     }
     engine
         .with_session_mut(session_id, |s| {
             s.effort = effort.map(String::from);
-            s.meta()
+            s.meta(accounts)
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))
 }
 
 /// rework-top-bar (design 11c): `francois:session:switchEffort`. Same shape and
@@ -615,12 +641,12 @@ pub fn session_switch_effort(
         .filter(|e| !e.is_empty());
     if let Some(e) = &level {
         if !valid_effort(e) {
-            return err("INVALID_INPUT", "unknown effort level");
+            return err(ErrorCode::InvalidInput, "unknown effort level");
         }
     }
-    let meta = match switch_effort_in_engine(&engine, &session_id, level.as_deref()) {
+    let meta = match switch_effort_in_engine(&engine, &app, &session_id, level.as_deref()) {
         Ok(meta) => meta,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     persist(&app, &engine);
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
@@ -644,11 +670,11 @@ pub fn session_switch_permission_mode(
     mode: String,
 ) -> IpcResult<Value> {
     let Some(mode) = parse_permission_mode(&mode) else {
-        return err("INVALID_INPUT", "unknown permission mode");
+        return err(ErrorCode::InvalidInput, "unknown permission mode");
     };
-    let meta = match switch_permission_mode_in_engine(&engine, &session_id, mode) {
+    let meta = match switch_permission_mode_in_engine(&engine, &app, &session_id, mode) {
         Ok(meta) => meta,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     persist(&app, &engine);
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
@@ -667,20 +693,26 @@ pub fn session_switch_permission_mode(
 /// comparison between the two.
 pub(crate) fn switch_response_mode_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     mode: ResponseMode,
-) -> Result<SessionMeta, (&'static str, &'static str)> {
+) -> Result<SessionMeta, AppError> {
     match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
-        None => return Err(("SESSION_NOT_FOUND", "no such session")),
-        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
+        Some(false) => {
+            return Err(AppError::new(
+                ErrorCode::SessionNotRunning,
+                "session has ended",
+            ))
+        }
         Some(true) => {}
     }
     engine
         .with_session_mut(session_id, |s| {
             s.response_mode = mode;
-            s.meta()
+            s.meta(accounts)
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))
 }
 
 /// response-mode FR-2: `francois:session:switchResponseMode`. Semantics and code
@@ -701,11 +733,11 @@ pub fn session_switch_response_mode(
     mode: String,
 ) -> IpcResult<Value> {
     let Some(mode) = ResponseMode::parse(&mode) else {
-        return err("INVALID_INPUT", "unknown response mode");
+        return err(ErrorCode::InvalidInput, "unknown response mode");
     };
-    let meta = match switch_response_mode_in_engine(&engine, &session_id, mode) {
+    let meta = match switch_response_mode_in_engine(&engine, &app, &session_id, mode) {
         Ok(meta) => meta,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     persist(&app, &engine);
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
@@ -726,10 +758,10 @@ pub fn session_rename(
 ) -> IpcResult<Value> {
     let name = match validate_session_name(&name) {
         Ok(n) => n,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
-    let Some(meta) = rename_in_engine(&engine, &session_id, name) else {
-        return err("SESSION_NOT_FOUND", "session not found");
+    let Some(meta) = rename_in_engine(&engine, &app, &session_id, name) else {
+        return err(ErrorCode::SessionNotFound, "session not found");
     };
     // FR-6: renaming to the identical name takes this same path — persisting and
     // emitting is idempotent, and a divergent no-op branch would only add states.
@@ -797,7 +829,7 @@ pub(crate) struct ValidatedSettingsPatch {
 pub(crate) fn validate_settings_patch(
     patch: &SessionSettingsPatch,
     advertised_models: &[String],
-) -> Result<ValidatedSettingsPatch, (&'static str, &'static str)> {
+) -> Result<ValidatedSettingsPatch, AppError> {
     let name = match &patch.name {
         Some(raw) => Some(validate_session_name(raw)?),
         None => None,
@@ -805,8 +837,8 @@ pub(crate) fn validate_settings_patch(
     let model_id = match &patch.model_id {
         Some(raw) => {
             if !advertised_models.iter().any(|m| m == raw) {
-                return Err((
-                    "INVALID_INPUT",
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
                     "model is not advertised for this session's account",
                 ));
             }
@@ -822,7 +854,10 @@ pub(crate) fn validate_settings_patch(
             } else if valid_effort(trimmed) {
                 Some(Some(trimmed.to_string()))
             } else {
-                return Err(("INVALID_INPUT", "unknown effort level"));
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown effort level",
+                ));
             }
         }
         None => None,
@@ -830,14 +865,24 @@ pub(crate) fn validate_settings_patch(
     let permission_mode = match &patch.permission_mode {
         Some(raw) => match parse_permission_mode(raw) {
             Some(mode) => Some(mode),
-            None => return Err(("INVALID_INPUT", "unknown permission mode")),
+            None => {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown permission mode",
+                ))
+            }
         },
         None => None,
     };
     let response_mode = match &patch.response_mode {
         Some(raw) => match ResponseMode::parse(raw) {
             Some(mode) => Some(mode),
-            None => return Err(("INVALID_INPUT", "unknown response mode")),
+            None => {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown response mode",
+                ))
+            }
         },
         None => None,
     };
@@ -860,21 +905,25 @@ pub(crate) fn validate_settings_patch(
 /// must not persist or emit for it.
 pub(crate) fn update_settings_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     patch: &SessionSettingsPatch,
     advertised_models: &[String],
-) -> Result<(SessionMeta, bool), (&'static str, &'static str)> {
+) -> Result<(SessionMeta, bool), AppError> {
     if patch.is_empty() {
         let meta = engine
-            .with_session(session_id, |s| s.meta())
-            .ok_or(("SESSION_NOT_FOUND", "no such session"))?;
+            .with_session(session_id, |s| s.meta(accounts))
+            .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
         return Ok((meta, false));
     }
     let terminal = engine
         .with_session(session_id, |s| status::is_terminal(&s.status))
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))?;
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
     if terminal && patch.touches_run_key() {
-        return Err(("SESSION_NOT_RUNNING", "session has ended"));
+        return Err(AppError::new(
+            ErrorCode::SessionNotRunning,
+            "session has ended",
+        ));
     }
     let validated = validate_settings_patch(patch, advertised_models)?;
     let meta = engine
@@ -901,9 +950,9 @@ pub(crate) fn update_settings_in_engine(
             if let Some(allow_git) = validated.allow_git {
                 s.allow_git = allow_git;
             }
-            s.meta()
+            s.meta(accounts)
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))?;
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
     Ok((meta, true))
 }
 
@@ -929,7 +978,7 @@ pub fn session_update_settings(
         let Some((account_id, agent_runtime)) =
             engine.with_session(&session_id, |s| (s.account_id.clone(), s.agent_runtime))
         else {
-            return err("SESSION_NOT_FOUND", "no such session");
+            return err(ErrorCode::SessionNotFound, "no such session");
         };
         adapter_for(agent_runtime)
             .models(&app, &account_id)
@@ -939,22 +988,22 @@ pub fn session_update_settings(
     } else {
         Vec::new()
     };
-    match update_settings_in_engine(&engine, &session_id, &patch, &advertised_models) {
+    match update_settings_in_engine(&engine, &app, &session_id, &patch, &advertised_models) {
         Ok((meta, true)) => {
             persist(&app, &engine);
             emit(&app, SessionEvent::Meta { meta: meta.clone() });
             ok(serde_json::to_value(meta).unwrap())
         }
         Ok((meta, false)) => ok(serde_json::to_value(meta).unwrap()),
-        Err((code, msg)) => err(code, msg),
+        Err(e) => e.into(),
     }
 }
 
 #[tauri::command(async)]
 pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
-    let mut map = engine.sessions.lock().unwrap();
+    let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     let Some(s) = map.get_mut(&session_id) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     // is_busy, not `== running`: interrupting a turn parked on an approval or a
     // question is exactly when the brake matters most — the user has decided they
@@ -977,7 +1026,7 @@ pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testutil::{test_engine_with, test_session};
+    use crate::session::testutil::{fake_accounts, test_engine_with, test_session};
 
     #[test]
     fn create_input_rejects_missing_cwd() {
@@ -989,7 +1038,7 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert_eq!(err.0, "INVALID_INPUT");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
     }
 
     #[test]
@@ -1025,7 +1074,9 @@ mod tests {
         // FR-1: the returned SessionMeta is exactly what the accompanying
         // session.meta emission carries.
         let engine = test_engine_with(test_session());
-        let meta = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        let meta =
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "bypassPermissions")
+                .unwrap();
         assert_eq!(meta.permission_mode, "bypassPermissions");
         assert_eq!(
             engine.with_session("s1", |s| s.permission_mode.clone()),
@@ -1039,7 +1090,8 @@ mod tests {
     fn switch_permission_mode_in_engine_is_a_no_op_success_for_the_current_mode() {
         // FR-3: picking the mode already set is a success, no special-casing.
         let engine = test_engine_with(test_session()); // starts "default"
-        let meta = switch_permission_mode_in_engine(&engine, "s1", "default").unwrap();
+        let meta =
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "default").unwrap();
         assert_eq!(meta.permission_mode, "default");
     }
 
@@ -1047,10 +1099,11 @@ mod tests {
     fn switch_permission_mode_in_engine_rejects_an_unknown_session() {
         // FR-2: SESSION_NOT_FOUND.
         let engine = test_engine_with(test_session());
-        let Err(err) = switch_permission_mode_in_engine(&engine, "nope", "plan") else {
+        let Err(err) = switch_permission_mode_in_engine(&engine, &fake_accounts(), "nope", "plan")
+        else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "SESSION_NOT_FOUND");
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
         assert_eq!(
             engine.with_session("s1", |s| s.permission_mode.clone()),
             Some("default".to_string())
@@ -1064,10 +1117,11 @@ mod tests {
         let mut session = test_session();
         session.status = status::DONE.into();
         let engine = test_engine_with(session);
-        let Err(err) = switch_permission_mode_in_engine(&engine, "s1", "plan") else {
+        let Err(err) = switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "plan")
+        else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "SESSION_NOT_RUNNING");
+        assert_eq!(err.code, ErrorCode::SessionNotRunning);
         // Nothing was mutated.
         assert_eq!(
             engine.with_session("s1", |s| s.permission_mode.clone()),
@@ -1083,14 +1137,18 @@ mod tests {
         session.permission_mode_since = 1;
         let engine = test_engine_with(session);
 
-        let meta = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        let meta =
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "bypassPermissions")
+                .unwrap();
         assert!(meta.permission_mode_since > 1);
         let json = serde_json::to_value(&meta).unwrap();
         assert_eq!(json["permissionModeSince"], meta.permission_mode_since);
 
         let first = meta.permission_mode_since;
         engine.with_session_mut("s1", |s| s.permission_mode_since = first - 5_000);
-        let again = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        let again =
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "bypassPermissions")
+                .unwrap();
         assert!(again.permission_mode_since >= first);
     }
 
@@ -1100,7 +1158,9 @@ mod tests {
     fn switch_response_mode_in_engine_mutates_and_returns_the_updated_meta() {
         let engine = test_engine_with(test_session());
 
-        let meta = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Concise).unwrap();
+        let meta =
+            switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Concise)
+                .unwrap();
         assert_eq!(meta.response_mode, ResponseMode::Concise);
         assert_eq!(
             engine.with_session("s1", |s| s.response_mode),
@@ -1115,7 +1175,9 @@ mod tests {
     fn switch_response_mode_in_engine_is_a_no_op_success_for_the_current_mode() {
         // FR-3: re-picking the current mode is a no-op SUCCESS — not special-cased.
         let engine = test_engine_with(test_session());
-        let meta = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Default).unwrap();
+        let meta =
+            switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Default)
+                .unwrap();
         assert_eq!(meta.response_mode, ResponseMode::Default);
     }
 
@@ -1128,7 +1190,8 @@ mod tests {
         session.response_mode_sent = Some(ResponseMode::Concise);
         let engine = test_engine_with(session);
 
-        switch_response_mode_in_engine(&engine, "s1", ResponseMode::Default).unwrap();
+        switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Default)
+            .unwrap();
         assert_eq!(
             engine.with_session("s1", |s| s.response_mode_sent),
             Some(Some(ResponseMode::Concise))
@@ -1138,11 +1201,15 @@ mod tests {
     #[test]
     fn switch_response_mode_in_engine_rejects_an_unknown_session() {
         let engine = test_engine_with(test_session());
-        let Err(err) = switch_response_mode_in_engine(&engine, "nope", ResponseMode::Concise)
-        else {
+        let Err(err) = switch_response_mode_in_engine(
+            &engine,
+            &fake_accounts(),
+            "nope",
+            ResponseMode::Concise,
+        ) else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "SESSION_NOT_FOUND");
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
     }
 
     #[test]
@@ -1153,11 +1220,15 @@ mod tests {
             let mut session = test_session();
             session.status = status.into();
             let engine = test_engine_with(session);
-            let Err(err) = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Concise)
-            else {
+            let Err(err) = switch_response_mode_in_engine(
+                &engine,
+                &fake_accounts(),
+                "s1",
+                ResponseMode::Concise,
+            ) else {
                 panic!("expected an error");
             };
-            assert_eq!(err.0, "SESSION_NOT_RUNNING");
+            assert_eq!(err.code, ErrorCode::SessionNotRunning);
             // The session is untouched.
             assert_eq!(
                 engine.with_session("s1", |s| s.response_mode),
@@ -1172,7 +1243,7 @@ mod tests {
     fn switch_effort_in_engine_sets_and_clears_the_level() {
         let engine = test_engine_with(test_session());
 
-        let meta = switch_effort_in_engine(&engine, "s1", Some("high")).unwrap();
+        let meta = switch_effort_in_engine(&engine, &fake_accounts(), "s1", Some("high")).unwrap();
         assert_eq!(meta.effort.as_deref(), Some("high"));
         assert_eq!(
             engine.with_session("s1", |s| s.effort.clone()),
@@ -1182,7 +1253,7 @@ mod tests {
         // same omit-not-null convention projectId uses.
         assert_eq!(serde_json::to_value(&meta).unwrap()["effort"], "high");
 
-        let cleared = switch_effort_in_engine(&engine, "s1", None).unwrap();
+        let cleared = switch_effort_in_engine(&engine, &fake_accounts(), "s1", None).unwrap();
         assert_eq!(cleared.effort, None);
         assert!(serde_json::to_value(&cleared)
             .unwrap()
@@ -1193,19 +1264,21 @@ mod tests {
     #[test]
     fn switch_effort_in_engine_rejects_an_unknown_or_terminal_session() {
         let engine = test_engine_with(test_session());
-        let Err(unknown) = switch_effort_in_engine(&engine, "nope", Some("high")) else {
+        let Err(unknown) = switch_effort_in_engine(&engine, &fake_accounts(), "nope", Some("high"))
+        else {
             panic!("expected an error");
         };
-        assert_eq!(unknown.0, "SESSION_NOT_FOUND");
+        assert_eq!(unknown.code, ErrorCode::SessionNotFound);
         assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
 
         let mut done = test_session();
         done.status = status::DONE.into();
         let engine = test_engine_with(done);
-        let Err(terminal) = switch_effort_in_engine(&engine, "s1", Some("high")) else {
+        let Err(terminal) = switch_effort_in_engine(&engine, &fake_accounts(), "s1", Some("high"))
+        else {
             panic!("expected an error");
         };
-        assert_eq!(terminal.0, "SESSION_NOT_RUNNING");
+        assert_eq!(terminal.code, ErrorCode::SessionNotRunning);
         assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
     }
 
@@ -1240,8 +1313,8 @@ mod tests {
             // Stripped, not replaced by a space — FR-1 step 1 is a filter.
             Some("apirefactor".to_string())
         );
-        let (code, _) = create_name(Some("a".repeat(81))).unwrap_err();
-        assert_eq!(code, "INVALID_INPUT");
+        let code = create_name(Some("a".repeat(81))).unwrap_err().code;
+        assert_eq!(code, ErrorCode::InvalidInput);
         assert_eq!(
             create_name(Some("a".repeat(80))).unwrap(),
             Some("a".repeat(80))
@@ -1253,7 +1326,8 @@ mod tests {
         // FR-4: the returned SessionMeta is the post-rename snapshot, and it is
         // exactly what the accompanying session.meta emission carries.
         let engine = test_engine_with(test_session());
-        let meta = rename_in_engine(&engine, "s1", "shipping lane".into()).unwrap();
+        let meta =
+            rename_in_engine(&engine, &fake_accounts(), "s1", "shipping lane".into()).unwrap();
         assert_eq!(meta.name, "shipping lane");
         assert_eq!(
             engine.with_session("s1", |s| s.name.clone()),
@@ -1268,7 +1342,7 @@ mod tests {
     fn rename_in_engine_is_none_for_an_unknown_id_and_mutates_nothing() {
         // FR-3.
         let engine = test_engine_with(test_session());
-        assert!(rename_in_engine(&engine, "nope", "x".into()).is_none());
+        assert!(rename_in_engine(&engine, &fake_accounts(), "nope", "x".into()).is_none());
         assert_eq!(
             engine.with_session("s1", |s| s.name.clone()),
             Some("n".into())
@@ -1284,7 +1358,7 @@ mod tests {
             s.status = status.into();
             s.claude_session_id = Some("claude-1".into());
             let engine = test_engine_with(s);
-            let meta = rename_in_engine(&engine, "s1", "n".into()).unwrap();
+            let meta = rename_in_engine(&engine, &fake_accounts(), "s1", "n".into()).unwrap();
             assert_eq!(meta.name, "n");
             assert_eq!(meta.status, status);
             assert_eq!(
@@ -1375,7 +1449,7 @@ mod tests {
     fn validate_settings_patch_rejects_a_blank_name() {
         let patch = patch_with_name("   ");
         let err = validate_settings_patch(&patch, &[]).unwrap_err();
-        assert_eq!(err.0, "INVALID_INPUT");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
     }
 
     #[test]
@@ -1387,7 +1461,7 @@ mod tests {
             ..Default::default()
         };
         let err = validate_settings_patch(&patch, &["sonnet".to_string()]).unwrap_err();
-        assert_eq!(err.0, "INVALID_INPUT");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
     }
 
     #[test]
@@ -1397,8 +1471,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            validate_settings_patch(&bad_effort, &[]).unwrap_err().0,
-            "INVALID_INPUT"
+            validate_settings_patch(&bad_effort, &[]).unwrap_err().code,
+            ErrorCode::InvalidInput
         );
 
         let bad_permission = SessionSettingsPatch {
@@ -1406,8 +1480,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            validate_settings_patch(&bad_permission, &[]).unwrap_err().0,
-            "INVALID_INPUT"
+            validate_settings_patch(&bad_permission, &[])
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
         );
 
         let bad_response = SessionSettingsPatch {
@@ -1415,8 +1491,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            validate_settings_patch(&bad_response, &[]).unwrap_err().0,
-            "INVALID_INPUT"
+            validate_settings_patch(&bad_response, &[])
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
         );
     }
 
@@ -1425,20 +1503,30 @@ mod tests {
     #[test]
     fn update_settings_in_engine_rejects_an_unknown_session() {
         let engine = test_engine_with(test_session());
-        let Err(err) = update_settings_in_engine(&engine, "nope", &patch_with_name("x"), &[])
-        else {
+        let Err(err) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "nope",
+            &patch_with_name("x"),
+            &[],
+        ) else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "SESSION_NOT_FOUND");
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
     }
 
     #[test]
     fn an_empty_patch_is_a_no_op_success_that_the_caller_must_not_persist_or_emit() {
         // FR-3.
         let engine = test_engine_with(test_session());
-        let (meta, should_persist) =
-            update_settings_in_engine(&engine, "s1", &SessionSettingsPatch::default(), &[])
-                .unwrap();
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &SessionSettingsPatch::default(),
+            &[],
+        )
+        .unwrap();
         assert_eq!(meta.name, "n");
         assert!(!should_persist);
     }
@@ -1449,8 +1537,14 @@ mod tests {
         let mut session = test_session();
         session.status = status::DONE.into();
         let engine = test_engine_with(session);
-        let (meta, should_persist) =
-            update_settings_in_engine(&engine, "s1", &patch_with_name("renamed"), &[]).unwrap();
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch_with_name("renamed"),
+            &[],
+        )
+        .unwrap();
         assert_eq!(meta.name, "renamed");
         assert!(should_persist);
     }
@@ -1467,11 +1561,16 @@ mod tests {
             model_id: Some("sonnet".into()),
             ..Default::default()
         };
-        let Err(err) = update_settings_in_engine(&engine, "s1", &patch, &["sonnet".to_string()])
-        else {
+        let Err(err) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch,
+            &["sonnet".to_string()],
+        ) else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "SESSION_NOT_RUNNING");
+        assert_eq!(err.code, ErrorCode::SessionNotRunning);
         assert_eq!(
             engine.with_session("s1", |s| s.name.clone()),
             Some("n".into())
@@ -1488,10 +1587,11 @@ mod tests {
             permission_mode: Some("not-a-mode".into()),
             ..Default::default()
         };
-        let Err(err) = update_settings_in_engine(&engine, "s1", &patch, &[]) else {
+        let Err(err) = update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[])
+        else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "INVALID_INPUT");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
         assert_eq!(
             engine.with_session("s1", |s| s.name.clone()),
             Some("n".into())
@@ -1510,8 +1610,14 @@ mod tests {
             allow_git: Some(true),
             ..Default::default()
         };
-        let (meta, should_persist) =
-            update_settings_in_engine(&engine, "s1", &patch, &["opus".to_string()]).unwrap();
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch,
+            &["opus".to_string()],
+        )
+        .unwrap();
         assert!(should_persist);
         assert_eq!(meta.model.id, "opus");
         assert_eq!(meta.permission_mode, "acceptEdits");
@@ -1531,7 +1637,8 @@ mod tests {
             permission_mode: Some("default".into()),
             ..Default::default()
         };
-        let (meta, _) = update_settings_in_engine(&engine, "s1", &patch, &[]).unwrap();
+        let (meta, _) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[]).unwrap();
         assert!(meta.permission_mode_since > 1);
     }
 
@@ -1540,7 +1647,8 @@ mod tests {
         // FR-3: not special-cased — same mutation, same persist+emit signal.
         let engine = test_engine_with(test_session()); // name "n"
         let (meta, should_persist) =
-            update_settings_in_engine(&engine, "s1", &patch_with_name("n"), &[]).unwrap();
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch_with_name("n"), &[])
+                .unwrap();
         assert_eq!(meta.name, "n");
         assert!(should_persist);
     }
@@ -1554,7 +1662,8 @@ mod tests {
             effort: Some("".into()),
             ..Default::default()
         };
-        let (meta, _) = update_settings_in_engine(&engine, "s1", &patch, &[]).unwrap();
+        let (meta, _) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[]).unwrap();
         assert_eq!(meta.effort, None);
         assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
     }
@@ -1619,7 +1728,7 @@ mod tests {
         assert!(check_system_prompt_bound(&"x".repeat(crate::profiles::MAX_SYSTEM_PROMPT)).is_ok());
         let err = check_system_prompt_bound(&"x".repeat(crate::profiles::MAX_SYSTEM_PROMPT + 1))
             .unwrap_err();
-        assert_eq!(err.0, "INVALID_INPUT");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
     }
 
     #[test]

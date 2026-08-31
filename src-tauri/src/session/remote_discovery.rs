@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 /// live projects dir — `D:\francois` → `D--francois`, and
 /// `D:\francois\.claude\worktrees\feat+remote-control` →
 /// `D--francois--claude-worktrees-feat-remote-control`.
-pub(crate) fn project_slug(cwd: &str) -> String {
+pub fn project_slug(cwd: &str) -> String {
     cwd.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
@@ -44,12 +44,12 @@ fn parse_bridge_status_with_timestamp(line: &str) -> Option<(String, String)> {
 
 /// The claude.ai URL carried by one transcript line, if that line is the Remote
 /// Control `bridge_status` record.
-pub(crate) fn parse_bridge_status(line: &str) -> Option<String> {
+pub fn parse_bridge_status(line: &str) -> Option<String> {
     parse_bridge_status_with_timestamp(line).map(|(url, _)| url)
 }
 
 /// First `bridge_status` URL in a transcript body.
-pub(crate) fn scan_transcript(body: &str) -> Option<String> {
+pub fn scan_transcript(body: &str) -> Option<String> {
     body.lines().find_map(parse_bridge_status)
 }
 
@@ -60,7 +60,7 @@ pub(crate) fn scan_transcript(body: &str) -> Option<String> {
 /// land mid-id (`…/session_01Mo4r8` with the rest in the NEXT read); accepting an
 /// id that runs to the end of the buffer would publish it truncated, and FR-11
 /// makes that permanent.
-pub(crate) fn extract_url_from_output(chunk: &str) -> Option<String> {
+pub fn extract_url_from_output(chunk: &str) -> Option<String> {
     const MARK: &str = "https://claude.ai/code/session_";
     let start = chunk.find(MARK)?;
     let rest = &chunk[start + MARK.len()..];
@@ -90,7 +90,7 @@ pub(crate) fn extract_url_from_output(chunk: &str) -> Option<String> {
 /// consumed to their terminator the same way; `ESC (`/`ESC )` (character-set
 /// designators) are exactly 3 bytes and consumed as such, rather than the 2-byte
 /// fallback leaking the designator byte as text.
-pub(crate) fn normalize_pty(raw: &str) -> String {
+pub fn normalize_pty(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
@@ -159,7 +159,7 @@ pub(crate) fn normalize_pty(raw: &str) -> String {
 /// carry) is the primary defence; this corroboration is defence in depth. The
 /// workspace-trust dialog has no live-captured second phrase, so it deliberately
 /// relies on frame-scoping alone — do not invent an unverified corroborator here.
-pub(crate) fn blocking_prompt(normalized: &str) -> Option<&'static str> {
+pub fn blocking_prompt(normalized: &str) -> Option<&'static str> {
     const MCP: &str = "New MCP server found";
     const MCP_CONFIRM: &str = "Use this MCP server";
     // Two trust wordings, because the shipped CLI has two paths and neither is the
@@ -194,7 +194,7 @@ pub(crate) fn blocking_prompt(normalized: &str) -> Option<&'static str> {
 /// What the reader thread should do after `feed` folds a new chunk of PTY output
 /// into the carry buffer.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ReaderAction {
+pub enum ReaderAction {
     Url(String),
     Blocked(&'static str),
 }
@@ -205,7 +205,7 @@ pub(crate) enum ReaderAction {
 /// and frame-scoping (M4) — a screen clear means everything before it belongs to a
 /// stale frame (e.g. `--resume`'s replay of prior history), so the carry is reset
 /// before the new chunk is appended, and only the CURRENT frame is ever matched.
-pub(crate) fn feed(carry: &mut String, chunk: &str) -> Option<ReaderAction> {
+pub fn feed(carry: &mut String, chunk: &str) -> Option<ReaderAction> {
     if chunk.contains("\u{1b}[2J") || chunk.contains("\u{1b}[3J") {
         carry.clear();
     }
@@ -240,7 +240,7 @@ pub(crate) fn feed(carry: &mut String, chunk: &str) -> Option<ReaderAction> {
 /// M3: seeks instead of reading the whole file every tick — the poller ticks every
 /// 250ms for up to 120s, and re-reading a multi-MB resumed transcript that often
 /// would be gigabytes of I/O per host start.
-pub(crate) fn tail_for_url(path: &Path, from: u64) -> (Option<String>, u64) {
+pub fn tail_for_url(path: &Path, from: u64) -> (Option<String>, u64) {
     let Ok(mut file) = std::fs::File::open(path) else {
         return (None, from);
     };
@@ -283,7 +283,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// UTC strings, so string comparison IS chronological comparison. This avoids
 /// parsing the record's timestamp back into a number (and, deliberately, a
 /// `chrono` dependency — not part of this project).
-pub(crate) fn epoch_ms_to_rfc3339(epoch_ms: u64) -> String {
+pub fn epoch_ms_to_rfc3339(epoch_ms: u64) -> String {
     let ms = epoch_ms % 1000;
     let secs_total = (epoch_ms / 1000) as i64;
     let days = secs_total.div_euclid(86_400);
@@ -307,7 +307,7 @@ pub(crate) fn epoch_ms_to_rfc3339(epoch_ms: u64) -> String {
 ///     from a live one once any write touches the file this run.
 ///  3. Returns the LAST matching record rather than the first, as defence in
 ///     depth should more than one ever land in a single file.
-pub(crate) fn scan_dir_for_url(dir: &Path, expected: &Path, since_ms: u64) -> Option<String> {
+pub fn scan_dir_for_url(dir: &Path, expected: &Path, since_ms: u64) -> Option<String> {
     let since = epoch_ms_to_rfc3339(since_ms);
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
@@ -339,7 +339,7 @@ pub(crate) fn scan_dir_for_url(dir: &Path, expected: &Path, since_ms: u64) -> Op
 /// silently reduce Remote Control to the verified no-op while Francois reports
 /// success). Strip leading dashes; fall back to the (also stripped) session name,
 /// then a fixed default, if that leaves nothing.
-pub(crate) fn sanitize_name(name: &str, session_name: &str) -> String {
+pub fn sanitize_name(name: &str, session_name: &str) -> String {
     let stripped = name.trim_start_matches('-');
     if !stripped.is_empty() {
         return stripped.to_string();

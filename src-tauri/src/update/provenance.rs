@@ -6,9 +6,7 @@
 //! is the only anchor that holds on all three platforms.
 
 use super::PACKAGE;
-use crate::process_util::no_window;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The macOS bundle marker. Matched as a plain string rather than by walking
 /// ancestors so the logic is identical — and testable — on every platform.
@@ -16,18 +14,13 @@ const BUNDLE_MARKER: &str = ".app/Contents/MacOS/";
 
 /// FR-5 #1: `npm root -g`, when it exits 0 and names an existing directory.
 /// `None` also covers "npm is not on PATH at all" (FR-18).
-pub(crate) fn npm_root_global() -> Option<PathBuf> {
+pub fn npm_root_global() -> Option<PathBuf> {
     // npm ships as npm.cmd on Windows, which CreateProcess will not run directly.
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.args(["/c", "npm", "root", "-g"]);
-        c
+    let cmd = if cfg!(windows) {
+        crate::process_util::spawn("cmd").args(["/c", "npm", "root", "-g"])
     } else {
-        let mut c = Command::new("npm");
-        c.args(["root", "-g"]);
-        c
+        crate::process_util::spawn("npm").args(["root", "-g"])
     };
-    no_window(&mut cmd);
     let out = cmd.output().ok()?;
     if !out.status.success() {
         return None;
@@ -37,7 +30,7 @@ pub(crate) fn npm_root_global() -> Option<PathBuf> {
 }
 
 /// The `.app` bundle containing `p`, or `None` for a plain binary path.
-pub(crate) fn bundle_of(p: &Path) -> Option<PathBuf> {
+pub fn bundle_of(p: &Path) -> Option<PathBuf> {
     let s = p.to_string_lossy().replace('\\', "/");
     let at = s.find(BUNDLE_MARKER)?;
     Some(PathBuf::from(&s[..at + ".app".len()]))
@@ -50,7 +43,7 @@ fn canon(p: &Path) -> PathBuf {
 /// FR-5 #3: is the recorded executable the copy that is running? Equal paths, or
 /// — on macOS, where the postinstall moves the bundle and the inner binary is
 /// named by the bundler — the same `.app` bundle.
-pub(crate) fn same_install(recorded: &Path, current: &Path) -> bool {
+pub fn same_install(recorded: &Path, current: &Path) -> bool {
     if canon(recorded) == canon(current) {
         return true;
     }
@@ -62,7 +55,7 @@ pub(crate) fn same_install(recorded: &Path, current: &Path) -> bool {
 
 /// FR-5 #2 + #3: the `executable` the npm postinstall recorded under `npm_root`,
 /// but ONLY when it names this running copy. `None` ⇒ `method: 'manual'`.
-pub(crate) fn npm_install_executable(npm_root: &Path, current_exe: &Path) -> Option<PathBuf> {
+pub fn npm_install_executable(npm_root: &Path, current_exe: &Path) -> Option<PathBuf> {
     let record = npm_root.join(PACKAGE).join("vendor").join("install.json");
     let body = std::fs::read_to_string(record).ok()?;
     let json: serde_json::Value = serde_json::from_str(&body).ok()?;
@@ -73,7 +66,7 @@ pub(crate) fn npm_install_executable(npm_root: &Path, current_exe: &Path) -> Opt
 /// FR-5 as a whole: the update method for this copy, and — for `npm` — the
 /// executable path npm recorded, which the helper relaunches when the
 /// post-install record is unreadable (FR-17).
-pub(crate) fn detect_install() -> (&'static str, Option<PathBuf>) {
+pub fn detect_install() -> (&'static str, Option<PathBuf>) {
     let Ok(current_exe) = std::env::current_exe() else {
         return (super::METHOD_MANUAL, None);
     };
