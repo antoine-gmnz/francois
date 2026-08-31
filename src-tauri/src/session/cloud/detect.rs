@@ -16,6 +16,7 @@
 //!    would resume somebody else's thread.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -24,8 +25,8 @@ use std::time::UNIX_EPOCH;
 /// adoption fails with. `detail` carries the machine-readable half where the
 /// contract defines one (`CLOUD_REPO_MISMATCH`'s `{ sessionRepo, currentRepo }`).
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CloudBlock {
-    pub(crate) code: &'static str,
+pub struct CloudBlock {
+    pub(crate) code: ErrorCode,
     pub(crate) message: String,
     pub(crate) detail: Option<Value>,
 }
@@ -80,7 +81,7 @@ const POLICY_MARKS: [&str; 4] = [
 /// after "from a checkout of", stripped of trailing punctuation. Best-effort —
 /// an unrecognized wording yields `None` and the error simply carries no
 /// `sessionRepo`, rather than a guess the user would act on.
-pub(crate) fn repo_from_mismatch(normalized: &str) -> Option<String> {
+pub fn repo_from_mismatch(normalized: &str) -> Option<String> {
     let at = normalized.find(REPO_MISMATCH_MARK)? + REPO_MISMATCH_MARK.len();
     let token = normalized[at..]
         .split_whitespace()
@@ -99,14 +100,14 @@ pub(crate) fn repo_from_mismatch(normalized: &str) -> Option<String> {
 /// `phase` is the phase the adoption is in RIGHT NOW — it becomes
 /// `CLOUD_ADOPT_STALLED`'s documented `detail: { phase }` (contract/common.ts), so
 /// a stall found in the PTY renders exactly like the FR-9 deadline's.
-pub(crate) fn teleport_block(
+pub fn teleport_block(
     normalized: &str,
     current_repo: Option<&str>,
     phase: &str,
 ) -> Option<CloudBlock> {
     let stalled = |message: &str| {
         Some(CloudBlock {
-            code: "CLOUD_ADOPT_STALLED",
+            code: ErrorCode::CloudAdoptStalled,
             message: message.to_string(),
             detail: Some(serde_json::json!({ "phase": phase })),
         })
@@ -116,14 +117,14 @@ pub(crate) fn teleport_block(
     // wording can co-occur with a trust or stash dialog on the same frame.
     if DEVICE_MARKS.iter().any(|m| lower.contains(m)) {
         return Some(CloudBlock {
-            code: "CLOUD_DEVICE_UNTRUSTED",
+            code: ErrorCode::CloudDeviceUntrusted,
             message: DEVICE_UNTRUSTED_MSG.to_string(),
             detail: None,
         });
     }
     if POLICY_MARKS.iter().any(|m| lower.contains(m)) {
         return Some(CloudBlock {
-            code: "CLOUD_POLICY_DENIED",
+            code: ErrorCode::CloudPolicyDenied,
             message: POLICY_DENIED_MSG.to_string(),
             detail: None,
         });
@@ -139,7 +140,7 @@ pub(crate) fn teleport_block(
             .map(|r| format!(" It belongs to {r}."))
             .unwrap_or_default();
         return Some(CloudBlock {
-            code: "CLOUD_REPO_MISMATCH",
+            code: ErrorCode::CloudRepoMismatch,
             message: format!(
                 "This cloud session cannot be adopted into that directory.{named} \
                  Adopt it into a checkout of the same repository — a fork does not count."
@@ -176,7 +177,7 @@ pub(crate) fn teleport_block(
 /// these are git's own words plus teleport's, and a miss only means the
 /// `hydrating` phase is emitted a moment later (the adoption emits it
 /// unconditionally before `ready`, so the FR-7 sequence never has a hole).
-pub(crate) fn checkout_marker(normalized: &str) -> bool {
+pub fn checkout_marker(normalized: &str) -> bool {
     const MARKS: [&str; 5] = [
         "Switched to branch",
         "Already on",
@@ -189,7 +190,7 @@ pub(crate) fn checkout_marker(normalized: &str) -> bool {
 
 /// What the reader thread learned from one chunk of teleport's PTY output.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum CloudReaderAction {
+pub enum CloudReaderAction {
     /// FR-8: parked or refused — fail now and reap the child.
     Blocked(CloudBlock),
     /// FR-7: the branch landed; the adoption is hydrating from here on.
@@ -202,7 +203,7 @@ pub(crate) enum CloudReaderAction {
 /// draining the master and hang the child forever) and frame-scoping, so a
 /// screen clear drops a stale frame instead of matching text teleport already
 /// scrolled past.
-pub(crate) fn cloud_feed(
+pub fn cloud_feed(
     carry: &mut String,
     chunk: &str,
     current_repo: Option<&str>,
@@ -231,7 +232,7 @@ pub(crate) fn cloud_feed(
 /// The working directory as the CLI itself sees it — which is what
 /// `project_slug` has to be computed from. For the `wsl` runtime that is the
 /// Linux path inside the distro, not the `\\wsl$\…` UNC path Windows uses.
-pub(crate) fn claude_cwd(runtime: &str, cwd: &str) -> String {
+pub fn claude_cwd(runtime: &str, cwd: &str) -> String {
     if runtime == "wsl" {
         if let Some((_, linux)) = crate::wsl::wsl_unc_to_linux(cwd) {
             return linux;
@@ -248,11 +249,7 @@ pub(crate) fn claude_cwd(runtime: &str, cwd: &str) -> String {
 /// Windows side either way. Only the built-in account under `wsl` needs the
 /// distro's own `$HOME` (§7 #7), reached through the same UNC translation
 /// permission-guardrails uses for `~/.claude/settings.json`.
-pub(crate) fn transcript_dir(
-    config_dir: Option<&str>,
-    runtime: &str,
-    cwd: &str,
-) -> Option<PathBuf> {
+pub fn transcript_dir(config_dir: Option<&str>, runtime: &str, cwd: &str) -> Option<PathBuf> {
     let base = match config_dir.map(str::trim).filter(|d| !d.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None if runtime == "wsl" => PathBuf::from(crate::wsl::wsl_home_unc(cwd)?).join(".claude"),
@@ -281,7 +278,7 @@ fn has_content(path: &Path) -> bool {
 /// `since_ms`, as its id. The mtime gate is what makes this safe — a project
 /// directory accumulates a transcript per session, and the newest one overall is
 /// almost never this run's.
-pub(crate) fn newest_transcript_since(dir: &Path, since_ms: u64) -> Option<String> {
+pub fn newest_transcript_since(dir: &Path, since_ms: u64) -> Option<String> {
     let mut best: Option<(u64, String)> = None;
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();
@@ -308,7 +305,7 @@ pub(crate) fn newest_transcript_since(dir: &Path, since_ms: u64) -> Option<Strin
 /// transcript is on disk, else the newest transcript written since the spawn.
 /// `None` ⇒ nothing has landed yet; the caller keeps waiting until the FR-9
 /// deadline.
-pub(crate) fn hydrated_session_id(dir: &Path, minted: &str, since_ms: u64) -> Option<String> {
+pub fn hydrated_session_id(dir: &Path, minted: &str, since_ms: u64) -> Option<String> {
     if has_content(&dir.join(format!("{minted}.jsonl"))) {
         return Some(minted.to_string());
     }
@@ -340,7 +337,7 @@ mod tests {
         let raw = "Run\u{1b}[1Cclaude\u{1b}[1C--teleport\u{1b}[1Cfrom\u{1b}[1Ca\u{1b}[1Ccheckout\u{1b}[1Cof\u{1b}[1Cacme/api";
         let block = teleport_block(&normalize_pty(raw), Some("me/api-fork"), "teleporting")
             .expect("must be detected");
-        assert_eq!(block.code, "CLOUD_REPO_MISMATCH");
+        assert_eq!(block.code, ErrorCode::CloudRepoMismatch);
         let detail = block.detail.expect("detail");
         assert_eq!(detail["sessionRepo"], "acme/api");
         assert_eq!(detail["currentRepo"], "me/api-fork");
@@ -359,7 +356,7 @@ mod tests {
             "fatal: not in a git repository",
         ] {
             let block = teleport_block(&normalize_pty(raw), None, "teleporting").expect("detected");
-            assert_eq!(block.code, "CLOUD_REPO_MISMATCH", "on {raw}");
+            assert_eq!(block.code, ErrorCode::CloudRepoMismatch, "on {raw}");
         }
         // With no repo named, the detail is honest about it rather than guessing.
         let block = teleport_block("host_unverified", None, "teleporting").unwrap();
@@ -372,7 +369,7 @@ mod tests {
         // the message must say what they can do instead.
         let raw = "You\u{1b}[1Chave\u{1b}[1Cuncommitted\u{1b}[1Cchanges. Stash\u{1b}[1Cthem\u{1b}[1Cand\u{1b}[1Ccontinue?";
         let block = teleport_block(&normalize_pty(raw), None, "teleporting").expect("detected");
-        assert_eq!(block.code, "CLOUD_ADOPT_STALLED");
+        assert_eq!(block.code, ErrorCode::CloudAdoptStalled);
         assert!(block.message.contains("worktree"), "{}", block.message);
     }
 
@@ -380,7 +377,7 @@ mod tests {
     fn the_mcp_and_trust_dialogs_stall_with_the_in_app_fix() {
         let mcp = "New MCP server found in this project: serena Use this MCP server?";
         let block = teleport_block(mcp, None, "teleporting").expect("detected");
-        assert_eq!(block.code, "CLOUD_ADOPT_STALLED");
+        assert_eq!(block.code, ErrorCode::CloudAdoptStalled);
         assert!(block.message.contains("panel [4]"), "{}", block.message);
 
         for raw in [
@@ -389,7 +386,7 @@ mod tests {
             "Error: Workspace not trusted. Please run `claude` in D:\\repo first",
         ] {
             let block = teleport_block(&normalize_pty(raw), None, "teleporting").expect("detected");
-            assert_eq!(block.code, "CLOUD_ADOPT_STALLED", "on {raw}");
+            assert_eq!(block.code, ErrorCode::CloudAdoptStalled, "on {raw}");
         }
     }
 
@@ -408,7 +405,7 @@ mod tests {
         ] {
             let block = teleport_block(&normalize_pty(raw), None, "teleporting")
                 .unwrap_or_else(|| panic!("must be detected: {raw}"));
-            assert_eq!(block.code, "CLOUD_ADOPT_STALLED", "on {raw}");
+            assert_eq!(block.code, ErrorCode::CloudAdoptStalled, "on {raw}");
             assert!(block.message.contains("panel [4]"), "on {raw}");
         }
         // …and still not out of ordinary prose about trust.
@@ -437,7 +434,7 @@ mod tests {
         for raw in dialogs {
             assert_eq!(
                 teleport_block(raw, None, "hydrating").unwrap().code,
-                "CLOUD_ADOPT_STALLED",
+                ErrorCode::CloudAdoptStalled,
                 "on {raw}"
             );
             let block = teleport_block(raw, None, "hydrating").expect("detected");
@@ -460,7 +457,7 @@ mod tests {
             "Error: device not enrolled for cloud sessions",
         ] {
             let block = teleport_block(&normalize_pty(raw), None, "teleporting").expect("detected");
-            assert_eq!(block.code, "CLOUD_DEVICE_UNTRUSTED", "on {raw}");
+            assert_eq!(block.code, ErrorCode::CloudDeviceUntrusted, "on {raw}");
             assert!(block.message.contains("/login"), "{}", block.message);
         }
         for raw in [
@@ -469,7 +466,7 @@ mod tests {
             "Error: your organization has disabled remote sessions",
         ] {
             let block = teleport_block(&normalize_pty(raw), None, "teleporting").expect("detected");
-            assert_eq!(block.code, "CLOUD_POLICY_DENIED", "on {raw}");
+            assert_eq!(block.code, ErrorCode::CloudPolicyDenied, "on {raw}");
             assert!(block.message.contains("administrator"), "{}", block.message);
         }
     }
@@ -559,7 +556,7 @@ mod tests {
             None
         );
         match cloud_feed(&mut carry, "checkout of acme/api\r\n", None, "teleporting") {
-            Some(CloudReaderAction::Blocked(b)) => assert_eq!(b.code, "CLOUD_REPO_MISMATCH"),
+            Some(CloudReaderAction::Blocked(b)) => assert_eq!(b.code, ErrorCode::CloudRepoMismatch),
             other => panic!("expected a block, got {other:?}"),
         }
     }

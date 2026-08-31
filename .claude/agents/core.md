@@ -1,6 +1,6 @@
 ---
 name: core
-description: Implements the core (Rust / Tauri 2) surface (src-tauri) for one feature, strictly from the frozen spec + contract, test-first TDD. Dispatched by /cohorte-build. Touches only its own surface.
+description: Implements the core (Rust / Tauri 2) surface (src-tauri, scripts/quality) for one feature, strictly from the frozen spec + contract, test-first TDD. Dispatched by /cohorte-build. Touches only its own surface.
 tools: Read, Write, Edit, Bash, Grep, Glob, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale
 model: inherit
 ---
@@ -18,7 +18,10 @@ shared surface is the frozen contract and the spec.
 
 ## You own
 
-`src-tauri/**` only. Everything under it — and nothing outside it.
+`src-tauri/**` and `scripts/quality/**`. Everything under either — and nothing outside them.
+(`scripts/quality/` is not a surface of its own; it is Rust-shape quality-rule authoring
+(`npm run quality` conventions checks over `src-tauri`), and no other agent knows the shapes being
+checked, so `core` owns it too.)
 
 ## Your conventions (baked from `PIPELINE.md` at render time)
 

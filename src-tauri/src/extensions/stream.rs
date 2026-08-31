@@ -11,14 +11,13 @@
 //! frontend's check, and a `file` source may only open paths that resolve —
 //! after symlinks — under the panel's declared root (FR-39).
 
-use super::provider::{apply_ext_env, kill_group, own_process_group, render_args};
+use super::provider::{kill_group, own_process_group, render_args};
 use super::schema::sanitize_line;
 use super::{emit, ExtensionEvent, Source, EXT_LOG_MAX_LINES};
-use crate::process_util::no_window;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
@@ -34,7 +33,7 @@ const FILE_POLL_MS: u64 = 400;
 /// crate carries no regex dependency). The leading class excludes `-`, so
 /// argument injection is structurally impossible rather than filtered, and it
 /// excludes `/`, `\` and a leading `.` so a token can never walk a path either.
-pub(crate) fn valid_token(token: &str) -> bool {
+pub fn valid_token(token: &str) -> bool {
     let mut chars = token.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -58,7 +57,7 @@ pub(crate) fn valid_token(token: &str) -> bool {
 // ---------- FR-39: containment ----------
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum SourceError {
+pub enum SourceError {
     /// FR-39: the resolved path escaped the panel's declared root. NO handle is
     /// opened — the check happens before the file is touched.
     OutsideRoot,
@@ -73,7 +72,7 @@ pub(crate) enum SourceError {
 /// The relative path a `file` source declares, with its single `${token}`
 /// slot filled in (or left as-is if the source declares none). The token has
 /// already been validated against `TOKEN_PATTERN`.
-pub(crate) fn file_rel_path(path_template: &str, token: &str) -> String {
+pub fn file_rel_path(path_template: &str, token: &str) -> String {
     path_template.replace("${token}", token)
 }
 
@@ -90,7 +89,7 @@ pub(crate) fn file_rel_path(path_template: &str, token: &str) -> String {
 /// (see `follow_file`) rather than trusting the once-checked candidate —
 /// otherwise a symlink planted after this call, between the ancestor and the
 /// file, would be a TOCTOU escape.
-pub(crate) fn resolve_under_root(root: &Path, rel: &str) -> Result<PathBuf, SourceError> {
+pub fn resolve_under_root(root: &Path, rel: &str) -> Result<PathBuf, SourceError> {
     let root = std::fs::canonicalize(root).map_err(|_| SourceError::RootMissing)?;
     let candidate = root.join(rel);
     let mut probe = candidate.clone();
@@ -122,7 +121,7 @@ pub(crate) fn resolve_under_root(root: &Path, rel: &str) -> Result<PathBuf, Sour
 
 /// One live stream. `stop` is what every kill path sets; `child` is present only
 /// for a `process` source. NO other identity is kept — a stream is its id.
-pub(crate) struct Live {
+pub struct Live {
     pub panel_id: String,
     pub extension_id: String,
     stop: Arc<AtomicBool>,
@@ -141,7 +140,7 @@ impl Live {
 }
 
 #[derive(Default)]
-pub(crate) struct Streams {
+pub struct Streams {
     by_id: HashMap<String, Live>,
     /// FR-42: one live stream per panel.
     by_panel: HashMap<String, String>,
@@ -150,7 +149,7 @@ pub(crate) struct Streams {
 impl Streams {
     /// Register a new stream for `panel_id`, closing any stream that panel
     /// already had (FR-42 — a different target is the same operation).
-    pub(crate) fn open(
+    pub fn open(
         &mut self,
         stream_id: &str,
         panel_id: &str,
@@ -236,7 +235,7 @@ impl Streams {
 /// core never forwards a whole 4 GB log because a user clicked a row: what is
 /// already on disk is bounded here, and what arrives afterwards is bounded by
 /// the frontend's ring.
-pub(crate) fn last_lines(content: &str, max: usize) -> Vec<String> {
+pub fn last_lines(content: &str, max: usize) -> Vec<String> {
     let all: Vec<&str> = content
         .split('\n')
         .map(|l| l.strip_suffix('\r').unwrap_or(l))
@@ -252,7 +251,7 @@ pub(crate) fn last_lines(content: &str, max: usize) -> Vec<String> {
 
 // ---------- starting a stream ----------
 
-pub(crate) fn new_stream_id() -> String {
+pub fn new_stream_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
@@ -356,7 +355,7 @@ fn follow_file(
 /// Start a `file` source. The initial containment check (FR-39) has already
 /// run — `root`/`rel` (not the resolved path) are what the poll loop re-checks
 /// on every iteration.
-pub(crate) fn spawn_file_stream(
+pub fn spawn_file_stream(
     app: &AppHandle,
     stream_id: &str,
     root: PathBuf,
@@ -373,7 +372,7 @@ pub(crate) fn spawn_file_stream(
 /// FR-38 `process` source argv: `argv0` plus the declared args with the single
 /// token filled in. The token is passed after `--` where the definition says so,
 /// and has already passed `valid_token`.
-pub(crate) fn process_argv(source: &Source, token: Option<&str>) -> Option<Vec<String>> {
+pub fn process_argv(source: &Source, token: Option<&str>) -> Option<Vec<String>> {
     let Source::Process { argv0, args } = source else {
         return None;
     };
@@ -404,7 +403,7 @@ fn pump_lines(app: AppHandle, stream_id: String, reader: impl Read, stop: Arc<At
 /// Start a `process` source under the same env/cwd/stdin discipline as a
 /// provider call (FR-20). It is EXEMPT from the FR-21 timeout by design — a
 /// follow is supposed to run — and is bounded by the kill paths instead.
-pub(crate) fn spawn_process_stream(
+pub fn spawn_process_stream(
     app: &AppHandle,
     stream_id: &str,
     argv: &[String],
@@ -415,19 +414,17 @@ pub(crate) fn spawn_process_stream(
     let path_override = crate::process_util::login_shell_path_env()
         .and_then(|p| crate::process_util::filter_absolute_path_entries(&p));
 
-    let mut cmd = Command::new(&argv[0]);
-    cmd.args(&argv[1..])
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    apply_ext_env(&mut cmd, path_override.as_deref());
-    no_window(&mut cmd);
     // FR-43: the same discipline as a provider call — the child is put in its
     // own process group at spawn, so `Live::kill()`'s `killpg` actually reaches
     // any grandchild it forked instead of only ever killing the bare PID.
-    own_process_group(&mut cmd);
-    let mut child = cmd.spawn()?;
+    let mut child = crate::process_util::spawn(&argv[0])
+        .args(&argv[1..])
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .scrubbed_env(path_override.as_deref())
+        .configure(own_process_group)
+        .start()?;
 
     let stop = Arc::new(AtomicBool::new(false));
     let stdout = child.stdout.take();

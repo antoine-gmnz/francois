@@ -4,7 +4,7 @@ use serde_json::Value;
 
 // ---------- tool summary / meta derivation (§5.4) ----------
 
-pub(crate) fn rel_path(path: &str, cwd: &str) -> String {
+pub fn rel_path(path: &str, cwd: &str) -> String {
     if !cwd.is_empty() {
         if let Some(stripped) = path.strip_prefix(cwd) {
             let s = stripped.trim_start_matches(['/', '\\']);
@@ -28,7 +28,7 @@ pub(crate) fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-pub(crate) fn str_field<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
+pub fn str_field<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
     input.get(key).and_then(|v| v.as_str())
 }
 
@@ -184,14 +184,14 @@ fn summary_fallback(input: &Value) -> String {
     truncate(&input.to_string(), 60)
 }
 
-pub(crate) fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
+pub fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
     match tool_spec(tool) {
         Some(spec) => (spec.summary)(input, cwd),
         None => summary_fallback(input),
     }
 }
 
-pub(crate) fn line_count(s: &str) -> usize {
+pub fn line_count(s: &str) -> usize {
     if s.is_empty() {
         0
     } else {
@@ -199,7 +199,7 @@ pub(crate) fn line_count(s: &str) -> usize {
     }
 }
 
-pub(crate) fn edit_counts(old: &str, new: &str) -> (usize, usize) {
+pub fn edit_counts(old: &str, new: &str) -> (usize, usize) {
     let old_lines: Vec<&str> = old.split('\n').collect();
     let new_lines: Vec<&str> = new.split('\n').collect();
     let mut lead = 0;
@@ -307,7 +307,7 @@ fn meta_done(_input: &Value, _result: &str) -> String {
     "done".into()
 }
 
-pub(crate) fn tool_meta(tool: &str, input: &Value, result: &str) -> String {
+pub fn tool_meta(tool: &str, input: &Value, result: &str) -> String {
     match tool_spec(tool) {
         Some(spec) => (spec.meta)(input, result),
         None => "done".into(),

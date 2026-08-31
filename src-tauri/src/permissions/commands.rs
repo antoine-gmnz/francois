@@ -1,8 +1,9 @@
 //! the francois:permissions:<verb> Tauri command surface (§5.1).
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
-use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::IpcResult;
 use crate::session::Engine;
 use std::path::PathBuf;
 use tauri::State;
@@ -12,7 +13,7 @@ use tauri::State;
 /// Both tier paths for a session. `SESSION_NOT_FOUND` when the session is gone;
 /// the global path is `None` when it cannot be resolved (§7 #4) — listing then
 /// shows local only, and a global write reports SETTINGS_WRITE_FAILED.
-pub(crate) fn tiers_for(engine: &Engine, session_id: &str) -> Option<(PathBuf, Option<PathBuf>)> {
+pub fn tiers_for(engine: &Engine, session_id: &str) -> Option<(PathBuf, Option<PathBuf>)> {
     let cwd = engine.cwd_of(session_id)?;
     let runtime = engine
         .runtime_of(session_id)
@@ -23,7 +24,7 @@ pub(crate) fn tiers_for(engine: &Engine, session_id: &str) -> Option<(PathBuf, O
     ))
 }
 
-pub(crate) const NO_GLOBAL: &str = "could not locate the global Claude settings directory";
+pub const NO_GLOBAL: &str = "could not locate the global Claude settings directory";
 
 /// The only two tier names the contract's `PermissionTier` union allows.
 pub fn is_valid_tier(tier: &str) -> bool {
@@ -45,16 +46,12 @@ pub fn decide_outcome(decision: &str) -> Option<(bool, bool)> {
 }
 
 /// Resolve a tier name to its settings path for a WRITE.
-pub fn tier_path(
-    engine: &Engine,
-    session_id: &str,
-    tier: &str,
-) -> Result<PathBuf, (&'static str, String)> {
+pub fn tier_path(engine: &Engine, session_id: &str, tier: &str) -> Result<PathBuf, AppError> {
     let Some((local, global)) = tiers_for(engine, session_id) else {
-        return Err(("SESSION_NOT_FOUND", "no such session".into()));
+        return Err(AppError::new(ErrorCode::SessionNotFound, "no such session"));
     };
     if tier == "global" {
-        return global.ok_or(("SETTINGS_WRITE_FAILED", NO_GLOBAL.into()));
+        return global.ok_or(AppError::new(ErrorCode::SettingsWriteFailed, NO_GLOBAL));
     }
     Ok(local)
 }
@@ -65,33 +62,43 @@ pub fn permissions_list(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Vec<PermissionRule>> {
-    match tiers_for(&engine, &session_id) {
-        None => err("SESSION_NOT_FOUND", "no such session"),
-        Some((local, global)) => ok(list_rules(&local, global.as_deref())),
-    }
+    list_of(&engine, &session_id).into()
+}
+
+fn list_of(engine: &Engine, session_id: &str) -> Result<Vec<PermissionRule>, AppError> {
+    let Some((local, global)) = tiers_for(engine, session_id) else {
+        return Err(AppError::new(ErrorCode::SessionNotFound, "no such session"));
+    };
+    Ok(list_rules(&local, global.as_deref()))
 }
 
 /// Look a rule up in the FRESH list (FR-18) — an id the user is acting on may
 /// have been deleted externally since the editor rendered it (§7 #13).
-pub(crate) fn locate(
+pub fn locate(
     engine: &Engine,
     session_id: &str,
     rule_id: &str,
-) -> Result<(PermissionRule, PathBuf, PathBuf, Option<PathBuf>), (&'static str, String)> {
+) -> Result<(PermissionRule, PathBuf, PathBuf, Option<PathBuf>), AppError> {
     let Some((local, global)) = tiers_for(engine, session_id) else {
-        return Err(("SESSION_NOT_FOUND", "no such session".into()));
+        return Err(AppError::new(ErrorCode::SessionNotFound, "no such session"));
     };
     let Some((tier, _, _)) = parse_rule_id(rule_id) else {
-        return Err(("RULE_NOT_FOUND", "that rule no longer exists".into()));
+        return Err(AppError::new(
+            ErrorCode::RuleNotFound,
+            "that rule no longer exists",
+        ));
     };
     let rule = list_rules(&local, global.as_deref())
         .into_iter()
         .find(|r| r.id == rule_id)
-        .ok_or(("RULE_NOT_FOUND", "that rule no longer exists".into()))?;
+        .ok_or(AppError::new(
+            ErrorCode::RuleNotFound,
+            "that rule no longer exists",
+        ))?;
     let settings = if tier == "global" {
         global
             .clone()
-            .ok_or(("SETTINGS_WRITE_FAILED", NO_GLOBAL.into()))?
+            .ok_or(AppError::new(ErrorCode::SettingsWriteFailed, NO_GLOBAL))?
     } else {
         local.clone()
     };
@@ -107,21 +114,24 @@ pub fn permissions_set_enabled(
     rule_id: String,
     enabled: bool,
 ) -> IpcResult<Vec<PermissionRule>> {
-    let (rule, settings, local, global) = match locate(&engine, &session_id, &rule_id) {
-        Ok(v) => v,
-        Err((code, msg)) => return err(code, msg),
-    };
+    set_enabled(&engine, &session_id, &rule_id, enabled).into()
+}
+
+fn set_enabled(
+    engine: &Engine,
+    session_id: &str,
+    rule_id: &str,
+    enabled: bool,
+) -> Result<Vec<PermissionRule>, AppError> {
+    let (rule, settings, local, global) = locate(engine, session_id, rule_id)?;
     if rule.enabled != enabled {
-        let outcome = if enabled {
-            write_rule(&settings, &rule.tier, &rule.effect, &rule.pattern).map(|_| ())
+        if enabled {
+            write_rule(&settings, &rule.tier, &rule.effect, &rule.pattern)?;
         } else {
-            park_rule(&settings, &rule.effect, &rule.pattern)
-        };
-        if let Err(msg) = outcome {
-            return err("SETTINGS_WRITE_FAILED", msg);
+            park_rule(&settings, &rule.effect, &rule.pattern)?;
         }
     }
-    ok(list_rules(&local, global.as_deref()))
+    Ok(list_rules(&local, global.as_deref()))
 }
 
 /// francois:permissions:remove (FR-18): clear the pattern from BOTH the settings
@@ -132,14 +142,17 @@ pub fn permissions_remove(
     session_id: String,
     rule_id: String,
 ) -> IpcResult<Vec<PermissionRule>> {
-    let (rule, settings, local, global) = match locate(&engine, &session_id, &rule_id) {
-        Ok(v) => v,
-        Err((code, msg)) => return err(code, msg),
-    };
-    if let Err(msg) = drop_rule(&settings, &rule.effect, &rule.pattern) {
-        return err("SETTINGS_WRITE_FAILED", msg);
-    }
-    ok(list_rules(&local, global.as_deref()))
+    remove_rule(&engine, &session_id, &rule_id).into()
+}
+
+fn remove_rule(
+    engine: &Engine,
+    session_id: &str,
+    rule_id: &str,
+) -> Result<Vec<PermissionRule>, AppError> {
+    let (rule, settings, local, global) = locate(engine, session_id, rule_id)?;
+    drop_rule(&settings, &rule.effect, &rule.pattern)?;
+    Ok(list_rules(&local, global.as_deref()))
 }
 
 /// francois:permissions:setTier (FR-18): move a rule between tiers, preserving
@@ -151,31 +164,36 @@ pub fn permissions_set_tier(
     rule_id: String,
     tier: String,
 ) -> IpcResult<Vec<PermissionRule>> {
+    set_tier(&engine, &session_id, &rule_id, &tier).into()
+}
+
+fn set_tier(
+    engine: &Engine,
+    session_id: &str,
+    rule_id: &str,
+    tier: &str,
+) -> Result<Vec<PermissionRule>, AppError> {
     // Validate BEFORE locate(): §5.1 lists no INVALID_INPUT for this channel, and
     // there is no reason to read both tiers' files to reject a bad argument.
-    if !is_valid_tier(&tier) {
-        return err("RULE_NOT_FOUND", "that rule no longer exists");
+    if !is_valid_tier(tier) {
+        return Err(AppError::new(
+            ErrorCode::RuleNotFound,
+            "that rule no longer exists",
+        ));
     }
-    let (rule, from, local, global) = match locate(&engine, &session_id, &rule_id) {
-        Ok(v) => v,
-        Err((code, msg)) => return err(code, msg),
-    };
+    let (rule, from, local, global) = locate(engine, session_id, rule_id)?;
     if rule.tier == tier {
-        return ok(list_rules(&local, global.as_deref()));
+        return Ok(list_rules(&local, global.as_deref()));
     }
     let to = if tier == "global" {
-        match global.clone() {
-            Some(p) => p,
-            None => return err("SETTINGS_WRITE_FAILED", NO_GLOBAL),
-        }
+        global
+            .clone()
+            .ok_or(AppError::new(ErrorCode::SettingsWriteFailed, NO_GLOBAL))?
     } else {
         local.clone()
     };
-    let moved = move_rule(&from, &to, &tier, &rule.effect, &rule.pattern, rule.enabled);
-    if let Err(msg) = moved {
-        return err("SETTINGS_WRITE_FAILED", msg);
-    }
-    ok(list_rules(&local, global.as_deref()))
+    move_rule(&from, &to, tier, &rule.effect, &rule.pattern, rule.enabled)?;
+    Ok(list_rules(&local, global.as_deref()))
 }
 
 #[cfg(test)]

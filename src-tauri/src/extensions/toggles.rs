@@ -43,7 +43,7 @@ impl Toggles {
         self.entry(extension_id).enabled
     }
 
-    pub(crate) fn set_enabled(&mut self, extension_id: &str, enabled: bool) {
+    pub fn set_enabled(&mut self, extension_id: &str, enabled: bool) {
         self.map
             .entry(extension_id.to_string())
             .or_default()
@@ -85,13 +85,13 @@ impl Toggles {
     }
 }
 
-pub(crate) fn toggles_path(app: &AppHandle) -> Option<PathBuf> {
+pub fn toggles_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join(FILE_NAME))
 }
 
 /// FR-15: a missing, empty or unparseable document yields NO overrides — i.e.
 /// everything disabled/never-consented — and is never fatal.
-pub(crate) fn parse(bytes: &[u8]) -> HashMap<String, ToggleEntry> {
+pub fn parse(bytes: &[u8]) -> HashMap<String, ToggleEntry> {
     let Ok(doc) = serde_json::from_slice::<Value>(bytes) else {
         return HashMap::new();
     };
@@ -118,7 +118,7 @@ pub(crate) fn parse(bytes: &[u8]) -> HashMap<String, ToggleEntry> {
 
 /// `{ "version": 1, "toggles": { … } }` — written in a stable (sorted) order
 /// so the file never reshuffles between writes.
-pub(crate) fn document(map: &HashMap<String, ToggleEntry>) -> Value {
+pub fn document(map: &HashMap<String, ToggleEntry>) -> Value {
     let mut ids: Vec<&String> = map.keys().collect();
     ids.sort();
     let mut toggles = Map::new();
@@ -136,7 +136,7 @@ pub(crate) fn document(map: &HashMap<String, ToggleEntry>) -> Value {
 
 /// Best-effort persistence: a write that fails leaves the in-memory state
 /// authoritative for this run rather than failing the user's toggle.
-pub(crate) fn save(app: &AppHandle, map: &HashMap<String, ToggleEntry>) {
+pub fn save(app: &AppHandle, map: &HashMap<String, ToggleEntry>) {
     let Some(path) = toggles_path(app) else {
         return;
     };

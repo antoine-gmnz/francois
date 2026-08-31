@@ -13,7 +13,7 @@
 
 use super::*;
 
-use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::{err, ok, ErrorCode, IpcResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager, State};
@@ -24,14 +24,14 @@ const OUTPUT_CAP_BYTES: usize = 64 * 1024;
 // ---------- StepDetail (contract/command-inspect.ts §5) ----------
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(crate) struct StepCommand {
+pub struct StepCommand {
     pub(crate) command: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(crate) struct StepOutput {
+pub struct StepOutput {
     pub(crate) text: String,
     #[serde(rename = "totalLines")]
     pub(crate) total_lines: u64,
@@ -45,7 +45,7 @@ pub(crate) struct StepOutput {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind")]
-pub(crate) enum StepBody {
+pub enum StepBody {
     #[serde(rename = "command")]
     Command {
         command: StepCommand,
@@ -60,7 +60,7 @@ pub(crate) enum StepBody {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(crate) struct StepDetail {
+pub struct StepDetail {
     #[serde(rename = "blockId")]
     pub(crate) block_id: String,
     pub(crate) tool: String,
@@ -149,16 +149,23 @@ pub(crate) fn compute_output(full: &str, stderr_lines: Option<u64>) -> StepOutpu
     }
 }
 
-/// FR-3: `'command'` for `Bash` when its input carries a string `command` —
-/// verbatim, never re-quoted/re-escaped/normalized. Every other case
-/// (including a malformed Bash call) falls back to `'generic'`, matching §7's
-/// "unparseable input is never a capture failure". The generic path reuses
-/// `permissions::input_json` (same pretty-print + 4000-char cap
+/// The tools whose input IS a command line — they share the `command` +
+/// `description` input shape, so a record of one reads as a `$` line rather
+/// than as JSON. `PowerShell` is Claude Code's shell tool on Windows: without
+/// it here, the one platform where every shell step is a PowerShell step was
+/// the one platform where no shell step got the treatment.
+const COMMAND_TOOLS: &[&str] = &["Bash", "PowerShell"];
+
+/// FR-3: `'command'` for a `COMMAND_TOOLS` name whose input carries a string
+/// `command` — verbatim, never re-quoted/re-escaped/normalized. Every other
+/// case (including a malformed call to one of them) falls back to `'generic'`,
+/// matching §7's "unparseable input is never a capture failure". The generic
+/// path reuses `permissions::input_json` (same pretty-print + 4000-char cap
 /// `PermissionAsk.inputJson` already applies) once the `__`-prefixed keys are
 /// stripped, rather than re-implementing that truncation here.
 fn build_body(tool: &str, input: &Value, output: StepOutput) -> StepBody {
     let clean = strip_internal_keys(input);
-    if tool == "Bash" {
+    if COMMAND_TOOLS.contains(&tool) {
         if let Some(command) = clean.get("command").and_then(|v| v.as_str()) {
             let description = clean
                 .get("description")
@@ -280,6 +287,78 @@ pub(crate) fn remove_step_detail_sidecar(app: &AppHandle, session_id: &str) {
     }
 }
 
+/// The on-disk retention bound for the sidecar — matches `TRANSCRIPT_COMPACT_CAP`
+/// (persistence.rs) so a compacted sidecar never outlives the transcript blocks
+/// it shadows. `append_step_detail` only ever appends, so without a
+/// disk-side counterpart to that bound the sidecar grows for the whole life
+/// of every retained session.
+pub(crate) const STEP_DETAIL_COMPACT_CAP: usize = super::persistence::TRANSCRIPT_COMPACT_CAP;
+
+/// Compact one session's step-detail sidecar to its last
+/// `STEP_DETAIL_COMPACT_CAP` records, deduped so only the LAST line for each
+/// `block_id` survives — the same "last wins" rule `pick_last_detail` already
+/// reads by (FR-11). Best-effort, temp+rename: an interrupted compaction
+/// leaves the ORIGINAL file intact, and any read/write failure here is
+/// silently ignored, matching `compact_transcript_file`'s discipline.
+/// Callers must never run this on a session mid-turn — same edge case #7
+/// `compact_all_transcripts` already guards against.
+pub(crate) fn compact_step_detail(app: &AppHandle, session_id: &str) {
+    let Some(path) = step_detail_path(app, session_id) else {
+        return;
+    };
+    compact_step_detail_file(&path);
+}
+
+/// The pure file-rewrite half of `compact_step_detail`, over a plain path —
+/// split out so it is testable without an `AppHandle`.
+fn compact_step_detail_file(path: &std::path::Path) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    // Keep only the last record per block_id (FR-11 "last wins"), then trim
+    // to the last STEP_DETAIL_COMPACT_CAP of those, oldest-first.
+    let mut seen = std::collections::HashSet::new();
+    let mut kept: Vec<StepDetail> = content
+        .lines()
+        .rev()
+        .filter_map(|l| serde_json::from_str::<StepDetail>(l).ok())
+        .filter(|d| seen.insert(d.block_id.clone()))
+        .collect();
+    kept.reverse();
+    if kept.len() > STEP_DETAIL_COMPACT_CAP {
+        kept = kept.split_off(kept.len() - STEP_DETAIL_COMPACT_CAP);
+    }
+    if kept.len() == content.lines().count() {
+        return; // already deduped and at/under the cap — nothing to rewrite
+    }
+    let mut out = String::new();
+    for d in &kept {
+        out.push_str(&serde_json::to_string(d).unwrap_or_default());
+        out.push('\n');
+    }
+    let tmp = path.with_extension("jsonl.tmp");
+    if std::fs::write(&tmp, out.as_bytes()).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// FR-10 counterpart for the sidecar: compact every session's step-detail
+/// file on a clean shutdown, alongside `compact_all_transcripts`. Skips a
+/// session mid-turn (edge case #7), same as the transcript compaction.
+pub fn compact_all_step_details(app: &AppHandle) {
+    let engine = app.state::<Engine>();
+    let ids: Vec<String> = {
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        map.values()
+            .filter(|s| !status::is_busy(&s.status))
+            .map(|s| s.id.clone())
+            .collect()
+    };
+    for id in ids {
+        compact_step_detail(app, &id);
+    }
+}
+
 /// FR-7: "a sidecar with no transcript is removed on load" — a startup sweep
 /// of the transcripts dir for a `<id>.details.jsonl` with no sibling
 /// `<id>.jsonl`. Best-effort: a directory that cannot be listed is a no-op.
@@ -324,11 +403,11 @@ pub fn conversation_step_detail(
     block_id: String,
 ) -> IpcResult<Value> {
     if engine.with_session(&session_id, |_| ()).is_none() {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     }
     match read_step_detail(&app, &session_id, &block_id) {
         Some(detail) => ok(serde_json::to_value(detail).unwrap()),
-        None => err("STEP_DETAIL_NOT_FOUND", "no record for that step"),
+        None => err(ErrorCode::StepDetailNotFound, "no record for that step"),
     }
 }
 
@@ -441,6 +520,53 @@ mod tests {
                 assert_eq!(command.command, "npm  test"); // untouched double space
                 assert_eq!(command.description.as_deref(), Some("run the suite"));
             }
+            other => panic!("expected a command body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn powershell_input_becomes_a_command_body_the_same_way_bash_does() {
+        let input = json!({ "command": "Get-ChildItem -Force", "description": "List every file" });
+        let d = build_step_detail(
+            "b1",
+            "PowerShell",
+            "D:\\acme-api",
+            "native",
+            100,
+            200,
+            false,
+            None,
+            &input,
+            "ok\n",
+            None,
+        );
+        match d.body {
+            StepBody::Command { command, .. } => {
+                assert_eq!(command.command, "Get-ChildItem -Force");
+                assert_eq!(command.description.as_deref(), Some("List every file"));
+            }
+            other => panic!("expected a command body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_command_tool_with_no_description_carries_none_rather_than_an_empty_string() {
+        let input = json!({ "command": "pwd" });
+        let d = build_step_detail(
+            "b1",
+            "PowerShell",
+            "/x",
+            "native",
+            0,
+            0,
+            false,
+            None,
+            &input,
+            "",
+            None,
+        );
+        match d.body {
+            StepBody::Command { command, .. } => assert_eq!(command.description, None),
             other => panic!("expected a command body, got {other:?}"),
         }
     }

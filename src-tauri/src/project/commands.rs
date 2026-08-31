@@ -10,8 +10,9 @@
 //! (`project_remove`), so the two subsystems' locks can never deadlock either.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
-use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::{ok, IpcResult};
 use tauri::{AppHandle, State};
 
 /// Snapshot the projects slot, mutate the clone, persist the whole document, and
@@ -22,7 +23,7 @@ fn commit_projects(
     app: &AppHandle,
     doc: &mut RegistryDocument,
     next: Vec<Project>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let groups = doc.groups.clone();
     commit_with(&mut doc.projects, next, |projects| {
         persist(app, projects, &groups)
@@ -34,7 +35,7 @@ fn commit_groups(
     app: &AppHandle,
     doc: &mut RegistryDocument,
     next: Vec<ProjectGroup>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let projects = doc.projects.clone();
     commit_with(&mut doc.groups, next, |groups| {
         persist(app, &projects, groups)
@@ -68,27 +69,29 @@ pub fn project_create(
     name: Option<String>,
     defaults: Option<ProjectDefaults>,
 ) -> IpcResult<ProjectMeta> {
+    create(&app, &state, root, name, defaults).into()
+}
+
+fn create(
+    app: &AppHandle,
+    state: &ProjectRegistry,
+    root: String,
+    name: Option<String>,
+    defaults: Option<ProjectDefaults>,
+) -> Result<ProjectMeta, AppError> {
     // FR-6 order: root shape/existence first, then duplication. The stat happens
     // BEFORE the lock is taken (see project_list) — the duplicate check needs the
     // registry, the filesystem check does not.
-    let root = match validate_root(&root) {
-        Ok(r) => r,
-        Err(msg) => return err("INVALID_INPUT", msg),
-    };
+    let root = validate_root(&root).map_err(|msg| AppError::new(ErrorCode::InvalidInput, msg))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = crate::session::now_ms();
 
     let mut doc = state.doc.lock().unwrap();
-    let project = match create_entry(&doc.projects, &root, name.as_deref(), defaults, id, now) {
-        Ok(p) => p,
-        Err((code, msg)) => return err(code, msg),
-    };
+    let project = create_entry(&doc.projects, &root, name.as_deref(), defaults, id, now)?;
     let mut next = doc.projects.clone();
     next.push(project.clone());
-    match commit_projects(&app, &mut doc, next) {
-        Ok(()) => ok(meta_of(&project)),
-        Err(msg) => err("INTERNAL", msg),
-    }
+    commit_projects(app, &mut doc, next)?;
+    Ok(meta_of(&project))
 }
 
 /// francois:project:update (FR-7): patches only the fields present in the payload.
@@ -103,32 +106,37 @@ pub fn project_update(
     root: Option<String>,
     defaults: Option<ProjectDefaults>,
 ) -> IpcResult<ProjectMeta> {
+    update(&app, &state, project_id, name, root, defaults).into()
+}
+
+fn update(
+    app: &AppHandle,
+    state: &ProjectRegistry,
+    project_id: String,
+    name: Option<String>,
+    root: Option<String>,
+    defaults: Option<ProjectDefaults>,
+) -> Result<ProjectMeta, AppError> {
     // Normalize + stat a new root before the lock (see project_list).
     let normalized = match root {
-        Some(raw) => match validate_root(&raw) {
-            Ok(r) => Some(r),
-            Err(msg) => return err("INVALID_INPUT", msg),
-        },
+        Some(raw) => {
+            Some(validate_root(&raw).map_err(|msg| AppError::new(ErrorCode::InvalidInput, msg))?)
+        }
         None => None,
     };
 
     let mut doc = state.doc.lock().unwrap();
-    let (idx, patched) = match patch_entry(
+    let (idx, patched) = patch_entry(
         &doc.projects,
         &project_id,
         name.as_deref(),
         normalized.as_deref(),
         defaults,
-    ) {
-        Ok(v) => v,
-        Err((code, msg)) => return err(code, msg),
-    };
+    )?;
     let mut next = doc.projects.clone();
     next[idx] = patched.clone();
-    match commit_projects(&app, &mut doc, next) {
-        Ok(()) => ok(meta_of(&patched)),
-        Err(msg) => err("INTERNAL", msg),
-    }
+    commit_projects(app, &mut doc, next)?;
+    Ok(meta_of(&patched))
 }
 
 /// francois:project:remove (FR-9): drop the entry, then clear `projectId` on every
@@ -140,10 +148,18 @@ pub fn project_remove(
     state: State<'_, ProjectRegistry>,
     project_id: String,
 ) -> IpcResult<Option<()>> {
+    remove(&app, &state, &project_id).into()
+}
+
+fn remove(
+    app: &AppHandle,
+    state: &ProjectRegistry,
+    project_id: &str,
+) -> Result<Option<()>, AppError> {
     {
         let mut doc = state.doc.lock().unwrap();
         if !doc.projects.iter().any(|p| p.id == project_id) {
-            return err("PROJECT_NOT_FOUND", NOT_FOUND_MSG);
+            return Err(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG));
         }
         let next: Vec<Project> = doc
             .projects
@@ -151,12 +167,10 @@ pub fn project_remove(
             .filter(|p| p.id != project_id)
             .cloned()
             .collect();
-        if let Err(msg) = commit_projects(&app, &mut doc, next) {
-            return err("INTERNAL", msg);
-        }
+        commit_projects(app, &mut doc, next)?;
     } // the registry lock is released BEFORE the engine lock is taken
-    crate::session::unlink_project_sessions(&app, &project_id);
-    ok(None)
+    crate::session::unlink_project_sessions(app, project_id);
+    Ok(None)
 }
 
 /// francois:project:createGroup (FR-1).
@@ -166,20 +180,23 @@ pub fn project_create_group(
     state: State<'_, ProjectRegistry>,
     name: String,
 ) -> IpcResult<ProjectGroup> {
+    create_group(&app, &state, &name).into()
+}
+
+fn create_group(
+    app: &AppHandle,
+    state: &ProjectRegistry,
+    name: &str,
+) -> Result<ProjectGroup, AppError> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = crate::session::now_ms();
 
     let mut doc = state.doc.lock().unwrap();
-    let group = match create_group_entry(&name, id, now) {
-        Ok(g) => g,
-        Err((code, msg)) => return err(code, msg),
-    };
+    let group = create_group_entry(name, id, now)?;
     let mut next = doc.groups.clone();
     next.push(group.clone());
-    match commit_groups(&app, &mut doc, next) {
-        Ok(()) => ok(group),
-        Err(msg) => err("INTERNAL", msg),
-    }
+    commit_groups(app, &mut doc, next)?;
+    Ok(group)
 }
 
 /// francois:project:renameGroup (FR-4).
@@ -190,17 +207,21 @@ pub fn project_rename_group(
     group_id: String,
     name: String,
 ) -> IpcResult<ProjectGroup> {
+    rename_group(&app, &state, &group_id, &name).into()
+}
+
+fn rename_group(
+    app: &AppHandle,
+    state: &ProjectRegistry,
+    group_id: &str,
+    name: &str,
+) -> Result<ProjectGroup, AppError> {
     let mut doc = state.doc.lock().unwrap();
-    let (idx, patched) = match rename_group_entry(&doc.groups, &group_id, &name) {
-        Ok(v) => v,
-        Err((code, msg)) => return err(code, msg),
-    };
+    let (idx, patched) = rename_group_entry(&doc.groups, group_id, name)?;
     let mut next = doc.groups.clone();
     next[idx] = patched.clone();
-    match commit_groups(&app, &mut doc, next) {
-        Ok(()) => ok(patched),
-        Err(msg) => err("INTERNAL", msg),
-    }
+    commit_groups(app, &mut doc, next)?;
+    Ok(patched)
 }
 
 /// francois:project:removeGroup (FR-8/FR-9): deletes the group, then clears
@@ -212,10 +233,18 @@ pub fn project_remove_group(
     state: State<'_, ProjectRegistry>,
     group_id: String,
 ) -> IpcResult<Option<()>> {
+    remove_group(&app, &state, &group_id).into()
+}
+
+fn remove_group(
+    app: &AppHandle,
+    state: &ProjectRegistry,
+    group_id: &str,
+) -> Result<Option<()>, AppError> {
     {
         let mut doc = state.doc.lock().unwrap();
-        if !group_exists(&doc.groups, &group_id) {
-            return err("GROUP_NOT_FOUND", GROUP_NOT_FOUND_MSG);
+        if !group_exists(&doc.groups, group_id) {
+            return Err(AppError::new(ErrorCode::GroupNotFound, GROUP_NOT_FOUND_MSG));
         }
         let next: Vec<ProjectGroup> = doc
             .groups
@@ -223,12 +252,10 @@ pub fn project_remove_group(
             .filter(|g| g.id != group_id)
             .cloned()
             .collect();
-        if let Err(msg) = commit_groups(&app, &mut doc, next) {
-            return err("INTERNAL", msg);
-        }
+        commit_groups(app, &mut doc, next)?;
     } // the registry lock is released BEFORE clear_group re-acquires it (FR-8)
-    clear_group(&app, &group_id);
-    ok(None)
+    clear_group(app, group_id);
+    Ok(None)
 }
 
 /// francois:project:assignGroup (FR-7): sets or clears a project's `groupId`,
@@ -241,27 +268,27 @@ pub fn project_assign_group(
     project_id: String,
     group_id: Option<String>,
 ) -> IpcResult<ProjectMeta> {
+    assign_group(&app, &state, &project_id, group_id.as_deref()).into()
+}
+
+fn assign_group(
+    app: &AppHandle,
+    state: &ProjectRegistry,
+    project_id: &str,
+    group_id: Option<&str>,
+) -> Result<ProjectMeta, AppError> {
     // ONE lock covers both arrays, so reading groups and patching projects can
     // never race a concurrent group mutation the way two separate locks could.
     let mut doc = state.doc.lock().unwrap();
-    let (idx, patched) =
-        match assign_group_entry(&doc.projects, &doc.groups, &project_id, group_id.as_deref()) {
-            Ok(v) => v,
-            Err((code, msg)) => return err(code, msg),
-        };
+    let (idx, patched) = assign_group_entry(&doc.projects, &doc.groups, project_id, group_id)?;
     let mut next = doc.projects.clone();
     next[idx] = patched.clone();
-    match commit_projects(&app, &mut doc, next) {
-        Ok(()) => ok(meta_of(&patched)),
-        Err(msg) => err("INTERNAL", msg),
-    }
+    commit_projects(app, &mut doc, next)?;
+    Ok(meta_of(&patched))
 }
 
 /// The project's root, ready for a standards read/write.
-fn root_for(
-    state: &State<'_, ProjectRegistry>,
-    project_id: &str,
-) -> Result<String, (&'static str, &'static str)> {
+fn root_for(state: &ProjectRegistry, project_id: &str) -> Result<String, AppError> {
     // Snapshot under the lock; root_of stats the root, so it runs outside it
     // (a dead UNC share must not stall the registry — see project_list).
     let snapshot = { state.doc.lock().unwrap().projects.clone() };
@@ -274,14 +301,13 @@ pub fn project_get_standards(
     state: State<'_, ProjectRegistry>,
     project_id: String,
 ) -> IpcResult<StandardsRead> {
-    let root = match root_for(&state, &project_id) {
-        Ok(r) => r,
-        Err((code, msg)) => return err(code, msg),
-    };
-    match read_standards(&root) {
-        Ok(read) => ok(read),
-        Err(msg) => err("INTERNAL", msg), // FR-15: reads fail as INTERNAL
-    }
+    get_standards(&state, &project_id).into()
+}
+
+fn get_standards(state: &ProjectRegistry, project_id: &str) -> Result<StandardsRead, AppError> {
+    let root = root_for(state, project_id)?;
+    // FR-15: a read fails as INTERNAL, which `read_standards` now says itself.
+    read_standards(&root)
 }
 
 /// francois:project:setStandards (FR-13..FR-16). Validation runs BEFORE any file
@@ -292,6 +318,14 @@ pub fn project_set_standards(
     project_id: String,
     standards: ProjectStandards,
 ) -> IpcResult<StandardsRead> {
+    set_standards(&state, &project_id, &standards).into()
+}
+
+fn set_standards(
+    state: &ProjectRegistry,
+    project_id: &str,
+    standards: &ProjectStandards,
+) -> Result<StandardsRead, AppError> {
     // Resolve the project first (an unknown id is not an INVALID_INPUT), but
     // validate before the root stat and before any file handle exists.
     let known = {
@@ -299,16 +333,15 @@ pub fn project_set_standards(
         doc.projects.iter().find(|p| p.id == project_id).cloned()
     };
     let Some(project) = known else {
-        return err("PROJECT_NOT_FOUND", NOT_FOUND_MSG);
+        return Err(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG));
     };
-    if let Err(msg) = validate_standards(&standards) {
-        return err("INVALID_INPUT", msg);
-    }
+    validate_standards(standards)?;
     if !root_exists(&project.root) {
-        return err("PROJECT_ROOT_MISSING", ROOT_MISSING_MSG);
+        return Err(AppError::new(
+            ErrorCode::ProjectRootMissing,
+            ROOT_MISSING_MSG,
+        ));
     }
-    match write_standards(&project.root, &standards) {
-        Ok(read) => ok(read), // FR-16: a fresh re-read, never the payload
-        Err(msg) => err("STANDARDS_WRITE_FAILED", msg),
-    }
+    // FR-16: a fresh re-read, never the payload.
+    write_standards(&project.root, standards)
 }

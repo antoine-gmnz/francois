@@ -25,9 +25,9 @@ pub(crate) use claude_code::ClaudeCodeAdapter;
 // of the pure argv/env helpers.
 pub(crate) use claude_code::{child_stdout_lines, spawn_claude};
 /// multi-provider-codex FR-3: the `AgentRuntime::Codex` adapter.
-pub(crate) use codex::{codex_program, CodexAdapter};
+pub(crate) use codex::CodexAdapter;
 /// multi-provider-grok FR-3: the `AgentRuntime::Grok` adapter.
-pub(crate) use grok::{grok_program, GrokAdapter};
+pub(crate) use grok::GrokAdapter;
 /// multi-provider-openai FR-1: the real `AgentRuntime::Francois` adapter —
 /// `UnavailableAdapter` is gone, not kept alongside it.
 pub(crate) use openai::OpenAiAdapter;
@@ -87,7 +87,7 @@ impl AgentRuntime {
     /// kind at creation — `session_create` never accepts either directly.
     /// Exhaustive over `AccountKind`, so a third kind fails to compile here
     /// rather than falling back silently.
-    pub(crate) fn from_account_kind(
+    pub fn from_account_kind(
         kind: crate::account::AccountKind,
     ) -> (AgentRuntime, ProviderProtocol) {
         match kind {
@@ -113,7 +113,7 @@ impl AgentRuntime {
 /// FR-1: what a turn spawn/connect reads off its session — snapshotted BEFORE
 /// any I/O (under `Engine.sessions`, released immediately after), so no
 /// adapter ever reaches back into the registry mid-spawn.
-pub(crate) struct TurnContext {
+pub struct TurnContext {
     pub(crate) session_id: String,
     pub(crate) block_id: String,
     pub(crate) text: String,
@@ -149,7 +149,7 @@ pub(crate) struct TurnContext {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum TurnMode {
+pub enum TurnMode {
     Normal,
     #[allow(dead_code)]
     Compact,
@@ -163,14 +163,14 @@ pub(crate) enum TurnMode {
 /// `awaiting_approval`/`awaiting_input` from this without knowing which
 /// adapter it is talking to.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct PendingCounts {
+pub struct PendingCounts {
     pub(crate) questions: usize,
     pub(crate) permissions: usize,
 }
 
 /// FR-2: what `permissions_decide` hands to `TurnControl::decide_permission`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum PermissionDecision {
+pub enum PermissionDecision {
     Allow,
     Deny,
 }
@@ -185,7 +185,7 @@ pub(crate) enum PermissionDecision {
 /// failure variants return the SAME `*_NOT_PENDING` error, and only
 /// `ChannelClosed` resolves the card `cancelled` on its way out.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ControlAck {
+pub enum ControlAck {
     /// The id was never pending (unknown, or already resolved by a race).
     NotPending,
     /// The id was pending and the decision reached the control channel.
@@ -251,7 +251,7 @@ static GROK_ADAPTER: GrokAdapter = GrokAdapter;
 /// FR-4/FR-14a: dispatch a session's `agentRuntime` ALONE to its adapter —
 /// `protocol` is read inside the `francois` runtime to pick the wire codec,
 /// never here.
-pub(crate) fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter {
+pub fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter {
     match runtime {
         AgentRuntime::ClaudeCode => &CLAUDE_CODE_ADAPTER,
         AgentRuntime::Francois => &OPENAI_ADAPTER,

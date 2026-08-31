@@ -6,6 +6,7 @@
 //! ask set can say.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 // ---------- FR-3/FR-4/FR-22: the detail ----------
 
@@ -93,20 +94,20 @@ pub(crate) fn find_run(
 
 /// FR-7: the current detail of a run, rescanning (FR-5) first. `Err` carries the
 /// contract's error code.
-pub(crate) fn compute_detail(
-    engine: &Engine,
-    run_id: &str,
-) -> Result<WorkflowDetail, (&'static str, &'static str)> {
+pub fn compute_detail(engine: &Engine, run_id: &str) -> Result<WorkflowDetail, AppError> {
     let found = {
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         find_run(&map, run_id)
     };
     let Some((session_id, run, script)) = found else {
-        return Err(("WORKFLOW_NOT_FOUND", "no such workflow run"));
+        return Err(AppError::new(
+            ErrorCode::WorkflowNotFound,
+            "no such workflow run",
+        ));
     };
     let Some(dir) = run.transcript_dir.clone() else {
-        return Err((
-            "WORKFLOW_NO_TRANSCRIPT",
+        return Err(AppError::new(
+            ErrorCode::WorkflowNoTranscript,
             "this run reported no transcript directory",
         ));
     };
@@ -133,15 +134,15 @@ pub(crate) fn compute_detail(
 
 /// FR-6: is this run past its last flush? A run that no longer exists counts as
 /// terminal — whatever was watching it has nothing left to report.
-pub(crate) fn run_is_terminal(engine: &Engine, run_id: &str) -> bool {
-    let map = engine.sessions.lock().unwrap();
+pub fn run_is_terminal(engine: &Engine, run_id: &str) -> bool {
+    let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     find_run(&map, run_id)
         .map(|(_, run, _)| run.status != "running")
         .unwrap_or(true)
 }
 
 /// FR-20 rung 2's input: runId → the agentIds each run's scan has seen.
-pub(crate) fn seen_agents(engine: &Engine) -> HashMap<String, Vec<String>> {
+pub fn seen_agents(engine: &Engine) -> HashMap<String, Vec<String>> {
     engine
         .workflow_scans
         .lock()
@@ -247,12 +248,12 @@ mod tests {
         let d = fixture();
         let engine = detail_engine(&d);
         assert_eq!(
-            compute_detail(&engine, "nope").unwrap_err().0,
-            "WORKFLOW_NOT_FOUND"
+            compute_detail(&engine, "nope").unwrap_err().code,
+            ErrorCode::WorkflowNotFound
         );
         assert_eq!(
-            compute_detail(&engine, "run-2").unwrap_err().0,
-            "WORKFLOW_NO_TRANSCRIPT"
+            compute_detail(&engine, "run-2").unwrap_err().code,
+            ErrorCode::WorkflowNoTranscript
         );
     }
 

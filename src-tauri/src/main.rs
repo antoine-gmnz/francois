@@ -1,33 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// Francois core. Feature domains live in their own module directories; this file
-// is only Tauri bootstrap (state, setup, the command table, the run loop).
-//  * shell-terminal — session-keyed registry of real PTYs (shell/).
-//  * session-engine — Claude Code session lifecycle + event stream (session/).
+// Francois core — Tauri bootstrap only (state, setup, the command table, the
+// run loop). core-architecture-wave3 FR-2: every feature domain now lives
+// behind the `francois` library target (`lib.rs`); this file is an external
+// crate relative to it.
 
-mod account;
-mod diagnostics;
-mod diff;
-mod dnd;
-mod editor;
-mod extensions;
-mod fs_util;
-mod ipc;
-mod permissions;
-mod process_util;
-mod profiles;
-mod project;
-mod session;
-mod shell;
-mod update;
-mod usage;
-mod window;
-mod wsl;
-
-// session::session_remove disposes a session's shells without depending on the
-// shell module directly — re-exported at the crate root so `crate::dispose_session_shells`
-// keeps resolving exactly as before this domain moved out of main.rs.
-pub(crate) use shell::dispose_session_shells;
+use francois::{
+    account, diagnostics, diff, dnd, editor, extensions, permissions, profiles, project, session,
+    shell, update, usage, window,
+};
 
 use tauri::RunEvent;
 // `get_webview_window` is a `Manager` method; only the windows-only chrome tint
@@ -70,6 +51,16 @@ fn main() {
         .manage(extensions::ExtensionState::default())
         .setup(|app| {
             diagnostics::install_panic_log(app.handle());
+            // core-architecture-wave3 FR-9: the crate root is the one place that
+            // legitimately knows about both domains, so it is where they are
+            // wired together. FIRST in `.setup()` — every later step can create
+            // sessions, and a session removed before this ran would orphan its
+            // PTYs silently.
+            session::register_teardown(vec![Box::new(shell::ShellTeardown)]);
+            // Same wiring, the other direction: removing an account repoints the
+            // sessions bound to it, and `account` no longer names `session` to
+            // say so.
+            account::register_removal_observers(vec![Box::new(session::SessionAccountObserver)]);
             // Tint with the dark caption up front; the webview re-tints with the
             // persisted theme (app_set_window_theme) once it mounts. See §theme.
             #[cfg(windows)]
@@ -101,6 +92,10 @@ fn main() {
             // available synchronously, before the first session exists.
             session::load_model_cache(app.handle());
             session::load_persisted(app.handle());
+            // FR-9: transcripts hydrate off the main thread, one session at a
+            // time, each landing via its own `session.meta` — `.setup()`
+            // itself performs no transcript read, so the window paints first.
+            session::spawn_transcript_hydration(app.handle().clone());
             session::warm_model_cache(app.handle().clone());
             // extension-install FR-1/FR-13: load the manifest registry from
             // ~/.francois/extensions/ once at startup — the other FR-13
@@ -255,6 +250,13 @@ fn main() {
                 // (`docker logs -f`) — it goes with the window, like every other
                 // process this app owns.
                 extensions::kill_all_streams(app);
+                // FR-10: compact every idle session's on-disk transcript to
+                // its retention bound — best-effort, skips a session mid-turn.
+                session::compact_all_transcripts(app);
+                // FR-10 counterpart for the step-detail sidecar: without this
+                // it grows unbounded for the whole life of every retained
+                // session — same best-effort, skips a session mid-turn.
+                session::compact_all_step_details(app);
             }
         });
 }

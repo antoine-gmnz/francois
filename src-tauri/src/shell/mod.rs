@@ -15,11 +15,12 @@
 // `#[tauri::command]` macro generates hidden sibling items alongside each
 // command fn IN THE MODULE WHERE IT'S DEFINED, so a flattened re-export here
 // would leave those siblings unreachable from main.rs.
-pub(crate) mod commands;
+pub mod commands;
 mod spawn;
 
 pub(crate) use spawn::shell_spawn_target;
 
+use crate::ipc::AppError;
 use portable_pty::{ChildKiller, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -129,7 +130,7 @@ impl Ring {
     }
 }
 
-pub(crate) struct Shared {
+pub struct Shared {
     alive: bool,
     exit_code: Option<i32>,
     disposed: bool,
@@ -174,7 +175,7 @@ pub struct ShellRestartData {
 // (open + spawn is commands.rs's concern; the registry only ever takes the
 // resulting handles, so it stays free of portable-pty spawn logic.)
 
-pub(crate) struct PtyHandles {
+pub struct PtyHandles {
     pub(crate) master: Box<dyn MasterPty + Send>,
     pub(crate) writer: Box<dyn Write + Send>,
     pub(crate) killer: Box<dyn ChildKiller + Send + Sync>,
@@ -280,7 +281,7 @@ pub struct Registry {
 /// What `Registry::write` found — mirrors the pre-multiple-shells `shell_write`
 /// handling verbatim, just renamed off `SESSION_NOT_FOUND` (shell-terminal) onto
 /// `SHELL_NOT_FOUND` (this domain's own vocabulary, §5).
-pub(crate) enum WriteOutcome {
+pub enum WriteOutcome {
     Ok,
     /// Not alive: bytes are silently dropped, `ok: true` (edge cases §7).
     Dropped,
@@ -314,8 +315,8 @@ impl Registry {
     pub(crate) fn ensure_first(
         &self,
         owner: &ShellOwner,
-        spawn: impl FnOnce() -> Result<(String, PtyHandles, Arc<Mutex<Shared>>), String>,
-    ) -> Result<String, String> {
+        spawn: impl FnOnce() -> Result<(String, PtyHandles, Arc<Mutex<Shared>>), AppError>,
+    ) -> Result<String, AppError> {
         if let Some(first) = self.first_of_owner(owner) {
             return Ok(first);
         }
@@ -576,6 +577,19 @@ pub fn dispose_session_shells(app: &AppHandle, session_id: &str) -> usize {
     match app.try_state::<Registry>() {
         Some(reg) => reg.dispose_session(session_id),
         None => 0,
+    }
+}
+
+/// core-architecture-wave3 FR-9: how `session_remove` reaches the PTYs. The
+/// dependency points shell → session, which it already did (`shell` has always
+/// known about sessions; a shell belongs to one). What is gone is the return
+/// edge — `session` no longer names this module, directly or through the
+/// crate-root re-export that used to stand in for naming it.
+pub struct ShellTeardown;
+
+impl crate::session::SessionTeardown for ShellTeardown {
+    fn dispose_session(&self, app: &AppHandle, session_id: &str) -> usize {
+        dispose_session_shells(app, session_id)
     }
 }
 

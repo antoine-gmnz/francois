@@ -10,6 +10,7 @@ use super::{
     write_helper, UpdateApplyAck, UpdateCheck, UpdateState, SHUTDOWN_GRACE_MS, UPDATE_COMMAND,
 };
 use crate::ipc::{err, err_detail, ok, IpcResult};
+use crate::ipc::{AppError, ErrorCode};
 use crate::session::Engine;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,7 @@ use tauri::{AppHandle, State};
 /// rather than from the stored check's `method`, which the modal may have been
 /// showing for a while.
 #[derive(Debug)]
-pub(crate) enum ApplyPlan {
+pub enum ApplyPlan {
     /// Cleared to update: install `latest`, and relaunch `exe` if the
     /// post-install record turns out to be unreadable (FR-17).
     Go { latest: String, exe: PathBuf },
@@ -37,7 +38,7 @@ pub(crate) enum ApplyPlan {
 /// Order is deliberate: FR-12 is decided BEFORE provenance, because a mid-turn
 /// session is the thing the user can act on and must not be masked by a
 /// manual-install failure.
-pub(crate) fn plan_apply(
+pub fn plan_apply(
     running: usize,
     check: Option<&UpdateCheck>,
     npm_root: Option<&Path>,
@@ -84,7 +85,8 @@ pub fn app_check_update(state: State<'_, UpdateState>) -> IpcResult<UpdateCheck>
             state.store(check.clone());
             ok(check)
         }
-        Err(message) => err("UPDATE_CHECK_FAILED", message),
+        // FR-6: `run_check` already says UPDATE_CHECK_FAILED.
+        Err(e) => e.into(),
     }
 }
 
@@ -99,7 +101,10 @@ pub fn app_apply_update(
     state: State<'_, UpdateState>,
 ) -> IpcResult<UpdateApplyAck> {
     if !state.begin_apply() {
-        return err("UPDATE_APPLY_FAILED", "An update is already being applied.");
+        return err(
+            ErrorCode::UpdateApplyFailed,
+            "An update is already being applied.",
+        );
     }
 
     // LOCK ORDER (mod.rs): the engine is read FIRST, and its lock is released
@@ -111,7 +116,7 @@ pub fn app_apply_update(
         Err(e) => {
             state.end_apply();
             return err(
-                "UPDATE_APPLY_FAILED",
+                ErrorCode::UpdateApplyFailed,
                 format!("Could not locate the running Francois executable: {e}"),
             );
         }
@@ -126,7 +131,7 @@ pub fn app_apply_update(
         ApplyPlan::Blocked(running) => {
             state.end_apply();
             err_detail(
-                "UPDATE_BLOCKED",
+                ErrorCode::UpdateBlocked,
                 format!(
                     "Francois has to quit to update, and {running} session{} still running.",
                     if running == 1 { " is" } else { "s are" }
@@ -136,16 +141,16 @@ pub fn app_apply_update(
         }
         ApplyPlan::Failed(message) => {
             state.end_apply();
-            err("UPDATE_APPLY_FAILED", message)
+            err(ErrorCode::UpdateApplyFailed, message)
         }
         ApplyPlan::Go { latest, exe } => match start_helper(&app, &latest, &exe) {
             // Deliberately NOT calling `end_apply` here: the ack means shutdown
             // is imminent (FR-16), so the claim outlives this process.
             Ok(ack) => ok(ack),
             // FR-18: the app stays open on every failure of this path.
-            Err(message) => {
+            Err(e) => {
                 state.end_apply();
-                err("UPDATE_APPLY_FAILED", message)
+                e.into()
             }
         },
     }
@@ -153,14 +158,21 @@ pub fn app_apply_update(
 
 /// FR-13/FR-15/FR-16: write the helper, spawn it detached, and schedule the
 /// shutdown that lets the ack land in the webview first.
-fn start_helper(app: &AppHandle, latest: &str, exe: &Path) -> Result<UpdateApplyAck, String> {
-    let dir = fresh_helper_dir()
-        .map_err(|e| format!("Could not create a directory for the update helper: {e}"))?;
+fn start_helper(app: &AppHandle, latest: &str, exe: &Path) -> Result<UpdateApplyAck, AppError> {
+    // core-architecture-wave3 FR-6: UPDATE_APPLY_FAILED (FR-18) at the failure.
+    let apply_failed = |m: String| AppError::new(ErrorCode::UpdateApplyFailed, m);
+    let dir = fresh_helper_dir().map_err(|e| {
+        apply_failed(format!(
+            "Could not create a directory for the update helper: {e}"
+        ))
+    })?;
     let files = match write_helper(&dir, std::process::id(), exe) {
         Ok(files) => files,
         Err(e) => {
             std::fs::remove_dir_all(&dir).ok();
-            return Err(format!("Could not write the update helper: {e}"));
+            return Err(apply_failed(format!(
+                "Could not write the update helper: {e}"
+            )));
         }
     };
     let helper_pid = match spawn_helper(&files) {

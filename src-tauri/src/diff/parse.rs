@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 // ---------- parsers (pure — unit tested) ----------
 
-pub(crate) fn num(s: &str) -> u64 {
+pub fn num(s: &str) -> u64 {
     if s == "-" {
         0
     } else {
@@ -14,14 +14,14 @@ pub(crate) fn num(s: &str) -> u64 {
     }
 }
 
-pub(crate) fn split_path(p: &str) -> (String, String) {
+pub fn split_path(p: &str) -> (String, String) {
     match p.rfind('/') {
         Some(i) => (p[..i].to_string(), p[i + 1..].to_string()),
         None => (String::new(), p.to_string()),
     }
 }
 
-pub(crate) fn map_status(xy: &str) -> DiffFileStatus {
+pub fn map_status(xy: &str) -> DiffFileStatus {
     if xy == "??" {
         return DiffFileStatus::Untracked;
     }
@@ -40,7 +40,7 @@ pub(crate) fn map_status(xy: &str) -> DiffFileStatus {
 /// Parse `git status --porcelain=v1 -z` into (xy, path). Each record is
 /// `XY<space>PATH\0`; a rename/copy (`R`/`C`) is followed by an extra NUL field
 /// carrying the origin path (the new path comes first — we keep it, discard origin).
-pub(crate) fn parse_porcelain_z(data: &[u8]) -> Vec<(String, String)> {
+pub fn parse_porcelain_z(data: &[u8]) -> Vec<(String, String)> {
     let s = String::from_utf8_lossy(data);
     let tokens: Vec<&str> = s.split('\0').collect();
     let mut out = Vec::new();
@@ -64,7 +64,7 @@ pub(crate) fn parse_porcelain_z(data: &[u8]) -> Vec<(String, String)> {
 /// Parse `git diff -z --numstat` into path -> (additions, deletions). Normal record
 /// is `add\tdel\tpath\0`; a rename is `add\tdel\t\0oldpath\0newpath\0` (empty path
 /// field signals rename; the new path is the second field). Binary is `-\t-`.
-pub(crate) fn parse_numstat_z(data: &[u8]) -> HashMap<String, (u64, u64)> {
+pub fn parse_numstat_z(data: &[u8]) -> HashMap<String, (u64, u64)> {
     let s = String::from_utf8_lossy(data);
     let tokens: Vec<&str> = s.split('\0').collect();
     let mut map = HashMap::new();
@@ -99,7 +99,7 @@ pub(crate) fn parse_numstat_z(data: &[u8]) -> HashMap<String, (u64, u64)> {
     map
 }
 
-pub(crate) fn parse_hunk_header(line: &str) -> (u64, u64) {
+pub fn parse_hunk_header(line: &str) -> (u64, u64) {
     // Only read the `-a,b +c,d` between the first and second `@@`; git appends
     // function-context text after the closing `@@` that can contain `+`/`-` tokens.
     let (mut old, mut new) = (0u64, 0u64);
@@ -128,7 +128,7 @@ pub(crate) fn parse_hunk_header(line: &str) -> (u64, u64) {
 
 /// Parse a unified diff patch into hunks (FR-9). Preamble before the first `@@`
 /// (diff --git / index / +++/--- lines) is skipped; the `\ No newline` marker is dropped.
-pub(crate) fn parse_unified_diff(text: &str) -> Vec<DiffHunk> {
+pub fn parse_unified_diff(text: &str) -> Vec<DiffHunk> {
     let mut hunks: Vec<DiffHunk> = Vec::new();
     let (mut old_no, mut new_no) = (0u64, 0u64);
     for line in text.split('\n') {

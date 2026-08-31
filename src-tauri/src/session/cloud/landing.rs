@@ -12,6 +12,7 @@
 //! only reverse what the branch that actually created a tree handed it.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::diff::{is_git_repo, GitHost};
 
@@ -22,7 +23,7 @@ const NOT_A_REPO_MSG: &str =
 // ---------- FR-4: the branch a fresh worktree lands on ----------
 
 /// The readable tail of a cloud id, for FR-4's fallback branch name.
-pub(crate) fn short_cloud_id(cloud_id: &str) -> String {
+pub fn short_cloud_id(cloud_id: &str) -> String {
     let body = cloud_id
         .strip_prefix("session_")
         .or_else(|| cloud_id.strip_prefix("cse_"))
@@ -43,7 +44,7 @@ pub(crate) fn short_cloud_id(cloud_id: &str) -> String {
 /// else `cloud/<shortId>`. A branch starting with `-` is refused rather than
 /// passed on: it becomes a positional git argument downstream, where git would
 /// read it as an option.
-pub(crate) fn adopt_branch(cloud_branch: Option<&str>, cloud_id: &str) -> String {
+pub fn adopt_branch(cloud_branch: Option<&str>, cloud_id: &str) -> String {
     match cloud_branch
         .map(str::trim)
         .filter(|b| !b.is_empty() && !b.starts_with('-'))
@@ -55,7 +56,7 @@ pub(crate) fn adopt_branch(cloud_branch: Option<&str>, cloud_id: &str) -> String
 
 // ---------- FR-4: the landing directory ----------
 
-pub(crate) struct Landing {
+pub struct Landing {
     pub(crate) dir: String,
     pub(crate) worktree: Option<SessionWorktree>,
     pub(crate) distro: Option<String>,
@@ -67,7 +68,7 @@ pub(crate) struct Landing {
 impl Landing {
     /// The `owner/name` of the landing checkout, for `CLOUD_REPO_MISMATCH`'s
     /// `currentRepo` (FR-8) — best-effort, and absent rather than guessed.
-    pub(crate) fn current_repo(&self) -> Option<String> {
+    pub fn current_repo(&self) -> Option<String> {
         let host = host_from_distro(&self.distro);
         let out =
             crate::diff::git_routed(&host, &self.dir, &["remote", "get-url", "origin"]).ok()?;
@@ -98,7 +99,7 @@ fn base_ref_of(host: &GitHost, root: &str) -> String {
 /// FR-4: `worktree` (the default) creates a fresh tree through the existing
 /// session-worktree path; `checkout` uses the project root as-is. Either way the
 /// directory exists and is a git repository BEFORE teleport spawns.
-pub(crate) fn prepare_landing(
+pub fn prepare_landing(
     project_root: &str,
     destination: &str,
     cloud_branch: Option<&str>,
@@ -106,7 +107,7 @@ pub(crate) fn prepare_landing(
 ) -> Result<Landing, AdoptError> {
     let host = GitHost::of(project_root);
     if !is_git_repo(&host, project_root) {
-        return Err(AdoptError::new("NOT_A_GIT_REPO", NOT_A_REPO_MSG));
+        return Err(AdoptError::new(ErrorCode::NotAGitRepo, NOT_A_REPO_MSG));
     }
     if destination == "checkout" {
         return Ok(Landing {
@@ -135,12 +136,16 @@ pub(crate) fn prepare_landing(
             worktree: Some(sw),
             distro,
         }),
-        Err((code, msg)) if code == "WORKTREE_BRANCH_IN_USE" => Err(AdoptError::detailed(
-            &code,
+        Err(AppError {
+            code, message: msg, ..
+        }) if code == ErrorCode::WorktreeBranchInUse => Err(AdoptError::detailed(
+            code,
             "that branch is already checked out at another path",
             serde_json::json!({ "path": msg }),
         )),
-        Err((code, msg)) => Err(AdoptError::new(&code, msg)),
+        Err(AppError {
+            code, message: msg, ..
+        }) => Err(AdoptError::new(code, msg)),
     }
 }
 
@@ -150,7 +155,7 @@ pub(crate) fn prepare_landing(
 /// reverses a worktree this run created unless the adoption succeeded. Never
 /// touches a worktree that already existed — `created` is only ever set by the
 /// branch that actually made one.
-pub(crate) struct AdoptGuard<'a> {
+pub struct AdoptGuard<'a> {
     reg: &'a CloudAdoptRegistry,
     key: String,
     pub(crate) created: Option<CreatedWorktree>,
@@ -158,7 +163,7 @@ pub(crate) struct AdoptGuard<'a> {
 }
 
 impl<'a> AdoptGuard<'a> {
-    pub(crate) fn new(reg: &'a CloudAdoptRegistry, key: String) -> AdoptGuard<'a> {
+    pub fn new(reg: &'a CloudAdoptRegistry, key: String) -> AdoptGuard<'a> {
         AdoptGuard {
             reg,
             key,
@@ -214,12 +219,9 @@ mod tests {
     // ---- FR-4 / FR-11: the landing directory, and what a failure leaves behind ----
 
     fn git(dir: &Path, args: &[&str]) {
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(args)
-            .current_dir(dir)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        crate::process_util::no_window(&mut cmd);
+        let cmd = crate::process_util::spawn("git")
+            .args(args)
+            .current_dir(dir);
         assert!(cmd.status().expect("git spawn").success(), "git {args:?}");
     }
 
@@ -344,7 +346,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("francois-cloud-bare-{}", uuid()));
         std::fs::create_dir_all(&dir).unwrap();
         match prepare_landing(&dir.to_string_lossy(), "worktree", None, "session_01AB") {
-            Err(e) => assert_eq!(e.code, "NOT_A_GIT_REPO"),
+            Err(e) => assert_eq!(e.code, ErrorCode::NotAGitRepo),
             Ok(_) => panic!("teleport needs a repo to check the branch out into"),
         }
         std::fs::remove_dir_all(&dir).ok();

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 /// names (`sessions/`, `projects/`, `.claude.json`, `history.jsonl`, `cache/`)
 /// and linking those back would re-merge exactly what an account exists to keep
 /// apart.
-pub(crate) const MIRRORED: &[&str] = &[
+pub const MIRRORED: &[&str] = &[
     "commands",
     "agents",
     "skills",
@@ -38,7 +38,7 @@ pub(crate) const MIRRORED: &[&str] = &[
 /// The user's global config root — `~/.claude`, resolved from the HOME dir and
 /// NOT from `CLAUDE_CONFIG_DIR`, which may already point at an account when the
 /// app itself was launched from one.
-pub(crate) fn global_config_dir() -> Option<PathBuf> {
+pub fn global_config_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude"))
 }
 
@@ -47,7 +47,7 @@ pub(crate) fn global_config_dir() -> Option<PathBuf> {
 /// touched — that is what makes a backfill safe to run on every load and keeps
 /// an account's own `settings.json` (theme, model) from being replaced by a
 /// link to the global one. Pure; the caller supplies both listings.
-pub(crate) fn pending<'a>(source_has: &[&'a str], target_has: &[&str]) -> Vec<&'a str> {
+pub fn pending<'a>(source_has: &[&'a str], target_has: &[&str]) -> Vec<&'a str> {
     MIRRORED
         .iter()
         .filter_map(|name| source_has.iter().find(|s| *s == name).copied())
@@ -58,7 +58,7 @@ pub(crate) fn pending<'a>(source_has: &[&'a str], target_has: &[&str]) -> Vec<&'
 /// Link every missing shared entry from the global root into `config_dir`.
 /// Best-effort: a missing global root, an unreadable dir, or a refused symlink
 /// all leave the account exactly as it was.
-pub(crate) fn mirror_global(config_dir: &Path) {
+pub fn mirror_global(config_dir: &Path) {
     let Some(source) = global_config_dir() else {
         return;
     };
@@ -126,14 +126,13 @@ fn link_entry(source: &Path, target: &Path) -> std::io::Result<()> {
     if source.is_file() {
         return std::fs::copy(source, target).map(|_| ());
     }
-    let mut cmd = std::process::Command::new("cmd");
-    cmd.arg("/c")
+    let status = crate::process_util::spawn("cmd")
+        .arg("/c")
         .arg("mklink")
         .arg("/J")
         .arg(target)
-        .arg(source);
-    crate::process_util::no_window(&mut cmd);
-    let status = cmd.status()?;
+        .arg(source)
+        .status()?;
     if status.success() {
         Ok(())
     } else {

@@ -26,20 +26,20 @@
 //! (the file-wide lock rule).
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde_json::Value;
 use std::path::PathBuf;
-use tauri::State;
 
 /// The harness's multi-agent orchestration tool. Unlike `is_subagent_tool` there
 /// is no second spelling — `Workflow` is the only name it ships under.
-pub(crate) fn is_workflow_tool(tool: &str) -> bool {
+pub fn is_workflow_tool(tool: &str) -> bool {
     tool == "Workflow"
 }
 
 /// What a dispatch's input says about the run, before any of it is observed.
-pub(crate) struct WorkflowMeta {
+pub struct WorkflowMeta {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) phases: Vec<WorkflowPhaseInfo>,
@@ -281,7 +281,7 @@ fn file_stem(path: &str) -> String {
 /// Ladder, richest source first: an inline `script`'s own meta block → the saved
 /// workflow `name` → the `scriptPath` file stem. A dispatch that gives none of
 /// them still yields a usable card rather than a blank one.
-pub(crate) fn parse_workflow_meta(input: &Value) -> WorkflowMeta {
+pub fn parse_workflow_meta(input: &Value) -> WorkflowMeta {
     let script = input.get("script").and_then(|s| s.as_str()).unwrap_or("");
     if let Some(meta) = meta_block(script) {
         // the phases array carries its own `title`/`detail` keys — take it out of
@@ -327,7 +327,7 @@ pub(crate) fn parse_workflow_meta(input: &Value) -> WorkflowMeta {
 
 /// FR-6: the `wf_…` run id the dispatch ack reports, if any. Scanned rather than
 /// JSON-parsed — the ack is free text that happens to contain the id.
-pub(crate) fn extract_run_id(text: &str) -> Option<String> {
+pub fn extract_run_id(text: &str) -> Option<String> {
     let at = text.find("wf_")?;
     let id: String = text[at..]
         .chars()
@@ -360,7 +360,7 @@ impl Session {
 /// FR-2: a `Workflow` dispatch starts — mint its record and stash the
 /// correlation key. Name/description/phases stay provisional until
 /// `apply_workflow_meta` sees the complete input (FR-4).
-pub(crate) fn mint_workflow(
+pub fn mint_workflow(
     s: &mut Session,
     session_id: &str,
     run_uuid: &str,
@@ -391,7 +391,7 @@ pub(crate) fn mint_workflow(
 /// FR-4: the dispatch's input finished accumulating — fill in what the script
 /// declared. Returns the updated run to emit, or `None` when nothing changed
 /// (an unknown key, or a meta that adds nothing).
-pub(crate) fn apply_workflow_meta(
+pub fn apply_workflow_meta(
     s: &mut Session,
     run_uuid: &str,
     meta: WorkflowMeta,
@@ -416,7 +416,7 @@ pub(crate) fn apply_workflow_meta(
 /// and `Script file:` come from — each kept only when it resolves on disk. The
 /// transcript dir rides on the run (the tab needs it); the script path is
 /// core-only state on the session.
-pub(crate) fn apply_workflow_dispatch_result(
+pub fn apply_workflow_dispatch_result(
     s: &mut Session,
     run_uuid: &str,
     result_text: &str,
@@ -465,7 +465,7 @@ pub(crate) fn apply_workflow_dispatch_result(
 /// async-agents': the NAMED rungs run before the agent ladder (so a lone
 /// background agent cannot swallow a workflow's notice), and this loose one runs
 /// after it (so a lone workflow cannot swallow an agent's).
-pub(crate) fn resolve_notice_workflow(s: &Session, text: &str, allow_sole: bool) -> Option<String> {
+pub fn resolve_notice_workflow(s: &Session, text: &str, allow_sole: bool) -> Option<String> {
     let running: Vec<&WorkflowRun> = s
         .workflow_order
         .iter()
@@ -493,7 +493,7 @@ pub(crate) fn resolve_notice_workflow(s: &Session, text: &str, allow_sole: bool)
 /// FR-8: a resolved task-notification closes its run. `notice_is_error` is the
 /// same word test the agent trail uses, so "workflow failed" and "workflow
 /// completed" land on the same statuses in both panels.
-pub(crate) fn apply_workflow_notice(
+pub fn apply_workflow_notice(
     s: &mut Session,
     run_uuid: &str,
     text: &str,
@@ -519,7 +519,7 @@ pub(crate) fn apply_workflow_notice(
 /// FR-9 turn-end backstop: no run of this session is left `running`, so the
 /// elapsed clock never ticks past the turn that owns it. Mirrors
 /// `finalize_agents`, and runs at the same two call sites.
-pub(crate) fn finalize_workflows(s: &mut Session, errored: bool, at: u64) -> Vec<WorkflowRun> {
+pub fn finalize_workflows(s: &mut Session, errored: bool, at: u64) -> Vec<WorkflowRun> {
     let running: Vec<String> = s
         .workflow_order
         .iter()
@@ -560,7 +560,7 @@ pub(crate) fn terminal_watch_run_ids(runs: &[WorkflowRun]) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn emit_workflow_updates(env: &dyn SessionEnv, runs: Vec<WorkflowRun>) {
+pub fn emit_workflow_updates(env: &dyn SessionEnv, runs: Vec<WorkflowRun>) {
     let terminal_ids = terminal_watch_run_ids(&runs);
     for run in runs {
         env.emit_session(SessionEvent::WorkflowUpdate { run });
@@ -575,14 +575,14 @@ pub(crate) fn emit_workflow_updates(env: &dyn SessionEnv, runs: Vec<WorkflowRun>
 
 /// FR-2: called from the stream reader when a `Workflow` tool_use block opens.
 /// Returns the minted run id so the caller can correlate the rest of the block.
-pub(crate) fn on_workflow_start(
-    env: &dyn SessionEnv,
-    session_id: &str,
-    tool_use_id: &str,
-) -> String {
+pub fn on_workflow_start(env: &dyn SessionEnv, session_id: &str, tool_use_id: &str) -> String {
     let run_uuid = uuid();
     let minted = {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         map.get_mut(session_id)
             .map(|s| mint_workflow(s, session_id, &run_uuid, tool_use_id, now_ms()))
     };
@@ -593,7 +593,7 @@ pub(crate) fn on_workflow_start(
 }
 
 /// FR-4: called when the dispatch's input JSON has fully accumulated.
-pub(crate) fn on_workflow_input_complete(
+pub fn on_workflow_input_complete(
     env: &dyn SessionEnv,
     session_id: &str,
     run_uuid: &str,
@@ -601,7 +601,11 @@ pub(crate) fn on_workflow_input_complete(
 ) {
     let meta = parse_workflow_meta(input);
     let updated = {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         map.get_mut(session_id)
             .and_then(|s| apply_workflow_meta(s, run_uuid, meta))
     };
@@ -609,7 +613,7 @@ pub(crate) fn on_workflow_input_complete(
 }
 
 /// FR-6: called from the tool_result reconciliation for a `Workflow` dispatch.
-pub(crate) fn on_workflow_dispatch_result(
+pub fn on_workflow_dispatch_result(
     env: &dyn SessionEnv,
     session_id: &str,
     run_uuid: &str,
@@ -617,7 +621,11 @@ pub(crate) fn on_workflow_dispatch_result(
     is_error: bool,
 ) {
     let updated = {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         map.get_mut(session_id).and_then(|s| {
             apply_workflow_dispatch_result(s, run_uuid, result_text, is_error, now_ms())
         })
@@ -627,7 +635,7 @@ pub(crate) fn on_workflow_dispatch_result(
 
 /// FR-8: offer a task-notification to the workflow ladder. Returns whether it
 /// was claimed — the caller falls through to the agent ladder when it was not.
-pub(crate) fn handle_workflow_notification(
+pub fn handle_workflow_notification(
     env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
@@ -635,7 +643,11 @@ pub(crate) fn handle_workflow_notification(
 ) -> bool {
     let text = user_line_text(v);
     let updated = {
-        let mut map = env.engine().sessions.lock().unwrap();
+        let mut map = env
+            .engine()
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         map.get_mut(session_id).and_then(|s| {
             let id = resolve_notice_workflow(s, &text, allow_sole)?;
             apply_workflow_notice(s, &id, &text, now_ms())
@@ -648,15 +660,16 @@ pub(crate) fn handle_workflow_notification(
 
 // ---------- commands (spec §5) ----------
 
-#[tauri::command]
-pub fn workflows_list(
-    engine: State<'_, Engine>,
-    session_id: String,
-) -> IpcResult<Vec<WorkflowRun>> {
-    let map = engine.sessions.lock().unwrap();
+// FR-6: same rationale as diff/commands.rs:48-56. `app.state::<Engine>()`
+// replaces the borrowed `State<'_, _>` param, which an async command's
+// 'static future can't carry.
+#[tauri::command(async)]
+pub fn workflows_list(app: AppHandle, session_id: String) -> IpcResult<Vec<WorkflowRun>> {
+    let engine = app.state::<Engine>();
+    let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     match map.get(&session_id) {
         Some(s) => ok(s.workflow_list()),
-        None => err("SESSION_NOT_FOUND", "session not found"),
+        None => err(ErrorCode::SessionNotFound, "session not found"),
     }
 }
 

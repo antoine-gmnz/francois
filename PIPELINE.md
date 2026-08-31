@@ -51,7 +51,7 @@ surfaces:
     build_cmd: npm run build
     uses_design: true
   - key: core
-    path: src-tauri
+    path: [src-tauri, scripts/quality]        # widened core-architecture-wave3 FR-8/FR-10: quality-rule authoring for Rust-shape checks has no other owner
     label: core (Rust / Tauri 2)
     agent: core
     tools: [Read, Write, Edit, Bash, Grep, Glob, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
