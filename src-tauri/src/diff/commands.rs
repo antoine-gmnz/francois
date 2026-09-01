@@ -72,9 +72,16 @@ fn get_summary(app: &AppHandle, session_id: &str) -> Result<DiffSummary, AppErro
     let cwd = cwd_or_err(&engine, session_id)?;
     let lock = git_lock(session_id);
     let _g = lock.lock().unwrap();
-    let summary = compute_summary(&cwd)?;
-    broadcast(app, session_id, summary.files.len()); // FR-17
-    Ok(summary)
+    compute_summary(&cwd)
+    // NO broadcast here (FR-17 amended): a READ is not a change. The echo this
+    // used to emit was a feedback loop the moment more than one frontend
+    // listener refetched on `diff.changed` — the roster's fleet sync reads the
+    // summary of every settled session on every event, so its own read echoed
+    // straight back into itself (and, with the DIFF tab open, ping-ponged with
+    // DiffView's subscription) and every idle session spun a permanent
+    // `git status` + `git diff --numstat` loop. `diff.changed` now means only
+    // what its name says: the watcher (FR-15), a tool.done (FR-16), or a commit
+    // actually changed the tree.
 }
 
 #[tauri::command]
@@ -189,6 +196,11 @@ fn commit(
         &commit_args(message, paths),
         "git commit failed",
     )?;
+    // A commit is the one tree change no watcher sees: it only touches `.git/`,
+    // which `is_ignored_path` skips (and WSL repos have no watcher at all). The
+    // getSummary echo used to cover this by accident; now it is explicit. Runs
+    // off-thread and coalesced, so it just waits out the lock this fn holds.
+    schedule_recompute(app, session_id, &cwd);
     Ok(match git_routed(&host, &root, &["rev-parse", "HEAD"]) {
         Ok(o) if o.code == 0 => CommitResult {
             commit_hash: String::from_utf8_lossy(&o.stdout).trim().to_string(),
