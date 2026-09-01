@@ -344,6 +344,12 @@ export function useSessionFleetSync(): SessionFleetSync {
       // A settled session whose tree changed under it (a commit from the shell,
       // an external edit) has no status event coming to trigger the re-read, so
       // it happens here. A BUSY one is left alone — its row shows no totals.
+      // This re-read is only safe because `diff_get_summary` does NOT broadcast
+      // (FR-17 amended): while it did, this line fed its own listener and every
+      // idle session spun `git status` + `git diff --numstat` forever — the
+      // lag that grew with the number of open sessions. Anything added here
+      // that invokes a diff command must stay broadcast-free for the same
+      // reason.
       const owner = useStore.getState().sessions.find((x) => x.id === e.sessionId);
       if (owner && !isBusyStatus(owner.status)) readDiff(e.sessionId);
     }).then((unsub) => {

@@ -39,10 +39,17 @@ export interface DiffFeed {
  *
  * The hydrate effect below is intentionally NOT built on the shared
  * useHydratedSubscription hook (see REFACTOR-CONVENTIONS.md "known gaps"): it
- * registers its listener BEFORE the first getSummary specifically to count and
- * swallow that fetch's own diff.changed echo (FR-17, pendingEchoRef), and it
- * coalesces concurrent refreshes (summaryInFlightRef / refreshQueuedRef). Left
- * structurally unchanged — do not restructure this guard logic.
+ * registers its listener BEFORE the first getSummary so no change that lands
+ * mid-hydrate is missed, and it coalesces concurrent refreshes
+ * (summaryInFlightRef / refreshQueuedRef). Left structurally unchanged — do not
+ * restructure this guard logic.
+ *
+ * The echo counter that used to sit here (pendingEchoRef) is gone with the
+ * broadcast it existed to swallow: `diff_get_summary` no longer emits
+ * diff.changed (FR-17 amended), because a read is not a change. Counting echoes
+ * only ever worked for ONE listener anyway — the roster's fleet sync refetches
+ * on the same events, so its reads echoed into ours and ours into its, and the
+ * two spun git in a loop for as long as the tab was open.
  */
 export function useDiffFeed(sessionId: string): DiffFeed {
   const [summary, setSummary] = useState<DiffSummary | null>(null);
@@ -61,11 +68,6 @@ export function useDiffFeed(sessionId: string): DiffFeed {
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedPath;
   const mountedRef = useRef(true);
-  // Every getSummary emits one diff.changed echo (FR-17). We count outstanding echoes
-  // so our own subscription skips them and refetches only on external changes
-  // (watcher / tool.done / another surface) — otherwise getSummary would self-trigger
-  // an unbounded refetch loop.
-  const pendingEchoRef = useRef(0);
   // Coalesce external-broadcast refetches: while one summary load is in flight, a
   // burst of diff.changed events queues exactly ONE trailing re-run instead of
   // stacking fetches (which strobed requestBusy → the footer hints "blinked").
@@ -98,11 +100,9 @@ export function useDiffFeed(sessionId: string): DiffFeed {
   const loadSummary = useCallback((sid: string) => {
     const run = () => {
       summaryInFlightRef.current = true;
-      pendingEchoRef.current += 1; // a successful getSummary will broadcast one echo
       setSummaryLoading(true);
       void diffGetSummary(sid)
         .then((res) => {
-          if (!res.ok) pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1); // no broadcast on error
           if (!mountedRef.current) return;
           setSummaryLoading(false);
           if (res.ok) {
@@ -120,7 +120,6 @@ export function useDiffFeed(sessionId: string): DiffFeed {
           }
         })
         .catch(() => {
-          pendingEchoRef.current = Math.max(0, pendingEchoRef.current - 1);
           if (mountedRef.current) setSummaryLoading(false);
         })
         .finally(() => {
@@ -138,14 +137,11 @@ export function useDiffFeed(sessionId: string): DiffFeed {
   useEffect(() => {
     mountedRef.current = true;
     let unlisten: (() => void) | undefined;
-    // Register the listener BEFORE the first getSummary so that fetch's own echo is
-    // guaranteed to be consumed by the counter (no mount-race stuck-at-1, N1).
+    // Register the listener BEFORE the first getSummary so a change landing during
+    // the hydrate fetch queues a trailing re-run instead of being missed.
     void onDiffEvent((e) => {
-      switch (nextDiffEventAction(e, sessionId, pendingEchoRef.current, summaryInFlightRef.current)) {
+      switch (nextDiffEventAction(e, sessionId, summaryInFlightRef.current)) {
         case 'ignore':
-          return;
-        case 'consumeEcho':
-          pendingEchoRef.current -= 1; // our own getSummary echo — do not refetch
           return;
         case 'queueRefresh':
           refreshQueuedRef.current = true; // fold the burst into one trailing re-run
