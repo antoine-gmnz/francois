@@ -67,7 +67,11 @@ pub fn dispose_session_resources(app: &AppHandle, session_id: &str) -> usize {
 pub struct SessionAccountObserver;
 
 impl crate::account::AccountRemovalObserver for SessionAccountObserver {
+    fn credentials_changing(&self, account_id: &str) {
+        super::adapter::codex::invalidate_catalog(account_id);
+    }
     fn account_removed(&self, app: &AppHandle, account_id: &str) -> Vec<String> {
+        super::adapter::codex::invalidate_catalog(account_id);
         super::reassign_account_sessions(app, account_id)
     }
 }

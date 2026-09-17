@@ -134,6 +134,7 @@ fn resolve_models(override_ids: Option<&[String]>, fetched: Vec<ModelInfo>) -> V
 
 fn model_with_context(id: &str) -> ModelInfo {
     ModelInfo {
+        default_effort: None,
         context_tokens: Some(wire::context_tokens_for(id)),
         ..model(id, id)
     }

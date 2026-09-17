@@ -691,7 +691,7 @@ mod tests {
     fn bash_spawns_with_the_login_shell_path_when_it_resolves() {
         let dir = tmp_dir("bash-path-env");
         fs::create_dir_all(&dir).unwrap();
-        let out = bash(&dir, &json!({ "command": "echo -n $PATH" }));
+        let out = bash(&dir, &json!({ "command": "printf '%s' \"$PATH\"" }));
         let expected = crate::process_util::login_shell_path_env()
             .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
         assert_eq!(out.trim(), expected.trim());

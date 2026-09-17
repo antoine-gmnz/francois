@@ -132,6 +132,12 @@ export type ProjectListResponse = Result<ProjectListData>;
 
 // ---------- francois:project:create — frontend -> core ----------
 
+// Codex defaults: model/effort/account changes validate the effective pair with
+// the account catalogue before writes. Catalogue errors from session-engine.ts
+// propagate through both create/update Results. No model and no explicit effort,
+// clear-only effort, and unrelated edits need no lookup. Saved values are never
+// replaced by discovery; a model change clears only incompatible inherited effort.
+
 export interface ProjectCreateRequest {
   /** absolute path to an existing directory; normalized by the core (FR-8). */
   root: string;
@@ -267,6 +273,8 @@ export interface ProjectAwareSessionCreateRequest {
   cwd: string;
   name?: string;
   modelId?: string;
+  /** Codex explicit values must belong to the effective model's advertised efforts.
+   * Model/effort/account changes validate before writes; catalogue failures propagate. */
   effort?: string;
   permissionMode?: string;
   runtime?: string;

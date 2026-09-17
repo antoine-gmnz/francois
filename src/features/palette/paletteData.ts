@@ -5,7 +5,7 @@
 // single-App architecture without duplicating fetches.
 
 import { create } from 'zustand';
-import type { ModelInfo, SkillInfo, AgentInfo } from '../../../contract/common';
+import type { SkillInfo, AgentInfo } from '../../../contract/common';
 
 // A revision counter the palette subscribes to, so a change to any of these caches
 // re-renders the open palette and its per-render PaletteContext/hints stay live (FR-9).
@@ -14,14 +14,6 @@ export const usePaletteDataRev = create<{ rev: number; bump: () => void }>((set)
   bump: () => set((s) => ({ rev: s.rev + 1 })),
 }));
 const bump = () => usePaletteDataRev.getState().bump();
-
-// switch-model: the static model catalog, fetched once at bootstrap (FR-19).
-let models: ModelInfo[] = [];
-export const setPaletteModels = (m: ModelInfo[]) => {
-  models = m;
-  bump();
-};
-export const getPaletteModels = (): ModelInfo[] => models;
 
 // run-skill: installed skills for a session (skills-panel's skills:list cache, FR-23).
 const skillsBySession: Record<string, SkillInfo[]> = {};

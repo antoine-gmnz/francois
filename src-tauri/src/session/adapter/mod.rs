@@ -14,7 +14,7 @@
 //! child" shape the rest of this domain follows.
 
 mod claude_code;
-mod codex;
+pub(crate) mod codex;
 mod grok;
 mod openai;
 

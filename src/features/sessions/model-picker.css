@@ -1,8 +1,4 @@
-/* ModelPicker.tsx — trigger + popover/submenu, ported 1:1 from the former
-   fieldStyle/panelStyle CSSProperties consts and the inline family/option
-   row styling. Selection/hover states that were previously computed inline
-   (or via imperative onMouseEnter/onMouseLeave) are now plain modifier
-   classes / :hover rules. */
+/* Model trigger and viewport-bounded family/model columns. */
 
 .model-picker__trigger {
   background: var(--bg-raised);
@@ -58,7 +54,7 @@
   text-transform: uppercase;
 }
 
-/* Shared panel look for both the family list and the flown-out submenu. */
+/* Existing panel treatment, shared by the two scrollable columns. */
 .model-picker__panel {
   background: var(--bg-panel);
   border: 1px solid var(--bg-hover-2);
@@ -69,6 +65,11 @@
 .model-picker__popover {
   position: fixed;
   z-index: 40;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .model-picker__family {
@@ -90,6 +91,7 @@
 
 .model-picker__family-label {
   flex: 1;
+  min-width: 0;
   font-size: var(--font-size-12);
   font-weight: 500;
   color: var(--text);
@@ -104,14 +106,14 @@
   color: var(--text-faint);
 }
 
+.model-picker__provider-heading { grid-column: 1 / -1; }
+
+.model-picker__families,
 .model-picker__submenu {
-  position: absolute;
-  left: 100%;
-  top: -1px;
-  margin-left: 3px;
-  min-width: 260px;
-  max-height: 60vh;
+  min-height: 0;
   overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
 }
 
 .model-picker__option {
@@ -143,3 +145,7 @@
   color: var(--text-faint);
   margin-top: var(--space-2);
 }
+
+.model-picker__option--focused { background: var(--bg-hover-2); }
+.model-picker__option-label { overflow-wrap: anywhere; }
+.model-picker__trigger { text-align: left; }

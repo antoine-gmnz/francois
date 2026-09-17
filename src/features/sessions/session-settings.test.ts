@@ -93,6 +93,12 @@ describe('buildPatch', () => {
     expect(buildPatch(draft, baseline)).toEqual({ name: 'new name', allowGit: true });
   });
 
+  it('keeps an unavailable persisted model and future effort out of unrelated patches', () => {
+    const baseline = draftFromSession(session({ model: { id: 'retired', label: 'Retired' }, effort: 'ultra' }));
+    expect(buildPatch({ ...baseline, allowGit: true }, baseline)).toEqual({ allowGit: true });
+    expect(buildPatch({ ...baseline, effort: 'future' }, baseline)).toEqual({ effort: 'future' });
+  });
+
   it('is empty for an unchanged draft', () => {
     const baseline = draftFromSession(session());
     expect(buildPatch(baseline, baseline)).toEqual({});
@@ -329,5 +335,30 @@ describe("'session-settings' palette command (FR-19)", () => {
     const step = cmd.run({ activeSessionId: 's1', runningAgentCount: 0 });
     expect(step).toBeUndefined();
     expect(store.getState().sessionSettingsId).toBe('s1');
+  });
+});
+
+import { submitSettingsOnEnter } from './session-settings';
+
+describe('sheet Enter capture delegates interactive controls', () => {
+  it.each(['button', '[role="listbox"]', '[role="option"]', 'select', 'textarea', '[data-worktree-row]'])('lets %s select or refresh without creating/applying', (selector) => {
+    const submit = vi.fn();
+    const activate = vi.fn();
+    const event = {
+      key: 'Enter', defaultPrevented: false,
+      target: { closest: (selectors: string) => selectors.split(', ').includes(selector) ? {} : null },
+      preventDefault: vi.fn(),
+    };
+    submitSettingsOnEnter(event as unknown as KeyboardEvent, submit);
+    if (!event.preventDefault.mock.calls.length) activate();
+    expect(submit).not.toHaveBeenCalled();
+    expect(activate).toHaveBeenCalledOnce();
+  });
+  it('still submits Enter from a text field', () => {
+    const submit = vi.fn();
+    const event = { key: 'Enter', defaultPrevented: false, target: { closest: () => null }, preventDefault: vi.fn() };
+    submitSettingsOnEnter(event as unknown as KeyboardEvent, submit);
+    expect(submit).toHaveBeenCalledOnce();
+    expect(event.preventDefault).toHaveBeenCalledOnce();
   });
 });

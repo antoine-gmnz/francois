@@ -32,6 +32,7 @@ import './projects.css';
 export default function ProjectsModal({ home, onClose }: { home: string; onClose: () => void }) {
   const registry = useProjectRegistry();
   const mutations = useProjectMutations({
+    models: registry.models,
     projects: registry.projects,
     selectedId: registry.selectedId,
     selected: registry.selected,
@@ -147,7 +148,7 @@ export default function ProjectsModal({ home, onClose }: { home: string; onClose
               />
 
               {/* SESSION DEFAULTS — disabled while the root is missing (FR-38) */}
-              <DefaultsSection
+              <DefaultsSection catalogState={registry.catalogState}
                 fieldDefs={fieldDefs}
                 defaults={selected.defaults}
                 onCommit={mutations.commitDefault}

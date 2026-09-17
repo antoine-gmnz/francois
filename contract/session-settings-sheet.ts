@@ -13,7 +13,8 @@ export interface SessionSettingsPatch {
   name?: string;
   /** Must be a model id the session's ACCOUNT advertises. */
   modelId?: string;
-  /** '' clears back to the model's own default, mirroring session_switch_effort. */
+  /** '' clears to runtime default without probing; Codex explicit values must
+   * belong to the effective model's advertised efforts. Omission is unchanged. */
   effort?: string;
   permissionMode?: PermissionMode;
   responseMode?: ResponseMode;
@@ -35,6 +36,7 @@ export interface SessionUpdateSettingsRequest {
  *  - 'SESSION_NOT_RUNNING'  — session is done/error and the patch touches a run key (§7 case 2)
  *  - 'INVALID_INPUT'        — an enum/modelId/name failed re-validation; nothing written (§7 cases 3–5)
  *  - 'INTERNAL'             — unexpected core failure after the in-memory write (§7 case 6)
+ *  - Codex catalogue failures from session-engine.ts when model/effort validation needs discovery.
  */
 export type SessionUpdateSettingsResponse = Result<SessionMeta>;
 

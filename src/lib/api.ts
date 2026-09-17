@@ -1,10 +1,11 @@
+import type { SessionModelsInput, SessionModelsResponse } from '../../contract/session-engine';
 // Typed wrappers over the Tauri session commands + the session event stream.
 // Each command resolves a Result<T> (never rejects) per the contract.
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { demoInvoke, demoListen } from '../demo/demo';
-import type { AccountId, BlockId, Result, SessionMeta, ModelInfo, PermissionMode, ResponseMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, BlockId, Result, SessionMeta, PermissionMode, ResponseMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
   WorkflowDetail,
@@ -152,13 +153,9 @@ export const appSetWindowTheme = (theme: 'light' | 'dark') =>
 export const appDndState = () => ipc<Result<DndState>>('app_dnd_state');
 
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
-// multi-provider-openai FR-18/FR-21: keyed on `accountId`, not `sessionId` —
-// the model picker's only mount (the New Session modal) has no session yet.
-// Every existing call site (no account context) keeps invoking with no
-// payload and the core keeps answering with the default account's Claude
-// Code catalog unchanged.
-export const sessionModels = (accountId?: AccountId) =>
-  ipc<Result<ModelInfo[]>>('session_models', accountId ? { accountId } : undefined);
+// Account-scoped discovery; core owns cache freshness and validation.
+export const sessionModels = (input: SessionModelsInput = {}) =>
+  ipc<SessionModelsResponse>('session_models', input);
 // projects FR-19: session_create gained an optional projectId, stored verbatim —
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
 // session-worktree: session_create also gained an optional `worktree` (spec §5),

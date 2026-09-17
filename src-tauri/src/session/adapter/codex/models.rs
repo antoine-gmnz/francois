@@ -1,307 +1,329 @@
-//! The Codex model catalog (multi-provider-codex FR-17).
-//!
-//! Read from `<CODEX_HOME>/models_cache.json` — **Codex's own cache, which Codex
-//! refreshes**. No network call: an adapter that fetched its own catalog would
-//! need the account's credentials, a client, and a staleness policy, all to
-//! duplicate a file already sitting next to the auth token. This is the one
-//! place where delegating the loop to a CLI pays a dividend the native OpenAI
-//! adapter cannot collect.
-//!
-//! Pure apart from the single `read_to_string`, and that is isolated in
-//! `catalog_for_home` so the mapping itself is testable against fixture text.
-
-use crate::session::models::ModelInfo;
-use crate::session::spawn::valid_effort;
-
+//! Account-scoped, bounded App Server catalogue discovery. No vendor-cache fallback.
+use crate::ipc::{AppError, ErrorCode, ModelInfo};
 use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
+use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
-/// FR-17: the shape we read out of `models_cache.json`. Deliberately a SUBSET —
-/// the real file carries ~35 keys per model (tool modes, verbosity defaults,
-/// service tiers) that are Codex's business. Everything here is `default`ed so a
-/// cache written by a newer Codex that drops or renames a field degrades to a
-/// usable row instead of failing the whole parse.
+pub(crate) fn valid_effort(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 32
+        && bytes[0].is_ascii_lowercase()
+        && bytes
+            .iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
+}
+
+pub(super) fn spawn_failure() -> AppError {
+    AppError::new(ErrorCode::SpawnFailed, "Unable to launch the Codex CLI.")
+}
+
+pub(super) fn failure(reason: &str) -> AppError {
+    AppError::with_detail(
+        ErrorCode::ModelCatalogUnavailable,
+        if reason == "unsupported-cli" {
+            "Codex model discovery is unavailable. Update or install the Codex CLI and retry."
+        } else {
+            "Codex models could not be loaded. Retry model discovery."
+        },
+        json!({"reason":reason}),
+    )
+}
+
 #[derive(Deserialize)]
-struct CachedModel {
-    #[serde(default)]
-    slug: String,
-    #[serde(default)]
+#[serde(rename_all = "camelCase")]
+struct Row {
+    id: String,
+    model: String,
     display_name: String,
-    #[serde(default)]
     description: String,
-    #[serde(default)]
-    supported_reasoning_levels: Vec<ReasoningLevel>,
-    /// `"hide"` marks a model Codex uses internally (`codex-auto-review`) which
-    /// must never reach the picker. Anything else lists.
-    #[serde(default)]
-    visibility: String,
-    #[serde(default)]
-    context_window: u64,
-    /// Codex's own ordering hint; lower sorts first.
-    #[serde(default)]
-    priority: i64,
+    hidden: bool,
+    supported_reasoning_efforts: Vec<Effort>,
+    default_reasoning_effort: String,
+    is_default: bool,
 }
-
 #[derive(Deserialize)]
-struct ReasoningLevel {
-    #[serde(default)]
-    effort: String,
+#[serde(rename_all = "camelCase")]
+struct Effort {
+    reasoning_effort: String,
+    description: String,
 }
-
-#[derive(Deserialize)]
-struct ModelsCache {
-    #[serde(default)]
-    models: Vec<CachedModel>,
+#[derive(Default)]
+struct Accumulator {
+    models: Vec<ModelInfo>,
+    default_id: Option<String>,
+    ids: HashSet<String>,
+    cursors: HashSet<String>,
 }
-
-/// FR-17's fallback. Used when the cache is absent (a freshly created account
-/// dir has none until Codex first runs), unreadable, or malformed — the picker
-/// is never empty, because an empty picker makes a working account look broken.
-///
-/// Slugs are the ones 0.147.0 ships; if they age out, a wrong id surfaces as a
-/// clear Codex error on the first turn, whereas no ids at all surfaces as a
-/// dead-end UI with nothing to click.
-fn fallback() -> Vec<ModelInfo> {
-    ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"]
-        .iter()
-        .map(|slug| ModelInfo {
-            id: (*slug).to_string(),
-            label: pretty_label(slug),
-            brief: None,
-            context_tokens: None,
-            efforts: vec!["low".into(), "medium".into(), "high".into()],
-        })
-        .collect()
+fn display(value: &str) -> Result<String, AppError> {
+    if value.len() > 16 * 1024 {
+        return Err(failure("protocol"));
+    }
+    Ok(value.chars().filter(|c| !c.is_control()).collect())
 }
-
-/// `gpt-5.6-terra` → `GPT-5.6-Terra`. Only used by the fallback, where no
-/// `display_name` exists to read.
-fn pretty_label(slug: &str) -> String {
-    slug.split('-')
-        .map(|part| {
-            if part.eq_ignore_ascii_case("gpt") {
-                "GPT".to_string()
-            } else {
-                let mut chars = part.chars();
-                match chars.next() {
-                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().count() <= 256 && !id.chars().any(char::is_control)
+}
+impl Accumulator {
+    fn page(&mut self, value: Value) -> Result<Option<String>, AppError> {
+        let data = value
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| failure("protocol"))?;
+        let cursor = match value.get("nextCursor") {
+            Some(Value::Null) => None,
+            Some(Value::String(s))
+                if !s.is_empty() && s.len() <= 4096 && self.cursors.insert(s.clone()) =>
+            {
+                Some(s.clone())
+            }
+            _ => return Err(failure("protocol")),
+        };
+        for value in data {
+            let row: Row =
+                serde_json::from_value(value.clone()).map_err(|_| failure("protocol"))?;
+            if !valid_id(&row.id)
+                || !valid_id(&row.model)
+                || row.supported_reasoning_efforts.len() > 32
+                || !valid_effort(&row.default_reasoning_effort)
+            {
+                return Err(failure("protocol"));
+            }
+            let label = display(&row.display_name)?;
+            let brief = display(&row.description)?;
+            let mut efforts = Vec::new();
+            for effort in row.supported_reasoning_efforts {
+                display(&effort.description)?;
+                if !valid_effort(&effort.reasoning_effort) {
+                    return Err(failure("protocol"));
+                }
+                if !efforts.contains(&effort.reasoning_effort) {
+                    efforts.push(effort.reasoning_effort);
                 }
             }
-        })
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
-/// The pure half: cache text → catalog. Returns `None` when the text cannot be
-/// used at all, so the caller can pick the fallback (rather than this function
-/// baking that policy in and hiding a parse failure behind plausible output).
-fn parse_catalog(text: &str) -> Option<Vec<ModelInfo>> {
-    let cache: ModelsCache = serde_json::from_str(text).ok()?;
-    let mut rows: Vec<(i64, ModelInfo)> = cache
-        .models
-        .into_iter()
-        .filter(|m| !m.slug.is_empty())
-        .filter(|m| m.visibility != "hide")
-        .map(|m| {
-            let label = if m.display_name.is_empty() {
-                pretty_label(&m.slug)
-            } else {
-                m.display_name.clone()
-            };
-            let efforts: Vec<String> = m
-                .supported_reasoning_levels
-                .iter()
-                // Codex ships an `ultra` level the core's effort vocabulary does
-                // not carry (`valid_effort`: low/medium/high/xhigh/max). Filtering
-                // here rather than widening that vocabulary keeps one runtime from
-                // introducing an effort every other surface would have to handle.
-                .filter(|l| valid_effort(&l.effort))
-                .map(|l| l.effort.clone())
-                .collect();
-            (
-                m.priority,
-                ModelInfo {
-                    id: m.slug,
-                    label,
-                    brief: (!m.description.is_empty()).then_some(m.description),
-                    context_tokens: (m.context_window > 0).then_some(m.context_window),
-                    efforts,
+            if row.hidden || !self.ids.insert(row.model.clone()) {
+                continue;
+            }
+            if self.models.len() == 1000 {
+                return Err(failure("limit"));
+            }
+            if row.is_default && self.default_id.is_none() {
+                self.default_id = Some(row.model.clone());
+            }
+            self.models.push(ModelInfo {
+                label: if label.is_empty() {
+                    row.model.clone()
+                } else {
+                    label
                 },
-            )
-        })
-        .collect();
-    if rows.is_empty() {
-        return None;
+                id: row.model,
+                brief: (!brief.is_empty()).then_some(brief),
+                context_tokens: None,
+                default_effort: efforts
+                    .contains(&row.default_reasoning_effort)
+                    .then_some(row.default_reasoning_effort),
+                efforts,
+            });
+        }
+        Ok(cursor)
     }
-    // Stable so equal priorities keep the cache's own order.
-    rows.sort_by_key(|(priority, _)| *priority);
-    Some(rows.into_iter().map(|(_, m)| m).collect())
 }
 
-/// FR-17: the catalog for one account's `CODEX_HOME`, falling back when the
-/// cache cannot be used.
-pub(super) fn catalog_for_home(codex_home: Option<&Path>) -> Vec<ModelInfo> {
-    let Some(home) = codex_home else {
-        return fallback();
-    };
-    std::fs::read_to_string(home.join("models_cache.json"))
-        .ok()
-        .and_then(|text| parse_catalog(&text))
-        .unwrap_or_else(fallback)
+// Every probe remains owned through cleanup and application exit.
+static ACTIVE: OnceLock<Mutex<Vec<Weak<Mutex<Child>>>>> = OnceLock::new();
+static STOPPING: AtomicBool = AtomicBool::new(false);
+struct ProbeChild(Arc<Mutex<Child>>);
+impl ProbeChild {
+    fn register(child: Child) -> Result<Self, AppError> {
+        let child = Self(Arc::new(Mutex::new(child)));
+        let mut active = ACTIVE.get_or_init(Default::default).lock().unwrap();
+        if STOPPING.load(Ordering::SeqCst) {
+            return Err(failure("runtime"));
+        }
+        active.retain(|weak| weak.strong_count() > 0);
+        active.push(Arc::downgrade(&child.0));
+        Ok(child)
+    }
+}
+impl Drop for ProbeChild {
+    fn drop(&mut self) {
+        let mut child = self.0.lock().unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+pub fn kill_probes() {
+    STOPPING.store(true, Ordering::SeqCst);
+    if let Some(active) = ACTIVE.get() {
+        for weak in active.lock().unwrap().drain(..) {
+            if let Some(child) = weak.upgrade() {
+                let mut child = child.lock().unwrap();
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+fn send(writer: &SyncSender<Value>, value: Value) -> Result<(), AppError> {
+    // A server sending requests without reading our rejection cannot block the deadline.
+    writer.try_send(value).map_err(|_| failure("runtime"))
+}
+fn response(
+    rx: &Receiver<Result<Value, AppError>>,
+    writer: &SyncSender<Value>,
+    id: u64,
+    deadline: Instant,
+) -> Result<Value, AppError> {
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or_else(|| failure("timeout"))?;
+        let value = rx.recv_timeout(remaining).map_err(|e| {
+            failure(match e {
+                std::sync::mpsc::RecvTimeoutError::Timeout => "timeout",
+                _ => "runtime",
+            })
+        })??;
+        if value.get("method").is_some() {
+            if let Some(request_id) = value.get("id") {
+                send(
+                    writer,
+                    json!({"id":request_id,"error":{"code":-32601,"message":"Method not found"}}),
+                )?;
+            }
+            continue;
+        }
+        if value.get("id").and_then(Value::as_u64) != Some(id) {
+            return Err(failure("protocol"));
+        }
+        if let Some(error) = value.get("error") {
+            return Err(failure(
+                if error.get("code").and_then(Value::as_i64) == Some(-32601) {
+                    "unsupported-cli"
+                } else {
+                    "runtime"
+                },
+            ));
+        }
+        return value
+            .get("result")
+            .cloned()
+            .ok_or_else(|| failure("protocol"));
+    }
+}
+
+pub(super) fn probe(
+    program: &Path,
+    home: &Path,
+    timeout: Duration,
+) -> Result<(Vec<ModelInfo>, Option<String>), AppError> {
+    let deadline = Instant::now() + timeout;
+    let path = crate::process_util::login_shell_path_env();
+    if Instant::now() >= deadline {
+        return Err(failure("timeout"));
+    }
+    let child = ProbeChild::register(
+        crate::process_util::spawn(program)
+            .args(["app-server", "--listen", "stdio://"])
+            .scrubbed_env(path.as_deref())
+            .env("CODEX_HOME", home)
+            .current_dir(home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .start()
+            .map_err(|_| spawn_failure())?,
+    )?;
+    let stdout = child
+        .0
+        .lock()
+        .unwrap()
+        .stdout
+        .take()
+        .ok_or_else(|| failure("runtime"))?;
+    let mut stdin_pipe = child
+        .0
+        .lock()
+        .unwrap()
+        .stdin
+        .take()
+        .ok_or_else(|| failure("runtime"))?;
+    let (stdin, writes) = sync_channel::<Value>(4);
+    std::thread::spawn(move || {
+        for value in writes {
+            if serde_json::to_writer(&mut stdin_pipe, &value).is_err()
+                || stdin_pipe
+                    .write_all(b"\n")
+                    .and_then(|_| stdin_pipe.flush())
+                    .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let (tx, rx) = sync_channel(1);
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut total = 0;
+        loop {
+            let mut bytes = Vec::new();
+            let result = reader
+                .by_ref()
+                .take(2 * 1024 * 1024 + 1)
+                .read_until(b'\n', &mut bytes);
+            match result {
+                Ok(0) => break,
+                Ok(n) => {
+                    total += n;
+                    if n > 2 * 1024 * 1024 || total > 8 * 1024 * 1024 {
+                        let _ = tx.send(Err(failure("limit")));
+                        break;
+                    }
+                    let parsed = serde_json::from_slice(&bytes).map_err(|_| failure("protocol"));
+                    let failed = parsed.is_err();
+                    if tx.send(parsed).is_err() || failed {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    let _ = tx.send(Err(failure("runtime")));
+                    break;
+                }
+            }
+        }
+    });
+    send(
+        &stdin,
+        json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"francois","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}}}),
+    )?;
+    response(&rx, &stdin, 1, deadline)?;
+    send(&stdin, json!({"method":"initialized"}))?;
+    let mut catalog = Accumulator::default();
+    let mut cursor: Option<String> = None;
+    for page in 0..32 {
+        let id = page + 2;
+        send(
+            &stdin,
+            json!({"id":id,"method":"model/list","params":{"cursor":cursor,"limit":100,"includeHidden":false}}),
+        )?;
+        cursor = catalog.page(response(&rx, &stdin, id, deadline)?)?;
+        if cursor.is_none() {
+            let default_id = catalog
+                .default_id
+                .or_else(|| catalog.models.first().map(|row| row.id.clone()));
+            return Ok((catalog.models, default_id));
+        }
+    }
+    Err(failure("limit"))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Trimmed from a REAL `~/.codex/models_cache.json` written by codex-cli
-    /// 0.147.0 — same field names, same values, same `hide`/`ultra` members,
-    /// with only the ~30 keys this module ignores removed.
-    const LIVE_CACHE: &str = r#"{
-      "fetched_at": "2026-08-17T10:23:12.388354700Z",
-      "client_version": "0.147.0",
-      "models": [
-        {
-          "slug": "gpt-5.6-luna", "display_name": "GPT-5.6-Luna",
-          "description": "Fast model for lighter work.",
-          "supported_reasoning_levels": [{"effort":"low"},{"effort":"medium"}],
-          "visibility": "list", "supported_in_api": true, "priority": 3,
-          "context_window": 272000
-        },
-        {
-          "slug": "gpt-5.6-terra", "display_name": "GPT-5.6-Terra",
-          "description": "Balanced agentic coding model for everyday work.",
-          "supported_reasoning_levels": [
-            {"effort":"low"},{"effort":"medium"},{"effort":"high"},
-            {"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}
-          ],
-          "visibility": "list", "supported_in_api": true, "priority": 2,
-          "context_window": 272000
-        },
-        {
-          "slug": "codex-auto-review", "display_name": "Codex Auto Review",
-          "description": "Internal.", "supported_reasoning_levels": [],
-          "visibility": "hide", "supported_in_api": true, "priority": 1,
-          "context_window": 272000
-        }
-      ]
-    }"#;
-
-    #[test]
-    fn the_live_cache_maps_field_for_field_onto_model_info() {
-        let catalog = parse_catalog(LIVE_CACHE).expect("a real cache parses");
-        let terra = catalog.iter().find(|m| m.id == "gpt-5.6-terra").unwrap();
-        assert_eq!(terra.label, "GPT-5.6-Terra");
-        assert_eq!(
-            terra.brief.as_deref(),
-            Some("Balanced agentic coding model for everyday work.")
-        );
-        assert_eq!(terra.context_tokens, Some(272_000));
-    }
-
-    #[test]
-    fn a_hidden_model_never_reaches_the_picker() {
-        // `codex-auto-review` is Codex's own internal reviewer. It has the
-        // LOWEST priority number, so a sort-only implementation would put it
-        // first in the list.
-        let catalog = parse_catalog(LIVE_CACHE).unwrap();
-        assert!(!catalog.iter().any(|m| m.id == "codex-auto-review"));
-        assert_eq!(catalog.len(), 2);
-    }
-
-    #[test]
-    fn efforts_are_filtered_to_the_vocabulary_the_core_accepts() {
-        // Codex ships `ultra`; `valid_effort` does not carry it. Letting it
-        // through would put an effort in the picker that every other surface —
-        // and the Claude adapter's own --effort flag — would reject.
-        let catalog = parse_catalog(LIVE_CACHE).unwrap();
-        let terra = catalog.iter().find(|m| m.id == "gpt-5.6-terra").unwrap();
-        assert_eq!(terra.efforts, vec!["low", "medium", "high", "xhigh", "max"]);
-        assert!(!terra.efforts.iter().any(|e| e == "ultra"));
-        for effort in &terra.efforts {
-            assert!(valid_effort(effort));
-        }
-    }
-
-    #[test]
-    fn models_are_ordered_by_codexs_own_priority() {
-        let catalog = parse_catalog(LIVE_CACHE).unwrap();
-        assert_eq!(catalog[0].id, "gpt-5.6-terra"); // priority 2
-        assert_eq!(catalog[1].id, "gpt-5.6-luna"); // priority 3
-    }
-
-    #[test]
-    fn a_malformed_or_empty_cache_yields_none_so_the_caller_can_fall_back() {
-        assert!(parse_catalog("not json").is_none());
-        assert!(parse_catalog(r#"{"models":[]}"#).is_none());
-        // Every model hidden is the same as no models.
-        assert!(parse_catalog(r#"{"models":[{"slug":"x","visibility":"hide"}]}"#).is_none());
-        // A model with no slug has no id to select it by.
-        assert!(parse_catalog(r#"{"models":[{"display_name":"X"}]}"#).is_none());
-    }
-
-    #[test]
-    fn a_cache_from_a_newer_codex_degrades_to_a_usable_row() {
-        // Only `slug` is load-bearing; everything else has a default. A future
-        // Codex renaming `description` must not empty the picker.
-        let catalog = parse_catalog(r#"{"models":[{"slug":"gpt-9","brand_new_key":1}]}"#).unwrap();
-        assert_eq!(catalog.len(), 1);
-        assert_eq!(catalog[0].id, "gpt-9");
-        assert_eq!(catalog[0].label, "GPT-9");
-        assert_eq!(catalog[0].brief, None);
-        assert_eq!(catalog[0].context_tokens, None);
-        assert!(catalog[0].efforts.is_empty());
-    }
-
-    // ---------- FR-17: the fallback ----------
-
-    /// `ModelInfo` is a shared serde type with no `PartialEq` — comparing ids is
-    /// the identity that matters here anyway (which models the picker offers).
-    fn ids(catalog: &[ModelInfo]) -> Vec<&str> {
-        catalog.iter().map(|m| m.id.as_str()).collect()
-    }
-
-    #[test]
-    fn a_missing_cache_falls_back_rather_than_emptying_the_picker() {
-        let dir = std::env::temp_dir().join("francois-codex-models-missing");
-        let _ = std::fs::remove_dir_all(&dir);
-        let _ = std::fs::create_dir_all(&dir);
-        let catalog = catalog_for_home(Some(&dir));
-        assert!(!catalog.is_empty());
-        assert_eq!(ids(&catalog), ids(&fallback()));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn an_unreadable_cache_falls_back() {
-        let dir = std::env::temp_dir().join("francois-codex-models-bad");
-        let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("models_cache.json"), "{{{ not json").unwrap();
-        assert_eq!(ids(&catalog_for_home(Some(&dir))), ids(&fallback()));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_real_cache_on_disk_is_read_and_beats_the_fallback() {
-        let dir = std::env::temp_dir().join("francois-codex-models-good");
-        let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("models_cache.json"), LIVE_CACHE).unwrap();
-        let catalog = catalog_for_home(Some(&dir));
-        assert_eq!(catalog[0].id, "gpt-5.6-terra");
-        assert_ne!(ids(&catalog), ids(&fallback()));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn the_built_in_account_with_no_config_dir_still_gets_a_catalog() {
-        assert_eq!(ids(&catalog_for_home(None)), ids(&fallback()));
-        assert!(!fallback().is_empty());
-    }
-
-    #[test]
-    fn pretty_label_capitalises_the_way_codex_display_names_do() {
-        assert_eq!(pretty_label("gpt-5.6-terra"), "GPT-5.6-Terra");
-        assert_eq!(pretty_label("gpt-5.4-mini"), "GPT-5.4-Mini");
-    }
-}
+#[path = "catalog-tests.rs"]
+mod catalog_tests;

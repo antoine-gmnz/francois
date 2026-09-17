@@ -6,6 +6,156 @@ use crate::session::*;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, State};
 
+/// Validate a Codex selection without inventing models or reasoning levels.
+pub(crate) fn validate_catalog_selection(
+    catalog: &crate::session::models::ModelCatalog,
+    model: Option<&str>,
+    explicit_effort: Option<&str>,
+    existing_effort: Option<&str>,
+) -> Result<(String, Option<String>), AppError> {
+    let id = model
+        .filter(|m| !m.trim().is_empty())
+        .or(catalog.default_model_id.as_deref())
+        .ok_or_else(|| AppError::new(ErrorCode::InvalidInput, "No models available"))?;
+    let row = catalog.models.iter().find(|m| m.id == id).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::InvalidInput,
+            "Model is not advertised for this account",
+        )
+    })?;
+    let effort = match explicit_effort {
+        Some(raw) if raw.trim().is_empty() => None,
+        Some(raw) => {
+            let value = raw.trim();
+            if !crate::session::models::valid_catalog_effort(value)
+                || !row.efforts.iter().any(|e| e == value)
+            {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "Effort is not supported by this model",
+                ));
+            }
+            Some(value.to_string())
+        }
+        None => existing_effort
+            .filter(|e| row.efforts.iter().any(|v| v == e))
+            .map(String::from),
+    };
+    Ok((id.to_string(), effort))
+}
+
+/// Probe outside the engine lock, then apply the entire patch only if the
+/// settings used by validation still match. Running turns retain their snapshot.
+fn update_codex_settings(
+    app: &AppHandle,
+    engine: &Engine,
+    session_id: &str,
+    patch: &SessionSettingsPatch,
+) -> Result<SessionMeta, AppError> {
+    update_codex_settings_with(
+        app,
+        engine,
+        session_id,
+        patch,
+        |account| crate::session::models::catalog_for_account(app, Some(account), false),
+        |event| {
+            persist(app, engine);
+            emit(app, event);
+        },
+    )
+}
+
+fn update_codex_settings_with(
+    accounts: &dyn crate::account::AccountKinds,
+    engine: &Engine,
+    session_id: &str,
+    patch: &SessionSettingsPatch,
+    resolve: impl FnOnce(&str) -> Result<crate::session::models::ModelCatalog, AppError>,
+    commit: impl FnOnce(SessionEvent),
+) -> Result<SessionMeta, AppError> {
+    let snapshot = engine
+        .with_session(session_id, |s| {
+            (
+                s.account_id.clone(),
+                s.model_id.clone(),
+                s.effort.clone(),
+                s.agent_runtime,
+                s.name.clone(),
+                s.permission_mode.clone(),
+                s.response_mode,
+                s.allow_git,
+                s.status.clone(),
+            )
+        })
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+    if status::is_terminal(&snapshot.8) {
+        return Err(AppError::new(
+            ErrorCode::SessionNotRunning,
+            "session has ended",
+        ));
+    }
+    let needs_catalog = patch.model_id.is_some()
+        || patch
+            .effort
+            .as_deref()
+            .is_some_and(|e| !e.trim().is_empty());
+    let catalog = if needs_catalog {
+        Some(resolve(&snapshot.0)?)
+    } else {
+        None
+    };
+    let models = catalog.as_ref().map(|c| c.models.as_slice()).unwrap_or(&[]);
+    // Non-catalogue keys retain their existing validation, while Codex efforts
+    // are validated exclusively against this account's selected row.
+    let base_patch = SessionSettingsPatch {
+        effort: None,
+        ..patch.clone()
+    };
+    let mut validated = validate_settings_patch(&base_patch, models)?;
+    if let Some(catalog) = &catalog {
+        let (_, effort) = validate_catalog_selection(
+            catalog,
+            patch.model_id.as_deref().or(Some(&snapshot.1)),
+            patch.effort.as_deref(),
+            snapshot.2.as_deref(),
+        )?;
+        validated.effort = Some(effort);
+    } else if patch.effort.is_some() {
+        validated.effort = Some(None);
+    }
+    let meta = engine
+        .with_session_mut(session_id, |s| {
+            if status::is_terminal(&s.status) {
+                return Err(AppError::new(
+                    ErrorCode::SessionNotRunning,
+                    "session has ended",
+                ));
+            }
+            let current = (
+                s.account_id.clone(),
+                s.model_id.clone(),
+                s.effort.clone(),
+                s.agent_runtime,
+                s.name.clone(),
+                s.permission_mode.clone(),
+                s.response_mode,
+                s.allow_git,
+                s.status.clone(),
+            );
+            if current != snapshot {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "Session changed while loading models. Please retry.",
+                ));
+            }
+            apply_validated_settings(s, validated, models);
+            Ok(s.meta(accounts))
+        })
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))??;
+    commit(SessionEvent::Meta { meta: meta.clone() });
+    Ok(meta)
+}
+
 /// projects: the decision half of `session_create`'s post-insert TOCTOU re-check.
 ///
 /// `project_remove` can commit and run its unlink between the pre-create link check
@@ -188,6 +338,33 @@ pub fn check_system_prompt_bound(system_prompt: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+fn create_with_selection(
+    codex: bool,
+    fallback_model: String,
+    requested_model: Option<&str>,
+    effort: Option<&str>,
+    resolve: impl FnOnce() -> Result<crate::session::models::ModelCatalog, AppError>,
+    create: impl FnOnce(String, Option<String>) -> IpcResult<Value>,
+) -> IpcResult<Value> {
+    let (model, effort) = if codex {
+        let catalog = match resolve() {
+            Ok(c) => c,
+            Err(e) => return e.into(),
+        };
+        match validate_catalog_selection(&catalog, requested_model, effort, None) {
+            Ok(selection) => selection,
+            Err(e) => return e.into(),
+        }
+    } else {
+        let effort = effort.map(str::trim).filter(|e| !e.is_empty());
+        if effort.is_some_and(|e| !valid_effort(e)) {
+            return err(ErrorCode::InvalidInput, "unknown effort level");
+        }
+        (fallback_model, effort.map(String::from))
+    };
+    create(model, effort)
+}
+
 #[tauri::command(async)]
 pub fn session_create(
     app: AppHandle,
@@ -213,6 +390,7 @@ pub fn session_create(
     // narrowing is not the gate.
     response_mode: Option<String>,
 ) -> IpcResult<Value> {
+    let requested_model = model_id.clone();
     let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
     let response_mode = match response_mode {
         Some(raw) => match ResponseMode::parse(&raw) {
@@ -243,202 +421,213 @@ pub fn session_create(
         Ok(id) => id,
         Err(e) => return e.into(),
     };
-    let account_config_dir = crate::account::config_dir_of(&app, &account_id);
-    // FR-25: a WSL session reaches its config dir through `WSLENV`'s `/p` path
-    // translation, which only works for a drive-letter path. Fail at creation,
-    // NAMING the account, rather than spawning a claude that would silently use
-    // a different configuration inside the distro.
-    if runtime == "wsl" {
-        if let Some(dir) = account_config_dir
-            .as_deref()
-            .filter(|d| !crate::account::wsl_translatable_config_dir(d))
-        {
-            let label =
-                crate::account::label_of(&app, &account_id).unwrap_or_else(|| account_id.clone());
-            return err(
-                ErrorCode::InvalidInput,
-                format!(
+    create_with_selection(
+        crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::CodexCli,
+        model_id,
+        requested_model.as_deref(),
+        effort.as_deref(),
+        || crate::session::models::catalog_for_account(&app, Some(&account_id), false),
+        |model_id, effort| {
+            let account_config_dir = crate::account::config_dir_of(&app, &account_id);
+            // FR-25: a WSL session reaches its config dir through `WSLENV`'s `/p` path
+            // translation, which only works for a drive-letter path. Fail at creation,
+            // NAMING the account, rather than spawning a claude that would silently use
+            // a different configuration inside the distro.
+            if runtime == "wsl" {
+                if let Some(dir) = account_config_dir
+                    .as_deref()
+                    .filter(|d| !crate::account::wsl_translatable_config_dir(d))
+                {
+                    let label = crate::account::label_of(&app, &account_id)
+                        .unwrap_or_else(|| account_id.clone());
+                    return err(
+                        ErrorCode::InvalidInput,
+                        format!(
                     "account {label} keeps its Claude Code configuration at {dir}, which WSL \
                      cannot translate — use the native runtime for this account"
                 ),
+                    );
+                }
+            }
+
+            // multi-provider-codex FR-5: this preflight runs `claude --version` with the
+            // account's dir as CLAUDE_CONFIG_DIR. On a non-Claude account it checks the
+            // WRONG BINARY — and worse, `claude` initializes whatever config dir it is
+            // pointed at, so it seeds a Codex account's CODEX_HOME with a full Claude
+            // profile (`.claude.json`, `projects/`, `sessions/`) the moment a session is
+            // created. Each runtime's own preflight is its adapter's
+            // (`SessionAdapter::preflight`), which is where the Codex auth check lives.
+            if crate::account::kind_of(&app, &account_id)
+                == crate::account::AccountKind::ClaudeCodeOauth
+            {
+                if let Err(AppError {
+                    code, message: msg, ..
+                }) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref())
+                {
+                    return err(code, msg);
+                }
+            }
+
+            // projects FR-19: a link must resolve to a live registry entry. The core does
+            // NO auto-adoption and NO default merging — the frontend resolved the project
+            // and applied its defaults, so what the modal showed is exactly what is created.
+            // A blank string is treated as "unlinked" rather than as a bad id.
+            let project_id = project_id.filter(|p| !p.trim().is_empty());
+            if let Some(pid) = &project_id {
+                if let Err(AppError {
+                    code, message: msg, ..
+                }) = crate::project::check_session_link(&app, pid)
+                {
+                    return err(code, msg);
+                }
+            }
+
+            // Edge case §7: a systemPrompt present but whitespace-only is treated as
+            // absent — no `--system-prompt`, `replacesSystemPrompt: false` (FR-17).
+            let system_prompt = system_prompt.filter(|s| !s.trim().is_empty());
+            // session-profiles FR-6 defense-in-depth: re-bound a systemPrompt that
+            // reached this command directly rather than through the profile editor
+            // (see `check_system_prompt_bound`).
+            if let Some(sp) = &system_prompt {
+                if let Err(AppError {
+                    code, message: msg, ..
+                }) = check_system_prompt_bound(sp)
+                {
+                    return err(code, msg);
+                }
+            }
+
+            // session-profiles FR-11: re-run the FR-9 denylist over the RESOLVED
+            // `extraArgs` this call received — the frontend is not trusted with the
+            // parser contract. FR-15: a profileId must resolve to a live registry
+            // entry; the core snapshots the NAME itself, never trusting the caller's
+            // copy — a deleted-then-recreated id would otherwise mismatch (FR-22).
+            let extra_args = extra_args.unwrap_or_default();
+            let profile_id = profile_id.filter(|p| !p.trim().is_empty());
+            let profile_ref = match resolve_profile_ref(
+                &extra_args,
+                profile_id.as_deref(),
+                system_prompt.is_some(),
+                |pid| crate::profiles::find(&app, pid).map(|p| (p.id, p.name)),
+            ) {
+                Ok(profile_ref) => profile_ref,
+                Err(ProfileResolveError::ArgDenied { flag, reason }) => {
+                    return err_detail(
+                        ErrorCode::ProfileArgDenied,
+                        format!("{flag} is not allowed in a session's extra args: {reason}"),
+                        serde_json::json!({ "flag": flag, "reason": reason }),
+                    )
+                }
+                Err(ProfileResolveError::NotFound) => {
+                    return err(ErrorCode::ProfileNotFound, "no such profile")
+                }
+            };
+
+            // session-worktree FR-5/FR-6/FR-11/FR-12: resolve LAST, only once every other
+            // fallible validation (permission_mode, runtime, WSL availability, the FR-9
+            // spawn probe, the project-link check) has passed. `resolve_worktree` is the
+            // only step that mutates git state (a new worktree + branch); running it last
+            // means a later validation failure never orphans that state (FR-11) — there
+            // is nothing fallible left to run after it.
+            if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
+                return e.into();
+            }
+            let mut cwd = cwd;
+            let mut session_worktree: Option<SessionWorktree> = None;
+            let mut worktree_distro: Option<String> = None;
+            if let Some(opts) = &worktree {
+                match resolve_worktree(&cwd, opts) {
+                    Ok((actual_cwd, sw, distro)) => {
+                        cwd = actual_cwd;
+                        session_worktree = Some(sw);
+                        worktree_distro = distro;
+                    }
+                    Err(AppError {
+                        code, message: msg, ..
+                    }) if code == ErrorCode::WorktreeBranchInUse => {
+                        return err_detail(
+                            code,
+                            "that branch is already checked out at another path",
+                            serde_json::json!({ "path": msg }),
+                        )
+                    }
+                    Err(e) => return e.into(),
+                }
+            }
+
+            let now = now_ms();
+            let id = uuid();
+            let name = name.unwrap_or_else(|| basename(&cwd));
+            let (model_label, context_limit_tokens) =
+                resolve_model_display(&app, &account_id, &model_id);
+            // multi-provider-seam FR-13a: both axes derived from the resolved
+            // account's kind — session_create gains no field and the new-session
+            // modal gains no control.
+            let (agent_runtime, protocol) =
+                AgentRuntime::from_account_kind(crate::account::kind_of(&app, &account_id));
+            let session = Session::new(
+                id.clone(),
+                name,
+                cwd.clone(),
+                model_id.clone(),
+                model_label,
+                0, // context_used_tokens
+                context_limit_tokens,
+                now, // started_at
+                now, // last_activity_at
+                effort,
+                permission_mode,
+                runtime,
+                allow_git.unwrap_or(false),
+                project_id.clone(),
+                session_worktree,
+                worktree_distro,
+                account_id.clone(), // multi-account FR-19: stored VERBATIM, never re-derived
+                agent_runtime,
+                protocol,
+                None, // claude_session_id
+                Vec::new(),
+                system_prompt,
+                extra_args,
+                profile_ref,
+                response_mode,
             );
-        }
-    }
+            let meta_before = session.meta(&app);
+            engine
+                .sessions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(id.clone(), session);
 
-    // multi-provider-codex FR-5: this preflight runs `claude --version` with the
-    // account's dir as CLAUDE_CONFIG_DIR. On a non-Claude account it checks the
-    // WRONG BINARY — and worse, `claude` initializes whatever config dir it is
-    // pointed at, so it seeds a Codex account's CODEX_HOME with a full Claude
-    // profile (`.claude.json`, `projects/`, `sessions/`) the moment a session is
-    // created. Each runtime's own preflight is its adapter's
-    // (`SessionAdapter::preflight`), which is where the Codex auth check lives.
-    if crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::ClaudeCodeOauth {
-        if let Err(AppError {
-            code, message: msg, ..
-        }) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref())
-        {
-            return err(code, msg);
-        }
-    }
-
-    // projects FR-19: a link must resolve to a live registry entry. The core does
-    // NO auto-adoption and NO default merging — the frontend resolved the project
-    // and applied its defaults, so what the modal showed is exactly what is created.
-    // A blank string is treated as "unlinked" rather than as a bad id.
-    let project_id = project_id.filter(|p| !p.trim().is_empty());
-    if let Some(pid) = &project_id {
-        if let Err(AppError {
-            code, message: msg, ..
-        }) = crate::project::check_session_link(&app, pid)
-        {
-            return err(code, msg);
-        }
-    }
-
-    // Edge case §7: a systemPrompt present but whitespace-only is treated as
-    // absent — no `--system-prompt`, `replacesSystemPrompt: false` (FR-17).
-    let system_prompt = system_prompt.filter(|s| !s.trim().is_empty());
-    // session-profiles FR-6 defense-in-depth: re-bound a systemPrompt that
-    // reached this command directly rather than through the profile editor
-    // (see `check_system_prompt_bound`).
-    if let Some(sp) = &system_prompt {
-        if let Err(AppError {
-            code, message: msg, ..
-        }) = check_system_prompt_bound(sp)
-        {
-            return err(code, msg);
-        }
-    }
-
-    // session-profiles FR-11: re-run the FR-9 denylist over the RESOLVED
-    // `extraArgs` this call received — the frontend is not trusted with the
-    // parser contract. FR-15: a profileId must resolve to a live registry
-    // entry; the core snapshots the NAME itself, never trusting the caller's
-    // copy — a deleted-then-recreated id would otherwise mismatch (FR-22).
-    let extra_args = extra_args.unwrap_or_default();
-    let profile_id = profile_id.filter(|p| !p.trim().is_empty());
-    let profile_ref = match resolve_profile_ref(
-        &extra_args,
-        profile_id.as_deref(),
-        system_prompt.is_some(),
-        |pid| crate::profiles::find(&app, pid).map(|p| (p.id, p.name)),
-    ) {
-        Ok(profile_ref) => profile_ref,
-        Err(ProfileResolveError::ArgDenied { flag, reason }) => {
-            return err_detail(
-                ErrorCode::ProfileArgDenied,
-                format!("{flag} is not allowed in a session's extra args: {reason}"),
-                serde_json::json!({ "flag": flag, "reason": reason }),
-            )
-        }
-        Err(ProfileResolveError::NotFound) => {
-            return err(ErrorCode::ProfileNotFound, "no such profile")
-        }
-    };
-
-    // session-worktree FR-5/FR-6/FR-11/FR-12: resolve LAST, only once every other
-    // fallible validation (permission_mode, runtime, WSL availability, the FR-9
-    // spawn probe, the project-link check) has passed. `resolve_worktree` is the
-    // only step that mutates git state (a new worktree + branch); running it last
-    // means a later validation failure never orphans that state (FR-11) — there
-    // is nothing fallible left to run after it.
-    let mut cwd = cwd;
-    let mut session_worktree: Option<SessionWorktree> = None;
-    let mut worktree_distro: Option<String> = None;
-    if let Some(opts) = &worktree {
-        match resolve_worktree(&cwd, opts) {
-            Ok((actual_cwd, sw, distro)) => {
-                cwd = actual_cwd;
-                session_worktree = Some(sw);
-                worktree_distro = distro;
+            // projects: close the TOCTOU window. `project_remove` can commit and run its
+            // unlink between the link check above and this insert, leaving a session
+            // pointing at a project that no longer exists. That self-heals only at the next
+            // launch (FR-18's drop-on-load), so the live board would carry a dangling link
+            // for the whole run. Re-check now that the session is visible and unlink it
+            // here if the project went away. One registry read; the two locks never overlap.
+            let still_linked = match &project_id {
+                Some(pid) => crate::project::check_session_link(&app, pid).is_ok(),
+                None => true, // an unlinked session has nothing to lose
+            };
+            let linked = toctou_outcome(project_id.clone(), still_linked);
+            if linked.is_none() && project_id.is_some() {
+                engine.with_session_mut(&id, |s| s.project_id = None);
             }
-            Err(AppError {
-                code, message: msg, ..
-            }) if code == ErrorCode::WorktreeBranchInUse => {
-                return err_detail(
-                    code,
-                    "that branch is already checked out at another path",
-                    serde_json::json!({ "path": msg }),
-                )
+            let meta = engine
+                .with_session(&id, |s| s.meta(&app))
+                .unwrap_or(meta_before);
+
+            persist(&app, &engine);
+            // projects FR-20: the project just backed a session. A persist failure here is
+            // logged inside touch_last_used and IGNORED — it must never fail creation.
+            if let Some(pid) = &linked {
+                crate::project::touch_last_used(&app, pid);
             }
-            Err(e) => return e.into(),
-        }
-    }
-
-    let effort = effort.filter(|e| valid_effort(e));
-    let now = now_ms();
-    let id = uuid();
-    let name = name.unwrap_or_else(|| basename(&cwd));
-    // display-openai-model-name FR-6: resolve the label + window from THIS
-    // session's own runtime catalog, once, at creation — never re-derived
-    // from a catalog on the hot `meta()` path (FR-2).
-    let (model_label, context_limit_tokens) = resolve_model_display(&app, &account_id, &model_id);
-    // multi-provider-seam FR-13a: both axes derived from the resolved
-    // account's kind — session_create gains no field and the new-session
-    // modal gains no control.
-    let (agent_runtime, protocol) =
-        AgentRuntime::from_account_kind(crate::account::kind_of(&app, &account_id));
-    let session = Session::new(
-        id.clone(),
-        name,
-        cwd.clone(),
-        model_id.clone(),
-        model_label,
-        0, // context_used_tokens
-        context_limit_tokens,
-        now, // started_at
-        now, // last_activity_at
-        effort,
-        permission_mode,
-        runtime,
-        allow_git.unwrap_or(false),
-        project_id.clone(),
-        session_worktree,
-        worktree_distro,
-        account_id, // multi-account FR-19: stored VERBATIM, never re-derived
-        agent_runtime,
-        protocol,
-        None, // claude_session_id
-        Vec::new(),
-        system_prompt,
-        extra_args,
-        profile_ref,
-        response_mode,
-    );
-    let meta_before = session.meta(&app);
-    engine
-        .sessions
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(id.clone(), session);
-
-    // projects: close the TOCTOU window. `project_remove` can commit and run its
-    // unlink between the link check above and this insert, leaving a session
-    // pointing at a project that no longer exists. That self-heals only at the next
-    // launch (FR-18's drop-on-load), so the live board would carry a dangling link
-    // for the whole run. Re-check now that the session is visible and unlink it
-    // here if the project went away. One registry read; the two locks never overlap.
-    let still_linked = match &project_id {
-        Some(pid) => crate::project::check_session_link(&app, pid).is_ok(),
-        None => true, // an unlinked session has nothing to lose
-    };
-    let linked = toctou_outcome(project_id.clone(), still_linked);
-    if linked.is_none() && project_id.is_some() {
-        engine.with_session_mut(&id, |s| s.project_id = None);
-    }
-    let meta = engine
-        .with_session(&id, |s| s.meta(&app))
-        .unwrap_or(meta_before);
-
-    persist(&app, &engine);
-    // projects FR-20: the project just backed a session. A persist failure here is
-    // logged inside touch_last_used and IGNORED — it must never fail creation.
-    if let Some(pid) = &linked {
-        crate::project::touch_last_used(&app, pid);
-    }
-    emit(&app, SessionEvent::Meta { meta: meta.clone() });
-    crate::diff::watch_session(&app, &id, &cwd); // FR-15: watch the session's cwd
-    ok(serde_json::to_value(meta).unwrap())
+            emit(&app, SessionEvent::Meta { meta: meta.clone() });
+            crate::diff::watch_session(&app, &id, &cwd); // FR-15: watch the session's cwd
+            ok(serde_json::to_value(meta).unwrap())
+        },
+    )
 }
 
 #[tauri::command(async)]
@@ -510,34 +699,47 @@ pub fn session_switch_model(
         Some(true) => {}
     }
     match apply_model_switch(&app, &session_id, &model_id) {
-        Some(meta) => ok(serde_json::to_value(meta).unwrap()),
-        None => err(ErrorCode::SessionNotFound, "no such session"),
+        Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
+        Err(error) => error.into(),
     }
 }
 
 /// Shared switch semantics (francois:session:switchModel and `/model <arg>` —
 /// interactive-commands FR-13): update the model + context limit, persist, emit
-/// session.meta. The in-flight turn is unaffected. None if the session is gone.
+/// session.meta. The in-flight turn is unaffected.
 pub fn apply_model_switch(
     app: &AppHandle,
     session_id: &str,
     model_id: &str,
-) -> Option<SessionMeta> {
+) -> Result<SessionMeta, AppError> {
     let engine = app.state::<Engine>();
-    // display-openai-model-name FR-7: re-resolve via the account's own runtime
-    // — the account read must happen OUTSIDE the mutation closure, which must
-    // not block (`with_session_mut`'s single-session discipline).
-    let account_id = engine.with_session(session_id, |s| s.account_id.clone())?;
+    if engine.with_session(session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        let meta = update_codex_settings(
+            app,
+            &engine,
+            session_id,
+            &SessionSettingsPatch {
+                model_id: Some(model_id.to_string()),
+                ..Default::default()
+            },
+        )?;
+        return Ok(meta);
+    }
+    let account_id = engine
+        .with_session(session_id, |s| s.account_id.clone())
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
     let (label, limit) = resolve_model_display(app, &account_id, model_id);
-    let meta = engine.with_session_mut(session_id, |s| {
-        s.model_id = model_id.to_string();
-        s.model_label = label;
-        s.context_limit_tokens = limit;
-        s.meta(app)
-    })?;
+    let meta = engine
+        .with_session_mut(session_id, |s| {
+            s.model_id = model_id.to_string();
+            s.model_label = label;
+            s.context_limit_tokens = limit;
+            s.meta(app)
+        })
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
     persist(app, &engine);
     emit(app, SessionEvent::Meta { meta: meta.clone() });
-    Some(meta)
+    Ok(meta)
 }
 
 /// session-permission-mode FR-2: `francois:session:switchPermissionMode`'s enum
@@ -646,6 +848,17 @@ pub fn session_switch_effort(
     session_id: String,
     effort: Option<String>,
 ) -> IpcResult<Value> {
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        return session_update_settings(
+            app,
+            engine,
+            session_id,
+            SessionSettingsPatch {
+                effort: Some(effort.unwrap_or_default()),
+                ..Default::default()
+            },
+        );
+    }
     let level = effort
         .map(|e| e.trim().to_string())
         .filter(|e| !e.is_empty());
@@ -786,7 +999,7 @@ pub fn session_rename(
 /// `patch` — changed keys only, never null. `effort: Some("")` is FR's "clears
 /// back to the model's own default" (mirrors `session_switch_effort`'s absent/
 /// blank rule).
-#[derive(serde::Deserialize, Default)]
+#[derive(serde::Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSettingsPatch {
     pub name: Option<String>,
@@ -908,6 +1121,37 @@ pub(crate) fn validate_settings_patch(
     })
 }
 
+fn apply_validated_settings(
+    s: &mut Session,
+    validated: ValidatedSettingsPatch,
+    catalog: &[ModelInfo],
+) {
+    if let Some(name) = validated.name {
+        s.name = name;
+    }
+    if let Some(model_id) = validated.model_id {
+        let (label, limit) = resolve_model_display_from_catalog(catalog, &model_id);
+        s.model_label = label;
+        s.context_limit_tokens = limit;
+        s.model_id = model_id;
+    }
+    if let Some(effort) = validated.effort {
+        s.effort = effort;
+    }
+    if let Some(mode) = validated.permission_mode {
+        // FR-4: stamped on EVERY write, including a no-op re-pick —
+        // mirrors switch_permission_mode_in_engine's rationale.
+        s.permission_mode = mode.to_string();
+        s.permission_mode_since = now_ms();
+    }
+    if let Some(mode) = validated.response_mode {
+        s.response_mode = mode;
+    }
+    if let Some(allow_git) = validated.allow_git {
+        s.allow_git = allow_git;
+    }
+}
+
 /// session-settings-sheet FR-2/FR-3/§7 case 2: the engine half of
 /// `session_update_settings` — SESSION_NOT_FOUND, FR-3's empty-patch no-op,
 /// the terminal+run-key guard, FR-6's re-validation and the batched mutation,
@@ -940,33 +1184,7 @@ pub(crate) fn update_settings_in_engine(
     let validated = validate_settings_patch(patch, catalog)?;
     let meta = engine
         .with_session_mut(session_id, |s| {
-            if let Some(name) = validated.name {
-                s.name = name;
-            }
-            if let Some(model_id) = validated.model_id {
-                // display-openai-model-name FR-7: re-resolve from the SAME
-                // catalog `validate_settings_patch` just validated membership
-                // against — one adapter call for the whole patch.
-                let (label, limit) = resolve_model_display_from_catalog(catalog, &model_id);
-                s.model_label = label;
-                s.context_limit_tokens = limit;
-                s.model_id = model_id;
-            }
-            if let Some(effort) = validated.effort {
-                s.effort = effort;
-            }
-            if let Some(mode) = validated.permission_mode {
-                // FR-4: stamped on EVERY write, including a no-op re-pick —
-                // mirrors switch_permission_mode_in_engine's rationale.
-                s.permission_mode = mode.to_string();
-                s.permission_mode_since = now_ms();
-            }
-            if let Some(mode) = validated.response_mode {
-                s.response_mode = mode;
-            }
-            if let Some(allow_git) = validated.allow_git {
-                s.allow_git = allow_git;
-            }
+            apply_validated_settings(s, validated, catalog);
             s.meta(accounts)
         })
         .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
@@ -988,6 +1206,17 @@ pub fn session_update_settings(
     session_id: String,
     patch: SessionSettingsPatch,
 ) -> IpcResult<Value> {
+    if !patch.is_empty()
+        && engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex)
+    {
+        // Name-only changes remain allowed after a session ends.
+        if patch.touches_run_key() {
+            return match update_codex_settings(&app, &engine, &session_id, &patch) {
+                Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
+                Err(e) => e.into(),
+            };
+        }
+    }
     // The model catalog is fetched only when the patch actually carries a
     // modelId — sparing a settings-only edit the round trip and the account
     // lookup it needs.
@@ -1248,6 +1477,215 @@ mod tests {
                 Some(ResponseMode::Default)
             );
         }
+    }
+
+    fn codex_catalog() -> crate::session::models::ModelCatalog {
+        let mut row = crate::ipc::model("future-model", "Future model");
+        row.efforts = vec!["low".into(), "ultra".into(), "future_effort-2".into()];
+        crate::session::models::ModelCatalog {
+            account_id: "codex-account".into(),
+            agent_runtime: AgentRuntime::Codex,
+            models: vec![row],
+            default_model_id: Some("future-model".into()),
+            source: "codex-app-server".into(),
+            freshness: "fresh".into(),
+            fetched_at: Some(1),
+            warning: None,
+        }
+    }
+
+    #[test]
+    fn codex_creation_rejects_selection_before_worktree_or_session_effects() {
+        for (model, effort) in [(Some("missing"), None), (None, Some("unsupported"))] {
+            let result = create_with_selection(
+                true,
+                "fallback".into(),
+                model,
+                effort,
+                || Ok(codex_catalog()),
+                |_, _| panic!("must not create worktree or session"),
+            );
+            let json = serde_json::to_value(result).unwrap();
+            assert_eq!(json["error"]["code"], "INVALID_INPUT");
+        }
+    }
+
+    #[test]
+    fn codex_mutation_rejects_mixed_patch_without_commit() {
+        let engine = test_engine_with(test_session());
+        let before = engine.with_session("s1", |s| (s.name.clone(), s.model_id.clone()));
+        let result = update_codex_settings_with(
+            &fake_accounts(),
+            &engine,
+            "s1",
+            &SessionSettingsPatch {
+                name: Some("changed".into()),
+                model_id: Some("future-model".into()),
+                effort: Some("unsupported".into()),
+                ..Default::default()
+            },
+            |_| Ok(codex_catalog()),
+            |_| panic!("must not persist or emit"),
+        );
+        assert_eq!(result.err().unwrap().code, ErrorCode::InvalidInput);
+        assert_eq!(
+            engine.with_session("s1", |s| (s.name.clone(), s.model_id.clone())),
+            before
+        );
+    }
+
+    #[test]
+    fn codex_mutation_rechecks_revision_after_unlocked_probe() {
+        let engine = test_engine_with(test_session());
+        let result = update_codex_settings_with(
+            &fake_accounts(),
+            &engine,
+            "s1",
+            &SessionSettingsPatch {
+                model_id: Some("future-model".into()),
+                ..Default::default()
+            },
+            |_| {
+                engine.with_session_mut("s1", |s| s.name = "concurrent rename".into());
+                Ok(codex_catalog())
+            },
+            |_| panic!("stale patch must not commit"),
+        );
+        let error = result.err().unwrap();
+        assert_eq!(error.code, ErrorCode::InvalidInput);
+        assert!(error.message.contains("retry"));
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("concurrent rename".into())
+        );
+    }
+
+    #[test]
+    fn codex_mutation_clear_and_unrelated_edit_work_offline() {
+        let mut session = test_session();
+        session.effort = Some("saved-effort".into());
+        let engine = test_engine_with(session);
+        for patch in [
+            SessionSettingsPatch {
+                allow_git: Some(true),
+                ..Default::default()
+            },
+            SessionSettingsPatch {
+                effort: Some(" ".into()),
+                ..Default::default()
+            },
+        ] {
+            let mut events = Vec::new();
+            let meta = update_codex_settings_with(
+                &fake_accounts(),
+                &engine,
+                "s1",
+                &patch,
+                |_| panic!("offline edit must not discover"),
+                |event| events.push(event),
+            )
+            .unwrap();
+            assert_eq!(events.len(), 1);
+            assert!(
+                matches!(&events[0], SessionEvent::Meta { meta: event_meta } if event_meta.id == meta.id)
+            );
+            if patch.effort.is_none() {
+                assert_eq!(meta.effort.as_deref(), Some("saved-effort"));
+            } else {
+                assert_eq!(meta.effort, None);
+            }
+        }
+    }
+
+    #[test]
+    fn codex_mutation_model_change_clears_inherited_effort_and_emits_once() {
+        let mut session = test_session();
+        session.effort = Some("unsupported".into());
+        let engine = test_engine_with(session);
+        let mut events = Vec::new();
+        let meta = update_codex_settings_with(
+            &fake_accounts(),
+            &engine,
+            "s1",
+            &SessionSettingsPatch {
+                model_id: Some("future-model".into()),
+                ..Default::default()
+            },
+            |_| Ok(codex_catalog()),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert_eq!(meta.model.id, "future-model");
+        assert_eq!(meta.model.label, "Future model");
+        assert_eq!(meta.effort, None);
+        assert_eq!(events.len(), 1);
+        let SessionEvent::Meta { meta: emitted } = &events[0] else {
+            panic!("wrong event")
+        };
+        assert_eq!(
+            serde_json::to_value(emitted).unwrap(),
+            serde_json::to_value(meta).unwrap()
+        );
+    }
+
+    #[test]
+    fn codex_selection_uses_runtime_default_and_model_specific_efforts() {
+        let catalog = codex_catalog();
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, Some("ultra"), None).unwrap(),
+            ("future-model".into(), Some("ultra".into()))
+        );
+        for effort in ["high", "ULTRA", "bad\"value"] {
+            assert_eq!(
+                validate_catalog_selection(&catalog, None, Some(effort), None)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidInput
+            );
+        }
+        assert_eq!(
+            validate_catalog_selection(&catalog, Some("missing"), None, None)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+    }
+
+    #[test]
+    fn codex_model_change_preserves_supported_effort_and_clears_inherited_unsupported_effort() {
+        let catalog = codex_catalog();
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, None, Some("ultra"))
+                .unwrap()
+                .1,
+            Some("ultra".into())
+        );
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, None, Some("high"))
+                .unwrap()
+                .1,
+            None
+        );
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, Some("  "), Some("ultra"))
+                .unwrap()
+                .1,
+            None
+        );
+        assert!(validate_catalog_selection(&catalog, None, Some("high"), Some("ultra")).is_err());
+    }
+
+    #[test]
+    fn empty_codex_catalog_never_invents_a_default_model() {
+        let mut catalog = codex_catalog();
+        catalog.models.clear();
+        catalog.default_model_id = None;
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, None, None)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
     }
 
     // ---------- rework-top-bar: the effort switch (design 11c) ----------

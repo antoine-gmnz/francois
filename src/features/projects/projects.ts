@@ -294,23 +294,9 @@ export interface DefaultFieldDef {
   options: FieldOption[];
 }
 
-/** Canonical effort ladder — the order the CLI advertises them in. */
-const EFFORT_LADDER = ['low', 'medium', 'high', 'xhigh', 'max'];
-
-/**
- * The efforts offered for a project's default model. An unset (or unknown) model
- * means the project inherits the modal's model, so every effort any catalog model
- * advertises is offered, in ladder order.
- */
+/** Only the selected model's advertised efforts are selectable. */
 export function effortOptions(models: ModelInfo[], modelId: string): string[] {
-  // Match on the MODEL, not on its `efforts`: ModelInfo.efforts is optional, so a
-  // known model that simply advertises none was falling through to the union branch
-  // and being offered every effort in the catalog — the "no model selected" answer.
-  const own = models.find((m) => m.id === modelId);
-  if (own) return (own.efforts ?? []).slice();
-  const union = new Set<string>();
-  for (const m of models) for (const e of m.efforts ?? []) union.add(e);
-  return EFFORT_LADDER.filter((e) => union.has(e));
+  return models.find((m) => m.id === modelId)?.efforts?.slice() ?? [];
 }
 
 const PERMISSION_MODES: PermissionMode[] = ['default', 'plan', 'acceptEdits', 'bypassPermissions'];
@@ -356,6 +342,7 @@ export function defaultFieldDefs(
   accounts: AccountOptionSource[] = [],
   profiles: ProfileOptionSource[] = [],
 ): DefaultFieldDef[] {
+  const defaultEffort = models.find(m => m.id === defaults.modelId)?.defaultEffort;
   const accountField: DefaultFieldDef[] =
     accounts.length > 1
       ? [
@@ -392,7 +379,7 @@ export function defaultFieldDefs(
     {
       key: 'effort',
       label: 'effort',
-      options: [INHERIT, ...effortOptions(models, defaults.modelId ?? '').map((e) => ({ value: e, label: e }))],
+      options: [{ value: '', label: defaultEffort ? `Model default · ${defaultEffort}` : 'Model default' }, ...effortOptions(models, defaults.modelId ?? '').map((e) => ({ value: e, label: e }))],
     },
     {
       key: 'permissionMode',
@@ -433,6 +420,7 @@ export function patchDefaults(
   defaults: ProjectDefaults,
   key: DefaultsKey,
   value: string,
+  models?: ModelInfo[],
 ): ProjectDefaults {
   const next: ProjectDefaults = { ...defaults };
   if (value === '') {
@@ -442,6 +430,7 @@ export function patchDefaults(
   switch (key) {
     case 'modelId':
       next.modelId = value;
+      if (models && next.effort && !effortOptions(models, value).includes(next.effort)) delete next.effort;
       break;
     case 'effort':
       next.effort = value;

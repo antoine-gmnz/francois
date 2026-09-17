@@ -399,6 +399,7 @@ pub fn claude_config_dir_of(app: &AppHandle, account_id: &str) -> Option<String>
 /// RELEASED (multi-account §6 LOCK ORDER), exactly as the direct call was, and
 /// the observer list itself is a write-once `OnceLock` with no mutex at all.
 pub trait AccountRemovalObserver: Send + Sync {
+    fn credentials_changing(&self, _account_id: &str) {}
     fn account_removed(&self, app: &AppHandle, account_id: &str) -> Vec<String>;
 }
 
@@ -425,6 +426,15 @@ pub fn notify_account_removed(app: &AppHandle, account_id: &str) -> Vec<String> 
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Reauthentication invalidates dependent memory state before login begins.
+pub fn notify_credentials_changing(account_id: &str) {
+    if let Some(observers) = REMOVAL_OBSERVERS.get() {
+        for observer in observers {
+            observer.credentials_changing(account_id);
+        }
+    }
 }
 
 pub trait AccountKinds {

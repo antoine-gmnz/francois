@@ -31,7 +31,7 @@ mod events;
 mod interactive;
 mod mcp;
 mod mcp_approval;
-mod models;
+pub(crate) mod models;
 mod persistence;
 mod remote;
 mod remote_discovery;
@@ -119,6 +119,7 @@ pub(crate) use blocks::classify_block;
 // items per command, so naming the three commands explicitly is not enough.
 // Every name this module exports is `cloud_`/`Cloud`-prefixed or otherwise
 // domain-specific for that reason — see cloud/mod.rs.
+pub use adapter::codex::models::kill_probes as kill_model_probes;
 pub use cloud::{
     __cmd__cloud_adopt, __cmd__cloud_list, __cmd__cloud_resolve, __tauri_command_name_cloud_adopt,
     __tauri_command_name_cloud_list, __tauri_command_name_cloud_resolve, cloud_adopt, cloud_list,
@@ -126,6 +127,7 @@ pub use cloud::{
 };
 #[cfg(test)]
 pub(crate) use commands::switch_permission_mode_in_engine;
+pub(crate) use commands::validate_catalog_selection;
 pub use commands::{
     __cmd__conversation_get_transcript, __cmd__permissions_decide, __cmd__session_answer_question,
     __cmd__session_clear, __cmd__session_compact, __cmd__session_create, __cmd__session_interrupt,

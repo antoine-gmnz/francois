@@ -243,6 +243,7 @@ pub fn fetch_live_models() -> Option<Vec<ModelInfo>> {
                     id,
                     label,
                     brief,
+                    default_effort: None,
                     context_tokens: ctx,
                     efforts,
                 },
@@ -514,7 +515,13 @@ pub fn resolve_model_display(app: &AppHandle, account_id: &str, model_id: &str) 
     if runtime == AgentRuntime::ClaudeCode {
         return (fallback_label(model_id), fallback_context(model_id));
     }
-    let catalog = adapter_for(runtime).models(app, account_id);
+    let catalog = if runtime == AgentRuntime::Codex {
+        catalog_for_account(app, Some(account_id), false)
+            .map(|catalog| catalog.models)
+            .unwrap_or_default()
+    } else {
+        adapter_for(runtime).models(app, account_id)
+    };
     resolve_model_display_from_catalog(&catalog, model_id)
 }
 
@@ -566,103 +573,160 @@ pub use crate::ipc::{model, ModelInfo};
 /// `AgentRuntime` (derived from `AccountKind` via `from_account_kind`), which
 /// is what makes an endpoint account's `models()` reachable at all — the
 /// account is what `OpenAiAdapter::models` (FR-18) actually needs.
-#[tauri::command(async)]
-pub fn session_models(app: AppHandle, account_id: Option<String>) -> IpcResult<Vec<ModelInfo>> {
-    let known = crate::account::known_ids(&app);
-    let found = known_account_id(account_id.as_deref(), &known).map(|id| {
-        let kind = crate::account::kind_of(&app, id);
-        (AgentRuntime::from_account_kind(kind).0, id.to_string())
-    });
-    let (runtime, account_id) = resolve_models_target(found);
-    ok(adapter_for(runtime).models(&app, &account_id))
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCatalog {
+    pub account_id: String,
+    pub agent_runtime: AgentRuntime,
+    pub models: Vec<ModelInfo>,
+    pub default_model_id: Option<String>,
+    pub source: String,
+    pub freshness: String,
+    pub fetched_at: Option<u64>,
+    pub warning: Option<AppError>,
 }
 
-/// Pure: trims `account_id` and, when it names an account the registry
-/// actually knows (per `crate::account::known_ids`), hands back the trimmed
-/// id — extracted so "omitted, blank, or unknown falls back to the default"
-/// is covered without a `tauri::AppHandle` (`known_ids`/`kind_of` both need
-/// one). `known` already contains `DEFAULT_ACCOUNT_ID`, so an explicit
-/// `"default"` resolves identically to an omitted payload.
-fn known_account_id<'a>(
+pub(crate) use super::adapter::codex::models::valid_effort as valid_catalog_effort;
+
+fn resolve_catalog_account<'a>(
     account_id: Option<&'a str>,
     known: &std::collections::HashSet<String>,
-) -> Option<&'a str> {
-    account_id
-        .map(str::trim)
-        .filter(|id| !id.is_empty() && known.contains(*id))
+) -> Result<&'a str, AppError> {
+    let id = account_id
+        .unwrap_or(crate::account::DEFAULT_ACCOUNT_ID)
+        .trim();
+    if id.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Account id cannot be blank.",
+        ));
+    }
+    if !known.contains(id) {
+        return Err(AppError::new(
+            ErrorCode::AccountNotFound,
+            "Account no longer exists.",
+        ));
+    }
+    Ok(id)
 }
 
-/// The pure half of the account-keyed `session_models`: an unresolvable
-/// account (omitted `accountId`, or an id the registry no longer knows) falls
-/// back to the pre-existing default, byte for byte.
-fn resolve_models_target(found: Option<(AgentRuntime, String)>) -> (AgentRuntime, String) {
-    found.unwrap_or((
-        AgentRuntime::ClaudeCode,
-        crate::account::DEFAULT_ACCOUNT_ID.to_string(),
-    ))
+pub(crate) fn catalog_for_account(
+    app: &AppHandle,
+    account_id: Option<&str>,
+    refresh: bool,
+) -> Result<ModelCatalog, AppError> {
+    let id = resolve_catalog_account(account_id, &crate::account::known_ids(app))?;
+    let runtime = AgentRuntime::from_account_kind(crate::account::kind_of(app, id)).0;
+    if runtime == AgentRuntime::Codex {
+        return super::adapter::codex::model_catalog(app, id, refresh);
+    }
+    let models = adapter_for(runtime).models(app, id);
+    Ok(ModelCatalog {
+        account_id: id.to_owned(),
+        agent_runtime: runtime,
+        default_model_id: models.first().map(|m| m.id.clone()),
+        models,
+        source: "legacy-adapter".into(),
+        freshness: "unverified".into(),
+        fetched_at: None,
+        warning: None,
+    })
+}
+
+/// Capture the complete JSON object so malformed optional values reach the
+/// canonical Result envelope instead of Tauri's argument rejection path.
+pub struct CatalogRequest(Value);
+impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for CatalogRequest {
+    fn from_command(
+        command: tauri::ipc::CommandItem<'de, R>,
+    ) -> Result<Self, tauri::ipc::InvokeError> {
+        Ok(Self(match command.message.payload() {
+            tauri::ipc::InvokeBody::Json(args) => args.clone(),
+            tauri::ipc::InvokeBody::Raw(_) => Value::Null,
+        }))
+    }
+}
+
+fn session_models_request(
+    request: &Value,
+    resolve: impl FnOnce(Option<&str>, bool) -> Result<ModelCatalog, AppError>,
+) -> IpcResult<ModelCatalog> {
+    let Some(args) = request.as_object() else {
+        return crate::ipc::err(ErrorCode::InvalidInput, "Expected a request object.");
+    };
+    let account_id = match args.get("accountId") {
+        None => None,
+        Some(Value::String(value)) => Some(value.as_str()),
+        _ => return crate::ipc::err(ErrorCode::InvalidInput, "Account id must be a string."),
+    };
+    let refresh = match args.get("refresh") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => return crate::ipc::err(ErrorCode::InvalidInput, "Refresh must be a boolean."),
+    };
+    match resolve(account_id, refresh) {
+        Ok(catalog) => ok(catalog),
+        Err(error) => crate::ipc::IpcResult::Err { ok: false, error },
+    }
+}
+
+#[tauri::command(async)]
+pub fn session_models(app: AppHandle, request: CatalogRequest) -> IpcResult<ModelCatalog> {
+    session_models_request(&request.0, |account_id, refresh| {
+        catalog_for_account(&app, account_id, refresh)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
-
-    // ---------- known_account_id (session_models FR-18/FR-21 account rekey) ----------
-
-    fn known_set(ids: &[&str]) -> HashSet<String> {
-        ids.iter().map(|s| s.to_string()).collect()
+    #[test]
+    fn catalog_command_returns_invalid_input_envelopes_for_raw_bad_fields() {
+        for body in [
+            serde_json::json!({"accountId": 42}),
+            serde_json::json!({"accountId": null}),
+            serde_json::json!({"accountId": []}),
+            serde_json::json!({"refresh": null}),
+            serde_json::json!({"refresh": "true"}),
+            serde_json::json!({"refresh": 1}),
+        ] {
+            let response =
+                session_models_request(&body, |_, _| panic!("invalid request reached discovery"));
+            let json = serde_json::to_value(response).unwrap();
+            assert_eq!(json["ok"], false);
+            assert_eq!(json["error"]["code"], "INVALID_INPUT");
+        }
+        for (body, expected) in [
+            (serde_json::json!({}), false),
+            (serde_json::json!({"refresh": true}), true),
+        ] {
+            let _ = session_models_request(&body, |account, refresh| {
+                assert_eq!(account, None);
+                assert_eq!(refresh, expected);
+                Err(AppError::new(ErrorCode::Internal, "fixture"))
+            });
+        }
     }
 
     #[test]
-    fn no_account_id_is_unresolvable() {
+    fn catalog_accounts_are_explicit_and_trimmed() {
+        let known = ["default".to_string(), "codex".to_string()]
+            .into_iter()
+            .collect();
+        assert_eq!(resolve_catalog_account(None, &known).unwrap(), "default");
         assert_eq!(
-            known_account_id(None, &known_set(&["default", "acct-1"])),
-            None
-        );
-    }
-
-    #[test]
-    fn a_blank_or_whitespace_account_id_is_unresolvable() {
-        let known = known_set(&["default", "acct-1"]);
-        assert_eq!(known_account_id(Some(""), &known), None);
-        assert_eq!(known_account_id(Some("   "), &known), None);
-    }
-
-    #[test]
-    fn an_id_the_registry_does_not_know_is_unresolvable() {
-        assert_eq!(
-            known_account_id(Some("removed-acct"), &known_set(&["default", "acct-1"])),
-            None
-        );
-    }
-
-    #[test]
-    fn a_known_id_resolves_trimmed() {
-        let known = known_set(&["default", "acct-1"]);
-        assert_eq!(known_account_id(Some("acct-1"), &known), Some("acct-1"));
-        assert_eq!(known_account_id(Some("  acct-1  "), &known), Some("acct-1"));
-        assert_eq!(known_account_id(Some("default"), &known), Some("default"));
-    }
-
-    // ---------- resolve_models_target (session_models FR-18 wire fix) ----------
-
-    #[test]
-    fn no_account_falls_back_to_the_default_claude_code_catalog() {
-        assert_eq!(
-            resolve_models_target(None),
-            (AgentRuntime::ClaudeCode, "default".to_string())
-        );
-    }
-
-    #[test]
-    fn a_resolved_account_routes_by_its_own_runtime_and_id() {
-        assert_eq!(
-            resolve_models_target(Some((AgentRuntime::Francois, "acct-1".to_string()))),
-            (AgentRuntime::Francois, "acct-1".to_string())
+            resolve_catalog_account(Some(" codex "), &known).unwrap(),
+            "codex"
         );
         assert_eq!(
-            resolve_models_target(Some((AgentRuntime::ClaudeCode, "acct-2".to_string()))),
-            (AgentRuntime::ClaudeCode, "acct-2".to_string())
+            resolve_catalog_account(Some(" "), &known).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            resolve_catalog_account(Some("removed"), &known)
+                .unwrap_err()
+                .code,
+            ErrorCode::AccountNotFound
         );
     }
 
@@ -693,6 +757,7 @@ mod tests {
                     id: "claude-opus-4-8".into(),
                     label: "Opus 4.8".into(),
                     brief: None,
+                    default_effort: None,
                     context_tokens: Some(1_000_000),
                     efforts: vec![],
                 },
@@ -700,6 +765,7 @@ mod tests {
                     id: "claude-opus-4-5-20251101".into(),
                     label: "Opus 4.5".into(),
                     brief: None,
+                    default_effort: None,
                     context_tokens: Some(200_000),
                     efforts: vec![],
                 },
@@ -707,6 +773,7 @@ mod tests {
                     id: "claude-haiku-4-5".into(),
                     label: "Haiku 4.5".into(),
                     brief: None,
+                    default_effort: None,
                     context_tokens: Some(200_000),
                     efforts: vec![],
                 },
@@ -736,6 +803,7 @@ mod tests {
             id: "claude-opus-5".into(),
             label: "Opus 5".into(),
             brief: None,
+            default_effort: None,
             context_tokens: Some(1_000_000),
             efforts: vec![],
         }];
@@ -780,6 +848,7 @@ mod tests {
             id: "claude-opus-5".into(),
             label: "Opus 5".into(),
             brief: Some("1M context".into()),
+            default_effort: None,
             context_tokens: Some(1_000_000),
             efforts: vec!["high".into()],
         }];

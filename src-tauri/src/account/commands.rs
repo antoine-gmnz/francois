@@ -758,6 +758,8 @@ pub fn account_codex_login(app: AppHandle, account_id: String) -> IpcResult<()> 
         }
     };
 
+    super::notify_credentials_changing(&account_id);
+
     // The dir can have been removed under us (a synced app-data folder, a manual
     // clean) — recreate rather than fail, since an empty CODEX_HOME is exactly
     // what a fresh login expects anyway.

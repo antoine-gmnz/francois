@@ -58,6 +58,7 @@ fn fallback() -> Vec<ModelInfo> {
             id: (*id).to_string(),
             label: (*id).to_string(),
             brief: None,
+            default_effort: None,
             context_tokens: None,
             efforts: Vec::new(),
         })
@@ -81,6 +82,7 @@ fn parse_catalog(text: &str) -> Option<Vec<ModelInfo>> {
             label: m.name.unwrap_or_else(|| id.clone()),
             id,
             brief: m.description,
+            default_effort: None,
             context_tokens: m.context_window,
             efforts: Vec::new(),
         })

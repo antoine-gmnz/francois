@@ -1,0 +1,5 @@
+.model-catalog-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; }
+.model-catalog-status:has(span:not(:empty)) { margin-bottom: 6px; }
+.model-catalog-status button { margin-left: auto; color: var(--text-dim); background: none; border: 0; font: inherit; cursor: pointer; }
+.model-catalog-status button:disabled { cursor: default; opacity: .5; }
+.model-catalog-status__error { color: var(--error); }

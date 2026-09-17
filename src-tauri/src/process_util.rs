@@ -187,16 +187,66 @@ fn resolve_cli_program(bin: &str) -> String {
 /// may print MOTD/nvm-banner noise before its output.
 #[cfg(not(windows))]
 fn login_shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    login_shell_path_with(&shell, std::time::Duration::from_secs(2))
+}
+#[cfg(not(windows))]
+fn login_shell_path_with(shell: &str, timeout: std::time::Duration) -> Option<String> {
     const START: &str = "__francois_path_start__";
     const END: &str = "__francois_path_end__";
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = Command::new(shell)
+    let deadline = std::time::Instant::now() + timeout;
+    let mut child = Command::new(shell)
         // `${PATH}` (not `$PATH`), so the shell doesn't read the marker's trailing
         // text as part of the variable name and expand it to nothing.
-        .args(["-ilc", &format!("echo -n {START}${{PATH}}{END}")])
-        .output()
+        .args(["-ilc", &format!("printf '%s' {START}\"${{PATH}}\"{END}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .ok()?;
-    let text = String::from_utf8(out.stdout).ok()?;
+    // Nonblocking reads keep the deadline active even after the shell exits
+    // while a descendant retains stdout. Drain while it runs to avoid pipe backpressure.
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    let result = (|| {
+        let mut stdout = child.stdout.take()?;
+        let fd = stdout.as_raw_fd();
+        // SAFETY: fd is an owned, live pipe; flags are fetched before modification.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        let mut buffer = [0; 8192];
+        let mut eof = false;
+        loop {
+            if std::time::Instant::now() >= deadline {
+                return None;
+            }
+            if !eof {
+                match stdout.read(&mut buffer) {
+                    Ok(0) => eof = true,
+                    Ok(n) => {
+                        if bytes.len() + n > 1024 * 1024 {
+                            return None;
+                        }
+                        bytes.extend_from_slice(&buffer[..n]);
+                        continue;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => return None,
+                }
+            }
+            if child.try_wait().ok()?.is_some() && eof {
+                return String::from_utf8(bytes).ok();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    })();
+    let _ = child.kill();
+    let _ = child.wait();
+    let text = result?;
     let start = text.find(START)? + START.len();
     let end = text[start..].find(END)? + start;
     let path = text[start..end].trim();
@@ -606,4 +656,47 @@ mod facade_tests {
             assert!(!text.contains("FRANCOIS_FACADE_TEST_SECRET"), "{text}");
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn stalled_login_shell_is_bounded_without_mutating_process_environment() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("francois-path-timeout-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let shell = dir.join("shell");
+    std::fs::write(&shell, "#!/bin/sh\nexec /bin/sleep 5\n").unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let started = std::time::Instant::now();
+    assert!(login_shell_path_with(
+        shell.to_str().unwrap(),
+        std::time::Duration::from_millis(50)
+    )
+    .is_none());
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn login_shell_output_collection_obeys_deadline_and_drains_verbose_startup() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("francois-path-pipe-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let shell = dir.join("shell");
+    for (script, expected) in [
+        ("#!/usr/bin/python3\nimport os,time\nif os.fork() == 0:\n time.sleep(2)\n os._exit(0)\nos.write(1,b'__francois_path_start__/usr/bin__francois_path_end__')\nos._exit(0)\n", None),
+        ("#!/bin/sh\n/usr/bin/head -c 100000 /dev/zero\nprintf '__francois_path_start__/usr/bin__francois_path_end__'\n", Some("/usr/bin")),
+    ] {
+        std::fs::write(&shell, script).unwrap();
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(
+            login_shell_path_with(shell.to_str().unwrap(), std::time::Duration::from_secs(1))
+                .as_deref(),
+            expected
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }

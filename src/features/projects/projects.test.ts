@@ -431,7 +431,7 @@ describe('project defaults form (FR-34)', () => {
   it('opens every select with an "inherit" option', () => {
     const defs = defaultFieldDefs(MODELS, {}, true);
     expect(defs.map((d) => d.key)).toEqual(['modelId', 'effort', 'permissionMode', 'runtime', 'allowGit']);
-    for (const d of defs) expect(d.options[0]).toEqual({ value: '', label: 'inherit' });
+    for (const d of defs) expect(d.options[0]).toEqual({ value: '', label: d.key === 'effort' ? 'Model default' : 'inherit' });
     expect(defs[4].options.map((o) => o.value)).toEqual(['', 'yes', 'no']);
   });
 
@@ -444,10 +444,10 @@ describe('project defaults form (FR-34)', () => {
     expect(runtimeOptions(false)).toEqual(['', 'native']);
   });
 
-  it('offers the efforts of the project default model, else every known effort', () => {
+  it('offers the efforts of the project default model, never a union from another model', () => {
     expect(effortOptions(MODELS, 'claude-opus-5')).toEqual(['medium', 'high', 'xhigh']);
-    expect(effortOptions(MODELS, '')).toEqual(['low', 'medium', 'high', 'xhigh']);
-    expect(effortOptions(MODELS, 'claude-ghost-1')).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(effortOptions(MODELS, '')).toEqual([]);
+    expect(effortOptions(MODELS, 'claude-ghost-1')).toEqual([]);
   });
 
   it('renders an unset default as "" (inherit) and a set one verbatim', () => {
@@ -456,6 +456,12 @@ describe('project defaults form (FR-34)', () => {
     expect(defaultsSelectValue({ allowGit: true }, 'allowGit')).toBe('yes');
     expect(defaultsSelectValue({ allowGit: false }, 'allowGit')).toBe('no');
     expect(defaultsSelectValue({ permissionMode: 'plan' }, 'permissionMode')).toBe('plan');
+  });
+
+  it('clears an incompatible effort atomically on a model change, preserving compatible future efforts', () => {
+    const models = [{ id: 'new', label: 'New', efforts: ['ultra', 'future'] }];
+    expect(patchDefaults({ modelId: 'old', effort: 'high' }, 'modelId', 'new', models)).toEqual({ modelId: 'new' });
+    expect(patchDefaults({ modelId: 'old', effort: 'ultra' }, 'modelId', 'new', models)).toEqual({ modelId: 'new', effort: 'ultra' });
   });
 
   it('patches ONE field and drops it entirely for inherit (FR-7 whole-object replace)', () => {
@@ -692,7 +698,7 @@ describe('empty-input edges', () => {
     ];
     // the bug: `?.efforts` being undefined fell through to the union branch
     expect(effortOptions(models, 'quiet')).toEqual([]);
-    expect(effortOptions(models, 'empty-list')).toEqual(['low', 'high']); // unknown id ⇒ union
+    expect(effortOptions(models, 'empty-list')).toEqual([]); // unknown id has no selectable efforts
     expect(effortOptions(models, 'loud')).toEqual(['low', 'high']);
   });
 

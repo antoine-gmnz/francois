@@ -1,3 +1,4 @@
+import type { ModelInfo } from '../../../contract/common';
 // projects — ProjectsModal's mutation logic (no Save button — FR-35). Every
 // commit fires its command, a failure shows inline, and a success or failure
 // alike re-reads through `reload` so the form returns to on-disk truth.
@@ -27,6 +28,7 @@ import {
 } from './projects';
 
 export interface ProjectMutationsDeps {
+  models: ModelInfo[];
   projects: ProjectMeta[];
   selectedId: string | null;
   selected: ProjectMeta | null;
@@ -66,6 +68,7 @@ export interface ProjectMutations {
 
 export function useProjectMutations(deps: ProjectMutationsDeps): ProjectMutations {
   const {
+    models,
     projects,
     selectedId,
     selected,
@@ -121,7 +124,7 @@ export function useProjectMutations(deps: ProjectMutationsDeps): ProjectMutation
 
   const commitDefault = (key: DefaultsKey, value: string) => {
     if (!selected) return;
-    void runUpdate({ defaults: patchDefaults(selected.defaults, key, value) }, 'defaults');
+    void runUpdate({ defaults: patchDefaults(selected.defaults, key, value, models) }, 'defaults');
   };
 
   // FR-35: the whole standards object on every individual change; FR-16: repaint

@@ -233,6 +233,7 @@ fn main() {
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 shell::kill_all_shells(app);
+                session::kill_model_probes();
                 session::kill_all(app);
                 // remote-control: the hosts are real interactive `claude`
                 // processes — leaking them leaves remote sessions live on the
