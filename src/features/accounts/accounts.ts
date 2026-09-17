@@ -190,25 +190,6 @@ export function resolveNewSessionAccountId(accounts: Account[], preferred: Accou
  * THAT account, silently overriding the user's explicit choice. Sending the
  * selection verbatim is what FR-19's "stored verbatim" promises.
  */
-export function accountIdForSessionCreate(accountId: AccountId): AccountId {
-  return accountId;
-}
-
-/**
- * multi-provider-openai FR-21: the model picker's neutral group heading —
- * the SELECTED account's own label, sourced here (not from `agentRuntime`/
- * `protocol`, which FR-20's grep gate forbids any component from branching
- * on). "Provider is metadata, not identity" (design brief §Rule 1): this is
- * deliberately the account's label, not a vendor name — a GPT session and a
- * Claude session read as the same kind of object, just under a different
- * account. Empty before the registry hydrates (or for an id it never knew),
- * so the picker simply renders no heading yet rather than a fabricated one.
- */
-export function modelPickerProviderHeading(accounts: Account[], accountId: AccountId): string {
-  const account = findAccount(accounts, accountId);
-  return account ? accountDisplayLabel(account) : '';
-}
-
 /**
  * FR-30: which account's snapshot the usage bar renders and the status-bar chip
  * names — the SELECTED session's, or the isDefault account with no session

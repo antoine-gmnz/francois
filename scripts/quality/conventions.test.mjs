@@ -105,6 +105,17 @@ describe('crossFeatureFindings', () => {
     expect(found).toEqual([]);
   });
 
+  it('allows the palette registry to compose commands owned by other features', () => {
+    expect(
+      crossFeatureFindings([
+        {
+          path: 'src/features/palette/paletteCommands.ts',
+          imports: ['../usage/usage', '../update/update', '../shell/shellActions'],
+        },
+      ]),
+    ).toEqual([]);
+  });
+
   it('ignores files outside src/features', () => {
     const found = crossFeatureFindings([{ path: 'src/app/App.tsx', imports: ['../features/x/y'] }]);
     expect(found).toEqual([]);

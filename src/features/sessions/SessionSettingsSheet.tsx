@@ -29,7 +29,7 @@ import { Button } from '../../ui/Button';
 import { Chip } from '../../ui/Chip';
 import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
 import { StatusDot } from '../../ui/StatusDot';
-import { accountIdForSessionCreate, modelPickerProviderHeading } from '../accounts/accounts';
+import { accountIdForSessionCreate, modelPickerProviderHeading } from '../../lib/account-selection';
 import { AccountField } from './AccountField';
 import { ProfileField } from './ProfileField';
 import { ProjectField } from './ProjectField';

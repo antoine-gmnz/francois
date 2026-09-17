@@ -1,7 +1,7 @@
 ---
 id: codex-model-catalog
 title: Codex model catalogue and reasoning efforts
-status: shipped
+status: in-review
 branch: feat/codex-model-catalog
 created: 2026-09-17
 depends_on: [multi-provider-codex, session-settings-sheet]
@@ -182,3 +182,7 @@ Existing model fields gain refresh/error/cached/empty states and fully dynamic e
 ### Round 1 — 2026-09-17
 
 - 2026-09-17 — 6 findings, all fixed
+
+### Round 2 — 2026-09-17
+
+- 2026-09-17 — 2 findings, all fixed
