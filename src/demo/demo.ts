@@ -220,7 +220,7 @@ function route(cmd: string, a: Args): unknown {
     case 'session_list':
       return ok(sessions);
     case 'session_models':
-      return ok(MODELS);
+      return ok({ accountId: a?.accountId ?? 'default', agentRuntime: 'claude-code', models: MODELS, defaultModelId: MODELS[0]?.id ?? null, source: 'legacy-adapter', freshness: 'unverified', fetchedAt: null, warning: null });
     case 'session_list_commands':
       return ok(COMMANDS);
     case 'session_send': {

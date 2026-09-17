@@ -13,6 +13,12 @@ packaging/npm/vendor/
 Thumbs.db
 .serena/
 
+# Codex pipeline local state
+.cohorte/pipeline-metrics.jsonl
+.cohorte/preflight.ok
+.cohorte/preflight.log
+.cohorte/preflight-report.txt
+
 # pipeline build/review timing metrics — local only
 .claude/pipeline-metrics.jsonl
 pipeline-metrics.jsonl

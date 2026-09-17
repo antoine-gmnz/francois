@@ -60,6 +60,92 @@ pub fn project_list(state: State<'_, ProjectRegistry>) -> IpcResult<ProjectRegis
     })
 }
 
+/// Validate only changed selection fields, before taking the project write lock.
+fn validate_defaults(
+    app: &AppHandle,
+    defaults: &mut ProjectDefaults,
+    previous: Option<&ProjectDefaults>,
+) -> Result<Option<String>, AppError> {
+    validate_defaults_with(
+        defaults,
+        previous,
+        |id| {
+            let account = crate::account::resolve_new_session_account(app, id)?;
+            let codex =
+                crate::account::kind_of(app, &account) == crate::account::AccountKind::CodexCli;
+            Ok((account, codex))
+        },
+        |id| crate::session::models::catalog_for_account(app, Some(id), false),
+    )
+}
+
+fn validate_defaults_with(
+    defaults: &mut ProjectDefaults,
+    previous: Option<&ProjectDefaults>,
+    account: impl FnOnce(Option<&str>) -> Result<(String, bool), AppError>,
+    resolve: impl FnOnce(&str) -> Result<crate::session::models::ModelCatalog, AppError>,
+) -> Result<Option<String>, AppError> {
+    let unchanged = previous.is_some_and(|old| {
+        old.model_id == defaults.model_id
+            && old.effort == defaults.effort
+            && old.account_id == defaults.account_id
+    });
+    if unchanged {
+        return Ok(None);
+    }
+    let (account, codex) = account(defaults.account_id.as_deref())?;
+    if !codex {
+        return Ok(None);
+    }
+    let explicit_effort = defaults
+        .effort
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let model = defaults
+        .model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if model.is_none() && explicit_effort.is_none() {
+        defaults.effort = None;
+        return Ok(Some(account));
+    }
+    // Clearing just effort must also work while discovery is offline.
+    if previous.is_some_and(|old| {
+        old.model_id == defaults.model_id && old.account_id == defaults.account_id
+    }) && explicit_effort.is_none()
+    {
+        defaults.effort = None;
+        return Ok(Some(account));
+    }
+    let catalog = resolve(&account)?;
+    let (selected, effort) =
+        crate::session::validate_catalog_selection(&catalog, model, explicit_effort, None)?;
+    if defaults.model_id.is_some() {
+        defaults.model_id = Some(selected);
+    }
+    defaults.effort = effort;
+    Ok(Some(account))
+}
+fn recheck_defaults_account(
+    app: &AppHandle,
+    defaults: Option<&ProjectDefaults>,
+    checked: Option<&str>,
+) -> Result<(), AppError> {
+    if let (Some(defaults), Some(checked)) = (defaults, checked) {
+        if crate::account::resolve_new_session_account(app, defaults.account_id.as_deref())?
+            != checked
+        {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "Account settings changed. Retry saving project defaults.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// francois:project:create (FR-6).
 #[tauri::command(async)]
 pub fn project_create(
@@ -79,6 +165,27 @@ fn create(
     name: Option<String>,
     defaults: Option<ProjectDefaults>,
 ) -> Result<ProjectMeta, AppError> {
+    create_with(
+        state,
+        root,
+        name,
+        defaults,
+        |defaults, previous| {
+            let checked = validate_defaults(app, defaults, previous)?;
+            recheck_defaults_account(app, Some(defaults), checked.as_deref())
+        },
+        |doc, next| commit_projects(app, doc, next),
+    )
+}
+
+fn create_with(
+    state: &ProjectRegistry,
+    root: String,
+    name: Option<String>,
+    defaults: Option<ProjectDefaults>,
+    prepare: impl FnOnce(&mut ProjectDefaults, Option<&ProjectDefaults>) -> Result<(), AppError>,
+    commit: impl FnOnce(&mut RegistryDocument, Vec<Project>) -> Result<(), AppError>,
+) -> Result<ProjectMeta, AppError> {
     // FR-6 order: root shape/existence first, then duplication. The stat happens
     // BEFORE the lock is taken (see project_list) — the duplicate check needs the
     // registry, the filesystem check does not.
@@ -86,11 +193,16 @@ fn create(
     let id = uuid::Uuid::new_v4().to_string();
     let now = crate::session::now_ms();
 
+    let mut defaults = defaults;
+    if let Some(value) = defaults.as_mut() {
+        prepare(value, None)?;
+    }
+
     let mut doc = state.doc.lock().unwrap();
     let project = create_entry(&doc.projects, &root, name.as_deref(), defaults, id, now)?;
     let mut next = doc.projects.clone();
     next.push(project.clone());
-    commit_projects(app, &mut doc, next)?;
+    commit(&mut doc, next)?;
     Ok(meta_of(&project))
 }
 
@@ -117,6 +229,29 @@ fn update(
     root: Option<String>,
     defaults: Option<ProjectDefaults>,
 ) -> Result<ProjectMeta, AppError> {
+    update_with(
+        state,
+        project_id,
+        name,
+        root,
+        defaults,
+        |defaults, previous| {
+            let checked = validate_defaults(app, defaults, previous)?;
+            recheck_defaults_account(app, Some(defaults), checked.as_deref())
+        },
+        |doc, next| commit_projects(app, doc, next),
+    )
+}
+
+fn update_with(
+    state: &ProjectRegistry,
+    project_id: String,
+    name: Option<String>,
+    root: Option<String>,
+    defaults: Option<ProjectDefaults>,
+    prepare: impl FnOnce(&mut ProjectDefaults, Option<&ProjectDefaults>) -> Result<(), AppError>,
+    commit: impl FnOnce(&mut RegistryDocument, Vec<Project>) -> Result<(), AppError>,
+) -> Result<ProjectMeta, AppError> {
     // Normalize + stat a new root before the lock (see project_list).
     let normalized = match root {
         Some(raw) => {
@@ -125,7 +260,27 @@ fn update(
         None => None,
     };
 
+    let before = state
+        .doc
+        .lock()
+        .unwrap()
+        .projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .cloned()
+        .ok_or_else(|| AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG))?;
+    let mut defaults = defaults;
+    if let Some(value) = defaults.as_mut() {
+        prepare(value, Some(&before.defaults))?;
+    }
+
     let mut doc = state.doc.lock().unwrap();
+    if doc.projects.iter().find(|p| p.id == project_id) != Some(&before) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Project settings changed. Retry saving project defaults.",
+        ));
+    }
     let (idx, patched) = patch_entry(
         &doc.projects,
         &project_id,
@@ -135,7 +290,7 @@ fn update(
     )?;
     let mut next = doc.projects.clone();
     next[idx] = patched.clone();
-    commit_projects(app, &mut doc, next)?;
+    commit(&mut doc, next)?;
     Ok(meta_of(&patched))
 }
 
@@ -344,4 +499,150 @@ fn set_standards(
     }
     // FR-16: a fresh re-read, never the payload.
     write_standards(&project.root, standards)
+}
+
+#[cfg(test)]
+mod catalog_mutation_tests {
+    use super::*;
+
+    fn catalog() -> crate::session::models::ModelCatalog {
+        let mut row = crate::ipc::model("future-model", "Future model");
+        row.efforts = vec!["ultra".into()];
+        crate::session::models::ModelCatalog {
+            account_id: "codex-account".into(),
+            agent_runtime: crate::session::AgentRuntime::Codex,
+            models: vec![row],
+            default_model_id: Some("future-model".into()),
+            source: "codex-app-server".into(),
+            freshness: "fresh".into(),
+            fetched_at: Some(1),
+            warning: None,
+        }
+    }
+
+    fn prepare(
+        defaults: &mut ProjectDefaults,
+        previous: Option<&ProjectDefaults>,
+    ) -> Result<(), AppError> {
+        validate_defaults_with(
+            defaults,
+            previous,
+            |_| Ok(("codex-account".into(), true)),
+            |_| Ok(catalog()),
+        )
+        .map(|_| ())
+    }
+
+    #[test]
+    fn project_defaults_create_and_offline_edit_use_production_commit_sequence() {
+        let state = ProjectRegistry::default();
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let mut writes = 0;
+        let meta = create_with(
+            &state,
+            root,
+            None,
+            Some(ProjectDefaults {
+                model_id: Some("future-model".into()),
+                effort: Some("ultra".into()),
+                ..Default::default()
+            }),
+            prepare,
+            |doc, next| {
+                writes += 1;
+                doc.projects = next;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(writes, 1);
+        assert_eq!(meta.defaults.effort.as_deref(), Some("ultra"));
+        let cleared = ProjectDefaults {
+            model_id: Some("future-model".into()),
+            ..Default::default()
+        };
+        update_with(
+            &state,
+            meta.id.clone(),
+            Some("renamed".into()),
+            None,
+            Some(cleared),
+            |defaults, previous| {
+                validate_defaults_with(
+                    defaults,
+                    previous,
+                    |_| Ok(("codex-account".into(), true)),
+                    |_| panic!("clear must work offline"),
+                )
+                .map(|_| ())
+            },
+            |doc, next| {
+                writes += 1;
+                doc.projects = next;
+                Ok(())
+            },
+        )
+        .unwrap();
+        update_with(
+            &state,
+            meta.id,
+            Some("unrelated".into()),
+            None,
+            None,
+            |_, _| panic!("unrelated edit must not discover"),
+            |doc, next| {
+                writes += 1;
+                doc.projects = next;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(writes, 3);
+        assert_eq!(state.doc.lock().unwrap().projects[0].defaults.effort, None);
+    }
+
+    #[test]
+    fn project_create_rejects_defaults_before_any_write() {
+        let state = ProjectRegistry::default();
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let result = create_with(
+            &state,
+            root,
+            None,
+            Some(ProjectDefaults {
+                model_id: Some("future-model".into()),
+                effort: Some("unsupported".into()),
+                ..Default::default()
+            }),
+            prepare,
+            |_, _| panic!("invalid defaults must not write"),
+        );
+        assert_eq!(result.err().unwrap().code, ErrorCode::InvalidInput);
+        assert!(state.doc.lock().unwrap().projects.is_empty());
+    }
+
+    #[test]
+    fn project_update_rejects_concurrent_revision_without_write() {
+        let state = ProjectRegistry::default();
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let project = create_entry(&[], &root, None, None, "p1".into(), 1).unwrap();
+        state.doc.lock().unwrap().projects.push(project);
+        let result = update_with(
+            &state,
+            "p1".into(),
+            Some("stale rename".into()),
+            None,
+            Some(ProjectDefaults::default()),
+            |_, _| {
+                state.doc.lock().unwrap().projects[0].name = "concurrent rename".into();
+                Ok(())
+            },
+            |_, _| panic!("stale defaults must not write"),
+        );
+        assert_eq!(result.err().unwrap().code, ErrorCode::InvalidInput);
+        assert_eq!(
+            state.doc.lock().unwrap().projects[0].name,
+            "concurrent rename"
+        );
+    }
 }

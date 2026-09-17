@@ -35,6 +35,7 @@ import {
   onAccountEvent,
 } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { accountIdForSessionCreate, modelPickerProviderHeading } from '../../lib/account-selection';
 import {
   LOGIN_CANCEL_HINT,
   LOGIN_TITLE,
@@ -69,13 +70,11 @@ import {
   endpointUpdatePayload,
   findAccount,
   formatModelIds,
-  modelPickerProviderHeading,
   loginErrorMessage,
   middleTruncate,
   modelIdsForAdd,
   modelIdsForUpdate,
   moveCursor,
-  accountIdForSessionCreate,
   newlyAddedAccountId,
   parseModelIdsList,
   removeConfirmView,

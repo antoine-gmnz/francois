@@ -60,7 +60,13 @@ export function barrelFindings(paths) {
  */
 export function crossFeatureFindings(files) {
   const out = [];
+  // The palette registry is the app's command router: its responsibility is
+  // intentionally to compose commands owned by other features. Keeping this
+  // exception explicit prevents the warning from obscuring actual shared-code
+  // leaks elsewhere in the tree.
+  const compositionFiles = new Set(['src/features/palette/paletteCommands.ts']);
   for (const { path, imports } of files) {
+    if (compositionFiles.has(path)) continue;
     const from = /^src\/features\/([^/]+)\//.exec(path);
     if (!from) continue;
     for (const spec of imports) {

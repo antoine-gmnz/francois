@@ -567,7 +567,13 @@ pub fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
         effort: rec
             .get("effort")
             .and_then(|v| v.as_str())
-            .filter(|e| valid_effort(e))
+            .filter(|e| {
+                if agent_runtime == AgentRuntime::Codex {
+                    crate::session::models::valid_catalog_effort(e)
+                } else {
+                    valid_effort(e)
+                }
+            })
             .map(String::from),
         permission_mode: rec
             .get("permissionMode")
@@ -1227,6 +1233,23 @@ mod tests {
         let m = parse_session_record(&claude_pair, 0).unwrap();
         assert_eq!(m.agent_runtime, AgentRuntime::ClaudeCode);
         assert_eq!(m.protocol, ProviderProtocol::Anthropic);
+    }
+
+    #[test]
+    fn codex_catalog_efforts_survive_loading_without_discovery() {
+        for effort in ["ultra", "future_effort-2"] {
+            let rec = json!({"id":"s", "name":"n", "cwd":"/x", "agentRuntime":"codex", "protocol":"openai", "effort":effort});
+            assert_eq!(
+                parse_session_record(&rec, 0).unwrap().effort.as_deref(),
+                Some(effort)
+            );
+        }
+        for effort in ["UPPER", "bad\"value", ""] {
+            let rec = json!({"id":"s", "name":"n", "cwd":"/x", "agentRuntime":"codex", "protocol":"openai", "effort":effort});
+            assert_eq!(parse_session_record(&rec, 0).unwrap().effort, None);
+        }
+        let rec = json!({"id":"s", "name":"n", "cwd":"/x", "agentRuntime":"claude-code", "protocol":"anthropic", "effort":"ultra"});
+        assert_eq!(parse_session_record(&rec, 0).unwrap().effort, None);
     }
 
     #[test]

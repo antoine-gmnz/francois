@@ -27,7 +27,13 @@ pub struct ModelInfo {
         skip_serializing_if = "Option::is_none"
     )]
     pub context_tokens: Option<u64>,
-    /// Effort levels this model supports (subset of low/medium/high/xhigh/max).
+    #[serde(
+        rename = "defaultEffort",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub default_effort: Option<String>,
+    /// Effort strings advertised by the runtime for this model.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub efforts: Vec<String>,
 }
@@ -38,6 +44,7 @@ pub fn model(id: &str, label: &str) -> ModelInfo {
         id: id.into(),
         label: label.into(),
         brief: None,
+        default_effort: None,
         context_tokens: None,
         efforts: Vec::new(),
     }

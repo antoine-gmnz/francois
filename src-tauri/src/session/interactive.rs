@@ -423,16 +423,34 @@ pub fn run_intercepted_command(
 }
 
 /// /model — bare: catalog card (FR-12); with an argument: resolve + switch or an
-/// unknown-model notice (FR-13). Instant either way; no status change.
+/// unknown-model notice (FR-13). Codex discovery does not change session status.
 pub fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&str>) {
-    let models = model_catalog_snapshot();
+    let engine = app.state::<Engine>();
+    let Some((account_id, runtime, current_id)) = engine.with_session(session_id, |s| {
+        (s.account_id.clone(), s.agent_runtime, s.model_id.clone())
+    }) else {
+        return;
+    };
+    let models = if runtime == AgentRuntime::Codex {
+        match crate::session::models::catalog_for_account(app, Some(&account_id), false) {
+            Ok(catalog) => catalog.models,
+            Err(error) => {
+                finalize_command_block(
+                    app,
+                    session_id,
+                    &uuid(),
+                    "model",
+                    &CommandCard::Notice {
+                        text: error.message,
+                    },
+                );
+                return;
+            }
+        }
+    } else {
+        model_catalog_snapshot()
+    };
     let Some(arg) = arg else {
-        let current_id = {
-            let engine = app.state::<Engine>();
-            let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
-            let Some(s) = map.get(session_id) else { return };
-            s.model_id.clone()
-        };
         finalize_command_block(
             app,
             session_id,
@@ -445,8 +463,8 @@ pub fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&str>) {
     match resolve_model_arg(&models, arg) {
         Some(m) => {
             let (id, label) = (m.id.clone(), m.label.clone());
-            if apply_model_switch(app, session_id, &id).is_some() {
-                finalize_command_block(
+            match apply_model_switch(app, session_id, &id) {
+                Ok(_) => finalize_command_block(
                     app,
                     session_id,
                     &uuid(),
@@ -454,7 +472,16 @@ pub fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&str>) {
                     &CommandCard::Notice {
                         text: format!("model \u{2192} {label}"),
                     },
-                );
+                ),
+                Err(error) => finalize_command_block(
+                    app,
+                    session_id,
+                    &uuid(),
+                    "model",
+                    &CommandCard::Notice {
+                        text: error.message,
+                    },
+                ),
             }
         }
         None => {

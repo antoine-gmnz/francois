@@ -91,7 +91,7 @@ function Palette() {
 
   const pickItem = (item: SecondaryStepItem) => {
     secondaryStep?.onPick(item.id); // FR-13/FR-17
-    closePalette();
+    if (usePaletteState.getState().secondaryStep === secondaryStep) closePalette();
   };
 
   const activate = () => {

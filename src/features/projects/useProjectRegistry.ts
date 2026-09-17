@@ -1,3 +1,4 @@
+import { useModelCatalog, type ModelCatalogState } from '../../lib/hooks/useModelCatalog';
 // projects — the "read" half of ProjectsModal: the registry list, the current
 // selection, the two on-disk reads it drives (model catalog, standards), and
 // the Identity drafts. Owns the three effects that keep them honest against
@@ -8,7 +9,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ModelInfo } from '../../../contract/common';
 import type { ProjectGroup, ProjectMeta, StandardsRead } from '../../../contract/projects';
-import { projectGetStandards, projectList, sessionModels } from '../../lib/api';
+import { projectGetStandards, projectList } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { EMPTY_SECTION_ERRORS, safeCall, type ProjectSection } from './projects';
@@ -32,6 +33,7 @@ export interface ProjectRegistry {
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
   models: ModelInfo[];
+  catalogState: ModelCatalogState;
   standards: StandardsRead | null;
   setStandards: (s: StandardsRead) => void;
   notes: string;
@@ -70,7 +72,7 @@ export function useProjectRegistry(): ProjectRegistry {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [groups, setGroups] = useState<ProjectGroup[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [models, setModels] = useState<ModelInfo[]>([]);
+
   const [standards, setStandards] = useState<StandardsRead | null>(null);
   const [notes, setNotes] = useState('');
   const [newRule, setNewRule] = useState('');
@@ -123,9 +125,6 @@ export function useProjectRegistry(): ProjectRegistry {
 
   useEffect(() => {
     void reload();
-    void safeCall(sessionModels()).then((res) => {
-      if (alive.current && res.ok) setModels(res.data);
-    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -211,6 +210,8 @@ export function useProjectRegistry(): ProjectRegistry {
   }, [selectedId, selectedRoot]);
 
   const selected = projects.find((p) => p.id === selectedId) ?? null;
+  const catalogState = useModelCatalog(selected?.defaults.accountId ?? accountsRegistry.find(a => a.isDefault)?.id ?? 'default');
+  const models = catalogState.models;
   const rootMissing = selected !== null && !selected.rootExists;
   const rules = standards?.standards.rules ?? [];
 
@@ -221,6 +222,7 @@ export function useProjectRegistry(): ProjectRegistry {
     selectedId,
     setSelectedId,
     models,
+    catalogState,
     standards,
     setStandards,
     notes,

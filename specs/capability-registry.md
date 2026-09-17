@@ -4,7 +4,7 @@ title: Capability registry & discovery
 status: draft
 branch:
 created: 2026-08-14
-depends_on: [multi-provider-seam, multi-provider-openai, skills-panel, mcp-panel, agents-panel, projects, session-engine]
+depends_on: [multi-provider-seam, multi-provider-openai, skills-panel, mcp-panel, agents-panel, projects, session-engine, provider-effective-capabilities]
 loop_pass: 0
 loop_phase:
 reviewed_base:
@@ -13,6 +13,16 @@ design_files: []
 ---
 
 # Capability registry & discovery
+
+> **Programme scope update — 2026-09-17.** This existing draft is delivery 08 of
+> [provider-capability-parity](provider-capability-parity.md), with its own Obsidian ticket.
+> The two-runtime sketch below must be revised for Claude Code, Codex, Grok and the Francois loop
+> before freeze. Cover runtime/account-specific discovery, skill bodies/resources and activation,
+> not merely names/descriptions. Native configuration ownership and precedence require explicit
+> decisions; reading Claude formats is no longer the only discovery path to consider.
+> `provider-mcp-runtime` owns the actual MCP client/connection work; `provider-agent-control`
+> owns the child dispatcher. Remove the conflicting execution promise in sketch FR-11 when
+> freezing this registry spec. The original sketch is retained as context, not frozen authority.
 
 > **DRAFT — not ready to freeze.** Captured 2026-08-14 from an architecture review against
 > `multi-provider-agent-architecture.md`, while the reasoning was fresh and before

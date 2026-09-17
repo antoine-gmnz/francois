@@ -26,6 +26,7 @@ export type ErrorCode =
   | 'SESSION_NOT_RUNNING'
   | 'SESSION_ALREADY_RUNNING'
   | 'SPAWN_FAILED'
+  | 'MODEL_CATALOG_UNAVAILABLE' // codex-model-catalog: detail is ModelCatalogFailureDetail
   | 'INVALID_INPUT'
   | 'GIT_ERROR'
   | 'NOT_A_GIT_REPO'
@@ -205,8 +206,10 @@ export interface ModelInfo {
   brief?: string;
   /** max input tokens (real context window) from /v1/models. */
   contextTokens?: number;
-  /** effort levels this model supports, subset of low/medium/high/xhigh/max (empty = none). */
+  /** Runtime/model-advertised effort strings, in advertised order (empty = none). */
   efforts?: string[];
+  /** Advertised default, present only when included in efforts. */
+  defaultEffort?: string;
 }
 
 export interface SessionMeta {
@@ -338,7 +341,8 @@ export type ProjectId = string; // uuid v4
  */
 export interface ProjectDefaults {
   modelId?: string;
-  /** low | medium | high | xhigh | max — nominally one the chosen model advertises. */
+  /** Runtime/model-advertised value. Codex membership is checked on relevant edits,
+   * while syntactically valid saved values survive catalogue changes. */
   effort?: string;
   permissionMode?: PermissionMode;
   runtime?: ClaudeRuntime;

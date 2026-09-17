@@ -253,6 +253,23 @@ mod tests {
     // ---------- effort ----------
 
     #[test]
+    fn catalogue_efforts_reach_fresh_and_resumed_turns_verbatim() {
+        for resume in [None, Some("thread-1")] {
+            for effort in ["ultra", "future_effort-2"] {
+                let args = turn_args("new-runtime-model", resume, Some(effort), "default");
+                assert!(pair(
+                    &args,
+                    "-c",
+                    &format!("model_reasoning_effort=\"{effort}\"")
+                ));
+            }
+            assert!(!turn_args("m", resume, None, "default")
+                .iter()
+                .any(|arg| arg.starts_with("model_reasoning_effort")));
+        }
+    }
+
+    #[test]
     fn effort_rides_a_config_override_and_is_omitted_when_absent() {
         let args = turn_args("m", None, Some("high"), "default");
         assert!(pair(&args, "-c", "model_reasoning_effort=\"high\""));

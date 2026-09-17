@@ -16,13 +16,15 @@
 //! 2. **No text deltas.** `agent_message` arrives whole in one `item.completed`,
 //!    so a reply is finalized in one step instead of streamed. Tool activity is
 //!    still live.
-//! 3. **No model fetch.** The catalog is Codex's own on-disk cache (`models.rs`).
+//! 3. The model catalogue is discovered through an isolated App Server probe.
 //!
 //! Module shape follows the domain convention: the model and the adapter here,
 //! one concern per child (`args` · `wire` · `models` · `runner`).
 
 mod args;
-mod models;
+mod catalog;
+pub(crate) mod models;
+pub(crate) use catalog::{get as model_catalog, invalidate as invalidate_catalog};
 mod runner;
 mod translate;
 mod wire;
@@ -135,10 +137,10 @@ impl SessionAdapter for CodexAdapter {
         runner::begin_turn(app, ctx)
     }
 
-    /// FR-17: Codex's own `models_cache.json`, under the account's `CODEX_HOME`.
     fn models(&self, app: &tauri::AppHandle, account_id: &str) -> Vec<ModelInfo> {
-        let config_dir = crate::account::config_dir_of(app, account_id);
-        models::catalog_for_home(config_dir.as_deref().map(std::path::Path::new))
+        model_catalog(app, account_id, false)
+            .map(|catalog| catalog.models)
+            .unwrap_or_default()
     }
 }
 
