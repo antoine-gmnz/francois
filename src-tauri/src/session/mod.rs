@@ -85,8 +85,9 @@ mod worktree;
 // site, not by re-adding the glob).
 // ---------------------------------------------------------------------------
 pub(crate) use adapter::{
-    adapter_for, child_stdout_lines, spawn_claude, AgentRuntime, ControlAck, PendingCounts,
-    PermissionDecision, ProviderProtocol, SessionAdapter, TurnContext, TurnControl, TurnMode,
+    adapter_for, child_stdout_lines, openai_context_tokens_for, spawn_claude, AgentRuntime,
+    ControlAck, PendingCounts, PermissionDecision, ProviderProtocol, SessionAdapter, TurnContext,
+    TurnControl, TurnMode,
 };
 pub use agent_transcript::{
     __cmd__agents_transcript, __tauri_command_name_agents_transcript, agents_transcript,
@@ -184,9 +185,11 @@ pub use mcp_approval::{
     __tauri_command_name_mcp_decide, approval_state, mcp_approvals, mcp_decide, McpApprovalState,
 };
 pub use models::{
-    __cmd__session_models, __tauri_command_name_session_models, catalog, context_limit, label_for,
-    load_model_cache, loaded_context, model, model_cache, refresh_models, refresh_models_for,
-    resolve_context_tokens, session_models, warm_model_cache, ModelInfo, DEFAULT_CONTEXT_LIMIT,
+    __cmd__session_models, __tauri_command_name_session_models, catalog, context_limit,
+    fallback_context, fallback_label, is_anthropic_shaped, load_model_cache, loaded_context, model,
+    model_cache, refresh_models, refresh_models_for, resolve_context_tokens, resolve_model_display,
+    resolve_model_display_from_catalog, session_models, warm_model_cache, ModelInfo,
+    DEFAULT_CONTEXT_LIMIT,
 };
 pub use teardown::{
     dispose_session_resources, register_teardown, SessionAccountObserver, SessionTeardown,
@@ -661,6 +664,11 @@ pub struct Session {
     name: String,
     cwd: String,
     model_id: String,
+    /// display-openai-model-name FR-1: the label this session's OWN runtime
+    /// catalog gave `model_id` at the moment it was last resolved (creation, a
+    /// model switch, or FR-10's reconcile pass) — persisted as `modelLabel`.
+    /// `meta()` reads it verbatim; it performs NO catalog lookup (FR-2).
+    model_label: String,
     status: String,
     context_used_tokens: u64,
     context_limit_tokens: u64,
@@ -834,6 +842,7 @@ impl Session {
         name: String,
         cwd: String,
         model_id: String,
+        model_label: String,
         context_used_tokens: u64,
         context_limit_tokens: u64,
         started_at: u64,
@@ -860,6 +869,7 @@ impl Session {
             name,
             cwd,
             model_id,
+            model_label,
             status: "idle".into(),
             context_used_tokens,
             context_limit_tokens,
@@ -935,14 +945,16 @@ impl Session {
     /// Grok) by resyncing at the mutation; this closes the class, because there
     /// is no longer a stored value that dispatch reads.
     fn meta(&self, accounts: &dyn crate::account::AccountKinds) -> SessionMeta {
-        let label = label_for(&self.model_id);
         let (agent_runtime, protocol) =
             AgentRuntime::from_account_kind(accounts.kind_of(&self.account_id));
         SessionMeta {
             id: self.id.clone(),
             name: self.name.clone(),
             cwd: self.cwd.clone(),
-            model: model(&self.model_id, &label),
+            // display-openai-model-name FR-2: built from the session's OWN
+            // persisted label — no catalog lookup here (allocation-cheap,
+            // never touches disk or network; this runs on every emitted event).
+            model: model(&self.model_id, &self.model_label),
             status: self.status.clone(),
             context_used_tokens: self.context_used_tokens,
             context_limit_tokens: self.context_limit_tokens,

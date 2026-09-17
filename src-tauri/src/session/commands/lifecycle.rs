@@ -369,7 +369,10 @@ pub fn session_create(
     let now = now_ms();
     let id = uuid();
     let name = name.unwrap_or_else(|| basename(&cwd));
-    let context_limit_tokens = context_limit(&model_id);
+    // display-openai-model-name FR-6: resolve the label + window from THIS
+    // session's own runtime catalog, once, at creation — never re-derived
+    // from a catalog on the hot `meta()` path (FR-2).
+    let (model_label, context_limit_tokens) = resolve_model_display(&app, &account_id, &model_id);
     // multi-provider-seam FR-13a: both axes derived from the resolved
     // account's kind — session_create gains no field and the new-session
     // modal gains no control.
@@ -380,6 +383,7 @@ pub fn session_create(
         name,
         cwd.clone(),
         model_id.clone(),
+        model_label,
         0, // context_used_tokens
         context_limit_tokens,
         now, // started_at
@@ -520,9 +524,15 @@ pub fn apply_model_switch(
     model_id: &str,
 ) -> Option<SessionMeta> {
     let engine = app.state::<Engine>();
+    // display-openai-model-name FR-7: re-resolve via the account's own runtime
+    // — the account read must happen OUTSIDE the mutation closure, which must
+    // not block (`with_session_mut`'s single-session discipline).
+    let account_id = engine.with_session(session_id, |s| s.account_id.clone())?;
+    let (label, limit) = resolve_model_display(app, &account_id, model_id);
     let meta = engine.with_session_mut(session_id, |s| {
         s.model_id = model_id.to_string();
-        s.context_limit_tokens = context_limit(model_id);
+        s.model_label = label;
+        s.context_limit_tokens = limit;
         s.meta(app)
     })?;
     persist(app, &engine);
@@ -822,13 +832,15 @@ pub(crate) struct ValidatedSettingsPatch {
 /// every key `SessionSettingsPatch` carries — the frontend's narrowing (a
 /// picker/toggle that cannot itself produce a bad value) is never trusted. The
 /// FIRST bad key stops the whole patch, so nothing partial is ever written.
-/// `advertised_models` is the session's ACCOUNT catalog (case 4) — pass an
-/// empty slice when the patch carries no `modelId` (the model call is skipped
-/// entirely, sparing sessions with no live catalog from needing one for an
-/// unrelated field).
+/// `catalog` is the session's ACCOUNT catalog (case 4) — pass an empty slice
+/// when the patch carries no `modelId` (the model call is skipped entirely,
+/// sparing sessions with no live catalog from needing one for an unrelated
+/// field). display-openai-model-name FR-7: the SAME fetch also supplies the
+/// new label/context window (`ModelInfo`, not just the bare id) so a model
+/// change re-resolves without a second adapter call.
 pub(crate) fn validate_settings_patch(
     patch: &SessionSettingsPatch,
-    advertised_models: &[String],
+    catalog: &[ModelInfo],
 ) -> Result<ValidatedSettingsPatch, AppError> {
     let name = match &patch.name {
         Some(raw) => Some(validate_session_name(raw)?),
@@ -836,7 +848,7 @@ pub(crate) fn validate_settings_patch(
     };
     let model_id = match &patch.model_id {
         Some(raw) => {
-            if !advertised_models.iter().any(|m| m == raw) {
+            if !catalog.iter().any(|m| &m.id == raw) {
                 return Err(AppError::new(
                     ErrorCode::InvalidInput,
                     "model is not advertised for this session's account",
@@ -908,7 +920,7 @@ pub(crate) fn update_settings_in_engine(
     accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     patch: &SessionSettingsPatch,
-    advertised_models: &[String],
+    catalog: &[ModelInfo],
 ) -> Result<(SessionMeta, bool), AppError> {
     if patch.is_empty() {
         let meta = engine
@@ -925,14 +937,19 @@ pub(crate) fn update_settings_in_engine(
             "session has ended",
         ));
     }
-    let validated = validate_settings_patch(patch, advertised_models)?;
+    let validated = validate_settings_patch(patch, catalog)?;
     let meta = engine
         .with_session_mut(session_id, |s| {
             if let Some(name) = validated.name {
                 s.name = name;
             }
             if let Some(model_id) = validated.model_id {
-                s.context_limit_tokens = context_limit(&model_id);
+                // display-openai-model-name FR-7: re-resolve from the SAME
+                // catalog `validate_settings_patch` just validated membership
+                // against — one adapter call for the whole patch.
+                let (label, limit) = resolve_model_display_from_catalog(catalog, &model_id);
+                s.model_label = label;
+                s.context_limit_tokens = limit;
                 s.model_id = model_id;
             }
             if let Some(effort) = validated.effort {
@@ -974,21 +991,17 @@ pub fn session_update_settings(
     // The model catalog is fetched only when the patch actually carries a
     // modelId — sparing a settings-only edit the round trip and the account
     // lookup it needs.
-    let advertised_models: Vec<String> = if patch.model_id.is_some() {
+    let catalog: Vec<ModelInfo> = if patch.model_id.is_some() {
         let Some((account_id, agent_runtime)) =
             engine.with_session(&session_id, |s| (s.account_id.clone(), s.agent_runtime))
         else {
             return err(ErrorCode::SessionNotFound, "no such session");
         };
-        adapter_for(agent_runtime)
-            .models(&app, &account_id)
-            .into_iter()
-            .map(|m| m.id)
-            .collect()
+        adapter_for(agent_runtime).models(&app, &account_id)
     } else {
         Vec::new()
     };
-    match update_settings_in_engine(&engine, &app, &session_id, &patch, &advertised_models) {
+    match update_settings_in_engine(&engine, &app, &session_id, &patch, &catalog) {
         Ok((meta, true)) => {
             persist(&app, &engine);
             emit(&app, SessionEvent::Meta { meta: meta.clone() });
@@ -1374,6 +1387,13 @@ mod tests {
 
     // ---------- session-settings-sheet ----------
 
+    /// display-openai-model-name: a bare id list, shaped into the `ModelInfo`
+    /// catalog `validate_settings_patch`/`update_settings_in_engine` now take
+    /// (FR-7 — the same fetch resolves the new label/window, not just the id).
+    fn model_catalog(ids: &[&str]) -> Vec<ModelInfo> {
+        ids.iter().map(|id| model(id, id)).collect()
+    }
+
     fn patch_with_name(name: &str) -> SessionSettingsPatch {
         SessionSettingsPatch {
             name: Some(name.into()),
@@ -1424,7 +1444,7 @@ mod tests {
             allow_git: Some(true),
         };
         let validated =
-            validate_settings_patch(&patch, &["sonnet".to_string(), "opus".to_string()]).unwrap();
+            validate_settings_patch(&patch, &model_catalog(&["sonnet", "opus"])).unwrap();
         assert_eq!(validated.name.as_deref(), Some("renamed"));
         assert_eq!(validated.model_id.as_deref(), Some("opus"));
         assert_eq!(validated.effort, Some(Some("high".to_string())));
@@ -1460,7 +1480,7 @@ mod tests {
             model_id: Some("claude-nonexistent".into()),
             ..Default::default()
         };
-        let err = validate_settings_patch(&patch, &["sonnet".to_string()]).unwrap_err();
+        let err = validate_settings_patch(&patch, &model_catalog(&["sonnet"])).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidInput);
     }
 
@@ -1566,7 +1586,7 @@ mod tests {
             &fake_accounts(),
             "s1",
             &patch,
-            &["sonnet".to_string()],
+            &model_catalog(&["sonnet"]),
         ) else {
             panic!("expected an error");
         };
@@ -1615,7 +1635,7 @@ mod tests {
             &fake_accounts(),
             "s1",
             &patch,
-            &["opus".to_string()],
+            &model_catalog(&["opus"]),
         )
         .unwrap();
         assert!(should_persist);
@@ -1625,6 +1645,28 @@ mod tests {
         let json = serde_json::to_value(&meta).unwrap();
         assert_eq!(json["allowGit"], true);
         assert!(meta.permission_mode_since > 0);
+    }
+
+    #[test]
+    fn a_model_change_re_resolves_the_label_and_context_window_from_the_catalog() {
+        // display-openai-model-name FR-7: the settings-sheet model change
+        // re-resolves BOTH stored values from the account's own catalog,
+        // exactly like session_switch_model's apply_model_switch.
+        let engine = test_engine_with(test_session());
+        let catalog = vec![ModelInfo {
+            context_tokens: Some(128_000),
+            ..model("gpt-4o", "gpt-4o")
+        }];
+        let patch = SessionSettingsPatch {
+            model_id: Some("gpt-4o".into()),
+            ..Default::default()
+        };
+        let (meta, should_persist) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &catalog).unwrap();
+        assert!(should_persist);
+        assert_eq!(meta.model.id, "gpt-4o");
+        assert_eq!(meta.model.label, "gpt-4o"); // never "Gpt"
+        assert_eq!(meta.context_limit_tokens, 128_000);
     }
 
     #[test]

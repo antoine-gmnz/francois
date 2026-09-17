@@ -139,6 +139,7 @@ pub fn test_session() -> Session {
         name: "n".into(),
         cwd: "/x".into(),
         model_id: "sonnet".into(),
+        model_label: "Sonnet".into(),
         status: "idle".into(),
         context_used_tokens: 0,
         context_limit_tokens: 200_000,

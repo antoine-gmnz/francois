@@ -28,6 +28,11 @@ pub(crate) use claude_code::{child_stdout_lines, spawn_claude};
 pub(crate) use codex::CodexAdapter;
 /// multi-provider-grok FR-3: the `AgentRuntime::Grok` adapter.
 pub(crate) use grok::GrokAdapter;
+/// display-openai-model-name FR-5: the OpenAI-shaped context-window table is
+/// also the non-Anthropic id fallback `session::models::fallback_context`
+/// reaches for — re-exported so that sibling domain module can name it
+/// without `openai`/`wire` themselves needing to be crate-visible.
+pub(crate) use openai::wire::context_tokens_for as openai_context_tokens_for;
 /// multi-provider-openai FR-1: the real `AgentRuntime::Francois` adapter —
 /// `UnavailableAdapter` is gone, not kept alongside it.
 pub(crate) use openai::OpenAiAdapter;
