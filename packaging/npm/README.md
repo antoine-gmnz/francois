@@ -62,5 +62,19 @@ Prebuilt for macOS (universal), Windows x64 and Linux x64. On anything else,
 Environment: `FRANCOIS_SKIP_DOWNLOAD=1` skips the postinstall download,
 `FRANCOIS_DOWNLOAD_BASE` overrides the release host (mirrors, air-gapped setups).
 
+## An update installed, but the app still shows the old version
+
+Node version managers keep global npm packages in separate directories. After
+switching Node versions, a shortcut or taskbar pin can still open the previous
+copy even though `npm i -g francois` updated the active one.
+
+Finish your sessions and quit Francois, then run `francois` in the terminal where
+you installed the update. Run `francois shortcut` there to refresh the desktop
+entry. On Windows, replace an old taskbar pin if it still opens the previous copy.
+Windows desktop shortcuts use the installation's resolved executable path, so
+switching NVM's active Node version does not change which copy they open. Terminal
+launches still follow the active Node installation. To select a particular copy
+for desktop launches, run that copy's `francois shortcut` command.
+
 [Full documentation](https://github.com/antoine-gmnz/francois) ·
 [AGPL-3.0](https://github.com/antoine-gmnz/francois/blob/main/LICENSE)

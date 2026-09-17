@@ -114,7 +114,18 @@ function attempt(command, args) {
 
 // ── Windows ─────────────────────────────────────────────────────────────────
 
+/** Pin desktop launches to this install, independent of NVM's active version. */
+function windowsShortcutExecutable(executable) {
+  try {
+    return fs.realpathSync.native(executable);
+  } catch {
+    // Keep desktop registration best-effort when the payload is unavailable.
+  }
+  return executable;
+}
+
 function installWindows({ executable, productName, channel, appVersion, notes }) {
+  executable = windowsShortcutExecutable(executable);
   const shortcut = startMenuShortcut(productName);
   if (!shortcut) {
     notes.push('APPDATA is not set — skipped the Start Menu shortcut.');
@@ -292,4 +303,5 @@ module.exports = {
   shortcutWorkingDir,
   startMenuShortcut,
   uninstallRegistryKey,
+  windowsShortcutExecutable,
 };

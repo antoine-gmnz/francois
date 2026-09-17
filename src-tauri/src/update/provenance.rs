@@ -1,9 +1,9 @@
 //! FR-5 — is this copy of Francois npm-managed, and where does npm think its
 //! executable is?
 //!
-//! Deriving the package root from the executable path does not work on macOS,
-//! where the postinstall moves the bundle out to `~/Applications`; `npm root -g`
-//! is the only anchor that holds on all three platforms.
+//! Check the active npm root first (needed for relocated macOS bundles), then
+//! the running binary's package. Node version managers can change the active
+//! global root while a shortcut still launches a copy from the previous one.
 
 use super::PACKAGE;
 use std::path::{Path, PathBuf};
@@ -53,14 +53,27 @@ pub fn same_install(recorded: &Path, current: &Path) -> bool {
     }
 }
 
-/// FR-5 #2 + #3: the `executable` the npm postinstall recorded under `npm_root`,
-/// but ONLY when it names this running copy. `None` ⇒ `method: 'manual'`.
-pub fn npm_install_executable(npm_root: &Path, current_exe: &Path) -> Option<PathBuf> {
+fn recorded_executable(npm_root: &Path, current_exe: &Path) -> Option<PathBuf> {
     let record = npm_root.join(PACKAGE).join("vendor").join("install.json");
     let body = std::fs::read_to_string(record).ok()?;
     let json: serde_json::Value = serde_json::from_str(&body).ok()?;
     let recorded = PathBuf::from(json.get("executable")?.as_str()?);
     same_install(&recorded, current_exe).then(|| canon(&recorded))
+}
+
+/// FR-5 (amended by updating-bug): require a record naming this running copy,
+/// either in the active npm root or in its own `francois/vendor` directory.
+/// The latter survives an NVM switch; an unrelated record never proves ownership.
+pub fn npm_install_executable(npm_root: &Path, current_exe: &Path) -> Option<PathBuf> {
+    recorded_executable(npm_root, current_exe).or_else(|| {
+        let current = canon(current_exe);
+        let vendor = current.parent()?;
+        let package = vendor.parent()?;
+        if vendor.file_name()? != "vendor" || package.file_name()? != PACKAGE {
+            return None;
+        }
+        recorded_executable(package.parent()?, &current)
+    })
 }
 
 /// FR-5 as a whole: the update method for this copy, and — for `npm` — the
@@ -121,6 +134,27 @@ mod tests {
             Some(exe.canonicalize().unwrap_or(exe))
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recognizes_the_running_npm_copy_after_switching_node_versions() {
+        let (old_root, exe) = npm_tree("node18", Some(r#"{"executable": "__EXE__"}"#));
+        let (active_root, _) = npm_tree("node21", Some(r#"{"executable": "__EXE__"}"#));
+        assert_eq!(
+            npm_install_executable(&active_root, &exe),
+            Some(exe.canonicalize().unwrap())
+        );
+        std::fs::remove_dir_all(old_root).unwrap();
+        std::fs::remove_dir_all(active_root).unwrap();
+    }
+
+    #[test]
+    fn switching_node_versions_still_requires_a_matching_local_record() {
+        let (old_root, exe) = npm_tree("invalid-old", Some(r#"{"executable": "elsewhere"}"#));
+        let (active_root, _) = npm_tree("valid-new", Some(r#"{"executable": "__EXE__"}"#));
+        assert_eq!(npm_install_executable(&active_root, &exe), None);
+        std::fs::remove_dir_all(old_root).unwrap();
+        std::fs::remove_dir_all(active_root).unwrap();
     }
 
     // FR-5 #3: a record naming some OTHER copy is not this install.
