@@ -19,6 +19,7 @@ const {
   shortcutWorkingDir,
   startMenuShortcut,
   uninstallRegistryKey,
+  windowsShortcutExecutable,
 } = require('./desktop.js');
 
 const tempDirs = [];
@@ -62,6 +63,39 @@ describe('shortcutWorkingDir', () => {
     expect(shortcutWorkingDir(home)).toBe(home);
     expect(shortcutWorkingDir(home)).not.toContain('node_modules');
     expect(shortcutWorkingDir()).toBe(os.homedir());
+  });
+});
+
+describe('windowsShortcutExecutable', () => {
+  function npmBinary(prefix) {
+    const exe = path.join(prefix, 'node_modules', 'francois', 'vendor', 'francois.exe');
+    fs.mkdirSync(path.dirname(exe), { recursive: true });
+    fs.writeFileSync(exe, 'fixture');
+    return exe;
+  }
+
+  it('pins the installed Node version even when given the NVM junction', () => {
+    const root = tempDir();
+    const version = path.join(root, 'v21');
+    const exe = npmBinary(version);
+    const stable = path.join(root, 'nodejs');
+    fs.symlinkSync(version, stable, process.platform === 'win32' ? 'junction' : 'dir');
+    const alias = path.join(stable, 'node_modules', 'francois', 'vendor', 'francois.exe');
+    expect(windowsShortcutExecutable(alias)).toBe(fs.realpathSync.native(exe));
+  });
+
+  it('keeps the supplied installation when another Node version also has the app', () => {
+    const root = tempDir();
+    const exe = npmBinary(path.join(root, 'v18'));
+    const active = path.join(root, 'v21');
+    npmBinary(active);
+    expect(windowsShortcutExecutable(exe)).toBe(fs.realpathSync.native(exe));
+  });
+
+  it('keeps a missing executable path for best-effort desktop registration', () => {
+    const root = tempDir();
+    const exe = path.join(root, 'missing.exe');
+    expect(windowsShortcutExecutable(exe)).toBe(exe);
   });
 });
 

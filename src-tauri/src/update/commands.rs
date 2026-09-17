@@ -65,7 +65,7 @@ pub fn plan_apply(
     // FR-5 re-run live: only an npm-managed copy can be updated in place.
     let Some(exe) = npm_install_executable(root, current_exe) else {
         return ApplyPlan::Failed(format!(
-            "This copy of Francois was not installed through npm, so it cannot update itself. Run `{UPDATE_COMMAND}` to update it."
+            "Francois could not verify an npm install record for this copy. Run `{UPDATE_COMMAND}`, then launch `francois` from that terminal."
         ));
     };
     ApplyPlan::Go {
@@ -257,6 +257,25 @@ mod tests {
             other => panic!("expected Go, got {other:?}"),
         }
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_node_version_switch_does_not_block_an_idle_npm_copy() {
+        let (old_root, exe) = npm_tree("old-node");
+        let (active_root, _) = npm_tree("active-node");
+        let check = check_fixture("0.37.1", "0.38.0", METHOD_NPM);
+        match plan_apply(0, Some(&check), Some(&active_root), &exe) {
+            ApplyPlan::Go {
+                latest,
+                exe: fallback,
+            } => {
+                assert_eq!(latest, "0.38.0");
+                assert_eq!(fallback, exe.canonicalize().unwrap());
+            }
+            other => panic!("expected Go, got {other:?}"),
+        }
+        std::fs::remove_dir_all(old_root).unwrap();
+        std::fs::remove_dir_all(active_root).unwrap();
     }
 
     // FR-18: calling applyUpdate on a manual install resolves UPDATE_APPLY_FAILED.
