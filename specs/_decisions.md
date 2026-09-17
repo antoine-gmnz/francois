@@ -92,6 +92,9 @@
 - 2026-08-25 · data · A derived-summary row carries only a `has<X>` BOOLEAN for its fat record; the record is fetched lazily by id from a sidecar and never inlined into the list payload or an event — because the summary list is the hot path and a fat field taxes every page read to serve a rare click · command-inspect
 - 2026-08-25 · data · Truncation at CAPTURE must store the true pre-truncation totals and the panel must state what was dropped — a capped slice is never presented as complete — because a bound that lies about its own bound is worse than no bound · command-inspect
 
+- 2026-09-16 · data · Persist a vendor-catalog display value on the entity; point-of-use derivation is only for sources that stay authoritative — because a label must outlive its account · display-openai-model-name
+- 2026-09-16 · naming · A humanizer tuned to one vendor's id grammar is gated on the id being that vendor's; every other id renders verbatim — because out of domain it invents a name (gpt-4o → "Gpt") instead of failing visibly · display-openai-model-name
+
 ## Superseded
 
 - 2026-08-12 · data · A session's provider is DERIVED from its account's kind at creation and never chosen or re-derived — because two sources of truth for which wire a session speaks is how a session ends up pointed at a key it does not have · multi-provider-seam · superseded 2026-08-24 by core-architecture-fixes

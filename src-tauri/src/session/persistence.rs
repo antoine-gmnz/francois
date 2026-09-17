@@ -335,6 +335,11 @@ pub fn persist(app: &AppHandle, engine: &Engine) {
         .map(|s| {
             let mut rec = serde_json::json!({
                 "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
+                // display-openai-model-name FR-1: always written, like modelId —
+                // every session has both, resolved once at creation/switch/reconcile
+                // and never re-derived on load (FR-8).
+                "modelLabel": s.model_label,
+                "contextLimitTokens": s.context_limit_tokens,
                 "permissionMode": s.permission_mode,
                 // rework-top-bar (design 11c): the `on since` line must survive a
                 // restart — a bypass left on last week is exactly the case the
@@ -432,6 +437,12 @@ pub struct PersistedMeta {
     name: String,
     cwd: String,
     model_id: String,
+    /// display-openai-model-name FR-1/FR-9: `None` on every pre-feature
+    /// record — `load_persisted` falls back to `fallback_label` for those.
+    model_label: Option<String>,
+    /// display-openai-model-name FR-1/FR-9: `None` on every pre-feature
+    /// record.
+    context_limit_tokens: Option<u64>,
     effort: Option<String>,
     permission_mode: String, // "default" when absent (pre-feature records)
     /// rework-top-bar (design 11c): `None` on every pre-feature record — the load
@@ -545,6 +556,14 @@ pub fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
         name,
         cwd,
         model_id,
+        // display-openai-model-name FR-1: a blank string is treated as absent,
+        // matching the other optional-string fields below.
+        model_label: rec
+            .get("modelLabel")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(String::from),
+        context_limit_tokens: rec.get("contextLimitTokens").and_then(|v| v.as_u64()),
         effort: rec
             .get("effort")
             .and_then(|v| v.as_str())
@@ -754,11 +773,33 @@ pub fn load_persisted(app: &AppHandle) {
         // `spawn_transcript_hydration` fills it in on a background thread.
         let block_buffer = Vec::new();
         let transcript_truncated = false;
-        // Only a window the catalog actually KNOWS is a ceiling — see
-        // `loaded_context`. `load_model_cache` runs before this, so the mirror
-        // from the last run is already in hand.
-        let (limit, used) =
-            loaded_context(resolve_context_tokens(&m.model_id), m.context_used_tokens);
+        // display-openai-model-name FR-8/FR-9/FR-12: no adapter call on the
+        // load path (no network, no CODEX_HOME read). An Anthropic-shaped id
+        // keeps TODAY's byte-for-byte behavior — the persisted
+        // contextLimitTokens is ignored and `resolve_context_tokens` (cache
+        // only; `load_model_cache` runs before this) decides real vs
+        // placeholder, exactly as before this feature (Goals: "no change on
+        // Claude Code sessions"). A non-Anthropic id trusts its own
+        // persisted figure — or FR-5's pure table fallback on a pre-feature
+        // record (FR-9) — as real: FR-11 says this path must never overwrite
+        // a resolved non-Anthropic limit with the Anthropic placeholder.
+        let anthropic = is_anthropic_shaped(&m.model_id);
+        let model_label = if anthropic {
+            fallback_label(&m.model_id)
+        } else {
+            m.model_label
+                .clone()
+                .unwrap_or_else(|| fallback_label(&m.model_id))
+        };
+        let known_context: Option<u64> = if anthropic {
+            resolve_context_tokens(&m.model_id)
+        } else {
+            Some(
+                m.context_limit_tokens
+                    .unwrap_or_else(|| fallback_context(&m.model_id)),
+            )
+        };
+        let (limit, used) = loaded_context(known_context, m.context_used_tokens);
         watched.push((m.id.clone(), m.cwd.clone()));
         map.insert(
             m.id.clone(),
@@ -767,6 +808,7 @@ pub fn load_persisted(app: &AppHandle) {
                 name: m.name,
                 cwd: m.cwd,
                 model_id: m.model_id,
+                model_label,
                 // Always `idle` on load, whatever the session was when the app
                 // quit: the child process is gone, so a persisted `starting` or
                 // `awaiting_*` would describe a turn that no longer exists.
@@ -1134,6 +1176,37 @@ mod tests {
         );
         // missing required field → None
         assert!(parse_session_record(&json!({ "name": "x" }), 0).is_none());
+    }
+
+    // ---------- display-openai-model-name FR-1/FR-9 ----------
+
+    #[test]
+    fn a_pre_feature_record_has_neither_new_field() {
+        let old = json!({ "id": "abc", "name": "n", "cwd": "/x", "modelId": "gpt-4o" });
+        let m = parse_session_record(&old, 0).unwrap();
+        assert_eq!(m.model_label, None);
+        assert_eq!(m.context_limit_tokens, None);
+    }
+
+    #[test]
+    fn a_post_feature_record_round_trips_both_new_fields() {
+        let full = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "gpt-4o",
+            "modelLabel": "gpt-4o", "contextLimitTokens": 128_000u64,
+        });
+        let m = parse_session_record(&full, 0).unwrap();
+        assert_eq!(m.model_label.as_deref(), Some("gpt-4o"));
+        assert_eq!(m.context_limit_tokens, Some(128_000));
+    }
+
+    #[test]
+    fn a_blank_persisted_label_reads_back_as_absent() {
+        // Same normalization every other optional string field applies.
+        let rec = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "gpt-4o", "modelLabel": "   ",
+        });
+        let m = parse_session_record(&rec, 0).unwrap();
+        assert_eq!(m.model_label, None);
     }
 
     #[test]

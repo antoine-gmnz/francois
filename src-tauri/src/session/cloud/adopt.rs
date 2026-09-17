@@ -389,13 +389,17 @@ fn create_adopted_session(
     // the fact that the thread came from Claude Code on the web.
     let (agent_runtime, protocol) =
         AgentRuntime::from_account_kind(crate::account::kind_of(app, &account_id));
+    // display-openai-model-name FR-6: adoption resolves the label + window
+    // from the account's own runtime catalog too, same as session_create.
+    let (model_label, context_limit_tokens) = resolve_model_display(app, &account_id, &model_id);
     let mut session = Session::new(
         id.clone(),
         adopt_name(title, &landing.dir),
         landing.dir.clone(),
         model_id.clone(),
+        model_label,
         0,
-        context_limit(&model_id),
+        context_limit_tokens,
         now,
         now,
         seed.effort.clone().filter(|e| valid_effort(e)),
