@@ -398,6 +398,8 @@ fn check_consentable(ext: &LoadedExtension, manifest_sha256: &str) -> Result<(),
             code: "INVALID_INPUT".into(),
             message: "this manifest failed to load".into(),
             detail: None,
+
+            runtime_failure: None,
         });
     }
     let Some(current_sha) = ext.manifest_sha256.as_deref() else {
@@ -405,13 +407,17 @@ fn check_consentable(ext: &LoadedExtension, manifest_sha256: &str) -> Result<(),
             code: "INVALID_INPUT".into(),
             message: "this manifest failed to load".into(),
             detail: None,
+
+            runtime_failure: None,
         });
     };
     if current_sha != manifest_sha256 {
         return Err(AppError {
             code: "EXT_CONSENT_STALE".into(),
             message: "the manifest changed since this dialog opened".into(),
-            detail: Some(json!({ "extensionId": ext.id })),
+            detail: Some(Box::new(json!({ "extensionId": ext.id }))),
+
+            runtime_failure: None,
         });
     }
     Ok(())
@@ -836,6 +842,8 @@ mod tests {
                 code: "EXT_MANIFEST_INVALID".into(),
                 message: "invalid manifest".into(),
                 detail: None,
+
+                runtime_failure: None,
             }),
         };
         let result = check_consentable(&ext, "deadbeef");

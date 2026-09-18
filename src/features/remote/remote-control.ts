@@ -2,7 +2,7 @@
 // per-session Remote Control host. The core owns the process; this module owns how
 // its state is folded and rendered.
 
-import type { AppError, SessionId } from '../../../contract/common';
+import type { AppError, CapabilityState, SessionId } from '../../../contract/common';
 import type { McpApprovalState } from '../../../contract/mcp-panel';
 import type { RemoteControlEvent, RemoteControlState, RemoteControlStatus } from '../../../contract/remote-control';
 
@@ -154,3 +154,8 @@ export function approvalRequiredOf(state: RemoteControlState): McpApprovalState 
 // pane [1] dot — deferred, see spec §8
 export const liveRemoteSessionIds = (map: RemoteMap): SessionId[] =>
   Object.keys(map).filter((id) => isRemoteLive(map[id]));
+
+/** Starting and opening are separate: an existing host must remain stoppable. */
+export function remoteControlActions(capability: CapabilityState, state: RemoteControlState) {
+  return { canStart: capability.available, canOpen: capability.available || isRemoteLive(state) || state.phase === 'failed', reason: capability.reason };
+}

@@ -2,11 +2,28 @@
 
 use super::*;
 
-use crate::ipc::AppError;
+use crate::ipc::{AppError, RuntimeFailure};
 use crate::permissions::{PermissionAsk, PermissionRule};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
+
+/// Ordered, session-scoped runtime events. This intentionally carries only
+/// core-normalised values; Pi's wire DTOs stay inside its future adapter.
+#[derive(Serialize, Clone)]
+#[serde(tag = "kind")]
+#[allow(dead_code)]
+pub(crate) enum RuntimeEventPayload {
+    #[serde(rename = "run.state")]
+    RunState { state: RuntimeRunState },
+    #[serde(rename = "capabilities")]
+    Capabilities {
+        #[serde(serialize_with = "serialize_capabilities")]
+        capabilities: RuntimeCapabilities,
+    },
+    #[serde(rename = "failure")]
+    Failure { failure: RuntimeFailure },
+}
 
 // ---------- SessionEvent (contract/common.ts, reproduced) ----------
 
@@ -76,6 +93,8 @@ pub(crate) enum SessionEvent {
         #[serde(rename = "blockId")]
         block_id: String,
         meta: String,
+        #[serde(rename = "hasDetail", skip_serializing_if = "Option::is_none")]
+        has_detail: Option<bool>,
     },
     #[serde(rename = "command.started")]
     CommandStarted {
@@ -184,6 +203,26 @@ pub(crate) enum SessionEvent {
         session_id: String,
         error: AppError,
     },
+    #[serde(rename = "runtime.event")]
+    #[allow(dead_code)]
+    RuntimeEvent {
+        #[serde(rename = "sessionId")]
+        #[serde(serialize_with = "serialize_uuid")]
+        session_id: String,
+        #[serde(serialize_with = "serialize_uuid")]
+        generation: String,
+        #[serde(serialize_with = "serialize_safe_integer")]
+        sequence: u64,
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        #[serde(serialize_with = "serialize_optional_uuid")]
+        run_id: Option<String>,
+        #[serde(rename = "requestId", skip_serializing_if = "Option::is_none")]
+        #[serde(serialize_with = "serialize_optional_uuid")]
+        request_id: Option<String>,
+        #[serde(serialize_with = "serialize_safe_integer")]
+        at: u64,
+        event: RuntimeEventPayload,
+    },
 }
 
 pub(crate) fn emit(app: &AppHandle, ev: SessionEvent) {
@@ -206,6 +245,51 @@ mod tests {
             ev,
             serde_json::json!({ "type": "session.cleared", "sessionId": "s1" })
         );
+    }
+
+    #[test]
+    fn runtime_event_serializes_to_the_ordered_contract_envelope() {
+        let capabilities = adapter::RUNTIME_CAPABILITIES
+            .into_iter()
+            .map(|key| {
+                (
+                    key.into(),
+                    CapabilityState {
+                        available: false,
+                        reason: Some("Runtime is not connected.".into()),
+                    },
+                )
+            })
+            .collect();
+        let event = SessionEvent::RuntimeEvent {
+            session_id: uuid(),
+            generation: uuid(),
+            sequence: 1,
+            run_id: None,
+            request_id: Some(uuid()),
+            at: 1_000,
+            event: RuntimeEventPayload::Capabilities { capabilities },
+        };
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["type"], "runtime.event");
+        assert_eq!(value["sequence"], 1);
+        assert_eq!(value["event"]["kind"], "capabilities");
+        assert!(value.get("runId").is_none());
+
+        let _ = RuntimeEventPayload::RunState {
+            state: RuntimeRunState::Idle,
+        };
+        let _ = RuntimeEventPayload::Failure {
+            failure: RuntimeFailure::validated(
+                "runtime",
+                "RUNTIME_EXITED",
+                "stopped",
+                false,
+                None,
+                None,
+            )
+            .unwrap(),
+        };
     }
 
     #[test]
@@ -402,6 +486,17 @@ mod tests {
     }
 
     #[test]
+    fn run_state_maps_onto_the_closed_session_status_vocabulary() {
+        // pi-runtime-boundary: `stopping` has no wire status of its own and
+        // reads as still-busy `running`; `failed` is the terminal `error`.
+        assert_eq!(RuntimeRunState::Starting.session_status(), status::STARTING);
+        assert_eq!(RuntimeRunState::Running.session_status(), status::RUNNING);
+        assert_eq!(RuntimeRunState::Stopping.session_status(), status::RUNNING);
+        assert_eq!(RuntimeRunState::Idle.session_status(), status::IDLE);
+        assert_eq!(RuntimeRunState::Failed.session_status(), status::ERROR);
+    }
+
+    #[test]
     fn workflow_update_event_serializes_to_contract_shape() {
         // workflow-panel §5: { type: 'workflow.update', run } — the whole run,
         // with no sessionId of its own at the envelope level (it rides on `run`).
@@ -415,4 +510,182 @@ mod tests {
         assert_eq!(v["run"]["status"], "running");
         assert!(v.get("sessionId").is_none());
     }
+}
+
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+pub(crate) enum RuntimeRunState {
+    Starting,
+    Running,
+    Idle,
+    Stopping,
+    Failed,
+}
+impl RuntimeRunState {
+    /// The `Session.status` a `run.state` event settles the session onto
+    /// (pi-runtime-boundary): `Stopping` still counts as busy (cancellation in
+    /// flight, no dedicated wire status for it) and `Failed` is the terminal
+    /// `status::ERROR` — the caller pairs it with clearing/setting
+    /// `error_message`, never this function alone.
+    pub(crate) fn session_status(self) -> &'static str {
+        match self {
+            Self::Starting => status::STARTING,
+            Self::Running | Self::Stopping => status::RUNNING,
+            Self::Idle => status::IDLE,
+            Self::Failed => status::ERROR,
+        }
+    }
+}
+#[allow(dead_code)]
+pub(crate) struct RuntimeEventSequence {
+    session_id: String,
+    generation: String,
+    sequence: u64,
+}
+impl RuntimeEventSequence {
+    pub(crate) fn generation(&self) -> &str {
+        &self.generation
+    }
+    pub(crate) fn new(session_id: String) -> Result<Self, AppError> {
+        if !crate::ipc::valid_correlation(&session_id) {
+            return Err(AppError::runtime(
+                crate::ipc::RuntimeErrorCode::InvalidInput,
+                "invalid session id",
+            ));
+        }
+        Ok(Self {
+            session_id,
+            generation: uuid(),
+            sequence: 0,
+        })
+    }
+    pub(crate) fn next(
+        &mut self,
+        at: u64,
+        run_id: Option<String>,
+        request_id: Option<String>,
+        event: RuntimeEventPayload,
+    ) -> Result<SessionEvent, AppError> {
+        const MAX_SAFE: u64 = 9_007_199_254_740_991;
+        if at > MAX_SAFE
+            || self.sequence >= MAX_SAFE
+            || run_id
+                .iter()
+                .chain(request_id.iter())
+                .any(|id| !crate::ipc::valid_correlation(id))
+        {
+            return Err(AppError::runtime(
+                crate::ipc::RuntimeErrorCode::InvalidInput,
+                "invalid runtime event envelope",
+            ));
+        }
+        if let RuntimeEventPayload::Capabilities { capabilities } = &event {
+            adapter::validate_capabilities(capabilities)?;
+        }
+        self.sequence += 1;
+        Ok(SessionEvent::RuntimeEvent {
+            session_id: self.session_id.clone(),
+            generation: self.generation.clone(),
+            sequence: self.sequence,
+            run_id,
+            request_id,
+            at,
+            event,
+        })
+    }
+}
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    #[test]
+    fn ordered_uuid_generation_and_validation() {
+        assert!(RuntimeEventSequence::new("bad".into()).is_err());
+        let mut seq = RuntimeEventSequence::new(uuid()).unwrap();
+        let a = serde_json::to_value(
+            seq.next(
+                1,
+                None,
+                Some(uuid()),
+                RuntimeEventPayload::RunState {
+                    state: RuntimeRunState::Starting,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let b = serde_json::to_value(
+            seq.next(
+                2,
+                None,
+                None,
+                RuntimeEventPayload::RunState {
+                    state: RuntimeRunState::Idle,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(a["generation"], b["generation"]);
+        assert!(crate::ipc::valid_correlation(
+            a["generation"].as_str().unwrap()
+        ));
+        assert_eq!(b["sequence"], 2);
+        assert!(seq
+            .next(
+                3,
+                None,
+                Some("unsafe".into()),
+                RuntimeEventPayload::RunState {
+                    state: RuntimeRunState::Failed
+                }
+            )
+            .is_err());
+        assert!(seq
+            .next(
+                u64::MAX,
+                None,
+                None,
+                RuntimeEventPayload::RunState {
+                    state: RuntimeRunState::Idle
+                }
+            )
+            .is_err());
+    }
+}
+
+fn serialize_uuid<S: serde::Serializer>(id: &str, serializer: S) -> Result<S::Ok, S::Error> {
+    if !crate::ipc::valid_correlation(id) {
+        return Err(serde::ser::Error::custom("invalid runtime UUID"));
+    }
+    serializer.serialize_str(id)
+}
+fn serialize_optional_uuid<S: serde::Serializer>(
+    id: &Option<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if id
+        .as_ref()
+        .is_some_and(|id| !crate::ipc::valid_correlation(id))
+    {
+        return Err(serde::ser::Error::custom("invalid runtime correlation"));
+    }
+    id.serialize(serializer)
+}
+fn serialize_safe_integer<S: serde::Serializer>(
+    value: &u64,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if *value > 9_007_199_254_740_991 {
+        return Err(serde::ser::Error::custom("unsafe runtime integer"));
+    }
+    serializer.serialize_u64(*value)
+}
+fn serialize_capabilities<S: serde::Serializer>(
+    caps: &RuntimeCapabilities,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    adapter::validate_capabilities(caps)
+        .map_err(|_| serde::ser::Error::custom("invalid capability snapshot"))?;
+    caps.serialize(serializer)
 }

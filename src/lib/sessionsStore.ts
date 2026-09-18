@@ -13,7 +13,7 @@
 // moving on).
 
 import type { StateCreator } from 'zustand';
-import type { SessionId, SessionMeta } from '../../contract/common';
+import type { RuntimeEventEnvelope, SessionId, SessionMeta } from '../../contract/common';
 import { dropSessionTabs, mainTabAfterClose } from '../features/agents/agent-tab';
 import type { MainTab } from './agentTabStore';
 import { closeStreamsForRemovedPanels } from './extensionsStore';
@@ -43,6 +43,8 @@ export interface SessionsSlice {
    */
   patchError: (id: SessionId, message: string) => void;
   patchUsage: (id: SessionId, used: number, limit: number) => void;
+  /** Applies sanitized, ordered child state only when it belongs to the live connection. */
+  applyRuntimeEvent: (event: RuntimeEventEnvelope) => void;
   removeSession: (id: SessionId) => void;
 
   // sessions-sidebar store slice (§5)
@@ -120,19 +122,67 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       next[i] = m; // update in place, position preserved
       return { sessions: next };
     }),
+  // The three patches bail without minting a new `sessions` array when the
+  // patch changes nothing (unknown id, or the value already cached) — the same
+  // no-op guard rosterStore/overviewStore carry. Without it every duplicate
+  // status/usage event from ANY session invalidated the array reference and
+  // re-rendered all whole-array subscribers (App, Sidebar, UsageMeters), which
+  // is what made typing lag once several sessions streamed at once. Only the
+  // touched entry is replaced, so per-session `find` selectors stay
+  // reference-stable for everyone else.
   patchStatus: (id, status) =>
-    set((s) => ({
-      sessions: s.sessions.map((x) => (x.id === id ? { ...x, status: status as SessionMeta['status'] } : x)),
-    })),
+    set((s) => {
+      const i = s.sessions.findIndex((x) => x.id === id);
+      if (i === -1 || s.sessions[i].status === status) return {};
+      const next = s.sessions.slice();
+      next[i] = { ...next[i], status: status as SessionMeta['status'] };
+      return { sessions: next };
+    }),
   patchError: (id, message) =>
-    set((s) => ({
-      sessions: s.sessions.map((x) => (x.id === id ? { ...x, errorMessage: message } : x)),
-    })),
+    set((s) => {
+      const i = s.sessions.findIndex((x) => x.id === id);
+      if (i === -1 || s.sessions[i].errorMessage === message) return {};
+      const next = s.sessions.slice();
+      next[i] = { ...next[i], errorMessage: message };
+      return { sessions: next };
+    }),
   patchUsage: (id, used, limit) =>
+    set((s) => {
+      const i = s.sessions.findIndex((x) => x.id === id);
+      if (i === -1) return {};
+      const cur = s.sessions[i];
+      // Identical figures = a duplicate event, not a turn — skip the
+      // lastActivityAt stamp too, or the "idle Xh" readout would reset on noise.
+      if (cur.contextUsedTokens === used && cur.contextLimitTokens === limit) return {};
+      const next = s.sessions.slice();
+      next[i] = { ...cur, contextUsedTokens: used, contextLimitTokens: limit, lastActivityAt: Date.now() };
+      return { sessions: next };
+    }),
+  applyRuntimeEvent: (event) =>
     set((s) => ({
-      sessions: s.sessions.map((x) =>
-        x.id === id ? { ...x, contextUsedTokens: used, contextLimitTokens: limit, lastActivityAt: Date.now() } : x,
-      ),
+      sessions: s.sessions.map((session) => {
+        // A fresh session.meta establishes the new generation. An old child is
+        // allowed to finish emitting, but it must never repaint the new child.
+        if (session.id !== event.sessionId || session.runtimeGeneration !== event.generation) return session;
+        switch (event.event.kind) {
+          case 'capabilities':
+            return { ...session, effectiveCapabilities: event.event.capabilities };
+          case 'failure':
+            return { ...session, errorMessage: event.event.failure.message };
+          case 'run.state':
+            return {
+              ...session,
+              status:
+                event.event.state === 'failed'
+                  ? 'error'
+                  : event.event.state === 'idle'
+                    ? 'idle'
+                    : event.event.state === 'starting'
+                      ? 'starting'
+                      : 'running',
+            };
+        }
+      }),
     })),
   removeSession: (id) =>
     set((s) => {

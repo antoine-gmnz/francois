@@ -52,6 +52,14 @@ export interface ComposerPaneProps {
   sessionId: string;
   /** split-session FR-6: see ConversationViewProps.inert. */
   inert: boolean;
+  /**
+   * Whether this composer is ON SCREEN — see ConversationViewProps.visible. It
+   * gates exactly what `inert` gates and for the same reason: the two
+   * document/webview-level attachment gestures. The main pane now holds up to
+   * three transcripts mounted at once, so without this a single paste would
+   * stage the image into all three sessions.
+   */
+  visible: boolean;
   onFocusRequest?: () => void;
   inertFooter?: ReactNode;
   status: SessionStatus;
@@ -69,6 +77,7 @@ export interface ComposerPaneProps {
 export default function ComposerPane({
   sessionId,
   inert,
+  visible,
   onFocusRequest,
   inertFooter,
   status,
@@ -122,17 +131,18 @@ export default function ComposerPane({
   }, []);
 
   // split-session FR-5/FR-6: selecting a pane hands the caret to its composer.
-  const wasInertRef = useRef(inert);
+  const wasInertRef = useRef(inert || !visible);
   useEffect(() => {
     const wasInert = wasInertRef.current;
-    wasInertRef.current = inert;
-    if (shouldFocusComposer({ wasInert, inert, hasSelection: documentHasSelection() })) {
+    wasInertRef.current = inert || !visible;
+    if (shouldFocusComposer({ wasInert, inert: inert || !visible, hasSelection: documentHasSelection() })) {
       inputRef.current?.focus();
     }
-  }, [inert]);
+  }, [inert, visible]);
 
   // ---------- session-attachments ----------
-  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow, active: !inert });
+  const imagesCapability = sessionCapability(meta, 'images');
+  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow, active: !inert && visible, imagesCapability });
 
   // ---------- slash-menu popup (FR-5..FR-9/12) ----------
 
@@ -187,6 +197,7 @@ export default function ComposerPane({
       }
       return;
     }
+    if (!attachments.canSubmit(text)) return;
     const blockId = crypto.randomUUID();
     // transcript-perf FR-10: a busy session parks the prompt instead of
     // creating a transcript block — the core will only mint it at drain time
@@ -342,7 +353,7 @@ export default function ComposerPane({
         inputRef={inputRef}
         placeholder={placeholder}
         sendError={sendError}
-        attachError={attachments.attachError}
+        attachError={attachments.attachError ?? (imagesCapability.available ? null : (imagesCapability.reason ?? 'Images are unavailable for this session.'))}
         attachments={attachments.chips}
         contextPercent={
           meta && meta.contextLimitTokens > 0

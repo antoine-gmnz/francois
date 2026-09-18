@@ -18,5 +18,21 @@ export function sessionCapability(
   capability: RuntimeCapability,
 ): CapabilityState {
   if (!meta) return { available: true };
-  return runtimeCapabilities(meta.agentRuntime)[capability];
+  const baseline = runtimeCapabilities(meta.agentRuntime)[capability];
+  const live = meta.effectiveCapabilities?.[capability];
+  // The core's live snapshot may only narrow the contract's static default. A
+  // runtime must never acquire a UI action merely because an incomplete or
+  // optimistic child snapshot says it can do something.
+  // Pi deliberately has a fully-disabled static fallback until it connects;
+  // after that, its core-supplied snapshot is the authoritative capability set.
+  if (meta.agentRuntime === 'pi') return live ?? baseline;
+  if (!live || !baseline.available) return baseline;
+  return live.available ? baseline : live;
+}
+
+/** Sandbox selection is separate from interactive approval support. */
+export function sandboxSelectionCapability(meta: SessionMeta | null | undefined): CapabilityState {
+  return meta?.agentRuntime === 'pi'
+    ? { available: false, reason: 'Runtime sandbox selection is unavailable.' }
+    : { available: true };
 }

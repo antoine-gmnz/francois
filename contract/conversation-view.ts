@@ -66,6 +66,8 @@ export interface ToolConversationBlock extends ConversationBlockBase {
   bodyColor: '#8b93a3';
   summary: string;
   meta?: string;
+  /** command-inspect: a captured StepDetail record exists for this tool block. */
+  hasDetail?: boolean;
 }
 
 export interface SubagentConversationBlock extends ConversationBlockBase {

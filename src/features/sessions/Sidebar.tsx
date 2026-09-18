@@ -67,8 +67,8 @@ export default function Sidebar({ home }: { home: string }) {
   const newSessionOpen = useStore((s) => s.newSessionOpen);
   // cloud-sessions FR-14: the adopt modal owns ↑/↓ while it is up.
   const adoptCloudOpen = useStore((s) => s.adoptCloudOpen);
-  // session-rename FR-8: the rename modal owns the keyboard while it is up.
-  const renameOpen = useStore((s) => s.renameSessionId !== null);
+  // session-settings-sheet FR-19: the sheet owns the keyboard while it is up.
+  const sessionSettingsOpen = useStore((s) => s.sessionSettingsId !== null);
   // projects FR-27: the board's project scope (null = All projects).
   const activeProjectId = useStore((s) => s.activeProjectId);
   const projects = useStore((s) => s.projects);
@@ -202,7 +202,7 @@ export default function Sidebar({ home }: { home: string }) {
     adoptCloudOpen,
     projectsOpen,
     menuOpen: !!menu,
-    renameOpen,
+    sessionSettingsOpen,
     selectSession,
     setFocusedPane,
   });
@@ -429,11 +429,11 @@ export default function Sidebar({ home }: { home: string }) {
             // step is actually open, and only for a session that has a worktree.
             if (target?.worktree) startWorktreeCheck(menu.sessionId);
           }}
-          onRename={() => {
-            // session-rename FR-12: the menu closes, the modal (rendered by the
-            // shell, since ⌘K opens the same one) takes over.
+          onOpenSettings={() => {
+            // session-settings-sheet FR-19: the menu closes, the sheet (rendered
+            // by the shell, since ⌘K/⌘, open the same one) takes over.
             setMenu(null);
-            useStore.getState().setRenameSessionId(menu.sessionId);
+            useStore.getState().setSessionSettingsId(menu.sessionId);
           }}
           onCopyPath={() => {
             // The RAW cwd, not the `~`-abbreviated one the header renders — what

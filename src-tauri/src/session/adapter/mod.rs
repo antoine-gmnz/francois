@@ -18,6 +18,11 @@ mod codex;
 mod grok;
 mod openai;
 
+/// The Pi transport is intentionally unavailable until the production runtime
+/// is introduced. Keeping this adapter explicit makes dispatch exhaustive and
+/// prevents an unknown runtime from falling back to Claude.
+struct PiAdapter;
+
 pub(crate) use claude_code::ClaudeCodeAdapter;
 // `session_compact` (a synchronous side-spawn, not a full turn) and the
 // argv-shaped unit tests still reach these directly — same "turn-shaped, not
@@ -37,6 +42,7 @@ use super::*;
 use crate::ipc::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use tauri::AppHandle;
 
 /// Mirrors contract/common.ts `AgentRuntime` (multi-provider-seam FR-11a;
@@ -66,6 +72,10 @@ pub enum AgentRuntime {
     /// Openai` because the wire dialect underneath is an OpenAI-compatible one).
     #[serde(rename = "grok")]
     Grok,
+    /// A session-scoped Pi child. Pi owns its RPC transport, so it has no
+    /// provider API protocol value.
+    #[serde(rename = "pi")]
+    Pi,
 }
 
 /// Mirrors contract/common.ts `ProviderProtocol` (multi-provider-seam
@@ -73,13 +83,45 @@ pub enum AgentRuntime {
 /// `AgentRuntime`: the Claude Code CLI honours `ANTHROPIC_BASE_URL`, so
 /// `(ClaudeCode, Anthropic)` against a third-party endpoint is a real cell a
 /// single collapsed enum could not name.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ProviderProtocol {
     #[default]
-    #[serde(rename = "anthropic")]
     Anthropic,
-    #[serde(rename = "openai")]
     Openai,
+    /// Explicit JSON null for Pi. This must remain distinct from a missing
+    /// legacy field, which is migrated to `Anthropic` by persistence.
+    Pi,
+}
+
+impl Serialize for ProviderProtocol {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Anthropic => serializer.serialize_str("anthropic"),
+            Self::Openai => serializer.serialize_str("openai"),
+            Self::Pi => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ProviderProtocol {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Option::<String>::deserialize(deserializer)?;
+        match value.as_deref() {
+            Some("anthropic") => Ok(Self::Anthropic),
+            Some("openai") => Ok(Self::Openai),
+            None => Ok(Self::Pi),
+            Some(other) => Err(serde::de::Error::unknown_variant(
+                other,
+                &["anthropic", "openai"],
+            )),
+        }
+    }
 }
 
 impl AgentRuntime {
@@ -146,6 +188,62 @@ pub(crate) struct TurnContext {
     /// the rest. No adapter re-reads the session mid-turn, which is what makes
     /// FR-4's next-turn semantics uniform across runtimes.
     pub(crate) response_mode: crate::session::ResponseMode,
+}
+
+/// Immutable, lock-free snapshot used to establish a session-scoped runtime
+/// connection. It deliberately carries no registry guard or credential.
+#[allow(dead_code)]
+#[derive(Clone)]
+pub(crate) struct RuntimeConnectContext {
+    pub(crate) session_id: String,
+    pub(crate) cwd: String,
+    pub(crate) runtime: String,
+    pub(crate) worktree_distro: Option<String>,
+    pub(crate) account_id: String,
+    pub(crate) launch_policy: RuntimeLaunchPolicy,
+    pub(crate) profile_snapshot: RuntimeProfileSnapshot,
+    pub(crate) model: RuntimeModelRef,
+    pub(crate) resume: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct RuntimeModelRef {
+    #[serde(rename = "providerId")]
+    pub(crate) provider_id: String,
+    #[serde(rename = "modelId")]
+    pub(crate) model_id: String,
+}
+
+/// Core-owned capability snapshot. A missing snapshot is intentionally
+/// distinguishable from a map of enabled defaults, especially for Pi.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct CapabilityState {
+    pub(crate) available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reason: Option<String>,
+}
+
+pub(crate) type RuntimeCapabilities = BTreeMap<String, CapabilityState>;
+
+/// Task 08 expands this message vocabulary. The boundary only supports normal
+/// text now, so later runtimes cannot accidentally expose a wire DTO here.
+#[allow(dead_code)]
+pub(crate) struct RuntimeSubmission {
+    pub(crate) text: String,
+}
+
+#[allow(dead_code)]
+pub(crate) struct SubmissionReceipt {
+    pub(crate) request_id: String,
+}
+
+#[allow(dead_code)]
+pub(crate) trait RuntimeSessionControl: Send + Sync {
+    fn submit(&self, input: RuntimeSubmission) -> Result<SubmissionReceipt, AppError>;
+    fn capabilities(&self) -> RuntimeCapabilities;
+    fn cancel(&self) -> Result<(), AppError>;
+    fn shutdown(&self) -> Result<(), AppError>;
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -240,13 +338,54 @@ pub(crate) trait SessionAdapter: Send + Sync {
         app: &AppHandle,
         ctx: TurnContext,
     ) -> Result<std::sync::Arc<dyn TurnControl>, AppError>;
+    #[allow(dead_code)]
+    fn connect_session(
+        &self,
+        _ctx: RuntimeConnectContext,
+    ) -> Result<std::sync::Arc<dyn RuntimeSessionControl>, AppError> {
+        Err(runtime_unsupported())
+    }
     fn models(&self, app: &AppHandle, account_id: &str) -> Vec<ModelInfo>;
+}
+
+#[allow(dead_code)]
+fn runtime_unsupported() -> AppError {
+    AppError::runtime(
+        crate::ipc::RuntimeErrorCode::Unsupported,
+        "this runtime does not support session connections",
+    )
+}
+
+impl SessionAdapter for PiAdapter {
+    fn agent_runtime(&self) -> AgentRuntime {
+        AgentRuntime::Pi
+    }
+    fn preflight(&self, _app: &AppHandle, _ctx: &TurnContext) -> Result<(), AppError> {
+        Err(AppError::runtime(
+            crate::ipc::RuntimeErrorCode::Unavailable,
+            "Pi runtime is not available in this build",
+        ))
+    }
+    fn begin_turn(
+        &self,
+        _app: &AppHandle,
+        _ctx: TurnContext,
+    ) -> Result<std::sync::Arc<dyn TurnControl>, AppError> {
+        Err(AppError::runtime(
+            crate::ipc::RuntimeErrorCode::Unavailable,
+            "Pi runtime is not available in this build",
+        ))
+    }
+    fn models(&self, _app: &AppHandle, _account_id: &str) -> Vec<ModelInfo> {
+        Vec::new()
+    }
 }
 
 static CLAUDE_CODE_ADAPTER: ClaudeCodeAdapter = ClaudeCodeAdapter;
 static OPENAI_ADAPTER: OpenAiAdapter = OpenAiAdapter;
 static CODEX_ADAPTER: CodexAdapter = CodexAdapter;
 static GROK_ADAPTER: GrokAdapter = GrokAdapter;
+static PI_ADAPTER: PiAdapter = PiAdapter;
 
 /// FR-4/FR-14a: dispatch a session's `agentRuntime` ALONE to its adapter —
 /// `protocol` is read inside the `francois` runtime to pick the wire codec,
@@ -257,6 +396,7 @@ pub(crate) fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter 
         AgentRuntime::Francois => &OPENAI_ADAPTER,
         AgentRuntime::Codex => &CODEX_ADAPTER,
         AgentRuntime::Grok => &GROK_ADAPTER,
+        AgentRuntime::Pi => &PI_ADAPTER,
     }
 }
 
@@ -282,6 +422,10 @@ mod tests {
             serde_json::to_value(AgentRuntime::Grok).unwrap(),
             serde_json::json!("grok")
         );
+        assert_eq!(
+            serde_json::to_value(AgentRuntime::Pi).unwrap(),
+            serde_json::json!("pi")
+        );
         assert_eq!(AgentRuntime::default(), AgentRuntime::ClaudeCode);
     }
 
@@ -296,6 +440,14 @@ mod tests {
             serde_json::json!("openai")
         );
         assert_eq!(ProviderProtocol::default(), ProviderProtocol::Anthropic);
+        assert_eq!(
+            serde_json::to_value(ProviderProtocol::Pi).unwrap(),
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            serde_json::from_value::<ProviderProtocol>(serde_json::Value::Null).unwrap(),
+            ProviderProtocol::Pi
+        );
     }
 
     #[test]
@@ -338,6 +490,10 @@ mod tests {
             adapter_for(AgentRuntime::Grok).agent_runtime(),
             AgentRuntime::Grok
         );
+        assert_eq!(
+            adapter_for(AgentRuntime::Pi).agent_runtime(),
+            AgentRuntime::Pi
+        );
     }
 
     #[test]
@@ -373,5 +529,247 @@ mod tests {
         assert_ne!(ControlAck::NotPending, ControlAck::Applied);
         assert_ne!(ControlAck::Applied, ControlAck::ChannelClosed);
         assert_ne!(ControlAck::NotPending, ControlAck::ChannelClosed);
+    }
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
+pub(crate) struct RuntimeLaunchPolicy {
+    pub(crate) permission_mode: String,
+    pub(crate) allow_git: bool,
+}
+#[derive(Clone)]
+#[allow(dead_code)]
+pub(crate) struct RuntimeProfileSnapshot {
+    pub(crate) system_prompt: Option<String>,
+    pub(crate) extra_args: Vec<String>,
+}
+impl RuntimeModelRef {
+    pub(crate) fn validate(&self) -> Result<(), AppError> {
+        if [&self.provider_id, &self.model_id]
+            .iter()
+            .any(|id| id.is_empty() || id.len() > 256 || id.chars().any(char::is_control))
+        {
+            return Err(AppError::runtime(
+                crate::ipc::RuntimeErrorCode::InvalidInput,
+                "invalid provider/model identity",
+            ));
+        }
+        Ok(())
+    }
+}
+impl RuntimeConnectContext {
+    pub(crate) fn validate(self) -> Result<Self, AppError> {
+        self.model.validate()?;
+        if !std::path::Path::new(&self.cwd).is_absolute()
+            || !crate::ipc::valid_correlation(&self.session_id)
+        {
+            return Err(AppError::runtime(
+                crate::ipc::RuntimeErrorCode::InvalidInput,
+                "invalid runtime connection snapshot",
+            ));
+        }
+        Ok(self)
+    }
+}
+pub(crate) const RUNTIME_CAPABILITIES: [&str; 17] = [
+    "mcp",
+    "subagents",
+    "skills",
+    "skillsInstall",
+    "workflows",
+    "interactiveCommands",
+    "permissions",
+    "remoteControl",
+    "usageBar",
+    "compaction",
+    "steering",
+    "followUps",
+    "resumableSessions",
+    "modelSwitching",
+    "images",
+    "contextMetrics",
+    "costMetrics",
+];
+pub(crate) fn validate_capabilities(caps: &RuntimeCapabilities) -> Result<(), AppError> {
+    if caps.len() != RUNTIME_CAPABILITIES.len()
+        || RUNTIME_CAPABILITIES.iter().any(|key| {
+            caps.get(*key).is_none_or(|state| {
+                state.available == state.reason.is_some()
+                    || state.reason.as_ref().is_some_and(|r| {
+                        !crate::ipc::safe_display(r, crate::ipc::MAX_CAPABILITY_REASON_BYTES)
+                    })
+            })
+        })
+    {
+        return Err(AppError::runtime(
+            crate::ipc::RuntimeErrorCode::InvalidInput,
+            "invalid runtime capabilities",
+        ));
+    }
+    Ok(())
+}
+pub(crate) fn resolve_capability(
+    runtime: AgentRuntime,
+    caps: Option<&RuntimeCapabilities>,
+    key: &str,
+) -> bool {
+    if !RUNTIME_CAPABILITIES.contains(&key) {
+        return false;
+    }
+    let baseline = match runtime {
+        AgentRuntime::ClaudeCode => {
+            RUNTIME_CAPABILITIES[..10].contains(&key) || matches!(key, "modelSwitching" | "images")
+        }
+        AgentRuntime::Francois => {
+            matches!(key, "skills" | "permissions" | "modelSwitching" | "images")
+        }
+        AgentRuntime::Codex | AgentRuntime::Grok => matches!(key, "modelSwitching" | "images"),
+        AgentRuntime::Pi => false,
+    };
+    match caps {
+        Some(caps) => {
+            validate_capabilities(caps).is_ok()
+                && (runtime == AgentRuntime::Pi || baseline)
+                && caps.get(key).is_some_and(|s| s.available)
+        }
+        None => baseline,
+    }
+}
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+    #[test]
+    fn capability_reasons_are_bounded_safe_display_text() {
+        let mut caps: RuntimeCapabilities = RUNTIME_CAPABILITIES
+            .into_iter()
+            .map(|k| {
+                (
+                    k.into(),
+                    CapabilityState {
+                        available: false,
+                        reason: Some("Disabled".into()),
+                    },
+                )
+            })
+            .collect();
+        caps.get_mut("mcp").unwrap().reason =
+            Some("x".repeat(crate::ipc::MAX_CAPABILITY_REASON_BYTES + 1));
+        assert!(validate_capabilities(&caps).is_err());
+        caps.get_mut("mcp").unwrap().reason = Some("secret\nwire".into());
+        assert!(validate_capabilities(&caps).is_err());
+    }
+    #[test]
+    fn legacy_defaults_do_not_enable_unsupported_actions() {
+        assert!(!resolve_capability(
+            AgentRuntime::ClaudeCode,
+            None,
+            "steering"
+        ));
+        assert!(!resolve_capability(
+            AgentRuntime::Codex,
+            None,
+            "permissions"
+        ));
+        assert!(!resolve_capability(AgentRuntime::Francois, None, "mcp"));
+        let caps = RUNTIME_CAPABILITIES
+            .into_iter()
+            .map(|k| {
+                (
+                    k.into(),
+                    CapabilityState {
+                        available: true,
+                        reason: None,
+                    },
+                )
+            })
+            .collect();
+        assert!(!resolve_capability(AgentRuntime::Codex, Some(&caps), "mcp"));
+    }
+    #[test]
+    fn missing_and_explicitly_disabled_snapshots() {
+        assert!(resolve_capability(
+            AgentRuntime::ClaudeCode,
+            None,
+            "permissions"
+        ));
+        assert!(!resolve_capability(AgentRuntime::Pi, None, "permissions"));
+        let caps = RUNTIME_CAPABILITIES
+            .into_iter()
+            .map(|key| {
+                (
+                    key.into(),
+                    CapabilityState {
+                        available: false,
+                        reason: Some("unavailable".into()),
+                    },
+                )
+            })
+            .collect();
+        assert!(validate_capabilities(&caps).is_ok());
+        assert!(!resolve_capability(
+            AgentRuntime::ClaudeCode,
+            Some(&caps),
+            "permissions"
+        ));
+        assert!(validate_capabilities(&RuntimeCapabilities::new()).is_err());
+    }
+    #[test]
+    fn exact_bounded_model_identifiers() {
+        let model = RuntimeModelRef {
+            provider_id: "provider".into(),
+            model_id: "model:exact".into(),
+        };
+        assert!(model.validate().is_ok());
+        assert!(RuntimeModelRef {
+            provider_id: "".into(),
+            ..model.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(RuntimeModelRef {
+            model_id: "x".repeat(257),
+            ..model
+        }
+        .validate()
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod connect_snapshot_tests {
+    use super::*;
+    fn context(cwd: &str) -> RuntimeConnectContext {
+        RuntimeConnectContext {
+            session_id: uuid(),
+            cwd: cwd.into(),
+            runtime: "native".into(),
+            worktree_distro: None,
+            account_id: uuid(),
+            launch_policy: RuntimeLaunchPolicy {
+                permission_mode: "default".into(),
+                allow_git: false,
+            },
+            profile_snapshot: RuntimeProfileSnapshot {
+                system_prompt: Some("exact prompt".into()),
+                extra_args: vec!["--exact".into()],
+            },
+            model: RuntimeModelRef {
+                provider_id: "exact.provider".into(),
+                model_id: "exact:model".into(),
+            },
+            resume: None,
+        }
+    }
+    #[test]
+    fn snapshot_requires_absolute_cwd_and_retains_launch_profile_and_model() {
+        assert!(context("relative").validate().is_err());
+        let ctx = context(env!("CARGO_MANIFEST_DIR")).validate().unwrap();
+        assert_eq!(ctx.model.model_id, "exact:model");
+        assert_eq!(
+            ctx.profile_snapshot.system_prompt.as_deref(),
+            Some("exact prompt")
+        );
+        assert_eq!(ctx.launch_policy.permission_mode, "default");
     }
 }

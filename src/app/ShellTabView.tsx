@@ -27,12 +27,21 @@ export interface ShellTabViewProps {
    *    keystrokes land in the wrong session's PTY.
    */
   paneFocused?: boolean;
+  /**
+   * Whether this whole tab is on screen. False for a mount the main pane's
+   * `SessionViewHost` is HOLDING behind `display: none` (another session's
+   * shell, or this session's while the pane shows SESSION/DIFF): its terminals
+   * must not run FR-13's become-visible fit — the container measures 0 while
+   * hidden — and none of them may take the caret. Defaults to true: a
+   * `SplitPane` only ever mounts this for the tab it is actually showing.
+   */
+  visible?: boolean;
 }
 
 /** The SHELL main tab's body: the sub-tab strip (multiple-shells), the PTY
  * terminal(s) — every shell of the session stays mounted while this tab is
  * (FR-13) — and the footer (alive dot, shell name + cwd, interrupt/clear hints). */
-export default function ShellTabView({ sessionId, home, paneFocused = true }: ShellTabViewProps) {
+export default function ShellTabView({ sessionId, home, paneFocused = true, visible = true }: ShellTabViewProps) {
   const shells = useShellsFor(sessionId);
   const activeShellId = useActiveShellId(sessionId);
   const [attachError, setAttachError] = useState<string | null>(null);
@@ -48,7 +57,11 @@ export default function ShellTabView({ sessionId, home, paneFocused = true }: Sh
 
   // FR-19/FR-21: ⌘T/⌘W/⌃⇥/⌃⇧⇥ reachable from anywhere in this tab, not just an
   // unfocused terminal (ShellTerminal's own key handler covers that case).
-  useShellShortcuts(sessionId, paneFocused);
+  // `visible` is half the gate now that the host holds up to three of these
+  // mounted at once: without it, one ⌘T would open a shell in every held
+  // session, only one of which is on screen.
+  const owns = paneFocused && visible;
+  useShellShortcuts(sessionId, owns);
 
   // Flow 1/5/7: learn (or create-if-none attach) the session's shell roster —
   // once per mount (tab open / session change). Each ShellTerminal ensures
@@ -122,8 +135,11 @@ export default function ShellTabView({ sessionId, home, paneFocused = true }: Sh
             key={s.id}
             owner={{ kind: 'session', sessionId }}
             shellId={s.id}
-            visible={s.id === activeShellId}
-            canFocus={paneFocused}
+            // FR-13's "displayed shell" now has a second condition: the tab it
+            // lives in must itself be on screen. A held tab's active shell would
+            // otherwise fit + focus against a display:none container.
+            visible={visible && s.id === activeShellId}
+            canFocus={owns}
             initialData={initialAttach?.shellId === s.id ? initialAttach.data : undefined}
           />
         ))}

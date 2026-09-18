@@ -16,8 +16,8 @@ export interface UseSidebarKeyboardOptions {
   projectsOpen: boolean;
   /** True while the row context menu is open. */
   menuOpen: boolean;
-  /** session-rename FR-8: true while the rename modal is up — pane [1] keys are off. */
-  renameOpen: boolean;
+  /** session-settings-sheet FR-19: true while the settings sheet is up — pane [1] keys are off. */
+  sessionSettingsOpen: boolean;
   selectSession: (id: string) => void;
   setFocusedPane: (p: Pane) => void;
 }
@@ -36,14 +36,14 @@ export function useSidebarKeyboard(options: UseSidebarKeyboardOptions): void {
     adoptCloudOpen,
     projectsOpen,
     menuOpen,
-    renameOpen,
+    sessionSettingsOpen,
     selectSession,
     setFocusedPane,
   } = options;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (newSessionOpen || adoptCloudOpen || projectsOpen || menuOpen || renameOpen) return;
+      if (newSessionOpen || adoptCloudOpen || projectsOpen || menuOpen || sessionSettingsOpen) return;
       const activeEl = document.activeElement as HTMLElement | null;
       const inFilter = activeEl === filterRef.current;
       const inOtherInput = !!activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && !inFilter;
@@ -93,7 +93,7 @@ export function useSidebarKeyboard(options: UseSidebarKeyboardOptions): void {
     adoptCloudOpen,
     projectsOpen,
     menuOpen,
-    renameOpen,
+    sessionSettingsOpen,
     setRowCursor,
     setSidebarFilter,
     setFocusedPane,

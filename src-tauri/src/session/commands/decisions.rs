@@ -116,6 +116,9 @@ pub fn permissions_decide(
     decision: String,
     tier: Option<String>,
 ) -> IpcResult<Option<()>> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "permissions") {
+        return err(code, msg);
+    }
     let Some((allow, remember)) = crate::permissions::decide_outcome(&decision) else {
         return err("INVALID_INPUT", "unknown decision");
     };

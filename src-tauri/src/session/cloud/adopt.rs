@@ -501,7 +501,8 @@ pub fn cloud_adopt(
                 error: crate::ipc::AppError {
                     code: e.code.clone(),
                     message: e.message.clone(),
-                    detail: e.detail.clone(),
+                    detail: e.detail.clone().map(Box::new),
+                    runtime_failure: None,
                 },
             });
             match e.detail {

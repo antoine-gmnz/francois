@@ -3,8 +3,10 @@
 // bootstraps are centralized here and called once at app mount; each command still
 // delegates to its owning feature's own action/channel exactly as the spec pins.
 
-import type { Result } from '../../../contract/common';
-import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './palette';
+import type { PaletteCommand } from '../../../contract/command-palette';
+import { sessionCapability } from '../../lib/runtimeCapability';
+import type { RuntimeCapability, Result } from '../../../contract/common';
+import { registerPaletteCommand as registerCommand, requestBodyFocusOnClose, showToast } from './palette';
 import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
 import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
 import { useNotificationsStore } from '../../lib/notificationsStore';
@@ -16,6 +18,50 @@ import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
 import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../lib/layoutStore';
+
+const commandCapabilities: Record<string, RuntimeCapability> = {
+  'switch-model': 'modelSwitching', 'compact-context': 'compaction',
+  'run-skill': 'skills', 'attach-mcp-server': 'mcp',
+  'new-agent': 'subagents', 'kill-agent': 'subagents', 'manage-permissions': 'permissions',
+};
+
+function registerPaletteCommand(command: PaletteCommand): void {
+  const capability = commandCapabilities[command.id];
+  if (!capability) {
+    registerCommand(command);
+    return;
+  }
+  const state = (sessionId: string | null) => {
+    if (!sessionId) return { available: false, reason: 'Select a session first.' };
+    const meta = useStore.getState().sessions.find(s => s.id === sessionId);
+    return meta ? sessionCapability(meta, capability) : { available: false, reason: 'Session is not available.' };
+  };
+  const allowed = (sessionId: string | null) => {
+    const cap = state(sessionId);
+    if (!cap.available) showToast(cap.reason ?? 'Action unavailable.', 'error');
+    return cap.available;
+  };
+  registerCommand({
+    ...command,
+    enabled: ctx => state(ctx.activeSessionId).available && (command.enabled?.(ctx) ?? true),
+    hint: () => {
+      const cap = state(useStore.getState().activeSessionId);
+      return cap.available ? (command.hint?.() ?? '') : (cap.reason ?? 'Action unavailable.');
+    },
+    run: ctx => {
+      const sessionId = ctx.activeSessionId;
+      if (!allowed(sessionId)) return;
+      const step = command.run(ctx);
+      if (!step) return;
+      return {
+        ...step,
+        onPick: id => {
+          if (allowed(sessionId)) step.onPick(id);
+        },
+      };
+    },
+  });
+}
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
 
@@ -98,17 +144,19 @@ export function registerBuiltinCommands(): void {
     },
   });
 
-  // 1b — Rename session (session-rename FR-14): opens the same modal the sidebar
-  // row's context menu opens, for the ACTIVE session. Not a SecondaryStep — it
-  // acts on one session, so it just opens the modal and closes the palette.
+  // 1b — Session settings… (session-settings-sheet FR-19): opens the same sheet
+  // the run chip and the sidebar row's context menu open, in EDIT mode, for the
+  // ACTIVE session. Not a SecondaryStep — it acts on one session, so it just
+  // opens the sheet and closes the palette. Supersedes session-rename's
+  // dedicated "Rename session" entry — renaming is now the sheet's NAME row.
   registerPaletteCommand({
-    id: 'rename-session',
-    glyph: '✎',
-    name: 'Rename session',
+    id: 'session-settings',
+    glyph: '⚙',
+    name: 'Session settings…',
     // design brief §3: this row carries no right-aligned hint.
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: (ctx) => {
-      if (ctx.activeSessionId) useStore.getState().setRenameSessionId(ctx.activeSessionId);
+      if (ctx.activeSessionId) useStore.getState().setSessionSettingsId(ctx.activeSessionId);
     },
   });
 

@@ -168,13 +168,19 @@ pub(crate) fn begin_turn(
     let agent_runtime = engine
         .with_session(session_id, |s| s.agent_runtime)
         .unwrap_or_default();
+    if let Some(Err((code, msg))) =
+        engine.with_session(session_id, |s| s.validate_attachment_submission(&text))
+    {
+        fail_session(app, session_id, code, msg);
+        return;
+    }
     let adapter = adapter_for(agent_runtime);
     let Some(ctx) = build_turn_context(&engine, session_id, block_id, text, mode) else {
         return;
     };
 
     if let Err(e) = adapter.preflight(app, &ctx) {
-        fail_session(app, session_id, &e.code, &e.message);
+        fail_session_error(app, session_id, e);
         return;
     }
 
@@ -205,7 +211,7 @@ pub(crate) fn begin_turn(
                 s.current = Some(control);
             });
         }
-        Err(e) => fail_session(app, session_id, &e.code, &e.message),
+        Err(e) => fail_session_error(app, session_id, e),
     }
 }
 
@@ -379,6 +385,8 @@ pub(crate) fn finish_turn(
                     code: if transient { "USAGE_LIMIT" } else { "INTERNAL" }.into(),
                     message: msg,
                     detail: None,
+
+                    runtime_failure: None,
                 },
             },
         );
@@ -427,9 +435,23 @@ pub(crate) fn apply_fail_session(
 }
 
 pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &str) {
+    fail_session_error(
+        app,
+        session_id,
+        AppError {
+            code: code.into(),
+            message: msg.into(),
+            detail: None,
+            runtime_failure: None,
+        },
+    );
+}
+pub(crate) fn fail_session_error(app: &AppHandle, session_id: &str, error: AppError) {
     let engine = app.state::<Engine>();
     let (agent_ems, workflow_runs) = engine
-        .with_session_mut(session_id, |s| apply_fail_session(s, msg, now_ms()))
+        .with_session_mut(session_id, |s| {
+            apply_fail_session(s, &error.message, now_ms())
+        })
         .unwrap_or_default();
     // usage-bar FR-13: running → error. multi-account FR-29: that session's
     // account only.
@@ -445,11 +467,7 @@ pub(crate) fn fail_session(app: &AppHandle, session_id: &str, code: &str, msg: &
         app,
         SessionEvent::Error {
             session_id: session_id.into(),
-            error: AppError {
-                code: code.into(),
-                message: msg.into(),
-                detail: None,
-            },
+            error,
         },
     );
     emit(

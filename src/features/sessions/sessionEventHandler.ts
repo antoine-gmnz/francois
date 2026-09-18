@@ -9,7 +9,7 @@
 // switch only decides WHICH callback fires for which event, never how the
 // store is touched.
 
-import type { AgentInfo, BlockId, PermissionAsk, SessionEvent, SessionId, SessionStatus } from '../../../contract/common';
+import type { AgentInfo, BlockId, PermissionAsk, RuntimeEventEnvelope, SessionEvent, SessionId, SessionStatus } from '../../../contract/common';
 
 export interface SessionEventContext {
   onMeta: (meta: Extract<SessionEvent, { type: 'session.meta' }>['meta']) => void;
@@ -18,6 +18,7 @@ export interface SessionEventContext {
   onUsage: (sessionId: SessionId, usedTokens: number, limitTokens: number) => void;
   onAgentUpdate: (agent: AgentInfo) => void;
   onRemoved: (sessionId: SessionId) => void;
+  onRuntimeEvent: (event: RuntimeEventEnvelope) => void;
   // ── design 12b: the roster's live per-row signals ────────────────────────
   /** A turn began — the row's elapsed restarts and its activity line is stale. */
   onTurnStart: (sessionId: SessionId) => void;
@@ -57,6 +58,9 @@ export function handleSessionEvent(e: SessionEvent, ctx: SessionEventContext): v
       break;
     case 'session.removed':
       ctx.onRemoved(e.sessionId);
+      break;
+    case 'runtime.event':
+      ctx.onRuntimeEvent(e);
       break;
     case 'message.user':
       ctx.onTurnStart(e.sessionId);

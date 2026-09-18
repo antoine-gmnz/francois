@@ -695,6 +695,9 @@ pub fn agents_dispatch(
     session_id: String,
     task: String,
 ) -> IpcResult<DispatchOutput> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "subagents") {
+        return err(code, msg);
+    }
     let task = task.trim().to_string();
     if task.is_empty() {
         return err("INVALID_INPUT", "task is empty");
@@ -736,6 +739,18 @@ pub fn agents_kill(
     engine: State<'_, Engine>,
     agent_id: String,
 ) -> IpcResult<Option<()>> {
+    let session_id = {
+        let map = engine.sessions.lock().unwrap();
+        map.values()
+            .find(|s| s.agents.contains_key(&agent_id))
+            .map(|s| s.id.clone())
+    };
+    let Some(session_id) = session_id else {
+        return err("AGENT_NOT_FOUND", "no such agent");
+    };
+    if let Err((code, msg)) = engine.require_capability(&session_id, "subagents") {
+        return err(code, msg);
+    }
     // async-agents FR-18: status 'error' + endedAt + a `killed from the panel`
     // notice step. The harness-side background agent is NOT interrupted (v1), so
     // FR-11 may legitimately resurrect the card if it keeps emitting.

@@ -43,6 +43,14 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
 
+  // The last hovered row, for the kill affordance. Panel-local, so `useAgentsFeed`'s
+  // own per-session reset does not cover it — and this panel is no longer keyed by
+  // session (App.tsx's host), so nothing else clears it either: a switch would
+  // otherwise carry the previous session's agent id into the new list.
+  useEffect(() => {
+    setHoverId(null);
+  }, [sessionId]);
+
   const focused = focusedPane === 'agents';
   const list = ordered(agents);
   const hasRunning = list.some((agent) => agent.status === 'running');

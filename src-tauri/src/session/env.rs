@@ -27,6 +27,10 @@ pub(crate) trait SessionEnv: Send + Sync {
     fn emit_workflow_detail(&self, ev: WorkflowDetailEvent);
     fn persist(&self);
     fn append_transcript(&self, session_id: &str, block: &BufBlock);
+    /// command-inspect FR-1: append one settled step's `StepDetail` to its
+    /// session's sidecar — unconditional, like `append_transcript`, which is
+    /// what lets `hasDetail` (FR-10) be set `true` for every settled tool block.
+    fn append_step_detail(&self, session_id: &str, detail: &StepDetail);
     /// FR-16: a file-mutating tool (Edit/Write) finished — recompute the diff
     /// summary. Named for the effect, not the call, so a test double can be a
     /// no-op without pretending to understand the diff domain.
@@ -61,6 +65,9 @@ impl SessionEnv for AppHandle {
     fn append_transcript(&self, session_id: &str, block: &BufBlock) {
         crate::session::append_transcript(self, session_id, block);
     }
+    fn append_step_detail(&self, session_id: &str, detail: &StepDetail) {
+        crate::session::append_step_detail(self, session_id, detail);
+    }
     fn note_file_diff(&self, session_id: &str, cwd: &str) {
         on_tool_done(self, session_id, cwd);
     }
@@ -86,6 +93,10 @@ pub(crate) mod testenv {
         pub(crate) persist_calls: Mutex<u32>,
         pub(crate) transcript_appends: Mutex<Vec<(String, String)>>, // (sessionId, blockId)
         pub(crate) diff_notes: Mutex<Vec<(String, String)>>,         // (sessionId, cwd)
+        /// command-inspect: (sessionId, StepDetail) for every capture — lets a
+        /// test assert exactly what would have been written, without an
+        /// `AppHandle` to write it through.
+        pub(crate) step_details: Mutex<Vec<(String, StepDetail)>>,
     }
 
     impl SessionEnv for TestEnv {
@@ -109,6 +120,12 @@ pub(crate) mod testenv {
                 .lock()
                 .unwrap()
                 .push((session_id.to_string(), block.block_id.clone()));
+        }
+        fn append_step_detail(&self, session_id: &str, detail: &StepDetail) {
+            self.step_details
+                .lock()
+                .unwrap()
+                .push((session_id.to_string(), detail.clone()));
         }
         fn note_file_diff(&self, session_id: &str, cwd: &str) {
             self.diff_notes

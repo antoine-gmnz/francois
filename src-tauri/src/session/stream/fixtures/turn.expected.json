@@ -345,15 +345,8 @@
     "type": "assistant.delta",
     "sessionId": "s1",
     "blockId": "id-1",
-    "text": "I'll read the README, then run a subagent to list directory contents, create a build folder, and ask which",
+    "text": "I'll read the README, then run a subagent to list directory contents, create a build folder, and ask which environment to target.",
     "offset": 0
-  },
-  {
-    "type": "assistant.delta",
-    "sessionId": "s1",
-    "blockId": "id-1",
-    "text": " environment to target.",
-    "offset": 106
   },
   {
     "type": "assistant.done",
@@ -372,7 +365,8 @@
     "type": "tool.done",
     "sessionId": "s1",
     "blockId": "id-2",
-    "meta": "7 lines"
+    "meta": "7 lines",
+    "hasDetail": true
   },
   {
     "type": "agent.update",
@@ -465,21 +459,15 @@
     "type": "tool.done",
     "sessionId": "s1",
     "blockId": "id-4",
-    "meta": "The current directory contains README.md, notes.txt, and a .cartograph folder ho"
+    "meta": "The current directory contains README.md, notes.txt, and a .cartograph folder ho",
+    "hasDetail": true
   },
   {
     "type": "assistant.delta",
     "sessionId": "s1",
     "blockId": "id-5",
-    "text": "The",
+    "text": "The subagent finished. Now creating the build directory.",
     "offset": 0
-  },
-  {
-    "type": "assistant.delta",
-    "sessionId": "s1",
-    "blockId": "id-5",
-    "text": " subagent finished. Now creating the build directory.",
-    "offset": 3
   },
   {
     "type": "assistant.done",
@@ -511,7 +499,8 @@
     "type": "tool.done",
     "sessionId": "s1",
     "blockId": "id-6",
-    "meta": "1 lines"
+    "meta": "1 lines",
+    "hasDetail": true
   },
   {
     "type": "question.asked",
@@ -546,28 +535,15 @@
     "type": "tool.done",
     "sessionId": "s1",
     "blockId": "id-9",
-    "meta": "done"
+    "meta": "done",
+    "hasDetail": true
   },
   {
     "type": "assistant.delta",
     "sessionId": "s1",
     "blockId": "id-10",
-    "text": "README",
+    "text": "README.md describes a scratch project with README.md and notes.txt (confirmed by the subagent, which also found a .cartograph folder), the build directory was created, and you picked **staging** as the target environment.",
     "offset": 0
-  },
-  {
-    "type": "assistant.delta",
-    "sessionId": "s1",
-    "blockId": "id-10",
-    "text": ".md describes a scratch project with README.md and notes.txt (confirmed by the subagent, which also found a .cartograph folder), the",
-    "offset": 6
-  },
-  {
-    "type": "assistant.delta",
-    "sessionId": "s1",
-    "blockId": "id-10",
-    "text": " build directory was created, and you picked **staging** as the target environment.",
-    "offset": 138
   },
   {
     "type": "assistant.done",

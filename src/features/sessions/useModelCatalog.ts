@@ -70,10 +70,13 @@ export function startModelCatalogFetch(
   };
 }
 
-export function useModelCatalog(accountId: AccountId): UseModelCatalogResult {
+export function useModelCatalog(accountId: AccountId, initialModelId = ''): UseModelCatalogResult {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
-  const [modelId, setModelId] = useState('');
+  // session-settings-sheet FR-13: seeded from "New session from these ↗" — the
+  // catalog fetch's own reconcileModelId keeps it once the fetch resolves, same
+  // as any other in-flight edit (see startModelCatalogFetch's doc comment).
+  const [modelId, setModelId] = useState(initialModelId);
 
   useEffect(
     () => startModelCatalogFetch(accountId, sessionModels, { setModelsLoading, setModels, setModelId }),

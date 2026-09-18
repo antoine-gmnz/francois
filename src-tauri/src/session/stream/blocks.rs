@@ -113,6 +113,7 @@ fn start_tool_use_block(
             input: start_input,
             is_task,
             is_workflow,
+            started_at: now_ms(),
         },
     );
     // stash tool_use_id in the block accum slot's kind — track via separate map:

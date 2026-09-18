@@ -441,7 +441,7 @@ pub(crate) fn run_model_command(app: &AppHandle, session_id: &str, arg: Option<&
     match resolve_model_arg(&models, arg) {
         Some(m) => {
             let (id, label) = (m.id.clone(), m.label.clone());
-            if apply_model_switch(app, session_id, &id).is_some() {
+            if apply_model_switch(app, session_id, &id).is_ok() {
                 finalize_command_block(
                     app,
                     session_id,

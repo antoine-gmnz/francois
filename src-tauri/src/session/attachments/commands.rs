@@ -37,32 +37,37 @@ fn refuse<T: Serialize>(e: AttachError) -> IpcResult<T> {
     }
 }
 
-/// Record freshly ingested refs and persist. `false` when the session vanished
-/// while the bytes were being written (no lock is held during IO): the copies are
-/// then deleted again rather than orphaned under a cwd nothing points at any more.
+/// Record freshly ingested refs and persist. Revalidate image support under the
+/// mutation lock after ingestion I/O. If the session vanished or support narrowed,
+/// delete copied bytes outside that lock and return the refusal.
 fn record_staged(
     app: &AppHandle,
     engine: &Engine,
     session_id: &str,
     staged: &[Attachment],
-) -> bool {
+) -> Result<(), (&'static str, &'static str)> {
     let recorded = engine.with_session_mut(session_id, |s| {
+        for a in staged {
+            s.validate_attachment_kind(&a.kind)?;
+        }
         for a in staged {
             s.stage_attachment(a.clone());
         }
+        Ok(())
     });
-    if recorded.is_none() {
+    let result = recorded.unwrap_or(Err(("SESSION_NOT_FOUND", NO_SESSION)));
+    if let Err(error) = result {
         for a in staged {
             delete_stored(a);
         }
-        return false;
+        return Err(error);
     }
     persist(app, engine);
     // FR-12: the chip's thumbnail is read off disk BY THE WEBVIEW, through the
     // asset protocol — which serves nothing outside its scope. The grant is made
     // once the record exists and covers exactly these files (see `asset_scope`).
     allow_thumbnails(app, staged);
-    true
+    Ok(())
 }
 
 /// The single-ref path: record it, or refuse and take the bytes back.
@@ -73,10 +78,9 @@ fn stage_one(
     attachment: Attachment,
 ) -> IpcResult<Value> {
     let value = json_of(&attachment);
-    if record_staged(app, engine, session_id, std::slice::from_ref(&attachment)) {
-        ok(value)
-    } else {
-        err("SESSION_NOT_FOUND", NO_SESSION)
+    match record_staged(app, engine, session_id, std::slice::from_ref(&attachment)) {
+        Ok(()) => ok(value),
+        Err((code, msg)) => err(code, msg),
     }
 }
 
@@ -91,6 +95,11 @@ pub fn session_attach_file(
     let Some(cwd) = engine.cwd_of(&session_id) else {
         return err("SESSION_NOT_FOUND", NO_SESSION);
     };
+    if attachment_kind_for_name(&path) == "image" {
+        if let Err((code, msg)) = engine.require_capability(&session_id, "images") {
+            return err(code, msg);
+        }
+    }
     match ingest_path(&session_id, &cwd, &path, now_ms()) {
         Ok(a) => stage_one(&app, &engine, &session_id, a),
         Err(e) => refuse(e),
@@ -109,6 +118,9 @@ pub fn session_attach_clipboard_image(
     let Some(cwd) = engine.cwd_of(&session_id) else {
         return err("SESSION_NOT_FOUND", NO_SESSION);
     };
+    if let Err((code, msg)) = engine.require_capability(&session_id, "images") {
+        return err(code, msg);
+    }
     match ingest_clipboard_image(&session_id, &cwd, &mime, &data_base64, now_ms()) {
         Ok(a) => stage_one(&app, &engine, &session_id, a),
         Err(e) => refuse(e),
@@ -152,11 +164,27 @@ pub async fn session_pick_attachments(app: AppHandle, session_id: String) -> Ipc
     let (paths, unresolvable) = split_picks(picks);
     let mut response = ingest_picks(&session_id, &cwd, &paths, now_ms());
     response.failed.extend(unresolvable);
-    if !response.attached.is_empty()
-        && !record_staged(&app, &engine, &session_id, &response.attached)
-    {
-        return err("SESSION_NOT_FOUND", NO_SESSION);
+    let mut accepted = Vec::new();
+    for attachment in std::mem::take(&mut response.attached) {
+        match record_staged(
+            &app,
+            &engine,
+            &session_id,
+            std::slice::from_ref(&attachment),
+        ) {
+            Ok(()) => accepted.push(attachment),
+            Err((code, msg)) => response.failed.push(AttachFailure {
+                name: attachment.name,
+                error: crate::ipc::AppError {
+                    code: code.into(),
+                    message: msg.into(),
+                    detail: None,
+                    runtime_failure: None,
+                },
+            }),
+        }
     }
+    response.attached = accepted;
     ok(json_of(&response))
 }
 
@@ -220,10 +248,15 @@ pub fn session_commit_attachments(
     session_id: String,
     text: String,
 ) -> IpcResult<Value> {
-    let Some((result, dropped)) =
-        engine.with_session_mut(&session_id, |s| s.commit_attachments(&text))
-    else {
+    let Some(commit) = engine.with_session_mut(&session_id, |s| {
+        s.validate_attachment_submission(&text)?;
+        Ok::<_, (&str, &str)>(s.commit_attachments(&text))
+    }) else {
         return err("SESSION_NOT_FOUND", NO_SESSION);
+    };
+    let (result, dropped) = match commit {
+        Ok(value) => value,
+        Err((code, msg)) => return err(code, msg),
     };
     for a in &dropped {
         delete_stored(a);

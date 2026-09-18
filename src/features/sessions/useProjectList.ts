@@ -21,12 +21,19 @@ export interface UseProjectListResult {
 export function useProjectList(
   activeProjectId: ProjectId | null,
   openRef: MutableRefObject<boolean>,
+  /**
+   * session-settings-sheet FR-13: "New session from these ↗" carries the
+   * source session's project (or none, §7 case 12) over explicitly — present
+   * (even with an empty `projectId`) means "skip the FR-30 active-project
+   * preselect below; this choice is already deliberate".
+   */
+  seed?: { projectId?: string },
 ): UseProjectListResult {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
-  const [projectId, setProjectId] = useState('');
+  const [projectId, setProjectId] = useState(seed?.projectId ?? '');
   // projects FR-30: opening the modal while the board is scoped to a project
   // starts in that project — "inside a project, a new session belongs to it".
-  const preselectedRef = useRef(false);
+  const preselectedRef = useRef(seed !== undefined);
 
   useEffect(() => {
     void safeCall(projectList()).then((res) => {

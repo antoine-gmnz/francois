@@ -4,19 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelInfo, ResponseMode, SessionMeta } from '../../../contract/common';
 import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
-import {
-  APPLIES_COPY,
-  SET_PROJECT_DEFAULT_COPY,
-  SET_PROJECT_DEFAULT_TITLE,
-  bypassNote,
-  canSetProjectDefault,
-  effortHint,
-  effortLevels,
-  formatClock,
-  nextProjectDefaults,
-  responseModeOption,
-  runChipParts,
-} from './run-chip';
+import { bypassNote, effortHint, effortLevels, formatClock, responseModeOption, runChipParts } from './run-chip';
 
 const OPUS: ModelInfo = { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh'] };
 const SONNET: ModelInfo = { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['low', 'medium', 'high'] };
@@ -149,43 +137,6 @@ describe('bypassNote', () => {
   });
 });
 
-describe('the footer', () => {
-  it('states the one thing that is true of every pick in the panel', () => {
-    expect(APPLIES_COPY).toBe('Applies from the next turn');
-    expect(SET_PROJECT_DEFAULT_COPY).toBe('Set as project default');
-  });
-
-  // response-mode FR-16: the action now writes a fourth value, so its title has to
-  // name it — an action that writes more than it says is how a default gets set by
-  // accident.
-  it('names every setting the action writes, response mode included', () => {
-    expect(SET_PROJECT_DEFAULT_TITLE).toContain('response mode');
-    expect(SET_PROJECT_DEFAULT_TITLE).toContain('permission mode');
-  });
-
-  it('offers the project default only for a session that has a project', () => {
-    expect(canSetProjectDefault(session())).toBe(false);
-    expect(canSetProjectDefault(session({ projectId: 'p1' }))).toBe(true);
-  });
-
-  it('writes the four settings the panel owns and leaves the rest of the defaults alone', () => {
-    const s = session({ projectId: 'p1', permissionMode: 'plan', effort: 'high' });
-    expect(nextProjectDefaults({ runtime: 'wsl', allowGit: true }, s)).toEqual({
-      runtime: 'wsl',
-      allowGit: true,
-      modelId: 'claude-opus-5',
-      effort: 'high',
-      permissionMode: 'plan',
-      responseMode: 'default',
-    });
-  });
-
-  it('CLEARS the effort default when the session has none, rather than leaving a stale one', () => {
-    const s = session({ projectId: 'p1' });
-    expect(nextProjectDefaults({ effort: 'xhigh' }, s)).toEqual({
-      modelId: 'claude-opus-5',
-      permissionMode: 'default',
-      responseMode: 'default',
-    });
-  });
-});
+// session-settings-sheet FR-17/FR-20: the footer's "Set as project default" and
+// its nextProjectDefaults/canSetProjectDefault helpers moved to
+// session-settings.ts/.test.ts with the run chip's popover — see there.

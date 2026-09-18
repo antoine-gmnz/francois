@@ -3,6 +3,14 @@
 // component body is JSX + a thin composer; this hook owns the transcript
 // reducer, the hydration/pin state that follows it, and the slash-menu
 // registry hydration that piggybacks on the same session.commands events.
+//
+// One mount is no longer one VIEWING: the main pane's `SessionViewHost` keeps
+// the last few sessions' transcripts mounted and hidden, so this hook now runs
+// for a session nobody is looking at. It stays subscribed there — that is what
+// makes coming back instant, and what keeps a background session's transcript
+// current — but everything whose only value is on screen is gated on `visible`
+// (the rAF delta coalescer below, and the scroll pin, which cannot write a
+// meaningful scrollTop against a `display: none` subtree).
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type RefObject } from 'react';
 import type { TranscriptPage } from '../../../contract/conversation-view';
@@ -20,6 +28,7 @@ import {
   isTranscriptRelevantEvent,
   pushDelta,
   RENDER_WINDOW,
+  shouldScheduleDeltaFlush,
   transcriptReducer,
   type ConversationEventSetters,
   type DeltaChunk,
@@ -53,7 +62,13 @@ export interface ConversationTranscript {
   activateEarlier: () => void;
 }
 
-export function useConversationTranscript(sessionId: string): ConversationTranscript {
+/**
+ * @param visible whether this transcript is the one on screen. A held-but-hidden
+ * mount buffers its deltas instead of scheduling frames, and re-pins on the flip
+ * back to visible. Defaults to true — a call site that mounts one transcript at
+ * a time never has to think about it.
+ */
+export function useConversationTranscript(sessionId: string, visible = true): ConversationTranscript {
   const [state, dispatch] = useReducer(transcriptReducer, { blocks: [], windowSize: RENDER_WINDOW });
   const [hydrated, setHydrated] = useState(false);
   // transcript-scale FR-6/FR-7: whether older blocks exist beyond what the
@@ -71,14 +86,20 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
   );
   const [isPinned, setPinned] = useState(true);
   const [resumeFailed, setResumeFailed] = useState(false); // durable-sessions FR-14 banner
-  // The plan-limit banner. Session-scoped like the one above (the keyed remount
-  // clears it), and cleared by the next user turn — the limit either lifted, in
-  // which case the turn runs, or it did not and a fresh notice replaces this one.
+  // The plan-limit banner. Session-scoped like the one above, and cleared by the
+  // next user turn — the limit either lifted, in which case the turn runs, or it
+  // did not and a fresh notice replaces this one. That turn is now the ONLY
+  // thing that clears it: the view is keyed by session but held across a switch
+  // (SessionViewHost), so looking at another session and coming back no longer
+  // dismisses it by remounting — which is the honest behaviour, since the limit
+  // did not lift because you looked away.
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
 
   // slash-menu popup state (spec §6): registry mirror for THIS session
-  // (cache-seeded, FR-10). Component-local — a session switch remounts (keyed
-  // by sessionId) and clears it.
+  // (cache-seeded, FR-10). Component-local and session-scoped — this mount is
+  // keyed by sessionId, so it can never show another session's registry; it is
+  // seeded from the cache, refreshed by the listCommands effect below, and kept
+  // live by `session.commands` for as long as the host holds it.
   const [commands, setCommands] = useState<SlashCommandInfo[]>(() => getSessionCommands(sessionId));
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -138,6 +159,13 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
   // `state.blocks`) writes `scrollTop` at most once per flush too (FR-8).
   const deltaBufferRef = useRef<Map<string, DeltaChunk[]>>(new Map());
   const rafRef = useRef<number | null>(null);
+  // `onTranscriptEvent` is captured ONCE per subscription (the [sessionId]-keyed
+  // effect below), so reading `visible` from the closure would freeze this hook
+  // on its mount-time visibility forever. A ref is the only value the captured
+  // handler can read that stays current — mirrored during render, like
+  // `pinnedRef` above, so no event can ever read a stale visibility.
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
 
   const flushDeltas = () => {
     if (rafRef.current !== null) {
@@ -150,7 +178,12 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
   const onTranscriptEvent = (e: SessionEvent) => {
     if (e.type === 'assistant.delta') {
       pushDelta(deltaBufferRef.current, e.blockId, e.text, e.offset);
-      if (rafRef.current === null) {
+      // A HIDDEN transcript buffers and does nothing else: a frame scheduled
+      // for a `display: none` subtree spends the visible session's frame budget
+      // rendering markdown nobody can see. The buffer is drained the moment
+      // this session comes back (the effect below), by the next non-delta event
+      // (FR-6), and on unmount (FR-7) — so nothing is ever lost, only deferred.
+      if (shouldScheduleDeltaFlush(visibleRef.current, rafRef.current !== null)) {
         rafRef.current = requestAnimationFrame(flushDeltas);
       }
       return;
@@ -165,9 +198,27 @@ export function useConversationTranscript(sessionId: string): ConversationTransc
   // both tear down this same [sessionId]-keyed effect.
   useEffect(() => () => flushDeltas(), [sessionId]);
 
+  // The flip to visible settles both things a hidden mount left pending: the
+  // buffered deltas (above) and the scroll pin. The pin's layout effect below
+  // DID run while hidden, but `scrollHeight` is 0 on a `display: none` subtree,
+  // so it wrote a meaningless scrollTop — the transcript would come back
+  // scrolled to the top of a conversation the user left pinned to its tail.
+  useEffect(() => {
+    if (!visible) return;
+    flushDeltas();
+    if (pinnedRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+    // `[visible]` alone, deliberately: `flushDeltas` and the two refs above are
+    // rebuilt or read every render, and re-running this on anything but the
+    // FLIP would re-pin a transcript the user has scrolled away from.
+  }, [visible]);
+
   // Hydration + live events (FR-8/9/10). Component is keyed by sessionId in the
   // parent, so this runs fresh per session; a stale getTranscript after unmount
-  // is discarded via useHydratedSubscription's own mounted guard (FR-9).
+  // is discarded via useHydratedSubscription's own mounted guard (FR-9). It now
+  // runs ONCE per held mount rather than once per visit — which is the point of
+  // the host: switching away and back costs no `getTranscript` at all.
   useHydratedSubscription<SessionEvent, TranscriptPage>({
     enabled: true,
     // transcript-scale FR-21: through the one router subscription, scoped to

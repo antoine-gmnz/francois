@@ -363,7 +363,9 @@ fn install_failure(code: Option<i32>, tail: &Mutex<String>) -> AppError {
             Some(c) => format!("npm exited with code {c}"),
             None => "npm was terminated before it finished".into(),
         },
-        detail: Some(json!({ "code": code, "tail": tail.trim_end() })),
+        detail: Some(Box::new(json!({ "code": code, "tail": tail.trim_end() }))),
+
+        runtime_failure: None,
     }
 }
 
@@ -372,6 +374,8 @@ fn error(code: &str, message: impl Into<String>) -> AppError {
         code: code.into(),
         message: message.into(),
         detail: None,
+
+        runtime_failure: None,
     }
 }
 

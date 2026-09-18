@@ -1,0 +1,32 @@
+/* SessionViewHost — the main pane's persistent host for the SESSION and SHELL
+   bodies. Its own file rather than more of app.css, which is already past the
+   CLAUDE.md size cap.
+
+   Pure plumbing: the host and each slot are transparent flex columns that hand
+   the whole cell to whichever child is displayed, so a held-but-hidden view
+   costs no layout at all (a `display: none` element generates no flex item).
+   Nothing here paints — the surfaces belong to the views themselves. */
+
+.session-host {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.session-host__slot {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ConversationView's `.conv-root` and ShellTabView's `.app-shell-view` both
+   expect to BE the pane, so the slot passes its box straight through. */
+.session-host__slot > * {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}

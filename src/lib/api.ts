@@ -1,3 +1,5 @@
+import type { SessionUpdateSettingsRequest, SessionUpdateSettingsResponse } from '../../contract/session-settings-sheet';
+import type { StepDetailPayload, StepDetailResponse } from '../../contract/command-inspect';
 // Typed wrappers over the Tauri session commands + the session event stream.
 // Each command resolves a Result<T> (never rejects) per the contract.
 
@@ -546,3 +548,9 @@ export function onShellEvent(cb: (e: ShellEvent) => void): Promise<UnlistenFn> {
 export function onSessionEvent(cb: (e: SessionEvent) => void): Promise<UnlistenFn> {
   return stream<SessionEvent>('francois://session/event', cb);
 }
+
+// Legacy session and transcript operations remain part of their frozen contracts.
+export const sessionUpdateSettings = (req: SessionUpdateSettingsRequest) =>
+  ipc<SessionUpdateSettingsResponse>('session_update_settings', req);
+export const conversationStepDetail = (req: StepDetailPayload) =>
+  ipc<StepDetailResponse>('conversation_step_detail', req);

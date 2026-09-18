@@ -40,6 +40,7 @@ mod remote_discovery;
 /// enum is a `Session`/`SessionMeta` field and nothing outside this domain
 /// names it.
 mod response_mode;
+mod runtime;
 mod skills;
 mod slash;
 mod spawn;
@@ -48,6 +49,11 @@ mod spawn;
 // readable. The glob still brings the module path itself into scope.
 pub(crate) mod status;
 mod stdio;
+/// command-inspect: the `StepDetail` capture record, its sidecar, and the
+/// `conversation_step_detail` command — see the module doc for why capture is
+/// adapter-agnostic (built through `build_step_detail`, written through
+/// `SessionEnv::append_step_detail`).
+mod step_detail;
 mod stream;
 mod tools;
 /// transcript-scale FR-1/FR-2: the `block_buffer` eviction concern — split out
@@ -88,6 +94,7 @@ pub(crate) use skills::*;
 pub(crate) use slash::*;
 pub(crate) use spawn::*;
 pub(crate) use stdio::*;
+pub(crate) use step_detail::*;
 pub(crate) use stream::*;
 pub(crate) use tools::*;
 pub(crate) use transcript_cap::*;
@@ -108,6 +115,7 @@ use crate::profiles::SessionProfileRef;
 // usage-bar §6: the /usage meter grammar + stream-json answer extraction now live
 // in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
 // is unchanged — these are the same functions, imported instead of defined.
+use crate::ipc::AppError;
 use crate::usage::{parse_meter_line, probe_answer, synthetic_text, UsageMeter};
 use serde::Serialize;
 use serde_json::Value;
@@ -198,6 +206,17 @@ pub(crate) struct SessionMeta {
     /// multi-provider-seam FR-11a: the wire dialect this session's endpoint
     /// speaks. Same derivation/persistence discipline as `agent_runtime`.
     protocol: ProviderProtocol,
+    /// Explicit provider/model identity for a runtime-owned connection.
+    #[serde(rename = "runtimeModel", skip_serializing_if = "Option::is_none")]
+    runtime_model: Option<RuntimeModelRef>,
+    /// Live capabilities are transient: they are revalidated on reconnect.
+    #[serde(
+        rename = "effectiveCapabilities",
+        skip_serializing_if = "Option::is_none"
+    )]
+    effective_capabilities: Option<RuntimeCapabilities>,
+    #[serde(rename = "runtimeGeneration", skip_serializing_if = "Option::is_none")]
+    runtime_generation: Option<String>,
     /// session-profiles FR-16: present ⇔ created from a profile; snapshot-only.
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<SessionProfileRef>,
@@ -206,6 +225,8 @@ pub(crate) struct SessionMeta {
     /// one, and a persisted record without the key loads as `default`.
     #[serde(rename = "responseMode")]
     response_mode: ResponseMode,
+    #[serde(rename = "allowGit")]
+    allow_git: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -398,6 +419,12 @@ pub(crate) struct BufBlock {
     meta: Option<String>,
     /// interactive-commands: serialized CommandCard (Command kind; None while pending).
     card: Option<Value>,
+    /// command-inspect FR-1/FR-10: true iff a `StepDetail` record was written
+    /// for this block at settle time. Only ever set on a `Tool` block —
+    /// `classify_block` is what decides whether the kind even has a slot for
+    /// it (`ToolConversationBlock` only; a `Subagent` block's contract type
+    /// carries no `hasDetail` field, so the value there is inert).
+    has_detail: bool,
     streaming: bool,
     /// design 9a: epoch ms this block was appended, mirrored to the contract's
     /// `ConversationBlockBase.at`. 0 means "unknown" — a block read back from a
@@ -421,6 +448,7 @@ impl BufBlock {
             block_id: block_id.into(),
             kind,
             text: String::new(),
+            has_detail: false,
             tool: String::new(),
             summary: String::new(),
             meta: None,
@@ -504,6 +532,9 @@ pub(crate) struct Session {
     /// `agent_runtime` from the same `from_account_kind` call and never
     /// re-derived afterward.
     protocol: ProviderProtocol,
+    runtime_model: Option<RuntimeModelRef>,
+    effective_capabilities: Option<RuntimeCapabilities>,
+    runtime_generation: Option<String>,
     /// session-profiles FR-12/FR-13: REPLACE-mode prompt, snapshotted at
     /// creation and threaded through every turn's `turn_args` — never
     /// re-read from the profile (FR-16).
@@ -659,6 +690,9 @@ impl Session {
             cloud: None,
             agent_runtime,
             protocol,
+            runtime_model: None,
+            effective_capabilities: None,
+            runtime_generation: None,
             system_prompt,
             extra_args,
             profile,
@@ -732,8 +766,12 @@ impl Session {
             cloud: self.cloud.clone(),
             agent_runtime: self.agent_runtime,
             protocol: self.protocol,
+            runtime_model: self.runtime_model.clone(),
+            effective_capabilities: self.effective_capabilities.clone(),
+            runtime_generation: self.runtime_generation.clone(),
             profile: self.profile.clone(),
             response_mode: self.response_mode,
+            allow_git: self.allow_git,
         }
     }
 
@@ -992,13 +1030,24 @@ impl Session {
     /// transcript-scale FR-2 rationale as `buf_command_output`: the clone is
     /// taken BEFORE `trim_block_buffer` runs, so a tool/subagent block that was
     /// itself pinning eviction is never evicted before its caller can persist it.
-    fn buf_tool_done(&mut self, block_id: &str, meta: String) -> Option<BufBlock> {
+    ///
+    /// `has_detail`: command-inspect FR-1/FR-10 — the caller must have already
+    /// written the `StepDetail` sidecar record (if any) BEFORE calling this, so
+    /// the finalized block and the `tool.done` event it feeds both carry the
+    /// right flag on the FIRST — and only — line ever persisted for it.
+    fn buf_tool_done(
+        &mut self,
+        block_id: &str,
+        meta: String,
+        has_detail: bool,
+    ) -> Option<BufBlock> {
         let out = self
             .block_buffer
             .iter_mut()
             .find(|b| b.block_id == block_id)
             .map(|b| {
                 b.meta = Some(meta);
+                b.has_detail = has_detail;
                 b.streaming = false;
                 b.clone()
             });
@@ -1018,6 +1067,9 @@ impl Session {
 
 #[derive(Default)]
 pub struct Engine {
+    runtime_events: Mutex<HashMap<String, events::RuntimeEventSequence>>,
+    unsupported_runtime_records: Mutex<HashMap<String, Value>>,
+    runtime_connections: Mutex<HashMap<String, Arc<dyn adapter::RuntimeSessionControl>>>,
     sessions: Mutex<HashMap<String, Session>>,
     /// workflow-details §6: run id → the incremental scan state of its run
     /// directory (per-file byte offsets + running aggregates, FR-5) and the
@@ -1178,6 +1230,7 @@ pub fn kill_all(app: &AppHandle) {
     let Some(engine) = app.try_state::<Engine>() else {
         return;
     };
+    engine.shutdown_runtimes();
     // session-questions FR-13 (app-exit teardown, §7#5): drain every parked
     // question BEFORE killing its child, so the cancelled state is persisted
     // synchronously here — the reader threads may never get to run again. The
@@ -1412,7 +1465,7 @@ mod tests {
         assert!(s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP);
         assert_eq!(s.block_buffer[0].block_id, "tool-1");
 
-        let done = s.buf_tool_done("tool-1", "3 lines".into());
+        let done = s.buf_tool_done("tool-1", "3 lines".into(), false);
         assert_eq!(done.as_ref().map(|b| b.block_id.as_str()), Some("tool-1"));
         assert_eq!(done.unwrap().meta.as_deref(), Some("3 lines"));
         // Settling it unpins eviction, which catches back up to the cap in the

@@ -36,6 +36,7 @@ const META: SessionMeta = {
   accountId: 'default',
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
+  allowGit: false,
   responseMode: 'concise',
 };
 

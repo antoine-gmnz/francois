@@ -17,7 +17,7 @@ export function useShellShortcuts(sessionId: SessionId | null, active: boolean):
     const onKey = (e: KeyboardEvent) => {
       const combo = shellShortcutFor(e.key, e.metaKey, e.ctrlKey, e.shiftKey);
       if (!combo) return;
-      // useAppShortcuts parity: a modal (new session, new agent, rename,
+      // useAppShortcuts parity: a modal (new session, new agent, settings sheet,
       // permissions, projects, accounts, update) or a focused text input
       // suppresses these combos too — otherwise ⌘T/⌘W/⌃⇥/⌃⇧⇥ still mutate the
       // shell strip behind an open modal.
@@ -30,7 +30,7 @@ export function useShellShortcuts(sessionId: SessionId | null, active: boolean):
         st.permissionsOpen ||
         st.projectsOpen ||
         st.accountsOpen ||
-        st.renameSessionId !== null ||
+        st.sessionSettingsId !== null ||
         st.updateModalOpen ||
         inInput
       )

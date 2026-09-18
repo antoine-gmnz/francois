@@ -1,6 +1,7 @@
 //! sessions.json + per-session transcript persistence (FR-42/43).
 
 use super::*;
+use crate::ipc::AppError;
 
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -82,10 +83,19 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
     // design 9a: `at` rides the line so a reopened session states when each turn
     // actually happened. Only the four base kinds carry it — the card kinds
     // (command/question/permission) render their own chrome and never a clock.
-    serde_json::json!({
+    let mut o = serde_json::json!({
         "blockId": b.block_id, "kind": kind, "text": b.text,
         "tool": b.tool, "summary": b.summary, "meta": b.meta, "at": b.at,
-    })
+    });
+    // command-inspect FR-10: round-trips through the transcript file (never
+    // just in-memory) so a step's chevron survives quit/reopen exactly like
+    // its sidecar record does. Written ONLY for a `tool` line — the only kind
+    // whose contract type (`ToolConversationBlock`) has a slot for it — and
+    // only when true, so a pre-feature line stays byte-identical.
+    if kind == "tool" && b.has_detail {
+        o["hasDetail"] = Value::Bool(true);
+    }
+    o
 }
 
 /// Append one finalized block as a JSON line to the session's transcript (FR-1/2).
@@ -115,6 +125,7 @@ pub(crate) fn clear_transcript(app: &AppHandle, session_id: &str) {
     if let Some(path) = transcript_path(app, session_id) {
         let _ = std::fs::remove_file(&path);
     }
+    remove_step_detail_sidecar(app, session_id);
 }
 
 /// Parse one PersistedBlock line back into a BufBlock. Returns None for a malformed
@@ -219,6 +230,13 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
             .unwrap_or("")
             .to_string(),
         meta: v.get("meta").and_then(|m| m.as_str()).map(String::from),
+        // command-inspect FR-10: absent on every line written before this
+        // feature (and on every non-tool kind, which never writes the key) —
+        // reads back as `false`, exactly the "no chevron" default FR-12 asks for.
+        has_detail: v
+            .get("hasDetail")
+            .and_then(|h| h.as_bool())
+            .unwrap_or(false),
         ..BufBlock::new(&block_id, kind)
     })
 }
@@ -228,10 +246,14 @@ pub(crate) fn parse_persisted_block(line: &str) -> Option<BufBlock> {
 /// (session-questions FR-15); everything else appends exactly once.
 pub(crate) fn parse_transcript(content: &str) -> Vec<BufBlock> {
     let mut out: Vec<BufBlock> = Vec::new();
+    let mut positions: HashMap<String, usize> = HashMap::new();
     for b in content.lines().filter_map(parse_persisted_block) {
-        match out.iter_mut().find(|e| e.block_id == b.block_id) {
-            Some(slot) => *slot = b,
-            None => out.push(b),
+        match positions.get(&b.block_id).copied() {
+            Some(idx) => out[idx] = b,
+            None => {
+                positions.insert(b.block_id.clone(), out.len());
+                out.push(b);
+            }
         }
     }
     out
@@ -255,7 +277,7 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
     static PERSIST_LOCK: Mutex<()> = Mutex::new(());
     let _w = PERSIST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let map = engine.sessions.lock().unwrap();
-    let list: Vec<Value> = map
+    let mut list: Vec<Value> = map
         .values()
         .map(|s| {
             let mut rec = serde_json::json!({
@@ -279,6 +301,7 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
                 // `parse_session_record`), never written.
                 "agentRuntime": s.agent_runtime,
                 "protocol": s.protocol,
+                "runtimeModel": s.runtime_model,
                 // response-mode FR-1: always written, like accountId — every
                 // session has one and 'default' is a real value. FR-10's
                 // `responseModeSent` rides alongside the thread anchor it is
@@ -334,6 +357,14 @@ pub(crate) fn persist(app: &AppHandle, engine: &Engine) {
             rec
         })
         .collect();
+    list.extend(
+        engine
+            .unsupported_runtime_records
+            .lock()
+            .unwrap()
+            .values()
+            .cloned(),
+    );
     if let Some(path) = sessions_json_path(app) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -382,6 +413,7 @@ pub(crate) struct PersistedMeta {
     /// `parse_session_record`'s migration.
     agent_runtime: AgentRuntime,
     protocol: ProviderProtocol,
+    runtime_model: Option<RuntimeModelRef>,
     claude_session_id: Option<String>,
     last_activity_at: u64,
     context_used_tokens: u64,
@@ -428,21 +460,32 @@ pub(crate) struct PersistedMeta {
 ///
 /// Save-side (`persist`) writes only the two new keys; the legacy key is read
 /// here, never written.
-fn parse_agent_runtime_and_protocol(rec: &Value) -> (AgentRuntime, ProviderProtocol) {
-    let runtime = rec
-        .get("agentRuntime")
-        .and_then(|v| serde_json::from_value::<AgentRuntime>(v.clone()).ok());
-    let protocol = rec
-        .get("protocol")
-        .and_then(|v| serde_json::from_value::<ProviderProtocol>(v.clone()).ok());
-    if let (Some(r), Some(p)) = (runtime, protocol) {
-        return (r, p);
-    }
-    match rec.get("provider").and_then(|v| v.as_str()) {
-        Some("claude-code") => (AgentRuntime::ClaudeCode, ProviderProtocol::Anthropic),
+fn parse_agent_runtime_and_protocol(
+    rec: &Value,
+) -> Result<(AgentRuntime, ProviderProtocol), AppError> {
+    let legacy = match rec.get("provider").and_then(Value::as_str) {
         Some("openai-compatible") => (AgentRuntime::Francois, ProviderProtocol::Openai),
-        _ => (AgentRuntime::default(), ProviderProtocol::default()),
-    }
+        _ => (AgentRuntime::ClaudeCode, ProviderProtocol::Anthropic),
+    };
+    let runtime = match rec.get("agentRuntime") {
+        Some(value) => serde_json::from_value(value.clone()).map_err(|_| {
+            AppError::runtime(
+                crate::ipc::RuntimeErrorCode::Unsupported,
+                "unsupported runtime record retained for recovery",
+            )
+        })?,
+        None => legacy.0,
+    };
+    let protocol = match rec.get("protocol") {
+        Some(value) => serde_json::from_value(value.clone()).map_err(|_| {
+            AppError::runtime(
+                crate::ipc::RuntimeErrorCode::Unsupported,
+                "unsupported provider protocol",
+            )
+        })?,
+        None => legacy.1,
+    };
+    Ok((runtime, protocol))
 }
 
 pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
@@ -463,7 +506,7 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
     .to_string();
     // multi-provider-seam FR-11a: computed once, ahead of the literal below —
     // see `parse_agent_runtime_and_protocol`'s doc comment for the migration.
-    let (agent_runtime, protocol) = parse_agent_runtime_and_protocol(rec);
+    let (agent_runtime, protocol) = parse_agent_runtime_and_protocol(rec).ok()?;
     Some(PersistedMeta {
         id,
         name,
@@ -530,6 +573,11 @@ pub(crate) fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMet
             .map(String::from),
         agent_runtime,
         protocol,
+        runtime_model: rec
+            .get("runtimeModel")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .filter(|m: &RuntimeModelRef| m.validate().is_ok()),
         claude_session_id: rec
             .get("claudeSessionId")
             .and_then(|v| v.as_str())
@@ -642,6 +690,7 @@ pub(crate) fn unlink_project_sessions(app: &AppHandle, project_id: &str) {
 }
 
 pub fn load_persisted(app: &AppHandle) {
+    sweep_orphaned_step_detail_sidecars(app);
     let Some(path) = sessions_json_path(app) else {
         return;
     };
@@ -663,6 +712,15 @@ pub fn load_persisted(app: &AppHandle) {
     for rec in list {
         let now = now_ms();
         let Some(m) = parse_session_record(&rec, now) else {
+            if parse_agent_runtime_and_protocol(&rec).is_err() {
+                if let Some(id) = rec.get("id").and_then(Value::as_str) {
+                    engine
+                        .unsupported_runtime_records
+                        .lock()
+                        .unwrap()
+                        .insert(id.into(), rec);
+                }
+            }
             continue;
         };
         let mut block_buffer = read_transcript(app, &m.id); // FR-5
@@ -717,6 +775,9 @@ pub fn load_persisted(app: &AppHandle) {
                 cloud: m.cloud,
                 agent_runtime: m.agent_runtime,
                 protocol: m.protocol,
+                runtime_model: m.runtime_model,
+                effective_capabilities: None,
+                runtime_generation: None,
                 // session-profiles FR-19: a resumed session spawns with ITS
                 // persisted values, not the profile's current ones.
                 system_prompt: m.system_prompt,
@@ -772,8 +833,31 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn persisted_runtime_models_reject_malformed_identifiers() {
+        for invalid in ["bad\nvalue", "bad\tvalue", "bad\0value", ""] {
+            for field in ["providerId", "modelId"] {
+                let mut rec = json!({"id":"s1", "name":"session", "cwd":"/tmp", "runtimeModel":{"providerId":"provider", "modelId":"model"}});
+                rec["runtimeModel"][field] = json!(invalid);
+                assert!(
+                    parse_session_record(&rec, 1)
+                        .unwrap()
+                        .runtime_model
+                        .is_none(),
+                    "{field}: {invalid:?}"
+                );
+            }
+        }
+        let rec = json!({"id":"s1", "name":"session", "cwd":"/tmp", "runtimeModel":{"providerId":"provider", "modelId":"model"}});
+        assert!(parse_session_record(&rec, 1)
+            .unwrap()
+            .runtime_model
+            .is_some());
+    }
+
+    #[test]
     fn transcript_block_roundtrips_finalized() {
         let b = BufBlock {
+            has_detail: false,
             block_id: "b1".into(),
             kind: BlockKind::Tool,
             text: String::new(),
@@ -814,6 +898,7 @@ mod tests {
     #[test]
     fn transcript_user_block_has_null_meta() {
         let b = BufBlock {
+            has_detail: false,
             block_id: "u1".into(),
             kind: BlockKind::User,
             text: "hi".into(),
@@ -843,6 +928,7 @@ mod tests {
     #[test]
     fn transcript_subagent_block_roundtrips() {
         let b = BufBlock {
+            has_detail: false,
             block_id: "s1".into(),
             kind: BlockKind::Subagent,
             text: "opus".into(), // …and the dispatch's model lives in `text`
@@ -1247,6 +1333,8 @@ mod tests {
         );
         let blocks = parse_transcript(content);
         assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].block_id, "u1");
+        assert_eq!(blocks[2].block_id, "a1");
         assert_eq!(blocks[1].block_id, "q1"); // position of the first occurrence
         let q = classify_block(&blocks[1]);
         assert_eq!(q["state"], "answered");
@@ -1629,5 +1717,29 @@ mod project_link_tests {
         assert!(engine.clear_project("nobody").is_empty());
         let map = engine.sessions.lock().unwrap();
         assert_eq!(map.get("s1").unwrap().project_id.as_deref(), Some("p1"));
+    }
+}
+
+#[cfg(test)]
+mod runtime_record_tests {
+    use super::*;
+    #[test]
+    fn unknown_runtime_is_unsupported_and_protocol_migrates_independently() {
+        let unknown = serde_json::json!({ "id": "s", "name": "n", "cwd": "/x", "agentRuntime": "future", "protocol": null });
+        assert_eq!(
+            parse_agent_runtime_and_protocol(&unknown).unwrap_err().code,
+            "RUNTIME_UNSUPPORTED"
+        );
+        assert!(parse_session_record(&unknown, 0).is_none());
+        let legacy =
+            serde_json::json!({ "id": "s", "name": "n", "cwd": "/x", "agentRuntime": "codex" });
+        let parsed = parse_session_record(&legacy, 0).unwrap();
+        assert_eq!(parsed.agent_runtime, AgentRuntime::Codex);
+        assert_eq!(parsed.protocol, ProviderProtocol::Anthropic);
+        let pi = serde_json::json!({ "id": "s", "name": "n", "cwd": "/x", "agentRuntime": "pi", "protocol": null });
+        assert_eq!(
+            parse_session_record(&pi, 0).unwrap().protocol,
+            ProviderProtocol::Pi
+        );
     }
 }

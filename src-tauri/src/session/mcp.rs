@@ -334,6 +334,9 @@ pub fn mcp_reconnect(
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "mcp") {
+        return err(code, msg);
+    }
     let Some(info) = engine.with_session_mut(&session_id, |s| {
         let info = connecting_info(&name);
         s.mcp.insert(name.clone(), info.clone());
@@ -357,6 +360,9 @@ pub fn mcp_detach(
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "mcp") {
+        return err(code, msg);
+    }
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
@@ -390,6 +396,9 @@ pub fn mcp_attach(
     session_id: String,
     entry: Value,
 ) -> IpcResult<Option<()>> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "mcp") {
+        return err(code, msg);
+    }
     let name = entry
         .get("name")
         .and_then(|n| n.as_str())

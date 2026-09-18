@@ -1070,6 +1070,7 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
       accountId: 'default',
       agentRuntime: 'claude-code' as const,
       protocol: 'anthropic' as const,
+      allowGit: false,
       responseMode: 'default' as const,
     };
     applySessionEvent(dispatch, setters, { type: 'session.meta', meta });
@@ -1210,6 +1211,14 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     const step: AgentStep = { seq: 1, kind: 'text', at: 0, label: 'thinking' };
     const server: McpServerInfo = { name: 'fs', status: 'connected' };
     const ignored: SessionEvent[] = [
+      {
+        type: 'runtime.event',
+        sessionId: 'x',
+        generation: 'g1',
+        sequence: 1,
+        at: 0,
+        event: { kind: 'run.state', state: 'running' },
+      },
       { type: 'session.removed', sessionId: 'x' },
       { type: 'agent.update', agent },
       { type: 'agent.step', sessionId: 'x', agentId: 'a1', step },
@@ -1416,4 +1425,11 @@ describe('compactBlocks preserves block identity for untouched blocks (mac-text-
     expect(out[0]).toBe(user);
     expect(out[1]).toBe(assistant);
   });
+});
+it('retains tool detail availability through events and reducer updates', () => {
+  const dispatch = vi.fn();
+  applySessionEvent(dispatch, {} as ConversationEventSetters, { type: 'tool.done', sessionId: 's', blockId: 't', meta: 'done', hasDetail: true });
+  expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolDone', blockId: 't', meta: 'done', hasDetail: true });
+  const state = transcriptReducer(S0, { t: 'toolStart', blockId: 't', tool: 'Bash', summary: 'pwd' });
+  expect(transcriptReducer(state, dispatch.mock.calls[0][0]).blocks[0]).toMatchObject({ hasDetail: true });
 });

@@ -38,11 +38,12 @@ fn manifest_invalid(err: Invalid, manifest_path: &Path) -> AppError {
     AppError {
         code: "EXT_MANIFEST_INVALID".to_string(),
         message: format!("unknown {} at {}", err.expected, err.pointer),
-        detail: Some(json!({
+        detail: Some(Box::new(json!({
             "pointer": err.pointer,
             "expected": err.expected,
             "manifestPath": manifest_path.to_string_lossy(),
-        })),
+        }))),
+        runtime_failure: None,
     }
 }
 
@@ -50,7 +51,11 @@ fn manifest_unsupported(found: Value) -> AppError {
     AppError {
         code: "EXT_MANIFEST_UNSUPPORTED".to_string(),
         message: format!("unsupported manifest version {found}"),
-        detail: Some(json!({ "found": found, "supported": MANIFEST_VERSION })),
+        detail: Some(Box::new(
+            json!({ "found": found, "supported": MANIFEST_VERSION }),
+        )),
+
+        runtime_failure: None,
     }
 }
 

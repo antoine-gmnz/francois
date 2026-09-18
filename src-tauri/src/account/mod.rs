@@ -590,6 +590,8 @@ mod tests {
                 code: "ACCOUNT_DUPLICATE".into(),
                 message: "already registered".into(),
                 detail: None,
+
+                runtime_failure: None,
             },
         })
         .unwrap();

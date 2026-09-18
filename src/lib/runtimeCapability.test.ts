@@ -4,7 +4,7 @@
 // component compares `agentRuntime`/`protocol` to a literal.
 
 import { describe, expect, it } from 'vitest';
-import type { SessionMeta } from '../../contract/common';
+import type { RuntimeCapabilities, SessionMeta } from '../../contract/common';
 import { sessionCapability } from './runtimeCapability';
 
 function meta(overrides: Partial<SessionMeta>): SessionMeta {
@@ -24,6 +24,7 @@ function meta(overrides: Partial<SessionMeta>): SessionMeta {
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
+    allowGit: false,
     responseMode: 'default',
     ...overrides,
   };
@@ -69,5 +70,25 @@ describe('sessionCapability (FR-20)', () => {
     const a = meta({ agentRuntime: 'francois', protocol: 'anthropic' });
     const b = meta({ agentRuntime: 'francois', protocol: 'openai' });
     expect(sessionCapability(a, 'skills')).toEqual(sessionCapability(b, 'skills'));
+  });
+
+  it('lets a live core snapshot narrow a static capability without widening it', () => {
+    const effective: RuntimeCapabilities = {
+      ...Object.fromEntries(Object.keys({
+        mcp: null, subagents: null, skills: null, skillsInstall: null, workflows: null,
+        interactiveCommands: null, permissions: null, remoteControl: null, usageBar: null,
+        compaction: null, steering: null, followUps: null, resumableSessions: null,
+        modelSwitching: null, images: null, contextMetrics: null, costMetrics: null,
+      }).map((key) => [key, { available: true }])) as RuntimeCapabilities,
+      skills: { available: false, reason: 'Disabled by this model.' },
+    };
+    const pi = meta({ agentRuntime: 'pi', protocol: null, effectiveCapabilities: effective });
+    expect(sessionCapability(pi, 'skills')).toEqual({ available: false, reason: 'Disabled by this model.' });
+    expect(sessionCapability(pi, 'mcp')).toEqual({ available: true });
+  });
+
+  it('keeps a Pi session disabled until the core sends its live snapshot', () => {
+    const pi = meta({ agentRuntime: 'pi', protocol: null });
+    expect(sessionCapability(pi, 'steering')).toEqual({ available: false, reason: 'Runtime is not connected.' });
   });
 });

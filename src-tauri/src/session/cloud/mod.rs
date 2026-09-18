@@ -487,7 +487,9 @@ mod tests {
                 error: AppError {
                     code: "CLOUD_ADOPT_STALLED".into(),
                     message: "took too long".into(),
-                    detail: Some(json!({ "phase": "teleporting" })),
+                    detail: Some(Box::new(json!({ "phase": "teleporting" }))),
+
+                    runtime_failure: None,
                 }
             })
             .unwrap(),

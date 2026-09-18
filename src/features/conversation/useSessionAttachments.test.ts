@@ -538,3 +538,61 @@ describe('subscribeDocumentPaste', () => {
     expect(() => un()).not.toThrow();
   });
 });
+
+describe('disabled image capability snapshots', () => {
+  const unavailable = { available: false, reason: 'Images are disabled.' };
+  it('refuses pasted images before reading or sending bytes', async () => {
+    const { port, rec } = makePort();
+    const controller = createAttachmentsController({ ...port, imagesCapability: () => unavailable });
+    await controller.onPaste(clipboardEvent([imageItem()]));
+    expect(api.sessionAttachClipboardImage).not.toHaveBeenCalled();
+    expect(rec.errors).toContain(unavailable.reason);
+  });
+  it('refuses image drops but preserves ordinary files', async () => {
+    const { port, rec } = makePort();
+    api.sessionAttachFile.mockResolvedValue({ ok: true, data: attachment({ kind: 'file', refPath: 'notes.txt' }) });
+    await createAttachmentsController({ ...port, imagesCapability: () => unavailable }).attachPaths(['shot.png', 'notes.txt']);
+    expect(api.sessionAttachFile).toHaveBeenCalledTimes(1);
+    expect(api.sessionAttachFile).toHaveBeenCalledWith('s1', 'notes.txt');
+    expect(rec.text).toContain('@notes.txt');
+  });
+  it('filters images from picker results and releases their staged copies', async () => {
+    const { port, rec } = makePort();
+    api.sessionPickAttachments.mockResolvedValue({ ok: true, data: { attached: [attachment(), attachment({ id: 'f1', kind: 'file', refPath: 'notes.txt' })], failed: [] } });
+    api.sessionReleaseAttachment.mockResolvedValue({ ok: true, data: null });
+    await createAttachmentsController({ ...port, imagesCapability: () => unavailable }).onAttachClick();
+    expect(rec.staged.map((a) => a.id)).toEqual(['f1']);
+    expect(api.sessionReleaseAttachment).toHaveBeenCalledWith('s1', 'a1');
+    expect(rec.errors).toContain(unavailable.reason);
+  });
+  it('blocks submission after capability revocation but allows text and files', () => {
+    const { port } = makePort();
+    const controller = createAttachmentsController({ ...port, imagesCapability: () => unavailable });
+    expect(controller.canSubmit('describe @.francois/attachments/shot.PNG')).toBe(false);
+    expect(controller.canSubmit('read @notes.txt')).toBe(true);
+    expect(controller.canSubmit('ordinary text')).toBe(true);
+  });
+});
+
+describe('live image capability changes', () => {
+  it('rejects an image result when capability is revoked during ingestion', async () => {
+    const { port, rec } = makePort();
+    let available = true;
+    api.sessionAttachFile.mockImplementation(async () => {
+      available = false;
+      return { ok: true, data: attachment() };
+    });
+    api.sessionReleaseAttachment.mockResolvedValue({ ok: true, data: null });
+    const controller = createAttachmentsController({ ...port, imagesCapability: () => ({ available, reason: 'Revoked.' }) });
+    await controller.attachPaths(['shot.png']);
+    expect(rec.staged).toEqual([]);
+    expect(rec.text).toBe('');
+    expect(api.sessionReleaseAttachment).toHaveBeenCalledWith('s1', 'a1');
+  });
+  it('blocks staged image refs containing spaces after revocation', () => {
+    const { port } = makePort();
+    const a = attachment({ refPath: 'folder/my shot.png' });
+    const controller = createAttachmentsController({ ...port, stagedImages: () => [a], imagesCapability: () => ({ available: false }) });
+    expect(controller.canSubmit('describe @folder/my shot.png')).toBe(false);
+  });
+});

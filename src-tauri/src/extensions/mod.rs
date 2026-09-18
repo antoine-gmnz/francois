@@ -660,6 +660,8 @@ mod tests {
                     code: "EXT_PROVIDER_MISSING".into(),
                     message: "docker not found on PATH".into(),
                     detail: None,
+
+                    runtime_failure: None,
                 }
             }),
             json!({

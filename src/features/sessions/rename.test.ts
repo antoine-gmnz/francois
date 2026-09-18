@@ -1,9 +1,10 @@
 // session-rename (specs/session-rename.md) — frontend unit tests.
-// Covers the pure commit-gate helper the rename modal hangs off (FR-10), the
-// contract-typed `session_rename` invoke wrapper (§5), the store flag both entry
-// points write (FR-12/FR-14), and the palette command's registration + enablement
-// (FR-14). No DOM framework is wired — RenameSessionModal is a thin renderer over
-// these.
+// Covers the pure commit-gate helper (FR-10) and the contract-typed
+// `session_rename` invoke wrapper (§5). Both survive session-settings-sheet
+// FR-21: the verb, its contract and these tests stay — the dedicated
+// RenameSessionModal.tsx they used to back is gone, its NAME field folded into
+// SessionSettingsSheet.tsx (session-settings-sheet.md), and the store flag /
+// palette command they used to test moved with it — see session-settings.test.ts.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionMeta } from '../../../contract/common';
@@ -14,7 +15,6 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
 import { sessionRename } from '../../lib/api';
-import { useStore } from '../../lib/store';
 import { SESSION_NAME_MAX, canCommitRename } from './rename';
 
 const META: SessionMeta = {
@@ -34,6 +34,7 @@ const META: SessionMeta = {
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
   responseMode: 'default',
+  allowGit: false,
 };
 
 describe('canCommitRename (FR-10)', () => {
@@ -79,47 +80,5 @@ describe('sessionRename wrapper (§5)', () => {
     invokeMock.mockResolvedValue({ ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'session not found' } });
     const res = await sessionRename({ sessionId: 'gone', name: 'x' });
     expect(res.ok).toBe(false);
-  });
-});
-
-describe('renameSessionId store flag (FR-12/FR-14)', () => {
-  it('defaults to null and holds the session being renamed', () => {
-    expect(useStore.getState().renameSessionId).toBeNull();
-    useStore.getState().setRenameSessionId('s1');
-    expect(useStore.getState().renameSessionId).toBe('s1');
-    useStore.getState().setRenameSessionId(null);
-    expect(useStore.getState().renameSessionId).toBeNull();
-  });
-});
-
-describe('rename-session palette command (FR-14)', () => {
-  async function freshCommands() {
-    vi.resetModules();
-    const storeMod = await import('../../lib/store');
-    const paletteMod = await import('../palette/palette');
-    const commandsMod = await import('../palette/paletteCommands');
-    commandsMod.registerBuiltinCommands();
-    const cmd = paletteMod.paletteCommands().find((c) => c.id === 'rename-session');
-    if (!cmd) throw new Error("command 'rename-session' not registered");
-    return { useStore: storeMod.useStore, cmd };
-  }
-
-  it('is registered with the ✎ glyph and its spec name', async () => {
-    const { cmd } = await freshCommands();
-    expect(cmd.glyph).toBe('✎');
-    expect(cmd.name).toBe('Rename session');
-  });
-
-  it('is disabled (⇒ hidden) with no active session', async () => {
-    const { cmd } = await freshCommands();
-    expect(cmd.enabled?.({ activeSessionId: null, runningAgentCount: 0 })).toBe(false);
-    expect(cmd.enabled?.({ activeSessionId: 's1', runningAgentCount: 0 })).toBe(true);
-  });
-
-  it('opens the rename modal for the active session and returns void (no SecondaryStep)', async () => {
-    const { useStore: store, cmd } = await freshCommands();
-    const step = cmd.run({ activeSessionId: 's1', runningAgentCount: 0 });
-    expect(step).toBeUndefined();
-    expect(store.getState().renameSessionId).toBe('s1');
   });
 });

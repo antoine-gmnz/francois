@@ -208,6 +208,8 @@ fn unavailable(message: &str) -> AppError {
         code: "USAGE_UNAVAILABLE".into(),
         message: message.into(),
         detail: None,
+
+        runtime_failure: None,
     }
 }
 
@@ -217,6 +219,8 @@ fn spawn_failed() -> AppError {
         code: "SPAWN_FAILED".into(),
         message: MSG_SPAWN_FAILED.into(),
         detail: None,
+
+        runtime_failure: None,
     }
 }
 

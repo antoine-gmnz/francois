@@ -35,12 +35,18 @@ function TurnImpl({
   turn,
   model,
   now,
+  sessionId,
+  onOpenShell,
 }: {
   turn: TranscriptTurn;
   /** The session's model, shown on a reply. Absent on an agent trail or before meta lands. */
   model?: string;
   /** Ticking clock while streaming; a frozen, unused value otherwise. */
   now: number;
+  /** command-inspect: threaded down to each tool row's rail for its `stepDetail` fetch. */
+  sessionId: string;
+  /** command-inspect FR-16: threaded to each tool row's StepDetailPanel — see ConversationView. */
+  onOpenShell?: () => void;
 }) {
   const startedAt = turnStartedAt(turn);
   const meta = turnMeta(turn, now);
@@ -62,7 +68,7 @@ function TurnImpl({
           <span className="turn__rule" />
           {right !== '' && <span className="turn__meta">{right}</span>}
         </div>
-        <div className="turn__body">{renderBody(turn.blocks)}</div>
+        <div className="turn__body">{renderBody(turn.blocks, sessionId, onOpenShell)}</div>
       </div>
     </div>
   );
@@ -76,12 +82,12 @@ export default memo(TurnImpl);
  * indented UNDER, so folding them in would lose the ordering that makes a turn
  * readable as "said this, did that, then said this".
  */
-function renderBody(blocks: TurnBlock[]) {
+function renderBody(blocks: TurnBlock[], sessionId: string, onOpenShell?: () => void) {
   const out: React.ReactNode[] = [];
   let run: ToolConversationBlock[] = [];
   const flush = () => {
     if (run.length === 0) return;
-    out.push(<ToolRail key={`rail:${run[0]!.blockId}`} blocks={run} />);
+    out.push(<ToolRail key={`rail:${run[0]!.blockId}`} blocks={run} sessionId={sessionId} onOpenShell={onOpenShell} />);
     run = [];
   };
   for (const b of blocks) {

@@ -46,6 +46,7 @@ const metaOf = (id: string, s: SessionStatus): SessionMeta => ({
   accountId: 'default',
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
+  allowGit: false,
   responseMode: 'default',
 });
 

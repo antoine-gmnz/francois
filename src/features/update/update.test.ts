@@ -57,6 +57,7 @@ const session = (id: string, status: SessionMeta['status']): SessionMeta => ({
   accountId: 'default',
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
+  allowGit: false,
   responseMode: 'default',
 });
 

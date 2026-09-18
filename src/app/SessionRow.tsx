@@ -38,7 +38,9 @@ import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import RunChip from '../features/sessions/RunChip';
 import { truncateBranchLeft, worktreeChipLabel } from '../features/sessions/worktree';
 import LayoutToggle from '../features/usage/LayoutToggle';
+import { sessionCapability } from '../lib/runtimeCapability';
 import { sessionInterrupt } from '../lib/api';
+import { useElapsedClock } from '../lib/hooks/useElapsedClock';
 import { useWindowWidth } from '../lib/hooks/useWindowWidth';
 import { useStore, type MainTab } from '../lib/store';
 import { toneVar } from '../lib/tone';
@@ -65,7 +67,6 @@ export interface SessionRowProps {
   closeAgentTab: (agentId: string) => void;
   /** extensions FR-10 / design 11a: opening a tab from the `◈` menu or a pinned tab. */
   openExtTab: (extensionId: ExtensionId) => void;
-  elapsedMs: number;
   home: string;
 }
 
@@ -77,13 +78,25 @@ export default function SessionRow({
   agentTabs,
   closeAgentTab,
   openExtTab,
-  elapsedMs,
   home,
 }: SessionRowProps) {
+  // Elapsed clock ticks while the focused session's turn is in flight (FR-6) —
+  // isBusyStatus, so it keeps counting while the turn sits on an approval. That
+  // wait is part of the turn's wall clock, and freezing it there would read as
+  // the turn having finished. The clock lives HERE, not in App: this row is the
+  // only consumer, and ticking a useState at the tree's root re-rendered every
+  // mounted pane (composer included) once a second per busy session.
+  const busy = active !== null && isBusyStatus(active.status);
+  const clockNow = useElapsedClock(busy);
+  const elapsedMs = active
+    ? busy
+      ? clockNow - active.startedAt
+      : Math.max(0, active.lastActivityAt - active.startedAt)
+    : 0;
   const showLeftPane = useStore((s) => s.showLeftPane);
   const toggleLeftPane = useStore((s) => s.toggleLeftPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
-  const setRenameSessionId = useStore((s) => s.setRenameSessionId);
+  const setSessionSettingsId = useStore((s) => s.setSessionSettingsId);
   // split-session: the two panes carry their own strips, so this row's view
   // control would be a third, ambiguous one. It steps aside while split.
   const split = useStore((s) => s.extraPanes.length > 0);
@@ -139,8 +152,8 @@ export default function SessionRow({
           {/* The one elastic element in the row. */}
           <span
             className="session-row__name truncate"
-            title={`${active.name} — click to rename`}
-            onClick={() => setRenameSessionId(active.id)}
+            title={`${active.name} — click for session settings`}
+            onClick={() => setSessionSettingsId(active.id)}
           >
             {active.name}
           </span>
@@ -256,7 +269,7 @@ export default function SessionRow({
       {/* cloud-sessions FR-16: adopted from a Claude Code on the web session. */}
       {active?.cloud && <CloudChip cloud={active.cloud} />}
       {/* remote-control: host this session on claude.ai/code + mobile */}
-      {active && <RemoteControlBadge key={active.id} sessionId={active.id} />}
+      {active && <RemoteControlBadge key={active.id} sessionId={active.id} capability={sessionCapability(active, 'remoteControl')} />}
 
       {layout === 'segments' && <LayoutToggle />}
       {layout === 'menu' && <LayoutToggle variant="menu" />}

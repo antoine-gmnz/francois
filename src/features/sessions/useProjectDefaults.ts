@@ -47,6 +47,13 @@ export interface UseProjectDefaultsParams {
    * all — the palette's choice owns the field until it is consumed.
    */
   pendingProfileId: string | null;
+  /**
+   * session-settings-sheet FR-13: "New session from these ↗" seeds every field
+   * this hook would otherwise apply — skip the block for whichever project is
+   * initially selected, so the carried-over values render as-is. A LATER,
+   * manual project change still applies that project's own defaults normally.
+   */
+  seeded?: boolean;
 }
 
 export function useProjectDefaults(params: UseProjectDefaultsParams): void {
@@ -72,9 +79,10 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     profiles,
     setProfileId,
     pendingProfileId,
+    seeded,
   } = params;
 
-  const appliedRef = useRef<string | null>(null);
+  const appliedRef = useRef<string | null>(seeded ? projectId : null);
   useEffect(() => {
     if (modelsLoading) return;
     if (appliedRef.current === projectId) return;
@@ -125,7 +133,7 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
 
   // Same "registry arrives late" re-resolve as accounts, for a project default
   // profile that named nothing until profiles_list landed.
-  const profilesSeenRef = useRef(false);
+  const profilesSeenRef = useRef(seeded ?? false);
   useEffect(() => {
     if (profilesSeenRef.current || profiles.length === 0) return;
     profilesSeenRef.current = true;
@@ -140,7 +148,7 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
   // time a non-empty registry appears (AccountField itself renders
   // unconditionally per FR-31, including a single-account install's own
   // Default row — see its own doc comment).
-  const accountsSeenRef = useRef(false);
+  const accountsSeenRef = useRef(seeded ?? false);
   useEffect(() => {
     if (accountsSeenRef.current || accounts.length === 0) return;
     accountsSeenRef.current = true;

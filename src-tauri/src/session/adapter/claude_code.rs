@@ -285,7 +285,9 @@ impl SessionAdapter for ClaudeCodeAdapter {
                         "this session's account is not signed in — use Re-login in the Accounts modal"
                             .into(),
                     detail: None,
-                });
+
+                runtime_failure: None,
+});
             }
         }
         Ok(())
@@ -315,6 +317,8 @@ impl SessionAdapter for ClaudeCodeAdapter {
             code: "SPAWN_FAILED".into(),
             message: format!("could not start claude: {e}"),
             detail: None,
+
+            runtime_failure: None,
         })?;
 
         // session-questions FR-2: the stdin writer joins the turn state for the

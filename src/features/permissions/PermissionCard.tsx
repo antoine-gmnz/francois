@@ -63,6 +63,8 @@ export default function PermissionCard({
   // §8.2: the transcript carries no timestamp, so the age is measured from the
   // card's first render and only claimed while the ask is still waiting.
   const askedAt = useRef(Date.now());
+  // Whether this card is actually ON SCREEN — see the keydown guard below.
+  const rootRef = useRef<HTMLDivElement>(null);
   const now = useElapsedClock(pending, 30_000);
 
   const interactive = pending && !inFlight;
@@ -102,6 +104,14 @@ export default function PermissionCard({
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
       if (el && el.closest('.xterm') !== null) return;
       if (focusedSessionId(useStore.getState()) !== sessionId) return;
+      // …and only while this card is DISPLAYED. The main pane now HOLDS a
+      // session's transcript mounted behind DIFF, SHELL and the panel tabs
+      // (SessionViewHost), so the session test above no longer implies the card
+      // is on screen — without this, `1`–`4` typed on the DIFF tab (where they
+      // mean "focus the roster" / "open a panel") would answer an approval the
+      // user cannot even see. `offsetParent === null` is the same
+      // "hidden by an ancestor" test ShellTerminal's ResizeObserver uses.
+      if (!rootRef.current || rootRef.current.offsetParent === null) return;
       e.preventDefault();
       e.stopPropagation();
       decide(PERMISSION_ACTIONS[idx].decision);
@@ -112,7 +122,7 @@ export default function PermissionCard({
   }, [interactive, sessionId, tier]);
 
   return (
-    <div className={cardClass(block.state, inFlight)}>
+    <div ref={rootRef} className={cardClass(block.state, inFlight)}>
       {/* 9b: the legend names WHAT KIND of ask this is, then a rule carries the
           eye to the waiting clock at the right edge. */}
       <div className="pcard__head">

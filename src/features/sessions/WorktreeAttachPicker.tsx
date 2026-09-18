@@ -8,7 +8,7 @@
 import type { KeyboardEvent } from 'react';
 import { ListRow } from '../../ui/ListRow';
 import type { WorktreeRow } from './worktree';
-import './new-session-modal.css';
+import './session-settings-sheet.css';
 
 export interface WorktreeAttachPickerProps {
   rows: WorktreeRow[];

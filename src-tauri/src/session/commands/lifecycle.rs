@@ -434,6 +434,9 @@ pub fn session_remove(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Option<()>> {
+    if let Err(error) = engine.shutdown_runtime(&session_id) {
+        return crate::ipc::IpcResult::Err { ok: false, error };
+    }
     let removed = {
         let mut map = engine.sessions.lock().unwrap();
         map.remove(&session_id)
@@ -460,6 +463,8 @@ pub fn session_remove(
             // would introduce a pattern nothing else in the module follows.
             purge_session(&session.cwd, &session_id, &session.attachments);
             persist(&app, &engine);
+            remove_step_detail_sidecar(&app, &session_id); // command-inspect FR-7
+
             if let Some(path) = transcript_path(&app, &session_id) {
                 let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)
             }
@@ -481,6 +486,9 @@ pub fn session_switch_model(
     session_id: String,
     model_id: String,
 ) -> IpcResult<Value> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "modelSwitching") {
+        return err(code, msg);
+    }
     if model_id.trim().is_empty() {
         return err("INVALID_INPUT", "model is empty");
     }
@@ -490,28 +498,48 @@ pub fn session_switch_model(
         Some(true) => {}
     }
     match apply_model_switch(&app, &session_id, &model_id) {
-        Some(meta) => ok(serde_json::to_value(meta).unwrap()),
-        None => err("SESSION_NOT_FOUND", "no such session"),
+        Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
+        Err((code, message)) => err(code, message),
     }
 }
 
 /// Shared switch semantics (francois:session:switchModel and `/model <arg>` —
 /// interactive-commands FR-13): update the model + context limit, persist, emit
-/// session.meta. The in-flight turn is unaffected. None if the session is gone.
+/// session.meta. The in-flight turn is unaffected.
 pub(crate) fn apply_model_switch(
     app: &AppHandle,
     session_id: &str,
     model_id: &str,
-) -> Option<SessionMeta> {
+) -> Result<SessionMeta, (&'static str, &'static str)> {
     let engine = app.state::<Engine>();
-    let meta = engine.with_session_mut(session_id, |s| {
-        s.model_id = model_id.to_string();
-        s.context_limit_tokens = context_limit(model_id);
-        s.meta()
-    })?;
+    let meta = switch_model_in_engine(&engine, session_id, model_id)?;
     persist(app, &engine);
     emit(app, SessionEvent::Meta { meta: meta.clone() });
-    Some(meta)
+    Ok(meta)
+}
+
+fn switch_model_in_engine(
+    engine: &Engine,
+    session_id: &str,
+    model_id: &str,
+) -> Result<SessionMeta, (&'static str, &'static str)> {
+    engine
+        .with_session_mut(session_id, |s| {
+            if !adapter::resolve_capability(
+                s.agent_runtime,
+                s.effective_capabilities.as_ref(),
+                "modelSwitching",
+            ) {
+                return Err(("RUNTIME_UNSUPPORTED", "runtime capability is unavailable"));
+            }
+            if status::is_terminal(&s.status) {
+                return Err(("SESSION_NOT_RUNNING", "session has ended"));
+            }
+            s.model_id = model_id.to_string();
+            s.context_limit_tokens = context_limit(model_id);
+            Ok(s.meta())
+        })
+        .ok_or(("SESSION_NOT_FOUND", "no such session"))?
 }
 
 /// session-permission-mode FR-2: `francois:session:switchPermissionMode`'s enum
@@ -543,6 +571,13 @@ pub(crate) fn switch_permission_mode_in_engine(
     session_id: &str,
     mode: &str,
 ) -> Result<SessionMeta, (&'static str, &'static str)> {
+    // Sandbox selection is independent of interactive approval cards.
+    if engine.with_session(session_id, |s| s.agent_runtime == AgentRuntime::Pi) == Some(true) {
+        return Err((
+            "RUNTIME_UNSUPPORTED",
+            "runtime sandbox selection is unavailable",
+        ));
+    }
     match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
         None => return Err(("SESSION_NOT_FOUND", "no such session")),
         Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
@@ -585,10 +620,20 @@ pub(crate) fn switch_effort_in_engine(
     }
     engine
         .with_session_mut(session_id, |s| {
+            if !adapter::resolve_capability(
+                s.agent_runtime,
+                s.effective_capabilities.as_ref(),
+                "modelSwitching",
+            ) {
+                return Err(("RUNTIME_UNSUPPORTED", "runtime capability is unavailable"));
+            }
+            if status::is_terminal(&s.status) {
+                return Err(("SESSION_NOT_RUNNING", "session has ended"));
+            }
             s.effort = effort.map(String::from);
-            s.meta()
+            Ok(s.meta())
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+        .ok_or(("SESSION_NOT_FOUND", "no such session"))?
 }
 
 /// rework-top-bar (design 11c): `francois:session:switchEffort`. Same shape and
@@ -738,25 +783,23 @@ pub fn session_rename(
 
 #[tauri::command(async)]
 pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
-    let mut map = engine.sessions.lock().unwrap();
-    let Some(s) = map.get_mut(&session_id) else {
-        return err("SESSION_NOT_FOUND", "no such session");
-    };
-    // is_busy, not `== running`: interrupting a turn parked on an approval or a
-    // question is exactly when the brake matters most — the user has decided they
-    // want out rather than to answer. The reader-thread teardown cancels the
-    // pending ask (session-questions FR-13).
-    if !status::is_busy(&s.status) {
-        return ok(None); // FR-23 no-op
+    if let Err(error) = engine.cancel_runtime(&session_id) {
+        return IpcResult::Err { ok: false, error };
     }
-    if let Some(turn) = &s.current {
-        // multi-provider-seam FR-8: reached only through TurnControl.
+    let turn = match engine.with_session(&session_id, |s| {
+        if status::is_busy(&s.status) {
+            s.current.clone()
+        } else {
+            None
+        }
+    }) {
+        None => return err("SESSION_NOT_FOUND", "no such session"),
+        Some(turn) => turn,
+    };
+    if let Some(turn) = turn {
         turn.interrupt();
         turn.kill();
     }
-    // The turn's reader thread observes the kill, closes the open block, and
-    // routes completion (drain queue or go idle) — FR-24. A pending question is
-    // cancelled by the same reader-thread teardown (session-questions FR-13).
     ok(None)
 }
 
@@ -1158,5 +1201,104 @@ mod tests {
         assert!(!crate::account::wsl_translatable_config_dir(
             "\\\\server\\share\\accounts\\a1"
         ));
+    }
+}
+
+#[cfg(test)]
+mod capability_guard_tests {
+    use super::*;
+    use crate::session::testutil::{test_engine_with, test_session};
+    #[test]
+    fn model_switch_rechecks_capability_after_preliminary_check() {
+        let session = test_session();
+        let original_model = session.model_id.clone();
+        let original_limit = session.context_limit_tokens;
+        let engine = test_engine_with(session);
+        assert!(engine.require_capability("s1", "modelSwitching").is_ok());
+        engine.with_session_mut("s1", |s| {
+            s.effective_capabilities = Some(
+                [(
+                    "modelSwitching".into(),
+                    adapter::CapabilityState {
+                        available: false,
+                        reason: None,
+                    },
+                )]
+                .into(),
+            );
+        });
+        assert_eq!(
+            switch_model_in_engine(&engine, "s1", "new-model")
+                .err()
+                .unwrap()
+                .0,
+            "RUNTIME_UNSUPPORTED"
+        );
+        assert_eq!(
+            engine.with_session("s1", |s| (s.model_id.clone(), s.context_limit_tokens)),
+            Some((original_model, original_limit))
+        );
+    }
+    #[test]
+    fn effort_rejects_missing_pi_and_disabled_legacy_capabilities_without_mutation() {
+        for runtime in [
+            AgentRuntime::Pi,
+            AgentRuntime::ClaudeCode,
+            AgentRuntime::Codex,
+            AgentRuntime::Grok,
+        ] {
+            let mut session = test_session();
+            session.agent_runtime = runtime;
+            session.effort = Some("low".into());
+            if runtime != AgentRuntime::Pi {
+                session.effective_capabilities = Some(
+                    [(
+                        "modelSwitching".into(),
+                        adapter::CapabilityState {
+                            available: false,
+                            reason: None,
+                        },
+                    )]
+                    .into(),
+                );
+            }
+            let engine = test_engine_with(session);
+            for effort in [Some("high"), None] {
+                assert_eq!(
+                    switch_effort_in_engine(&engine, "s1", effort)
+                        .err()
+                        .unwrap()
+                        .0,
+                    "RUNTIME_UNSUPPORTED"
+                );
+                assert_eq!(
+                    engine.with_session("s1", |s| s.effort.clone()).unwrap(),
+                    Some("low".into())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_permissions_prevent_mutation_and_legacy_missing_is_preserved() {
+        let mut session = test_session();
+        let id = session.id.clone();
+        session.agent_runtime = AgentRuntime::Pi;
+        let engine = test_engine_with(session);
+        assert_eq!(
+            switch_permission_mode_in_engine(&engine, &id, "plan")
+                .err()
+                .unwrap()
+                .0,
+            "RUNTIME_UNSUPPORTED"
+        );
+        assert_eq!(
+            engine
+                .with_session(&id, |s| s.permission_mode.clone())
+                .unwrap(),
+            "default"
+        );
+        engine.with_session_mut(&id, |s| s.agent_runtime = AgentRuntime::ClaudeCode);
+        assert!(switch_permission_mode_in_engine(&engine, &id, "plan").is_ok());
     }
 }

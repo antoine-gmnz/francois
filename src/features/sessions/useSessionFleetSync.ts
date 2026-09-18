@@ -3,7 +3,7 @@ import type { AppError, SessionMeta, SessionStatus } from '../../../contract/com
 import { countRunning, isBusyStatus, type SessionDerived } from '../../../contract/fleet-board';
 import { statusTransitionKind, type ActivityKind } from '../../../contract/overview';
 import { diffGetSummary, onDiffEvent, sessionList } from '../../lib/api';
-import { subscribeSessionEvents } from '../../lib/session-events';
+import { captureSessionHydration, subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
 import { clearDraft } from '../conversation/composer-draft';
 import { clearPending, resolvePrompt } from '../conversation/pending-queue';
@@ -80,6 +80,7 @@ export function useSessionFleetSync(): SessionFleetSync {
   const patchStatus = useStore((s) => s.patchStatus);
   const patchError = useStore((s) => s.patchError);
   const patchUsage = useStore((s) => s.patchUsage);
+  const applyRuntimeEvent = useStore((s) => s.applyRuntimeEvent);
   const removeSessionFromCache = useStore((s) => s.removeSession);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
   // split-by-4 FR-27: the removal fallback takes the RAW reassignment —
@@ -131,6 +132,9 @@ export function useSessionFleetSync(): SessionFleetSync {
     clearRosterSignals(id); // design 12b: activity line / turn clock / parked ask
     // split-session: the rail badges' per-session counts go with it.
     useStore.getState().dropPanelCounts(id);
+    // …and any extension log-tail streams this session owned, so a capped log
+    // buffer never sits retained under a panel id that later gets reused.
+    useStore.getState().dropSessionExtStreams(id);
     // multiple-shells FR-9: purge the session's shell roster/active-id/unread
     // bookkeeping too, mirroring the core's own dispose_session_shells.
     useShellStore.getState().removeSession(id);
@@ -199,8 +203,9 @@ export function useSessionFleetSync(): SessionFleetSync {
   };
 
   const retryHydration = () => {
+    const reconcile = captureSessionHydration();
     void sessionList().then((res) => {
-      if (res.ok) applyHydration(res.data);
+      if (res.ok) applyHydration(reconcile(res.data));
       else setHydrationError(res.error);
     });
   };
@@ -263,6 +268,7 @@ export function useSessionFleetSync(): SessionFleetSync {
       onUsage: (sessionId, usedTokens, limitTokens) => {
         patchUsage(sessionId, usedTokens, limitTokens); // keeps the ctx figure live (FR-3)
       },
+      onRuntimeEvent: (event) => applyRuntimeEvent(event),
       onAgentUpdate: (agent) => {
         const owner = useStore.getState().sessions.find((session) => session.id === agent.sessionId);
         if (!owner) return; // drop post-removal (FR-7)
@@ -348,9 +354,10 @@ export function useSessionFleetSync(): SessionFleetSync {
       else unlistenDiff = unsub;
     });
 
+    const reconcile = captureSessionHydration();
     void sessionList().then((res) => {
       if (cancelled) return;
-      if (res.ok) applyHydration(res.data);
+      if (res.ok) applyHydration(reconcile(res.data));
       else setHydrationError(res.error);
     });
 

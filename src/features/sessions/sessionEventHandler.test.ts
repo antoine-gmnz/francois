@@ -12,6 +12,7 @@ function makeCtx(): MockContext {
     onUsage: vi.fn(),
     onAgentUpdate: vi.fn(),
     onRemoved: vi.fn(),
+    onRuntimeEvent: vi.fn(),
     onTurnStart: vi.fn(),
     onMessageUser: vi.fn(),
     onToolStart: vi.fn(),
@@ -41,6 +42,7 @@ const meta: SessionMeta = {
   accountId: 'default',
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
+  allowGit: false,
   responseMode: 'default',
 };
 
@@ -98,6 +100,21 @@ describe('handleSessionEvent', () => {
     const ctx = makeCtx();
     handleSessionEvent({ type: 'session.removed', sessionId: 's1' }, ctx);
     expect(ctx.onRemoved).toHaveBeenCalledWith('s1');
+    expect(calledCount(ctx)).toBe(1);
+  });
+
+  it('routes runtime.event to onRuntimeEvent with the complete envelope', () => {
+    const ctx = makeCtx();
+    const event: Extract<SessionEvent, { type: 'runtime.event' }> = {
+      type: 'runtime.event',
+      sessionId: 's1',
+      generation: 'g1',
+      sequence: 1,
+      at: 0,
+      event: { kind: 'run.state', state: 'running' },
+    };
+    handleSessionEvent(event, ctx);
+    expect(ctx.onRuntimeEvent).toHaveBeenCalledWith(event);
     expect(calledCount(ctx)).toBe(1);
   });
 

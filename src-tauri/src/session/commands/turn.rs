@@ -44,10 +44,39 @@ pub(crate) fn do_send(
     source: SendSource,
 ) -> IpcResult<SendOutput> {
     let engine = app.state::<Engine>();
+    if engine
+        .unsupported_runtime_records
+        .lock()
+        .unwrap()
+        .contains_key(session_id)
+    {
+        return err(
+            "RUNTIME_UNSUPPORTED",
+            "unsupported runtime record retained for recovery",
+        );
+    }
+    if let Some((command, _)) = send_intercept(&text, source) {
+        let key = match command.as_str() {
+            "compact" => "compaction",
+            "model" => "modelSwitching",
+            _ => "interactiveCommands",
+        };
+        if let Err((code, msg)) = engine.require_capability(session_id, key) {
+            return err(code, msg);
+        }
+    }
+    if source == SendSource::Skill {
+        if let Err((code, msg)) = engine.require_capability(session_id, "skills") {
+            return err(code, msg);
+        }
+    }
     let mut map = engine.sessions.lock().unwrap();
     let Some(s) = map.get_mut(session_id) else {
         return err("SESSION_NOT_FOUND", "no such session");
     };
+    if let Err((code, msg)) = s.validate_attachment_submission(&text) {
+        return err(code, msg);
+    }
     if status::is_terminal(&s.status) {
         return err("SESSION_NOT_RUNNING", "session has ended; create a new one");
     }
@@ -175,6 +204,9 @@ pub fn session_compact(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Option<()>> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "compaction") {
+        return err(code, msg);
+    }
     // Snapshot cwd/model/resume/effort; enforce status.
     let (
         cwd,

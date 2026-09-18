@@ -189,6 +189,26 @@ export function mainPaneBranch(mainTab: MainTab): MainPaneBranch {
   return workflowIdFromTab(mainTab) !== null ? 'workflow' : 'agent';
 }
 
+// ---------- the held session bodies (SessionViewHost) ----------
+
+/** Which body the main pane's persistent `SessionViewHost` DISPLAYS, or `null`
+ *  for neither — see `hostedTab`. */
+export type HostedTab = 'session' | 'shell' | null;
+
+/**
+ * SESSION and SHELL are the two main-pane bodies that are expensive to build (a
+ * transcript hydration over IPC; a PTY attach with its scrollback replayed), so
+ * they are not rendered by `MainPaneBody`'s branch table at all: a persistent
+ * host renders them on EVERY branch and hides the ones that are not on screen,
+ * exactly as App.tsx's host does for the four dissolved panes.
+ *
+ * This is the branch → "what should the host display" mapping. Every other
+ * branch answers `null` — the host stays mounted, showing nothing.
+ */
+export function hostedTab(branch: MainPaneBranch): HostedTab {
+  return branch === 'session' || branch === 'shell' ? branch : null;
+}
+
 // ---------- panel tabs (design 7a) ----------
 
 /**
