@@ -79,6 +79,15 @@ contract:
 # CI job) — release.yml derives versions from conventional commits automatically.
 release_notes:
   enabled: false                              # /cohorte-ship §2b is a no-op
+  tool: none
+  dir: ""
+  filename: "<feature_id>.md"
+  anchor_package: ""
+  language: English
+  forbid_levels: []
+  empty_cmd: ""
+  ci_job: ""
+  guidance: ""
 
 # ── repo-wide commands ──────────────────────────────────────────────────────
 commands:
@@ -97,6 +106,7 @@ commands:
 rbac:
   enabled: false
   hierarchy: []
+  note: ""
 
 # ── design ──────────────────────────────────────────────────────────────────
 design:

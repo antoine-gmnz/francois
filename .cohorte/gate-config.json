@@ -1,0 +1,22 @@
+{
+  "default_branch": "main",
+  "deny": [
+    "git push --force",
+    "git push -f"
+  ],
+  "ask": [],
+  "ask_on_default_branch": [
+    "git commit",
+    "git push",
+    "git merge",
+    "git rebase",
+    "git reset"
+  ],
+  "preflight": {
+    "enabled": true,
+    "agents": [
+      "review"
+    ],
+    "max_age_minutes": 30
+  }
+}

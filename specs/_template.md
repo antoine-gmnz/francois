@@ -1,5 +1,6 @@
 ---
 id: <feature-id>
+feature_id: <feature-id> # canonical pipeline id; keep aligned with id and filename
 title: <Feature title>
 status: draft            # draft → frozen → in-progress → in-review → shipped · blocked (see SCHEMA.md §Spec status)
 branch: feat/<feature-id>
