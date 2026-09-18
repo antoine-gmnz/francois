@@ -216,6 +216,16 @@
   color: var(--accent-bright, var(--accent));
 }
 
+/* pi-runtime-boundary FR-4: each field is a <fieldset> so an unavailable
+   capability disables every control inside it at once. Strip the UA frame —
+   flat treatment, no strokes. */
+.session-settings-sheet__field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 /* design 15a — the changed-row treatment: the ONLY stroke this feature adds. A
    tonal step alone can't say "this one differs" when the row beside it shares
    the same fill. Reuses the existing field components' own classes (NameField,

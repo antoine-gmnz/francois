@@ -38,6 +38,7 @@ import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import RunChip from '../features/sessions/RunChip';
 import { truncateBranchLeft, worktreeChipLabel } from '../features/sessions/worktree';
 import LayoutToggle from '../features/usage/LayoutToggle';
+import { sessionCapability } from '../lib/runtimeCapability';
 import { sessionInterrupt } from '../lib/api';
 import { useElapsedClock } from '../lib/hooks/useElapsedClock';
 import { useWindowWidth } from '../lib/hooks/useWindowWidth';
@@ -268,7 +269,7 @@ export default function SessionRow({
       {/* cloud-sessions FR-16: adopted from a Claude Code on the web session. */}
       {active?.cloud && <CloudChip cloud={active.cloud} />}
       {/* remote-control: host this session on claude.ai/code + mobile */}
-      {active && <RemoteControlBadge key={active.id} sessionId={active.id} />}
+      {active && <RemoteControlBadge key={active.id} sessionId={active.id} capability={sessionCapability(active, 'remoteControl')} />}
 
       {layout === 'segments' && <LayoutToggle />}
       {layout === 'menu' && <LayoutToggle variant="menu" />}

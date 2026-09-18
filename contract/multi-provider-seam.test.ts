@@ -6,7 +6,7 @@ import type { AgentRuntime } from './common';
 // The two lists the table must stay exhaustive over. Written out rather than
 // derived from the table itself — a test that reads its keys back off the thing
 // under test would pass no matter which member went missing.
-const CAPABILITIES: RuntimeCapability[] = [
+const LEGACY_CAPABILITIES: RuntimeCapability[] = [
   'mcp',
   'subagents',
   'skills',
@@ -19,7 +19,19 @@ const CAPABILITIES: RuntimeCapability[] = [
   'compaction',
 ];
 
-const RUNTIMES: AgentRuntime[] = ['claude-code', 'francois', 'codex', 'grok'];
+const ADDED_CAPABILITIES: RuntimeCapability[] = [
+  'steering',
+  'followUps',
+  'resumableSessions',
+  'modelSwitching',
+  'images',
+  'contextMetrics',
+  'costMetrics',
+];
+
+const CAPABILITIES: RuntimeCapability[] = [...LEGACY_CAPABILITIES, ...ADDED_CAPABILITIES];
+
+const RUNTIMES: AgentRuntime[] = ['claude-code', 'francois', 'codex', 'grok', 'pi'];
 
 describe('runtimeCapabilities', () => {
   it('answers for every runtime', () => {
@@ -28,7 +40,7 @@ describe('runtimeCapabilities', () => {
     }
   });
 
-  it('is exhaustive over RuntimeCapability for both runtimes (FR-15)', () => {
+  it('is exhaustive over RuntimeCapability for every runtime (FR-15)', () => {
     for (const runtime of RUNTIMES) {
       const caps = runtimeCapabilities(runtime);
       expect(Object.keys(caps).sort()).toEqual([...CAPABILITIES].sort());
@@ -53,10 +65,29 @@ describe('runtimeCapabilities', () => {
     }
   });
 
-  it('makes everything available on claude-code', () => {
+  it('preserves the available legacy capabilities on claude-code', () => {
     const caps = runtimeCapabilities('claude-code');
-    for (const capability of CAPABILITIES) {
+    for (const capability of LEGACY_CAPABILITIES) {
       expect(caps[capability].available).toBe(true);
+    }
+  });
+
+  it('preserves model and image actions while disabling unimplemented added capabilities', () => {
+    for (const runtime of RUNTIMES.filter((runtime) => runtime !== 'pi')) {
+      const caps = runtimeCapabilities(runtime);
+      for (const capability of ADDED_CAPABILITIES) {
+        expect(caps[capability].available).toBe(capability === 'modelSwitching' || capability === 'images');
+      }
+    }
+  });
+
+  it('enables no action on Pi without a live capability snapshot (FR-4)', () => {
+    const caps = runtimeCapabilities('pi');
+    for (const capability of CAPABILITIES) {
+      expect(caps[capability]).toEqual({
+        available: false,
+        reason: 'Runtime is not connected.',
+      });
     }
   });
 
@@ -74,17 +105,17 @@ describe('runtimeCapabilities', () => {
     // the truth it states is not.
     const caps = runtimeCapabilities('francois');
     for (const capability of CAPABILITIES) {
-      const expected = capability === 'skills' || capability === 'permissions';
+      const expected = capability === 'skills' || capability === 'permissions' || capability === 'modelSwitching' || capability === 'images';
       expect(caps[capability].available).toBe(expected);
     }
     expect(caps.skillsInstall.available).toBe(false);
   });
 
   // multi-provider-codex FR-16.
-  it('makes nothing available on the codex runtime', () => {
+  it('preserves only model and image actions on the codex runtime', () => {
     const caps = runtimeCapabilities('codex');
     for (const capability of CAPABILITIES) {
-      expect(caps[capability].available).toBe(false);
+      expect(caps[capability].available).toBe(capability === 'modelSwitching' || capability === 'images');
     }
   });
 
@@ -110,10 +141,10 @@ describe('runtimeCapabilities', () => {
   });
 
   // multi-provider-grok FR-26.
-  it('makes nothing available on the grok runtime', () => {
+  it('preserves only model and image actions on the grok runtime', () => {
     const caps = runtimeCapabilities('grok');
     for (const capability of CAPABILITIES) {
-      expect(caps[capability].available).toBe(false);
+      expect(caps[capability].available).toBe(capability === 'modelSwitching' || capability === 'images');
     }
   });
 

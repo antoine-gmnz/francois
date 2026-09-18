@@ -1,3 +1,4 @@
+import { sandboxSelectionCapability, sessionCapability } from '../../lib/runtimeCapability';
 // session-settings-sheet — the pure half of the sheet: the working draft, what
 // counts as "changed" against the session's current values (FR-14), the patch
 // Apply sends (FR-16), the foot's change count + timing sentence (FR-15), the
@@ -236,6 +237,14 @@ export function nextProjectDefaults(current: ProjectDefaults, draft: SettingsDra
   if (draft.effort) next.effort = draft.effort;
   else delete next.effort;
   return next;
+}
+
+/** The same guards apply to field interaction and the atomic Apply payload. */
+export function settingCapability(session: SessionMeta, key: keyof SettingsDraft) {
+  if (key === 'modelId' || key === 'effort') return sessionCapability(session, 'modelSwitching');
+  if (key === 'allowGit') return sessionCapability(session, 'permissions');
+  if (key === 'permissionMode') return sandboxSelectionCapability(session);
+  return { available: true };
 }
 
 /** Window capture must leave activation/navigation to the focused control. */

@@ -661,6 +661,8 @@ mod tests {
                     code: ErrorCode::ExtProviderMissing,
                     message: "docker not found on PATH".into(),
                     detail: None,
+
+                    runtime_failure: None,
                 }
             }),
             json!({

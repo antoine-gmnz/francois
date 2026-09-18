@@ -1,7 +1,7 @@
 // transcript-scale FR-17..22 — the single-listener router.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionEvent } from '../../contract/common';
+import type { SessionEvent, SessionMeta } from '../../contract/common';
 
 const { listenMock } = vi.hoisted(() => ({ listenMock: vi.fn() }));
 
@@ -12,6 +12,16 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 
 const statusEvent = (sessionId: string): SessionEvent => ({ type: 'session.status', sessionId, status: 'running' });
 const noSessionEvent = (): SessionEvent => ({ type: 'session.removed', sessionId: 'ignored-by-this-fixture' });
+const runtimeMeta = (runtimeGeneration?: string): SessionMeta => ({
+  id: 's1', name: 'x', cwd: '/repo', model: { id: 'm', label: 'M' }, status: 'idle',
+  contextUsedTokens: 0, contextLimitTokens: 0, startedAt: 0, lastActivityAt: 0,
+  permissionMode: 'default', permissionModeSince: 0, runtime: 'native', accountId: 'default',
+  agentRuntime: 'pi', protocol: 'anthropic', allowGit: false, responseMode: 'default', runtimeGeneration,
+});
+const runtimeEvent = (generation: string, sequence: number): SessionEvent => ({
+  type: 'runtime.event', sessionId: 's1', generation, sequence, at: 1,
+  event: { kind: 'run.state', state: 'idle' },
+});
 
 describe('subscribeSessionEvents (transcript-scale FR-17..20)', () => {
   let sessionHandler: ((e: { payload: SessionEvent }) => void) | undefined;
@@ -197,5 +207,162 @@ describe('subscribeSessionEvents (transcript-scale FR-17..20)', () => {
     void subscribeSessionEvents('s1', vi.fn());
     await tick();
     expect(() => sessionHandler?.({ payload: noSessionEvent() })).not.toThrow();
+  });
+
+  it('rejects duplicate, out-of-order, and stale-generation runtime events', async () => {
+    const { useStore } = await import('./store');
+    useStore.getState().setSessions([runtimeMeta('g1')]);
+    const { subscribeSessionEvents } = await import('./session-events');
+    const received: SessionEvent[] = [];
+    void subscribeSessionEvents('s1', (e) => received.push(e));
+    await tick();
+    const event = (generation: string, sequence: number): SessionEvent => ({
+      type: 'runtime.event', sessionId: 's1', generation, sequence, at: 1,
+      event: { kind: 'run.state', state: 'idle' },
+    });
+    sessionHandler?.({ payload: event('g1', 1) });
+    sessionHandler?.({ payload: event('g1', 1) });
+    sessionHandler?.({ payload: event('g1', 0) });
+    sessionHandler?.({ payload: event('g1', 2) });
+    sessionHandler?.({ payload: event('g2', 1) });
+    expect(received).toEqual([event('g1', 1), event('g1', 2)]);
+  });
+
+  it('rejects stale-first delivery against hydrated metadata without advancing the live cursor', async () => {
+    const { subscribeSessionEvents } = await import('./session-events');
+    const { useStore } = await import('./store');
+    const received: SessionEvent[] = [];
+    await subscribeSessionEvents('s1', (e) => received.push(e));
+    useStore.getState().setSessions([runtimeMeta('live')]);
+    sessionHandler?.({ payload: runtimeEvent('stale', 99) });
+    sessionHandler?.({ payload: runtimeEvent('live', 1) });
+    expect(received).toEqual([runtimeEvent('live', 1)]);
+  });
+
+  it('preserves newer metadata and capabilities when a captured g1 list hydrates after g2 metadata', async () => {
+    const { subscribeSessionEvents, captureSessionHydration } = await import('./session-events');
+    const { useStore } = await import('./store');
+    const { runtimeCapabilities } = await import('../../contract/multi-provider-seam');
+    const received: SessionEvent[] = [];
+    await subscribeSessionEvents('s1', (event) => {
+      if (event.type === 'session.meta') useStore.getState().upsertSession(event.meta);
+      if (event.type === 'runtime.event') received.push(event);
+    });
+    const g1 = { ...runtimeMeta('g1'), effectiveCapabilities: runtimeCapabilities('pi') };
+    useStore.getState().setSessions([g1]);
+    const reconcile = captureSessionHydration();
+    const capturedList = [g1];
+    const g2 = {
+      ...runtimeMeta('g2'),
+      effectiveCapabilities: { ...g1.effectiveCapabilities, images: { available: false, reason: 'New model' } },
+    };
+    sessionHandler?.({ payload: { type: 'session.meta', meta: g2 } });
+    useStore.getState().setSessions(reconcile(capturedList));
+    expect(useStore.getState().sessions).toEqual([g2]);
+    sessionHandler?.({ payload: runtimeEvent('g1', 99) });
+    sessionHandler?.({ payload: runtimeEvent('g2', 1) });
+    expect(received).toEqual([runtimeEvent('g2', 1)]);
+  });
+
+  it('preserves capability narrowing during pending hydration without a metadata event', async () => {
+    const { subscribeSessionEvents, captureSessionHydration } = await import('./session-events');
+    const { useStore } = await import('./store');
+    const { runtimeCapabilities } = await import('../../contract/multi-provider-seam');
+    const g1 = { ...runtimeMeta('g1'), effectiveCapabilities: runtimeCapabilities('pi') };
+    useStore.getState().setSessions([g1]);
+    await subscribeSessionEvents('s1', (event) => {
+      if (event.type === 'runtime.event') useStore.getState().applyRuntimeEvent(event);
+    });
+    const reconcile = captureSessionHydration();
+    const capabilities = { ...g1.effectiveCapabilities, images: { available: false, reason: 'Narrowed' } };
+    sessionHandler?.({ payload: {
+      ...runtimeEvent('g1', 1), type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event: { kind: 'capabilities', capabilities },
+    } });
+    useStore.getState().setSessions(reconcile([g1]));
+    expect(useStore.getState().sessions[0].effectiveCapabilities).toEqual(capabilities);
+  });
+
+  it.each(['failure', 'run.state'] as const)('preserves %s arriving before an older list response', async (kind) => {
+    const { subscribeSessionEvents, captureSessionHydration } = await import('./session-events');
+    const { useStore } = await import('./store');
+    const g1 = runtimeMeta('g1');
+    useStore.getState().setSessions([g1]);
+    await subscribeSessionEvents('s1', (event) => {
+      if (event.type === 'runtime.event') useStore.getState().applyRuntimeEvent(event);
+    });
+    const reconcile = captureSessionHydration();
+    sessionHandler?.({ payload: {
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event: kind === 'failure'
+        ? { kind, failure: { origin: 'runtime', code: 'RUNTIME_EXITED', message: 'Child exited.', retryable: true } }
+        : { kind, state: 'failed' },
+    } });
+    useStore.getState().setSessions(reconcile([g1]));
+    if (kind === 'failure') expect(useStore.getState().sessions[0].errorMessage).toBe('Child exited.');
+    else expect(useStore.getState().sessions[0].status).toBe('error');
+  });
+
+  it('does not restore a session removed during pending hydration', async () => {
+    const { subscribeSessionEvents, captureSessionHydration } = await import('./session-events');
+    const { useStore } = await import('./store');
+    const g1 = runtimeMeta('g1');
+    useStore.getState().setSessions([g1]);
+    await subscribeSessionEvents('s1', (event) => {
+      if (event.type === 'session.removed') useStore.getState().removeSession(event.sessionId);
+    });
+    const reconcile = captureSessionHydration();
+    sessionHandler?.({ payload: { type: 'session.removed', sessionId: 's1' } });
+    useStore.getState().setSessions(reconcile([g1]));
+    expect(useStore.getState().sessions).toEqual([]);
+  });
+
+  it('accepts a reconnected generation from session.meta and retains sequence on repeated metadata', async () => {
+    const { subscribeSessionEvents } = await import('./session-events');
+    const received: SessionEvent[] = [];
+    await subscribeSessionEvents('s1', (e) => {
+      if (e.type === 'runtime.event') received.push(e);
+    });
+    sessionHandler?.({ payload: { type: 'session.meta', meta: runtimeMeta('g1') } });
+    sessionHandler?.({ payload: runtimeEvent('g1', 7) });
+    sessionHandler?.({ payload: { type: 'session.meta', meta: runtimeMeta('g2') } });
+    sessionHandler?.({ payload: runtimeEvent('g1', 99) });
+    sessionHandler?.({ payload: runtimeEvent('g2', 1) });
+    sessionHandler?.({ payload: { type: 'session.meta', meta: runtimeMeta('g2') } });
+    sessionHandler?.({ payload: runtimeEvent('g2', 1) });
+    sessionHandler?.({ payload: runtimeEvent('g2', 2) });
+    expect(received).toEqual([runtimeEvent('g1', 7), runtimeEvent('g2', 1), runtimeEvent('g2', 2)]);
+  });
+
+  it('resets sequence for a changed hydrated generation and preserves it for the same generation', async () => {
+    const { subscribeSessionEvents } = await import('./session-events');
+    const { useStore } = await import('./store');
+    const received: SessionEvent[] = [];
+    await subscribeSessionEvents('s1', (e) => received.push(e));
+    useStore.getState().setSessions([runtimeMeta('g1')]);
+    sessionHandler?.({ payload: runtimeEvent('g1', 7) });
+    useStore.getState().setSessions([runtimeMeta('g2')]);
+    sessionHandler?.({ payload: runtimeEvent('g1', 99) });
+    sessionHandler?.({ payload: runtimeEvent('g2', 1) });
+    useStore.getState().setSessions([runtimeMeta('g2')]);
+    sessionHandler?.({ payload: runtimeEvent('g2', 1) });
+    sessionHandler?.({ payload: runtimeEvent('g2', 2) });
+    useStore.getState().setSessions([]);
+    sessionHandler?.({ payload: runtimeEvent('g2', 3) });
+    expect(received).toEqual([runtimeEvent('g1', 7), runtimeEvent('g2', 1), runtimeEvent('g2', 2)]);
+  });
+
+  it('rejects runtime events before authoritative metadata and after the live generation is cleared', async () => {
+    const { subscribeSessionEvents } = await import('./session-events');
+    const received: SessionEvent[] = [];
+    await subscribeSessionEvents('s1', (e) => {
+      if (e.type === 'runtime.event') received.push(e);
+    });
+    sessionHandler?.({ payload: runtimeEvent('stale', 1) });
+    sessionHandler?.({ payload: { type: 'session.meta', meta: runtimeMeta('live') } });
+    sessionHandler?.({ payload: runtimeEvent('live', 1) });
+    sessionHandler?.({ payload: { type: 'session.meta', meta: runtimeMeta() } });
+    sessionHandler?.({ payload: runtimeEvent('live', 2) });
+    expect(received).toEqual([runtimeEvent('live', 1)]);
   });
 });

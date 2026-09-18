@@ -44,6 +44,7 @@ fn manifest_invalid(err: Invalid, manifest_path: &Path) -> AppError {
             "expected": err.expected,
             "manifestPath": manifest_path.to_string_lossy(),
         })),
+        runtime_failure: None,
     }
 }
 
@@ -52,6 +53,8 @@ fn manifest_unsupported(found: Value) -> AppError {
         code: ErrorCode::ExtManifestUnsupported,
         message: format!("unsupported manifest version {found}"),
         detail: Some(json!({ "found": found, "supported": MANIFEST_VERSION })),
+
+        runtime_failure: None,
     }
 }
 

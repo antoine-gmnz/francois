@@ -252,6 +252,7 @@ pub(super) fn begin_turn(
                 format!("could not start grok: {e}")
             },
             detail: None,
+            runtime_failure: None,
         });
     let mut child = child?;
 

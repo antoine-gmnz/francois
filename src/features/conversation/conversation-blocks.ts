@@ -625,6 +625,8 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
     dispatch({ t: 'permissionResolved', blockId: e.blockId, state: e.state, rule: e.rule }),
   // slash-menu FR-10: idempotent replace — an open popup refilters in place
   'session.commands': (_dispatch, setters, e) => setters.setCommands(e.commands),
+  // Runtime lifecycle and capability signals update the session fleet, not transcript blocks.
+  'runtime.event': ignoreEvent,
   'session.removed': ignoreEvent,
   'agent.update': ignoreEvent,
   'agent.step': ignoreEvent,

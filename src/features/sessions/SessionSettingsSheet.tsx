@@ -57,6 +57,7 @@ import {
   fixedAtSpawnLines,
   nextProjectDefaults,
   rebaseDraft,
+  settingCapability,
   timingLine,
   submitSettingsOnEnter,
   type SessionSettingsCarryOver,
@@ -519,6 +520,8 @@ function EditSheet({
   }, [session]);
 
   const setField = <K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) => {
+    // pi-runtime-boundary FR-4: a control the runtime cannot honour never edits the draft.
+    if (!session || !settingCapability(session, key).available) return;
     setDraft((d) => (d ? { ...d, [key]: value } : d));
     setTouched((t) => {
       const next = new Set(t);
@@ -543,6 +546,13 @@ function EditSheet({
     setSubmitting(true);
     setError(null);
     const patch = buildPatch(draft, baseline);
+    // FR-4: the same guard applies to the atomic Apply payload, against the
+    // session as it is now (a capability snapshot may have landed meanwhile).
+    const currentSession = useStore.getState().sessions.find((s) => s.id === sessionId);
+    if (!currentSession) { setSubmitting(false); return; }
+    const blocked = (Object.keys(patch) as (keyof SettingsDraft)[])
+      .map((key) => settingCapability(currentSession, key)).find((cap) => !cap.available);
+    if (blocked) { setSubmitting(false); setError(blocked.reason ?? 'Setting unavailable.'); return; }
     const res = await sessionUpdateSettings({ sessionId, patch });
     if (!alive.current) return;
     setSubmitting(false);
@@ -596,12 +606,17 @@ function EditSheet({
     if (draft.effort && !effortSupportedByModel(draft.effort, nextEfforts)) setField('effort', '');
   };
 
-  const field = (key: keyof SettingsDraft, was: string, children: ReactNode) => (
-    <div className={dirty.includes(key) ? 'session-settings-sheet__field session-settings-sheet__field--changed' : 'session-settings-sheet__field'}>
-      {children}
-      {dirty.includes(key) && <div className="session-settings-sheet__was">was {was}</div>}
-    </div>
-  );
+  const field = (key: keyof SettingsDraft, was: string, children: ReactNode) => {
+    const capability = settingCapability(session, key);
+    return (
+      <fieldset disabled={!capability.available || submitting} title={capability.reason}
+        className={dirty.includes(key) ? 'session-settings-sheet__field session-settings-sheet__field--changed' : 'session-settings-sheet__field'}>
+        {children}
+        {!capability.available && <div className="session-settings-sheet__was">{capability.reason ?? 'Setting unavailable.'}</div>}
+        {dirty.includes(key) && <div className="session-settings-sheet__was">was {was}</div>}
+      </fieldset>
+    );
+  };
 
   return (
     <Modal onClose={attemptClose} width={480} closeOnEscape={true} closeOnBackdropClick={true}>

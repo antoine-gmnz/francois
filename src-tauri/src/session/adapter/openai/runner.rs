@@ -110,6 +110,8 @@ fn not_an_endpoint_error() -> AppError {
         code: ErrorCode::InvalidInput,
         message: "this session's account is not an OpenAI-compatible endpoint".into(),
         detail: None,
+
+        runtime_failure: None,
     }
 }
 
@@ -965,7 +967,6 @@ mod tests {
     fn the_adapter_reports_the_francois_runtime() {
         assert_eq!(OpenAiAdapter.agent_runtime(), AgentRuntime::Francois);
     }
-
     #[test]
     fn the_first_turn_notice_matches_fr19s_exact_wording() {
         assert_eq!(

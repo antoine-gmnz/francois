@@ -13,7 +13,7 @@
 // moving on).
 
 import type { StateCreator } from 'zustand';
-import type { SessionId, SessionMeta } from '../../contract/common';
+import type { RuntimeEventEnvelope, SessionId, SessionMeta } from '../../contract/common';
 import { dropSessionTabs, mainTabAfterClose } from '../features/agents/agent-tab';
 import type { MainTab } from './agentTabStore';
 import { closeStreamsForRemovedPanels } from './extensionsStore';
@@ -43,6 +43,8 @@ export interface SessionsSlice {
    */
   patchError: (id: SessionId, message: string) => void;
   patchUsage: (id: SessionId, used: number, limit: number) => void;
+  /** Applies sanitized, ordered child state only when it belongs to the live connection. */
+  applyRuntimeEvent: (event: RuntimeEventEnvelope) => void;
   removeSession: (id: SessionId) => void;
 
   // sessions-sidebar store slice (§5)
@@ -156,6 +158,32 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       next[i] = { ...cur, contextUsedTokens: used, contextLimitTokens: limit, lastActivityAt: Date.now() };
       return { sessions: next };
     }),
+  applyRuntimeEvent: (event) =>
+    set((s) => ({
+      sessions: s.sessions.map((session) => {
+        // A fresh session.meta establishes the new generation. An old child is
+        // allowed to finish emitting, but it must never repaint the new child.
+        if (session.id !== event.sessionId || session.runtimeGeneration !== event.generation) return session;
+        switch (event.event.kind) {
+          case 'capabilities':
+            return { ...session, effectiveCapabilities: event.event.capabilities };
+          case 'failure':
+            return { ...session, errorMessage: event.event.failure.message };
+          case 'run.state':
+            return {
+              ...session,
+              status:
+                event.event.state === 'failed'
+                  ? 'error'
+                  : event.event.state === 'idle'
+                    ? 'idle'
+                    : event.event.state === 'starting'
+                      ? 'starting'
+                      : 'running',
+            };
+        }
+      }),
+    })),
   removeSession: (id) =>
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id);

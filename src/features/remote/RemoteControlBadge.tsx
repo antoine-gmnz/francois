@@ -6,12 +6,13 @@
 // browser opens) and a stop action.
 
 import { useEffect, useRef, useState } from 'react';
-import type { SessionId } from '../../../contract/common';
+import type { CapabilityState, SessionId } from '../../../contract/common';
 import { mcpDecide, remoteGet, remoteStart, remoteStop } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import './remote.css';
 import {
   approvalRequiredOf,
+  remoteControlActions,
   isRemoteLive,
   remoteDotTone,
   remoteFailure,
@@ -28,7 +29,7 @@ const TONE: Record<ReturnType<typeof remoteDotTone>, string> = {
   error: 'var(--error)',
 };
 
-export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
+export function RemoteControlBadge({ sessionId, capability }: { sessionId: SessionId; capability: CapabilityState }) {
   const state = useStore((s) => remoteStateOf(s.remote, sessionId));
   const mergeRemoteSeed = useStore((s) => s.mergeRemoteSeed);
   const mergeRemoteResult = useStore((s) => s.mergeRemoteResult);
@@ -72,6 +73,9 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
+  const actions = remoteControlActions(capability, state);
+  const capabilityRef = useRef(capability);
+  capabilityRef.current = capability;
   const live = isRemoteLive(state);
   const url = remoteUrlOf(state);
   const handle = remoteSessionHandle(state);
@@ -81,7 +85,7 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
   const approval = approvalRequiredOf(state);
 
   async function start() {
-    if (busy) return;
+    if (busy || !capabilityRef.current.available) return;
     setBusy(true);
     const res = await remoteStart(sessionId);
     if (!mounted.current) return;
@@ -99,7 +103,7 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
    * pane [4] for anyone who wants it.
    */
   async function approveAndStart() {
-    if (busy || !approval) return;
+    if (busy || !approval || !capabilityRef.current.available) return;
     setBusy(true);
     const res = await mcpDecide(sessionId, {
       approve: approval.pending,
@@ -170,11 +174,12 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
     <span className="rc-badge">
       <span
         role="button"
-        tabIndex={0}
+        tabIndex={actions.canOpen ? 0 : -1}
+        aria-disabled={!actions.canOpen}
         aria-expanded={open}
         onClick={() => void toggle()}
         onKeyDown={onChipKeyDown}
-        title={remoteLabel(state)}
+        title={actions.reason ?? remoteLabel(state)}
         className={`rc-chip${busy ? ' rc-chip--busy' : ''}${live ? ' rc-chip--live' : ''}`}
       >
         <span className="rc-dot" style={{ background: TONE[remoteDotTone(state)] }} />
@@ -190,6 +195,7 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
       {open && (
         <div className="rc-popover">
           <div className="rc-popover-title">{remoteLabel(state)}</div>
+          {actions.reason && <div className="rc-popover-note">{actions.reason}</div>}
 
           {state.phase === 'starting' && (
             <div className="rc-popover-note">
@@ -224,12 +230,12 @@ export function RemoteControlBadge({ sessionId }: { sessionId: SessionId }) {
               </button>
             )}
             {approval && (
-              <button className="rc-btn" onClick={() => void approveAndStart()} disabled={busy}>
+              <button className="rc-btn" onClick={() => void approveAndStart()} disabled={busy || !actions.canStart} title={actions.reason}>
                 approve &amp; start
               </button>
             )}
             {state.phase === 'failed' && !approval && (
-              <button className="rc-btn" onClick={() => void start()} disabled={busy}>
+              <button className="rc-btn" onClick={() => void start()} disabled={busy || !actions.canStart} title={actions.reason}>
                 retry
               </button>
             )}

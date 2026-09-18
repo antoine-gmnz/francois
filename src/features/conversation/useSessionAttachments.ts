@@ -23,8 +23,9 @@
 
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import type { CapabilityState } from '../../../contract/common';
 import type { AttachFailure, Attachment } from '../../../contract/session-attachments';
-import { attachmentRef } from '../../../contract/session-attachments';
+import { attachmentKindForName, attachmentRef } from '../../../contract/session-attachments';
 import {
   sessionAttachClipboardImage,
   sessionAttachFile,
@@ -58,6 +59,8 @@ export const CLIPBOARD_READ_FAILED_MESSAGE = "That image couldn't be read from t
 
 export interface AttachmentsPort {
   sessionId: string;
+  imagesCapability?: () => CapabilityState;
+  stagedImages?: () => readonly Attachment[];
   /** The live prompt plus its selection — the textarea when mounted, the state mirror otherwise. */
   readInput(): { value: string; selStart: number; selEnd: number };
   /** Writes the prompt. `caret` is null when the edit must not move the caret (chip removal). */
@@ -85,6 +88,7 @@ export interface ClipboardEventLike {
 }
 
 export interface AttachmentsController {
+  canSubmit(text: string): boolean;
   /** FR-9: each path is ingested independently — one refusal never aborts the rest. */
   attachPaths(paths: readonly string[]): Promise<void>;
   /** FR-14: attaches when the clipboard carries an image; a text-only paste falls through. */
@@ -103,6 +107,18 @@ export interface AttachmentsController {
  * mirroring `delegate()` in ../palette/paletteCommands.ts.
  */
 export function createAttachmentsController(port: AttachmentsPort): AttachmentsController {
+  const imageUnavailable = () => {
+    const capability = port.imagesCapability?.() ?? { available: true };
+    if (capability.available) return false;
+    port.showError(capability.reason ?? 'Images are unavailable for this session.');
+    return true;
+  };
+  const canSubmit = (text: string) => {
+    const refs = text.match(/@[^\s]+/g) ?? [];
+    const hasImage = imageChips(text, port.stagedImages?.() ?? []).length > 0
+      || refs.some((ref) => attachmentKindForName(ref) === 'image');
+    return !hasImage || !imageUnavailable();
+  };
   /** Runs `work`, converting a rejection (IPC down, webview gone) into one banner line. */
   const guarded = async (work: () => Promise<void>): Promise<void> => {
     try {
@@ -123,8 +139,16 @@ export function createAttachmentsController(port: AttachmentsPort): AttachmentsC
   /** The shared tail of a drop and a pick: stage + insert the successes, report the refusals. */
   const applyIngestion = (attached: readonly Attachment[], failed: readonly AttachFailure[]) => {
     if (attached.length > 0) {
-      port.stageAdd(attached);
-      insertRefs(attached.map(attachmentRef));
+      const allowed = attached.filter((attachment) => {
+        if (attachment.kind !== 'image' || !imageUnavailable()) return true;
+        void guarded(async () => {
+          const res = await sessionReleaseAttachment(port.sessionId, attachment.id);
+          if (!res.ok) port.showError(res.error.message);
+        });
+        return false;
+      });
+      port.stageAdd(allowed);
+      insertRefs(allowed.map(attachmentRef));
     }
     const line = refusalLine(failed);
     if (line) port.showError(line);
@@ -135,6 +159,7 @@ export function createAttachmentsController(port: AttachmentsPort): AttachmentsC
       const attached: Attachment[] = [];
       const failed: AttachFailure[] = [];
       for (const path of paths) {
+        if (attachmentKindForName(path) === 'image' && imageUnavailable()) continue;
         const res = await sessionAttachFile(port.sessionId, path);
         if (res.ok) attached.push(res.data);
         else failed.push({ name: basename(path), error: res.error });
@@ -147,6 +172,10 @@ export function createAttachmentsController(port: AttachmentsPort): AttachmentsC
     if (!data) return Promise.resolve();
     const item = firstImageItem(Array.from(data.items));
     if (!item) return Promise.resolve(); // text-only clipboard: the default paste is untouched
+    if (imageUnavailable()) {
+      e.preventDefault();
+      return Promise.resolve();
+    }
     const file = item.getAsFile();
     if (!file) return Promise.resolve();
     e.preventDefault(); // the image wins; suppress the default text paste
@@ -211,7 +240,7 @@ export function createAttachmentsController(port: AttachmentsPort): AttachmentsC
     });
   };
 
-  return { attachPaths, onPaste, onAttachClick, onRemoveAttachment, commit };
+  return { canSubmit, attachPaths, onPaste, onAttachClick, onRemoveAttachment, commit };
 }
 
 // ---------- drop (design §2) ----------
@@ -313,6 +342,7 @@ export function subscribeDocumentPaste(
 // ---------- the hook ----------
 
 export interface SessionAttachments {
+  canSubmit(text: string): boolean;
   /** design §1: one chip per staged image whose ref is still in the prompt. */
   chips: Attachment[];
   /** design §2: hidden · active · rejecting. */
@@ -328,6 +358,7 @@ export interface SessionAttachments {
 }
 
 export interface UseSessionAttachmentsOptions {
+  imagesCapability?: CapabilityState;
   sessionId: string;
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
@@ -350,6 +381,7 @@ export function useSessionAttachments({
   inputRef,
   autoGrow,
   active = true,
+  imagesCapability,
 }: UseSessionAttachmentsOptions): SessionAttachments {
   const [staged, setStaged] = useState<Attachment[]>([]);
   const [drag, setDrag] = useState<{ dragging: boolean; paths: string[] }>({ dragging: false, paths: [] });
@@ -361,6 +393,8 @@ export function useSessionAttachments({
   inputValueRef.current = input;
   const stagedRef = useRef(staged);
   stagedRef.current = staged;
+  const imagesCapabilityRef = useRef(imagesCapability);
+  imagesCapabilityRef.current = imagesCapability;
 
   const showError = (message: string) => {
     setError(message);
@@ -369,6 +403,8 @@ export function useSessionAttachments({
 
   const port: AttachmentsPort = {
     sessionId,
+    imagesCapability: () => imagesCapabilityRef.current ?? { available: true },
+    stagedImages: () => stagedRef.current,
     readInput: () => {
       const el = inputRef.current;
       if (!el) {
@@ -455,6 +491,7 @@ export function useSessionAttachments({
   );
 
   return {
+    canSubmit: (text) => controllerRef.current.canSubmit(text),
     chips: imageChips(input, staged),
     overlay: dropOverlayState(drag.dragging, drag.paths),
     attachError,

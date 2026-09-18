@@ -40,6 +40,7 @@ mod remote_discovery;
 /// enum is a `Session`/`SessionMeta` field and nothing outside this domain
 /// names it.
 mod response_mode;
+mod runtime;
 mod skills;
 mod slash;
 mod spawn;
@@ -86,8 +87,8 @@ mod worktree;
 // ---------------------------------------------------------------------------
 pub(crate) use adapter::{
     adapter_for, child_stdout_lines, openai_context_tokens_for, spawn_claude, AgentRuntime,
-    ControlAck, PendingCounts, PermissionDecision, ProviderProtocol, SessionAdapter, TurnContext,
-    TurnControl, TurnMode,
+    ControlAck, PendingCounts, PermissionDecision, ProviderProtocol, RuntimeCapabilities,
+    RuntimeModelRef, SessionAdapter, TurnContext, TurnControl, TurnMode,
 };
 pub use agent_transcript::{
     __cmd__agents_transcript, __tauri_command_name_agents_transcript, agents_transcript,
@@ -399,6 +400,17 @@ pub struct SessionMeta {
     /// multi-provider-seam FR-11a: the wire dialect this session's endpoint
     /// speaks. Same derivation/persistence discipline as `agent_runtime`.
     protocol: ProviderProtocol,
+    /// Explicit provider/model identity for a runtime-owned connection.
+    #[serde(rename = "runtimeModel", skip_serializing_if = "Option::is_none")]
+    runtime_model: Option<RuntimeModelRef>,
+    /// Live capabilities are transient: they are revalidated on reconnect.
+    #[serde(
+        rename = "effectiveCapabilities",
+        skip_serializing_if = "Option::is_none"
+    )]
+    effective_capabilities: Option<RuntimeCapabilities>,
+    #[serde(rename = "runtimeGeneration", skip_serializing_if = "Option::is_none")]
+    runtime_generation: Option<String>,
     /// session-profiles FR-16: present ⇔ created from a profile; snapshot-only.
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<SessionProfileRef>,
@@ -606,18 +618,18 @@ pub struct BufBlock {
     meta: Option<String>,
     /// interactive-commands: serialized CommandCard (Command kind; None while pending).
     card: Option<Value>,
-    streaming: bool,
-    /// design 9a: epoch ms this block was appended, mirrored to the contract's
-    /// `ConversationBlockBase.at`. 0 means "unknown" — a block read back from a
-    /// transcript written before the field existed — and is serialized as an
-    /// ABSENT key rather than as an epoch that would render as 01:00.
-    at: u64,
     /// command-inspect FR-1/FR-10: true iff a `StepDetail` record was written
     /// for this block at settle time. Only ever set on a `Tool` block —
     /// `classify_block` is what decides whether the kind even has a slot for
     /// it (`ToolConversationBlock` only; a `Subagent` block's contract type
     /// carries no `hasDetail` field, so the value there is inert).
     has_detail: bool,
+    streaming: bool,
+    /// design 9a: epoch ms this block was appended, mirrored to the contract's
+    /// `ConversationBlockBase.at`. 0 means "unknown" — a block read back from a
+    /// transcript written before the field existed — and is serialized as an
+    /// ABSENT key rather than as an epoch that would render as 01:00.
+    at: u64,
 }
 
 impl BufBlock {
@@ -635,13 +647,13 @@ impl BufBlock {
             block_id: block_id.into(),
             kind,
             text: String::new(),
+            has_detail: false,
             tool: String::new(),
             summary: String::new(),
             meta: None,
             card: None,
             streaming: false,
             at: now_ms(),
-            has_detail: false,
         }
     }
 }
@@ -733,6 +745,9 @@ pub struct Session {
     /// `agent_runtime` from the same `from_account_kind` call and never
     /// re-derived afterward.
     protocol: ProviderProtocol,
+    runtime_model: Option<RuntimeModelRef>,
+    effective_capabilities: Option<RuntimeCapabilities>,
+    runtime_generation: Option<String>,
     /// session-profiles FR-12/FR-13: REPLACE-mode prompt, snapshotted at
     /// creation and threaded through every turn's `turn_args` — never
     /// re-read from the profile (FR-16).
@@ -890,6 +905,9 @@ impl Session {
             cloud: None,
             agent_runtime,
             protocol,
+            runtime_model: None,
+            effective_capabilities: None,
+            runtime_generation: None,
             system_prompt,
             extra_args,
             profile,
@@ -947,8 +965,13 @@ impl Session {
     /// Grok) by resyncing at the mutation; this closes the class, because there
     /// is no longer a stored value that dispatch reads.
     fn meta(&self, accounts: &dyn crate::account::AccountKinds) -> SessionMeta {
-        let (agent_runtime, protocol) =
-            AgentRuntime::from_account_kind(accounts.kind_of(&self.account_id));
+        // pi-runtime-boundary FR-1: no account kind maps to Pi yet, so a Pi
+        // session keeps its stored runtime (and its null protocol, FR-2).
+        let (agent_runtime, protocol) = if self.agent_runtime == AgentRuntime::Pi {
+            (AgentRuntime::Pi, ProviderProtocol::Pi)
+        } else {
+            AgentRuntime::from_account_kind(accounts.kind_of(&self.account_id))
+        };
         SessionMeta {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -973,6 +996,9 @@ impl Session {
             cloud: self.cloud.clone(),
             agent_runtime,
             protocol,
+            runtime_model: self.runtime_model.clone(),
+            effective_capabilities: self.effective_capabilities.clone(),
+            runtime_generation: self.runtime_generation.clone(),
             profile: self.profile.clone(),
             response_mode: self.response_mode,
             allow_git: self.allow_git,
@@ -1251,6 +1277,7 @@ impl Session {
             .find(|b| b.block_id == block_id)
             .map(|b| {
                 b.meta = Some(meta);
+                b.has_detail = has_detail;
                 b.streaming = false;
                 b.has_detail = has_detail;
                 b.clone()
@@ -1271,6 +1298,9 @@ impl Session {
 
 #[derive(Default)]
 pub struct Engine {
+    runtime_events: Mutex<HashMap<String, events::RuntimeEventSequence>>,
+    unsupported_runtime_records: Mutex<HashMap<String, Value>>,
+    runtime_connections: Mutex<HashMap<String, Arc<dyn adapter::RuntimeSessionControl>>>,
     sessions: Mutex<HashMap<String, Session>>,
     /// workflow-details §6: run id → the incremental scan state of its run
     /// directory (per-file byte offsets + running aggregates, FR-5) and the
@@ -1443,6 +1473,7 @@ pub fn kill_all(app: &AppHandle) {
     let Some(engine) = app.try_state::<Engine>() else {
         return;
     };
+    engine.shutdown_runtimes();
     // session-questions FR-13 (app-exit teardown, §7#5): drain every parked
     // question BEFORE killing its child, so the cancelled state is persisted
     // synchronously here — the reader threads may never get to run again. The

@@ -296,6 +296,9 @@ pub fn skills_install(
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "skillsInstall") {
+        return err(code, msg);
+    }
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
         return err(ErrorCode::SessionNotFound, "no such session");
     };
@@ -384,6 +387,9 @@ pub fn skills_run(
     name: String,
     args: Option<String>,
 ) -> IpcResult<Option<()>> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "skills") {
+        return err(code, msg);
+    }
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
         return err(ErrorCode::SessionNotFound, "no such session");
     };

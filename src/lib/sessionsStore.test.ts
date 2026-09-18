@@ -170,6 +170,32 @@ describe('SessionMeta.agentRuntime/protocol are carried through the cache (multi
   });
 });
 
+describe('runtime events (pi-runtime-boundary FR-4/FR-5/FR-6)', () => {
+  it('applies a matching-generation capability snapshot and sanitized failure', () => {
+    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1' };
+    useStore.getState().setSessions([session]);
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event: { kind: 'capabilities', capabilities: { mcp: { available: false, reason: 'not installed' } } as never },
+    });
+    expect(useStore.getState().sessions[0].effectiveCapabilities?.mcp).toEqual({ available: false, reason: 'not installed' });
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 2, at: 2,
+      event: { kind: 'failure', failure: { origin: 'runtime', code: 'RUNTIME_EXITED', message: 'Child exited.', retryable: true, requestId: 'safe-id' } },
+    });
+    expect(useStore.getState().sessions[0].errorMessage).toBe('Child exited.');
+  });
+
+  it('does not let an old child generation mutate a reconnected session', () => {
+    useStore.getState().setSessions([{ ...meta('s1'), agentRuntime: 'pi', protocol: null, runtimeGeneration: 'g2' }]);
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 9, at: 1,
+      event: { kind: 'run.state', state: 'failed' },
+    });
+    expect(useStore.getState().sessions[0].status).toBe('idle');
+  });
+});
+
 // Perf guard (fix-bug-on-too-many-sessions): a patch that changes nothing must
 // not mint a new `sessions` array — the array reference is what every
 // whole-array subscriber (App, Sidebar, UsageMeters) keys its re-render on, and
