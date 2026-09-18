@@ -462,6 +462,17 @@
   min-height: 0;
 }
 
+/* pi-runtime-distribution: a fixed section under the rail/detail split, not
+   inside `.acc-detail` — Pi is not a provider pane (it has no accounts of its
+   own yet), so its health reads the same no matter which provider is selected. */
+.acc-pi-section {
+  flex-shrink: 0;
+  padding: var(--space-12) var(--space-18);
+  /* Flat treatment (turn 9a): no in-flow stroke — the section separates from
+     the vault body (bg-elevated) with a tonal step down instead of a border. */
+  background: var(--bg-deep);
+}
+
 /* ── left rail: which account ───────────────────────────────────────────── */
 .acc-rail {
   flex: 0 0 232px;
@@ -1121,4 +1132,29 @@
   color: var(--error);
   white-space: pre-wrap;
   user-select: text;
+}
+
+/* pi-runtime-distribution: the resolved path / Node version lines under a
+   card's note — same register as `.acc-cli-log`'s dim monospace, but no
+   background block, since there is no transcript to set off. */
+.acc-cli-card-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+/* `.acc-cli-docs` styled as a <button> rather than an <a> — reset the button
+   chrome browsers add by default so it reads identically. */
+.acc-cli-copy {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.acc-cli-copy:hover {
+  color: var(--text-2);
 }

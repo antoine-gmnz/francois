@@ -85,6 +85,12 @@ mod worktree;
 // two children is a compile error here — resolve by qualifying at the use
 // site, not by re-adding the glob).
 // ---------------------------------------------------------------------------
+/// pi-runtime-distribution §5: `francois:runtime:installation` — installation
+/// discovery only, independent of `adapter::pi`'s (still-stub) RPC transport.
+pub use adapter::pi::{
+    __cmd__runtime_installation, __tauri_command_name_runtime_installation, runtime_installation,
+    InstallState, Provenance, RuntimeInstallStatus,
+};
 pub(crate) use adapter::{
     adapter_for, child_stdout_lines, openai_context_tokens_for, spawn_claude, AgentRuntime,
     ControlAck, PendingCounts, PermissionDecision, ProviderProtocol, RuntimeCapabilities,
@@ -1279,7 +1285,6 @@ impl Session {
                 b.meta = Some(meta);
                 b.has_detail = has_detail;
                 b.streaming = false;
-                b.has_detail = has_detail;
                 b.clone()
             });
         // transcript-scale FR-2: settling this tool/subagent block may unblock

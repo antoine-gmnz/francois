@@ -36,7 +36,9 @@ use tauri::AppHandle;
 /// short of anything a user would read as a hang: three of these run per
 /// `cli_tools` call, and the modal blocks on the response.
 const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(4000);
-const VERSION_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+/// Mirrors `pi/probe.rs`'s `OUTPUT_CAP` — a `--version` banner is never
+/// legitimately this large, and it bounds a runaway CLI's output in memory.
+const VERSION_OUTPUT_CAP: usize = 64 * 1024;
 
 /// How much of npm's output rides along in a failure's `detail`. Enough to carry
 /// the real reason (EACCES, a 404 on the package, a registry timeout), bounded
@@ -151,33 +153,23 @@ fn probe(spec: &CliToolSpec) -> CliToolStatus {
 /// A timeout returns `None` and the tool still reports `installed: true` — the
 /// executable is on PATH, and a CLI that is slow to print a banner (or that
 /// decides to check for its own update first) has not stopped being installed.
+///
+/// Routed through `process_util::CommandBuilder::run_bounded` (shared with
+/// `pi/probe.rs`'s identically-shaped probe) rather than reading stdout only
+/// after `try_wait` reports exit: a CLI that writes past the OS pipe buffer
+/// before it exits would otherwise deadlock — it blocks on `write`, never
+/// exits, and `VERSION_TIMEOUT` elapses for nothing.
 fn probe_version(program: &std::path::Path) -> Option<String> {
     // The facade's null stdin is load-bearing here: `grok` with no arguments is
     // a TUI, and a CLI that mis-parses the flag would otherwise sit waiting on a
     // terminal that will never answer.
-    let mut child = crate::process_util::spawn(program)
+    let run = crate::process_util::spawn(program)
         .arg("--version")
-        .stdout(std::process::Stdio::piped())
-        .start()
-        .ok()?;
-
-    let deadline = std::time::Instant::now() + VERSION_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(VERSION_POLL),
-            // Killed at the deadline, then reaped — a `Child` dropped without a
-            // wait leaves a zombie, and this runs on every modal open.
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+        .run_bounded(VERSION_TIMEOUT, VERSION_OUTPUT_CAP);
+    if run.timed_out || run.spawn_failed {
+        return None;
     }
-
-    let mut out = String::new();
-    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    let out = String::from_utf8_lossy(&run.stdout).into_owned();
     first_version_line(&out)
 }
 
