@@ -54,11 +54,13 @@ import {
   accountRename,
   accountSetDefault,
   projectList,
+  runtimeInstallation,
 } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
 import { seedAccountUsage } from '../usage/usage';
 import AccountLoginView from './AccountLoginView';
+import { PiSetupCard } from './CliToolCard';
 import { CodexForm } from './CodexForm';
 import { EndpointForm } from './EndpointForm';
 import { GrokForm } from './GrokForm';
@@ -76,7 +78,16 @@ import {
   newlyAddedAccountId,
   startCliToolsFeed,
 } from './accounts';
-import { IDLE_INSTALL, findCliTool, reduceInstall, type CliInstallState } from './cliTools';
+import {
+  IDLE_INSTALL,
+  IDLE_RUNTIME_PROBE,
+  findCliTool,
+  reduceInstall,
+  reduceRuntimeProbe,
+  runtimeInstallProbeInput,
+  type CliInstallState,
+  type RuntimeProbeState,
+} from './cliTools';
 import {
   accountSessionNames,
   cliSectionState,
@@ -136,6 +147,10 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // survives the modal closing, this fact does not — a user who installs `codex`
   // in a terminal must see the truth on the next open, not a cached "missing".
   const [cliTools, setCliTools] = useState<CliToolStatus[]>([]);
+  // pi-runtime-distribution: the Pi installation health probe, machine-scoped
+  // like the vendor CLIs above and for the same reason — the fact lives here,
+  // not in a store, so re-opening the modal always re-reads the machine.
+  const [piProbe, setPiProbe] = useState<RuntimeProbeState>(IDLE_RUNTIME_PROBE);
   // Keyed by tool, not one slot: two providers' cards can be on screen across a
   // rail switch, and a shared slot would show `grok`'s npm output under
   // Anthropic's install.
@@ -218,6 +233,34 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         if (alive.current && res.ok) setCliTools(res.data);
       })
       .catch(() => {});
+  }, [alive]);
+
+  // pi-runtime-distribution: probe Pi's installation once per open. `probePi`
+  // is also what Retry calls, with `refresh: true` to bypass the core's 60s
+  // cache — this initial call leaves it off, matching a normal setup open.
+  const probePi = (refresh: boolean) => {
+    setPiProbe((prev) => reduceRuntimeProbe(prev, { kind: 'start' }));
+    void runtimeInstallation(runtimeInstallProbeInput(refresh))
+      .then((res) => {
+        if (!alive.current) return;
+        setPiProbe((prev) =>
+          res.ok
+            ? reduceRuntimeProbe(prev, { kind: 'loaded', status: res.data })
+            : reduceRuntimeProbe(prev, { kind: 'failed', error: res.error }),
+        );
+      })
+      .catch(() => {
+        if (alive.current) {
+          setPiProbe((prev) =>
+            reduceRuntimeProbe(prev, { kind: 'failed', error: { code: 'INTERNAL', message: 'Could not reach the core' } }),
+          );
+        }
+      });
+  };
+  useEffect(() => {
+    probePi(false);
+    // Once per open only — Retry (the only other trigger) calls probePi itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alive]);
 
   // The install sub-stream, mounted for as long as the modal is — NOT for as
@@ -669,6 +712,20 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
             onAddLogin={addLogin}
             onAddKey={addKey}
           />
+        </div>
+
+        {/* pi-runtime-distribution §3: "Accounts → Pi setup". Pi is not yet a
+            selectable account (pi-runtime-boundary task 06), so this is not a
+            provider pane — a fixed section beneath the vault, visible no
+            matter which provider the rail is pointed at. */}
+        <div className="acc-section acc-pi-section">
+          <div className="acc-section-head">
+            <span className="acc-section-eyebrow">Pi setup</span>
+            <span className="acc-section-rule" />
+          </div>
+          <div className="acc-section-body">
+            <PiSetupCard probe={piProbe} onRetry={() => probePi(true)} />
+          </div>
         </div>
 
         {/* The keyboard model this modal has always had and never named —

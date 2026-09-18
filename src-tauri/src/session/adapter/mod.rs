@@ -17,6 +17,10 @@ mod claude_code;
 pub(crate) mod codex;
 mod grok;
 mod openai;
+/// pi-runtime-distribution: installation discovery only (§5's
+/// `francois:runtime:installation`) — NOT the RPC transport below, which
+/// stays a deliberate stub.
+pub(crate) mod pi;
 
 /// The Pi transport is intentionally unavailable until the production runtime
 /// is introduced. Keeping this adapter explicit makes dispatch exhaustive and

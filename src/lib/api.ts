@@ -105,6 +105,7 @@ import type {
 } from '../../contract/cloud-sessions';
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
 import type { DndState } from '../../contract/audio-cues';
+import type { RuntimeInstallProbeInput, RuntimeInstallStatus } from '../../contract/pi-runtime-distribution';
 import type {
   CloseStreamRequest,
   CloseStreamResponse,
@@ -466,6 +467,13 @@ export const accountGrokLogin = (payload: AccountGrokLoginPayload) =>
 export const accountCliTools = () => ipc<AccountCliToolsResponse>('account_cli_tools');
 export const accountInstallCli = (payload: AccountInstallCliPayload) =>
   ipc<AccountInstallCliResponse>('account_install_cli', payload);
+
+// pi-runtime-distribution §5: francois:runtime:installation. Missing/incompatible/
+// probe-failed are successful health responses carrying `error` on the payload
+// itself — `Result.error` here is reserved for INVALID_INPUT/INTERNAL. Cached in
+// the core for 60s, keyed by environment; `refresh: true` bypasses that cache.
+export const runtimeInstallation = (payload: RuntimeInstallProbeInput) =>
+  ipc<Result<RuntimeInstallStatus>>('runtime_installation', payload);
 
 /** Subscribe to francois://account/event (account.list + the login sub-stream). */
 export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenFn> {
