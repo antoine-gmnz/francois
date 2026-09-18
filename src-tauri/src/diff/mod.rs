@@ -17,7 +17,7 @@ mod git;
 mod parse;
 mod watch;
 
-pub(crate) use commands::*;
+pub use commands::*;
 pub(crate) use compute::*;
 pub(crate) use git::*;
 pub(crate) use parse::*;
@@ -33,7 +33,7 @@ const NOT_A_REPO_MSG: &str = "not a git repository — initialize with `git init
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum DiffFileStatus {
+pub enum DiffFileStatus {
     Modified,
     Added,
     Deleted,
@@ -88,7 +88,7 @@ pub struct CommitResult {
     commit_hash: String,
 }
 
-pub(crate) struct GitOut {
+pub struct GitOut {
     pub(crate) code: i32,
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: String,

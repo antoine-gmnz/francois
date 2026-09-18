@@ -35,6 +35,7 @@ import {
   onAccountEvent,
 } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { accountIdForSessionCreate, modelPickerProviderHeading } from '../../lib/account-selection';
 import {
   LOGIN_CANCEL_HINT,
   LOGIN_TITLE,
@@ -69,13 +70,11 @@ import {
   endpointUpdatePayload,
   findAccount,
   formatModelIds,
-  modelPickerProviderHeading,
   loginErrorMessage,
   middleTruncate,
   modelIdsForAdd,
   modelIdsForUpdate,
   moveCursor,
-  accountIdForSessionCreate,
   newlyAddedAccountId,
   parseModelIdsList,
   removeConfirmView,
@@ -129,8 +128,8 @@ function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
     accountId: DEFAULT_ACCOUNT_ID,
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
-    allowGit: false,
     responseMode: 'default',
+    allowGit: false,
     ...over,
   };
 }

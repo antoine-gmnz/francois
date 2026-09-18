@@ -23,8 +23,8 @@ function session(over: Partial<SessionMeta> & Pick<SessionMeta, 'id'>): SessionM
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
-    allowGit: false,
     responseMode: 'default',
+    allowGit: false,
     ...over,
   };
 }

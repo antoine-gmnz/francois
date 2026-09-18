@@ -30,7 +30,7 @@ mod provenance;
 mod version;
 
 pub(crate) use check::*;
-pub(crate) use commands::*;
+pub use commands::*;
 pub(crate) use helper::*;
 pub(crate) use provenance::*;
 pub(crate) use version::*;
@@ -40,30 +40,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 /// The npm package this app is published as.
-pub(crate) const PACKAGE: &str = "francois";
+pub const PACKAGE: &str = "francois";
 /// `owner/repo` the release notes are read from (FR-3).
-pub(crate) const REPO: &str = "antoine-gmnz/francois";
+pub const REPO: &str = "antoine-gmnz/francois";
 /// FR-2: the npm registry — not GitHub — is the source of truth for the version,
 /// because it is exactly what `npm i -g francois@latest` will install.
-pub(crate) const REGISTRY_LATEST_URL: &str = "https://registry.npmjs.org/francois/latest";
+pub const REGISTRY_LATEST_URL: &str = "https://registry.npmjs.org/francois/latest";
 /// The verbatim command a manual install runs, and what the helper runs (FR-11/FR-14).
-pub(crate) const UPDATE_COMMAND: &str = "npm i -g francois@latest";
+pub const UPDATE_COMMAND: &str = "npm i -g francois@latest";
 /// FR-6: both HTTP calls.
-pub(crate) const HTTP_TIMEOUT_SECS: u64 = 10;
+pub const HTTP_TIMEOUT_SECS: u64 = 10;
 /// contract `UpdateMethod`.
-pub(crate) const METHOD_NPM: &str = "npm";
-pub(crate) const METHOD_MANUAL: &str = "manual";
+pub const METHOD_NPM: &str = "npm";
+pub const METHOD_MANUAL: &str = "manual";
 /// FR-14: the helper gives up if the app has not exited this long after launch.
-pub(crate) const EXIT_WAIT_SECS: u64 = 120;
+pub const EXIT_WAIT_SECS: u64 = 120;
 /// FR-16: how long after the ack reaches the webview the core waits before exiting.
-pub(crate) const SHUTDOWN_GRACE_MS: u64 = 400;
+pub const SHUTDOWN_GRACE_MS: u64 = 400;
 
 // ---------- contract shapes (contract/self-update.ts, mirrored) ----------
 
 /// Mirrors `UpdateCheck`. `notes` is OMITTED (never null) when the best-effort
 /// GitHub fetch failed — the contract types it optional (FR-3).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub(crate) struct UpdateCheck {
+pub struct UpdateCheck {
     /// FR-1: the running build, from CARGO_PKG_VERSION.
     pub current: String,
     /// FR-2: newest version on the npm registry.
@@ -85,7 +85,7 @@ pub(crate) struct UpdateCheck {
 
 /// Mirrors `UpdateApplyAck` — resolved BEFORE the core begins shutdown (FR-16).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub(crate) struct UpdateApplyAck {
+pub struct UpdateApplyAck {
     #[serde(rename = "helperPid")]
     pub helper_pid: u32,
     pub latest: String,
@@ -106,7 +106,7 @@ pub struct UpdateState {
 
 impl UpdateState {
     /// FR-19: a new check replaces the previous one wholesale.
-    pub(crate) fn store(&self, check: UpdateCheck) {
+    pub fn store(&self, check: UpdateCheck) {
         *self.last.lock().unwrap() = Some(check);
     }
 

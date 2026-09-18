@@ -1,7 +1,8 @@
 //! the per-turn NDJSON reader and its stream-event handlers, split by
 //! concern: `lines` (top-level NDJSON line dispatch + turn teardown),
 //! `blocks` (`content_block_*` stream events), `tool_results` (`tool_result`
-//! reconciliation). `mod.rs` owns the shared per-turn bookkeeping types
+//! reconciliation), `coalesce` (the `assistant.delta` emission window).
+//! `mod.rs` owns the shared per-turn bookkeeping types
 //! (`ToolRec`, `BlockKind`), `parse_stream` (multi-provider-seam FR-5/FR-6:
 //! the whole per-line parse loop over a `BufRead` source and a `SessionEnv` —
 //! no `Child`, no `AppHandle`, which is what makes a golden replay of a
@@ -36,7 +37,7 @@ use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 
 /// Per-turn state while parsing the NDJSON stream.
-pub(crate) struct ToolRec {
+pub struct ToolRec {
     block_id: String,
     tool: String,
     input: Value,
@@ -44,6 +45,8 @@ pub(crate) struct ToolRec {
     /// workflow-panel FR-2: this call is a `Workflow` dispatch, so its input and
     /// its tool_result feed pane [6] as well as the transcript.
     is_workflow: bool,
+    /// command-inspect FR-2: when the `tool_use` was first seen
+    /// (`content_block_start`) — `StepDetail.startedAt`.
     started_at: u64,
 }
 
@@ -53,7 +56,7 @@ pub(crate) struct ToolRec {
 /// in a comment — so a miswritten literal, or a comparison against the wrong
 /// number, compiled clean and silently routed a tool block through the text path.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum BlockKind {
+pub enum BlockKind {
     Text,
     Tool,
 }
@@ -63,7 +66,7 @@ pub(crate) enum BlockKind {
 /// close — the pieces of the old single-function reader that genuinely
 /// depend on the live `Child` (reaping it) or a recursive `begin_turn` (which
 /// needs a real, owned `AppHandle`) and so could not move into `parse_stream`.
-pub(crate) struct ParseOutcome {
+pub struct ParseOutcome {
     pub(crate) got_result: bool,
     pub(crate) got_init: bool,
     pub(crate) result_error: Option<String>,
@@ -87,7 +90,7 @@ pub(crate) struct ParseOutcome {
 /// a still-open block — `run_reader` does those with the pieces only it has
 /// (the live `Child`, a recursive `begin_turn` that needs an owned `AppHandle`).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn parse_stream(
+pub fn parse_stream(
     env: &dyn SessionEnv,
     session_id: &str,
     reader: impl BufRead,
@@ -100,6 +103,10 @@ pub(crate) fn parse_stream(
     let mut blocks: HashMap<u64, (String, BlockKind, String)> = HashMap::new();
     let mut tools: HashMap<String, ToolRec> = HashMap::new(); // tool_use_id -> rec
     let mut text_accum: HashMap<String, String> = HashMap::new(); // blockId -> text
+                                                                  // FR-2: the streamed UTF-16 offset per block, tracked incrementally instead
+                                                                  // of re-derived by re-encoding `text_accum` every delta. Never read
+                                                                  // downstream of this loop, so it does not join `ParseOutcome`.
+    let mut text_utf16: HashMap<String, usize> = HashMap::new();
     let mut open_block: Option<(String, BlockKind)> = None;
     let mut ctx_usage = ContextTracker::default();
     let mut got_result = false;
@@ -187,6 +194,7 @@ pub(crate) fn parse_stream(
                         &mut blocks,
                         &mut tools,
                         &mut text_accum,
+                        &mut text_utf16,
                         &mut open_block,
                         &mut ctx_usage,
                     );
@@ -265,7 +273,7 @@ pub(crate) fn parse_stream(
 /// child, and decide completion / resume-retry with the real `AppHandle` that
 /// recursion needs. `child` is here to be waited on, never to be read from.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_reader(
+pub fn run_reader(
     app: AppHandle,
     session_id: String,
     reader: impl BufRead,

@@ -126,8 +126,8 @@ describe('subscribeSessionEvents (transcript-scale FR-17..20)', () => {
       accountId: 'default',
       agentRuntime: 'claude-code' as const,
       protocol: 'anthropic' as const,
-      allowGit: false,
       responseMode: 'default' as const,
+      allowGit: false,
     };
     const s1Events: SessionEvent[] = [];
     const s2Events: SessionEvent[] = [];

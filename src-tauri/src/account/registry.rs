@@ -6,19 +6,20 @@
 //! the handlers in commands.rs are lock → delegate → persist → emit glue.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 /// FR-5: a label is user-editable and non-empty after trimming.
-pub(crate) const BAD_LABEL_MSG: &str = "an account label cannot be empty";
-pub(crate) const NOT_FOUND_MSG: &str = "no such account";
-pub(crate) const NOT_REMOVABLE_MSG: &str = "the default account cannot be removed";
+pub const BAD_LABEL_MSG: &str = "an account label cannot be empty";
+pub const NOT_FOUND_MSG: &str = "no such account";
+pub const NOT_REMOVABLE_MSG: &str = "the default account cannot be removed";
 
 // ---------- paths ----------
 
-pub(crate) fn accounts_json_path(app: &AppHandle) -> Option<PathBuf> {
+pub fn accounts_json_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
@@ -26,14 +27,14 @@ pub(crate) fn accounts_json_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 /// FR-6: `<app_data>/accounts` — the parent of every added account's config dir.
-pub(crate) fn accounts_dir(app: &AppHandle) -> Option<PathBuf> {
+pub fn accounts_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("accounts"))
 }
 
 /// FR-6: an account id must be a uuid-charset token, so a config dir path built
 /// from it can never escape `<app_data>/accounts` (defense-in-depth against a
 /// hand-edited accounts.json). `default` is reserved and never a directory.
-pub(crate) fn valid_account_id(id: &str) -> bool {
+pub fn valid_account_id(id: &str) -> bool {
     !id.is_empty()
         && id != DEFAULT_ACCOUNT_ID
         && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
@@ -45,7 +46,7 @@ pub(crate) fn valid_account_id(id: &str) -> bool {
 /// is never fatal; a single undeserializable entry is skipped, not fatal.
 /// Returns the records plus the persisted `defaultAccountId` (unresolved — the
 /// caller resolves it against the records with `resolve_default`).
-pub(crate) fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String>) {
+pub fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String>) {
     let Ok(doc) = serde_json::from_slice::<Value>(bytes) else {
         return (Vec::new(), None);
     };
@@ -84,7 +85,7 @@ fn account_record_invariant_holds(r: &AccountRecord) -> bool {
 
 /// FR-4: exactly one account is `isDefault`. A persisted id that no longer
 /// resolves — or none at all — hands the flag back to the built-in account.
-pub(crate) fn resolve_default(records: &[AccountRecord], persisted: Option<&str>) -> String {
+pub fn resolve_default(records: &[AccountRecord], persisted: Option<&str>) -> String {
     match persisted {
         Some(id) if id == DEFAULT_ACCOUNT_ID => DEFAULT_ACCOUNT_ID.to_string(),
         Some(id) if records.iter().any(|r| r.id == id) => id.to_string(),
@@ -94,7 +95,7 @@ pub(crate) fn resolve_default(records: &[AccountRecord], persisted: Option<&str>
 
 /// FR-1: `{ "version": 1, "accounts": [ … ], "defaultAccountId": "…" }`. The
 /// built-in row is NEVER written (FR-2) — it is synthesized on every read.
-pub(crate) fn registry_doc(records: &[AccountRecord], default_id: &str) -> Value {
+pub fn registry_doc(records: &[AccountRecord], default_id: &str) -> Value {
     serde_json::json!({
         "version": 1,
         "accounts": records,
@@ -102,9 +103,13 @@ pub(crate) fn registry_doc(records: &[AccountRecord], default_id: &str) -> Value
     })
 }
 
-pub(crate) fn persist(app: &AppHandle, inner: &AccountInner) -> Result<(), String> {
-    let path = accounts_json_path(app)
-        .ok_or_else(|| "could not resolve the app data directory".to_string())?;
+pub fn persist(app: &AppHandle, inner: &AccountInner) -> Result<(), AppError> {
+    let path = accounts_json_path(app).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::Internal,
+            "could not resolve the app data directory",
+        )
+    })?;
     crate::permissions::write_json_atomic(
         &path,
         &registry_doc(&inner.records, &inner.default_account_id),
@@ -175,7 +180,7 @@ pub(crate) fn exists(inner: &AccountInner, id: &str) -> bool {
 
 // ---------- FR-5: labels ----------
 
-pub(crate) fn validate_label(raw: &str) -> Result<String, &'static str> {
+pub fn validate_label(raw: &str) -> Result<String, &'static str> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(BAD_LABEL_MSG);
@@ -185,7 +190,7 @@ pub(crate) fn validate_label(raw: &str) -> Result<String, &'static str> {
 
 /// FR-5: the label of a freshly registered account — the caller's, else the
 /// email captured at login, else `Account <n>` (n = the new row's position).
-pub(crate) fn label_fallback(label: Option<&str>, email: Option<&str>, existing: usize) -> String {
+pub fn label_fallback(label: Option<&str>, email: Option<&str>, existing: usize) -> String {
     if let Some(l) = label.map(str::trim).filter(|l| !l.is_empty()) {
         return l.to_string();
     }
@@ -201,31 +206,27 @@ pub(crate) fn label_fallback(label: Option<&str>, email: Option<&str>, existing:
 /// synthesized (`Default`, FR-3) and accounts.json holds no row for it, so there
 /// would be nowhere to keep a new one. Reported as `INVALID_INPUT` rather than
 /// `ACCOUNT_NOT_FOUND`: the account exists, the operation does not apply to it.
-pub(crate) fn apply_rename(
-    inner: &mut AccountInner,
-    id: &str,
-    label: String,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn apply_rename(inner: &mut AccountInner, id: &str, label: String) -> Result<(), AppError> {
     if id == DEFAULT_ACCOUNT_ID {
-        return Err(("INVALID_INPUT", "the default account cannot be renamed"));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "the default account cannot be renamed",
+        ));
     }
     let record = inner
         .records
         .iter_mut()
         .find(|r| r.id == id)
-        .ok_or(("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG))?;
+        .ok_or(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG))?;
     record.label = label;
     Ok(())
 }
 
 /// FR-4: move the `isDefault` flag. Setting a new one clears the previous by
 /// construction — the flag is a single stored id, not a per-row boolean.
-pub(crate) fn apply_set_default(
-    inner: &mut AccountInner,
-    id: &str,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn apply_set_default(inner: &mut AccountInner, id: &str) -> Result<(), AppError> {
     if !exists(inner, id) {
-        return Err(("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG));
+        return Err(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG));
     }
     inner.default_account_id = id.to_string();
     Ok(())
@@ -235,18 +236,18 @@ pub(crate) fn apply_set_default(
 /// that carries `isDefault` hands the flag back to `default`. Returns the
 /// removed record — the caller deletes its config dir (FR-8) and repoints its
 /// sessions (FR-9) once the registry write has landed.
-pub(crate) fn apply_remove(
-    inner: &mut AccountInner,
-    id: &str,
-) -> Result<AccountRecord, (&'static str, &'static str)> {
+pub fn apply_remove(inner: &mut AccountInner, id: &str) -> Result<AccountRecord, AppError> {
     if id == DEFAULT_ACCOUNT_ID {
-        return Err(("ACCOUNT_NOT_REMOVABLE", NOT_REMOVABLE_MSG));
+        return Err(AppError::new(
+            ErrorCode::AccountNotRemovable,
+            NOT_REMOVABLE_MSG,
+        ));
     }
     let idx = inner
         .records
         .iter()
         .position(|r| r.id == id)
-        .ok_or(("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG))?;
+        .ok_or(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG))?;
     let removed = inner.records.remove(idx);
     inner.auth_failed_at.remove(id);
     if inner.default_account_id == id {
@@ -259,7 +260,7 @@ pub(crate) fn apply_remove(
 
 /// FR-14: is this identity already registered? `skip` excludes the row a
 /// re-login (FR-17) is refreshing, whose own email is expected to match.
-pub(crate) fn duplicate_email(inner: &AccountInner, email: &str, skip: Option<&str>) -> bool {
+pub fn duplicate_email(inner: &AccountInner, email: &str, skip: Option<&str>) -> bool {
     let same = |a: &str| a.trim().eq_ignore_ascii_case(email.trim());
     if skip != Some(DEFAULT_ACCOUNT_ID) {
         if let Some(d) = &inner.default_email {
@@ -280,7 +281,7 @@ pub(crate) fn duplicate_email(inner: &AccountInner, email: &str, skip: Option<&s
 /// `oauthAccount.emailAddress` / `.organizationName` of a `.claude.json`
 /// document. An empty email reads as no identity at all (FR-13's "first
 /// NON-EMPTY value").
-pub(crate) fn parse_oauth_account(doc: &Value) -> (Option<String>, Option<String>) {
+pub fn parse_oauth_account(doc: &Value) -> (Option<String>, Option<String>) {
     let Some(oauth) = doc.get("oauthAccount") else {
         return (None, None);
     };
@@ -306,7 +307,7 @@ fn read_identity_file(path: &Path) -> (Option<String>, Option<String>) {
 }
 
 /// FR-13: the identity an account's own config dir reports, if any.
-pub(crate) fn read_identity(config_dir: &str) -> (Option<String>, Option<String>) {
+pub fn read_identity(config_dir: &str) -> (Option<String>, Option<String>) {
     read_identity_file(&Path::new(config_dir).join(".claude.json"))
 }
 
@@ -316,7 +317,7 @@ pub(crate) fn read_identity(config_dir: &str) -> (Option<String>, Option<String>
 /// sitting in the config dir (FR-22/FR-23: credentials expiring mid-turn never
 /// delete the file, only flag `authFailedAt`). `None` means no file at all, so
 /// ANY identity appearing later is new by definition.
-pub(crate) fn identity_mtime(config_dir: &str) -> Option<std::time::SystemTime> {
+pub fn identity_mtime(config_dir: &str) -> Option<std::time::SystemTime> {
     std::fs::metadata(Path::new(config_dir).join(".claude.json"))
         .ok()?
         .modified()
@@ -325,7 +326,7 @@ pub(crate) fn identity_mtime(config_dir: &str) -> Option<std::time::SystemTime> 
 
 /// FR-3: the BUILT-IN account's identity, from `~/.claude.json`. Best-effort —
 /// unreadable means both absent and the row simply reads `Default`.
-pub(crate) fn read_default_identity() -> (Option<String>, Option<String>) {
+pub fn read_default_identity() -> (Option<String>, Option<String>) {
     match dirs::home_dir() {
         Some(home) => read_identity_file(&home.join(".claude.json")),
         None => (None, None),
@@ -338,7 +339,7 @@ pub(crate) fn read_default_identity() -> (Option<String>, Option<String>) {
 /// could point it anywhere, and `account_remove` later `remove_dir_all`s this
 /// path. Every row's config dir is derived from its id, not read off disk, so a
 /// spoofed value can never survive a load.
-pub(crate) fn sanitize_config_dirs(records: &mut [AccountRecord], accounts_dir: &Path) {
+pub fn sanitize_config_dirs(records: &mut [AccountRecord], accounts_dir: &Path) {
     for r in records.iter_mut() {
         r.config_dir = accounts_dir.join(&r.id).to_string_lossy().into_owned();
     }
@@ -588,7 +589,7 @@ mod tests {
         assert!(build_list(&inner)[0].is_default);
         assert_eq!(
             apply_set_default(&mut inner, "nope").unwrap_err(),
-            ("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG)
+            AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG)
         );
     }
 
@@ -599,15 +600,15 @@ mod tests {
         assert_eq!(inner.records[0].label, "client");
         assert_eq!(
             apply_rename(&mut inner, "nope", "x".into()).unwrap_err(),
-            ("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG)
+            AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG)
         );
         // FR-2/FR-3: the built-in row's label is synthesized, so there is nowhere
         // to keep a new one — the account exists, the operation does not apply.
         assert_eq!(
             apply_rename(&mut inner, "default", "x".into())
                 .unwrap_err()
-                .0,
-            "INVALID_INPUT"
+                .code,
+            ErrorCode::InvalidInput
         );
     }
 
@@ -617,11 +618,11 @@ mod tests {
         let mut inner = inner_fixture(&["a1"], "default");
         assert_eq!(
             apply_remove(&mut inner, "default").unwrap_err(),
-            ("ACCOUNT_NOT_REMOVABLE", NOT_REMOVABLE_MSG)
+            AppError::new(ErrorCode::AccountNotRemovable, NOT_REMOVABLE_MSG)
         );
         assert_eq!(
             apply_remove(&mut inner, "nope").unwrap_err(),
-            ("ACCOUNT_NOT_FOUND", NOT_FOUND_MSG)
+            AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG)
         );
         assert_eq!(inner.records.len(), 1, "nothing was removed");
     }

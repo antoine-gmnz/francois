@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ModelInfo } from '../../../contract/common';
-import { familyOf, groupByFamily, reconcileModelId } from './model-picker';
+import { familyOf, groupByFamily } from './model-picker';
 
 const model = (id: string, label: string): ModelInfo => ({ id, label });
 
@@ -46,25 +46,29 @@ describe('groupByFamily (FR-21)', () => {
   });
 });
 
-describe('reconcileModelId (useModelCatalog account rekey)', () => {
-  const models = [model('claude-sonnet-5', 'Sonnet 5'), model('claude-opus-5', 'Opus 5')];
+// Viewport geometry and scroll behavior are tested independently of visual layout.
+import { modelPickerPlacement, revealModelOption } from './model-picker';
+import { vi } from 'vitest';
 
-  it('keeps the current id when it is still in the fetched catalog', () => {
-    expect(reconcileModelId('claude-opus-5', models)).toBe('claude-opus-5');
+describe('catalogue access', () => {
+  it('keeps both columns inside a 720px window', () => {
+    const rect = modelPickerPlacement({ left: 120, top: 300, bottom: 332, width: 480 }, 720, 600);
+    expect(rect.left).toBeGreaterThanOrEqual(8);
+    expect(rect.left + rect.width).toBeLessThanOrEqual(712);
+    expect(rect.top + rect.maxHeight).toBeLessThanOrEqual(592);
   });
-
-  it('falls back to the catalog\'s first entry when nothing is selected yet', () => {
-    expect(reconcileModelId('', models)).toBe('claude-sonnet-5');
+  it('opens above a low trigger and bounds long lists', () => {
+    const rect = modelPickerPlacement({ left: 680, top: 550, bottom: 582, width: 480 }, 720, 600);
+    expect(rect.top).toBeLessThan(550);
+    expect(rect.maxHeight).toBeLessThanOrEqual(360);
+    expect(rect.left + rect.width).toBeLessThanOrEqual(712);
   });
-
-  it('falls back to the catalog\'s first entry when the current id belonged to a different account/provider', () => {
-    // e.g. switching from a Claude account (modelId 'claude-opus-5') to an
-    // endpoint account whose catalog carries entirely different ids.
-    expect(reconcileModelId('gpt-4o', models)).toBe('claude-sonnet-5');
-  });
-
-  it('is empty for an empty catalog — never a fabricated id', () => {
-    expect(reconcileModelId('claude-opus-5', [])).toBe('');
-    expect(reconcileModelId('', [])).toBe('');
+  it('reveals the active family and model during long-list navigation', () => {
+    const family = { scrollIntoView: vi.fn() };
+    const option = { scrollIntoView: vi.fn() };
+    const root = { querySelector: vi.fn().mockReturnValueOnce(family).mockReturnValueOnce(option) };
+    revealModelOption(root as unknown as HTMLElement);
+    expect(family.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(option.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
   });
 });

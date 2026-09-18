@@ -1,0 +1,12 @@
+{
+  "_comment": "core-architecture-wave3 FR-10. Module cycles between core domains that already exist: `a<->b` means a/ references crate::b AND b/ references crate::a. A pair here warns; a NEW pair fails the build. Rust does not reject intra-crate cycles and clippy has no lint for them, so this list is the only thing stopping the graph getting worse. Shrink it, never grow it.",
+  "cycles": [
+    "account<->project",
+    "diff<->session",
+    "permissions<->session",
+    "profiles<->project",
+    "profiles<->session",
+    "project<->session",
+    "session<->usage"
+  ]
+}

@@ -22,7 +22,7 @@ use tauri::{AppHandle, Manager};
 /// message that invoked tools, `tool_call_id` only on the `tool` message that
 /// answers one of them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ThreadMessage {
+pub struct ThreadMessage {
     pub(crate) role: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) content: Option<String>,
@@ -41,11 +41,11 @@ pub(crate) struct ThreadMessage {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ThreadToolCall {
+pub struct ThreadToolCall {
     pub(crate) id: String,
     #[serde(rename = "type", default = "function_call_kind")]
     pub(crate) kind: String,
-    pub(crate) function: ThreadToolCallFunction,
+    pub function: ThreadToolCallFunction,
 }
 
 fn function_call_kind() -> String {
@@ -53,7 +53,7 @@ fn function_call_kind() -> String {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ThreadToolCallFunction {
+pub struct ThreadToolCallFunction {
     pub(crate) name: String,
     pub(crate) arguments: String,
 }
@@ -71,7 +71,7 @@ fn thread_file_name(session_id: &str) -> Option<String> {
 /// `<appData>/threads/<sessionId>.json` — same sanitization `transcript_path`
 /// uses (persistence.rs FR-42/43), so a session id can never escape the
 /// threads dir.
-pub(crate) fn thread_path(app: &AppHandle, session_id: &str) -> Option<PathBuf> {
+pub fn thread_path(app: &AppHandle, session_id: &str) -> Option<PathBuf> {
     let name = thread_file_name(session_id)?;
     app.path()
         .app_data_dir()
@@ -82,16 +82,22 @@ pub(crate) fn thread_path(app: &AppHandle, session_id: &str) -> Option<PathBuf> 
 // ---------- I/O (pure over a Path, so it's testable without an AppHandle) ----------
 
 /// FR-16: atomic (temp + rename) write of the message array.
-pub(crate) fn write_thread_file(path: &Path, messages: &[ThreadMessage]) -> Result<(), String> {
+pub fn write_thread_file(path: &Path, messages: &[ThreadMessage]) -> Result<(), AppError> {
+    // core-architecture-wave3 FR-6: the thread file is adapter-owned bookkeeping
+    // nothing on the wire asks about, so a failure is INTERNAL; the one
+    // production caller drops it deliberately (a lost thread file degrades
+    // resume, it does not fail the turn).
+    let failed = |e: std::io::Error| AppError::new(ErrorCode::Internal, e.to_string());
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir).map_err(failed)?;
     }
-    let bytes = serde_json::to_vec_pretty(messages).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec_pretty(messages)
+        .map_err(|e| AppError::new(ErrorCode::Internal, e.to_string()))?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, &bytes).map_err(failed)?;
     if let Err(e) = std::fs::rename(&tmp, path) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
+        return Err(failed(e));
     }
     Ok(())
 }
@@ -100,7 +106,7 @@ pub(crate) fn write_thread_file(path: &Path, messages: &[ThreadMessage]) -> Resu
 /// file yet — nothing to resume) never fires the same signal as a corrupted
 /// one: only `Corrupt` is a degrade.
 #[derive(Debug, PartialEq)]
-pub(crate) enum ThreadLoad {
+pub enum ThreadLoad {
     /// No file at this path yet.
     Fresh,
     /// The file was there and parsed clean.
@@ -112,7 +118,7 @@ pub(crate) enum ThreadLoad {
 /// FR-17: read the persisted array back. Never panics on a missing or
 /// malformed file — the caller (`load_thread`) turns `Corrupt` into the
 /// `session.resumeFailed` degrade, `Fresh` into silently starting empty.
-pub(crate) fn read_thread_file(path: &Path) -> ThreadLoad {
+pub fn read_thread_file(path: &Path) -> ThreadLoad {
     match std::fs::read(path) {
         Ok(bytes) => match serde_json::from_slice::<Vec<ThreadMessage>>(&bytes) {
             Ok(messages) => ThreadLoad::Ok(messages),
@@ -131,7 +137,7 @@ pub(crate) fn read_thread_file(path: &Path) -> ThreadLoad {
 /// failure to open the session; the rendered transcript is untouched, only
 /// the wire array starts fresh). A session with no thread file yet (its very
 /// first turn) is silently `Fresh` — nothing to resume, nothing to report.
-pub(crate) fn load_thread(app: &AppHandle, session_id: &str) -> Vec<ThreadMessage> {
+pub fn load_thread(app: &AppHandle, session_id: &str) -> Vec<ThreadMessage> {
     let Some(path) = thread_path(app, session_id) else {
         return Vec::new();
     };
@@ -155,7 +161,7 @@ pub(crate) fn load_thread(app: &AppHandle, session_id: &str) -> Vec<ThreadMessag
 /// otherwise-successful turn. Call this ONLY with a message array that has
 /// already gone through `drop_unanswered_tool_calls`, and never after a
 /// stream cut mid-block (§7: "the thread file is not written").
-pub(crate) fn save_thread(app: &AppHandle, session_id: &str, messages: &[ThreadMessage]) {
+pub fn save_thread(app: &AppHandle, session_id: &str, messages: &[ThreadMessage]) {
     let Some(path) = thread_path(app, session_id) else {
         return;
     };
@@ -171,7 +177,7 @@ pub(crate) fn save_thread(app: &AppHandle, session_id: &str, messages: &[ThreadM
 /// mid-call — is dropped rather than persisted, because the Chat Completions
 /// API rejects an assistant message whose `tool_calls` aren't every one
 /// answered on the very next request (FR-8, §9).
-pub(crate) fn drop_unanswered_tool_calls(messages: &[ThreadMessage]) -> Vec<ThreadMessage> {
+pub fn drop_unanswered_tool_calls(messages: &[ThreadMessage]) -> Vec<ThreadMessage> {
     let answered: std::collections::HashSet<&str> = messages
         .iter()
         .filter(|m| m.role == "tool")

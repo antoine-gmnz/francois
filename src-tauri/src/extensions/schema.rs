@@ -23,11 +23,11 @@ use std::collections::HashMap;
 /// text — the message the user sees is composed from the panel's own
 /// definition.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SchemaError;
+pub struct SchemaError;
 
 // ---------- FR-51: sanitization ----------
 
-pub(crate) fn strip_control_sequences(input: &str) -> String {
+pub fn strip_control_sequences(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(c) = chars.next() {
@@ -64,7 +64,7 @@ pub(crate) fn strip_control_sequences(input: &str) -> String {
     out
 }
 
-pub(crate) fn sanitize_field(input: &str, max_chars: usize) -> String {
+pub fn sanitize_field(input: &str, max_chars: usize) -> String {
     let stripped = strip_control_sequences(input);
     truncate_chars(&stripped, max_chars)
 }
@@ -75,7 +75,7 @@ pub(crate) fn sanitize_field(input: &str, max_chars: usize) -> String {
 /// every manifest-controlled string that crosses IPC and must not carry a
 /// directional or hiding override — `manifest::sanitize_argv_element` (the
 /// declared-commands consent line) and `sanitize_field_strict` below.
-pub(crate) fn strip_bidi_and_zero_width(input: &str) -> String {
+pub fn strip_bidi_and_zero_width(input: &str) -> String {
     input
         .chars()
         .filter(|c| {
@@ -93,12 +93,12 @@ pub(crate) fn strip_bidi_and_zero_width(input: &str) -> String {
 /// points via `strip_bidi_and_zero_width` — for manifest-controlled fields
 /// (e.g. `detect::sanitize_reason_field`) that must close the same
 /// sanitization-boundary gap `sanitize_argv_element` closes for argv.
-pub(crate) fn sanitize_field_strict(input: &str, max_chars: usize) -> String {
+pub fn sanitize_field_strict(input: &str, max_chars: usize) -> String {
     let stripped = strip_bidi_and_zero_width(&strip_control_sequences(input));
     truncate_chars(&stripped, max_chars)
 }
 
-pub(crate) fn sanitize_line(input: &str) -> String {
+pub fn sanitize_line(input: &str) -> String {
     sanitize_field(input, EXT_FIELD_MAX_CHARS)
 }
 
@@ -242,7 +242,7 @@ fn table_data(
 /// One provider's stdout → the panel's `PanelData`, or `EXT_SCHEMA_INVALID`.
 /// The panel's DECLARED primitive picks the schema — a provider cannot decide
 /// which shape it is answering with.
-pub(crate) fn panel_data(
+pub fn panel_data(
     panel: &PanelDefinition,
     stdout: &[u8],
     offset: u32,

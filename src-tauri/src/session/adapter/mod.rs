@@ -14,7 +14,7 @@
 //! child" shape the rest of this domain follows.
 
 mod claude_code;
-mod codex;
+pub(crate) mod codex;
 mod grok;
 mod openai;
 
@@ -30,9 +30,14 @@ pub(crate) use claude_code::ClaudeCodeAdapter;
 // of the pure argv/env helpers.
 pub(crate) use claude_code::{child_stdout_lines, spawn_claude};
 /// multi-provider-codex FR-3: the `AgentRuntime::Codex` adapter.
-pub(crate) use codex::{codex_program, CodexAdapter};
+pub(crate) use codex::CodexAdapter;
 /// multi-provider-grok FR-3: the `AgentRuntime::Grok` adapter.
-pub(crate) use grok::{grok_program, GrokAdapter};
+pub(crate) use grok::GrokAdapter;
+/// display-openai-model-name FR-5: the OpenAI-shaped context-window table is
+/// also the non-Anthropic id fallback `session::models::fallback_context`
+/// reaches for — re-exported so that sibling domain module can name it
+/// without `openai`/`wire` themselves needing to be crate-visible.
+pub(crate) use openai::wire::context_tokens_for as openai_context_tokens_for;
 /// multi-provider-openai FR-1: the real `AgentRuntime::Francois` adapter —
 /// `UnavailableAdapter` is gone, not kept alongside it.
 pub(crate) use openai::OpenAiAdapter;
@@ -129,7 +134,7 @@ impl AgentRuntime {
     /// kind at creation — `session_create` never accepts either directly.
     /// Exhaustive over `AccountKind`, so a third kind fails to compile here
     /// rather than falling back silently.
-    pub(crate) fn from_account_kind(
+    pub fn from_account_kind(
         kind: crate::account::AccountKind,
     ) -> (AgentRuntime, ProviderProtocol) {
         match kind {
@@ -155,7 +160,7 @@ impl AgentRuntime {
 /// FR-1: what a turn spawn/connect reads off its session — snapshotted BEFORE
 /// any I/O (under `Engine.sessions`, released immediately after), so no
 /// adapter ever reaches back into the registry mid-spawn.
-pub(crate) struct TurnContext {
+pub struct TurnContext {
     pub(crate) session_id: String,
     pub(crate) block_id: String,
     pub(crate) text: String,
@@ -218,13 +223,13 @@ pub(crate) struct RuntimeModelRef {
 /// Core-owned capability snapshot. A missing snapshot is intentionally
 /// distinguishable from a map of enabled defaults, especially for Pi.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct CapabilityState {
+pub struct CapabilityState {
     pub(crate) available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reason: Option<String>,
 }
 
-pub(crate) type RuntimeCapabilities = BTreeMap<String, CapabilityState>;
+pub type RuntimeCapabilities = BTreeMap<String, CapabilityState>;
 
 /// Task 08 expands this message vocabulary. The boundary only supports normal
 /// text now, so later runtimes cannot accidentally expose a wire DTO here.
@@ -247,7 +252,7 @@ pub(crate) trait RuntimeSessionControl: Send + Sync {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum TurnMode {
+pub enum TurnMode {
     Normal,
     #[allow(dead_code)]
     Compact,
@@ -261,14 +266,14 @@ pub(crate) enum TurnMode {
 /// `awaiting_approval`/`awaiting_input` from this without knowing which
 /// adapter it is talking to.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct PendingCounts {
+pub struct PendingCounts {
     pub(crate) questions: usize,
     pub(crate) permissions: usize,
 }
 
 /// FR-2: what `permissions_decide` hands to `TurnControl::decide_permission`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum PermissionDecision {
+pub enum PermissionDecision {
     Allow,
     Deny,
 }
@@ -283,7 +288,7 @@ pub(crate) enum PermissionDecision {
 /// failure variants return the SAME `*_NOT_PENDING` error, and only
 /// `ChannelClosed` resolves the card `cancelled` on its way out.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ControlAck {
+pub enum ControlAck {
     /// The id was never pending (unknown, or already resolved by a race).
     NotPending,
     /// The id was pending and the decision reached the control channel.
@@ -390,7 +395,7 @@ static PI_ADAPTER: PiAdapter = PiAdapter;
 /// FR-4/FR-14a: dispatch a session's `agentRuntime` ALONE to its adapter —
 /// `protocol` is read inside the `francois` runtime to pick the wire codec,
 /// never here.
-pub(crate) fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter {
+pub fn adapter_for(runtime: AgentRuntime) -> &'static dyn SessionAdapter {
     match runtime {
         AgentRuntime::ClaudeCode => &CLAUDE_CODE_ADAPTER,
         AgentRuntime::Francois => &OPENAI_ADAPTER,

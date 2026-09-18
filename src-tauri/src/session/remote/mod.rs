@@ -30,6 +30,7 @@
 //! `session::remote_start` path keeps resolving unchanged.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{ok, IpcResult};
 use portable_pty::{ChildKiller, MasterPty};
@@ -40,7 +41,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 mod start;
-pub(crate) use start::*;
+pub use start::*;
 
 const EVENT_CHANNEL_REMOTE: &str = "francois://remote/event";
 
@@ -55,15 +56,15 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// contract AppError — mirrored locally because `crate::ipc::AppError` is not
 /// `Clone` and this one is carried inside cloneable state. Same JSON shape.
 #[derive(Serialize, Clone)]
-pub(crate) struct RemoteError {
-    pub(crate) code: String,
+pub struct RemoteError {
+    pub(crate) code: ErrorCode,
     pub(crate) message: String,
 }
 
 /// contract RemoteControlState — tagged on `phase`.
 #[derive(Serialize, Clone)]
 #[serde(tag = "phase", rename_all = "camelCase")]
-pub(crate) enum RemoteState {
+pub enum RemoteState {
     Off,
     #[serde(rename_all = "camelCase")]
     Starting {
@@ -86,7 +87,7 @@ pub(crate) enum RemoteState {
 /// contract RemoteControlStatus.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RemoteStatus {
+pub struct RemoteStatus {
     pub(crate) session_id: String,
     pub(crate) state: RemoteState,
 }
@@ -122,7 +123,7 @@ pub struct RemoteRegistry(Mutex<std::collections::HashMap<String, RemoteEntry>>)
 /// has already moved on is a no-op. An already-`active` host that later gets a
 /// SECOND url candidate keeps the first (FR-11); an already-`failed` one stays
 /// failed.
-pub(crate) fn to_active(cur: &RemoteState, url: String) -> Option<RemoteState> {
+pub fn to_active(cur: &RemoteState, url: String) -> Option<RemoteState> {
     match cur {
         RemoteState::Starting { name, started_at } => Some(RemoteState::Active {
             name: name.clone(),
@@ -135,12 +136,12 @@ pub(crate) fn to_active(cur: &RemoteState, url: String) -> Option<RemoteState> {
 
 /// `starting` → `failed`, once. An already-active host that later exits keeps its
 /// URL rather than being retro-marked failed (FR-14) — `stop` is what clears it.
-pub(crate) fn to_failed(cur: &RemoteState, message: &str) -> Option<RemoteState> {
+pub fn to_failed(cur: &RemoteState, message: &str) -> Option<RemoteState> {
     match cur {
         RemoteState::Starting { name, .. } => Some(RemoteState::Failed {
             name: name.clone(),
             error: RemoteError {
-                code: "REMOTE_CONTROL_FAILED".to_string(),
+                code: ErrorCode::RemoteControlFailed,
                 message: message.to_string(),
             },
         }),
@@ -291,7 +292,7 @@ mod tests {
         RemoteState::Failed {
             name: "n".into(),
             error: RemoteError {
-                code: "REMOTE_CONTROL_FAILED".into(),
+                code: ErrorCode::RemoteControlFailed,
                 message: "boom".into(),
             },
         }
@@ -388,7 +389,7 @@ mod tests {
         let failed = serde_json::to_value(RemoteState::Failed {
             name: "n".into(),
             error: RemoteError {
-                code: "REMOTE_CONTROL_FAILED".into(),
+                code: ErrorCode::RemoteControlFailed,
                 message: "boom".into(),
             },
         })

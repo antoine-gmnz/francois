@@ -28,6 +28,7 @@ export type ErrorCode =
   | 'SESSION_NOT_RUNNING'
   | 'SESSION_ALREADY_RUNNING'
   | 'SPAWN_FAILED'
+  | 'MODEL_CATALOG_UNAVAILABLE' // codex-model-catalog: detail is ModelCatalogFailureDetail
   | 'INVALID_INPUT'
   | 'GIT_ERROR'
   | 'NOT_A_GIT_REPO'
@@ -77,6 +78,7 @@ export type ErrorCode =
   | 'EDITOR_LAUNCH_FAILED' // open-in-vscode: the launcher could not be spawned (detail: { path })
   | 'SHELL_NOT_FOUND' // multiple-shells: no entry for that ShellId (unknown, disposed, or another session's)
   | 'SHELL_LIMIT_REACHED' // multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
+  | 'STEP_DETAIL_NOT_FOUND' // command-inspect FR-11: no record for that blockId (never captured, or swept)
   // session-engine: the turn died on the plan's usage limit (or an API rate
   // limit). Carried by `session.error` and NOT terminal — the core sends the
   // session back to `idle` because the window resets on its own clock and emits
@@ -275,8 +277,10 @@ export interface ModelInfo {
   brief?: string;
   /** max input tokens (real context window) from /v1/models. */
   contextTokens?: number;
-  /** effort levels this model supports, subset of low/medium/high/xhigh/max (empty = none). */
+  /** Runtime/model-advertised effort strings, in advertised order (empty = none). */
   efforts?: string[];
+  /** Advertised default, present only when included in efforts. */
+  defaultEffort?: string;
 }
 
 export interface SessionMeta {
@@ -358,7 +362,9 @@ export interface SessionMeta {
   /** How this session's NEXT turn is told to write. A persisted record without
    *  the key loads as 'default' (response-mode FR-1). */
   responseMode: ResponseMode;
-  /** Auto-approve direct git/gh Bash calls; absent legacy records migrate to false. */
+  /** Francois auto-approves direct `git`/`gh` Bash calls for this session
+   *  (session-settings-sheet FR-1). Read LIVE by the control channel, so a change
+   *  applies to the very next permission request. Pre-feature records load `false`. */
   allowGit: boolean;
 }
 
@@ -412,7 +418,8 @@ export type ProjectId = string; // uuid v4
  */
 export interface ProjectDefaults {
   modelId?: string;
-  /** low | medium | high | xhigh | max — nominally one the chosen model advertises. */
+  /** Runtime/model-advertised value. Codex membership is checked on relevant edits,
+   * while syntactically valid saved values survive catalogue changes. */
   effort?: string;
   permissionMode?: PermissionMode;
   runtime?: ClaudeRuntime;
@@ -720,7 +727,7 @@ export type SessionEvent =
   // e.g. tool 'Read', summary 'src/auth/middleware.ts'. `model` is set only on a
   // subagent dispatch that named one — see SubagentConversationBlock.agentModel.
   | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string }
-  | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean } // command-inspect: captured detail available
+  | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean } // e.g. '128 lines', '+34 −19'; hasDetail: command-inspect FR-10
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)
   | { type: 'question.asked'; sessionId: SessionId; blockId: BlockId; questions: SessionQuestion[] } // session-questions FR-6: a question parked the turn

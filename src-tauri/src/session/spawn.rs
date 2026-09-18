@@ -2,31 +2,31 @@
 //! session-config validators, the claude argv/runtime wrapper, and the PATH /
 //! window-flag helpers a spawned `claude` (or `wsl.exe`) child needs.
 //!
-//! `no_window` itself is NOT redefined here — session/mod.rs used to carry its
-//! own copy (a third one, alongside wsl.rs's and diff/git.rs's), now deleted in
-//! favor of the single `crate::process_util` copy. It is merely re-exported so
-//! every existing `crate::session::no_window` caller — including usage.rs,
-//! which this refactor does not own — keeps resolving unchanged.
+//! `no_window` used to be re-exported from here: session/mod.rs carried its own
+//! copy (a third one, alongside wsl.rs's and diff/git.rs's), and the re-export
+//! kept every `crate::session::no_window` caller resolving after those were
+//! collapsed into `crate::process_util`. core-architecture-wave3 FR-7 removed
+//! the re-export with the last caller — window suppression is now one of the
+//! four concerns `process_util::spawn` applies by construction, so no spawn site
+//! names it at all.
 //!
 //! `spawn_claude` itself lives in `session/adapter/claude_code.rs`
 //! (multi-provider-seam FR-3): it is turn-shaped (stdin/stdout wiring, the
 //! NDJSON user line) AND Claude-CLI-shaped, rather than argv/env plumbing.
 
-pub(crate) use crate::process_util::no_window;
-
-pub(crate) fn valid_effort(e: &str) -> bool {
+pub fn valid_effort(e: &str) -> bool {
     matches!(e, "low" | "medium" | "high" | "xhigh" | "max")
 }
 
 /// contract/common.ts PermissionMode. The CLI's `auto`/`dontAsk` are deliberately
 /// excluded (auto aborts headless -p runs on classifier blocks; dontAsk needs a
 /// paired allowedTools list).
-pub(crate) fn valid_permission_mode(m: &str) -> bool {
+pub fn valid_permission_mode(m: &str) -> bool {
     matches!(m, "default" | "plan" | "acceptEdits" | "bypassPermissions")
 }
 
 /// contract/common.ts ClaudeRuntime. 'wsl' is only accepted on Windows (create-time check).
-pub(crate) fn valid_runtime(r: &str) -> bool {
+pub fn valid_runtime(r: &str) -> bool {
     matches!(r, "native" | "wsl")
 }
 
@@ -34,7 +34,7 @@ pub(crate) fn valid_runtime(r: &str) -> bool {
 /// the user's ~/.claude settings (permissions.defaultMode / allow rules), exactly
 /// the pre-feature behavior. The flag does not persist across --resume, so every
 /// invocation passes it explicitly.
-pub(crate) fn permission_args(mode: &str) -> Vec<String> {
+pub fn permission_args(mode: &str) -> Vec<String> {
     match mode {
         "plan" | "acceptEdits" | "bypassPermissions" => {
             vec!["--permission-mode".into(), mode.into()]
@@ -58,7 +58,7 @@ pub(crate) fn permission_args(mode: &str) -> Vec<String> {
 /// passed to `--cd` verbatim, since it is already in the distro's own dialect.
 /// `None` preserves the pre-existing UNC-derived behavior for every other
 /// (non-worktree) WSL session.
-pub(crate) fn claude_invocation(
+pub fn claude_invocation(
     runtime: &str,
     cwd: &str,
     claude_args: Vec<String>,

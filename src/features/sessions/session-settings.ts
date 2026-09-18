@@ -246,3 +246,12 @@ export function settingCapability(session: SessionMeta, key: keyof SettingsDraft
   if (key === 'permissionMode') return sandboxSelectionCapability(session);
   return { available: true };
 }
+
+/** Window capture must leave activation/navigation to the focused control. */
+export function submitSettingsOnEnter(event: KeyboardEvent, submit: () => unknown): void {
+  if (event.key !== 'Enter' || event.defaultPrevented || event.isComposing) return;
+  const target = event.target as Element | null;
+  if (target?.closest?.('button, [role="button"], [role="listbox"], [role="option"], select, textarea, [data-worktree-row], [contenteditable="true"]')) return;
+  event.preventDefault();
+  void submit();
+}

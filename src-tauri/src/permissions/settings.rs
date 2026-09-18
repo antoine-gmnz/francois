@@ -2,8 +2,19 @@
 
 use super::*;
 
+use crate::ipc::{AppError, ErrorCode};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
+
+// core-architecture-wave3 FR-6: this module's fallible signatures are
+// `Result<T, AppError>` and raise SETTINGS_WRITE_FAILED — the contract's one
+// code for "settings.json could not be read-merged-written". A domain that
+// surfaces these failures under a code of its own (session/mcp_approval.rs
+// re-codes to MCP_ERROR) re-wraps at its own boundary; it does not get a
+// second helper.
+pub(crate) fn settings_err(message: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::SettingsWriteFailed, message)
+}
 
 // ---------- FR-13: tier paths ----------
 
@@ -31,7 +42,7 @@ pub fn global_settings_path(cwd: &str, runtime: &str) -> Option<PathBuf> {
 }
 
 /// The Francois-owned disabled-rules sidecar next to a settings file (FR-15).
-pub(crate) fn sidecar_path(settings: &Path) -> PathBuf {
+pub fn sidecar_path(settings: &Path) -> PathBuf {
     match settings.parent() {
         Some(dir) => dir.join(SIDECAR_NAME),
         None => PathBuf::from(SIDECAR_NAME),
@@ -43,19 +54,30 @@ pub(crate) fn sidecar_path(settings: &Path) -> PathBuf {
 /// Read a JSON object file. Missing or empty → `{}` (a read NEVER creates
 /// anything, §7 #3). Unparseable or non-object → `Err` — the caller must refuse
 /// to write rather than clobber a file it does not understand (§7 #2).
-pub fn read_json_object(path: &Path) -> Result<Value, String> {
+pub fn read_json_object(path: &Path) -> Result<Value, AppError> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Object(Map::new())),
-        Err(e) => return Err(format!("could not read {}: {e}", path.display())),
+        Err(e) => {
+            return Err(settings_err(format!(
+                "could not read {}: {e}",
+                path.display()
+            )))
+        }
     };
     if content.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
     }
     match serde_json::from_str::<Value>(&content) {
         Ok(v) if v.is_object() => Ok(v),
-        Ok(_) => Err(format!("{} is not a JSON object", path.display())),
-        Err(e) => Err(format!("{} is not valid JSON: {e}", path.display())),
+        Ok(_) => Err(settings_err(format!(
+            "{} is not a JSON object",
+            path.display()
+        ))),
+        Err(e) => Err(settings_err(format!(
+            "{} is not valid JSON: {e}",
+            path.display()
+        ))),
     }
 }
 
@@ -68,24 +90,27 @@ pub fn read_json_object(path: &Path) -> Result<Value, String> {
 /// (`ANTHROPIC_API_KEY` and friends), and a 0600 file silently becoming
 /// umask-default 0644 on Francois's first write would leak them to every local
 /// user.
-pub fn write_json_atomic(path: &Path, doc: &Value) -> Result<(), String> {
+pub fn write_json_atomic(path: &Path, doc: &Value) -> Result<(), AppError> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
-            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+            .map_err(|e| settings_err(format!("could not create {}: {e}", dir.display())))?;
     }
-    let mut bytes =
-        serde_json::to_vec_pretty(doc).map_err(|e| format!("could not serialize rules: {e}"))?;
+    let mut bytes = serde_json::to_vec_pretty(doc)
+        .map_err(|e| settings_err(format!("could not serialize rules: {e}")))?;
     bytes.push(b'\n');
     let tmp = crate::fs_util::unique_temp_path(path, "json");
     // Clean up on the WRITE failure too, not just the rename — a full disk takes
     // this branch, and a leaked `.tmp` would sit next to the user's settings.json.
     if let Err(e) = write_private(&tmp, &bytes, path) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(format!("could not write {}: {e}", tmp.display()));
+        return Err(settings_err(format!(
+            "could not write {}: {e}",
+            tmp.display()
+        )));
     }
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!("could not write {}: {e}", path.display())
+        settings_err(format!("could not write {}: {e}", path.display()))
     })
 }
 
@@ -112,7 +137,7 @@ pub(crate) fn write_private(tmp: &Path, bytes: &[u8], target: &Path) -> std::io:
 /// Windows has no umask and no group/other bits to leak through; the ACL is
 /// inherited from the directory, which is the same directory the target lives in.
 #[cfg(not(unix))]
-pub(crate) fn write_private(tmp: &Path, bytes: &[u8], target: &Path) -> std::io::Result<()> {
+pub fn write_private(tmp: &Path, bytes: &[u8], target: &Path) -> std::io::Result<()> {
     std::fs::write(tmp, bytes)?;
     if let Ok(meta) = std::fs::metadata(target) {
         let _ = std::fs::set_permissions(tmp, meta.permissions()); // carries read-only
@@ -124,7 +149,7 @@ pub(crate) fn write_private(tmp: &Path, bytes: &[u8], target: &Path) -> std::io:
 /// `None` for a non-object document — callers pass a `read_json_object` result so
 /// that cannot happen today, but `merge_pattern`/`remove_pattern` are `pub` and a
 /// panic here would land on the turn's reader thread.
-pub(crate) fn effect_array<'a>(doc: &'a mut Value, effect: &str) -> Option<&'a mut Vec<Value>> {
+pub fn effect_array<'a>(doc: &'a mut Value, effect: &str) -> Option<&'a mut Vec<Value>> {
     let root = doc.as_object_mut()?;
     let perms = root
         .entry("permissions")
@@ -172,7 +197,7 @@ pub fn remove_pattern(doc: &mut Value, effect: &str, pattern: &str) -> bool {
 
 /// Read the patterns of one effect off a settings document, skipping non-strings
 /// (§7 #15 — they are preserved on write, just not listed).
-pub(crate) fn patterns_of(doc: &Value, effect: &str) -> Vec<String> {
+pub fn patterns_of(doc: &Value, effect: &str) -> Vec<String> {
     doc.get("permissions")
         .and_then(|p| p.get(effect))
         .and_then(|a| a.as_array())

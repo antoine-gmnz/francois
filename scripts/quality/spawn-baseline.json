@@ -1,0 +1,7 @@
+{
+  "_comment": "core-architecture-wave3 FR-8. Files still constructing std::process::Command directly instead of going through process_util::spawn, with the number of sites each is allowed. A file over its count fails the build; a file at or under it warns. Shrink these, never grow them.",
+  "facade": "src-tauri/src/process_util.rs",
+  "allowed": {
+    "src-tauri/src/session/attachments/testutil.rs": 1
+  }
+}

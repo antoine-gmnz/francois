@@ -20,7 +20,7 @@ import { useStore } from '../../lib/store';
 /** Design brief: the line under a button disabled by work in flight. */
 export const BLOCKED_NOTE = 'Francois has to quit to update. Finish or stop the running turns first.';
 /** Design brief: the line above the copyable command on a non-npm install (FR-11). */
-export const MANUAL_NOTE = "This copy wasn't installed through npm, so Francois can't update it in place.";
+export const MANUAL_NOTE = "Francois couldn't verify npm ownership of this copy. After installing, quit and launch francois from the same terminal.";
 
 // ------------------------------------------------------------------ the chip
 

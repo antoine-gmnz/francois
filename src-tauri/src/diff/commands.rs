@@ -1,28 +1,30 @@
 //! the francois:diff:<verb> Tauri command surface.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
-use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::IpcResult;
 use crate::session::Engine;
 
 // ---------- commands (francois:diff:<verb>) ----------
 
-pub(crate) fn cwd_or_err<T: Serialize>(
-    engine: &State<'_, Engine>,
-    session_id: &str,
-) -> Result<String, IpcResult<T>> {
+/// core-architecture-wave3 FR-6: `Result<String, AppError>` rather than the
+/// `Result<String, IpcResult<T>>` this used to return. The old shape existed
+/// only so a caller could `return e` straight out of a command body; with the
+/// bodies converting through `.into()` the error type no longer has to know
+/// what envelope it will end up in, and the `T` parameter disappears with it.
+pub fn cwd_or_err(engine: &State<'_, Engine>, session_id: &str) -> Result<String, AppError> {
     engine
         .cwd_of(session_id)
-        .ok_or_else(|| err("SESSION_NOT_FOUND", "no such session"))
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))
 }
 
 /// Run one git step that MUST succeed, mapping both failure modes the way every
 /// call site did by hand: a non-zero exit reports git's own stderr, falling back
 /// to `fallback` when git said nothing; a spawn failure reports the io error.
-/// `Err` carries the message the caller passes to `err("GIT_ERROR", …)`.
+/// `Err` carries the message the caller passes to `err(ErrorCode::GitError, …)`.
 ///
 /// Only for steps where exit 0 means success. Two git calls in this file
 /// deliberately do NOT use it, because for them exit 0 is not success:
@@ -33,16 +35,22 @@ fn require_git_ok(
     root: &str,
     args: &[&str],
     fallback: &str,
-) -> Result<GitOut, String> {
+) -> Result<GitOut, AppError> {
     match git_routed(host, root, args) {
         Ok(o) if o.code == 0 => Ok(o),
-        Ok(o) => Err(if o.stderr.is_empty() {
+        Ok(o) => Err(git_error(if o.stderr.is_empty() {
             fallback.to_string()
         } else {
             o.stderr
-        }),
-        Err(e) => Err(e.to_string()),
+        })),
+        Err(e) => Err(git_error(e.to_string())),
     }
+}
+
+/// core-architecture-wave3 FR-6: GIT_ERROR is what every call site above
+/// stamped on these messages by hand.
+fn git_error(message: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::GitError, message)
 }
 
 // All diff commands are `async` so Tauri executes them on the async runtime — a
@@ -56,20 +64,24 @@ fn require_git_ok(
 // borrowed State param breaks that (E0597 in the generated handler).
 #[tauri::command]
 pub async fn diff_get_summary(app: AppHandle, session_id: String) -> IpcResult<DiffSummary> {
+    get_summary(&app, &session_id).into()
+}
+
+fn get_summary(app: &AppHandle, session_id: &str) -> Result<DiffSummary, AppError> {
     let engine = app.state::<Engine>();
-    let cwd = match cwd_or_err(&engine, &session_id) {
-        Ok(c) => c,
-        Err(e) => return e,
-    };
-    let lock = git_lock(&session_id);
+    let cwd = cwd_or_err(&engine, session_id)?;
+    let lock = git_lock(session_id);
     let _g = lock.lock().unwrap();
-    match compute_summary(&cwd) {
-        Ok(s) => {
-            broadcast(&app, &session_id, s.files.len()); // FR-17
-            ok(s)
-        }
-        Err((code, msg)) => err(&code, msg),
-    }
+    compute_summary(&cwd)
+    // NO broadcast here (FR-17 amended): a READ is not a change. The echo this
+    // used to emit was a feedback loop the moment more than one frontend
+    // listener refetched on `diff.changed` — the roster's fleet sync reads the
+    // summary of every settled session on every event, so its own read echoed
+    // straight back into itself (and, with the DIFF tab open, ping-ponged with
+    // DiffView's subscription) and every idle session spun a permanent
+    // `git status` + `git diff --numstat` loop. `diff.changed` now means only
+    // what its name says: the watcher (FR-15), a tool.done (FR-16), or a commit
+    // actually changed the tree.
 }
 
 #[tauri::command]
@@ -78,44 +90,41 @@ pub async fn diff_get_file_diff(
     session_id: String,
     path: String,
 ) -> IpcResult<FileDiff> {
+    get_file_diff(&app, &session_id, &path).into()
+}
+
+fn get_file_diff(app: &AppHandle, session_id: &str, path: &str) -> Result<FileDiff, AppError> {
     let engine = app.state::<Engine>();
-    let cwd = match cwd_or_err(&engine, &session_id) {
-        Ok(c) => c,
-        Err(e) => return e,
-    };
-    let lock = git_lock(&session_id);
+    let cwd = cwd_or_err(&engine, session_id)?;
+    let lock = git_lock(session_id);
     let _g = lock.lock().unwrap();
-    match compute_file_diff(&cwd, &path) {
-        Ok(d) => ok(d),
-        Err((code, msg)) => err(&code, msg),
-    }
+    compute_file_diff(&cwd, path)
 }
 
 #[tauri::command]
 pub async fn diff_stage_all(app: AppHandle, session_id: String) -> IpcResult<Option<()>> {
+    stage_all(&app, &session_id).into()
+}
+
+fn stage_all(app: &AppHandle, session_id: &str) -> Result<Option<()>, AppError> {
     let engine = app.state::<Engine>();
-    let cwd = match cwd_or_err(&engine, &session_id) {
-        Ok(c) => c,
-        Err(e) => return e,
-    };
+    let cwd = cwd_or_err(&engine, session_id)?;
     let host = GitHost::of(&cwd); // wsl-filesystem FR-9: same routing as every other git op
     if !is_git_repo(&host, &cwd) {
-        return err("NOT_A_GIT_REPO", NOT_A_REPO_MSG);
+        return Err(AppError::new(ErrorCode::NotAGitRepo, NOT_A_REPO_MSG));
     }
-    let lock = git_lock(&session_id);
+    let lock = git_lock(session_id);
     let _g = lock.lock().unwrap();
     let root = repo_root(&host, &cwd);
-    match require_git_ok(&host, &root, &["add", "-A"], "git add failed") {
-        Ok(_) => ok(None), // succeeds even with nothing to stage (FR-10)
-        Err(message) => err("GIT_ERROR", message),
-    }
+    require_git_ok(&host, &root, &["add", "-A"], "git add failed")?;
+    Ok(None) // succeeds even with nothing to stage (FR-10)
 }
 
 /// Pure: the `git commit` argv for `message` + selected `paths`. With no paths we
 /// commit whatever is already in the index (legacy stage-all flow). With paths we
 /// pin the commit to exactly those files — `git commit -m <msg> -- <paths…>` — so
 /// anything else already staged is left in the index, not committed.
-pub(crate) fn commit_args<'a>(message: &'a str, paths: &'a [String]) -> Vec<&'a str> {
+pub fn commit_args<'a>(message: &'a str, paths: &'a [String]) -> Vec<&'a str> {
     let mut args = vec!["commit", "-m", message];
     if !paths.is_empty() {
         args.push("--");
@@ -131,19 +140,29 @@ pub async fn diff_commit(
     message: String,
     paths: Vec<String>,
 ) -> IpcResult<CommitResult> {
+    commit(&app, &session_id, &message, &paths).into()
+}
+
+fn commit(
+    app: &AppHandle,
+    session_id: &str,
+    message: &str,
+    paths: &[String],
+) -> Result<CommitResult, AppError> {
     let engine = app.state::<Engine>();
-    let cwd = match cwd_or_err(&engine, &session_id) {
-        Ok(c) => c,
-        Err(e) => return e,
-    };
+    let cwd = cwd_or_err(&engine, session_id)?;
     if message.trim().is_empty() {
-        return err("INVALID_INPUT", "commit message is empty"); // defense in depth (FR-24)
+        // defense in depth (FR-24)
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "commit message is empty",
+        ));
     }
     let host = GitHost::of(&cwd); // wsl-filesystem FR-9: same routing as every other git op
     if !is_git_repo(&host, &cwd) {
-        return err("NOT_A_GIT_REPO", NOT_A_REPO_MSG);
+        return Err(AppError::new(ErrorCode::NotAGitRepo, NOT_A_REPO_MSG));
     }
-    let lock = git_lock(&session_id);
+    let lock = git_lock(session_id);
     let _g = lock.lock().unwrap();
     let root = repo_root(&host, &cwd);
 
@@ -153,13 +172,10 @@ pub async fn diff_commit(
         // `git diff --cached --quiet` exits 0 when the index is empty.
         match git_routed(&host, &root, &["diff", "--cached", "--quiet"]) {
             Ok(o) if o.code == 0 => {
-                return err(
-                    "GIT_ERROR",
-                    "nothing staged to commit — stage changes first",
-                )
+                return Err(git_error("nothing staged to commit — stage changes first"))
             }
             Ok(_) => {}
-            Err(e) => return err("GIT_ERROR", e.to_string()),
+            Err(e) => return Err(git_error(e.to_string())),
         }
     } else {
         // Selected-files flow: stage exactly the chosen paths first so untracked
@@ -168,30 +184,31 @@ pub async fn diff_commit(
         // no-op when a path has nothing to stage.
         let mut add = vec!["add", "--"];
         add.extend(paths.iter().map(|p| p.as_str()));
-        if let Err(message) = require_git_ok(&host, &root, &add, "git add failed") {
-            return err("GIT_ERROR", message);
-        }
+        require_git_ok(&host, &root, &add, "git add failed")?;
     }
 
     // FR-9: commit identity/hooks are the distro's own git config for WSL repos
     // (documented, not managed — spec §4). With paths, git itself errors if none of
     // the selected files have anything to commit.
-    if let Err(message) = require_git_ok(
+    require_git_ok(
         &host,
         &root,
-        &commit_args(message, &paths),
+        &commit_args(message, paths),
         "git commit failed",
-    ) {
-        return err("GIT_ERROR", message);
-    }
-    match git_routed(&host, &root, &["rev-parse", "HEAD"]) {
-        Ok(o) if o.code == 0 => ok(CommitResult {
+    )?;
+    // A commit is the one tree change no watcher sees: it only touches `.git/`,
+    // which `is_ignored_path` skips (and WSL repos have no watcher at all). The
+    // getSummary echo used to cover this by accident; now it is explicit. Runs
+    // off-thread and coalesced, so it just waits out the lock this fn holds.
+    schedule_recompute(app, session_id, &cwd);
+    Ok(match git_routed(&host, &root, &["rev-parse", "HEAD"]) {
+        Ok(o) if o.code == 0 => CommitResult {
             commit_hash: String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        }),
-        _ => ok(CommitResult {
+        },
+        _ => CommitResult {
             commit_hash: String::new(),
-        }),
-    }
+        },
+    })
 }
 
 #[cfg(test)]

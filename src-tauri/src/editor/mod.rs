@@ -19,13 +19,12 @@ mod detect;
 #[cfg(test)]
 mod tests;
 
+use crate::ipc::ErrorCode;
 use crate::ipc::{err, err_detail, ok, IpcResult};
-use crate::process_util::no_window;
 use crate::session::Engine;
 use crate::wsl::wsl_unc_to_linux;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use tauri::State;
 
@@ -37,7 +36,7 @@ use tauri::State;
 /// `Windsurf` -> `"windsurf"`).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum EditorId {
+pub enum EditorId {
     Vscode,
     VscodeInsiders,
     Cursor,
@@ -55,7 +54,7 @@ pub(crate) struct EditorInfo {
 
 /// Mirrors contract/open-in-vscode.ts::EditorListData.
 #[derive(Serialize, Clone, Debug)]
-pub(crate) struct EditorListData {
+pub struct EditorListData {
     editors: Vec<EditorInfo>,
 }
 
@@ -194,13 +193,10 @@ pub(crate) fn launch_argv(editor_path: &str, cwd: &str) -> Vec<String> {
 // ---------- FR-8: spawn (argv array, never a shell string; not awaited) ----------
 
 fn spawn_editor(argv: &[String]) -> std::io::Result<()> {
-    let mut cmd = Command::new(&argv[0]);
-    cmd.args(&argv[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    no_window(&mut cmd);
-    cmd.spawn().map(|_child| ())
+    crate::process_util::spawn(&argv[0])
+        .args(&argv[1..])
+        .start()
+        .map(|_child| ())
 }
 
 // ---------- commands ----------
@@ -229,7 +225,7 @@ pub(crate) fn open_in_editor_impl(
 ) -> IpcResult<Option<()>> {
     let Some(editor) = editors.iter().find(|e| e.id == editor_id) else {
         return err_detail(
-            "EDITOR_NOT_FOUND",
+            ErrorCode::EditorNotFound,
             "that editor is not installed",
             json!({ "editorId": editor_id }),
         );
@@ -238,7 +234,7 @@ pub(crate) fn open_in_editor_impl(
     match spawn_editor(&argv) {
         Ok(()) => ok(None),
         Err(e) => err_detail(
-            "EDITOR_LAUNCH_FAILED",
+            ErrorCode::EditorLaunchFailed,
             format!("could not launch the editor: {e}"),
             json!({ "path": editor.path }),
         ),
@@ -253,7 +249,7 @@ pub fn session_open_in_editor(
     editor_id: EditorId,
 ) -> IpcResult<Option<()>> {
     let Some(cwd) = engine.cwd_of(&session_id) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     open_in_editor_impl(&cached_editors(), &cwd, editor_id)
 }

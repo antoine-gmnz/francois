@@ -13,6 +13,12 @@ packaging/npm/vendor/
 Thumbs.db
 .serena/
 
+# Codex pipeline local state
+.cohorte/pipeline-metrics.jsonl
+.cohorte/preflight.ok
+.cohorte/preflight.log
+.cohorte/preflight-report.txt
+
 # pipeline build/review timing metrics — local only
 .claude/pipeline-metrics.jsonl
 pipeline-metrics.jsonl
@@ -40,3 +46,4 @@ docs/.vitepress/cache/
 # .github/workflows/quality.yml, which uploads them as artifacts. Never committed:
 # a checked-in report goes stale silently and starts getting believed.
 reports/
+.design-turn18a.html

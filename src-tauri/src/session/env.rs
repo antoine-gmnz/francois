@@ -20,7 +20,7 @@ use super::*;
 use crate::diff::on_tool_done;
 use tauri::{AppHandle, Manager};
 
-pub(crate) trait SessionEnv: Send + Sync {
+pub trait SessionEnv: Send + Sync {
     fn engine(&self) -> &Engine;
     fn emit_session(&self, ev: SessionEvent);
     fn emit_agent(&self, ev: AgentEvent);
@@ -76,8 +76,11 @@ impl SessionEnv for AppHandle {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod testenv {
+// core-architecture-wave3 FR-3: `pub` under the `harness` feature for the same
+// reason `testutil` is — `benches/` needs a `SessionEnv` and cannot see this one
+// otherwise.
+#[cfg(any(test, feature = "harness"))]
+pub mod testenv {
     use super::*;
     use std::sync::Mutex;
 
@@ -85,18 +88,18 @@ pub(crate) mod testenv {
     /// production managed one) and records every emission in arrival order,
     /// so a golden replay test can assert the exact `SessionEvent` sequence.
     #[derive(Default)]
-    pub(crate) struct TestEnv {
-        pub(crate) engine: Engine,
-        pub(crate) session_events: Mutex<Vec<SessionEvent>>,
-        pub(crate) agent_events: Mutex<Vec<AgentEvent>>,
-        pub(crate) workflow_events: Mutex<Vec<WorkflowDetailEvent>>,
-        pub(crate) persist_calls: Mutex<u32>,
-        pub(crate) transcript_appends: Mutex<Vec<(String, String)>>, // (sessionId, blockId)
-        pub(crate) diff_notes: Mutex<Vec<(String, String)>>,         // (sessionId, cwd)
+    pub struct TestEnv {
+        pub engine: Engine,
+        pub session_events: Mutex<Vec<SessionEvent>>,
+        pub agent_events: Mutex<Vec<AgentEvent>>,
+        pub workflow_events: Mutex<Vec<WorkflowDetailEvent>>,
+        pub persist_calls: Mutex<u32>,
+        pub transcript_appends: Mutex<Vec<(String, String)>>, // (sessionId, blockId)
+        pub diff_notes: Mutex<Vec<(String, String)>>,         // (sessionId, cwd)
         /// command-inspect: (sessionId, StepDetail) for every capture — lets a
         /// test assert exactly what would have been written, without an
         /// `AppHandle` to write it through.
-        pub(crate) step_details: Mutex<Vec<(String, StepDetail)>>,
+        pub step_details: Mutex<Vec<(String, StepDetail)>>,
     }
 
     impl SessionEnv for TestEnv {
@@ -143,7 +146,7 @@ pub(crate) mod testenv {
     /// `~/.claude` never exists. `fixtures/turn.expected.json`'s
     /// `session.commands` skill entries are generated from exactly this
     /// list (golden_replay_produces_the_locked_session_event_sequence).
-    pub(crate) fn fixed_command_inventory() -> Vec<SkillInfo> {
+    pub fn fixed_command_inventory() -> Vec<SkillInfo> {
         vec![
             SkillInfo {
                 name: "seam-fixture-skill-one".into(),

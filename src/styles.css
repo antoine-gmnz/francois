@@ -157,6 +157,12 @@ html[data-hidden='1'] [style*='animation'] {
   --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
+  /* The SHELL tab's own line height (ShellTerminal.tsx hands xterm the same
+     number, which xterm cannot read from CSS). Anything rendering captured
+     terminal output outside xterm — command-inspect's record body — uses this
+     so a log reads at the same rhythm whether it is live or recalled. */
+  --terminal-line-height: 1.35;
+
   /* ── surfaces (design 9a "flat") ──────────────────────────────────────────
      9a rebuilds 7a with no strokes, no shadows: separation comes from tonal
      steps in the surfaces alone. Four of these are the mock's named tiers and

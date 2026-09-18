@@ -24,8 +24,8 @@ function meta(overrides: Partial<SessionMeta>): SessionMeta {
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
-    allowGit: false,
     responseMode: 'default',
+    allowGit: false,
     ...overrides,
   };
 }

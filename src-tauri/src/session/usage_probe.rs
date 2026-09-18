@@ -12,7 +12,7 @@
 
 use super::*;
 use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
@@ -21,7 +21,7 @@ use tauri::{AppHandle, Manager};
 /// slot, emit command.started + a pending block, then probe on a detached thread.
 /// Invisible to the turn lifecycle: status, queue, claude_session_id and
 /// contextUsedTokens are never touched.
-pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str) {
+pub fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str) {
     let engine = app.state::<Engine>();
     let block_id = uuid();
     let reserved = engine.with_session_mut(session_id, |s| {
@@ -90,7 +90,7 @@ pub(crate) fn start_usage_probe(app: &AppHandle, session_id: &str, command: &str
 /// a WSL worktree probe routes to the repo's actual distro rather than the
 /// machine's default one.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_probe(
+pub fn run_probe(
     app: AppHandle,
     session_id: String,
     block_id: String,
@@ -112,23 +112,15 @@ pub(crate) fn run_probe(
         model_id,
     ];
     let (program, argv) = claude_invocation(&runtime, &cwd, args, worktree_distro.as_deref());
-    let mut cmd = Command::new(program);
-    cmd.args(argv);
-    if runtime != "wsl" {
-        cmd.current_dir(&cwd); // wsl probes get their cwd via `--cd` inside the distro
-    }
-    if let Some(path) = claude_path_env() {
-        cmd.env("PATH", path);
-    }
     // multi-account FR-21/FR-24.
-    for (k, v) in account_env(account_config_dir.as_deref(), &runtime, &[]) {
-        cmd.env(k, v);
+    let mut cmd = crate::process_util::spawn(program)
+        .args(argv)
+        .envs(account_env(account_config_dir.as_deref(), &runtime, &[]))
+        .stdout(Stdio::piped());
+    if runtime != "wsl" {
+        cmd = cmd.current_dir(&cwd); // wsl probes get their cwd via `--cd` inside the distro
     }
-    no_window(&mut cmd);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = match cmd.spawn() {
+    let mut child = match cmd.start() {
         Ok(c) => c,
         Err(_) => {
             // FR-10 with session-engine FR-45's actionable wording where determinable.
@@ -211,7 +203,7 @@ pub(crate) fn run_probe(
 /// Release the probe slot and finalize its pending block (FR-9/10 — a pending
 /// command block is never left open). If the session was removed mid-probe,
 /// nothing is emitted (session-engine FR-14).
-pub(crate) fn finish_probe(
+pub fn finish_probe(
     app: &AppHandle,
     session_id: &str,
     block_id: &str,

@@ -94,3 +94,4 @@ export function bypassNote(session: SessionMeta): string | null {
   const since = `on since ${formatClock(session.permissionModeSince)}`;
   return session.worktree ? `${since} · worktree ${session.worktree.branch}` : since;
 }
+

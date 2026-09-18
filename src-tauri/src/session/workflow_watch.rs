@@ -32,7 +32,7 @@ const WATCH_DEBOUNCE_MS: u64 = 300;
 /// declared as one so a second event never changes the wire shape.
 #[derive(Serialize, Clone, PartialEq, Debug)]
 #[serde(tag = "type")]
-pub(crate) enum WorkflowDetailEvent {
+pub enum WorkflowDetailEvent {
     #[serde(rename = "workflow.detail")]
     Detail {
         #[serde(rename = "sessionId")]
@@ -86,7 +86,7 @@ pub(crate) fn flush_workflow_detail(env: &dyn SessionEnv, run_id: &str) -> bool 
 /// FR-6: start the recursive watch on a run's directory. At most one per run —
 /// a second `workflows_detail` finds the handle already parked on the run's
 /// `ScanEntry` and does nothing.
-pub(crate) fn start_workflow_watch(app: &AppHandle, run_id: &str, dir: &str) {
+pub fn start_workflow_watch(app: &AppHandle, run_id: &str, dir: &str) {
     if watch_is_running(app, run_id) {
         return;
     }
@@ -149,7 +149,7 @@ pub(crate) fn stop_workflow_watch(engine: &Engine, run_id: &str) {
 /// FR-6: a session was removed — every watch of its runs stops, and the asks
 /// attributed to them go with it. Nothing is left pointing at a run that no
 /// longer exists.
-pub(crate) fn unwatch_session_workflows(engine: &Engine, run_ids: &[String]) {
+pub fn unwatch_session_workflows(engine: &Engine, run_ids: &[String]) {
     {
         let mut scans = engine.workflow_scans.lock().unwrap();
         for id in run_ids {
@@ -175,7 +175,7 @@ pub(crate) fn stop_all_workflow_watches(engine: &Engine) {
 /// (FR-21): everything here is additive, and a miss leaves the ask exactly as it
 /// behaves today — a SESSION card, resolved by the existing commands under the
 /// existing exactly-once claim.
-pub(crate) fn attribute_workflow_ask(
+pub fn attribute_workflow_ask(
     env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
@@ -186,7 +186,7 @@ pub(crate) fn attribute_workflow_ask(
     let engine = env.engine();
     let seen = seen_agents(engine);
     let found = {
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.get(session_id).and_then(|s| attribute_ask(s, v, &seen))
     };
     let Some(a) = found else {

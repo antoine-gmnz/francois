@@ -4,7 +4,7 @@
 // global event-listener wiring (initShellEvents) is exercised through the
 // api.ts `onShellEvent` seam in shell-event-routing.test.ts.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ShellInfo } from '../../../contract/shell-terminal';
 import { useShellStore } from './shellStore';
 
@@ -96,6 +96,20 @@ describe('unread', () => {
     expect(afterFirst.a).toBe(true);
     store.markUnread('a');
     expect(useShellStore.getState().unread).toBe(afterFirst); // same reference — no re-render
+  });
+
+  it('the no-op transition never notifies subscribers — the hot path bails before set', () => {
+    const listener = vi.fn();
+    const unsubscribe = useShellStore.subscribe(listener);
+    const store = useShellStore.getState();
+
+    store.markUnread('a');
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    store.markUnread('a'); // already true — must not reach `set`
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
   });
 
   it('clearUnread removes the mark, and is a no-op when already clear', () => {

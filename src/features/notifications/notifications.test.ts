@@ -61,8 +61,8 @@ const metaOf = (id: string, s: SessionStatus, name = 'x'): SessionMeta => ({
   accountId: 'default',
   agentRuntime: 'claude-code',
   protocol: 'anthropic',
-  allowGit: false,
   responseMode: 'default',
+  allowGit: false,
 });
 
 describe('shouldFire (FR-7/FR-8)', () => {

@@ -13,6 +13,7 @@
 //! no such session.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::diff::{git_routed, repo_info, GitHost};
 use crate::ipc::{err, ok, IpcResult};
@@ -55,7 +56,7 @@ pub struct RepoBrief {
 /// Physical line count. A trailing newline terminates the last line rather than
 /// opening an empty one, so a 41-line file reads 41 with or without it; an empty
 /// file is 0. Matches what `wc -l`-minded users expect to see next to a path.
-pub(crate) fn count_lines(content: &str) -> u32 {
+pub fn count_lines(content: &str) -> u32 {
     if content.is_empty() {
         return 0;
     }
@@ -68,7 +69,7 @@ pub(crate) fn count_lines(content: &str) -> u32 {
 /// has, `main` winning when it has both. Standing ON that trunk yields None — a
 /// repo has one trunk, so "main, 3 commits ahead of master" would be an artifact
 /// of the candidate list rather than a fact about the work.
-pub(crate) fn pick_base(branch: &str, existing: &[String]) -> Option<String> {
+pub fn pick_base(branch: &str, existing: &[String]) -> Option<String> {
     let trunk = ["main", "master"]
         .into_iter()
         .find(|c| existing.iter().any(|b| b == c))?;
@@ -77,7 +78,7 @@ pub(crate) fn pick_base(branch: &str, existing: &[String]) -> Option<String> {
 
 /// `git rev-list --count` output → a number. Anything unparseable is None, so a
 /// surprising git build can only cost the clause, never the whole header.
-pub(crate) fn parse_count(stdout: &str) -> Option<u32> {
+pub fn parse_count(stdout: &str) -> Option<u32> {
     stdout.trim().parse::<u32>().ok()
 }
 
@@ -85,7 +86,7 @@ pub(crate) fn parse_count(stdout: &str) -> Option<u32> {
 /// plain join; a WSL root is a Linux path, so it goes back through the UNC
 /// translation first (mirrors diff::untracked_counts). None ⇔ the distro's share
 /// could not be resolved.
-pub(crate) fn claude_md_fs_path(host: &GitHost, root: &str) -> Option<PathBuf> {
+pub fn claude_md_fs_path(host: &GitHost, root: &str) -> Option<PathBuf> {
     match host {
         GitHost::Native => Some(Path::new(root).join("CLAUDE.md")),
         GitHost::Wsl(distro) => {
@@ -179,7 +180,7 @@ fn git_brief(host: &GitHost, root: &str) -> Option<GitBrief> {
 pub async fn project_repo_brief(app: AppHandle, session_id: String) -> IpcResult<RepoBrief> {
     let cwd = match app.state::<Engine>().cwd_of(&session_id) {
         Some(cwd) => cwd,
-        None => return err("SESSION_NOT_FOUND", "no such session"),
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
     };
 
     // Outside a worktree there is no root and no git half — the CLAUDE.md probe
@@ -286,9 +287,8 @@ mod tests {
 
     #[test]
     fn git_brief_reads_a_real_repos_branch_claude_md_and_ahead_count() {
-        use std::process::Command;
         fn git(dir: &Path, args: &[&str]) {
-            let status = Command::new("git")
+            let status = crate::process_util::spawn("git")
                 .args(args)
                 .current_dir(dir)
                 .status()

@@ -9,7 +9,7 @@ use std::fs::{File, OpenOptions};
 use std::path::{Component, Path, PathBuf};
 
 /// FR-8. Files strictly larger than this are refused with ATTACHMENT_TOO_LARGE.
-pub(crate) const ATTACHMENT_MAX_BYTES: u64 = 10 * 1024 * 1024;
+pub const ATTACHMENT_MAX_BYTES: u64 = 10 * 1024 * 1024;
 
 /// FR-8, applied to a clipboard payload BEFORE it is decoded. base64 packs 3
 /// bytes into every 4 characters, so `ATTACHMENT_MAX_BYTES` needs at most
@@ -22,31 +22,29 @@ pub(crate) const ATTACHMENT_MAX_BYTES: u64 = 10 * 1024 * 1024;
 /// whitespace `decode_base64` tolerates. A payload padded with kilobytes of
 /// whitespace is refused as too large — the trade the cap is worth.
 const BASE64_SLACK: u64 = 1024;
-pub(crate) const ATTACHMENT_MAX_BASE64_CHARS: u64 =
-    ATTACHMENT_MAX_BYTES.div_ceil(3) * 4 + BASE64_SLACK;
+pub const ATTACHMENT_MAX_BASE64_CHARS: u64 = ATTACHMENT_MAX_BYTES.div_ceil(3) * 4 + BASE64_SLACK;
 
 /// The decoded size a base64 payload of `chars` characters carries — the number
 /// FR-8's `detail.bytes` reports when the pre-check refuses, so the chip's copy
 /// still talks about the image's size and never about its encoding's.
-pub(crate) fn base64_decoded_bytes(chars: u64) -> u64 {
+pub fn base64_decoded_bytes(chars: u64) -> u64 {
     chars / 4 * 3
 }
 
 /// FR-5. Extensions (lowercase, with dot) that classify as kind `image`.
-pub(crate) const ATTACHMENT_IMAGE_EXTENSIONS: [&str; 5] =
-    [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+pub const ATTACHMENT_IMAGE_EXTENSIONS: [&str; 5] = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
 
 /// FR-2. Directory segments appended to the session cwd.
-pub(crate) const ATTACHMENTS_DIR_ROOT: &str = ".francois";
-pub(crate) const ATTACHMENTS_DIR_NAME: &str = "attachments";
+pub const ATTACHMENTS_DIR_ROOT: &str = ".francois";
+pub const ATTACHMENTS_DIR_NAME: &str = "attachments";
 
 /// FR-3. Contents written to `<cwd>/.francois/.gitignore` on creation — a single
 /// `*` ignores the folder's contents INCLUDING this file, so `git status` (and
 /// therefore diff-view) never sees an attachment.
-pub(crate) const ATTACHMENTS_GITIGNORE_BODY: &str = "*\n";
+pub const ATTACHMENTS_GITIGNORE_BODY: &str = "*\n";
 
 /// FR-5. Case-insensitive extension test on a file name or path.
-pub(crate) fn attachment_kind_for_name(name: &str) -> &'static str {
+pub fn attachment_kind_for_name(name: &str) -> &'static str {
     let lower = name.to_lowercase();
     if ATTACHMENT_IMAGE_EXTENSIONS
         .iter()
@@ -59,12 +57,12 @@ pub(crate) fn attachment_kind_for_name(name: &str) -> &'static str {
 }
 
 /// FR-2. First 8 characters of the session id — the per-session folder name.
-pub(crate) fn attachments_short_id(session_id: &str) -> String {
+pub fn attachments_short_id(session_id: &str) -> String {
     session_id.chars().take(8).collect()
 }
 
 /// FR-2/FR-4. POSIX-separated attachments dir, relative to the session cwd.
-pub(crate) fn attachments_dir_ref_path(session_id: &str) -> String {
+pub fn attachments_dir_ref_path(session_id: &str) -> String {
     format!(
         "{ATTACHMENTS_DIR_ROOT}/{ATTACHMENTS_DIR_NAME}/{}",
         attachments_short_id(session_id)
@@ -72,7 +70,7 @@ pub(crate) fn attachments_dir_ref_path(session_id: &str) -> String {
 }
 
 /// FR-2. The absolute attachments dir of a session, in the HOST's dialect.
-pub(crate) fn attachments_dir(cwd: &str, session_id: &str) -> PathBuf {
+pub fn attachments_dir(cwd: &str, session_id: &str) -> PathBuf {
     Path::new(cwd)
         .join(ATTACHMENTS_DIR_ROOT)
         .join(ATTACHMENTS_DIR_NAME)
@@ -80,14 +78,14 @@ pub(crate) fn attachments_dir(cwd: &str, session_id: &str) -> PathBuf {
 }
 
 /// The `.francois` root of a session cwd (FR-3's gitignore lives directly in it).
-pub(crate) fn attachments_root(cwd: &str) -> PathBuf {
+pub fn attachments_root(cwd: &str) -> PathBuf {
     Path::new(cwd).join(ATTACHMENTS_DIR_ROOT)
 }
 
 /// Resolve `.`/`..` segments without touching the filesystem — the fallback for
 /// a path `canonicalize` cannot resolve (a `\\wsl$\…` share that is not mounted,
 /// a path that does not exist yet).
-pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
+pub fn lexical_normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in path.components() {
         match c {
@@ -105,12 +103,12 @@ pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
 
 /// The comparable form of a path: canonical when the OS can produce one (that is
 /// what resolves symlinks, 8.3 short names and Windows' case), lexical otherwise.
-pub(crate) fn normalize_for_compare(path: &Path) -> PathBuf {
+pub fn normalize_for_compare(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| lexical_normalize(path))
 }
 
 /// FR-4. POSIX-separated rendering of a RELATIVE path.
-pub(crate) fn to_posix(rel: &Path) -> String {
+pub fn to_posix(rel: &Path) -> String {
     rel.components()
         .filter_map(|c| match c {
             Component::Normal(s) => Some(s.to_string_lossy().to_string()),
@@ -122,7 +120,7 @@ pub(crate) fn to_posix(rel: &Path) -> String {
 
 /// FR-1/FR-4. `Some(refPath)` when `path` lies under `cwd` after normalization —
 /// the "reference it in place, copy nothing" case. `None` when it lies outside.
-pub(crate) fn relative_ref(cwd: &str, path: &Path) -> Option<String> {
+pub fn relative_ref(cwd: &str, path: &Path) -> Option<String> {
     let base = normalize_for_compare(Path::new(cwd));
     let target = normalize_for_compare(path);
     let rel = target.strip_prefix(&base).ok()?;
@@ -151,7 +149,7 @@ fn split_ext(name: &str) -> (&str, Option<&str>) {
 /// left a window in which two concurrent attaches on one session cwd settled on
 /// the same name and one silently overwrote the other; FR-7 says nothing is ever
 /// overwritten, so a ref already sent keeps pointing at the bytes it named.
-pub(crate) fn create_unique(dir: &Path, name: &str) -> std::io::Result<(String, File)> {
+pub fn create_unique(dir: &Path, name: &str) -> std::io::Result<(String, File)> {
     let (stem, ext) = split_ext(name);
     let suffixed = |n: u64| match ext {
         Some(e) => format!("{stem}-{n}.{e}"),
@@ -215,7 +213,7 @@ fn claim(dir: &Path, name: &str) -> std::io::Result<File> {
 }
 
 /// FR-6. The extension a clipboard image is written with; `png` by default.
-pub(crate) fn extension_for_mime(mime: &str) -> &'static str {
+pub fn extension_for_mime(mime: &str) -> &'static str {
     match mime.trim().to_lowercase().as_str() {
         "image/jpeg" | "image/jpg" => "jpg",
         "image/gif" => "gif",
@@ -227,7 +225,7 @@ pub(crate) fn extension_for_mime(mime: &str) -> &'static str {
 
 /// FR-6. `pasted-<YYYYMMDD>-<HHMMSS>.<ext>`. The clock is a parameter so the
 /// format is testable; callers pass `chrono::Local::now()` (LOCAL time, per spec).
-pub(crate) fn pasted_name(mime: &str, now: chrono::DateTime<chrono::Local>) -> String {
+pub fn pasted_name(mime: &str, now: chrono::DateTime<chrono::Local>) -> String {
     format!(
         "pasted-{}.{}",
         now.format("%Y%m%d-%H%M%S"),
@@ -236,7 +234,7 @@ pub(crate) fn pasted_name(mime: &str, now: chrono::DateTime<chrono::Local>) -> S
 }
 
 /// The base name of a path, as the `name` field carries it.
-pub(crate) fn file_name_of(path: &Path) -> String {
+pub fn file_name_of(path: &Path) -> String {
     path.file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default()

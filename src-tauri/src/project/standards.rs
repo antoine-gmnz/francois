@@ -6,13 +6,25 @@
 
 use super::*;
 
+use crate::ipc::{AppError, ErrorCode};
 use std::path::{Path, PathBuf};
+
+// core-architecture-wave3 FR-6: the two codes this module's callers used to
+// stamp on its `String` failures, applied where the failure is raised instead.
+// `read_standards` is the exception and says INTERNAL at its own site (FR-15).
+fn invalid(message: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::InvalidInput, message)
+}
+
+fn write_failed(message: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::StandardsWriteFailed, message)
+}
 
 // ---------- FR-11: the grammar's constants (contract/projects.ts, verbatim) ----------
 
-pub(crate) const STANDARDS_START: &str = "<!-- francois:standards:start -->";
-pub(crate) const STANDARDS_END: &str = "<!-- francois:standards:end -->";
-pub(crate) const STANDARDS_HEADING: &str = "## Coding standards";
+pub const STANDARDS_START: &str = "<!-- francois:standards:start -->";
+pub const STANDARDS_END: &str = "<!-- francois:standards:end -->";
+pub const STANDARDS_HEADING: &str = "## Coding standards";
 
 /// FR-13 bounds (contract/projects.ts MAX_*).
 const MAX_RULE_LENGTH: usize = 500;
@@ -45,7 +57,7 @@ fn lines_of(content: &str) -> Vec<Line<'_>> {
 
 /// Where the managed block sits, or why the file cannot be written (FR-14).
 #[derive(Debug, PartialEq)]
-pub(crate) enum BlockSpan {
+pub enum BlockSpan {
     Absent,
     /// Byte range covering the START line through the END line inclusive (with the
     /// END line's terminator) — everything outside it is preserved verbatim.
@@ -63,7 +75,7 @@ const UNTERMINATED: &str = "has a francois:standards:start marker with no matchi
 const ORPHAN_END: &str = "has a francois:standards:end marker with no matching start";
 const DUPLICATE_START: &str = "has more than one francois:standards:start marker";
 
-pub(crate) fn scan_block(content: &str) -> BlockSpan {
+pub fn scan_block(content: &str) -> BlockSpan {
     let lines = lines_of(content);
     let index_of = |marker: &str| -> Vec<usize> {
         lines
@@ -112,7 +124,7 @@ fn rule_of_line(line: &str) -> Option<String> {
 /// FR-12. Returns the parsed standards and whether the block was present at all.
 /// A malformed file (FR-14) parses as ABSENT rather than failing: the editor must
 /// still open so the user can see the project and fix the file by hand.
-pub(crate) fn parse_standards(content: &str) -> (ProjectStandards, bool) {
+pub fn parse_standards(content: &str) -> (ProjectStandards, bool) {
     let BlockSpan::Found { start, end } = scan_block(content) else {
         return (ProjectStandards::default(), false);
     };
@@ -149,7 +161,7 @@ pub(crate) fn parse_standards(content: &str) -> (ProjectStandards, bool) {
 
 /// The block, `\n`-terminated lines, WITHOUT a trailing newline after the END
 /// marker — composition decides what follows it.
-pub(crate) fn render_block(s: &ProjectStandards) -> String {
+pub fn render_block(s: &ProjectStandards) -> String {
     let mut out = String::new();
     out.push_str(STANDARDS_START);
     out.push('\n');
@@ -179,14 +191,16 @@ fn carries_marker(text: &str) -> bool {
 }
 
 /// FR-13. `Err` ⇒ `INVALID_INPUT`, with a message naming the offending constraint.
-pub(crate) fn validate_standards(s: &ProjectStandards) -> Result<(), String> {
+pub fn validate_standards(s: &ProjectStandards) -> Result<(), AppError> {
     if s.notes.chars().count() > MAX_NOTES_LENGTH {
-        return Err(format!(
+        return Err(invalid(format!(
             "notes must be at most {MAX_NOTES_LENGTH} characters"
-        ));
+        )));
     }
     if carries_marker(&s.notes) {
-        return Err("notes must not contain the francois standards markers".into());
+        return Err(invalid(
+            "notes must not contain the francois standards markers",
+        ));
     }
     // The block grammar (FR-11/FR-12) gives `- ` and the heading structural meaning:
     // parse_standards ends the notes at the FIRST `- ` line and strips a leading
@@ -196,37 +210,39 @@ pub(crate) fn validate_standards(s: &ProjectStandards) -> Result<(), String> {
     for line in s.notes.lines() {
         let line = line.trim_end();
         if line.trim_start().starts_with("- ") {
-            return Err(
-                "notes must not contain a '- ' bullet line — add it as a rule instead".into(),
-            );
+            return Err(invalid(
+                "notes must not contain a '- ' bullet line — add it as a rule instead",
+            ));
         }
         if line.trim() == STANDARDS_HEADING {
-            return Err(format!(
+            return Err(invalid(format!(
                 "notes must not contain the line '{STANDARDS_HEADING}'"
-            ));
+            )));
         }
     }
     if s.rules.len() > MAX_RULES {
-        return Err(format!("at most {MAX_RULES} rules are allowed"));
+        return Err(invalid(format!("at most {MAX_RULES} rules are allowed")));
     }
     for rule in &s.rules {
         if rule.contains('\n') || rule.contains('\r') {
-            return Err("a rule must be a single line".into());
+            return Err(invalid("a rule must be a single line"));
         }
         let trimmed = rule.trim();
         if trimmed.is_empty() {
-            return Err("a rule must not be empty".into());
+            return Err(invalid("a rule must not be empty"));
         }
         if trimmed.chars().count() > MAX_RULE_LENGTH {
-            return Err(format!(
+            return Err(invalid(format!(
                 "a rule must be at most {MAX_RULE_LENGTH} characters"
-            ));
+            )));
         }
         // A rule carrying a marker could CLOSE the block and take over the rest of
         // the file on the next write (§7 #10) — the one validation that is a
         // security property rather than a bound.
         if carries_marker(rule) {
-            return Err("a rule must not contain the francois standards markers".into());
+            return Err(invalid(
+                "a rule must not contain the francois standards markers",
+            ));
         }
     }
     Ok(())
@@ -272,7 +288,7 @@ fn without_trailing_blank_lines(s: &str) -> &str {
 /// FR-13, pure. `content` is `None` when CLAUDE.md does not exist.
 /// `Ok(None)` ⇒ nothing needs writing (and in particular the file is NOT created).
 /// `Err` ⇒ the markers are malformed → `STANDARDS_WRITE_FAILED` (FR-14).
-pub(crate) fn apply_standards(
+pub fn apply_standards(
     content: Option<&str>,
     s: &ProjectStandards,
 ) -> Result<Option<String>, &'static str> {
@@ -321,7 +337,7 @@ pub(crate) fn apply_standards(
 
 // ---------- file I/O (thin; every decision above is pure) ----------
 
-pub(crate) fn claude_md_path(root: &str) -> PathBuf {
+pub fn claude_md_path(root: &str) -> PathBuf {
     Path::new(root).join("CLAUDE.md")
 }
 
@@ -332,11 +348,14 @@ pub(crate) fn claude_md_path(root: &str) -> PathBuf {
 ///
 /// Kept separate from `permissions::write_json_atomic` on purpose — see the
 /// module doc on `crate::fs_util` for why the two atomic writers do not merge.
-fn write_text_atomic(path: &Path, content: &str) -> Result<(), String> {
+fn write_text_atomic(path: &Path, content: &str) -> Result<(), AppError> {
     let tmp = crate::fs_util::unique_temp_path(path, "md");
     if let Err(e) = std::fs::write(&tmp, content) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(format!("could not write {}: {e}", tmp.display()));
+        return Err(write_failed(format!(
+            "could not write {}: {e}",
+            tmp.display()
+        )));
     }
     // Carry the target's mode over on unix so an existing CLAUDE.md keeps its
     // permissions. Deliberately NOT done on Windows: copying a read-only target's
@@ -347,13 +366,13 @@ fn write_text_atomic(path: &Path, content: &str) -> Result<(), String> {
     }
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!("could not write {}: {e}", path.display())
+        write_failed(format!("could not write {}: {e}", path.display()))
     })
 }
 
 /// FR-10: read `<root>/CLAUDE.md`. A missing file is NOT an error. `Err` ⇒
 /// `INTERNAL` for reads (FR-15), with the OS error in the message.
-pub(crate) fn read_standards(root: &str) -> Result<StandardsRead, String> {
+pub fn read_standards(root: &str) -> Result<StandardsRead, AppError> {
     let path = claude_md_path(root);
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -364,7 +383,12 @@ pub(crate) fn read_standards(root: &str) -> Result<StandardsRead, String> {
                 block_present: false,
             })
         }
-        Err(e) => return Err(format!("could not read {}: {e}", path.display())),
+        Err(e) => {
+            return Err(AppError::new(
+                ErrorCode::Internal,
+                format!("could not read {}: {e}", path.display()),
+            ))
+        }
     };
     let (standards, block_present) = parse_standards(&content);
     Ok(StandardsRead {
@@ -388,7 +412,7 @@ pub(crate) fn read_standards(root: &str) -> Result<StandardsRead, String> {
 /// turn, and cross-project concurrency is not worth the bookkeeping.
 static STANDARDS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub(crate) fn write_standards(root: &str, s: &ProjectStandards) -> Result<StandardsRead, String> {
+pub fn write_standards(root: &str, s: &ProjectStandards) -> Result<StandardsRead, AppError> {
     // A poisoned lock still guards a consistent file — the panic that poisoned it
     // happened between a read and a rename, and the rename is atomic either way.
     let _guard = STANDARDS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -396,16 +420,21 @@ pub(crate) fn write_standards(root: &str, s: &ProjectStandards) -> Result<Standa
     let existing = match std::fs::read_to_string(&path) {
         Ok(c) => Some(c),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(format!("could not read {}: {e}", path.display())),
+        Err(e) => {
+            return Err(write_failed(format!(
+                "could not read {}: {e}",
+                path.display()
+            )))
+        }
     };
     match apply_standards(existing.as_deref(), s) {
         // FR-14: name the file and the problem; leave it exactly as it is.
-        Err(why) => return Err(format!("{} {why}", path.display())),
+        Err(why) => return Err(write_failed(format!("{} {why}", path.display()))),
         Ok(None) => {}
         Ok(Some(next)) => write_text_atomic(&path, &next)?,
     }
     // FR-16: the editor repaints from disk, never from what was typed.
-    read_standards(root)
+    read_standards(root).map_err(|e| write_failed(e.message))
 }
 
 #[cfg(test)]
@@ -775,9 +804,13 @@ mod tests {
         write_claude_md(&dir, &original);
 
         let e = write_standards(&root, &standards_of("", &["new"])).unwrap_err();
-        assert!(e.contains("CLAUDE.md"), "message must name the file: {e}");
+        assert_eq!(e.code, ErrorCode::StandardsWriteFailed);
         assert!(
-            e.contains("no matching end"),
+            e.message.contains("CLAUDE.md"),
+            "message must name the file: {e}"
+        );
+        assert!(
+            e.message.contains("no matching end"),
             "message must name the problem: {e}"
         );
         assert_eq!(read_claude_md(&dir), original);
@@ -823,8 +856,9 @@ mod remediation_tests {
         // re-reads from disk, so the user would watch it reshuffle).
         let s = standards_of("- prefer small files\n- test first", &[]);
         let err = validate_standards(&s).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
         assert!(
-            err.contains("bullet"),
+            err.message.contains("bullet"),
             "message must name the constraint: {err}"
         );
 
@@ -888,7 +922,7 @@ mod remediation_tests {
         // ...and the WRITE refuses rather than guessing (FR-14)
         let err = write_standards(&dir.to_string_lossy(), &standards_of("", &["y"])).unwrap_err();
         assert!(
-            err.contains("CLAUDE.md"),
+            err.message.contains("CLAUDE.md"),
             "the message names the file: {err}"
         );
         // the file is byte-identical afterwards

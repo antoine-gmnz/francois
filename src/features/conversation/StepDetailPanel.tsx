@@ -5,11 +5,12 @@
 // the fetch/open/loading state — this component only ever sees a resolved
 // `StepDetail`.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionId } from '../../../contract/common';
 import type { StepDetail, StepOutput } from '../../../contract/command-inspect';
 import { shellEnsure, shellWrite } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
+import { parseAnsi } from './ansi';
 import {
   stepHeaderGroups,
   stepOutputFooter,
@@ -130,6 +131,30 @@ function CommandLine({ command, sessionId, onOpenShell }: { command: string; ses
   );
 }
 
+/**
+ * Captured output, rendered the way a terminal would render it: the escape
+ * sequences in the bytes become colour instead of `←[0;32m` litter, and the
+ * indentation survives because the band is `pre` with an 8-column tab stop
+ * (conversation.css). The parse is memoised on the text — `show all` swaps a
+ * 15-line slice for a whole 64 KB capture, and re-parsing that on an unrelated
+ * re-render is the kind of cost the transcript's hot path exists to avoid.
+ *
+ * `style` is per CLAUDE.md's runtime-value exception: 256-colour and truecolour
+ * spans carry a colour computed from the bytes, which no class can name.
+ */
+function AnsiText({ text }: { text: string }) {
+  const spans = useMemo(() => parseAnsi(text), [text]);
+  return (
+    <pre className="step-detail__output-body">
+      {spans.map((s, i) => (
+        <span key={i} className={s.className || undefined} style={s.color || s.background ? { color: s.color, background: s.background } : undefined}>
+          {s.text}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
 function OutputBand({ output }: { output: StepOutput }) {
   const [showAll, setShowAll] = useState(false);
   if (output.text === '') return null;
@@ -138,7 +163,7 @@ function OutputBand({ output }: { output: StepOutput }) {
   return (
     <div className="step-detail__output">
       <div className="step-detail__output-strip">{stepOutputTotals(output)}</div>
-      <pre className="step-detail__output-body">{lines.join('\n')}</pre>
+      <AnsiText text={lines.join('\n')} />
       {footer && (
         <div className="step-detail__fold">
           {footer.kind === 'folded' ? `${footer.count} earlier lines folded` : `${footer.count} lines dropped at capture`}

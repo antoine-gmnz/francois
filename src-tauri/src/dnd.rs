@@ -26,7 +26,9 @@ impl DndState {
 }
 
 /// francois:app:dndState → Result<DndState> (FR-14). Never Err (FR-15).
-#[tauri::command]
+// FR-6: an OS state-file read run on a sync command blocks the MAIN thread —
+// same rationale as diff/commands.rs:48-56.
+#[tauri::command(async)]
 pub fn app_dnd_state() -> IpcResult<DndState> {
     ok(probe())
 }
@@ -303,7 +305,7 @@ mod macos {
 #[cfg(target_os = "windows")]
 mod windows {
     use super::DndState;
-    use std::process::{Command, Output, Stdio};
+    use std::process::{Output, Stdio};
     use std::time::{Duration, Instant};
 
     const KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings";
@@ -361,12 +363,12 @@ mod windows {
     /// `try_wait()` until the child exits or `timeout` elapses, killing the
     /// child and returning `Err(())` on expiry (FR-15's "a timeout" case).
     fn run_reg_query(timeout: Duration) -> Result<Output, ()> {
-        let mut cmd = Command::new("reg");
-        cmd.args(["query", &format!("HKCU\\{KEY_PATH}"), "/v", VALUE_NAME]);
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-        crate::process_util::no_window(&mut cmd);
-        let mut child = cmd.spawn().map_err(|_| ())?;
+        let mut child = crate::process_util::spawn("reg")
+            .args(["query", &format!("HKCU\\{KEY_PATH}"), "/v", VALUE_NAME])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .start()
+            .map_err(|_| ())?;
 
         let deadline = Instant::now() + timeout;
         loop {
@@ -483,10 +485,9 @@ mod windows {
         // moved from under us.
         #[test]
         fn canary_registry_key_readable() {
-            let mut cmd = Command::new("reg");
-            cmd.args(["query", &format!("HKCU\\{KEY_PATH}"), "/v", VALUE_NAME]);
-            crate::process_util::no_window(&mut cmd);
-            let result = cmd.output();
+            let result = crate::process_util::spawn("reg")
+                .args(["query", &format!("HKCU\\{KEY_PATH}"), "/v", VALUE_NAME])
+                .output();
             assert!(
                 result.is_ok(),
                 "dnd canary: `reg query` could not even be spawned: {:?}",

@@ -4,7 +4,7 @@
 // a session already showing in another pane is simply duplicated onto pane 0,
 // never swapped out of it or dropped from it.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { SessionMeta } from '../../contract/common';
 import { useStore } from './store';
 
@@ -25,8 +25,8 @@ function meta(id: string): SessionMeta {
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
-    allowGit: false,
     responseMode: 'default',
+    allowGit: false,
   };
 }
 
@@ -140,8 +140,8 @@ describe('SessionMeta.agentRuntime/protocol are carried through the cache (multi
       accountId: 'default',
       agentRuntime,
       protocol,
-      allowGit: false,
       responseMode: 'default',
+      allowGit: false,
     };
   }
 
@@ -235,12 +235,10 @@ describe('patchStatus/patchError/patchUsage no-op bails', () => {
   });
 
   it('a duplicate usage patch does not restamp lastActivityAt', () => {
-    const now = vi.spyOn(Date, 'now').mockReturnValueOnce(10).mockReturnValue(20);
     useStore.getState().setSessions([meta('s1')]);
     useStore.getState().patchUsage('s1', 10, 100);
     const stamped = useStore.getState().sessions[0].lastActivityAt;
     useStore.getState().patchUsage('s1', 10, 100);
     expect(useStore.getState().sessions[0].lastActivityAt).toBe(stamped);
-    now.mockRestore();
   });
 });

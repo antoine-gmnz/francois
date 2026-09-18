@@ -14,7 +14,6 @@
 
 use super::schema::sanitize_field;
 use super::{ProviderSpec, EXT_OUTPUT_CAP_BYTES, EXT_STDERR_MAX_CHARS, EXT_TIMEOUT_MS};
-use crate::process_util::no_window;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
@@ -25,7 +24,7 @@ use std::time::{Duration, Instant};
 
 /// The four FR-24/FR-21/FR-22 failure causes.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ProviderError {
+pub enum ProviderError {
     Missing { argv0: String },
     Timeout { timeout_ms: u64 },
     Exit { code: i32, stderr: String },
@@ -40,7 +39,7 @@ fn slots() -> &'static (Mutex<usize>, Condvar) {
     SLOTS.get_or_init(|| (Mutex::new(0), Condvar::new()))
 }
 
-pub(crate) struct Slot;
+pub struct Slot;
 
 impl Drop for Slot {
     fn drop(&mut self) {
@@ -51,7 +50,7 @@ impl Drop for Slot {
     }
 }
 
-pub(crate) fn acquire_slot(limit: usize) -> Slot {
+pub fn acquire_slot(limit: usize) -> Slot {
     let (lock, cv) = slots();
     let mut n = lock.lock().unwrap();
     while *n >= limit {
@@ -72,7 +71,7 @@ pub(crate) fn in_flight() -> usize {
 /// `token` renders empty (dropping nothing — the element stays, just without
 /// its slot filled) when `None`; callers that must drop the whole element
 /// when no token is present do so themselves (log-tail's own `process_argv`).
-pub(crate) fn render_arg(template: &str, offset: u32, limit: u32, token: Option<&str>) -> String {
+pub fn render_arg(template: &str, offset: u32, limit: u32, token: Option<&str>) -> String {
     let mut out = template.replace("${offset}", &offset.to_string());
     out = out.replace("${limit}", &limit.to_string());
     if let Some(token) = token {
@@ -81,12 +80,7 @@ pub(crate) fn render_arg(template: &str, offset: u32, limit: u32, token: Option<
     out
 }
 
-pub(crate) fn render_args(
-    args: &[String],
-    offset: u32,
-    limit: u32,
-    token: Option<&str>,
-) -> Vec<String> {
+pub fn render_args(args: &[String], offset: u32, limit: u32, token: Option<&str>) -> Vec<String> {
     args.iter()
         .map(|a| render_arg(a, offset, limit, token))
         .collect()
@@ -94,12 +88,7 @@ pub(crate) fn render_args(
 
 /// The full argv for one provider call. `page_args` are appended only for a
 /// paginated request — an unpaginated panel spawns the same argv every time.
-pub(crate) fn build_argv(
-    spec: &ProviderSpec,
-    paginated: bool,
-    offset: u32,
-    limit: u32,
-) -> Vec<String> {
+pub fn build_argv(spec: &ProviderSpec, paginated: bool, offset: u32, limit: u32) -> Vec<String> {
     let mut argv = vec![spec.argv0.clone()];
     argv.extend(render_args(&spec.args, offset, limit, None));
     if paginated {
@@ -109,48 +98,18 @@ pub(crate) fn build_argv(
 }
 
 // ---------- FR-20: the scrubbed environment ----------
+//
+// core-architecture-wave3 FR-7: the allowlist and the scrub itself moved to
+// `process_util`, where they became `CommandBuilder::scrubbed_env` — the
+// facade's answer to spawn concern 3. `apply_ext_env` is gone with them: both
+// provider spawn sites now name `.scrubbed_env(path_override)` on the builder,
+// which is the same single implementation they used to share by convention.
+// These two re-exports keep `extensions`' own tests (and any caller reasoning
+// about what an extension child may read) pointing at the allowlist by the name
+// they already know.
 
-pub(crate) const ENV_ALLOWLIST: &[&str] = &[
-    "PATH",
-    "HOME",
-    "USER",
-    "LANG",
-    "TMPDIR",
-    "SystemRoot",
-    "windir",
-    "PATHEXT",
-    "COMSPEC",
-    "TEMP",
-    "TMP",
-    "USERPROFILE",
-    "HOMEDRIVE",
-    "HOMEPATH",
-];
-
-pub(crate) fn scrub_env<I: IntoIterator<Item = (String, String)>>(
-    vars: I,
-) -> Vec<(String, String)> {
-    vars.into_iter()
-        .filter(|(k, _)| ENV_ALLOWLIST.contains(&k.as_str()))
-        .collect()
-}
-
-/// ext-path-resolution FR-3/FR-4/FR-9: the ONLY place in `extensions/` that
-/// calls `env_clear()`. Both provider spawn sites (`run_capped`,
-/// `stream::spawn_process_stream`) go through this so they cannot drift back
-/// apart. `path_override` — already filtered to absolute entries by the
-/// caller (FR-5/FR-7) — replaces the scrubbed `PATH`; `None` leaves the
-/// scrubbed process `PATH` untouched. `PATH` is already an `ENV_ALLOWLIST`
-/// member, so this is a value override, not a widening (FR-9).
-pub(crate) fn apply_ext_env(cmd: &mut Command, path_override: Option<&str>) {
-    cmd.env_clear();
-    for (k, v) in scrub_env(std::env::vars()) {
-        cmd.env(k, v);
-    }
-    if let Some(path) = path_override {
-        cmd.env("PATH", path);
-    }
-}
+#[allow(unused_imports)] // named for the tests below, and for anyone reading extensions/
+pub use crate::process_util::{scrub_env, ENV_ALLOWLIST};
 
 // ---------- FR-21/FR-22/FR-24: the spawn ----------
 
@@ -189,7 +148,7 @@ fn drain_capped(mut reader: impl Read, cap: usize) -> Vec<u8> {
     out
 }
 
-pub(crate) fn kill_group(child: &mut Child) {
+pub fn kill_group(child: &mut Child) {
     #[cfg(unix)]
     {
         unsafe {
@@ -211,9 +170,9 @@ pub(crate) fn own_process_group(cmd: &mut Command) {
 }
 
 #[cfg(not(unix))]
-pub(crate) fn own_process_group(_cmd: &mut Command) {}
+pub fn own_process_group(_cmd: &mut Command) {}
 
-pub(crate) fn run(argv: &[String], cwd: &Path) -> Result<Vec<u8>, ProviderError> {
+pub fn run(argv: &[String], cwd: &Path) -> Result<Vec<u8>, ProviderError> {
     run_capped(
         argv,
         cwd,
@@ -223,7 +182,7 @@ pub(crate) fn run(argv: &[String], cwd: &Path) -> Result<Vec<u8>, ProviderError>
     )
 }
 
-pub(crate) fn run_capped(
+pub fn run_capped(
     argv: &[String],
     cwd: &Path,
     timeout: Duration,
@@ -238,19 +197,17 @@ pub(crate) fn run_capped(
 
     let _slot = acquire_slot(concurrency);
 
-    let mut cmd = Command::new(&argv[0]);
-    cmd.args(&argv[1..])
+    let mut child = crate::process_util::spawn(&argv[0])
+        .args(&argv[1..])
         .current_dir(cwd)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    apply_ext_env(&mut cmd, path_override.as_deref());
-    no_window(&mut cmd);
-    own_process_group(&mut cmd);
-
-    let mut child = cmd.spawn().map_err(|_| ProviderError::Missing {
-        argv0: argv[0].clone(),
-    })?;
+        .stderr(Stdio::piped())
+        .scrubbed_env(path_override.as_deref())
+        .configure(own_process_group)
+        .start()
+        .map_err(|_| ProviderError::Missing {
+            argv0: argv[0].clone(),
+        })?;
 
     let capped = Arc::new(AtomicBool::new(false));
     let stdout = child.stdout.take();
@@ -304,7 +261,7 @@ pub(crate) fn run_capped(
 
 /// FR-12: the `commandSucceeds` predicate — an exec, so it runs under every
 /// cap above. Only the exit status matters; stdout is discarded.
-pub(crate) fn run_predicate(argv: &[String], cwd: &Path) -> Result<(), ProviderError> {
+pub fn run_predicate(argv: &[String], cwd: &Path) -> Result<(), ProviderError> {
     run(argv, cwd).map(|_| ())
 }
 
@@ -314,7 +271,7 @@ pub(crate) fn run_predicate(argv: &[String], cwd: &Path) -> Result<(), ProviderE
 /// tone (falling back to `neutral` for anything not a valid `StatusTone`);
 /// every other field lands in `cells` verbatim, sanitized (FR-51 of
 /// `extensions`).
-pub(crate) fn rows_from_lines(
+pub fn rows_from_lines(
     separator: &str,
     fields: &[String],
     id_field: Option<&str>,
@@ -563,14 +520,12 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let mut cmd = Command::new("/bin/sh");
-        cmd.arg("-c")
+        let mut child = crate::process_util::spawn("/bin/sh")
+            .arg("-c")
             .arg(format!("sleep 30 & echo $! > {}; wait", pid_file.display()))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        own_process_group(&mut cmd);
-        let mut child = cmd.spawn().unwrap();
+            .configure(own_process_group)
+            .start()
+            .unwrap();
 
         let mut grandchild_pid: Option<i32> = None;
         for _ in 0..50 {
@@ -636,17 +591,13 @@ mod tests {
 
     // ---- ext-path-resolution FR-3/FR-4/FR-5/FR-9 ----
 
-    #[cfg(unix)]
-    fn echo_path_command() -> Command {
-        let mut cmd = Command::new("/bin/sh");
-        cmd.args(["-c", "echo -n \"$PATH\""]);
-        cmd
-    }
-    #[cfg(windows)]
-    fn echo_path_command() -> Command {
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", "echo %PATH%"]);
-        cmd
+    /// The (program, argv) of a child that prints only its own `PATH`.
+    fn echo_path_argv() -> (&'static str, Vec<&'static str>) {
+        if cfg!(windows) {
+            ("cmd", vec!["/C", "echo %PATH%"])
+        } else {
+            ("/bin/sh", vec!["-c", "echo -n \"$PATH\""])
+        }
     }
 
     // FR-3/FR-5: the child actually receives the (filtered) login shell's
@@ -662,9 +613,12 @@ mod tests {
         };
         let first_entry = filtered.split(':').next().unwrap().to_string();
 
-        let mut cmd = echo_path_command();
-        apply_ext_env(&mut cmd, Some(&filtered));
-        let output = cmd.output().expect("the marker command must spawn");
+        let (program, argv) = echo_path_argv();
+        let output = crate::process_util::spawn(program)
+            .args(argv)
+            .scrubbed_env(Some(&filtered))
+            .output()
+            .expect("the marker command must spawn");
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains(&first_entry),
@@ -677,46 +631,15 @@ mod tests {
     #[test]
     fn apply_ext_env_still_scrubs_to_the_allowlist_with_a_path_override() {
         std::env::set_var("FRANCOIS_EXT_PATH_TEST_SECRET", "leak-me-not");
-        let mut cmd = Command::new("/usr/bin/env");
-        apply_ext_env(&mut cmd, Some("/custom/bin:/usr/bin"));
-        let output = cmd.output();
+        let output = crate::process_util::spawn("/usr/bin/env")
+            .scrubbed_env(Some("/custom/bin:/usr/bin"))
+            .output();
         std::env::remove_var("FRANCOIS_EXT_PATH_TEST_SECRET");
         if let Ok(output) = output {
             let stdout = String::from_utf8_lossy(&output.stdout);
             assert!(!stdout.contains("FRANCOIS_EXT_PATH_TEST_SECRET"));
             assert!(stdout.contains("PATH=/custom/bin:/usr/bin"));
         }
-    }
-
-    // FR-4: pins that `apply_ext_env` is the ONLY `env_clear()` call site left
-    // in `extensions/`, so `stream.rs` (or any future spawn site) cannot
-    // silently drift back to its own inline scrub block.
-    #[test]
-    fn apply_ext_env_is_the_only_env_clear_call_site_in_extensions() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/extensions");
-        let mut sites: Vec<String> = Vec::new();
-        for entry in std::fs::read_dir(&dir).expect("extensions dir must exist") {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).unwrap();
-            // Only the production code counts — a file's own `mod tests`
-            // block (this test included) legitimately mentions `env_clear()`
-            // in strings/comments/assertions. Every file in this crate puts
-            // its tests in a single trailing `mod tests { ... }`.
-            let production = text.split("mod tests {").next().unwrap_or(text.as_str());
-            for (i, line) in production.lines().enumerate() {
-                if line.contains("env_clear()") && !line.trim_start().starts_with("///") {
-                    sites.push(format!("{}:{}", path.display(), i + 1));
-                }
-            }
-        }
-        assert_eq!(
-            sites.len(),
-            1,
-            "env_clear() must appear exactly once in extensions/, in apply_ext_env: {sites:?}"
-        );
     }
 
     // FR-21/FR-23: the adapter is driven entirely by the declared format.

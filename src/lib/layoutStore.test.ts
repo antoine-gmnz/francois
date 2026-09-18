@@ -43,6 +43,13 @@ function mockStorage(seed: Record<string, string> = {}): { store: Record<string,
   return state;
 }
 
+// Every test here that calls freshStore re-imports the whole store graph, and
+// the first one to do so pays its cold transform — which on a loaded machine
+// (126 files in parallel) overruns the 5s default and fails a test that does
+// nothing but import. Same guard as projectsStore.test.ts: a machine-speed
+// bound, not a behavioural one.
+vi.setConfig({ testTimeout: 30_000 });
+
 async function freshStore() {
   vi.resetModules();
   const mod = await import('./store');

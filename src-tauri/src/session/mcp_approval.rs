@@ -48,6 +48,7 @@
 //! Francois.
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use crate::permissions::{
@@ -80,7 +81,7 @@ impl McpApprovalState {
     /// Anything an interactive `claude` would stop and ask about in this folder.
     /// Only the INTERACTIVE host (Remote Control) is parked by these — a `-p`
     /// turn starts undecided servers without asking (see the module doc).
-    pub(crate) fn blocks_interactive(&self) -> bool {
+    pub fn blocks_interactive(&self) -> bool {
         !self.pending.is_empty() || self.trust_required
     }
 }
@@ -96,11 +97,7 @@ impl McpApprovalState {
 /// there (that override replaces the config root wholesale — see account/mirror.rs),
 /// a `wsl` session's store lives in the DISTRO's home reached over the UNC root,
 /// and everything else is `~/.claude.json`.
-pub(crate) fn claude_json_path(
-    config_dir: Option<&str>,
-    runtime: &str,
-    cwd: &str,
-) -> Option<PathBuf> {
+pub fn claude_json_path(config_dir: Option<&str>, runtime: &str, cwd: &str) -> Option<PathBuf> {
     if let Some(dir) = config_dir {
         return Some(PathBuf::from(dir).join(".claude.json"));
     }
@@ -123,7 +120,7 @@ pub(crate) fn claude_json_path(
 /// normalized to forward slashes. A session opened in a SUBDIRECTORY of a repo
 /// therefore shares one node with the repo root; keying on the cwd instead would
 /// write the decision somewhere the CLI never looks.
-pub(crate) fn cli_project_key(cwd: &str) -> String {
+pub fn cli_project_key(cwd: &str) -> String {
     norm_path(&git_root(cwd).unwrap_or_else(|| cwd.to_string()))
 }
 
@@ -204,7 +201,7 @@ fn ancestors(cwd: &str) -> Vec<String> {
 /// exact. Leaning lenient here can only ever let a start through that the CLI
 /// then refuses outright, which `blocking_prompt` reports — the strict reading
 /// would instead block a folder the user really has trusted.
-pub(crate) fn trust_accepted(doc: &Value, cwd: &str) -> bool {
+pub fn trust_accepted(doc: &Value, cwd: &str) -> bool {
     if node_trusted(doc, &cli_project_key(cwd)) {
         return true;
     }
@@ -223,7 +220,7 @@ fn node_trusted(doc: &Value, key: &str) -> bool {
 
 /// A node's string array under `key`, skipping non-strings (they are preserved on
 /// write, just not counted).
-pub(crate) fn string_list(node: Option<&Value>, key: &str) -> Vec<String> {
+pub fn string_list(node: Option<&Value>, key: &str) -> Vec<String> {
     node.and_then(|n| n.get(key))
         .and_then(|a| a.as_array())
         .map(|a| {
@@ -241,7 +238,7 @@ pub(crate) fn string_list(node: Option<&Value>, key: &str) -> Vec<String> {
 /// `enableAllProjectMcpServers` settings), and a server allowed by ANY of them is
 /// not something the CLI will ask about.
 #[derive(Default, Debug, PartialEq)]
-pub(crate) struct Approvals {
+pub struct Approvals {
     pub(crate) enabled: Vec<String>,
     pub(crate) disabled: Vec<String>,
     pub(crate) enable_all: bool,
@@ -253,7 +250,7 @@ pub(crate) struct Approvals {
 /// the fold stays pure and unit-testable — `trusted` in particular is NOT a
 /// property of this one node (see `trust_accepted`: the CLI walks the cwd's
 /// ancestors), so reading it off the node would reintroduce the false positive.
-pub(crate) fn fold_approvals(node: Option<&Value>, settings: &[Value], trusted: bool) -> Approvals {
+pub fn fold_approvals(node: Option<&Value>, settings: &[Value], trusted: bool) -> Approvals {
     let mut out = Approvals {
         enabled: string_list(node, "enabledMcpjsonServers"),
         disabled: string_list(node, "disabledMcpjsonServers"),
@@ -285,7 +282,7 @@ pub(crate) fn fold_approvals(node: Option<&Value>, settings: &[Value], trusted: 
 /// Sort the project's `.mcp.json` server names into the three buckets the panel
 /// renders. `disabled` wins over `enabled` for a name in both, matching the CLI:
 /// a refused server does not start, however it got into the other list.
-pub(crate) fn classify(servers: &[String], a: &Approvals) -> McpApprovalState {
+pub fn classify(servers: &[String], a: &Approvals) -> McpApprovalState {
     let mut state = McpApprovalState {
         trust_required: !a.trusted,
         enable_all_project_mcp_servers: a.enable_all,
@@ -364,7 +361,7 @@ fn move_name(node: &mut Map<String, Value>, name: &str, into: &str, outof: &str)
 /// here also matters for the migration: it unions the node into
 /// settings.local.json, so a stale node entry left behind would resurrect the
 /// old answer there.
-pub(crate) fn apply_decision(
+pub fn apply_decision(
     doc: &mut Value,
     key: &str,
     approve: &[String],
@@ -408,7 +405,7 @@ pub(crate) fn apply_decision(
 /// refuse to write rather than replace a file it does not understand.
 ///
 /// Trust is deliberately absent — it still lives on the `~/.claude.json` node.
-pub(crate) fn apply_settings_decision(
+pub fn apply_settings_decision(
     doc: &mut Value,
     approve: &[String],
     reject: &[String],
@@ -445,7 +442,7 @@ pub(crate) fn apply_settings_decision(
 /// the file stay per-worktree, and a key the target already has is never
 /// overwritten (an adopted-then-recreated worktree may carry its own answers).
 /// Returns whether the target changed.
-pub(crate) fn seed_settings_consent(source: &Value, target: &mut Value) -> bool {
+pub fn seed_settings_consent(source: &Value, target: &mut Value) -> bool {
     const CONSENT_KEYS: [&str; 3] = [
         "enabledMcpjsonServers",
         "disabledMcpjsonServers",
@@ -491,11 +488,7 @@ fn settings_docs(cwd: &str, runtime: &str) -> Vec<Value> {
 
 /// The approval state of one project — the whole read path, for the command and
 /// for `mcp_list`'s per-row status.
-pub(crate) fn approval_state(
-    cwd: &str,
-    runtime: &str,
-    config_dir: Option<&str>,
-) -> McpApprovalState {
+pub fn approval_state(cwd: &str, runtime: &str, config_dir: Option<&str>) -> McpApprovalState {
     let servers: Vec<String> = mcp_servers_of(Some(&read_mcp_json(cwd)))
         .into_iter()
         .map(|(name, _)| name)
@@ -535,7 +528,7 @@ pub fn mcp_approvals(
     session_id: String,
 ) -> IpcResult<McpApprovalState> {
     let Some((cwd, runtime, config_dir)) = target_of(&app, &engine, &session_id) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     ok(approval_state(&cwd, &runtime, config_dir.as_deref()))
 }
@@ -557,11 +550,11 @@ pub fn mcp_decide(
     trust: bool,
 ) -> IpcResult<McpApprovalState> {
     let Some((cwd, runtime, config_dir)) = target_of(&app, &engine, &session_id) else {
-        return err("SESSION_NOT_FOUND", "no such session");
+        return err(ErrorCode::SessionNotFound, "no such session");
     };
     let Some(path) = claude_json_path(config_dir.as_deref(), &runtime, &cwd) else {
         return err(
-            "MCP_ERROR",
+            ErrorCode::McpError,
             "could not locate the Claude Code config directory for this session",
         );
     };
@@ -570,19 +563,22 @@ pub fn mcp_decide(
     // the keys this module owns. Both are read up front so a refusal happens
     // before either file is touched — a half-applied decision (node written,
     // settings refused) would leave the two stores telling different stories.
+    // core-architecture-wave3 FR-6: the settings helpers raise
+    // SETTINGS_WRITE_FAILED; this channel's contract says MCP_ERROR, so the
+    // message crosses and the code is this domain's.
     let mut doc = match read_json_object(&path) {
         Ok(v) => v,
-        Err(e) => return err("MCP_ERROR", e),
+        Err(e) => return err(ErrorCode::McpError, e.message),
     };
     let settings_path = local_settings_path(&cwd);
     let mut settings = match read_json_object(&settings_path) {
         Ok(v) => v,
-        Err(e) => return err("MCP_ERROR", e),
+        Err(e) => return err(ErrorCode::McpError, e.message),
     };
     let key = cli_project_key(&cwd);
     if apply_decision(&mut doc, &key, &approve, &reject, trust) {
         if let Err(e) = write_json_atomic(&path, &doc) {
-            return err("MCP_ERROR", e);
+            return err(ErrorCode::McpError, e.message);
         }
     }
     // The half the current CLI actually reads (see the module doc) — without it
@@ -591,13 +587,13 @@ pub fn mcp_decide(
     match apply_settings_decision(&mut settings, &approve, &reject) {
         Some(true) => {
             if let Err(e) = write_json_atomic(&settings_path, &settings) {
-                return err("MCP_ERROR", e);
+                return err(ErrorCode::McpError, e.message);
             }
         }
         Some(false) => {}
         None => {
             return err(
-                "MCP_ERROR",
+                ErrorCode::McpError,
                 format!("{} is not a JSON object", settings_path.display()),
             )
         }

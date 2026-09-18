@@ -12,7 +12,7 @@ use std::path::Path;
 /// FR-1: every IMMEDIATE subdirectory of `dir` carrying a readable
 /// `extension.json`. Order is lexicographic by directory name (FR-2), which is
 /// what the tab strip renders.
-pub(crate) fn scan_dir(dir: &Path) -> Vec<LoadedExtension> {
+pub fn scan_dir(dir: &Path) -> Vec<LoadedExtension> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -29,7 +29,7 @@ pub(crate) fn scan_dir(dir: &Path) -> Vec<LoadedExtension> {
 }
 
 /// The `(extension, panel)` a `panelId` names. `None` ⇒ `EXT_PANEL_NOT_FOUND`.
-pub(crate) fn panel<'a>(
+pub fn panel<'a>(
     registry: &'a [LoadedExtension],
     panel_id: &str,
 ) -> Option<(&'a LoadedExtension, &'a PanelDefinition)> {
@@ -38,10 +38,7 @@ pub(crate) fn panel<'a>(
         .find_map(|ext| ext.panel(panel_id).map(|p| (ext, p)))
 }
 
-pub(crate) fn extension<'a>(
-    registry: &'a [LoadedExtension],
-    id: &str,
-) -> Option<&'a LoadedExtension> {
+pub fn extension<'a>(registry: &'a [LoadedExtension], id: &str) -> Option<&'a LoadedExtension> {
     registry.iter().find(|e| e.id == id)
 }
 

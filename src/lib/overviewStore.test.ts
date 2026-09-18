@@ -50,8 +50,8 @@ function sess(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
-    allowGit: false,
     responseMode: 'default',
+    allowGit: false,
     ...over,
   };
 }

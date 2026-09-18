@@ -1,3 +1,4 @@
+import { reconcileCatalogModel } from '../../lib/model-catalog';
 // session-settings-sheet — one component, two modes (FR-7). Create mode is
 // NewSessionModal's own logic (FR-22: behaviour-identical, apart from the field
 // order and PROFILE sitting after ACCOUNT), reordered per FR-7/FR-8. Edit mode
@@ -28,14 +29,14 @@ import { Button } from '../../ui/Button';
 import { Chip } from '../../ui/Chip';
 import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
 import { StatusDot } from '../../ui/StatusDot';
-import { accountIdForSessionCreate, modelPickerProviderHeading } from '../accounts/accounts';
+import { accountIdForSessionCreate, modelPickerProviderHeading } from '../../lib/account-selection';
 import { AccountField } from './AccountField';
 import { ProfileField } from './ProfileField';
 import { ProjectField } from './ProjectField';
 import { DirectoryField } from './DirectoryField';
 import { NameField } from './NameField';
 import { ModelField } from './ModelField';
-import { useModelCatalog } from './useModelCatalog';
+import { useModelCatalog } from '../../lib/hooks/useModelCatalog';
 import { useProjectList } from './useProjectList';
 import { useProjectDefaults } from './useProjectDefaults';
 import { useDirectoryPicker } from './useDirectoryPicker';
@@ -47,7 +48,6 @@ import {
   SET_PROJECT_DEFAULT_COPY,
   SET_PROJECT_DEFAULT_TITLE,
   buildPatch,
-  settingCapability,
   canSetProjectDefault,
   carryOverToCreate,
   changeCountLabel,
@@ -57,7 +57,9 @@ import {
   fixedAtSpawnLines,
   nextProjectDefaults,
   rebaseDraft,
+  settingCapability,
   timingLine,
+  submitSettingsOnEnter,
   type SessionSettingsCarryOver,
   type SettingsDraft,
 } from './session-settings';
@@ -169,7 +171,8 @@ function CreateSheet({
   const cwdSeededRef = useRef(false);
 
   const accounts = useStore((s) => s.accounts);
-  const { models, modelsLoading, modelId, setModelId } = useModelCatalog(accountId, seed?.modelId);
+  const catalogState = useModelCatalog(accountId, seed?.modelId);
+  const { models, modelsLoading, modelId, setModelId } = catalogState;
   const providerHeading = modelPickerProviderHeading(accounts, accountId);
 
   const activeProjectId = useStore((s) => s.activeProjectId);
@@ -207,6 +210,8 @@ function CreateSheet({
   }, [pendingNewSessionProfileId, profiles]);
 
   useProjectDefaults({
+    accountId,
+    defaultModelId: catalogState.catalog?.defaultModelId ?? null,
     projectId,
     project,
     models,
@@ -247,18 +252,19 @@ function CreateSheet({
     caseInsensitive: IS_WINDOWS,
   });
 
-  const modelEfforts = models.find((m) => m.id === modelId)?.efforts ?? [];
+  const selectedModel = models.find((m) => m.id === modelId);
+  const modelEfforts = selectedModel?.efforts ?? [];
 
   // Reset effort if the newly selected model doesn't support the current level
   // — guarded on the catalog having actually loaded, so a SEEDED effort isn't
   // cleared by the one-render window before `models` resolves (FR-13).
   useEffect(() => {
-    if (modelsLoading) return;
+    if (modelsLoading || !catalogState.catalog) return;
     if (effort && !modelEfforts.includes(effort)) setEffort('');
   }, [modelId, models, modelsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const canCreate =
-    cwd.trim() !== '' && name.trim() !== '' && modelId !== '' && !submitting && !projectRootMissing && !worktree.blocked;
+    cwd.trim() !== '' && name.trim() !== '' && models.some(m => m.id === modelId) && !submitting && !projectRootMissing && !worktree.blocked;
   const cwdIsWsl = isWslUncPath(cwd);
 
   const createSession = async (overrideCwd: string, worktreeOpts?: { branch: string; baseRef: string; adopt?: boolean }) => {
@@ -327,11 +333,7 @@ function CreateSheet({
         e.stopPropagation();
         onClose();
       } else if (e.key === 'Enter' && canCreate) {
-        const activeEl = document.activeElement as HTMLElement | null;
-        if (activeEl?.tagName !== 'SELECT' && activeEl?.dataset.worktreeRow === undefined) {
-          e.preventDefault();
-          void submit();
-        }
+        submitSettingsOnEnter(e, submit);
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -376,13 +378,13 @@ function CreateSheet({
         {/* FR-7/FR-8: EFFORT joins MODEL's row, fixed width, right — and renders no
             track at all when the model advertises none, per the existing rule. */}
         <div className={modelEfforts.length > 0 ? 'session-settings-sheet__pair session-settings-sheet__pair--effort' : undefined}>
-          <ModelField models={models} modelId={modelId} loading={modelsLoading} onChange={setModelId} providerHeading={providerHeading} />
+          <ModelField catalogState={catalogState} models={models} modelId={modelId} loading={modelsLoading} onChange={setModelId} providerHeading={providerHeading} />
           {modelEfforts.length > 0 && (
             <div>
               <label className="new-session-modal__label">EFFORT</label>
               <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
                 <ChipGroup
-                  options={[{ value: '', label: 'default' }, ...modelEfforts.map((e) => ({ value: e, label: e }))]}
+                  options={[{ value: '', label: selectedModel?.defaultEffort ? `Model default · ${selectedModel.defaultEffort}` : 'Model default' }, ...modelEfforts.map((e) => ({ value: e, label: e }))]}
                   value={effort}
                   onChange={setEffort}
                 />
@@ -476,11 +478,23 @@ function EditSheet({
   const projects = useStore((s) => s.projects);
   const setProjects = useStore((s) => s.setProjects);
   const accounts = useStore((s) => s.accounts);
-  const { models, modelsLoading } = useModelCatalog(session?.accountId ?? DEFAULT_ACCOUNT_ID);
+  const catalogState = useModelCatalog(session?.accountId ?? DEFAULT_ACCOUNT_ID);
+  const { models, modelsLoading } = catalogState;
 
   const [baseline, setBaseline] = useState<SettingsDraft | null>(session ? draftFromSession(session) : null);
   const [draft, setDraft] = useState<SettingsDraft | null>(baseline);
   const [touched, setTouched] = useState<Set<keyof SettingsDraft>>(new Set());
+  useEffect(() => {
+    const catalog = catalogState.catalog;
+    if (!catalog) return;
+    setDraft(current => {
+      if (!current || current.modelId === baseline?.modelId) return current;
+      const modelId = reconcileCatalogModel(current.modelId, catalog);
+      if (modelId === current.modelId) return current;
+      const efforts = catalog.models.find(m => m.id === modelId)?.efforts ?? [];
+      return { ...current, modelId, effort: efforts.includes(current.effort) ? current.effort : '' };
+    });
+  }, [catalogState.catalog, baseline?.modelId]);
   const [submitting, setSubmitting] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState(false);
   const { error, setError, schedule } = useTimedError();
@@ -506,6 +520,7 @@ function EditSheet({
   }, [session]);
 
   const setField = <K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) => {
+    // pi-runtime-boundary FR-4: a control the runtime cannot honour never edits the draft.
     if (!session || !settingCapability(session, key).available) return;
     setDraft((d) => (d ? { ...d, [key]: value } : d));
     setTouched((t) => {
@@ -517,7 +532,9 @@ function EditSheet({
 
   const dirty = useMemo(() => (draft && baseline ? dirtyKeys(draft, baseline) : []), [draft, baseline]);
   const timing = timingLine(dirty);
-  const canApply = draft !== null && dirty.length > 0 && !submitting && canCommitRename(draft.name, false);
+  const canApply = draft !== null && dirty.length > 0 && !submitting && canCommitRename(draft.name, false)
+    && (!dirty.includes('modelId') || models.some(m => m.id === draft.modelId))
+    && (!dirty.includes('effort') || !draft.effort || (models.find(m => m.id === draft.modelId)?.efforts ?? []).includes(draft.effort));
 
   const attemptClose = () => {
     if (dirty.length > 0) setConfirmingClose(true);
@@ -529,6 +546,8 @@ function EditSheet({
     setSubmitting(true);
     setError(null);
     const patch = buildPatch(draft, baseline);
+    // FR-4: the same guard applies to the atomic Apply payload, against the
+    // session as it is now (a capability snapshot may have landed meanwhile).
     const currentSession = useStore.getState().sessions.find((s) => s.id === sessionId);
     if (!currentSession) { setSubmitting(false); return; }
     const blocked = (Object.keys(patch) as (keyof SettingsDraft)[])
@@ -560,11 +579,7 @@ function EditSheet({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && canApply && !confirmingClose) {
-        const activeEl = document.activeElement as HTMLElement | null;
-        if (activeEl?.tagName !== 'SELECT' && activeEl?.tagName !== 'TEXTAREA') {
-          e.preventDefault();
-          void apply();
-        }
+        submitSettingsOnEnter(e, apply);
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -575,9 +590,10 @@ function EditSheet({
 
   const statusColor = toneVar(STATUS_COLOR[session.status] ?? 'var(--text-dim)');
   const fixed = fixedAtSpawnLines(session, projects, accounts);
-  const modelEfforts = models.find((m) => m.id === draft.modelId)?.efforts ?? session.model.efforts ?? [];
+  const selectedModel = models.find((m) => m.id === draft.modelId);
+  const modelEfforts = selectedModel?.efforts ?? [];
   // §7 case 11: the catalog may not (yet) carry the session's own model.
-  const catalog = models.length > 0 ? models : [session.model];
+  const catalog = models;
   const providerHeading = modelPickerProviderHeading(accounts, session.accountId);
 
   // Model swap correctness (§7 case 22 parity with CreateSheet's own reset
@@ -654,6 +670,7 @@ function EditSheet({
             'modelId',
             session.model.label,
             <ModelField
+              catalogState={catalogState}
               models={catalog}
               modelId={draft.modelId}
               loading={modelsLoading}
@@ -661,15 +678,16 @@ function EditSheet({
               providerHeading={providerHeading}
             />,
           )}
-          {modelEfforts.length > 0 &&
+          {(modelEfforts.length > 0 || draft.effort !== '') &&
             field(
               'effort',
               baseline.effort || 'default',
               <div>
                 <label className="new-session-modal__label">EFFORT</label>
                 <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
+                  {draft.effort && !modelEfforts.includes(draft.effort) && <span>{draft.effort} · Not in the current catalogue</span>}
                   <ChipGroup
-                    options={[{ value: '', label: 'default' }, ...modelEfforts.map((e) => ({ value: e, label: e }))]}
+                    options={[{ value: '', label: selectedModel?.defaultEffort ? `Model default · ${selectedModel.defaultEffort}` : 'Model default' }, ...modelEfforts.map((e) => ({ value: e, label: e }))]}
                     value={draft.effort}
                     onChange={(v) => setField('effort', v)}
                   />

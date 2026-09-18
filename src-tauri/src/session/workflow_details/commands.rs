@@ -2,6 +2,7 @@
 //! script read (the only one of the three with no state behind it).
 
 use super::*;
+use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
 use tauri::{AppHandle, State};
@@ -10,7 +11,7 @@ use tauri::{AppHandle, State};
 
 /// FR-9: the source at `path`, capped at 200 KB. `None` ⇔ nothing readable is
 /// there (⇒ `WORKFLOW_NO_SCRIPT`).
-pub(crate) fn read_script(path: &Path) -> Option<WorkflowScript> {
+pub fn read_script(path: &Path) -> Option<WorkflowScript> {
     if !path.is_file() {
         return None;
     }
@@ -60,7 +61,7 @@ pub fn workflows_detail(
             }
             ok(detail)
         }
-        Err((code, message)) => err(code, message),
+        Err(e) => e.into(),
     }
 }
 
@@ -72,17 +73,20 @@ pub fn workflows_agent(
     agent_id: String,
 ) -> IpcResult<WorkflowAgentTranscript> {
     let found = {
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         find_run(&map, &run_id)
     };
     let Some((_, run, _)) = found else {
-        return err("WORKFLOW_NOT_FOUND", "no such workflow run");
+        return err(ErrorCode::WorkflowNotFound, "no such workflow run");
     };
     // No transcript directory ⇒ the scan has seen no agent at all, which is
     // exactly what WORKFLOW_AGENT_NOT_FOUND says (the only agent-level code this
     // channel declares).
     let Some(dir) = run.transcript_dir.clone() else {
-        return err("WORKFLOW_AGENT_NOT_FOUND", "no such agent in this run");
+        return err(
+            ErrorCode::WorkflowAgentNotFound,
+            "no such agent in this run",
+        );
     };
     let known = {
         let mut scans = engine.workflow_scans.lock().unwrap();
@@ -91,7 +95,10 @@ pub fn workflows_agent(
         entry.state.knows_agent(&agent_id)
     };
     if !known {
-        return err("WORKFLOW_AGENT_NOT_FOUND", "no such agent in this run");
+        return err(
+            ErrorCode::WorkflowAgentNotFound,
+            "no such agent in this run",
+        );
     }
     ok(read_agent_transcript(Path::new(&dir), &agent_id))
 }
@@ -100,15 +107,18 @@ pub fn workflows_agent(
 #[tauri::command(async)]
 pub fn workflows_script(engine: State<'_, Engine>, run_id: String) -> IpcResult<WorkflowScript> {
     let found = {
-        let map = engine.sessions.lock().unwrap();
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         find_run(&map, &run_id)
     };
     let Some((_, _, script)) = found else {
-        return err("WORKFLOW_NOT_FOUND", "no such workflow run");
+        return err(ErrorCode::WorkflowNotFound, "no such workflow run");
     };
     match script.as_deref().and_then(read_script) {
         Some(s) => ok(s),
-        None => err("WORKFLOW_NO_SCRIPT", "this run has no readable script file"),
+        None => err(
+            ErrorCode::WorkflowNoScript,
+            "this run has no readable script file",
+        ),
     }
 }
 

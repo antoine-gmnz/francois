@@ -3,18 +3,16 @@
 use super::*;
 
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
-use crate::process_util::no_window;
 use crate::wsl;
 
 /// Run `git <args>` in cwd with an argv array (never a shell string — FR-13).
-pub(crate) fn git(cwd: &str, args: &[&str]) -> std::io::Result<GitOut> {
-    let mut c = Command::new("git");
-    c.args(args).current_dir(cwd).stdin(Stdio::null());
-    no_window(&mut c);
-    let out = c.output()?;
+pub fn git(cwd: &str, args: &[&str]) -> std::io::Result<GitOut> {
+    let out = crate::process_util::spawn("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()?;
     Ok(GitOut {
         code: out.status.code().unwrap_or(-1),
         stdout: out.stdout,
@@ -22,7 +20,7 @@ pub(crate) fn git(cwd: &str, args: &[&str]) -> std::io::Result<GitOut> {
     })
 }
 
-pub(crate) type GitErr = (String, String); // (ErrorCode, message)
+pub type GitErr = crate::ipc::AppError;
 
 // ---------- wsl-filesystem FR-5 git routing ----------
 //
@@ -36,7 +34,7 @@ pub(crate) type GitErr = (String, String); // (ErrorCode, message)
 // misclassify as Native if you asked `is_wsl_unc_path` about it directly.
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(crate) enum GitHost {
+pub enum GitHost {
     Native,
     /// The repo lives in the named distro (from the UNC cwd). Carried here so
     /// every spawn passes `-d <distro>` — bare `wsl.exe` targets the machine's
@@ -47,7 +45,7 @@ pub(crate) enum GitHost {
 
 impl GitHost {
     /// Derived once from the session cwd — see the module note above.
-    pub(crate) fn of(cwd: &str) -> Self {
+    pub fn of(cwd: &str) -> Self {
         match wsl::wsl_unc_to_linux(cwd) {
             Some((distro, _)) => GitHost::Wsl(distro),
             None => GitHost::Native,
@@ -61,7 +59,7 @@ impl GitHost {
 /// construction never matches the WSL UNC prefixes). Idempotent either way, so
 /// every call site can just pass "whatever dir it has" — the session cwd on the
 /// first probe, the cached root afterwards — without tracking which form it is.
-pub(crate) fn wsl_cd_target(dir: &str) -> String {
+pub fn wsl_cd_target(dir: &str) -> String {
     wsl::wsl_unc_to_linux(dir)
         .map(|(_, linux)| linux)
         .unwrap_or_else(|| dir.to_string())
@@ -73,7 +71,7 @@ pub(crate) fn wsl_cd_target(dir: &str) -> String {
 /// by tests: the native branch must stay byte-identical to v0.2.1, spec §9). Wsl
 /// wraps as `wsl.exe -d <distro> --cd <dir> -- git <args…>` — `-d` because bare
 /// wsl.exe targets the default distro, not necessarily the repo's.
-pub(crate) fn git_program(host: &GitHost, dir: &str, args: &[&str]) -> (String, Vec<String>) {
+pub fn git_program(host: &GitHost, dir: &str, args: &[&str]) -> (String, Vec<String>) {
     match host {
         GitHost::Native => (
             "git".to_string(),
@@ -104,15 +102,12 @@ pub(crate) fn git_program(host: &GitHost, dir: &str, args: &[&str]) -> (String, 
 /// distro, bad --cd, WSL not installed) in UTF-16LE — and on stdout — so a failed
 /// spawn with an empty stderr surfaces the decoded stdout as the error text
 /// instead of NUL-interleaved garbage (or nothing).
-pub(crate) fn git_routed(host: &GitHost, dir: &str, args: &[&str]) -> std::io::Result<GitOut> {
+pub fn git_routed(host: &GitHost, dir: &str, args: &[&str]) -> std::io::Result<GitOut> {
     match host {
         GitHost::Native => git(dir, args),
         GitHost::Wsl(_) => {
             let (program, argv) = git_program(host, dir, args);
-            let mut c = Command::new(program);
-            c.args(&argv).stdin(Stdio::null());
-            no_window(&mut c);
-            let out = c.output()?;
+            let out = crate::process_util::spawn(program).args(&argv).output()?;
             let code = out.status.code().unwrap_or(-1);
             let mut stderr = wsl::decode_wsl_output(&out.stderr);
             if code != 0 && stderr.is_empty() && out.stdout.contains(&0) {
@@ -127,12 +122,12 @@ pub(crate) fn git_routed(host: &GitHost, dir: &str, args: &[&str]) -> std::io::R
     }
 }
 
-pub(crate) fn is_git_repo(host: &GitHost, cwd: &str) -> bool {
+pub fn is_git_repo(host: &GitHost, cwd: &str) -> bool {
     matches!(git_routed(host, cwd, &["rev-parse", "--is-inside-work-tree"]), Ok(o) if o.code == 0 && String::from_utf8_lossy(&o.stdout).trim() == "true")
 }
 
 /// HEAD when the repo has a commit, else the empty-tree object (FR-2).
-pub(crate) fn diff_base(host: &GitHost, cwd: &str) -> String {
+pub fn diff_base(host: &GitHost, cwd: &str) -> String {
     match git_routed(host, cwd, &["rev-parse", "--verify", "-q", "HEAD"]) {
         Ok(o) if o.code == 0 => "HEAD".into(),
         _ => EMPTY_TREE.into(),
@@ -144,7 +139,7 @@ pub(crate) fn diff_base(host: &GitHost, cwd: &str) -> String {
 /// Falls back to cwd if resolution fails. For a WSL repo this is a **Linux** path
 /// (wsl-filesystem FR-6) — stored verbatim by `repo_info` and reused directly as
 /// the `--cd` target for every subsequent op on that repo.
-pub(crate) fn repo_root(host: &GitHost, cwd: &str) -> String {
+pub fn repo_root(host: &GitHost, cwd: &str) -> String {
     // Fallbacks return the cwd in the HOST's path dialect: for a Wsl host the
     // "root is a Linux path" invariant must hold even here — untracked_counts
     // joins `<root>/<path>` and translates via linux_to_wsl_unc, which would
@@ -174,7 +169,7 @@ pub(crate) fn repo_root(host: &GitHost, cwd: &str) -> String {
 /// holds `Some("HEAD")` once a commit exists (HEAD never reverts to no-commits in
 /// practice, so it's safe to pin); for a commit-less repo it stays `None` and the base
 /// is recomputed each call (cheap, rare, and self-corrects to `HEAD` on the first commit).
-pub(crate) static REPO_CACHE: OnceLock<Mutex<HashMap<String, (GitHost, String, Option<String>)>>> =
+pub static REPO_CACHE: OnceLock<Mutex<HashMap<String, (GitHost, String, Option<String>)>>> =
     OnceLock::new();
 
 /// `(host, root, base)` for a cwd, or `None` if it isn't a git worktree. Serves the
@@ -182,7 +177,7 @@ pub(crate) static REPO_CACHE: OnceLock<Mutex<HashMap<String, (GitHost, String, O
 /// git/wsl spawns. `host` is derived ONCE here (wsl-filesystem FR-5) from the raw
 /// session `cwd` — never re-derived from `root`, which for a WSL repo is already a
 /// Linux path by the time it's cached (see the FR-5 routing note above).
-pub(crate) fn repo_info(cwd: &str) -> Option<(GitHost, String, String)> {
+pub fn repo_info(cwd: &str) -> Option<(GitHost, String, String)> {
     let cache = REPO_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some((host, root, stable_base)) = cache.lock().unwrap().get(cwd).cloned() {
         let base = stable_base.unwrap_or_else(|| diff_base(&host, &root));
@@ -316,10 +311,8 @@ mod tests {
 
     #[test]
     fn repo_info_resolves_a_linked_worktrees_own_root() {
-        use std::process::Command;
-
         fn git(dir: &std::path::Path, args: &[&str]) {
-            let status = Command::new("git")
+            let status = crate::process_util::spawn("git")
                 .args(args)
                 .current_dir(dir)
                 .status()
@@ -370,10 +363,8 @@ mod tests {
     #[test]
     #[ignore = "live: needs a running WSL distro reachable at \\\\wsl$\\<distro>"]
     fn repo_info_resolves_a_linked_worktrees_own_root_on_wsl() {
-        use std::process::Command;
-
         fn git(dir: &std::path::Path, args: &[&str]) {
-            let status = Command::new("git")
+            let status = crate::process_util::spawn("git")
                 .args(args)
                 .current_dir(dir)
                 .status()

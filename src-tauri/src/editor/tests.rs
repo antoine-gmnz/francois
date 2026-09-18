@@ -3,6 +3,7 @@
 //! resolution, and the engine-facing command half.
 
 use super::*;
+use crate::ipc::ErrorCode;
 use crate::ipc::IpcResult;
 
 fn editor(id: EditorId, path: &str) -> EditorInfo {
@@ -180,7 +181,7 @@ fn open_in_editor_impl_reports_editor_not_found_with_the_requested_id_in_detail(
     let editors = vec![editor(EditorId::Vscode, "C:\\code.cmd")];
     match open_in_editor_impl(&editors, "D:\\acme-api", EditorId::Cursor) {
         IpcResult::Err { error, .. } => {
-            assert_eq!(error.code, "EDITOR_NOT_FOUND");
+            assert_eq!(error.code, ErrorCode::EditorNotFound);
             assert_eq!(error.detail.unwrap()["editorId"], "cursor");
         }
         IpcResult::Ok { .. } => panic!("expected EDITOR_NOT_FOUND"),
@@ -202,7 +203,7 @@ fn open_in_editor_impl_reports_launch_failed_for_an_uninstalled_since_startup_ed
     let editors = vec![editor(EditorId::Vscode, bogus_path)];
     match open_in_editor_impl(&editors, "D:\\acme-api", EditorId::Vscode) {
         IpcResult::Err { error, .. } => {
-            assert_eq!(error.code, "EDITOR_LAUNCH_FAILED");
+            assert_eq!(error.code, ErrorCode::EditorLaunchFailed);
             assert_eq!(error.detail.unwrap()["path"], bogus_path);
         }
         IpcResult::Ok { .. } => panic!("expected EDITOR_LAUNCH_FAILED"),

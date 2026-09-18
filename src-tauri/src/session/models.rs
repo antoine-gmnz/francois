@@ -3,8 +3,8 @@
 use super::*;
 
 use crate::ipc::{ok, IpcResult};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
 
@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager};
 // each tier — robust across releases and account tiers. (Made-up full IDs like
 // `claude-opus-4` are rejected by the CLI.)
 
-pub(crate) fn catalog() -> Vec<ModelInfo> {
+pub fn catalog() -> Vec<ModelInfo> {
     vec![
         model("sonnet", "Sonnet"),
         model("opus", "Opus"),
@@ -25,9 +25,9 @@ pub(crate) fn catalog() -> Vec<ModelInfo> {
 
 /// What to SHOW when the catalog does not (yet) know a model's window. It is a
 /// display placeholder, never a ceiling — see `loaded_context`.
-pub(crate) const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
+pub const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
 
-pub(crate) fn context_limit(model_id: &str) -> u64 {
+pub fn context_limit(model_id: &str) -> u64 {
     resolve_context_tokens(model_id).unwrap_or(DEFAULT_CONTEXT_LIMIT)
 }
 
@@ -39,7 +39,7 @@ pub(crate) fn context_limit(model_id: &str) -> u64 {
 /// yet, and clamping against that placeholder destroyed the figure permanently —
 /// the next persist wrote the clamped 200000 back over the true count, so an
 /// Opus 5 session that had used 340K reloaded as "200K/200K, full".
-pub(crate) fn loaded_context(known: Option<u64>, persisted_used: u64) -> (u64, u64) {
+pub fn loaded_context(known: Option<u64>, persisted_used: u64) -> (u64, u64) {
     match known {
         Some(limit) => (limit, persisted_used.min(limit)),
         None => (DEFAULT_CONTEXT_LIMIT, persisted_used),
@@ -50,7 +50,7 @@ pub(crate) fn loaded_context(known: Option<u64>, persisted_used: u64) -> (u64, u
 /// aliases and bare family words (`opus`, `sonnet`, …) to the newest cached model
 /// of that family — so a session created with the `opus` alias still reports the
 /// current Opus context window (e.g. 1M) rather than the 200K default.
-pub(crate) fn resolve_context_tokens(model_id: &str) -> Option<u64> {
+pub fn resolve_context_tokens(model_id: &str) -> Option<u64> {
     let cache = model_cache().lock().unwrap();
     if let Some(c) = cache
         .iter()
@@ -72,7 +72,7 @@ pub(crate) fn resolve_context_tokens(model_id: &str) -> Option<u64> {
         .max()
 }
 
-pub(crate) fn fmt_tokens(n: u64) -> String {
+pub fn fmt_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         let m = n as f64 / 1_000_000.0;
         if (m - m.round()).abs() < 0.05 {
@@ -87,7 +87,7 @@ pub(crate) fn fmt_tokens(n: u64) -> String {
 
 /// Order model families so versions of the same model group together, flagship
 /// tiers first (spec: "sort the model versions by model").
-pub(crate) fn tier_rank(id: &str) -> u8 {
+pub fn tier_rank(id: &str) -> u8 {
     let l = id.to_lowercase();
     if l.contains("fable") || l.contains("mythos") {
         0
@@ -111,12 +111,12 @@ pub(crate) fn tier_rank(id: &str) -> u8 {
 // models released after this build). Falls back to the tier aliases if the
 // token/network is unavailable.
 
-pub(crate) static MODEL_CACHE: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
-pub(crate) fn model_cache() -> &'static Mutex<Vec<ModelInfo>> {
+pub static MODEL_CACHE: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
+pub fn model_cache() -> &'static Mutex<Vec<ModelInfo>> {
     MODEL_CACHE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-pub(crate) fn read_oauth_token() -> Option<String> {
+pub fn read_oauth_token() -> Option<String> {
     parse_access_token(&read_credentials_json()?)
 }
 
@@ -134,7 +134,7 @@ fn read_credentials_json() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn keychain_credentials_json() -> Option<String> {
-    let out = std::process::Command::new("security")
+    let out = crate::process_util::spawn("security")
         .args([
             "find-generic-password",
             "-s",
@@ -159,7 +159,7 @@ fn parse_access_token(json: &str) -> Option<String> {
         .map(String::from)
 }
 
-pub(crate) fn fetch_live_models() -> Option<Vec<ModelInfo>> {
+pub fn fetch_live_models() -> Option<Vec<ModelInfo>> {
     let token = read_oauth_token()?;
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(5))
@@ -243,6 +243,7 @@ pub(crate) fn fetch_live_models() -> Option<Vec<ModelInfo>> {
                     id,
                     label,
                     brief,
+                    default_effort: None,
                     context_tokens: ctx,
                     efforts,
                 },
@@ -265,10 +266,7 @@ pub(crate) fn fetch_live_models() -> Option<Vec<ModelInfo>> {
 /// places at bootstrap, all racing `warm_model_cache`, so a single transient
 /// failure among them was enough. Fall back only when nothing is known yet, so the
 /// model picker is never empty.
-pub(crate) fn refreshed_cache(
-    fetched: Option<Vec<ModelInfo>>,
-    cached: &[ModelInfo],
-) -> Vec<ModelInfo> {
+pub fn refreshed_cache(fetched: Option<Vec<ModelInfo>>, cached: &[ModelInfo]) -> Vec<ModelInfo> {
     match fetched {
         Some(live) => live,
         None if cached.is_empty() => catalog(),
@@ -285,7 +283,7 @@ pub(crate) fn refreshed_cache(
 // them at all. Mirroring the last successful fetch to disk makes the windows
 // survive the process: the second launch on a machine starts warm.
 
-pub(crate) fn models_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+pub fn models_json_path(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
@@ -344,7 +342,7 @@ fn adopt_live(app: &AppHandle, live: Vec<ModelInfo>) {
 
 /// Fetch the live list (updating the cache) or keep what we already know. With
 /// an `app` in hand a live fetch also mirrors + reconciles (`adopt_live`).
-pub(crate) fn refresh_models_for(app: Option<&AppHandle>) -> Vec<ModelInfo> {
+pub fn refresh_models_for(app: Option<&AppHandle>) -> Vec<ModelInfo> {
     let fetched = fetch_live_models(); // network first — never under the cache lock
     if let (Some(live), Some(app)) = (&fetched, app) {
         adopt_live(app, live.clone());
@@ -356,7 +354,7 @@ pub(crate) fn refresh_models_for(app: Option<&AppHandle>) -> Vec<ModelInfo> {
     next
 }
 
-pub(crate) fn refresh_models() -> Vec<ModelInfo> {
+pub fn refresh_models() -> Vec<ModelInfo> {
     refresh_models_for(None)
 }
 
@@ -391,37 +389,143 @@ pub fn warm_model_cache(app: AppHandle) {
     });
 }
 
-/// Recompute every live session's context limit against the (now warm) cache and
-/// emit a corrected meta for each one that moved.
+/// display-openai-model-name FR-10: generalized to every runtime and to the
+/// label as well — this is what makes FR-9's degraded fallback (a pre-FR-1
+/// record, or a runtime whose own catalog probe failed at creation) self-heal
+/// once the runtime's catalog is reachable, without paying for a probe on the
+/// load path (FR-8). Resolves each DISTINCT `(account_id, model_id)` pair live
+/// in the map via FR-3 — one adapter call per pair, not per session (§7 edge
+/// case: "two sessions, same account, same model") — and emits + persists a
+/// corrected `session.meta` for each session whose label or limit moved.
 fn reconcile_context_limits(app: &AppHandle) {
+    let engine = app.state::<Engine>();
+    let pairs: Vec<(String, String)> = {
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        for s in map.values() {
+            seen.insert((s.account_id.clone(), s.model_id.clone()));
+        }
+        seen.into_iter().collect()
+    };
+    let resolved: HashMap<(String, String), (String, u64)> = pairs
+        .into_iter()
+        .map(|(account_id, model_id)| {
+            let display = resolve_model_display(app, &account_id, &model_id);
+            ((account_id, model_id), display)
+        })
+        .collect();
     let updated: Vec<SessionMeta> = {
-        let engine = app.state::<Engine>();
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.values_mut()
             .filter_map(|s| {
-                let limit = context_limit(&s.model_id);
-                (limit != s.context_limit_tokens).then(|| {
-                    s.context_limit_tokens = limit;
-                    s.meta()
+                let key = (s.account_id.clone(), s.model_id.clone());
+                let (label, limit) = resolved.get(&key)?;
+                let moved = *label != s.model_label || *limit != s.context_limit_tokens;
+                moved.then(|| {
+                    s.model_label = label.clone();
+                    s.context_limit_tokens = *limit;
+                    s.meta(app)
                 })
             })
             .collect()
     };
+    if !updated.is_empty() {
+        persist(app, &engine);
+    }
     for m in updated {
         emit(app, SessionEvent::Meta { meta: m });
     }
 }
 
-/// Human label for a model id: the cached display name, else a best-effort
-/// humanization of the id (e.g. `claude-opus-4-8` → `Opus 4.8`).
-pub(crate) fn label_for(id: &str) -> String {
+/// display-openai-model-name FR-5: is `id` shaped like an Anthropic model id —
+/// a `claude-*` id, or one of the CLI's tier aliases. `humanize` and
+/// `resolve_context_tokens` are Anthropic-only tools; this is the gate that
+/// keeps them off every other runtime's ids (`gpt-4o`, `gpt-5.1-codex`,
+/// `o3-mini`, `grok-4`, …) — the whole fix for `humanize("gpt-4o") == "Gpt"`.
+pub fn is_anthropic_shaped(id: &str) -> bool {
+    id.starts_with("claude-") || matches!(id, "opus" | "sonnet" | "haiku" | "fable")
+}
+
+/// display-openai-model-name FR-5: the id-shaped (not account-shaped) label
+/// fallback — must be correct without knowing the account, because FR-14's
+/// removed-account case has no account left to ask. `humanize` is reached
+/// ONLY for an Anthropic-shaped id; everything else is the id verbatim.
+pub fn fallback_label(id: &str) -> String {
     if let Some(m) = model_cache().lock().unwrap().iter().find(|m| m.id == id) {
         return m.label.clone();
     }
-    humanize(id)
+    if is_anthropic_shaped(id) {
+        humanize(id)
+    } else {
+        id.to_string()
+    }
 }
 
-pub(crate) fn humanize(id: &str) -> String {
+/// display-openai-model-name FR-5: the id-shaped context-limit fallback,
+/// mirroring `fallback_label`'s split. An Anthropic-shaped id keeps today's
+/// placeholder-or-real answer (`context_limit`); every other id reads the
+/// OpenAI-shaped context table (`wire::context_tokens_for`), which always
+/// answers a concrete figure — no non-Anthropic id ever produces the
+/// Anthropic 200K placeholder.
+pub fn fallback_context(id: &str) -> u64 {
+    if is_anthropic_shaped(id) {
+        context_limit(id)
+    } else {
+        openai_context_tokens_for(id)
+    }
+}
+
+/// display-openai-model-name FR-3's pure half: given an already-fetched
+/// catalog, resolve `model_id`'s label + context window. `resolve_model_display`
+/// is this plus the I/O catalog fetch; a call site that already holds a
+/// catalog (`session_update_settings`) uses this directly to avoid fetching
+/// twice.
+pub fn resolve_model_display_from_catalog(catalog: &[ModelInfo], model_id: &str) -> (String, u64) {
+    match catalog.iter().find(|m| m.id == model_id) {
+        Some(m) => {
+            let limit = m
+                .context_tokens
+                .unwrap_or_else(|| fallback_context(model_id));
+            (m.label.clone(), limit)
+        }
+        None => (fallback_label(model_id), fallback_context(model_id)),
+    }
+}
+
+/// display-openai-model-name FR-3: resolve a session's model label + context
+/// window from its OWN runtime's catalog — the fix for the Anthropic-shaped
+/// guess (`humanize`, `context_limit`) being applied to every runtime. Called
+/// only at the cold moments FR-6/FR-7/FR-10 name; never from `Session::meta`
+/// (FR-2), never from an event path. A miss anywhere along the way (empty
+/// catalog, id absent from it, unresolvable account, failed probe) is never an
+/// error (FR-4) — it falls back to FR-5's id-shaped guess.
+///
+/// Claude Code is a deliberate exception: its own `models()` is
+/// `session_models`'s on-demand LIVE `/v1/models` fetch (`refresh_models_for`),
+/// which ALSO re-triggers this very reconcile pass on success (`adopt_live`) —
+/// calling it from every session_create/model-switch/reconcile would turn a
+/// cache read into a network round trip on the hottest runtime, and recurse
+/// straight back into itself from FR-10's pass. The cache it warms IS Claude
+/// Code's own catalog, so this reads it directly instead — byte-for-byte what
+/// the pre-feature `label_for`/`context_limit` gave (Goals: "no change on
+/// Claude Code sessions").
+pub fn resolve_model_display(app: &AppHandle, account_id: &str, model_id: &str) -> (String, u64) {
+    let kind = crate::account::kind_of(app, account_id);
+    let (runtime, _protocol) = AgentRuntime::from_account_kind(kind);
+    if runtime == AgentRuntime::ClaudeCode {
+        return (fallback_label(model_id), fallback_context(model_id));
+    }
+    let catalog = if runtime == AgentRuntime::Codex {
+        catalog_for_account(app, Some(account_id), false)
+            .map(|catalog| catalog.models)
+            .unwrap_or_default()
+    } else {
+        adapter_for(runtime).models(app, account_id)
+    };
+    resolve_model_display_from_catalog(&catalog, model_id)
+}
+
+pub fn humanize(id: &str) -> String {
     let s = id.strip_prefix("claude-").unwrap_or(id);
     let parts: Vec<&str> = s.split('-').collect();
     let Some(tier) = parts.first() else {
@@ -452,35 +556,12 @@ pub(crate) fn humanize(id: &str) -> String {
 
 // ---------- serialized public shapes (contract/common.ts) ----------
 
-/// `Deserialize` is not part of the wire contract — it exists so the catalog can
-/// round-trip through the on-disk mirror (`models.json`). Every field but `id`
-/// and `label` is `default`ed, so a mirror written by an older build still loads.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ModelInfo {
-    pub id: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub brief: Option<String>,
-    #[serde(
-        rename = "contextTokens",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub context_tokens: Option<u64>,
-    /// Effort levels this model supports (subset of low/medium/high/xhigh/max).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub efforts: Vec<String>,
-}
-
-pub(crate) fn model(id: &str, label: &str) -> ModelInfo {
-    ModelInfo {
-        id: id.into(),
-        label: label.into(),
-        brief: None,
-        context_tokens: None,
-        efforts: Vec::new(),
-    }
-}
+// core-architecture-wave3 FR-9: the TYPE moved to `crate::ipc::model` — it is a
+// contract payload two domains build, and `account/endpoint.rs` had to name this
+// module to build one. The CATALOG (everything else in this file) stays here,
+// which is the split that was missing. Re-exported so the catalog's own call
+// sites, and `crate::session::ModelInfo`, are unchanged.
+pub use crate::ipc::{model, ModelInfo};
 
 /// multi-provider-openai FR-18/FR-21's account-keyed wire fix: `accountId` is
 /// OPTIONAL, not `sessionId` — the model picker's only mount is the New
@@ -492,103 +573,160 @@ pub(crate) fn model(id: &str, label: &str) -> ModelInfo {
 /// `AgentRuntime` (derived from `AccountKind` via `from_account_kind`), which
 /// is what makes an endpoint account's `models()` reachable at all — the
 /// account is what `OpenAiAdapter::models` (FR-18) actually needs.
-#[tauri::command(async)]
-pub fn session_models(app: AppHandle, account_id: Option<String>) -> IpcResult<Vec<ModelInfo>> {
-    let known = crate::account::known_ids(&app);
-    let found = known_account_id(account_id.as_deref(), &known).map(|id| {
-        let kind = crate::account::kind_of(&app, id);
-        (AgentRuntime::from_account_kind(kind).0, id.to_string())
-    });
-    let (runtime, account_id) = resolve_models_target(found);
-    ok(adapter_for(runtime).models(&app, &account_id))
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCatalog {
+    pub account_id: String,
+    pub agent_runtime: AgentRuntime,
+    pub models: Vec<ModelInfo>,
+    pub default_model_id: Option<String>,
+    pub source: String,
+    pub freshness: String,
+    pub fetched_at: Option<u64>,
+    pub warning: Option<AppError>,
 }
 
-/// Pure: trims `account_id` and, when it names an account the registry
-/// actually knows (per `crate::account::known_ids`), hands back the trimmed
-/// id — extracted so "omitted, blank, or unknown falls back to the default"
-/// is covered without a `tauri::AppHandle` (`known_ids`/`kind_of` both need
-/// one). `known` already contains `DEFAULT_ACCOUNT_ID`, so an explicit
-/// `"default"` resolves identically to an omitted payload.
-fn known_account_id<'a>(
+pub(crate) use super::adapter::codex::models::valid_effort as valid_catalog_effort;
+
+fn resolve_catalog_account<'a>(
     account_id: Option<&'a str>,
     known: &std::collections::HashSet<String>,
-) -> Option<&'a str> {
-    account_id
-        .map(str::trim)
-        .filter(|id| !id.is_empty() && known.contains(*id))
+) -> Result<&'a str, AppError> {
+    let id = account_id
+        .unwrap_or(crate::account::DEFAULT_ACCOUNT_ID)
+        .trim();
+    if id.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Account id cannot be blank.",
+        ));
+    }
+    if !known.contains(id) {
+        return Err(AppError::new(
+            ErrorCode::AccountNotFound,
+            "Account no longer exists.",
+        ));
+    }
+    Ok(id)
 }
 
-/// The pure half of the account-keyed `session_models`: an unresolvable
-/// account (omitted `accountId`, or an id the registry no longer knows) falls
-/// back to the pre-existing default, byte for byte.
-fn resolve_models_target(found: Option<(AgentRuntime, String)>) -> (AgentRuntime, String) {
-    found.unwrap_or((
-        AgentRuntime::ClaudeCode,
-        crate::account::DEFAULT_ACCOUNT_ID.to_string(),
-    ))
+pub(crate) fn catalog_for_account(
+    app: &AppHandle,
+    account_id: Option<&str>,
+    refresh: bool,
+) -> Result<ModelCatalog, AppError> {
+    let id = resolve_catalog_account(account_id, &crate::account::known_ids(app))?;
+    let runtime = AgentRuntime::from_account_kind(crate::account::kind_of(app, id)).0;
+    if runtime == AgentRuntime::Codex {
+        return super::adapter::codex::model_catalog(app, id, refresh);
+    }
+    let models = adapter_for(runtime).models(app, id);
+    Ok(ModelCatalog {
+        account_id: id.to_owned(),
+        agent_runtime: runtime,
+        default_model_id: models.first().map(|m| m.id.clone()),
+        models,
+        source: "legacy-adapter".into(),
+        freshness: "unverified".into(),
+        fetched_at: None,
+        warning: None,
+    })
+}
+
+/// Capture the complete JSON object so malformed optional values reach the
+/// canonical Result envelope instead of Tauri's argument rejection path.
+pub struct CatalogRequest(Value);
+impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for CatalogRequest {
+    fn from_command(
+        command: tauri::ipc::CommandItem<'de, R>,
+    ) -> Result<Self, tauri::ipc::InvokeError> {
+        Ok(Self(match command.message.payload() {
+            tauri::ipc::InvokeBody::Json(args) => args.clone(),
+            tauri::ipc::InvokeBody::Raw(_) => Value::Null,
+        }))
+    }
+}
+
+fn session_models_request(
+    request: &Value,
+    resolve: impl FnOnce(Option<&str>, bool) -> Result<ModelCatalog, AppError>,
+) -> IpcResult<ModelCatalog> {
+    let Some(args) = request.as_object() else {
+        return crate::ipc::err(ErrorCode::InvalidInput, "Expected a request object.");
+    };
+    let account_id = match args.get("accountId") {
+        None => None,
+        Some(Value::String(value)) => Some(value.as_str()),
+        _ => return crate::ipc::err(ErrorCode::InvalidInput, "Account id must be a string."),
+    };
+    let refresh = match args.get("refresh") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => return crate::ipc::err(ErrorCode::InvalidInput, "Refresh must be a boolean."),
+    };
+    match resolve(account_id, refresh) {
+        Ok(catalog) => ok(catalog),
+        Err(error) => crate::ipc::IpcResult::Err { ok: false, error },
+    }
+}
+
+#[tauri::command(async)]
+pub fn session_models(app: AppHandle, request: CatalogRequest) -> IpcResult<ModelCatalog> {
+    session_models_request(&request.0, |account_id, refresh| {
+        catalog_for_account(&app, account_id, refresh)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
-
-    // ---------- known_account_id (session_models FR-18/FR-21 account rekey) ----------
-
-    fn known_set(ids: &[&str]) -> HashSet<String> {
-        ids.iter().map(|s| s.to_string()).collect()
+    #[test]
+    fn catalog_command_returns_invalid_input_envelopes_for_raw_bad_fields() {
+        for body in [
+            serde_json::json!({"accountId": 42}),
+            serde_json::json!({"accountId": null}),
+            serde_json::json!({"accountId": []}),
+            serde_json::json!({"refresh": null}),
+            serde_json::json!({"refresh": "true"}),
+            serde_json::json!({"refresh": 1}),
+        ] {
+            let response =
+                session_models_request(&body, |_, _| panic!("invalid request reached discovery"));
+            let json = serde_json::to_value(response).unwrap();
+            assert_eq!(json["ok"], false);
+            assert_eq!(json["error"]["code"], "INVALID_INPUT");
+        }
+        for (body, expected) in [
+            (serde_json::json!({}), false),
+            (serde_json::json!({"refresh": true}), true),
+        ] {
+            let _ = session_models_request(&body, |account, refresh| {
+                assert_eq!(account, None);
+                assert_eq!(refresh, expected);
+                Err(AppError::new(ErrorCode::Internal, "fixture"))
+            });
+        }
     }
 
     #[test]
-    fn no_account_id_is_unresolvable() {
+    fn catalog_accounts_are_explicit_and_trimmed() {
+        let known = ["default".to_string(), "codex".to_string()]
+            .into_iter()
+            .collect();
+        assert_eq!(resolve_catalog_account(None, &known).unwrap(), "default");
         assert_eq!(
-            known_account_id(None, &known_set(&["default", "acct-1"])),
-            None
-        );
-    }
-
-    #[test]
-    fn a_blank_or_whitespace_account_id_is_unresolvable() {
-        let known = known_set(&["default", "acct-1"]);
-        assert_eq!(known_account_id(Some(""), &known), None);
-        assert_eq!(known_account_id(Some("   "), &known), None);
-    }
-
-    #[test]
-    fn an_id_the_registry_does_not_know_is_unresolvable() {
-        assert_eq!(
-            known_account_id(Some("removed-acct"), &known_set(&["default", "acct-1"])),
-            None
-        );
-    }
-
-    #[test]
-    fn a_known_id_resolves_trimmed() {
-        let known = known_set(&["default", "acct-1"]);
-        assert_eq!(known_account_id(Some("acct-1"), &known), Some("acct-1"));
-        assert_eq!(known_account_id(Some("  acct-1  "), &known), Some("acct-1"));
-        assert_eq!(known_account_id(Some("default"), &known), Some("default"));
-    }
-
-    // ---------- resolve_models_target (session_models FR-18 wire fix) ----------
-
-    #[test]
-    fn no_account_falls_back_to_the_default_claude_code_catalog() {
-        assert_eq!(
-            resolve_models_target(None),
-            (AgentRuntime::ClaudeCode, "default".to_string())
-        );
-    }
-
-    #[test]
-    fn a_resolved_account_routes_by_its_own_runtime_and_id() {
-        assert_eq!(
-            resolve_models_target(Some((AgentRuntime::Francois, "acct-1".to_string()))),
-            (AgentRuntime::Francois, "acct-1".to_string())
+            resolve_catalog_account(Some(" codex "), &known).unwrap(),
+            "codex"
         );
         assert_eq!(
-            resolve_models_target(Some((AgentRuntime::ClaudeCode, "acct-2".to_string()))),
-            (AgentRuntime::ClaudeCode, "acct-2".to_string())
+            resolve_catalog_account(Some(" "), &known).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            resolve_catalog_account(Some("removed"), &known)
+                .unwrap_err()
+                .code,
+            ErrorCode::AccountNotFound
         );
     }
 
@@ -619,6 +757,7 @@ mod tests {
                     id: "claude-opus-4-8".into(),
                     label: "Opus 4.8".into(),
                     brief: None,
+                    default_effort: None,
                     context_tokens: Some(1_000_000),
                     efforts: vec![],
                 },
@@ -626,6 +765,7 @@ mod tests {
                     id: "claude-opus-4-5-20251101".into(),
                     label: "Opus 4.5".into(),
                     brief: None,
+                    default_effort: None,
                     context_tokens: Some(200_000),
                     efforts: vec![],
                 },
@@ -633,6 +773,7 @@ mod tests {
                     id: "claude-haiku-4-5".into(),
                     label: "Haiku 4.5".into(),
                     brief: None,
+                    default_effort: None,
                     context_tokens: Some(200_000),
                     efforts: vec![],
                 },
@@ -662,6 +803,7 @@ mod tests {
             id: "claude-opus-5".into(),
             label: "Opus 5".into(),
             brief: None,
+            default_effort: None,
             context_tokens: Some(1_000_000),
             efforts: vec![],
         }];
@@ -706,6 +848,7 @@ mod tests {
             id: "claude-opus-5".into(),
             label: "Opus 5".into(),
             brief: Some("1M context".into()),
+            default_effort: None,
             context_tokens: Some(1_000_000),
             efforts: vec!["high".into()],
         }];
@@ -727,5 +870,95 @@ mod tests {
         assert_eq!(humanize("claude-sonnet-4-5-20250929"), "Sonnet 4.5");
         assert_eq!(humanize("claude-fable-5"), "Fable 5");
         assert_eq!(humanize("opus"), "Opus");
+    }
+
+    // ---------- display-openai-model-name FR-5: is_anthropic_shaped ----------
+
+    #[test]
+    fn anthropic_shaped_ids_are_claude_prefixed_or_a_tier_alias() {
+        assert!(is_anthropic_shaped("claude-opus-4-8"));
+        assert!(is_anthropic_shaped("opus"));
+        assert!(is_anthropic_shaped("sonnet"));
+        assert!(is_anthropic_shaped("haiku"));
+        assert!(is_anthropic_shaped("fable"));
+    }
+
+    #[test]
+    fn every_other_runtimes_ids_are_not_anthropic_shaped() {
+        // The acceptance criterion's exact list (FR-9 §9): humanize must never
+        // be reached for any of these.
+        for id in ["gpt-4o", "gpt-5.1-codex", "o3-mini", "grok-4"] {
+            assert!(!is_anthropic_shaped(id), "{id} misclassified as Anthropic");
+        }
+    }
+
+    // ---------- FR-5: fallback_label / fallback_context ----------
+
+    #[test]
+    fn fallback_label_prefers_an_exact_cache_hit_for_any_id_shape() {
+        {
+            let mut c = model_cache().lock().unwrap();
+            *c = vec![model("gpt-4o", "gpt-4o (cached)")];
+        }
+        assert_eq!(fallback_label("gpt-4o"), "gpt-4o (cached)");
+        model_cache().lock().unwrap().clear();
+    }
+
+    #[test]
+    fn fallback_label_humanizes_only_anthropic_shaped_ids() {
+        model_cache().lock().unwrap().clear();
+        // THE BUG this feature fixes: `humanize` used to run unconditionally,
+        // turning `gpt-4o` and `gpt-5.1-codex` into "Gpt" — every one of these
+        // must read back verbatim instead.
+        for id in ["gpt-4o", "gpt-5.1-codex", "o3-mini", "grok-4"] {
+            assert_eq!(fallback_label(id), id, "humanize leaked onto {id}");
+        }
+        // An Anthropic-shaped miss still humanizes, unchanged.
+        assert_eq!(fallback_label("claude-opus-4-8"), "Opus 4.8");
+        assert_eq!(fallback_label("opus"), "Opus");
+    }
+
+    #[test]
+    fn fallback_context_routes_by_id_shape() {
+        model_cache().lock().unwrap().clear();
+        // Anthropic-shaped, cold cache: the 200K display placeholder.
+        assert_eq!(fallback_context("claude-opus-5"), DEFAULT_CONTEXT_LIMIT);
+        // Non-Anthropic: the OpenAI-shaped context table, never the Anthropic
+        // placeholder (FR-11).
+        assert_eq!(fallback_context("gpt-5"), 400_000);
+        assert_eq!(fallback_context("gpt-4o"), 128_000);
+    }
+
+    // ---------- FR-3's pure half: resolve_model_display_from_catalog ----------
+
+    #[test]
+    fn resolve_from_catalog_uses_the_matching_rows_label_and_context() {
+        let catalog = vec![ModelInfo {
+            context_tokens: Some(128_000),
+            ..model("gpt-4o", "gpt-4o")
+        }];
+        let (label, limit) = resolve_model_display_from_catalog(&catalog, "gpt-4o");
+        assert_eq!(label, "gpt-4o");
+        assert_eq!(limit, 128_000);
+    }
+
+    #[test]
+    fn resolve_from_catalog_falls_back_to_fallback_context_when_the_row_has_none() {
+        // Edge case §7: "id present in the adapter catalog with no
+        // context_tokens" — label is used, limit falls back per FR-5.
+        model_cache().lock().unwrap().clear();
+        let catalog = vec![model("gpt-4o", "gpt-4o")];
+        let (label, limit) = resolve_model_display_from_catalog(&catalog, "gpt-4o");
+        assert_eq!(label, "gpt-4o");
+        assert_eq!(limit, 128_000); // OPENAI_CONTEXT_DEFAULT via fallback_context
+    }
+
+    #[test]
+    fn resolve_from_catalog_falls_back_entirely_on_a_miss() {
+        model_cache().lock().unwrap().clear();
+        let catalog = vec![model("gpt-4o", "gpt-4o")];
+        let (label, limit) = resolve_model_display_from_catalog(&catalog, "gpt-5.1-codex");
+        assert_eq!(label, "gpt-5.1-codex"); // id verbatim, never "Gpt"
+        assert_eq!(limit, 400_000); // gpt-5 prefix match
     }
 }

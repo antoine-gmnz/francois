@@ -9,7 +9,7 @@ use serde_json::Value;
 /// Programs whose FIRST ARGUMENT is a subcommand, so a useful rule prefix is two
 /// tokens (`git commit`, `npm test`) rather than the bare program (`git` — which
 /// would trust every git operation including `push --force`).
-pub(crate) const SUBCOMMAND_PROGRAMS: [&str; 30] = [
+pub const SUBCOMMAND_PROGRAMS: [&str; 30] = [
     "git",
     "gh",
     "npm",
@@ -52,18 +52,18 @@ pub(crate) const SUBCOMMAND_PROGRAMS: [&str; 30] = [
 /// over-inclusive here only ever makes a generated rule NARROWER (an exact-command
 /// pin instead of a prefix), so anything that could plausibly chain, substitute,
 /// redirect or comment gets listed.
-pub(crate) const SHELL_OPERATORS: [char; 15] = [
+pub const SHELL_OPERATORS: [char; 15] = [
     '&', '|', ';', '`', '$', '>', '<', '(', ')', '{', '}', '#', '!', '\n', '\r',
 ];
 
-pub(crate) fn has_shell_operator(cmd: &str) -> bool {
+pub fn has_shell_operator(cmd: &str) -> bool {
     cmd.contains(SHELL_OPERATORS)
 }
 
 /// FR-5: the command prefix a `Bash(<prefix>:*)` rule is built from — the first
 /// token, extended with the second when the first is a subcommand-style program
 /// and the second is not a flag.
-pub(crate) fn bash_prefix(cmd: &str) -> String {
+pub fn bash_prefix(cmd: &str) -> String {
     let mut it = cmd.split_whitespace();
     let Some(first) = it.next() else {
         return String::new();
@@ -79,7 +79,7 @@ pub(crate) fn bash_prefix(cmd: &str) -> String {
     }
 }
 
-pub(crate) fn slashed(p: &str) -> String {
+pub fn slashed(p: &str) -> String {
     p.replace('\\', "/")
 }
 
@@ -88,7 +88,7 @@ pub(crate) fn slashed(p: &str) -> String {
 /// two platforms Francois runs on disagree about path case, and a rule that
 /// silently fails to match is worse than one that is slightly too generous about
 /// spelling.
-pub(crate) fn path_relative_to_cwd(path: &str, cwd: &str) -> String {
+pub fn path_relative_to_cwd(path: &str, cwd: &str) -> String {
     let p = slashed(path);
     let c = slashed(cwd);
     let c = c.trim_end_matches('/');
@@ -122,7 +122,7 @@ pub(crate) fn path_relative_to_cwd(path: &str, cwd: &str) -> String {
 /// from good.com" and offered that domain as the rule for a call going somewhere
 /// else. Anything still containing a delimiter-ish character after the split is
 /// rejected outright rather than guessed at.
-pub(crate) fn url_host(url: &str) -> Option<String> {
+pub fn url_host(url: &str) -> Option<String> {
     let after = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     let authority = after.split(['/', '?', '#', '\\']).next().unwrap_or("");
     let host = authority.rsplit('@').next().unwrap_or(authority);
@@ -149,7 +149,7 @@ pub(crate) fn url_host(url: &str) -> Option<String> {
 /// That is deliberately a rule the user is likely to REFUSE: failing toward
 /// something obviously too broad is safe, failing toward something that LOOKS
 /// narrow while granting more is not.
-pub(crate) fn exact_bash_pattern(cmd: &str) -> String {
+pub fn exact_bash_pattern(cmd: &str) -> String {
     if cmd.ends_with(":*") || cmd.contains(')') {
         return "Bash".to_string();
     }
@@ -157,7 +157,7 @@ pub(crate) fn exact_bash_pattern(cmd: &str) -> String {
 }
 
 /// Tools whose input names a filesystem path, and the key that holds it.
-pub(crate) fn path_key(tool: &str) -> Option<&'static [&'static str]> {
+pub fn path_key(tool: &str) -> Option<&'static [&'static str]> {
     match tool {
         "Read" | "Edit" | "Write" | "MultiEdit" => Some(&["file_path"]),
         "NotebookEdit" => Some(&["notebook_path", "file_path"]),
@@ -213,7 +213,7 @@ pub fn generate_pattern(tool: &str, input: &Value, cwd: &str) -> String {
 }
 
 /// The verb a path-shaped tool reads as in a rule label.
-pub(crate) fn tool_verb(tool: &str) -> String {
+pub fn tool_verb(tool: &str) -> String {
     match tool {
         "Read" => "read".into(),
         "Edit" | "MultiEdit" | "NotebookEdit" => "edit".into(),
@@ -260,7 +260,7 @@ pub fn label_for_pattern(pattern: &str) -> String {
 /// `Tool(arg)` → `("Tool", "arg")`. `None` for a bare tool name. The argument may
 /// itself contain parentheses (a Bash command does), so the match is on the FIRST
 /// `(` and the LAST `)`.
-pub(crate) fn split_pattern(pattern: &str) -> Option<(&str, &str)> {
+pub fn split_pattern(pattern: &str) -> Option<(&str, &str)> {
     let open = pattern.find('(')?;
     let close = pattern.rfind(')')?;
     if close <= open {

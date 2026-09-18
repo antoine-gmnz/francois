@@ -1,12 +1,11 @@
-import type { SessionUpdateSettingsRequest, SessionUpdateSettingsResponse } from '../../contract/session-settings-sheet';
-import type { StepDetailPayload, StepDetailResponse } from '../../contract/command-inspect';
+import type { SessionModelsInput, SessionModelsResponse } from '../../contract/session-engine';
 // Typed wrappers over the Tauri session commands + the session event stream.
 // Each command resolves a Result<T> (never rejects) per the contract.
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { demoInvoke, demoListen } from '../demo/demo';
-import type { AccountId, BlockId, Result, SessionMeta, ModelInfo, PermissionMode, ResponseMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, BlockId, Result, SessionMeta, PermissionMode, ResponseMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
   WorkflowDetail,
@@ -64,6 +63,7 @@ import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessio
 import type { SessionCreateInput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
 import type { SessionRenameRequest, SessionRenameResponse } from '../../contract/session-rename';
+import type { SessionUpdateSettingsRequest, SessionUpdateSettingsResponse } from '../../contract/session-settings-sheet';
 import type { EditorListData, OpenInEditorRequest } from '../../contract/open-in-vscode';
 import type {
   Attachment,
@@ -73,6 +73,7 @@ import type {
   PickAttachmentsResponse,
 } from '../../contract/session-attachments';
 import type { GetTranscriptRequest, TranscriptPage } from '../../contract/conversation-view';
+import type { StepDetail, StepDetailPayload } from '../../contract/command-inspect';
 import type { AgentEvent, AgentTranscript } from '../../contract/agent-tab';
 import type { McpApprovalState, McpDecision, McpServerDetail, McpRegistryEntry, McpAttachRequest } from '../../contract/mcp-panel';
 import type {
@@ -152,13 +153,9 @@ export const appSetWindowTheme = (theme: 'light' | 'dark') =>
 export const appDndState = () => ipc<Result<DndState>>('app_dnd_state');
 
 export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
-// multi-provider-openai FR-18/FR-21: keyed on `accountId`, not `sessionId` —
-// the model picker's only mount (the New Session modal) has no session yet.
-// Every existing call site (no account context) keeps invoking with no
-// payload and the core keeps answering with the default account's Claude
-// Code catalog unchanged.
-export const sessionModels = (accountId?: AccountId) =>
-  ipc<Result<ModelInfo[]>>('session_models', accountId ? { accountId } : undefined);
+// Account-scoped discovery; core owns cache freshness and validation.
+export const sessionModels = (input: SessionModelsInput = {}) =>
+  ipc<SessionModelsResponse>('session_models', input);
 // projects FR-19: session_create gained an optional projectId, stored verbatim —
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
 // session-worktree: session_create also gained an optional `worktree` (spec §5),
@@ -177,6 +174,12 @@ export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('sessio
 // session-rename §5: mutate a session's display name. The core validates/cleans it
 // (FR-1) and emits session.meta — the frontend's single update path (FR-13).
 export const sessionRename = (req: SessionRenameRequest) => ipc<SessionRenameResponse>('session_rename', req);
+// session-settings-sheet §5: one atomic patch of changed keys — validate all →
+// write all → persist once → emit ONE session.meta (FR-2). The frontend's
+// single update path is that event, same as every switch verb; this Result is
+// read only to surface a failure (or the no-op-success meta on an empty patch).
+export const sessionUpdateSettings = (req: SessionUpdateSettingsRequest) =>
+  ipc<SessionUpdateSettingsResponse>('session_update_settings', req);
 // session-worktree §5: probe a candidate cwd for worktree isolation (FR-1).
 export const sessionWorktreeProbe = (req: WorktreeProbeRequest) =>
   ipc<Result<WorktreeProbeData>>('session_worktree_probe', req);
@@ -232,6 +235,10 @@ export const sessionOpenInEditor = (req: OpenInEditorRequest) =>
 // 1..=500 (default 200) — never an INVALID_INPUT.
 export const getTranscript = (sessionId: SessionId, page?: { before?: BlockId; limit?: number }) =>
   ipc<Result<TranscriptPage>>('conversation_get_transcript', { sessionId, ...page } satisfies GetTranscriptRequest);
+// command-inspect FR-11: resolves one settled step's record by (sessionId, blockId). Never rides
+// an event — pulled lazily on first open (FR-13), and memoized by the caller for the session's life.
+export const stepDetail = (sessionId: SessionId, blockId: BlockId) =>
+  ipc<Result<StepDetail>>('conversation_step_detail', { sessionId, blockId } satisfies StepDetailPayload);
 export const sessionAnswerQuestion = (sessionId: SessionId, blockId: string, answers: Record<string, string>) =>
   ipc<Result<null>>('session_answer_question', { sessionId, blockId, answers });
 // permission-guardrails (§5.1). decide answers a parked approval card; the other
@@ -548,9 +555,3 @@ export function onShellEvent(cb: (e: ShellEvent) => void): Promise<UnlistenFn> {
 export function onSessionEvent(cb: (e: SessionEvent) => void): Promise<UnlistenFn> {
   return stream<SessionEvent>('francois://session/event', cb);
 }
-
-// Legacy session and transcript operations remain part of their frozen contracts.
-export const sessionUpdateSettings = (req: SessionUpdateSettingsRequest) =>
-  ipc<SessionUpdateSettingsResponse>('session_update_settings', req);
-export const conversationStepDetail = (req: StepDetailPayload) =>
-  ipc<StepDetailResponse>('conversation_step_detail', req);

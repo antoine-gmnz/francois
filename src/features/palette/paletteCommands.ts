@@ -1,3 +1,4 @@
+import { modelCatalogStep } from './model-catalog';
 // Registration of the seven built-in palette commands (FR-6) plus agents-panel's
 // eighth "New agent" (FR-7). In this single-App architecture the per-feature
 // bootstraps are centralized here and called once at app mount; each command still
@@ -7,8 +8,8 @@ import type { PaletteCommand } from '../../../contract/command-palette';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import type { RuntimeCapability, Result } from '../../../contract/common';
 import { registerPaletteCommand as registerCommand, requestBodyFocusOnClose, showToast } from './palette';
-import { getPaletteDiffCount, getPaletteModels, getPaletteRunningAgents, getPaletteSkills, setPaletteModels } from './paletteData';
-import { agentsKill, sessionClearAttachments, sessionCompact, sessionModels, sessionSwitchModel, skillsRun } from '../../lib/api';
+import { getPaletteDiffCount, getPaletteRunningAgents, getPaletteSkills } from './paletteData';
+import { agentsKill, sessionClearAttachments, sessionCompact, skillsRun } from '../../lib/api';
 import { useNotificationsStore } from '../../lib/notificationsStore';
 import { useStore } from '../../lib/store';
 import type { PanelTab } from '../../app/appShell';
@@ -115,11 +116,6 @@ export function registerBuiltinCommands(): void {
   if (registered) return;
   registered = true;
 
-  // Prefetch the static model catalog for switch-model's synchronous SecondaryStep (FR-19).
-  void sessionModels().then((res) => {
-    if (res.ok) setPaletteModels(res.data);
-  });
-
   // 1 — New session (sessions-sidebar)
   registerPaletteCommand({
     id: 'new-session',
@@ -165,18 +161,8 @@ export function registerBuiltinCommands(): void {
     id: 'switch-model',
     glyph: '⇄',
     name: 'Switch model',
-    hint: () => 'sonnet · opus · haiku',
     enabled: (ctx) => ctx.activeSessionId !== null,
-    run: (ctx) => {
-      const sid = ctx.activeSessionId;
-      return {
-        placeholder: 'switch model',
-        items: getPaletteModels().map((m) => ({ id: m.id, label: m.label })),
-        onPick: (modelId) => {
-          if (sid) delegate(sessionSwitchModel(sid, modelId));
-        },
-      };
-    },
+    run: (ctx) => ctx.activeSessionId ? modelCatalogStep(ctx.activeSessionId) : undefined,
   });
 
   // 3 — Attach MCP server (mcp-panel)

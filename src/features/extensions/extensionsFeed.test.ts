@@ -29,8 +29,8 @@ function session(over: Partial<SessionMeta> & { id: string; cwd: string }): Sess
     accountId: 'default',
     agentRuntime: 'claude-code',
     protocol: 'anthropic',
-    allowGit: false,
     responseMode: 'default',
+    allowGit: false,
     ...over,
   };
 }

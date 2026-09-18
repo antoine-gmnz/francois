@@ -22,6 +22,7 @@ use super::{
     ExtensionState, LoadedExtension, PanelData, PanelDefinition, PanelScope, PrimitiveKind, Source,
     EXT_PAGE_SIZE,
 };
+use crate::ipc::ErrorCode;
 use crate::ipc::{err, err_detail, ok, AppError, IpcResult};
 use serde_json::json;
 use std::path::PathBuf;
@@ -32,7 +33,7 @@ use tauri::{AppHandle, State};
 /// Rebuild the loaded registry from `~/.francois/extensions/` and reconcile
 /// the persisted toggles against it. Called at app setup and by
 /// `extensions_detect` — the only two FR-13 triggers.
-pub(crate) fn refresh_registry(app: &AppHandle, state: &ExtensionState) {
+pub fn refresh_registry(app: &AppHandle, state: &ExtensionState) {
     let dir = crate::fs_util::extensions_dir();
     if let Some(dir) = dir.as_ref() {
         let _ = crate::fs_util::ensure_dir_0700(dir);
@@ -121,23 +122,23 @@ fn provider_error<T: serde::Serialize>(e: ProviderError, argv: &[String]) -> Ipc
         ProviderError::Missing { argv0 } => {
             let argv0 = sanitize_argv_element(&argv0);
             err_detail(
-                "EXT_PROVIDER_MISSING",
+                ErrorCode::ExtProviderMissing,
                 format!("{argv0} not found on PATH"),
                 json!({ "argv0": argv0, "command": command }),
             )
         }
         ProviderError::Timeout { timeout_ms } => err_detail(
-            "EXT_PROVIDER_TIMEOUT",
+            ErrorCode::ExtProviderTimeout,
             format!("timed out after {}s", timeout_ms / 1_000),
             json!({ "timeoutMs": timeout_ms, "command": command }),
         ),
         ProviderError::Exit { code, stderr } => err_detail(
-            "EXT_PROVIDER_EXIT",
+            ErrorCode::ExtProviderExit,
             format!("exited {code}"),
             json!({ "code": code, "stderr": stderr, "command": command }),
         ),
         ProviderError::Capped { cap_bytes } => err_detail(
-            "EXT_OUTPUT_CAPPED",
+            ErrorCode::ExtOutputCapped,
             format!("output exceeded {} MiB", cap_bytes / (1024 * 1024)),
             json!({ "capBytes": cap_bytes, "command": command }),
         ),
@@ -153,7 +154,7 @@ fn spawn_error<T: serde::Serialize>(e: &std::io::Error, argv: &[String]) -> IpcR
         format!("{argv0} could not be started: {e}")
     };
     err_detail(
-        "EXT_PROVIDER_MISSING",
+        ErrorCode::ExtProviderMissing,
         message,
         json!({ "argv0": argv0, "command": command, "reason": e.to_string() }),
     )
@@ -282,7 +283,7 @@ fn panel_root(
 
 fn not_detected<T: serde::Serialize>(reason: String) -> IpcResult<T> {
     err_detail(
-        "EXT_NOT_DETECTED",
+        ErrorCode::ExtNotDetected,
         reason.clone(),
         json!({ "reason": reason }),
     )
@@ -290,7 +291,7 @@ fn not_detected<T: serde::Serialize>(reason: String) -> IpcResult<T> {
 
 fn no_home<T: serde::Serialize>(command: String) -> IpcResult<T> {
     err_detail(
-        "EXT_NOT_DETECTED",
+        ErrorCode::ExtNotDetected,
         "no home directory",
         json!({ "command": command }),
     )
@@ -298,7 +299,7 @@ fn no_home<T: serde::Serialize>(command: String) -> IpcResult<T> {
 
 fn not_enabled<T: serde::Serialize>(extension_id: &str) -> IpcResult<T> {
     err_detail(
-        "EXT_NOT_ENABLED",
+        ErrorCode::ExtNotEnabled,
         format!("{extension_id} is turned off"),
         json!({ "extensionId": extension_id }),
     )
@@ -306,7 +307,7 @@ fn not_enabled<T: serde::Serialize>(extension_id: &str) -> IpcResult<T> {
 
 fn not_consented<T: serde::Serialize>(extension_id: &str) -> IpcResult<T> {
     err_detail(
-        "EXT_NOT_CONSENTED",
+        ErrorCode::ExtNotConsented,
         format!("{extension_id} has not been reviewed and enabled"),
         json!({ "extensionId": extension_id }),
     )
@@ -337,7 +338,7 @@ pub fn extensions_set_enabled(
 ) -> IpcResult<Vec<ExtensionInfo>> {
     let registry = state.registry.lock().unwrap();
     let Some(ext) = registry::extension(&registry, &extension_id) else {
-        return err("INVALID_INPUT", "no such extension");
+        return err(ErrorCode::InvalidInput, "no such extension");
     };
     if enabled {
         let mut toggles = state.toggles.lock().unwrap();
@@ -395,7 +396,7 @@ pub fn extensions_detect(
 fn check_consentable(ext: &LoadedExtension, manifest_sha256: &str) -> Result<(), AppError> {
     if ext.manifest_error.is_some() {
         return Err(AppError {
-            code: "INVALID_INPUT".into(),
+            code: ErrorCode::InvalidInput,
             message: "this manifest failed to load".into(),
             detail: None,
 
@@ -404,7 +405,7 @@ fn check_consentable(ext: &LoadedExtension, manifest_sha256: &str) -> Result<(),
     }
     let Some(current_sha) = ext.manifest_sha256.as_deref() else {
         return Err(AppError {
-            code: "INVALID_INPUT".into(),
+            code: ErrorCode::InvalidInput,
             message: "this manifest failed to load".into(),
             detail: None,
 
@@ -413,9 +414,9 @@ fn check_consentable(ext: &LoadedExtension, manifest_sha256: &str) -> Result<(),
     };
     if current_sha != manifest_sha256 {
         return Err(AppError {
-            code: "EXT_CONSENT_STALE".into(),
+            code: ErrorCode::ExtConsentStale,
             message: "the manifest changed since this dialog opened".into(),
-            detail: Some(Box::new(json!({ "extensionId": ext.id }))),
+            detail: Some(json!({ "extensionId": ext.id })),
 
             runtime_failure: None,
         });
@@ -435,7 +436,7 @@ pub fn extensions_consent(
 ) -> IpcResult<Vec<ExtensionInfo>> {
     let registry = state.registry.lock().unwrap();
     let Some(ext) = registry::extension(&registry, &extension_id) else {
-        return err("INVALID_INPUT", "no such extension");
+        return err(ErrorCode::InvalidInput, "no such extension");
     };
     if let Err(e) = check_consentable(ext, &manifest_sha256) {
         return IpcResult::Err {
@@ -471,7 +472,7 @@ pub fn extensions_panel(
 ) -> IpcResult<PanelData> {
     let registry = state.registry.lock().unwrap();
     let Some((ext, panel)) = registry::panel(&registry, &panel_id) else {
-        return err("EXT_PANEL_NOT_FOUND", "no such panel");
+        return err(ErrorCode::ExtPanelNotFound, "no such panel");
     };
     let enabled = effective_enabled(&state, &app, ext);
     if !enabled {
@@ -479,7 +480,7 @@ pub fn extensions_panel(
     }
     let Some(provider) = panel.provider.as_ref() else {
         return err(
-            "EXT_PANEL_NOT_FOUND",
+            ErrorCode::ExtPanelNotFound,
             "a log-tail panel opens a stream, it does not resolve a payload",
         );
     };
@@ -498,7 +499,7 @@ pub fn extensions_panel(
         Ok(stdout) => match schema::panel_data(panel, &stdout, offset, limit) {
             Ok(data) => ok(data),
             Err(_) => err_detail(
-                "EXT_SCHEMA_INVALID",
+                ErrorCode::ExtSchemaInvalid,
                 "unexpected output shape",
                 json!({ "command": argv.join(" ") }),
             ),
@@ -520,23 +521,23 @@ pub fn extensions_open_stream(
 ) -> IpcResult<String> {
     let registry = state.registry.lock().unwrap();
     let Some((ext, panel)) = registry::panel(&registry, &panel_id) else {
-        return err("EXT_PANEL_NOT_FOUND", "no such panel");
+        return err(ErrorCode::ExtPanelNotFound, "no such panel");
     };
     let enabled = effective_enabled(&state, &app, ext);
     if !enabled {
         return not_enabled(&ext.id);
     }
     if panel.primitive != PrimitiveKind::LogTail {
-        return err("EXT_PANEL_NOT_FOUND", "this panel has no stream");
+        return err(ErrorCode::ExtPanelNotFound, "this panel has no stream");
     }
     let Some(source) = panel.source.as_ref() else {
-        return err("EXT_PANEL_NOT_FOUND", "this panel declares no source");
+        return err(ErrorCode::ExtPanelNotFound, "this panel declares no source");
     };
     let token = match (panel.token_source.as_ref(), token.as_deref()) {
         (Some(_), Some(t)) if valid_token(t) => Some(t.to_string()),
         (Some(_), _) => {
             return err_detail(
-                "EXT_INVALID_TOKEN",
+                ErrorCode::ExtInvalidToken,
                 "that row cannot be used as a log target",
                 json!({ "panelId": panel_id }),
             )
@@ -568,14 +569,14 @@ pub fn extensions_open_stream(
                 Ok(_) => {}
                 Err(SourceError::RootMissing) => {
                     return err_detail(
-                        "EXT_PATH_OUTSIDE_ROOT",
+                        ErrorCode::ExtPathOutsideRoot,
                         "the project root is no longer available",
                         json!({ "panelId": panel_id }),
                     );
                 }
                 Err(SourceError::OutsideRoot) => {
                     return err_detail(
-                        "EXT_PATH_OUTSIDE_ROOT",
+                        ErrorCode::ExtPathOutsideRoot,
                         "that log lives outside the project root",
                         json!({ "panelId": panel_id }),
                     );
@@ -590,7 +591,7 @@ pub fn extensions_open_stream(
         }
         Source::Process { .. } => {
             let Some(argv) = process_argv(source, token.as_deref()) else {
-                return err("EXT_PANEL_NOT_FOUND", "this panel declares no source");
+                return err(ErrorCode::ExtPanelNotFound, "this panel declares no source");
             };
             match spawn_process_stream(&app, &stream_id, &argv, &cwd) {
                 Ok((stop, child)) => state.streams.lock().unwrap().open(
@@ -623,7 +624,7 @@ pub fn extensions_close_stream(
     if state.streams.lock().unwrap().close(&stream_id) {
         ok(())
     } else {
-        err("EXT_STREAM_NOT_FOUND", "no such stream")
+        err(ErrorCode::ExtStreamNotFound, "no such stream")
     }
 }
 
@@ -646,7 +647,7 @@ mod tests {
             &argv,
         ));
         assert_eq!(value["ok"], json!(false));
-        assert_eq!(value["error"]["code"], json!("EXT_PROVIDER_MISSING"));
+        assert_eq!(value["error"]["code"], json!(ErrorCode::ExtProviderMissing));
         assert_eq!(
             value["error"]["message"],
             json!("cohorte not found on PATH")
@@ -702,7 +703,7 @@ mod tests {
             },
             &argv,
         ));
-        assert_eq!(value["error"]["code"], json!("EXT_PROVIDER_EXIT"));
+        assert_eq!(value["error"]["code"], json!(ErrorCode::ExtProviderExit));
         assert_eq!(value["error"]["message"], json!("exited 1"));
         assert_eq!(value["error"]["detail"]["code"], json!(1));
         assert_eq!(
@@ -718,20 +719,23 @@ mod tests {
             ProviderError::Timeout { timeout_ms: 10_000 },
             &argv,
         ));
-        assert_eq!(timeout["error"]["code"], json!("EXT_PROVIDER_TIMEOUT"));
+        assert_eq!(
+            timeout["error"]["code"],
+            json!(ErrorCode::ExtProviderTimeout)
+        );
         let capped = error_of(provider_error::<PanelData>(
             ProviderError::Capped {
                 cap_bytes: 4 * 1024 * 1024,
             },
             &argv,
         ));
-        assert_eq!(capped["error"]["code"], json!("EXT_OUTPUT_CAPPED"));
+        assert_eq!(capped["error"]["code"], json!(ErrorCode::ExtOutputCapped));
     }
 
     #[test]
     fn a_disabled_extension_is_refused_by_code() {
         let value = error_of(not_enabled::<PanelData>("docker"));
-        assert_eq!(value["error"]["code"], json!("EXT_NOT_ENABLED"));
+        assert_eq!(value["error"]["code"], json!(ErrorCode::ExtNotEnabled));
         assert_eq!(value["error"]["detail"]["extensionId"], json!("docker"));
     }
 
@@ -739,13 +743,13 @@ mod tests {
     #[test]
     fn an_unconsented_enable_is_refused_by_code() {
         let value = error_of(not_consented::<Vec<ExtensionInfo>>("k8s"));
-        assert_eq!(value["error"]["code"], json!("EXT_NOT_CONSENTED"));
+        assert_eq!(value["error"]["code"], json!(ErrorCode::ExtNotConsented));
     }
 
     #[test]
     fn an_undetected_root_reports_its_reason() {
         let value = error_of(not_detected::<PanelData>("not a git repository".into()));
-        assert_eq!(value["error"]["code"], json!("EXT_NOT_DETECTED"));
+        assert_eq!(value["error"]["code"], json!(ErrorCode::ExtNotDetected));
         assert_eq!(value["error"]["message"], json!("not a git repository"));
     }
 
@@ -760,14 +764,17 @@ mod tests {
 
     #[test]
     fn an_unknown_panel_id_is_not_found() {
-        let value = error_of(err::<PanelData>("EXT_PANEL_NOT_FOUND", "no such panel"));
-        assert_eq!(value["error"]["code"], json!("EXT_PANEL_NOT_FOUND"));
+        let value = error_of(err::<PanelData>(
+            ErrorCode::ExtPanelNotFound,
+            "no such panel",
+        ));
+        assert_eq!(value["error"]["code"], json!(ErrorCode::ExtPanelNotFound));
     }
 
     #[test]
     fn a_missing_home_directory_still_carries_a_command() {
         let value = error_of(no_home::<PanelData>("cohorte panels health --json".into()));
-        assert_eq!(value["error"]["code"], json!("EXT_NOT_DETECTED"));
+        assert_eq!(value["error"]["code"], json!(ErrorCode::ExtNotDetected));
         assert_eq!(value["error"]["message"], json!("no home directory"));
         assert_eq!(
             value["error"]["detail"]["command"],
@@ -839,7 +846,7 @@ mod tests {
             // refusal does NOT depend on the sha being absent or mismatched.
             manifest_sha256: Some("deadbeef".into()),
             manifest_error: Some(AppError {
-                code: "EXT_MANIFEST_INVALID".into(),
+                code: ErrorCode::ExtManifestInvalid,
                 message: "invalid manifest".into(),
                 detail: None,
 
@@ -848,7 +855,7 @@ mod tests {
         };
         let result = check_consentable(&ext, "deadbeef");
         let e = result.expect_err("a manifest_error must refuse consent");
-        assert_eq!(e.code, "INVALID_INPUT");
+        assert_eq!(e.code, ErrorCode::InvalidInput);
     }
 
     // REGRESSION (contract): `ExtensionSource.manifestSha256` is what the

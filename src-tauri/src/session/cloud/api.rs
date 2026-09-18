@@ -20,6 +20,7 @@
 //! contract lists for `cloud_list` precisely because they are actionable.
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use crate::ipc::{err, ok, IpcResult};
 
@@ -35,10 +36,10 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// `pub(crate)` because `detect.rs` returns the SAME words for the same two
 /// refusals when teleport announces them in the PTY rather than the API — one
 /// failure must not read as two different problems depending on where it was met.
-pub(crate) const DEVICE_UNTRUSTED_MSG: &str =
+pub const DEVICE_UNTRUSTED_MSG: &str =
     "This device is not enrolled for cloud sessions. Run `/login` in Claude Code on this \
      machine to enrol it, then try again.";
-pub(crate) const POLICY_DENIED_MSG: &str =
+pub const POLICY_DENIED_MSG: &str =
     "Your organization has turned cloud sessions off (allow_remote_sessions). \
      An administrator has to enable them.";
 const BAD_REF_MSG: &str =
@@ -50,7 +51,7 @@ const BAD_REF_MSG: &str =
 /// A cloud session id: `session_…` or `cse_…`, then the id charset. Deliberately
 /// strict — this value becomes an argv element (`claude --teleport <id>`), so
 /// anything that could be read as a flag or a path must never get through.
-pub(crate) fn valid_cloud_id(candidate: &str) -> bool {
+pub fn valid_cloud_id(candidate: &str) -> bool {
     let Some(rest) = candidate
         .strip_prefix("session_")
         .or_else(|| candidate.strip_prefix("cse_"))
@@ -70,7 +71,7 @@ pub(crate) fn valid_cloud_id(candidate: &str) -> bool {
 /// A path-shaped ref must name `claude.ai/code/` explicitly: accepting the last
 /// segment of ANY url would let `evil.example/session_x` through, and this value
 /// is handed to the CLI.
-pub(crate) fn normalize_cloud_ref(raw: &str) -> Option<String> {
+pub fn normalize_cloud_ref(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
@@ -108,7 +109,7 @@ fn first_str<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a str> {
 /// `git@github.com:acme/api.git` | `https://github.com/acme/api` | `acme/api`
 /// → `acme/api`. `None` when nothing owner/name-shaped survives, so a bare host
 /// or a single word is reported as "no repo" rather than as half a slug.
-pub(crate) fn remote_slug(raw: &str) -> Option<String> {
+pub fn remote_slug(raw: &str) -> Option<String> {
     let mut s = raw.trim();
     if s.is_empty() {
         return None;
@@ -138,7 +139,7 @@ pub(crate) fn remote_slug(raw: &str) -> Option<String> {
 /// session does? Host-agnostic and case-insensitive — a fork under a different
 /// owner deliberately does NOT match (spec §7 #6: "a checkout of the *same*
 /// repository — not a fork").
-pub(crate) fn repo_matches(remote_url: &str, repo: &str) -> bool {
+pub fn repo_matches(remote_url: &str, repo: &str) -> bool {
     match (remote_slug(remote_url), remote_slug(repo)) {
         (Some(a), Some(b)) => a.eq_ignore_ascii_case(&b),
         _ => false,
@@ -147,7 +148,7 @@ pub(crate) fn repo_matches(remote_url: &str, repo: &str) -> bool {
 
 /// Epoch milliseconds out of whatever the endpoint carries: a number (in ms or
 /// seconds — see `normalize_epoch_ms`) or an RFC3339 timestamp string.
-pub(crate) fn parse_epoch_ms(v: &Value) -> Option<u64> {
+pub fn parse_epoch_ms(v: &Value) -> Option<u64> {
     if let Some(n) = v.as_u64() {
         return Some(normalize_epoch_ms(n));
     }
@@ -177,7 +178,7 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 /// space separator, and a missing zone (read as UTC — the API is UTC and a
 /// wrong-by-hours "last activity" is strictly better than no row at all). A
 /// numeric offset is applied when present.
-pub(crate) fn rfc3339_to_epoch_ms(raw: &str) -> Option<u64> {
+pub fn rfc3339_to_epoch_ms(raw: &str) -> Option<u64> {
     let s = raw.trim();
     let bytes = s.as_bytes();
     if bytes.len() < 19 {
@@ -279,7 +280,7 @@ fn map_repo(v: &Value) -> Option<String> {
 /// that invents a title or a branch is worse than a row that shows neither.
 /// The key aliases are an informed guess at an endpoint that was not verified
 /// live — correcting them is an edit to the arrays below and nothing else.
-pub(crate) fn map_cloud_session(v: &Value) -> Option<CloudSession> {
+pub fn map_cloud_session(v: &Value) -> Option<CloudSession> {
     let id = first_str(v, &["id", "session_id", "sessionId", "uuid"])?;
     Some(CloudSession {
         id: id.to_string(),
@@ -308,7 +309,7 @@ pub(crate) fn map_cloud_session(v: &Value) -> Option<CloudSession> {
 /// not understand" — the caller degrades. A body whose array is non-empty but
 /// yields no mappable entry counts as unrecognized too: reporting an empty list
 /// there would claim the user has no cloud sessions, which is a lie.
-pub(crate) fn parse_cloud_list(body: &Value) -> Option<Vec<CloudSession>> {
+pub fn parse_cloud_list(body: &Value) -> Option<Vec<CloudSession>> {
     let entries = ["data", "sessions", "results", "items"]
         .iter()
         .find_map(|k| body.get(*k).and_then(|v| v.as_array()))
@@ -324,23 +325,23 @@ pub(crate) fn parse_cloud_list(body: &Value) -> Option<Vec<CloudSession>> {
 /// wording may talk about Remote Control. Map the reasons the user can act on to
 /// their CLOUD_* codes; `None` means "not actionable" and the caller degrades
 /// (FR-2) rather than inventing an error out of a shape it did not recognize.
-pub(crate) fn classify_api_error(status: u16, body: &str) -> Option<(&'static str, &'static str)> {
+pub fn classify_api_error(status: u16, body: &str) -> Option<(ErrorCode, &'static str)> {
     let b = body.to_lowercase();
     if b.contains("untrusted_device") || b.contains("trusted device") {
-        return Some(("CLOUD_DEVICE_UNTRUSTED", DEVICE_UNTRUSTED_MSG));
+        return Some((ErrorCode::CloudDeviceUntrusted, DEVICE_UNTRUSTED_MSG));
     }
     if b.contains("allow_remote_sessions") || (status == 403 && b.contains("policy")) {
-        return Some(("CLOUD_POLICY_DENIED", POLICY_DENIED_MSG));
+        return Some((ErrorCode::CloudPolicyDenied, POLICY_DENIED_MSG));
     }
     if b.contains("no_access_token") {
-        return Some(("CLOUD_AUTH_REQUIRED", AUTH_REQUIRED_MSG));
+        return Some((ErrorCode::CloudAuthRequired, AUTH_REQUIRED_MSG));
     }
     if status == 401
         || b.contains("token_expired")
         || b.contains("has expired")
         || b.contains("authentication_error")
     {
-        return Some(("CLOUD_AUTH_EXPIRED", AUTH_EXPIRED_MSG));
+        return Some((ErrorCode::CloudAuthExpired, AUTH_EXPIRED_MSG));
     }
     None
 }
@@ -355,9 +356,9 @@ pub(crate) fn classify_api_error(status: u16, body: &str) -> Option<(&'static st
 /// SINGLE-session endpoint a 404 is the answer to a question this app asked ("is
 /// this the id?"). On the list endpoint the same status means the route moved, so
 /// `list_result` folds it straight back into FR-2's degrade.
-pub(crate) enum CloudFetch {
+pub enum CloudFetch {
     Body(Value),
-    Actionable(&'static str, &'static str),
+    Actionable(ErrorCode, &'static str),
     NotFound,
     Degraded,
 }
@@ -365,7 +366,7 @@ pub(crate) enum CloudFetch {
 /// The verdict of one non-200, pure so the split above is testable without HTTP.
 /// An actionable BODY wins over the status: a policy refusal served as a 404 is
 /// still a policy refusal.
-pub(crate) fn classify_status(status: u16, body: &str) -> CloudFetch {
+pub fn classify_status(status: u16, body: &str) -> CloudFetch {
     match classify_api_error(status, body) {
         Some((code, message)) => CloudFetch::Actionable(code, message),
         None if status == 404 => CloudFetch::NotFound,
@@ -407,9 +408,7 @@ fn cloud_get(url: &str, token: &str) -> CloudFetch {
 /// FR-2: what one LIST fetch resolves to. Everything but an actionable refusal
 /// degrades — a 404 included, because on a collection endpoint it means the route
 /// moved and "you have no cloud sessions" would be a lie the user acts on.
-pub(crate) fn list_result(
-    fetch: CloudFetch,
-) -> Result<CloudListData, (&'static str, &'static str)> {
+pub fn list_result(fetch: CloudFetch) -> Result<CloudListData, AppError> {
     match fetch {
         CloudFetch::Body(body) => Ok(parse_cloud_list(&body)
             .map(|sessions| CloudListData {
@@ -417,16 +416,16 @@ pub(crate) fn list_result(
                 degraded: false,
             })
             .unwrap_or_else(degraded_list)),
-        CloudFetch::Actionable(code, message) => Err((code, message)),
+        CloudFetch::Actionable(code, message) => Err(AppError::new(code, message)),
         CloudFetch::NotFound | CloudFetch::Degraded => Ok(degraded_list()),
     }
 }
 
-pub(crate) fn list_url() -> String {
+pub fn list_url() -> String {
     format!("{API_BASE}/v1/code/sessions?limit={LIST_LIMIT}")
 }
 
-pub(crate) fn session_url(cloud_id: &str) -> String {
+pub fn session_url(cloud_id: &str) -> String {
     format!("{API_BASE}/v1/code/sessions/{cloud_id}")
 }
 
@@ -436,7 +435,7 @@ pub(crate) fn session_url(cloud_id: &str) -> String {
 /// documented precondition") — so the verdict stays a verdict here rather than
 /// being collapsed into an `Option` that loses the reason.
 #[derive(Debug)]
-pub(crate) enum CloudLookup {
+pub enum CloudLookup {
     /// The API described the session.
     Found(CloudSession),
     /// It did not answer usefully (transport, timeout, a shape this build does
@@ -447,13 +446,13 @@ pub(crate) enum CloudLookup {
     NotFound,
     /// A refusal the user can act on: an untrusted device, an org policy, or an
     /// auth state the FR-1 precheck did not already catch.
-    Actionable(&'static str, &'static str),
+    Actionable(ErrorCode, &'static str),
 }
 
 /// Pure: one fetch of the single-session endpoint → the verdict. The id is always
 /// the one the user gave — an API that answers about a DIFFERENT session is not
 /// something this app can explain, and the ref is what adoption will use.
-pub(crate) fn lookup_verdict(fetch: CloudFetch, cloud_id: &str) -> CloudLookup {
+pub fn lookup_verdict(fetch: CloudFetch, cloud_id: &str) -> CloudLookup {
     match fetch {
         CloudFetch::Body(body) => match map_cloud_session(&body)
             .or_else(|| body.get("session").and_then(map_cloud_session))
@@ -472,16 +471,16 @@ pub(crate) fn lookup_verdict(fetch: CloudFetch, cloud_id: &str) -> CloudLookup {
 
 /// FR-3/FR-4, best-effort: the cloud session's own metadata, or the reason the
 /// lookup could not produce it.
-pub(crate) fn lookup_cloud_session(token: &str, cloud_id: &str) -> CloudLookup {
+pub fn lookup_cloud_session(token: &str, cloud_id: &str) -> CloudLookup {
     lookup_verdict(cloud_get(&session_url(cloud_id), token), cloud_id)
 }
 
 /// The one wording for "no such cloud session", shared by `cloud_resolve` and
 /// `cloud_adopt` so the same 404 never reads as two different problems. Names the
 /// id, because the usual cause is a link pasted from a different account.
-pub(crate) fn session_not_found(cloud_id: &str) -> (&'static str, String) {
-    (
-        "CLOUD_SESSION_NOT_FOUND",
+pub fn session_not_found(cloud_id: &str) -> AppError {
+    AppError::new(
+        ErrorCode::CloudSessionNotFound,
         format!(
             "That cloud session does not exist for this account ({cloud_id}). Check the link, \
              or switch to the account that started it."
@@ -495,10 +494,7 @@ pub(crate) fn session_not_found(cloud_id: &str) -> (&'static str, String) {
 /// untrusted device or a policy refusal never leaves `cloud_resolve` (neither code
 /// is in its contract union). Only a definitive 404 fails, because there is then
 /// nothing left to adopt.
-pub(crate) fn resolved_session(
-    verdict: CloudLookup,
-    cloud_id: &str,
-) -> Result<CloudSession, (&'static str, String)> {
+pub fn resolved_session(verdict: CloudLookup, cloud_id: &str) -> Result<CloudSession, AppError> {
     match verdict {
         CloudLookup::Found(session) => Ok(session),
         CloudLookup::Unknown | CloudLookup::Actionable(..) => Ok(CloudSession {
@@ -516,7 +512,7 @@ pub(crate) fn resolved_session(
 /// than erroring: the contract's error sets for these three commands contain no
 /// account code, and a stale id degrading to the default account is strictly
 /// better than an error the frontend cannot render.
-pub(crate) fn cloud_account_id(app: &AppHandle, requested: Option<&str>) -> String {
+pub fn cloud_account_id(app: &AppHandle, requested: Option<&str>) -> String {
     let known = crate::account::known_ids(app);
     requested
         .map(str::trim)
@@ -525,10 +521,7 @@ pub(crate) fn cloud_account_id(app: &AppHandle, requested: Option<&str>) -> Stri
         .unwrap_or_else(|| crate::account::default_account_id(app))
 }
 
-pub(crate) fn cloud_token_for(
-    app: &AppHandle,
-    account_id: &str,
-) -> Result<String, (&'static str, &'static str)> {
+pub fn cloud_token_for(app: &AppHandle, account_id: &str) -> Result<String, AppError> {
     let config_dir = crate::account::config_dir_of(app, account_id);
     cloud_access_token(config_dir.as_deref())
 }
@@ -539,7 +532,7 @@ pub(crate) fn cloud_token_for(
 /// lets the modal pre-select quietly instead of guessing (FR-14). Compares git
 /// remotes, so a project directory that merely happens to be named `api` never
 /// matches `acme/api`.
-pub(crate) fn match_project_by_repo(app: &AppHandle, repo: &str) -> Option<String> {
+pub fn match_project_by_repo(app: &AppHandle, repo: &str) -> Option<String> {
     let roots = crate::project::project_roots(app);
     roots.into_iter().find_map(|(id, root)| {
         let host = crate::diff::GitHost::of(&root);
@@ -560,12 +553,9 @@ pub fn cloud_list(app: AppHandle, account_id: Option<String>) -> IpcResult<Cloud
     let account = cloud_account_id(&app, account_id.as_deref());
     let token = match cloud_token_for(&app, &account) {
         Ok(t) => t,
-        Err((code, message)) => return err(code, message),
+        Err(e) => return e.into(),
     };
-    match list_result(cloud_get(&list_url(), &token)) {
-        Ok(data) => ok(data),
-        Err((code, message)) => err(code, message),
-    }
+    list_result(cloud_get(&list_url(), &token)).into()
 }
 
 /// francois:cloud:resolve → `cloud_resolve`. FR-3: normalize the ref, then fill
@@ -579,18 +569,18 @@ pub fn cloud_resolve(
     account_id: Option<String>,
 ) -> IpcResult<CloudResolveData> {
     let Some(cloud_id) = normalize_cloud_ref(&r#ref) else {
-        return err("INVALID_INPUT", BAD_REF_MSG);
+        return err(ErrorCode::InvalidInput, BAD_REF_MSG);
     };
     let account = cloud_account_id(&app, account_id.as_deref());
     let token = match cloud_token_for(&app, &account) {
         Ok(t) => t,
-        Err((code, message)) => return err(code, message),
+        Err(e) => return e.into(),
     };
     // FR-3: everything but a definitive 404 resolves — with null metadata when the
     // lookup could not fill it in.
     let session = match resolved_session(lookup_cloud_session(&token, &cloud_id), &cloud_id) {
         Ok(session) => session,
-        Err((code, message)) => return err(code, message),
+        Err(e) => return e.into(),
     };
     let matched_project_id = session
         .repo
@@ -773,7 +763,7 @@ mod tests {
     fn the_actionable_api_failures_map_to_their_cloud_codes() {
         assert_eq!(
             classify_api_error(403, r#"{"error":{"type":"untrusted_device"}}"#).map(|(c, _)| c),
-            Some("CLOUD_DEVICE_UNTRUSTED")
+            Some(ErrorCode::CloudDeviceUntrusted)
         );
         assert_eq!(
             classify_api_error(
@@ -781,17 +771,17 @@ mod tests {
                 r#"{"error":{"message":"allow_remote_sessions is disabled"}}"#
             )
             .map(|(c, _)| c),
-            Some("CLOUD_POLICY_DENIED")
+            Some(ErrorCode::CloudPolicyDenied)
         );
         assert_eq!(
             classify_api_error(401, r#"{"error":{"type":"no_access_token"}}"#).map(|(c, _)| c),
-            Some("CLOUD_AUTH_REQUIRED")
+            Some(ErrorCode::CloudAuthRequired)
         );
         // §7 #4: the CLI/API may phrase it as Remote Control — the code is ours,
         // and the message we return must never repeat that phrase.
         let (code, message) =
             classify_api_error(401, "Remote Control session expired").expect("actionable");
-        assert_eq!(code, "CLOUD_AUTH_EXPIRED");
+        assert_eq!(code, ErrorCode::CloudAuthExpired);
         assert!(
             !message.to_lowercase().contains("remote control"),
             "this feature's UI must never say Remote Control: {message}"
@@ -829,7 +819,7 @@ mod tests {
         ));
         assert!(matches!(
             classify_status(403, r#"{"error":{"type":"untrusted_device"}}"#),
-            CloudFetch::Actionable("CLOUD_DEVICE_UNTRUSTED", _)
+            CloudFetch::Actionable(ErrorCode::CloudDeviceUntrusted, _)
         ));
         // An actionable body wins over the bare status, whatever the status is.
         assert!(matches!(
@@ -837,7 +827,7 @@ mod tests {
                 404,
                 "your organization has turned allow_remote_sessions off"
             ),
-            CloudFetch::Actionable("CLOUD_POLICY_DENIED", _)
+            CloudFetch::Actionable(ErrorCode::CloudPolicyDenied, _)
         ));
     }
 
@@ -862,10 +852,13 @@ mod tests {
         // Only the actionable refusals raise.
         assert_eq!(
             list_result(CloudFetch::Actionable(
-                "CLOUD_POLICY_DENIED",
+                ErrorCode::CloudPolicyDenied,
                 POLICY_DENIED_MSG
             )),
-            Err(("CLOUD_POLICY_DENIED", POLICY_DENIED_MSG))
+            Err(AppError::new(
+                ErrorCode::CloudPolicyDenied,
+                POLICY_DENIED_MSG
+            ))
         );
     }
 
@@ -918,10 +911,10 @@ mod tests {
         ));
         assert!(matches!(
             lookup_verdict(
-                CloudFetch::Actionable("CLOUD_DEVICE_UNTRUSTED", DEVICE_UNTRUSTED_MSG),
+                CloudFetch::Actionable(ErrorCode::CloudDeviceUntrusted, DEVICE_UNTRUSTED_MSG),
                 "session_01AB"
             ),
-            CloudLookup::Actionable("CLOUD_DEVICE_UNTRUSTED", _)
+            CloudLookup::Actionable(ErrorCode::CloudDeviceUntrusted, _)
         ));
     }
 
@@ -933,9 +926,9 @@ mod tests {
         // policy refusal must NOT leak out of resolve — the modal can still adopt.
         for verdict in [
             CloudLookup::Unknown,
-            CloudLookup::Actionable("CLOUD_DEVICE_UNTRUSTED", DEVICE_UNTRUSTED_MSG),
-            CloudLookup::Actionable("CLOUD_POLICY_DENIED", POLICY_DENIED_MSG),
-            CloudLookup::Actionable("CLOUD_AUTH_EXPIRED", AUTH_EXPIRED_MSG),
+            CloudLookup::Actionable(ErrorCode::CloudDeviceUntrusted, DEVICE_UNTRUSTED_MSG),
+            CloudLookup::Actionable(ErrorCode::CloudPolicyDenied, POLICY_DENIED_MSG),
+            CloudLookup::Actionable(ErrorCode::CloudAuthExpired, AUTH_EXPIRED_MSG),
         ] {
             let session = resolved_session(verdict, "session_01AB").expect("resolves");
             assert_eq!(
@@ -947,11 +940,12 @@ mod tests {
             );
         }
         // A definitive 404 IS the one the contract names.
-        let (code, message) = resolved_session(CloudLookup::NotFound, "session_01AB").unwrap_err();
-        assert_eq!(code, "CLOUD_SESSION_NOT_FOUND");
+        let error = resolved_session(CloudLookup::NotFound, "session_01AB").unwrap_err();
+        assert_eq!(error.code, ErrorCode::CloudSessionNotFound);
         assert!(
-            message.contains("no longer exists") || message.contains("does not exist"),
-            "actionable: {message}"
+            error.message.contains("no longer exists") || error.message.contains("does not exist"),
+            "actionable: {}",
+            error.message
         );
     }
 

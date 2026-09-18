@@ -12,6 +12,7 @@
 //! (`CLOUD_AUTH_REQUIRED`) and a token past its expiry (`CLOUD_AUTH_EXPIRED`).
 
 use super::*;
+use crate::ipc::{AppError, ErrorCode};
 
 use std::path::PathBuf;
 
@@ -19,10 +20,10 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 
-pub(crate) const AUTH_REQUIRED_MSG: &str =
+pub const AUTH_REQUIRED_MSG: &str =
     "Cloud sessions need a claude.ai login — API key auth is not sufficient. \
      Run `claude` in a terminal and sign in with /login.";
-pub(crate) const AUTH_EXPIRED_MSG: &str =
+pub const AUTH_EXPIRED_MSG: &str =
     "Your claude.ai login has expired. Run a turn in Claude Code, or `/login`, to refresh it.";
 const THIRD_PARTY_MSG: &str =
     "Cloud sessions need a claude.ai login. This account is configured against a \
@@ -30,7 +31,7 @@ const THIRD_PARTY_MSG: &str =
 
 /// FR-1: `<configDir>/.credentials.json`, else the global `~/.claude` one.
 /// `None` only when there is no config dir AND no home directory to fall back to.
-pub(crate) fn credentials_path(config_dir: Option<&str>) -> Option<PathBuf> {
+pub fn credentials_path(config_dir: Option<&str>) -> Option<PathBuf> {
     match config_dir.map(str::trim).filter(|d| !d.is_empty()) {
         Some(dir) => Some(PathBuf::from(dir).join(".credentials.json")),
         None => dirs::home_dir().map(|h| h.join(".claude").join(".credentials.json")),
@@ -40,7 +41,7 @@ pub(crate) fn credentials_path(config_dir: Option<&str>) -> Option<PathBuf> {
 /// The `(accessToken, expiresAt)` a credentials document carries. `None` when it
 /// has no claude.ai OAuth block at all — which is exactly the API-key /
 /// setup-token / Bedrock case (spec §7 #5): those write no `claudeAiOauth`.
-pub(crate) fn parse_credentials(doc: &Value) -> Option<(String, Option<u64>)> {
+pub fn parse_credentials(doc: &Value) -> Option<(String, Option<u64>)> {
     let oauth = doc.get("claudeAiOauth")?;
     let token = oauth.get("accessToken")?.as_str()?.trim().to_string();
     if token.is_empty() {
@@ -57,15 +58,15 @@ pub(crate) fn parse_credentials(doc: &Value) -> Option<(String, Option<u64>)> {
 /// an `expiresAt` at/before now ⇒ `CLOUD_AUTH_EXPIRED`. Both are ACTIONABLE,
 /// which is why they are the only cloud failures that ever resolve as errors
 /// rather than degrading (FR-2).
-pub(crate) fn token_state(
-    parsed: Option<(String, Option<u64>)>,
-    now: u64,
-) -> Result<String, (&'static str, &'static str)> {
+pub fn token_state(parsed: Option<(String, Option<u64>)>, now: u64) -> Result<String, AppError> {
     let Some((token, expires_at)) = parsed else {
-        return Err(("CLOUD_AUTH_REQUIRED", AUTH_REQUIRED_MSG));
+        return Err(AppError::new(
+            ErrorCode::CloudAuthRequired,
+            AUTH_REQUIRED_MSG,
+        ));
     };
     if expires_at.is_some_and(|exp| exp <= now) {
-        return Err(("CLOUD_AUTH_EXPIRED", AUTH_EXPIRED_MSG));
+        return Err(AppError::new(ErrorCode::CloudAuthExpired, AUTH_EXPIRED_MSG));
     }
     Ok(token)
 }
@@ -78,9 +79,7 @@ pub(crate) fn token_state(
 ///
 /// Pure over an injected environment lookup, so the rule is testable without
 /// mutating a global every other test in the binary can see.
-pub(crate) fn eligibility_block(
-    env: &dyn Fn(&str) -> Option<String>,
-) -> Option<(&'static str, &'static str)> {
+pub fn eligibility_block(env: &dyn Fn(&str) -> Option<String>) -> Option<AppError> {
     let truthy = |key: &str| {
         env(key)
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true"))
@@ -90,12 +89,12 @@ pub(crate) fn eligibility_block(
         || truthy("CLAUDE_CODE_USE_VERTEX")
         || truthy("CLAUDE_CODE_USE_FOUNDRY")
     {
-        return Some(("CLOUD_AUTH_REQUIRED", THIRD_PARTY_MSG));
+        return Some(AppError::new(ErrorCode::CloudAuthRequired, THIRD_PARTY_MSG));
     }
     let base = env("ANTHROPIC_BASE_URL").unwrap_or_default();
     let base = base.trim().to_lowercase();
     if !base.is_empty() && !base.contains("api.anthropic.com") {
-        return Some(("CLOUD_AUTH_REQUIRED", THIRD_PARTY_MSG));
+        return Some(AppError::new(ErrorCode::CloudAuthRequired, THIRD_PARTY_MSG));
     }
     None
 }
@@ -110,7 +109,7 @@ fn read_credentials_file(path: &std::path::Path) -> Option<(String, Option<u64>)
 /// than on disk. Read-only, and only reached when the file is absent.
 #[cfg(target_os = "macos")]
 fn keychain_credentials() -> Option<(String, Option<u64>)> {
-    let out = std::process::Command::new("security")
+    let out = crate::process_util::spawn("security")
         .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"])
         .output()
         .ok()?;
@@ -129,9 +128,7 @@ fn keychain_credentials() -> Option<(String, Option<u64>)> {
 
 /// FR-1 end to end: the token an adoption/list/resolve for this account must
 /// present, or the actionable reason it cannot.
-pub(crate) fn cloud_access_token(
-    config_dir: Option<&str>,
-) -> Result<String, (&'static str, &'static str)> {
+pub fn cloud_access_token(config_dir: Option<&str>) -> Result<String, AppError> {
     if let Some(blocked) = eligibility_block(&|k| std::env::var(k).ok()) {
         return Err(blocked);
     }
@@ -199,8 +196,8 @@ mod tests {
 
     #[test]
     fn a_missing_token_is_auth_required() {
-        let (code, message) = token_state(None, 1_000).unwrap_err();
-        assert_eq!(code, "CLOUD_AUTH_REQUIRED");
+        let AppError { code, message, .. } = token_state(None, 1_000).unwrap_err();
+        assert_eq!(code, ErrorCode::CloudAuthRequired);
         assert!(
             message.contains("API key auth is not sufficient"),
             "the message must say WHY a working API key is not enough: {message}"
@@ -209,8 +206,9 @@ mod tests {
 
     #[test]
     fn a_token_past_its_expiry_is_auth_expired() {
-        let (code, message) = token_state(Some(("t".into(), Some(1_000))), 1_001).unwrap_err();
-        assert_eq!(code, "CLOUD_AUTH_EXPIRED");
+        let AppError { code, message, .. } =
+            token_state(Some(("t".into(), Some(1_000))), 1_001).unwrap_err();
+        assert_eq!(code, ErrorCode::CloudAuthExpired);
         assert!(message.contains("/login"), "actionable: {message}");
         // Exactly at the expiry instant is expired too — the API would refuse it.
         assert!(token_state(Some(("t".into(), Some(1_000))), 1_000).is_err());
@@ -252,8 +250,8 @@ mod tests {
         // ineligible for cloud sessions, whatever is on disk.
         let bedrock = |k: &str| (k == "CLAUDE_CODE_USE_BEDROCK").then(|| "1".to_string());
         assert_eq!(
-            eligibility_block(&bedrock).map(|(c, _)| c),
-            Some("CLOUD_AUTH_REQUIRED")
+            eligibility_block(&bedrock).map(|e| e.code),
+            Some(ErrorCode::CloudAuthRequired)
         );
         let vertex = |k: &str| (k == "CLAUDE_CODE_USE_VERTEX").then(|| "true".to_string());
         assert!(eligibility_block(&vertex).is_some());

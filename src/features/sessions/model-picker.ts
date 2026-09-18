@@ -31,18 +31,25 @@ export function groupByFamily(models: ModelInfo[]): ModelFamilyGroup[] {
   return Array.from(map, ([family, items]) => ({ family, items }));
 }
 
-/**
- * useModelCatalog's account-rekey fetch resolver: which model id the picker
- * should show once a `session_models` fetch resolves. `current` is kept when
- * it is still in the freshly fetched `models` — this is what makes a
- * StrictMode double-fetch harmless (a project default already applied to
- * `current` before the second resolve lands survives, since it is still in
- * the catalog) and what re-seeds the picker when the selected account
- * changed to a different provider (a Claude model id is never in an
- * endpoint's catalog, so it falls through to the new catalog's first entry).
- * Empty for an empty catalog — never a fabricated id.
- */
-export function reconcileModelId(current: string, models: ModelInfo[]): string {
-  if (current !== '' && models.some((m) => m.id === current)) return current;
-  return models[0]?.id ?? '';
+export function modelPickerPlacement(
+  trigger: { left: number; top: number; bottom: number; width: number },
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const width = Math.min(trigger.width, viewportWidth - 16);
+  const below = viewportHeight - trigger.bottom - 12;
+  const above = trigger.top - 12;
+  const openAbove = above > below;
+  const maxHeight = Math.max(0, Math.min(viewportHeight * 0.6, openAbove ? above : below));
+  return {
+    left: Math.max(8, Math.min(trigger.left, viewportWidth - width - 8)),
+    top: openAbove ? trigger.top - maxHeight - 4 : trigger.bottom + 4,
+    width,
+    maxHeight,
+  };
+}
+
+export function revealModelOption(root: HTMLElement): void {
+  root.querySelector('.model-picker__family--active')?.scrollIntoView({ block: 'nearest' });
+  root.querySelector('.model-picker__option--focused')?.scrollIntoView({ block: 'nearest' });
 }

@@ -16,6 +16,7 @@
 use super::registry::build_list;
 use super::{emit, AccountEvent, AccountInner, AccountKind, AccountRecord, AccountState};
 use crate::account::Account;
+use crate::ipc::{AppError, ErrorCode};
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -35,7 +36,7 @@ const POLL: Duration = Duration::from_millis(500);
 /// starts empty and `codex login` is what fills it; copying an existing
 /// `~/.codex` in would silently share one credential across rows that the user
 /// created precisely to keep apart.
-pub(crate) fn apply_add_codex(
+pub fn apply_add_codex(
     inner: &mut AccountInner,
     id: String,
     config_dir: String,
@@ -47,7 +48,7 @@ pub(crate) fn apply_add_codex(
         email: None,
         organization: None,
         config_dir,
-        created_at: crate::session::now_ms(),
+        created_at: crate::ids::now_ms(),
         kind: AccountKind::CodexCli,
         endpoint: None,
     });
@@ -62,23 +63,18 @@ pub(crate) fn apply_add_codex(
 /// Returns as soon as the process is spawned — the browser round-trip happens
 /// out of band, and the poller below publishes the refreshed list once
 /// `auth.json` lands (which is what flips the row's `signedIn`, FR-21a).
-pub(crate) fn spawn_codex_login(
-    config_dir: &str,
-) -> Result<std::process::Child, (&'static str, String)> {
-    let mut cmd = std::process::Command::new(crate::session::codex_program());
-    cmd.arg("login");
-    cmd.env("CODEX_HOME", config_dir);
-    // A GUI-launched app inherits launchd's minimal PATH on macOS, not the login
-    // shell's — so an npm-installed `codex` would be invisible here even though
-    // it runs fine in a terminal. Same helper every `claude` spawn uses.
-    if let Some(path) = crate::session::claude_path_env() {
-        cmd.env("PATH", path);
-    }
+pub fn spawn_codex_login(config_dir: &str) -> Result<std::process::Child, AppError> {
+    // The facade resolves PATH against the login shell: a GUI-launched app
+    // inherits launchd's minimal PATH on macOS, so an npm-installed `codex`
+    // would otherwise be invisible here even though it runs in a terminal.
+    let mut cmd = crate::process_util::spawn(crate::process_util::codex_program())
+        .arg("login")
+        .env("CODEX_HOME", config_dir);
     if let Some(home) = dirs::home_dir() {
-        cmd.current_dir(home);
+        cmd = cmd.current_dir(home);
     }
-    crate::session::no_window(&mut cmd);
-    // **`null`, not `piped`.** Nothing here ever reads codex's output — the
+    // **`null`, not `piped`** — and the facade's defaults are already both.
+    // Nothing here ever reads codex's output — the
     // browser is the UI — and a piped stream with no reader is not merely
     // wasteful, it is fatal: `codex login` announces "Starting local login
     // server on http://localhost:1455" on stdout the moment it starts, and once
@@ -90,17 +86,17 @@ pub(crate) fn spawn_codex_login(
     // `null` discards the output without ever blocking or breaking, which is
     // what "we don't want codex's output in Francois' stdout" actually needs;
     // `piped` was the wrong instrument for that intent.
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    cmd.spawn().map_err(|e| {
+    cmd.start().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            (
-                "SPAWN_FAILED",
+            AppError::new(
+                ErrorCode::SpawnFailed,
                 "could not start codex — install it with `npm i -g @openai/codex`".to_string(),
             )
         } else {
-            ("SPAWN_FAILED", format!("could not start codex login: {e}"))
+            AppError::new(
+                ErrorCode::SpawnFailed,
+                format!("could not start codex login: {e}"),
+            )
         }
     })
 }
@@ -119,19 +115,19 @@ pub(crate) fn spawn_codex_login(
 /// side effect is an event that recomputes what `account_list` would have
 /// returned anyway. Giving up costs nothing — the next `account_list` derives
 /// the same truth from the same file (FR-20).
-pub(crate) fn start_codex_login_poller(
+pub fn start_codex_login_poller(
     app: &AppHandle,
     config_dir: String,
     mut child: std::process::Child,
 ) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let deadline = crate::session::now_ms() + LOGIN_TIMEOUT_SECS * 1_000;
+        let deadline = crate::ids::now_ms() + LOGIN_TIMEOUT_SECS * 1_000;
         loop {
             std::thread::sleep(POLL);
             let signed_in = super::codex_auth_file_exists(&config_dir);
             let exited = matches!(child.try_wait(), Ok(Some(_)) | Err(_));
-            let expired = crate::session::now_ms() >= deadline;
+            let expired = crate::ids::now_ms() >= deadline;
             match poll_step(signed_in, exited, expired) {
                 PollStep::Continue => continue,
                 PollStep::Publish => {
@@ -192,7 +188,7 @@ fn publish(app: &AppHandle) {
 /// `auth.json` atomically enough that two concurrent runs would not corrupt it,
 /// but two browser tabs for the same row is a confusing UI, so the caller checks
 /// this first.
-pub(crate) fn codex_login_in_flight(state: &AccountState) -> bool {
+pub fn codex_login_in_flight(state: &AccountState) -> bool {
     state.1.load(Ordering::SeqCst)
 }
 

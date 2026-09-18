@@ -6,7 +6,7 @@ Project: **Francois** — a desktop terminal app that orchestrates Claude Code s
 > deterministic contract pipeline commands parse (`/build`, `/review`, …). The prose sections after it
 > carry the conventions agents read — they are authoritative for anything the block abbreviates.
 > Kept current by `/update-pipeline` (reconcile: new fields topped up, values never overwritten).
-> Rendered agent files (`.claude/agents/frontend.md`, `core.md`) are regenerated from this profile on
+> Rendered agent files (`.codex/agents/frontend.toml`, `core.toml`) are regenerated from this profile on
 > every reconcile — customize agents through §Conventions here, never by editing the agent files.
 
 ```yaml pipeline-profile
@@ -51,7 +51,7 @@ surfaces:
     build_cmd: npm run build
     uses_design: true
   - key: core
-    path: src-tauri
+    path: [src-tauri, scripts/quality]        # widened core-architecture-wave3 FR-8/FR-10: quality-rule authoring for Rust-shape checks has no other owner
     label: core (Rust / Tauri 2)
     agent: core
     tools: [Read, Write, Edit, Bash, Grep, Glob, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
@@ -79,6 +79,15 @@ contract:
 # CI job) — release.yml derives versions from conventional commits automatically.
 release_notes:
   enabled: false                              # /cohorte-ship §2b is a no-op
+  tool: none
+  dir: ""
+  filename: "<feature_id>.md"
+  anchor_package: ""
+  language: English
+  forbid_levels: []
+  empty_cmd: ""
+  ci_job: ""
+  guidance: ""
 
 # ── repo-wide commands ──────────────────────────────────────────────────────
 commands:
@@ -97,11 +106,13 @@ commands:
 rbac:
   enabled: false
   hierarchy: []
+  note: ""
 
 # ── design ──────────────────────────────────────────────────────────────────
 design:
   enabled: true
   provider: claude-design
+  inline: false                              # Codex uses the conversational design path
   design_system_project: "Design system extraction plan"   # a4b15728-147c-4932-b83c-f60a5fc60db7
   design_project: none
   snapshot_dir: ""                            # local mirror lives at the repo root: *.dc.html + screenshots/
@@ -119,7 +130,7 @@ isolation:
   compose_file: ""
   registry: ""
 
-# ── gate (drives .claude/gate-config.json) ──────────────────────────────────
+# ── gate (drives .cohorte/gate-config.json) ─────────────────────────────────
 gate:
   default_branch: main                        # the protected branch (mirrors vcs.default_branch)
   deny:
@@ -132,10 +143,10 @@ gate:
     - "git merge"
     - "git rebase"
     - "git reset"
-  # Phase gate: review dispatches require a fresh `.claude/preflight.ok` stamp,
+  # Phase gate: review dispatches require a fresh `.cohorte/preflight.ok` stamp,
   # written by pipeline/scripts/preflight.sh when typecheck+tests are green — gate.py
   # "ask"s the dispatch when the stamp is missing, stale, or the code changed since.
-  # The stamp is local: keep `.claude/preflight.ok` gitignored, never committed.
+  # The stamp is local: keep `.cohorte/preflight.ok` gitignored, never committed.
   preflight:
     enabled: true
     agents: [review]                          # subagent_types the stamp gates

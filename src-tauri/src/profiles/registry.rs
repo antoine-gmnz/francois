@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::ipc::{AppError, ErrorCode};
+
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
@@ -10,7 +12,7 @@ use tauri::{AppHandle, Manager};
 
 /// FR-3: `name` is trimmed, 1..=MAX_PROFILE_NAME chars — counted as Unicode
 /// scalar values, never bytes (a 60-emoji name is 60 characters).
-pub(crate) fn validate_name(raw: &str) -> Result<String, &'static str> {
+pub fn validate_name(raw: &str) -> Result<String, &'static str> {
     let name = raw.trim().to_string();
     if name.is_empty() || name.chars().count() > MAX_PROFILE_NAME {
         return Err(BAD_NAME_MSG);
@@ -22,7 +24,7 @@ pub(crate) fn validate_name(raw: &str) -> Result<String, &'static str> {
 /// absent — no `--system-prompt`, `replacesSystemPrompt: false`. Bounds are
 /// checked against the ORIGINAL text (FR-6), so an over-cap prompt of only
 /// whitespace still refuses rather than silently vanishing.
-pub(crate) fn normalize_prompt(raw: Option<String>) -> Result<Option<String>, &'static str> {
+pub fn normalize_prompt(raw: Option<String>) -> Result<Option<String>, &'static str> {
     let Some(text) = raw else {
         return Ok(None);
     };
@@ -55,16 +57,33 @@ fn normalize_extra_args_raw(raw: Option<String>) -> Result<Option<String>, &'sta
 /// What a validation failure looks like at the command layer: an
 /// `INVALID_INPUT` (bounds, unterminated quote) or a `PROFILE_ARG_DENIED`
 /// carrying the named `{ flag, reason }` (FR-9).
-pub(crate) enum ProfileError {
+pub enum ProfileError {
     InvalidInput(&'static str),
     ArgDenied { flag: String, reason: &'static str },
+}
+
+// core-architecture-wave3 FR-6: the typed domain error carries its own codes
+// (and, for ArgDenied, the contract's `{ flag, reason }` detail) into the one
+// error type every command body converts from. The command surface no longer
+// needs a hand-written mapper.
+impl From<ProfileError> for AppError {
+    fn from(e: ProfileError) -> Self {
+        match e {
+            ProfileError::InvalidInput(msg) => AppError::new(ErrorCode::InvalidInput, msg),
+            ProfileError::ArgDenied { flag, reason } => AppError::with_detail(
+                ErrorCode::ProfileArgDenied,
+                format!("{flag} is not allowed in a profile's extra args: {reason}"),
+                serde_json::json!({ "flag": flag, "reason": reason }),
+            ),
+        }
+    }
 }
 
 /// FR-6/FR-7/FR-9: the whole create/update decision — validate, parse
 /// `extraArgsRaw`, re-check the denylist — kept pure so it is unit-testable
 /// without a Tauri AppHandle. `id`/`created_at` are carried through unchanged
 /// by `:update` (FR-5); `:create` mints fresh ones at the call site.
-pub(crate) fn build_profile(
+pub fn build_profile(
     id: String,
     name: &str,
     system_prompt: Option<String>,
@@ -106,7 +125,7 @@ pub(crate) fn build_profile(
 
 /// FR-4: `name` ascending, case-insensitive, ties broken by `id` for
 /// stability.
-pub(crate) fn list_ordered(profiles: &[SessionProfile]) -> Vec<SessionProfile> {
+pub fn list_ordered(profiles: &[SessionProfile]) -> Vec<SessionProfile> {
     let mut out = profiles.to_vec();
     out.sort_by(|a, b| {
         a.name
@@ -119,13 +138,13 @@ pub(crate) fn list_ordered(profiles: &[SessionProfile]) -> Vec<SessionProfile> {
 
 // ---------- FR-5: update ----------
 
-pub(crate) fn find_index(profiles: &[SessionProfile], id: &str) -> Option<usize> {
+pub fn find_index(profiles: &[SessionProfile], id: &str) -> Option<usize> {
     profiles.iter().position(|p| p.id == id)
 }
 
 // ---------- FR-1: persistence ----------
 
-pub(crate) fn profiles_json_path(app: &AppHandle) -> Option<PathBuf> {
+pub fn profiles_json_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
@@ -135,7 +154,7 @@ pub(crate) fn profiles_json_path(app: &AppHandle) -> Option<PathBuf> {
 /// A missing, empty or unparseable document yields an EMPTY registry (FR-4);
 /// a single undeserializable entry is skipped, not fatal — the same tolerance
 /// `project::parse_registry` applies.
-pub(crate) fn parse_registry(bytes: &[u8]) -> Vec<SessionProfile> {
+pub fn parse_registry(bytes: &[u8]) -> Vec<SessionProfile> {
     let Ok(doc) = serde_json::from_slice::<Value>(bytes) else {
         return Vec::new();
     };
@@ -147,7 +166,7 @@ pub(crate) fn parse_registry(bytes: &[u8]) -> Vec<SessionProfile> {
         .collect()
 }
 
-pub(crate) fn load_from(path: &Path) -> Vec<SessionProfile> {
+pub fn load_from(path: &Path) -> Vec<SessionProfile> {
     std::fs::read(path)
         .map(|b| parse_registry(&b))
         .unwrap_or_default()
@@ -156,14 +175,18 @@ pub(crate) fn load_from(path: &Path) -> Vec<SessionProfile> {
 /// FR-1: `{ "version": 1, "profiles": [ … ] }`, written atomically through the
 /// same helper permission-guardrails/project use — a write failure must never
 /// leave memory and disk disagreeing.
-pub(crate) fn save_to(path: &Path, profiles: &[SessionProfile]) -> Result<(), String> {
+pub fn save_to(path: &Path, profiles: &[SessionProfile]) -> Result<(), AppError> {
     let doc = serde_json::json!({ "version": 1, "profiles": profiles });
     crate::permissions::write_json_atomic(path, &doc)
 }
 
-pub(crate) fn persist_registry(app: &AppHandle, profiles: &[SessionProfile]) -> Result<(), String> {
-    let path = profiles_json_path(app)
-        .ok_or_else(|| "could not resolve the app data directory".to_string())?;
+pub fn persist_registry(app: &AppHandle, profiles: &[SessionProfile]) -> Result<(), AppError> {
+    let path = profiles_json_path(app).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::Internal,
+            "could not resolve the app data directory",
+        )
+    })?;
     save_to(&path, profiles)
 }
 

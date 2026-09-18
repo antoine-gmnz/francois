@@ -54,10 +54,11 @@ export function stepOutcome(detail: Pick<StepDetail, 'isError' | 'exitCode'>): s
 
 /** One `·`-joined header segment, tagged with which tone it renders in
  *  (design brief §8: tool is tinted, an outcome present is always non-clean
- *  so it carries the failure tint; everything else is the header's plain tone). */
+ *  so it carries the failure tint, the description is prose among metadata and
+ *  reads a shade brighter; everything else is the header's plain tone). */
 export interface StepHeaderSegment {
   text: string;
-  tone: 'tool' | 'plain' | 'outcome';
+  tone: 'tool' | 'description' | 'plain' | 'outcome';
 }
 
 export interface StepHeaderGroups {
@@ -67,17 +68,29 @@ export interface StepHeaderGroups {
   right: StepHeaderSegment[];
 }
 
+/** The tool input's own `description`, when the step is a command one and it
+ *  carried a non-blank string. A generic step has no place to keep one. */
+export function stepDescription(detail: StepDetail): string | null {
+  if (detail.body.kind !== 'command') return null;
+  const described = detail.body.command.description?.trim();
+  return described ? described : null;
+}
+
 /**
  * FR-15: the header's segments split into the left group (tool lowercased,
- * cwd, runtime+distro) and the right group (wall clock, duration, outcome),
- * each omitted outright when its field is absent rather than rendered as a
- * placeholder.
+ * description, cwd, runtime+distro) and the right group (wall clock, duration,
+ * outcome), each omitted outright when its field is absent rather than
+ * rendered as a placeholder.
+ *
+ * The description sits directly after the tool because it answers the question
+ * the tool name raises — `powershell · List every file` — and before the cwd,
+ * which is where the step ran rather than what it was for.
  */
 export function stepHeaderGroups(detail: StepDetail): StepHeaderGroups {
-  const left: StepHeaderSegment[] = [
-    { text: detail.tool.toLowerCase(), tone: 'tool' },
-    { text: detail.cwd, tone: 'plain' },
-  ];
+  const left: StepHeaderSegment[] = [{ text: detail.tool.toLowerCase(), tone: 'tool' }];
+  const description = stepDescription(detail);
+  if (description) left.push({ text: description, tone: 'description' });
+  left.push({ text: detail.cwd, tone: 'plain' });
   const runtime = stepRuntimeLabel(detail.runtime, detail.distro);
   if (runtime) left.push({ text: runtime, tone: 'plain' });
 

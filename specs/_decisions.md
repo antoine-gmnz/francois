@@ -57,7 +57,6 @@
 - 2026-08-17 · surfaces · UI-authored registries persist as one JSON in the APP DATA DIR (projects/accounts/profiles); `~/.francois/` is for artifacts read FROM disk only — because a hand-editable file the app trusts re-opens the impersonation surface the extension-install consent gate was written to close · session-profiles
 - 2026-08-17 · ui · Acid marks the ONE focused/singular surface; the same state on a repeatable surface (list row, fleet card) renders neutral + a marker — because one-acid-per-view and "always show why this differs" only reconcile by splitting the treatment by surface cardinality · session-profiles
 - 2026-08-17 · security · A validation the core owns is re-run at every entry point that accepts the same value from the frontend, never trusted once — because the frontend is not the authority on the core's own parser/stream contract · session-profiles
-- 2026-08-12 · data · A session's provider is DERIVED from its account's kind at creation and never chosen or re-derived — because two sources of truth for which wire a session speaks is how a session ends up pointed at a key it does not have · multi-provider-seam
 - 2026-08-12 · auth · Non-OAuth provider keys live in a 0600/ACL-restricted file in the account config dir, never the OS keychain, and never enter session state, the transcript or diagnostics — because one code path on three platforms beats a keychain that is absent on headless Linux · multi-provider-seam
 - 2026-08-12 · ui · Parity with Claude Code's tuned harness is not a goal for Francois-loop sessions; their first turn states so once, in-transcript — because otherwise every tool-loop quality gap gets filed as a Francois bug · multi-provider-seam
 - 2026-08-12 · auth · Secret material is WRITE-ONLY across the IPC boundary — a payload carries `hasKey`, never the value, and no verb reads a secret back — because a secret that can be read back is one debug log or one screenshot from disclosure · multi-provider-endpoint
@@ -86,8 +85,19 @@
 - 2026-08-23 · api · A change-only injection channel must emit an explicit REVERT instruction when returning to the neutral value, never fall silent — because the previous instruction survives in the thread's own history · response-mode
 - 2026-08-23 · api · Instruction/prompt text the core injects never crosses the IPC boundary; the frontend gets the enum plus a label/hint table only — because text the webview can read is text it will be asked to edit, and that is a registry feature, not a setting · response-mode
 
+- 2026-08-24 · api · A verb that accepts a multi-field patch validates EVERY key before writing any; one bad key rejects the whole patch — because a best-effort loop leaves the session in a state neither the user nor the caller asked for · session-settings-sheet
+- 2026-08-24 · ui · When settings in one form take effect at different moments, the form names WHICH ones are deferred and stays silent when none are — never a blanket timing claim — because one immediate field makes a blanket claim false, and the user reads the claim, not the field list · session-settings-sheet
+- 2026-08-24 · ui · A value fixed at creation renders as a read-only line in a labelled block, never a disabled input — because a disabled input still reads as clickable and costs a full row to say nothing · session-settings-sheet
+
+- 2026-08-25 · data · A derived-summary row carries only a `has<X>` BOOLEAN for its fat record; the record is fetched lazily by id from a sidecar and never inlined into the list payload or an event — because the summary list is the hot path and a fat field taxes every page read to serve a rare click · command-inspect
+- 2026-08-25 · data · Truncation at CAPTURE must store the true pre-truncation totals and the panel must state what was dropped — a capped slice is never presented as complete — because a bound that lies about its own bound is worse than no bound · command-inspect
+
+- 2026-09-16 · data · Persist a vendor-catalog display value on the entity; point-of-use derivation is only for sources that stay authoritative — because a label must outlive its account · display-openai-model-name
+- 2026-09-16 · naming · A humanizer tuned to one vendor's id grammar is gated on the id being that vendor's; every other id renders verbatim — because out of domain it invents a name (gpt-4o → "Gpt") instead of failing visibly · display-openai-model-name
+
 ## Superseded
 
+- 2026-08-12 · data · A session's provider is DERIVED from its account's kind at creation and never chosen or re-derived — because two sources of truth for which wire a session speaks is how a session ends up pointed at a key it does not have · multi-provider-seam · superseded 2026-08-24 by core-architecture-fixes
 - 2026-08-12 · naming · A session's provider names the RUNNER (`claude-code` | `openai-compatible`), never the vendor — because an Anthropic-API-through-our-own-loop path would make a vendor name a lie the day it lands · multi-provider-seam
 
 <!-- moved here when a line above supersedes them; never deleted -->
@@ -110,3 +120,12 @@
 - 2026-08-20 · data · A bounded in-memory buffer evicts from the head but never past the oldest UNSETTLED entry — because an entry evicted then upserted by a later event re-appends at the tail and silently reorders what the user reads · transcript-scale
 - 2026-08-20 · data · Page an append-with-upsert log over the FOLDED sequence, never raw line offsets, re-folding per request — because a line index is not a block index, and a parse cache re-grows the memory the cap was added to remove · transcript-scale
 - 2026-08-20 · surfaces · Exactly ONE Tauri session listener exists in the webview; every consumer subscribes through the session-keyed router and none calls onSessionEvent directly — because per-consumer JS filtering makes event cost scale with panes × fleet · extends 2026-08-17 surfaces · transcript-scale
+
+- 2026-08-26 · ui · A loading affordance is gated on a perception threshold AND suppressed when the app already knows the resource is empty — because below the threshold it is a flash, and for an empty resource it is a lie · session-switch-loader
+- 2026-08-26 · ui · Skeleton bars are static fills; a loading surface gets at most ONE indeterminate element, and it names the fetch, not the content — because motion on the placeholder reads as activity inside the thing it stands for · session-switch-loader
+- 2026-08-24 · data · A session's AgentRuntime is derived from its account's kind at every POINT OF USE, never read back from the persisted field — because a stored derivation desynchronises the moment the account is reassigned or removed, and nothing re-derives it · supersedes 2026-08-12 data · core-architecture-fixes
+- 2026-08-24 · quality · A structural rule the core must keep (no new cross-domain back-edge, no bare `Command::new`) ships as a ratcheted `conventions.mjs` check, never as prose in CLAUDE.md — because a rule no tool reports regresses within a quarter · core-architecture-fixes
+- 2026-08-24 · surfaces · The core stays ONE binary crate plus a lib target, thread-per-turn — no workspace split, no tokio — because splitting before the cycles are inverted turns them into compile errors only a rewrite resolves, and async buys nothing for a handful of long-lived blocking streams · core-architecture-fixes
+- 2026-08-24 · surfaces · `core` owns `scripts/quality/` too, not just `src-tauri` — because those ratchet rules check Rust shapes only the core agent knows · core-architecture-wave3
+- 2026-08-24 · data · Derive at point of use; never resync a derived field at its mutation sites — because resync closes the known instance and leaves the class open · core-architecture-wave3
+- 2026-08-26 · surfaces · A fallible core function returns `Result<T, AppError>` and stamps its `ErrorCode` where the failure is RAISED; a command body converts with `.into()` and never re-codes — because a code chosen at the boundary cannot be asserted at the site that fails, and every re-stamp is a place two callers can disagree about what the same failure means · core-architecture-wave3

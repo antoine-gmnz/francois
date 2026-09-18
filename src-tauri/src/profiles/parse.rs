@@ -2,7 +2,7 @@
 
 /// FR-9. Refused at save time with a named reason. Mirrors
 /// `contract/session-profiles.ts`'s `DENIED_ARG_FLAGS`, in the same order.
-pub(crate) const DENIED_ARG_FLAGS: &[&str] = &[
+pub const DENIED_ARG_FLAGS: &[&str] = &[
     "--output-format",
     "--input-format",
     "-p",
@@ -55,7 +55,7 @@ fn flag_of(token: &str) -> &str {
 /// `profiles_create`/`profiles_update` (over the freshly-parsed tokens) and
 /// `session_create` (FR-11: re-run over the resolved `extraArgs` it received —
 /// the frontend is not trusted with the parser contract).
-pub(crate) fn check_denied(tokens: &[String]) -> Option<(String, &'static str)> {
+pub fn check_denied(tokens: &[String]) -> Option<(String, &'static str)> {
     tokens.iter().find_map(|t| {
         let flag = flag_of(t);
         DENIED_ARG_FLAGS
@@ -68,7 +68,7 @@ pub(crate) fn check_denied(tokens: &[String]) -> Option<(String, &'static str)> 
 /// FR-7: `extraArgsRaw` split with POSIX-ish rules — whitespace separates
 /// tokens; single and double quotes group; a backslash escapes the next
 /// character. `Err` on an unterminated quote.
-pub(crate) fn parse_extra_args(raw: &str) -> Result<Vec<String>, ()> {
+pub fn parse_extra_args(raw: &str) -> Result<Vec<String>, ()> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut in_token = false;

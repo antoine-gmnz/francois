@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter};
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind")]
 #[allow(dead_code)]
-pub(crate) enum RuntimeEventPayload {
+pub enum RuntimeEventPayload {
     #[serde(rename = "run.state")]
     RunState { state: RuntimeRunState },
     #[serde(rename = "capabilities")]
@@ -29,7 +29,7 @@ pub(crate) enum RuntimeEventPayload {
 
 #[derive(Serialize, Clone)]
 #[serde(tag = "type")]
-pub(crate) enum SessionEvent {
+pub enum SessionEvent {
     #[serde(rename = "session.meta")]
     Meta { meta: SessionMeta },
     #[serde(rename = "session.status")]
@@ -93,6 +93,9 @@ pub(crate) enum SessionEvent {
         #[serde(rename = "blockId")]
         block_id: String,
         meta: String,
+        /// command-inspect FR-10: same flag as `ToolConversationBlock.hasDetail`
+        /// — `Some(true)` iff FR-1 wrote a `StepDetail` record for this block;
+        /// omitted (never `Some(false)`) otherwise.
         #[serde(rename = "hasDetail", skip_serializing_if = "Option::is_none")]
         has_detail: Option<bool>,
     },
@@ -254,7 +257,7 @@ mod tests {
             .map(|key| {
                 (
                     key.into(),
-                    CapabilityState {
+                    adapter::CapabilityState {
                         available: false,
                         reason: Some("Runtime is not connected.".into()),
                     },
@@ -515,7 +518,7 @@ mod tests {
 #[derive(Serialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 #[allow(dead_code)]
-pub(crate) enum RuntimeRunState {
+pub enum RuntimeRunState {
     Starting,
     Running,
     Idle,

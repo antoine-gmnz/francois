@@ -42,15 +42,15 @@ mod detail;
 mod scan;
 mod transcript;
 
-pub(crate) use ack::*;
-pub(crate) use asks::*;
-pub(crate) use commands::*;
-pub(crate) use detail::*;
+pub use ack::*;
+pub use asks::*;
+pub use commands::*;
+pub use detail::*;
 pub(crate) use scan::*;
 pub(crate) use transcript::*;
 
 #[cfg(test)]
-pub(crate) mod testutil;
+pub mod testutil;
 
 /// FR-8: the transcript window, mirroring agent-tab's own cap.
 const AGENT_BLOCK_CAP: usize = 400;
@@ -185,7 +185,7 @@ pub(crate) struct ScanState {
 impl ScanState {
     /// FR-8: is this an agent the scan has seen? (Anything short of this is
     /// `WORKFLOW_AGENT_NOT_FOUND`.)
-    pub(crate) fn knows_agent(&self, agent_id: &str) -> bool {
+    pub fn knows_agent(&self, agent_id: &str) -> bool {
         self.aggs.contains_key(agent_id)
             || self.metas.contains_key(agent_id)
             || self.results.contains_key(agent_id)
@@ -225,7 +225,7 @@ impl ScanState {
 /// FR-6: one run's scan state plus the `notify` watcher keeping it live. Held in
 /// `Engine.workflow_scans`; dropping the entry stops the watch.
 #[derive(Default)]
-pub(crate) struct ScanEntry {
+pub struct ScanEntry {
     pub(crate) state: ScanState,
     /// `Some` ⇔ a watch is running for this run (at most one, FR-6).
     pub(crate) watcher: Option<notify::RecommendedWatcher>,

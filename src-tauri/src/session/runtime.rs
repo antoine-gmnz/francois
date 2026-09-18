@@ -13,7 +13,7 @@ impl Engine {
         &self,
         id: &str,
         key: &str,
-    ) -> Result<(), (&'static str, &'static str)> {
+    ) -> Result<(), (ErrorCode, &'static str)> {
         if self
             .unsupported_runtime_records
             .lock()
@@ -21,20 +21,24 @@ impl Engine {
             .contains_key(id)
         {
             return Err((
-                "RUNTIME_UNSUPPORTED",
+                ErrorCode::RuntimeUnsupported,
                 "unsupported runtime record retained for recovery",
             ));
         }
         self.with_session(id, |s| {
             adapter::resolve_capability(s.agent_runtime, s.effective_capabilities.as_ref(), key)
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))?
+        .ok_or((ErrorCode::SessionNotFound, "no such session"))?
         .then_some(())
-        .ok_or(("RUNTIME_UNSUPPORTED", "runtime capability is unavailable"))
+        .ok_or((
+            ErrorCode::RuntimeUnsupported,
+            "runtime capability is unavailable",
+        ))
     }
     #[allow(dead_code)]
     pub(crate) fn connect_runtime(
         &self,
+        accounts: &dyn crate::account::AccountKinds,
         ctx: adapter::RuntimeConnectContext,
         runtime: AgentRuntime,
     ) -> Result<(RuntimeProducer, Vec<SessionEvent>), AppError> {
@@ -43,11 +47,12 @@ impl Engine {
         let model = ctx.model.clone();
         let connection = adapter_for(runtime).connect_session(ctx)?;
         let capabilities = connection.capabilities();
-        self.install_runtime_connection(id, connection, model, capabilities)
+        self.install_runtime_connection(accounts, id, connection, model, capabilities)
     }
     #[allow(dead_code)]
     pub(crate) fn install_runtime_connection(
         &self,
+        accounts: &dyn crate::account::AccountKinds,
         id: String,
         connection: Arc<dyn adapter::RuntimeSessionControl>,
         model: adapter::RuntimeModelRef,
@@ -70,7 +75,7 @@ impl Engine {
             s.runtime_generation = Some(generation.clone());
             s.runtime_model = Some(model);
             s.effective_capabilities = Some(capabilities);
-            s.meta()
+            s.meta(accounts)
         });
         let Some(meta) = meta else {
             drop(streams);
@@ -158,6 +163,7 @@ impl Engine {
     #[allow(dead_code)]
     pub(crate) fn runtime_event(
         &self,
+        accounts: &dyn crate::account::AccountKinds,
         producer: &RuntimeProducer,
         at: u64,
         run_id: Option<String>,
@@ -190,7 +196,7 @@ impl Engine {
             events::RuntimeEventPayload::Capabilities { capabilities } => {
                 self.with_session_mut(&producer.session_id, |s| {
                     s.effective_capabilities = Some(capabilities);
-                    s.meta()
+                    s.meta(accounts)
                 })
             }
             events::RuntimeEventPayload::RunState { state } => {
@@ -200,14 +206,14 @@ impl Engine {
                     if next != status::ERROR {
                         s.error_message = None;
                     }
-                    s.meta()
+                    s.meta(accounts)
                 })
             }
             events::RuntimeEventPayload::Failure { failure } => {
                 self.with_session_mut(&producer.session_id, |s| {
                     s.status = status::ERROR.into();
                     s.error_message = Some(failure.message().to_string());
-                    s.meta()
+                    s.meta(accounts)
                 })
             }
         };
@@ -222,6 +228,7 @@ impl Engine {
 #[cfg(test)]
 mod connection_tests {
     use super::*;
+    use crate::session::testutil::fake_accounts;
     use adapter::{RuntimeSessionControl, RuntimeSubmission, SubmissionReceipt};
     struct MockConnection {
         engine: std::sync::Weak<Engine>,
@@ -288,11 +295,11 @@ mod connection_tests {
             }) as Arc<dyn RuntimeSessionControl>
         };
         let (old, first) = engine
-            .install_runtime_connection(id.clone(), c(), model(), enabled_caps())
+            .install_runtime_connection(&fake_accounts(), id.clone(), c(), model(), enabled_caps())
             .unwrap();
         assert!(matches!(first.as_slice(), [SessionEvent::Meta { .. }]));
         let (current, _) = engine
-            .install_runtime_connection(id.clone(), c(), model(), enabled_caps())
+            .install_runtime_connection(&fake_accounts(), id.clone(), c(), model(), enabled_caps())
             .unwrap();
         let mut caps = enabled_caps();
         caps.insert(
@@ -304,6 +311,7 @@ mod connection_tests {
         );
         assert!(engine
             .runtime_event(
+                &fake_accounts(),
                 &old,
                 1,
                 None,
@@ -316,6 +324,7 @@ mod connection_tests {
         assert!(engine.require_capability(&id, "permissions").is_ok());
         let batch = engine
             .runtime_event(
+                &fake_accounts(),
                 &current,
                 2,
                 None,
@@ -333,7 +342,9 @@ mod connection_tests {
         assert!(engine.require_capability(&id, "permissions").is_err());
         let ui = serde_json::to_value(&batch[0]).unwrap();
         let core = engine
-            .with_session(&id, |s| serde_json::to_value(s.meta()).unwrap())
+            .with_session(&id, |s| {
+                serde_json::to_value(s.meta(&fake_accounts())).unwrap()
+            })
             .unwrap();
         assert_eq!(ui["meta"], core);
         assert_eq!(core["runtimeModel"]["modelId"], "model");
@@ -350,7 +361,7 @@ mod connection_tests {
             calls: calls.clone(),
         });
         engine
-            .install_runtime_connection(id.clone(), c, model(), enabled_caps())
+            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
             .unwrap();
         assert!(engine.with_session(&id, |s| s.current.is_none()).unwrap());
         let receipt = engine
@@ -382,7 +393,13 @@ mod connection_tests {
                 }) as Arc<dyn RuntimeSessionControl>
             };
             engine
-                .install_runtime_connection(id.clone(), make(), model(), enabled_caps())
+                .install_runtime_connection(
+                    &fake_accounts(),
+                    id.clone(),
+                    make(),
+                    model(),
+                    enabled_caps(),
+                )
                 .unwrap();
             let connections = engine.runtime_connections.lock().unwrap();
             let worker = engine.clone();
@@ -410,7 +427,13 @@ mod connection_tests {
                 "shutdown must hold installation lock until the matching connection is retired"
             );
             let (producer, _) = engine
-                .install_runtime_connection(id.clone(), make(), model(), enabled_caps())
+                .install_runtime_connection(
+                    &fake_accounts(),
+                    id.clone(),
+                    make(),
+                    model(),
+                    enabled_caps(),
+                )
                 .unwrap();
             assert!(engine
                 .with_session(&id, |s| s.runtime_generation.as_ref()
@@ -464,7 +487,13 @@ mod connection_tests {
                 engine: Arc::downgrade(&engine),
             });
             let (retired, _) = engine
-                .install_runtime_connection(id.clone(), old, model(), enabled_caps())
+                .install_runtime_connection(
+                    &fake_accounts(),
+                    id.clone(),
+                    old,
+                    model(),
+                    enabled_caps(),
+                )
                 .unwrap();
             let worker = engine.clone();
             let worker_id = id.clone();
@@ -484,7 +513,13 @@ mod connection_tests {
                 calls: calls.clone(),
             }) as Arc<dyn RuntimeSessionControl>;
             let (producer, _) = engine
-                .install_runtime_connection(id.clone(), current.clone(), model(), enabled_caps())
+                .install_runtime_connection(
+                    &fake_accounts(),
+                    id.clone(),
+                    current.clone(),
+                    model(),
+                    enabled_caps(),
+                )
                 .unwrap();
             release_tx.send(()).unwrap();
             stop.join().unwrap();
@@ -501,10 +536,10 @@ mod connection_tests {
                 capabilities: enabled_caps(),
             };
             assert!(engine
-                .runtime_event(&retired, 1, None, None, event())
+                .runtime_event(&fake_accounts(), &retired, 1, None, None, event())
                 .is_err());
             assert!(engine
-                .runtime_event(&producer, 1, None, None, event())
+                .runtime_event(&fake_accounts(), &producer, 1, None, None, event())
                 .is_ok());
         }
     }
@@ -520,11 +555,12 @@ mod connection_tests {
             calls: Arc::new(Mutex::new(Vec::new())),
         }) as Arc<dyn RuntimeSessionControl>;
         let (producer, _) = engine
-            .install_runtime_connection(id.clone(), c, model(), enabled_caps())
+            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
             .unwrap();
 
         let batch = engine
             .runtime_event(
+                &fake_accounts(),
                 &producer,
                 1,
                 None,
@@ -543,6 +579,7 @@ mod connection_tests {
         // it just observed — the CRITICAL this regresses.
         let batch = engine
             .runtime_event(
+                &fake_accounts(),
                 &producer,
                 2,
                 None,
@@ -553,7 +590,9 @@ mod connection_tests {
             )
             .unwrap();
         let core = engine
-            .with_session(&id, |s| serde_json::to_value(s.meta()).unwrap())
+            .with_session(&id, |s| {
+                serde_json::to_value(s.meta(&fake_accounts())).unwrap()
+            })
             .unwrap();
         assert_eq!(core["status"], status::RUNNING);
         let ui = serde_json::to_value(&batch[0]).unwrap();
@@ -571,7 +610,7 @@ mod connection_tests {
             calls: Arc::new(Mutex::new(Vec::new())),
         }) as Arc<dyn RuntimeSessionControl>;
         let (producer, _) = engine
-            .install_runtime_connection(id.clone(), c, model(), enabled_caps())
+            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
             .unwrap();
         let failure = crate::ipc::RuntimeFailure::validated(
             "runtime",
@@ -585,6 +624,7 @@ mod connection_tests {
 
         engine
             .runtime_event(
+                &fake_accounts(),
                 &producer,
                 1,
                 None,
@@ -601,6 +641,7 @@ mod connection_tests {
         // it just observed — the CRITICAL this regresses.
         let batch = engine
             .runtime_event(
+                &fake_accounts(),
                 &producer,
                 2,
                 None,
@@ -611,7 +652,9 @@ mod connection_tests {
             )
             .unwrap();
         let core = engine
-            .with_session(&id, |s| serde_json::to_value(s.meta()).unwrap())
+            .with_session(&id, |s| {
+                serde_json::to_value(s.meta(&fake_accounts())).unwrap()
+            })
             .unwrap();
         assert_eq!(core["status"], status::ERROR);
         assert_eq!(core["errorMessage"], "the child exited");

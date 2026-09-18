@@ -35,7 +35,7 @@ fn version_key(v: &str) -> Option<(u64, u64, u64, u8)> {
 /// FR-4: is `latest` strictly greater than `current`? `None` when either side is
 /// unparseable — the caller turns that into a check failure (FR-6), NEVER into
 /// `false`, which would silently hide a real update behind a formatting change.
-pub(crate) fn is_newer(latest: &str, current: &str) -> Option<bool> {
+pub fn is_newer(latest: &str, current: &str) -> Option<bool> {
     Some(version_key(latest)? > version_key(current)?)
 }
 

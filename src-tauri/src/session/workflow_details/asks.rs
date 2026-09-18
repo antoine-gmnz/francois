@@ -12,7 +12,7 @@ use super::*;
 
 /// Which run (and possibly which agent) a parked ask belongs to.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct AskAttribution {
+pub struct AskAttribution {
     pub(crate) run_id: String,
     pub(crate) agent_id: Option<String>,
     pub(crate) confidence: String, // exact | inferred
@@ -39,7 +39,7 @@ fn request_field(v: &Value, keys: &[&str]) -> Option<String> {
 ///   4. nothing → not a workflow ask; this feature leaves it entirely alone
 ///
 /// `seen` is runId → the agentIds FR-3's scan has observed for it.
-pub(crate) fn attribute_ask(
+pub fn attribute_ask(
     s: &Session,
     v: &Value,
     seen: &HashMap<String, Vec<String>>,
@@ -95,7 +95,7 @@ pub(crate) fn attribute_ask(
 /// FR-22: record an attributed ask against its run. Returns the run's new ask
 /// count (FR-24); `None` when that `blockId` was ALREADY attributed — attribution
 /// is idempotent, so a re-offered ask can never be double-counted.
-pub(crate) fn push_ask(
+pub fn push_ask(
     asks: &mut HashMap<String, Vec<WorkflowPendingAsk>>,
     run_id: &str,
     ask: WorkflowPendingAsk,
@@ -114,7 +114,7 @@ pub(crate) fn push_ask(
 /// FR-22/FR-26: the ask keyed by `block_id` is gone — resolved, cancelled or
 /// orphaned. Returns `(runId, how many that run has left)`; `None` when it was
 /// never attributed, which is the ordinary case for a non-workflow ask.
-pub(crate) fn drop_ask(
+pub fn drop_ask(
     asks: &mut HashMap<String, Vec<WorkflowPendingAsk>>,
     block_id: &str,
 ) -> Option<(String, u32)> {
@@ -135,7 +135,7 @@ pub(crate) fn drop_ask(
 /// can say `waiting on you` without subscribing to the detail stream. ABSENT
 /// (never `0`) when nothing is blocking. Returns the run to emit, or `None` when
 /// nothing changed.
-pub(crate) fn set_pending_asks(s: &mut Session, run_id: &str, n: u32) -> Option<WorkflowRun> {
+pub fn set_pending_asks(s: &mut Session, run_id: &str, n: u32) -> Option<WorkflowRun> {
     let run = s.workflows.get_mut(run_id)?;
     let next = (n > 0).then_some(n);
     if run.pending_asks == next {

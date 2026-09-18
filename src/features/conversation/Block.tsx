@@ -16,7 +16,7 @@ import type { SessionId } from '../../../contract/common';
 import type { StepDetail } from '../../../contract/command-inspect';
 import CommandBlock from '../commands/CommandCard';
 import { toneVar } from '../../lib/tone';
-import { conversationStepDetail as fetchStepDetail } from '../../lib/api';
+import { stepDetail as fetchStepDetail } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
@@ -187,7 +187,7 @@ function ToolRowImpl({
     if (next && detail === null && !loading) {
       setLoading(true);
       setFetchError(null);
-      void fetchStepDetail({ sessionId, blockId: b.blockId }).then((res) => {
+      void fetchStepDetail(sessionId, b.blockId).then((res) => {
         if (!mountedRef.current) return;
         setLoading(false);
         if (res.ok) setDetail(res.data);
@@ -213,22 +213,29 @@ function ToolRowImpl({
         <span className="toolrow__target" title={toolBody(b.tool, b.summary)}>
           {b.summary}
         </span>
-        <span className="toolrow__chips">
-          {b.isStreaming && chips.length === 0 ? (
-            <StatusDot color="var(--accent)" size={5} pulsing />
-          ) : (
-            chips.map((c) => (
-              <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`}>
-                {c.text}
-              </span>
-            ))
+        {/* One cell for the whole right edge: the meta chips and, after them,
+            the disclosure. They have to share the grid's 4th column — as a 5th
+            child the chevron wrapped onto an implicit second row, which both
+            put it under the glyph and made an expandable row taller than an
+            inert one (design 16a: same height open, closed or inert). */}
+        <span className="toolrow__meta">
+          <span className="toolrow__chips">
+            {b.isStreaming && chips.length === 0 ? (
+              <StatusDot color="var(--accent)" size={5} pulsing />
+            ) : (
+              chips.map((c) => (
+                <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`}>
+                  {c.text}
+                </span>
+              ))
+            )}
+          </span>
+          {b.hasDetail && (
+            <span className="toolrow__disclosure">
+              open <span className="toolrow__chevron">⌄</span>
+            </span>
           )}
         </span>
-        {b.hasDetail && (
-          <span className="toolrow__disclosure">
-            open <span className="toolrow__chevron">⌄</span>
-          </span>
-        )}
       </div>
       {open && sessionId && (
         <div className="step-detail-wrap">

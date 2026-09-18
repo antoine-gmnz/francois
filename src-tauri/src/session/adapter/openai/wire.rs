@@ -12,6 +12,7 @@
 //! socket, to produce a genuine `ureq::Error` to map (§7).
 
 use super::FrancoisTool;
+use crate::ipc::ErrorCode;
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -22,7 +23,7 @@ use std::io::{self, BufRead};
 /// FR-6: the loop's round-trip cap, named here so the loop and its test read
 /// one number. Hitting it ends the turn with `PROVIDER_REQUEST_FAILED` and a
 /// message naming the cap.
-pub(crate) const MAX_ROUND_TRIPS: u32 = 50;
+pub const MAX_ROUND_TRIPS: u32 = 50;
 
 // ---------- FR-3: the request body ----------
 
@@ -30,7 +31,7 @@ pub(crate) const MAX_ROUND_TRIPS: u32 = 50;
 /// include_usage: true } }`. `messages` are the wire messages the caller
 /// (thread.rs / the loop) already owns — this only assembles the envelope
 /// and the static `tools` declarations; it never mutates or persists them.
-pub(crate) fn request_body(model: &str, messages: &[Value]) -> Value {
+pub fn request_body(model: &str, messages: &[Value]) -> Value {
     json!({
         "model": model,
         "messages": messages,
@@ -45,7 +46,7 @@ pub(crate) fn request_body(model: &str, messages: &[Value]) -> Value {
 /// `generate_pattern`) already reads — `file_path` for Read/Write/Edit,
 /// `path` for Grep/Glob, `command` for Bash. A mismatch here means a
 /// permission rule silently stops matching a call this codec sends.
-pub(crate) fn tool_declarations() -> Value {
+pub fn tool_declarations() -> Value {
     Value::Array(
         FrancoisTool::ALL
             .iter()
@@ -150,7 +151,7 @@ fn tool_declaration(tool: FrancoisTool) -> Value {
 
 /// Mirrors `OPENAI_CONTEXT_FALLBACK` in contract/multi-provider-openai.ts —
 /// `(prefix, contextTokens)`, longest matching prefix wins.
-pub(crate) const OPENAI_CONTEXT_FALLBACK: &[(&str, u64)] = &[
+pub const OPENAI_CONTEXT_FALLBACK: &[(&str, u64)] = &[
     ("gpt-5", 400_000),
     ("gpt-4.1", 1_047_576),
     ("gpt-4o", 128_000),
@@ -159,11 +160,11 @@ pub(crate) const OPENAI_CONTEXT_FALLBACK: &[(&str, u64)] = &[
 ];
 
 /// Mirrors `OPENAI_CONTEXT_DEFAULT` — applied when no prefix matches.
-pub(crate) const OPENAI_CONTEXT_DEFAULT: u64 = 128_000;
+pub const OPENAI_CONTEXT_DEFAULT: u64 = 128_000;
 
 /// Mirrors `contextTokensFor` in contract/multi-provider-openai.ts: longest
 /// matching prefix wins, falling back to `OPENAI_CONTEXT_DEFAULT`.
-pub(crate) fn context_tokens_for(model_id: &str) -> u64 {
+pub fn context_tokens_for(model_id: &str) -> u64 {
     OPENAI_CONTEXT_FALLBACK
         .iter()
         .filter(|(prefix, _)| model_id.starts_with(prefix))
@@ -177,11 +178,16 @@ pub(crate) fn context_tokens_for(model_id: &str) -> u64 {
 /// FR-5: one tool call, fully accumulated — `id`/`name` arrive once,
 /// `arguments` arrives in fragments concatenated in arrival order.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ToolCall {
+pub struct ToolCall {
     pub(crate) id: String,
     pub(crate) name: String,
     /// FR-5: malformed accumulated JSON is not a crash — `Err` carries the
     /// string the loop hands back to the model as the tool result.
+    ///
+    /// core-architecture-wave3 FR-6 does NOT apply here: this is a field
+    /// holding a decode outcome, not a fallible signature, and its `String` is
+    /// a tool result rendered to the model rather than anything that reaches
+    /// the IPC boundary. An `AppError` would add a code nothing reads.
     pub(crate) arguments: Result<Value, String>,
 }
 
@@ -190,7 +196,7 @@ pub(crate) struct ToolCall {
 /// pure codec type the loop translates, it never crosses the IPC boundary
 /// itself.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum StreamEvent {
+pub enum StreamEvent {
     /// FR-4: `choices[0].delta.content` — `offset` is the UTF-16 length of
     /// this response's text already streamed BEFORE this delta, the same
     /// discipline `session/stream/blocks.rs::handle_text_delta` uses.
@@ -221,7 +227,7 @@ struct PendingToolCall {
 /// HTTP response: the loop creates a fresh decoder for each of the (at most
 /// `MAX_ROUND_TRIPS`) round-trips a turn makes.
 #[derive(Default)]
-pub(crate) struct ChatStreamDecoder {
+pub struct ChatStreamDecoder {
     line_buf: String,
     text: String,
     tool_calls: BTreeMap<u64, PendingToolCall>,
@@ -229,7 +235,7 @@ pub(crate) struct ChatStreamDecoder {
 }
 
 impl ChatStreamDecoder {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
@@ -398,7 +404,7 @@ impl ChatStreamDecoder {
 /// the loop integrator hands this is `BufReader::new(response.into_reader())`
 /// from a `ureq` call, no async runtime required. Reads until EOF or
 /// `[DONE]`, calling `on_event` for each event as it completes.
-pub(crate) fn decode_sse(
+pub fn decode_sse(
     mut reader: impl BufRead,
     mut on_event: impl FnMut(StreamEvent),
 ) -> io::Result<()> {
@@ -431,21 +437,21 @@ pub(crate) fn decode_sse(
 /// already uses for this mapping. The key is never read here at all: this
 /// function only ever sees the status and the response body, never the
 /// request that produced them.
-pub(crate) fn map_http_error(err: ureq::Error) -> (&'static str, String) {
+pub fn map_http_error(err: ureq::Error) -> (ErrorCode, String) {
     match err {
         ureq::Error::Status(401, _) => (
-            "ACCOUNT_NOT_AUTHENTICATED",
+            ErrorCode::AccountNotAuthenticated,
             "the endpoint rejected the API key".to_string(),
         ),
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();
             (
-                "PROVIDER_REQUEST_FAILED",
+                ErrorCode::ProviderRequestFailed,
                 format!("HTTP {code}: {}", truncate_500(&body)),
             )
         }
         ureq::Error::Transport(t) => (
-            "PROVIDER_REQUEST_FAILED",
+            ErrorCode::ProviderRequestFailed,
             format!("could not reach the endpoint: {t}"),
         ),
     }
@@ -872,7 +878,7 @@ mod tests {
             .send_string("{}")
             .unwrap_err();
         let (code, msg) = map_http_error(err);
-        assert_eq!(code, "ACCOUNT_NOT_AUTHENTICATED");
+        assert_eq!(code, ErrorCode::AccountNotAuthenticated);
         assert!(!msg.contains("sk-should-never-leak"));
         handle.join().unwrap();
     }
@@ -892,7 +898,7 @@ mod tests {
             .send_string("{}")
             .unwrap_err();
         let (code, msg) = map_http_error(err);
-        assert_eq!(code, "PROVIDER_REQUEST_FAILED");
+        assert_eq!(code, ErrorCode::ProviderRequestFailed);
         assert!(msg.contains("429"));
         assert!(msg.chars().count() <= 500 + "HTTP 429: ".len());
         assert!(!msg.contains("sk-should-never-leak-either"));
@@ -908,7 +914,7 @@ mod tests {
             .send_string("{}")
             .unwrap_err();
         let (code, msg) = map_http_error(err);
-        assert_eq!(code, "PROVIDER_REQUEST_FAILED");
+        assert_eq!(code, ErrorCode::ProviderRequestFailed);
         assert!(msg.contains("503"));
         handle.join().unwrap();
     }
@@ -922,6 +928,6 @@ mod tests {
             .send_string("{}")
             .unwrap_err();
         let (code, _) = map_http_error(err);
-        assert_eq!(code, "PROVIDER_REQUEST_FAILED");
+        assert_eq!(code, ErrorCode::ProviderRequestFailed);
     }
 }

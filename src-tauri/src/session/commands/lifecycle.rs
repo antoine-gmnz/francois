@@ -1,10 +1,161 @@
 //! session lifecycle: create, remove, switch model, interrupt (specs/session-engine.md).
 
 use crate::ipc::{err, err_detail, ok, IpcResult};
+use crate::ipc::{AppError, ErrorCode};
 use crate::session::*;
 use serde_json::Value;
-use std::process::{Command, Stdio};
 use tauri::{AppHandle, Manager, State};
+
+/// Validate a Codex selection without inventing models or reasoning levels.
+pub(crate) fn validate_catalog_selection(
+    catalog: &crate::session::models::ModelCatalog,
+    model: Option<&str>,
+    explicit_effort: Option<&str>,
+    existing_effort: Option<&str>,
+) -> Result<(String, Option<String>), AppError> {
+    let id = model
+        .filter(|m| !m.trim().is_empty())
+        .or(catalog.default_model_id.as_deref())
+        .ok_or_else(|| AppError::new(ErrorCode::InvalidInput, "No models available"))?;
+    let row = catalog.models.iter().find(|m| m.id == id).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::InvalidInput,
+            "Model is not advertised for this account",
+        )
+    })?;
+    let effort = match explicit_effort {
+        Some(raw) if raw.trim().is_empty() => None,
+        Some(raw) => {
+            let value = raw.trim();
+            if !crate::session::models::valid_catalog_effort(value)
+                || !row.efforts.iter().any(|e| e == value)
+            {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "Effort is not supported by this model",
+                ));
+            }
+            Some(value.to_string())
+        }
+        None => existing_effort
+            .filter(|e| row.efforts.iter().any(|v| v == e))
+            .map(String::from),
+    };
+    Ok((id.to_string(), effort))
+}
+
+/// Probe outside the engine lock, then apply the entire patch only if the
+/// settings used by validation still match. Running turns retain their snapshot.
+fn update_codex_settings(
+    app: &AppHandle,
+    engine: &Engine,
+    session_id: &str,
+    patch: &SessionSettingsPatch,
+) -> Result<SessionMeta, AppError> {
+    update_codex_settings_with(
+        app,
+        engine,
+        session_id,
+        patch,
+        |account| crate::session::models::catalog_for_account(app, Some(account), false),
+        |event| {
+            persist(app, engine);
+            emit(app, event);
+        },
+    )
+}
+
+fn update_codex_settings_with(
+    accounts: &dyn crate::account::AccountKinds,
+    engine: &Engine,
+    session_id: &str,
+    patch: &SessionSettingsPatch,
+    resolve: impl FnOnce(&str) -> Result<crate::session::models::ModelCatalog, AppError>,
+    commit: impl FnOnce(SessionEvent),
+) -> Result<SessionMeta, AppError> {
+    let snapshot = engine
+        .with_session(session_id, |s| {
+            (
+                s.account_id.clone(),
+                s.model_id.clone(),
+                s.effort.clone(),
+                s.agent_runtime,
+                s.name.clone(),
+                s.permission_mode.clone(),
+                s.response_mode,
+                s.allow_git,
+                s.status.clone(),
+            )
+        })
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+    if status::is_terminal(&snapshot.8) {
+        return Err(AppError::new(
+            ErrorCode::SessionNotRunning,
+            "session has ended",
+        ));
+    }
+    let needs_catalog = patch.model_id.is_some()
+        || patch
+            .effort
+            .as_deref()
+            .is_some_and(|e| !e.trim().is_empty());
+    let catalog = if needs_catalog {
+        Some(resolve(&snapshot.0)?)
+    } else {
+        None
+    };
+    let models = catalog.as_ref().map(|c| c.models.as_slice()).unwrap_or(&[]);
+    // Non-catalogue keys retain their existing validation, while Codex efforts
+    // are validated exclusively against this account's selected row.
+    let base_patch = SessionSettingsPatch {
+        effort: None,
+        ..patch.clone()
+    };
+    let mut validated = validate_settings_patch(&base_patch, models)?;
+    if let Some(catalog) = &catalog {
+        let (_, effort) = validate_catalog_selection(
+            catalog,
+            patch.model_id.as_deref().or(Some(&snapshot.1)),
+            patch.effort.as_deref(),
+            snapshot.2.as_deref(),
+        )?;
+        validated.effort = Some(effort);
+    } else if patch.effort.is_some() {
+        validated.effort = Some(None);
+    }
+    let meta = engine
+        .with_session_mut(session_id, |s| {
+            if status::is_terminal(&s.status) {
+                return Err(AppError::new(
+                    ErrorCode::SessionNotRunning,
+                    "session has ended",
+                ));
+            }
+            let current = (
+                s.account_id.clone(),
+                s.model_id.clone(),
+                s.effort.clone(),
+                s.agent_runtime,
+                s.name.clone(),
+                s.permission_mode.clone(),
+                s.response_mode,
+                s.allow_git,
+                s.status.clone(),
+            );
+            if current != snapshot {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "Session changed while loading models. Please retry.",
+                ));
+            }
+            settings_capability_guard(s, patch)?;
+            apply_validated_settings(s, validated, models);
+            Ok(s.meta(accounts))
+        })
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))??;
+    commit(SessionEvent::Meta { meta: meta.clone() });
+    Ok(meta)
+}
 
 /// projects: the decision half of `session_create`'s post-insert TOCTOU re-check.
 ///
@@ -15,7 +166,7 @@ use tauri::{AppHandle, Manager, State};
 ///
 /// Pure so the branching is testable: the handler owns the two lock acquisitions,
 /// this owns the decision. Returns the project id to KEEP, or `None` to unlink.
-pub(crate) fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> Option<String> {
+pub fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> Option<String> {
     project_id.filter(|_| still_linked)
 }
 
@@ -23,9 +174,7 @@ pub(crate) fn toctou_outcome(project_id: Option<String>, still_linked: bool) -> 
 /// so the fallback branching is testable. `Ok(None)` means "no usable name was
 /// given" — the caller falls back to `basename(cwd)`, which is why a blank name
 /// never fails creation. A non-blank name is cleaned and capped like any rename.
-pub(crate) fn create_name(
-    name: Option<String>,
-) -> Result<Option<String>, (&'static str, &'static str)> {
+pub fn create_name(name: Option<String>) -> Result<Option<String>, AppError> {
     match name.filter(|n| !clean_session_name(n).is_empty()) {
         Some(raw) => validate_session_name(&raw).map(Some),
         None => Ok(None),
@@ -36,14 +185,15 @@ pub(crate) fn create_name(
 /// under the lock and hand back the updated snapshot. `None` when the id is
 /// unknown, in which case nothing was mutated. Persist + emit stay in the handler
 /// (they need the AppHandle), mirroring `apply_model_switch`.
-pub(crate) fn rename_in_engine(
+pub fn rename_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     name: String,
 ) -> Option<SessionMeta> {
     engine.with_session_mut(session_id, |s| {
         s.name = name;
-        s.meta()
+        s.meta(accounts)
     })
 }
 
@@ -54,13 +204,13 @@ pub(crate) fn rename_in_engine(
 /// `adopt` is session-worktree's `WorktreeCreateInput::adopt` (false when the
 /// session carries no worktree input) — it only steers how the FR-7 check
 /// resolves `cwd`, see below.
-pub(crate) fn validate_create_input(
+pub fn validate_create_input(
     cwd: &str,
     model_id: Option<String>,
     permission_mode: Option<String>,
     runtime: Option<String>,
     adopt: bool,
-) -> Result<(String, String, String), (&'static str, &'static str)> {
+) -> Result<(String, String, String), AppError> {
     // FR-7: cwd must exist and be a directory.
     //
     // CRITICAL remediation: the FR-5 "already checked out" recovery flow calls
@@ -77,8 +227,8 @@ pub(crate) fn validate_create_input(
         crate::diff::GitHost::Wsl(_) => path_exists(&precheck_host, cwd),
     };
     if !cwd_ok {
-        return Err((
-            "INVALID_INPUT",
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
             "working directory does not exist or is not a directory",
         ));
     }
@@ -91,15 +241,18 @@ pub(crate) fn validate_create_input(
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
     let permission_mode = permission_mode.unwrap_or_else(|| "default".to_string());
     if !valid_permission_mode(&permission_mode) {
-        return Err(("INVALID_INPUT", "unknown permission mode"));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "unknown permission mode",
+        ));
     }
     let runtime = runtime.unwrap_or_else(|| "native".to_string());
     if !valid_runtime(&runtime) {
-        return Err(("INVALID_INPUT", "unknown runtime"));
+        return Err(AppError::new(ErrorCode::InvalidInput, "unknown runtime"));
     }
     if runtime == "wsl" && !cfg!(windows) {
-        return Err((
-            "INVALID_INPUT",
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
             "the WSL runtime is only available on Windows",
         ));
     }
@@ -114,31 +267,21 @@ pub(crate) fn validate_create_input(
 /// `config_dir` (multi-account FR-21): the chosen account's `CLAUDE_CONFIG_DIR`,
 /// so the create-time probe runs under the very configuration the session's
 /// turns will use — `None` for the built-in `default` account (no override).
-pub(crate) fn probe_claude_binary(
+pub fn probe_claude_binary(
     runtime: &str,
     cwd: &str,
     config_dir: Option<&str>,
-) -> Result<(), (&'static str, &'static str)> {
+) -> Result<(), AppError> {
     let (probe, probe_args) = claude_invocation(runtime, cwd, vec!["--version".to_string()], None);
-    let mut probe_cmd = Command::new(&probe);
-    probe_cmd
+    let probe_cmd = crate::process_util::spawn(&probe)
         .args(&probe_args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(path) = claude_path_env() {
-        probe_cmd.env("PATH", path);
-    }
-    for (k, v) in account_env(config_dir, runtime, &[]) {
-        probe_cmd.env(k, v);
-    }
-    crate::process_util::no_window(&mut probe_cmd);
+        .envs(account_env(config_dir, runtime, &[]));
     match probe_cmd.status() {
         Ok(s) if s.success() => Ok(()),
-        Ok(_) if runtime == "wsl" => Err(("SPAWN_FAILED", "Claude Code CLI failed inside WSL. Run `claude` once in your WSL distro to install and authenticate it.")),
-        Ok(_) => Err(("SPAWN_FAILED", "Claude Code CLI exited with an error. Run `claude` once in a terminal to authenticate.")),
-        Err(_) if runtime == "wsl" => Err(("SPAWN_FAILED", "WSL not found. Install it (wsl --install) or use the native runtime.")),
-        Err(_) => Err(("SPAWN_FAILED", "Claude Code CLI not found. Install it and ensure `claude` is on PATH.")),
+        Ok(_) if runtime == "wsl" => Err(AppError::new(ErrorCode::SpawnFailed, "Claude Code CLI failed inside WSL. Run `claude` once in your WSL distro to install and authenticate it.")),
+        Ok(_) => Err(AppError::new(ErrorCode::SpawnFailed, "Claude Code CLI exited with an error. Run `claude` once in a terminal to authenticate.")),
+        Err(_) if runtime == "wsl" => Err(AppError::new(ErrorCode::SpawnFailed, "WSL not found. Install it (wsl --install) or use the native runtime.")),
+        Err(_) => Err(AppError::new(ErrorCode::SpawnFailed, "Claude Code CLI not found. Install it and ensure `claude` is on PATH.")),
     }
 }
 
@@ -148,12 +291,12 @@ pub(crate) fn probe_claude_binary(
 /// `crate::profiles::find` at the call site (injected here so a test can stub
 /// the registry); it's asked only when a `profile_id` was actually given.
 #[derive(Debug)]
-pub(crate) enum ProfileResolveError {
+pub enum ProfileResolveError {
     ArgDenied { flag: String, reason: &'static str },
     NotFound,
 }
 
-pub(crate) fn resolve_profile_ref(
+pub fn resolve_profile_ref(
     extra_args: &[String],
     profile_id: Option<&str>,
     system_prompt_present: bool,
@@ -186,13 +329,41 @@ pub(crate) fn resolve_profile_ref(
 /// oversized prompt directly. Re-applying the same char-count bound here
 /// means that case surfaces as `INVALID_INPUT` at creation instead of a
 /// confusing `SPAWN_FAILED` once the CLI itself balks at the argv.
-pub(crate) fn check_system_prompt_bound(
-    system_prompt: &str,
-) -> Result<(), (&'static str, &'static str)> {
+pub fn check_system_prompt_bound(system_prompt: &str) -> Result<(), AppError> {
     if system_prompt.chars().count() > crate::profiles::MAX_SYSTEM_PROMPT {
-        return Err(("INVALID_INPUT", crate::profiles::BAD_PROMPT_MSG));
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            crate::profiles::BAD_PROMPT_MSG,
+        ));
     }
     Ok(())
+}
+
+fn create_with_selection(
+    codex: bool,
+    fallback_model: String,
+    requested_model: Option<&str>,
+    effort: Option<&str>,
+    resolve: impl FnOnce() -> Result<crate::session::models::ModelCatalog, AppError>,
+    create: impl FnOnce(String, Option<String>) -> IpcResult<Value>,
+) -> IpcResult<Value> {
+    let (model, effort) = if codex {
+        let catalog = match resolve() {
+            Ok(c) => c,
+            Err(e) => return e.into(),
+        };
+        match validate_catalog_selection(&catalog, requested_model, effort, None) {
+            Ok(selection) => selection,
+            Err(e) => return e.into(),
+        }
+    } else {
+        let effort = effort.map(str::trim).filter(|e| !e.is_empty());
+        if effort.is_some_and(|e| !valid_effort(e)) {
+            return err(ErrorCode::InvalidInput, "unknown effort level");
+        }
+        (fallback_model, effort.map(String::from))
+    };
+    create(model, effort)
 }
 
 #[tauri::command(async)]
@@ -220,18 +391,19 @@ pub fn session_create(
     // narrowing is not the gate.
     response_mode: Option<String>,
 ) -> IpcResult<Value> {
+    let requested_model = model_id.clone();
     let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
     let response_mode = match response_mode {
         Some(raw) => match ResponseMode::parse(&raw) {
             Some(mode) => mode,
-            None => return err("INVALID_INPUT", "unknown response mode"),
+            None => return err(ErrorCode::InvalidInput, "unknown response mode"),
         },
         None => ResponseMode::Default,
     };
     let (model_id, permission_mode, runtime) =
         match validate_create_input(&cwd, model_id, permission_mode, runtime, adopt) {
             Ok(v) => v,
-            Err((code, msg)) => return err(code, msg),
+            Err(e) => return e.into(),
         };
     // session-rename FR-2: validate the name here — pure, and BEFORE anything is
     // spawned or a worktree is created, so an over-cap name orphans no git state.
@@ -239,7 +411,7 @@ pub fn session_create(
     // cwd, which is why this only decides the "a name was given" case.
     let name = match create_name(name) {
         Ok(n) => n,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
 
     // multi-account FR-18: resolve the account BEFORE anything is spawned or
@@ -248,184 +420,215 @@ pub fn session_create(
     let account_id = match crate::account::resolve_new_session_account(&app, account_id.as_deref())
     {
         Ok(id) => id,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
-    let account_config_dir = crate::account::config_dir_of(&app, &account_id);
-    // FR-25: a WSL session reaches its config dir through `WSLENV`'s `/p` path
-    // translation, which only works for a drive-letter path. Fail at creation,
-    // NAMING the account, rather than spawning a claude that would silently use
-    // a different configuration inside the distro.
-    if runtime == "wsl" {
-        if let Some(dir) = account_config_dir
-            .as_deref()
-            .filter(|d| !crate::account::wsl_translatable_config_dir(d))
-        {
-            let label =
-                crate::account::label_of(&app, &account_id).unwrap_or_else(|| account_id.clone());
-            return err(
-                "INVALID_INPUT",
-                format!(
+    create_with_selection(
+        crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::CodexCli,
+        model_id,
+        requested_model.as_deref(),
+        effort.as_deref(),
+        || crate::session::models::catalog_for_account(&app, Some(&account_id), false),
+        |model_id, effort| {
+            let account_config_dir = crate::account::config_dir_of(&app, &account_id);
+            // FR-25: a WSL session reaches its config dir through `WSLENV`'s `/p` path
+            // translation, which only works for a drive-letter path. Fail at creation,
+            // NAMING the account, rather than spawning a claude that would silently use
+            // a different configuration inside the distro.
+            if runtime == "wsl" {
+                if let Some(dir) = account_config_dir
+                    .as_deref()
+                    .filter(|d| !crate::account::wsl_translatable_config_dir(d))
+                {
+                    let label = crate::account::label_of(&app, &account_id)
+                        .unwrap_or_else(|| account_id.clone());
+                    return err(
+                        ErrorCode::InvalidInput,
+                        format!(
                     "account {label} keeps its Claude Code configuration at {dir}, which WSL \
                      cannot translate — use the native runtime for this account"
                 ),
+                    );
+                }
+            }
+
+            // multi-provider-codex FR-5: this preflight runs `claude --version` with the
+            // account's dir as CLAUDE_CONFIG_DIR. On a non-Claude account it checks the
+            // WRONG BINARY — and worse, `claude` initializes whatever config dir it is
+            // pointed at, so it seeds a Codex account's CODEX_HOME with a full Claude
+            // profile (`.claude.json`, `projects/`, `sessions/`) the moment a session is
+            // created. Each runtime's own preflight is its adapter's
+            // (`SessionAdapter::preflight`), which is where the Codex auth check lives.
+            if crate::account::kind_of(&app, &account_id)
+                == crate::account::AccountKind::ClaudeCodeOauth
+            {
+                if let Err(AppError {
+                    code, message: msg, ..
+                }) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref())
+                {
+                    return err(code, msg);
+                }
+            }
+
+            // projects FR-19: a link must resolve to a live registry entry. The core does
+            // NO auto-adoption and NO default merging — the frontend resolved the project
+            // and applied its defaults, so what the modal showed is exactly what is created.
+            // A blank string is treated as "unlinked" rather than as a bad id.
+            let project_id = project_id.filter(|p| !p.trim().is_empty());
+            if let Some(pid) = &project_id {
+                if let Err(AppError {
+                    code, message: msg, ..
+                }) = crate::project::check_session_link(&app, pid)
+                {
+                    return err(code, msg);
+                }
+            }
+
+            // Edge case §7: a systemPrompt present but whitespace-only is treated as
+            // absent — no `--system-prompt`, `replacesSystemPrompt: false` (FR-17).
+            let system_prompt = system_prompt.filter(|s| !s.trim().is_empty());
+            // session-profiles FR-6 defense-in-depth: re-bound a systemPrompt that
+            // reached this command directly rather than through the profile editor
+            // (see `check_system_prompt_bound`).
+            if let Some(sp) = &system_prompt {
+                if let Err(AppError {
+                    code, message: msg, ..
+                }) = check_system_prompt_bound(sp)
+                {
+                    return err(code, msg);
+                }
+            }
+
+            // session-profiles FR-11: re-run the FR-9 denylist over the RESOLVED
+            // `extraArgs` this call received — the frontend is not trusted with the
+            // parser contract. FR-15: a profileId must resolve to a live registry
+            // entry; the core snapshots the NAME itself, never trusting the caller's
+            // copy — a deleted-then-recreated id would otherwise mismatch (FR-22).
+            let extra_args = extra_args.unwrap_or_default();
+            let profile_id = profile_id.filter(|p| !p.trim().is_empty());
+            let profile_ref = match resolve_profile_ref(
+                &extra_args,
+                profile_id.as_deref(),
+                system_prompt.is_some(),
+                |pid| crate::profiles::find(&app, pid).map(|p| (p.id, p.name)),
+            ) {
+                Ok(profile_ref) => profile_ref,
+                Err(ProfileResolveError::ArgDenied { flag, reason }) => {
+                    return err_detail(
+                        ErrorCode::ProfileArgDenied,
+                        format!("{flag} is not allowed in a session's extra args: {reason}"),
+                        serde_json::json!({ "flag": flag, "reason": reason }),
+                    )
+                }
+                Err(ProfileResolveError::NotFound) => {
+                    return err(ErrorCode::ProfileNotFound, "no such profile")
+                }
+            };
+
+            // session-worktree FR-5/FR-6/FR-11/FR-12: resolve LAST, only once every other
+            // fallible validation (permission_mode, runtime, WSL availability, the FR-9
+            // spawn probe, the project-link check) has passed. `resolve_worktree` is the
+            // only step that mutates git state (a new worktree + branch); running it last
+            // means a later validation failure never orphans that state (FR-11) — there
+            // is nothing fallible left to run after it.
+            if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
+                return e.into();
+            }
+            let mut cwd = cwd;
+            let mut session_worktree: Option<SessionWorktree> = None;
+            let mut worktree_distro: Option<String> = None;
+            if let Some(opts) = &worktree {
+                match resolve_worktree(&cwd, opts) {
+                    Ok((actual_cwd, sw, distro)) => {
+                        cwd = actual_cwd;
+                        session_worktree = Some(sw);
+                        worktree_distro = distro;
+                    }
+                    Err(AppError {
+                        code, message: msg, ..
+                    }) if code == ErrorCode::WorktreeBranchInUse => {
+                        return err_detail(
+                            code,
+                            "that branch is already checked out at another path",
+                            serde_json::json!({ "path": msg }),
+                        )
+                    }
+                    Err(e) => return e.into(),
+                }
+            }
+
+            let now = now_ms();
+            let id = uuid();
+            let name = name.unwrap_or_else(|| basename(&cwd));
+            let (model_label, context_limit_tokens) =
+                resolve_model_display(&app, &account_id, &model_id);
+            // multi-provider-seam FR-13a: both axes derived from the resolved
+            // account's kind — session_create gains no field and the new-session
+            // modal gains no control.
+            let (agent_runtime, protocol) =
+                AgentRuntime::from_account_kind(crate::account::kind_of(&app, &account_id));
+            let session = Session::new(
+                id.clone(),
+                name,
+                cwd.clone(),
+                model_id.clone(),
+                model_label,
+                0, // context_used_tokens
+                context_limit_tokens,
+                now, // started_at
+                now, // last_activity_at
+                effort,
+                permission_mode,
+                runtime,
+                allow_git.unwrap_or(false),
+                project_id.clone(),
+                session_worktree,
+                worktree_distro,
+                account_id.clone(), // multi-account FR-19: stored VERBATIM, never re-derived
+                agent_runtime,
+                protocol,
+                None, // claude_session_id
+                Vec::new(),
+                system_prompt,
+                extra_args,
+                profile_ref,
+                response_mode,
             );
-        }
-    }
+            let meta_before = session.meta(&app);
+            engine
+                .sessions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(id.clone(), session);
 
-    // multi-provider-codex FR-5: this preflight runs `claude --version` with the
-    // account's dir as CLAUDE_CONFIG_DIR. On a non-Claude account it checks the
-    // WRONG BINARY — and worse, `claude` initializes whatever config dir it is
-    // pointed at, so it seeds a Codex account's CODEX_HOME with a full Claude
-    // profile (`.claude.json`, `projects/`, `sessions/`) the moment a session is
-    // created. Each runtime's own preflight is its adapter's
-    // (`SessionAdapter::preflight`), which is where the Codex auth check lives.
-    if crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::ClaudeCodeOauth {
-        if let Err((code, msg)) = probe_claude_binary(&runtime, &cwd, account_config_dir.as_deref())
-        {
-            return err(code, msg);
-        }
-    }
-
-    // projects FR-19: a link must resolve to a live registry entry. The core does
-    // NO auto-adoption and NO default merging — the frontend resolved the project
-    // and applied its defaults, so what the modal showed is exactly what is created.
-    // A blank string is treated as "unlinked" rather than as a bad id.
-    let project_id = project_id.filter(|p| !p.trim().is_empty());
-    if let Some(pid) = &project_id {
-        if let Err((code, msg)) = crate::project::check_session_link(&app, pid) {
-            return err(code, msg);
-        }
-    }
-
-    // Edge case §7: a systemPrompt present but whitespace-only is treated as
-    // absent — no `--system-prompt`, `replacesSystemPrompt: false` (FR-17).
-    let system_prompt = system_prompt.filter(|s| !s.trim().is_empty());
-    // session-profiles FR-6 defense-in-depth: re-bound a systemPrompt that
-    // reached this command directly rather than through the profile editor
-    // (see `check_system_prompt_bound`).
-    if let Some(sp) = &system_prompt {
-        if let Err((code, msg)) = check_system_prompt_bound(sp) {
-            return err(code, msg);
-        }
-    }
-
-    // session-profiles FR-11: re-run the FR-9 denylist over the RESOLVED
-    // `extraArgs` this call received — the frontend is not trusted with the
-    // parser contract. FR-15: a profileId must resolve to a live registry
-    // entry; the core snapshots the NAME itself, never trusting the caller's
-    // copy — a deleted-then-recreated id would otherwise mismatch (FR-22).
-    let extra_args = extra_args.unwrap_or_default();
-    let profile_id = profile_id.filter(|p| !p.trim().is_empty());
-    let profile_ref = match resolve_profile_ref(
-        &extra_args,
-        profile_id.as_deref(),
-        system_prompt.is_some(),
-        |pid| crate::profiles::find(&app, pid).map(|p| (p.id, p.name)),
-    ) {
-        Ok(profile_ref) => profile_ref,
-        Err(ProfileResolveError::ArgDenied { flag, reason }) => {
-            return err_detail(
-                "PROFILE_ARG_DENIED",
-                format!("{flag} is not allowed in a session's extra args: {reason}"),
-                serde_json::json!({ "flag": flag, "reason": reason }),
-            )
-        }
-        Err(ProfileResolveError::NotFound) => return err("PROFILE_NOT_FOUND", "no such profile"),
-    };
-
-    // session-worktree FR-5/FR-6/FR-11/FR-12: resolve LAST, only once every other
-    // fallible validation (permission_mode, runtime, WSL availability, the FR-9
-    // spawn probe, the project-link check) has passed. `resolve_worktree` is the
-    // only step that mutates git state (a new worktree + branch); running it last
-    // means a later validation failure never orphans that state (FR-11) — there
-    // is nothing fallible left to run after it.
-    let mut cwd = cwd;
-    let mut session_worktree: Option<SessionWorktree> = None;
-    let mut worktree_distro: Option<String> = None;
-    if let Some(opts) = &worktree {
-        match resolve_worktree(&cwd, opts) {
-            Ok((actual_cwd, sw, distro)) => {
-                cwd = actual_cwd;
-                session_worktree = Some(sw);
-                worktree_distro = distro;
+            // projects: close the TOCTOU window. `project_remove` can commit and run its
+            // unlink between the link check above and this insert, leaving a session
+            // pointing at a project that no longer exists. That self-heals only at the next
+            // launch (FR-18's drop-on-load), so the live board would carry a dangling link
+            // for the whole run. Re-check now that the session is visible and unlink it
+            // here if the project went away. One registry read; the two locks never overlap.
+            let still_linked = match &project_id {
+                Some(pid) => crate::project::check_session_link(&app, pid).is_ok(),
+                None => true, // an unlinked session has nothing to lose
+            };
+            let linked = toctou_outcome(project_id.clone(), still_linked);
+            if linked.is_none() && project_id.is_some() {
+                engine.with_session_mut(&id, |s| s.project_id = None);
             }
-            Err((code, msg)) if code == "WORKTREE_BRANCH_IN_USE" => {
-                return err_detail(
-                    &code,
-                    "that branch is already checked out at another path",
-                    serde_json::json!({ "path": msg }),
-                )
+            let meta = engine
+                .with_session(&id, |s| s.meta(&app))
+                .unwrap_or(meta_before);
+
+            persist(&app, &engine);
+            // projects FR-20: the project just backed a session. A persist failure here is
+            // logged inside touch_last_used and IGNORED — it must never fail creation.
+            if let Some(pid) = &linked {
+                crate::project::touch_last_used(&app, pid);
             }
-            Err((code, msg)) => return err(&code, msg),
-        }
-    }
-
-    let effort = effort.filter(|e| valid_effort(e));
-    let now = now_ms();
-    let id = uuid();
-    let name = name.unwrap_or_else(|| basename(&cwd));
-    let context_limit_tokens = context_limit(&model_id);
-    // multi-provider-seam FR-13a: both axes derived from the resolved
-    // account's kind — session_create gains no field and the new-session
-    // modal gains no control.
-    let (agent_runtime, protocol) =
-        AgentRuntime::from_account_kind(crate::account::kind_of(&app, &account_id));
-    let session = Session::new(
-        id.clone(),
-        name,
-        cwd.clone(),
-        model_id.clone(),
-        0, // context_used_tokens
-        context_limit_tokens,
-        now, // started_at
-        now, // last_activity_at
-        effort,
-        permission_mode,
-        runtime,
-        allow_git.unwrap_or(false),
-        project_id.clone(),
-        session_worktree,
-        worktree_distro,
-        account_id, // multi-account FR-19: stored VERBATIM, never re-derived
-        agent_runtime,
-        protocol,
-        None, // claude_session_id
-        Vec::new(),
-        system_prompt,
-        extra_args,
-        profile_ref,
-        response_mode,
-    );
-    let meta_before = session.meta();
-    engine.sessions.lock().unwrap().insert(id.clone(), session);
-
-    // projects: close the TOCTOU window. `project_remove` can commit and run its
-    // unlink between the link check above and this insert, leaving a session
-    // pointing at a project that no longer exists. That self-heals only at the next
-    // launch (FR-18's drop-on-load), so the live board would carry a dangling link
-    // for the whole run. Re-check now that the session is visible and unlink it
-    // here if the project went away. One registry read; the two locks never overlap.
-    let still_linked = match &project_id {
-        Some(pid) => crate::project::check_session_link(&app, pid).is_ok(),
-        None => true, // an unlinked session has nothing to lose
-    };
-    let linked = toctou_outcome(project_id.clone(), still_linked);
-    if linked.is_none() && project_id.is_some() {
-        engine.with_session_mut(&id, |s| s.project_id = None);
-    }
-    let meta = engine
-        .with_session(&id, |s| s.meta())
-        .unwrap_or(meta_before);
-
-    persist(&app, &engine);
-    // projects FR-20: the project just backed a session. A persist failure here is
-    // logged inside touch_last_used and IGNORED — it must never fail creation.
-    if let Some(pid) = &linked {
-        crate::project::touch_last_used(&app, pid);
-    }
-    emit(&app, SessionEvent::Meta { meta: meta.clone() });
-    crate::diff::watch_session(&app, &id, &cwd); // FR-15: watch the session's cwd
-    ok(serde_json::to_value(meta).unwrap())
+            emit(&app, SessionEvent::Meta { meta: meta.clone() });
+            crate::diff::watch_session(&app, &id, &cwd); // FR-15: watch the session's cwd
+            ok(serde_json::to_value(meta).unwrap())
+        },
+    )
 }
 
 #[tauri::command(async)]
@@ -438,11 +641,11 @@ pub fn session_remove(
         return crate::ipc::IpcResult::Err { ok: false, error };
     }
     let removed = {
-        let mut map = engine.sessions.lock().unwrap();
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.remove(&session_id)
     };
     match removed {
-        None => err("SESSION_NOT_FOUND", "no such session"),
+        None => err(ErrorCode::SessionNotFound, "no such session"),
         Some(session) => {
             if let Some(turn) = session.current {
                 // multi-provider-seam FR-8: reached only through TurnControl.
@@ -463,16 +666,21 @@ pub fn session_remove(
             // would introduce a pattern nothing else in the module follows.
             purge_session(&session.cwd, &session_id, &session.attachments);
             persist(&app, &engine);
-            remove_step_detail_sidecar(&app, &session_id); // command-inspect FR-7
-
             if let Some(path) = transcript_path(&app, &session_id) {
                 let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)
             }
-            crate::diff::unwatch_session(&session_id); // FR-15: dispose the watcher
-                                                       // workflow-details FR-6: the run directories of a removed session are
-                                                       // no longer watched, and the asks attributed to its runs go with it.
+            remove_step_detail_sidecar(&app, &session_id); // command-inspect FR-7
+
+            crate::diff::unwatch_session(&session_id, &session.cwd); // FR-15: dispose the watcher
+                                                                     // workflow-details FR-6: the run directories of a removed session are
+                                                                     // no longer watched, and the asks attributed to its runs go with it.
+
             unwatch_session_workflows(&engine, &session.workflow_order);
-            crate::dispose_session_shells(&app, &session_id); // wsl-filesystem FR-13/multiple-shells FR-9: dispose every shell
+            // wsl-filesystem FR-13 / multiple-shells FR-9: dispose every shell.
+            // core-architecture-wave3 FR-9: through the teardown seam, so this
+            // domain neither names `shell` nor reaches it through a crate-root
+            // re-export that only moved the import path.
+            crate::session::dispose_session_resources(&app, &session_id);
             emit(&app, SessionEvent::Removed { session_id });
             ok(None)
         }
@@ -490,39 +698,65 @@ pub fn session_switch_model(
         return err(code, msg);
     }
     if model_id.trim().is_empty() {
-        return err("INVALID_INPUT", "model is empty");
+        return err(ErrorCode::InvalidInput, "model is empty");
     }
     match engine.with_session(&session_id, |s| !status::is_terminal(&s.status)) {
-        None => return err("SESSION_NOT_FOUND", "no such session"),
-        Some(false) => return err("SESSION_NOT_RUNNING", "session has ended"),
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
+        Some(false) => return err(ErrorCode::SessionNotRunning, "session has ended"),
         Some(true) => {}
     }
     match apply_model_switch(&app, &session_id, &model_id) {
         Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
-        Err((code, message)) => err(code, message),
+        Err(error) => error.into(),
     }
 }
 
 /// Shared switch semantics (francois:session:switchModel and `/model <arg>` —
 /// interactive-commands FR-13): update the model + context limit, persist, emit
 /// session.meta. The in-flight turn is unaffected.
-pub(crate) fn apply_model_switch(
+pub fn apply_model_switch(
     app: &AppHandle,
     session_id: &str,
     model_id: &str,
-) -> Result<SessionMeta, (&'static str, &'static str)> {
+) -> Result<SessionMeta, AppError> {
     let engine = app.state::<Engine>();
-    let meta = switch_model_in_engine(&engine, session_id, model_id)?;
+    // pi-runtime-boundary FR-4: the `/model` path reaches here without the
+    // command's preliminary check.
+    engine
+        .require_capability(session_id, "modelSwitching")
+        .map_err(|(code, message)| AppError::new(code, message))?;
+    if engine.with_session(session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        let meta = update_codex_settings(
+            app,
+            &engine,
+            session_id,
+            &SessionSettingsPatch {
+                model_id: Some(model_id.to_string()),
+                ..Default::default()
+            },
+        )?;
+        return Ok(meta);
+    }
+    let account_id = engine
+        .with_session(session_id, |s| s.account_id.clone())
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+    let (label, limit) = resolve_model_display(app, &account_id, model_id);
+    let meta = switch_model_in_engine(&engine, app, session_id, model_id, label, limit)?;
     persist(app, &engine);
     emit(app, SessionEvent::Meta { meta: meta.clone() });
     Ok(meta)
 }
 
+/// pi-runtime-boundary FR-4: the capability is re-checked under the same lock
+/// as the mutation, so a snapshot narrowed after the preliminary check wins.
 fn switch_model_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     model_id: &str,
-) -> Result<SessionMeta, (&'static str, &'static str)> {
+    label: String,
+    limit: u64,
+) -> Result<SessionMeta, AppError> {
     engine
         .with_session_mut(session_id, |s| {
             if !adapter::resolve_capability(
@@ -530,16 +764,23 @@ fn switch_model_in_engine(
                 s.effective_capabilities.as_ref(),
                 "modelSwitching",
             ) {
-                return Err(("RUNTIME_UNSUPPORTED", "runtime capability is unavailable"));
+                return Err(AppError::new(
+                    ErrorCode::RuntimeUnsupported,
+                    "runtime capability is unavailable",
+                ));
             }
             if status::is_terminal(&s.status) {
-                return Err(("SESSION_NOT_RUNNING", "session has ended"));
+                return Err(AppError::new(
+                    ErrorCode::SessionNotRunning,
+                    "session has ended",
+                ));
             }
             s.model_id = model_id.to_string();
-            s.context_limit_tokens = context_limit(model_id);
-            Ok(s.meta())
+            s.model_label = label;
+            s.context_limit_tokens = limit;
+            Ok(s.meta(accounts))
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))?
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?
 }
 
 /// session-permission-mode FR-2: `francois:session:switchPermissionMode`'s enum
@@ -549,7 +790,7 @@ fn switch_model_in_engine(
 /// back to `default`. Mirrors `valid_permission_mode` (session/spawn.rs), which
 /// stays the create-time check; this one hands back the canonical `&'static
 /// str` the switch stores, matching the shape the spec names.
-pub(crate) fn parse_permission_mode(mode: &str) -> Option<&'static str> {
+pub fn parse_permission_mode(mode: &str) -> Option<&'static str> {
     match mode {
         "default" => Some("default"),
         "plan" => Some("plan"),
@@ -566,21 +807,27 @@ pub(crate) fn parse_permission_mode(mode: &str) -> Option<&'static str> {
 /// testable without an `AppHandle` (persist + emit stay in the handler).
 /// Setting the mode the session already has is deliberately NOT special-cased
 /// (FR-3): same mutation, same `Ok`.
-pub(crate) fn switch_permission_mode_in_engine(
+pub fn switch_permission_mode_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     mode: &str,
-) -> Result<SessionMeta, (&'static str, &'static str)> {
+) -> Result<SessionMeta, AppError> {
     // Sandbox selection is independent of interactive approval cards.
     if engine.with_session(session_id, |s| s.agent_runtime == AgentRuntime::Pi) == Some(true) {
-        return Err((
-            "RUNTIME_UNSUPPORTED",
+        return Err(AppError::new(
+            ErrorCode::RuntimeUnsupported,
             "runtime sandbox selection is unavailable",
         ));
     }
     match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
-        None => return Err(("SESSION_NOT_FOUND", "no such session")),
-        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
+        Some(false) => {
+            return Err(AppError::new(
+                ErrorCode::SessionNotRunning,
+                "session has ended",
+            ))
+        }
         Some(true) => {}
     }
     engine
@@ -592,9 +839,9 @@ pub(crate) fn switch_permission_mode_in_engine(
             // original one would understate how long it has been live.
             s.permission_mode = mode.to_string();
             s.permission_mode_since = now_ms();
-            s.meta()
+            s.meta(accounts)
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))
 }
 
 /// rework-top-bar (design 11c): the engine half of `session_switch_effort` — the
@@ -608,14 +855,20 @@ pub(crate) fn switch_permission_mode_in_engine(
 /// older frontend, the CLI, an extension), and an unknown level would otherwise
 /// reach the CLI as `--effort <garbage>` and fail the whole turn instead of one
 /// command.
-pub(crate) fn switch_effort_in_engine(
+pub fn switch_effort_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     effort: Option<&str>,
-) -> Result<SessionMeta, (&'static str, &'static str)> {
+) -> Result<SessionMeta, AppError> {
     match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
-        None => return Err(("SESSION_NOT_FOUND", "no such session")),
-        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
+        Some(false) => {
+            return Err(AppError::new(
+                ErrorCode::SessionNotRunning,
+                "session has ended",
+            ))
+        }
         Some(true) => {}
     }
     engine
@@ -625,15 +878,21 @@ pub(crate) fn switch_effort_in_engine(
                 s.effective_capabilities.as_ref(),
                 "modelSwitching",
             ) {
-                return Err(("RUNTIME_UNSUPPORTED", "runtime capability is unavailable"));
+                return Err(AppError::new(
+                    ErrorCode::RuntimeUnsupported,
+                    "runtime capability is unavailable",
+                ));
             }
             if status::is_terminal(&s.status) {
-                return Err(("SESSION_NOT_RUNNING", "session has ended"));
+                return Err(AppError::new(
+                    ErrorCode::SessionNotRunning,
+                    "session has ended",
+                ));
             }
             s.effort = effort.map(String::from);
-            Ok(s.meta())
+            Ok(s.meta(accounts))
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))?
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?
 }
 
 /// rework-top-bar (design 11c): `francois:session:switchEffort`. Same shape and
@@ -653,17 +912,28 @@ pub fn session_switch_effort(
     session_id: String,
     effort: Option<String>,
 ) -> IpcResult<Value> {
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        return session_update_settings(
+            app,
+            engine,
+            session_id,
+            SessionSettingsPatch {
+                effort: Some(effort.unwrap_or_default()),
+                ..Default::default()
+            },
+        );
+    }
     let level = effort
         .map(|e| e.trim().to_string())
         .filter(|e| !e.is_empty());
     if let Some(e) = &level {
         if !valid_effort(e) {
-            return err("INVALID_INPUT", "unknown effort level");
+            return err(ErrorCode::InvalidInput, "unknown effort level");
         }
     }
-    let meta = match switch_effort_in_engine(&engine, &session_id, level.as_deref()) {
+    let meta = match switch_effort_in_engine(&engine, &app, &session_id, level.as_deref()) {
         Ok(meta) => meta,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     persist(&app, &engine);
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
@@ -687,11 +957,11 @@ pub fn session_switch_permission_mode(
     mode: String,
 ) -> IpcResult<Value> {
     let Some(mode) = parse_permission_mode(&mode) else {
-        return err("INVALID_INPUT", "unknown permission mode");
+        return err(ErrorCode::InvalidInput, "unknown permission mode");
     };
-    let meta = match switch_permission_mode_in_engine(&engine, &session_id, mode) {
+    let meta = match switch_permission_mode_in_engine(&engine, &app, &session_id, mode) {
         Ok(meta) => meta,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     persist(&app, &engine);
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
@@ -710,20 +980,26 @@ pub fn session_switch_permission_mode(
 /// comparison between the two.
 pub(crate) fn switch_response_mode_in_engine(
     engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
     session_id: &str,
     mode: ResponseMode,
-) -> Result<SessionMeta, (&'static str, &'static str)> {
+) -> Result<SessionMeta, AppError> {
     match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
-        None => return Err(("SESSION_NOT_FOUND", "no such session")),
-        Some(false) => return Err(("SESSION_NOT_RUNNING", "session has ended")),
+        None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
+        Some(false) => {
+            return Err(AppError::new(
+                ErrorCode::SessionNotRunning,
+                "session has ended",
+            ))
+        }
         Some(true) => {}
     }
     engine
         .with_session_mut(session_id, |s| {
             s.response_mode = mode;
-            s.meta()
+            s.meta(accounts)
         })
-        .ok_or(("SESSION_NOT_FOUND", "no such session"))
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))
 }
 
 /// response-mode FR-2: `francois:session:switchResponseMode`. Semantics and code
@@ -744,11 +1020,11 @@ pub fn session_switch_response_mode(
     mode: String,
 ) -> IpcResult<Value> {
     let Some(mode) = ResponseMode::parse(&mode) else {
-        return err("INVALID_INPUT", "unknown response mode");
+        return err(ErrorCode::InvalidInput, "unknown response mode");
     };
-    let meta = match switch_response_mode_in_engine(&engine, &session_id, mode) {
+    let meta = match switch_response_mode_in_engine(&engine, &app, &session_id, mode) {
         Ok(meta) => meta,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
     persist(&app, &engine);
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
@@ -769,16 +1045,294 @@ pub fn session_rename(
 ) -> IpcResult<Value> {
     let name = match validate_session_name(&name) {
         Ok(n) => n,
-        Err((code, msg)) => return err(code, msg),
+        Err(e) => return e.into(),
     };
-    let Some(meta) = rename_in_engine(&engine, &session_id, name) else {
-        return err("SESSION_NOT_FOUND", "session not found");
+    let Some(meta) = rename_in_engine(&engine, &app, &session_id, name) else {
+        return err(ErrorCode::SessionNotFound, "session not found");
     };
     // FR-6: renaming to the identical name takes this same path — persisting and
     // emitting is idempotent, and a divergent no-op branch would only add states.
     persist(&app, &engine);
     emit(&app, SessionEvent::Meta { meta: meta.clone() });
     ok(serde_json::to_value(meta).unwrap())
+}
+
+// ---------- session-settings-sheet ----------
+
+/// session-settings-sheet §5: the wire shape of `francois:session:updateSettings`'s
+/// `patch` — changed keys only, never null. `effort: Some("")` is FR's "clears
+/// back to the model's own default" (mirrors `session_switch_effort`'s absent/
+/// blank rule).
+#[derive(serde::Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSettingsPatch {
+    pub name: Option<String>,
+    pub model_id: Option<String>,
+    pub effort: Option<String>,
+    pub permission_mode: Option<String>,
+    pub response_mode: Option<String>,
+    pub allow_git: Option<bool>,
+}
+
+impl SessionSettingsPatch {
+    /// §7 case 2: everything but `name` touches a process/turn concern, so a
+    /// terminal session accepts a name-only patch (matching `session_rename`)
+    /// and rejects any patch that carries one of these.
+    pub(crate) fn touches_run_key(&self) -> bool {
+        self.model_id.is_some()
+            || self.effort.is_some()
+            || self.permission_mode.is_some()
+            || self.response_mode.is_some()
+            || self.allow_git.is_some()
+    }
+
+    /// FR-3: no key at all.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.name.is_none() && !self.touches_run_key()
+    }
+}
+
+/// The changed-keys-only patch after FR-6's re-validation, ready to write.
+/// `effort: Some(None)` is the FR-3-style clear; `None` (outer) means the key
+/// was absent from the patch, i.e. "leave alone".
+#[derive(Debug)]
+pub(crate) struct ValidatedSettingsPatch {
+    name: Option<String>,
+    model_id: Option<String>,
+    effort: Option<Option<String>>,
+    permission_mode: Option<&'static str>,
+    response_mode: Option<ResponseMode>,
+    allow_git: Option<bool>,
+}
+
+/// session-settings-sheet FR-6/§7 cases 3-5: the core's OWN re-validation of
+/// every key `SessionSettingsPatch` carries — the frontend's narrowing (a
+/// picker/toggle that cannot itself produce a bad value) is never trusted. The
+/// FIRST bad key stops the whole patch, so nothing partial is ever written.
+/// `catalog` is the session's ACCOUNT catalog (case 4) — pass an empty slice
+/// when the patch carries no `modelId` (the model call is skipped entirely,
+/// sparing sessions with no live catalog from needing one for an unrelated
+/// field). display-openai-model-name FR-7: the SAME fetch also supplies the
+/// new label/context window (`ModelInfo`, not just the bare id) so a model
+/// change re-resolves without a second adapter call.
+pub(crate) fn validate_settings_patch(
+    patch: &SessionSettingsPatch,
+    catalog: &[ModelInfo],
+) -> Result<ValidatedSettingsPatch, AppError> {
+    let name = match &patch.name {
+        Some(raw) => Some(validate_session_name(raw)?),
+        None => None,
+    };
+    let model_id = match &patch.model_id {
+        Some(raw) => {
+            if !catalog.iter().any(|m| &m.id == raw) {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "model is not advertised for this session's account",
+                ));
+            }
+            Some(raw.clone())
+        }
+        None => None,
+    };
+    let effort = match &patch.effort {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                Some(None)
+            } else if valid_effort(trimmed) {
+                Some(Some(trimmed.to_string()))
+            } else {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown effort level",
+                ));
+            }
+        }
+        None => None,
+    };
+    let permission_mode = match &patch.permission_mode {
+        Some(raw) => match parse_permission_mode(raw) {
+            Some(mode) => Some(mode),
+            None => {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown permission mode",
+                ))
+            }
+        },
+        None => None,
+    };
+    let response_mode = match &patch.response_mode {
+        Some(raw) => match ResponseMode::parse(raw) {
+            Some(mode) => Some(mode),
+            None => {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "unknown response mode",
+                ))
+            }
+        },
+        None => None,
+    };
+    Ok(ValidatedSettingsPatch {
+        name,
+        model_id,
+        effort,
+        permission_mode,
+        response_mode,
+        allow_git: patch.allow_git,
+    })
+}
+
+fn apply_validated_settings(
+    s: &mut Session,
+    validated: ValidatedSettingsPatch,
+    catalog: &[ModelInfo],
+) {
+    if let Some(name) = validated.name {
+        s.name = name;
+    }
+    if let Some(model_id) = validated.model_id {
+        let (label, limit) = resolve_model_display_from_catalog(catalog, &model_id);
+        s.model_label = label;
+        s.context_limit_tokens = limit;
+        s.model_id = model_id;
+    }
+    if let Some(effort) = validated.effort {
+        s.effort = effort;
+    }
+    if let Some(mode) = validated.permission_mode {
+        // FR-4: stamped on EVERY write, including a no-op re-pick —
+        // mirrors switch_permission_mode_in_engine's rationale.
+        s.permission_mode = mode.to_string();
+        s.permission_mode_since = now_ms();
+    }
+    if let Some(mode) = validated.response_mode {
+        s.response_mode = mode;
+    }
+    if let Some(allow_git) = validated.allow_git {
+        s.allow_git = allow_git;
+    }
+}
+
+/// session-settings-sheet FR-2/FR-3/§7 case 2: the engine half of
+/// `session_update_settings` — SESSION_NOT_FOUND, FR-3's empty-patch no-op,
+/// the terminal+run-key guard, FR-6's re-validation and the batched mutation,
+/// all pure (no `AppHandle`) like `switch_permission_mode_in_engine` — persist
+/// + emit stay in the handler, which also owns the model-catalog fetch this
+/// needs for FR-6's `modelId` check. `Ok((meta, false))` is FR-3: the caller
+/// must not persist or emit for it.
+pub(crate) fn update_settings_in_engine(
+    engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
+    session_id: &str,
+    patch: &SessionSettingsPatch,
+    catalog: &[ModelInfo],
+) -> Result<(SessionMeta, bool), AppError> {
+    if patch.is_empty() {
+        let meta = engine
+            .with_session(session_id, |s| s.meta(accounts))
+            .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+        return Ok((meta, false));
+    }
+    let terminal = engine
+        .with_session(session_id, |s| status::is_terminal(&s.status))
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+    if terminal && patch.touches_run_key() {
+        return Err(AppError::new(
+            ErrorCode::SessionNotRunning,
+            "session has ended",
+        ));
+    }
+    let validated = validate_settings_patch(patch, catalog)?;
+    let meta = engine
+        .with_session_mut(session_id, |s| {
+            settings_capability_guard(s, patch)?;
+            apply_validated_settings(s, validated, catalog);
+            Ok::<_, AppError>(s.meta(accounts))
+        })
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))??;
+    Ok((meta, true))
+}
+
+/// pi-runtime-boundary FR-4: a patch touching a capability the session's
+/// effective snapshot narrows is rejected WHOLE, under the mutation's lock.
+fn settings_capability_guard(s: &Session, patch: &SessionSettingsPatch) -> Result<(), AppError> {
+    // Sandbox selection is independent of interactive approval support.
+    if patch.permission_mode.is_some() && s.agent_runtime == AgentRuntime::Pi {
+        return Err(AppError::new(
+            ErrorCode::RuntimeUnsupported,
+            "runtime sandbox selection is unavailable",
+        ));
+    }
+    for (needed, key) in [
+        (
+            patch.model_id.is_some() || patch.effort.is_some(),
+            "modelSwitching",
+        ),
+        (patch.allow_git.is_some(), "permissions"),
+    ] {
+        if needed
+            && !adapter::resolve_capability(s.agent_runtime, s.effective_capabilities.as_ref(), key)
+        {
+            return Err(AppError::new(
+                ErrorCode::RuntimeUnsupported,
+                "runtime capability is unavailable",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// session-settings-sheet FR-2: `francois:session:updateSettings` /
+/// `session_update_settings`. Validates every changed key in ONE pass (§7
+/// cases 3-5: one bad key writes NONE of them), applies them in ONE pass,
+/// persists once and emits exactly one `session.meta` — the same shape as the
+/// single-setting switch verbs above, batched. FR-5: no verb here reaches into
+/// a running turn — `name`/`allowGit` land immediately because they touch no
+/// `TurnContext` snapshot, and the rest reach only the session's next turn,
+/// exactly like the switch verbs they replace in this sheet.
+#[tauri::command(async)]
+pub fn session_update_settings(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    patch: SessionSettingsPatch,
+) -> IpcResult<Value> {
+    if !patch.is_empty()
+        && engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex)
+    {
+        // Name-only changes remain allowed after a session ends.
+        if patch.touches_run_key() {
+            return match update_codex_settings(&app, &engine, &session_id, &patch) {
+                Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
+                Err(e) => e.into(),
+            };
+        }
+    }
+    // The model catalog is fetched only when the patch actually carries a
+    // modelId — sparing a settings-only edit the round trip and the account
+    // lookup it needs.
+    let catalog: Vec<ModelInfo> = if patch.model_id.is_some() {
+        let Some((account_id, agent_runtime)) =
+            engine.with_session(&session_id, |s| (s.account_id.clone(), s.agent_runtime))
+        else {
+            return err(ErrorCode::SessionNotFound, "no such session");
+        };
+        adapter_for(agent_runtime).models(&app, &account_id)
+    } else {
+        Vec::new()
+    };
+    match update_settings_in_engine(&engine, &app, &session_id, &patch, &catalog) {
+        Ok((meta, true)) => {
+            persist(&app, &engine);
+            emit(&app, SessionEvent::Meta { meta: meta.clone() });
+            ok(serde_json::to_value(meta).unwrap())
+        }
+        Ok((meta, false)) => ok(serde_json::to_value(meta).unwrap()),
+        Err(e) => e.into(),
+    }
 }
 
 #[tauri::command(async)]
@@ -793,7 +1347,7 @@ pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcRe
             None
         }
     }) {
-        None => return err("SESSION_NOT_FOUND", "no such session"),
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
         Some(turn) => turn,
     };
     if let Some(turn) = turn {
@@ -806,7 +1360,7 @@ pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testutil::{test_engine_with, test_session};
+    use crate::session::testutil::{fake_accounts, test_engine_with, test_session};
 
     #[test]
     fn create_input_rejects_missing_cwd() {
@@ -818,7 +1372,7 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert_eq!(err.0, "INVALID_INPUT");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
     }
 
     #[test]
@@ -854,7 +1408,9 @@ mod tests {
         // FR-1: the returned SessionMeta is exactly what the accompanying
         // session.meta emission carries.
         let engine = test_engine_with(test_session());
-        let meta = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        let meta =
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "bypassPermissions")
+                .unwrap();
         assert_eq!(meta.permission_mode, "bypassPermissions");
         assert_eq!(
             engine.with_session("s1", |s| s.permission_mode.clone()),
@@ -868,7 +1424,8 @@ mod tests {
     fn switch_permission_mode_in_engine_is_a_no_op_success_for_the_current_mode() {
         // FR-3: picking the mode already set is a success, no special-casing.
         let engine = test_engine_with(test_session()); // starts "default"
-        let meta = switch_permission_mode_in_engine(&engine, "s1", "default").unwrap();
+        let meta =
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "default").unwrap();
         assert_eq!(meta.permission_mode, "default");
     }
 
@@ -876,10 +1433,11 @@ mod tests {
     fn switch_permission_mode_in_engine_rejects_an_unknown_session() {
         // FR-2: SESSION_NOT_FOUND.
         let engine = test_engine_with(test_session());
-        let Err(err) = switch_permission_mode_in_engine(&engine, "nope", "plan") else {
+        let Err(err) = switch_permission_mode_in_engine(&engine, &fake_accounts(), "nope", "plan")
+        else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "SESSION_NOT_FOUND");
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
         assert_eq!(
             engine.with_session("s1", |s| s.permission_mode.clone()),
             Some("default".to_string())
@@ -893,10 +1451,11 @@ mod tests {
         let mut session = test_session();
         session.status = status::DONE.into();
         let engine = test_engine_with(session);
-        let Err(err) = switch_permission_mode_in_engine(&engine, "s1", "plan") else {
+        let Err(err) = switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "plan")
+        else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "SESSION_NOT_RUNNING");
+        assert_eq!(err.code, ErrorCode::SessionNotRunning);
         // Nothing was mutated.
         assert_eq!(
             engine.with_session("s1", |s| s.permission_mode.clone()),
@@ -912,14 +1471,18 @@ mod tests {
         session.permission_mode_since = 1;
         let engine = test_engine_with(session);
 
-        let meta = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        let meta =
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "bypassPermissions")
+                .unwrap();
         assert!(meta.permission_mode_since > 1);
         let json = serde_json::to_value(&meta).unwrap();
         assert_eq!(json["permissionModeSince"], meta.permission_mode_since);
 
         let first = meta.permission_mode_since;
         engine.with_session_mut("s1", |s| s.permission_mode_since = first - 5_000);
-        let again = switch_permission_mode_in_engine(&engine, "s1", "bypassPermissions").unwrap();
+        let again =
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), "s1", "bypassPermissions")
+                .unwrap();
         assert!(again.permission_mode_since >= first);
     }
 
@@ -929,7 +1492,9 @@ mod tests {
     fn switch_response_mode_in_engine_mutates_and_returns_the_updated_meta() {
         let engine = test_engine_with(test_session());
 
-        let meta = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Concise).unwrap();
+        let meta =
+            switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Concise)
+                .unwrap();
         assert_eq!(meta.response_mode, ResponseMode::Concise);
         assert_eq!(
             engine.with_session("s1", |s| s.response_mode),
@@ -944,7 +1509,9 @@ mod tests {
     fn switch_response_mode_in_engine_is_a_no_op_success_for_the_current_mode() {
         // FR-3: re-picking the current mode is a no-op SUCCESS — not special-cased.
         let engine = test_engine_with(test_session());
-        let meta = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Default).unwrap();
+        let meta =
+            switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Default)
+                .unwrap();
         assert_eq!(meta.response_mode, ResponseMode::Default);
     }
 
@@ -957,7 +1524,8 @@ mod tests {
         session.response_mode_sent = Some(ResponseMode::Concise);
         let engine = test_engine_with(session);
 
-        switch_response_mode_in_engine(&engine, "s1", ResponseMode::Default).unwrap();
+        switch_response_mode_in_engine(&engine, &fake_accounts(), "s1", ResponseMode::Default)
+            .unwrap();
         assert_eq!(
             engine.with_session("s1", |s| s.response_mode_sent),
             Some(Some(ResponseMode::Concise))
@@ -967,11 +1535,15 @@ mod tests {
     #[test]
     fn switch_response_mode_in_engine_rejects_an_unknown_session() {
         let engine = test_engine_with(test_session());
-        let Err(err) = switch_response_mode_in_engine(&engine, "nope", ResponseMode::Concise)
-        else {
+        let Err(err) = switch_response_mode_in_engine(
+            &engine,
+            &fake_accounts(),
+            "nope",
+            ResponseMode::Concise,
+        ) else {
             panic!("expected an error");
         };
-        assert_eq!(err.0, "SESSION_NOT_FOUND");
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
     }
 
     #[test]
@@ -982,11 +1554,15 @@ mod tests {
             let mut session = test_session();
             session.status = status.into();
             let engine = test_engine_with(session);
-            let Err(err) = switch_response_mode_in_engine(&engine, "s1", ResponseMode::Concise)
-            else {
+            let Err(err) = switch_response_mode_in_engine(
+                &engine,
+                &fake_accounts(),
+                "s1",
+                ResponseMode::Concise,
+            ) else {
                 panic!("expected an error");
             };
-            assert_eq!(err.0, "SESSION_NOT_RUNNING");
+            assert_eq!(err.code, ErrorCode::SessionNotRunning);
             // The session is untouched.
             assert_eq!(
                 engine.with_session("s1", |s| s.response_mode),
@@ -995,13 +1571,222 @@ mod tests {
         }
     }
 
+    fn codex_catalog() -> crate::session::models::ModelCatalog {
+        let mut row = crate::ipc::model("future-model", "Future model");
+        row.efforts = vec!["low".into(), "ultra".into(), "future_effort-2".into()];
+        crate::session::models::ModelCatalog {
+            account_id: "codex-account".into(),
+            agent_runtime: AgentRuntime::Codex,
+            models: vec![row],
+            default_model_id: Some("future-model".into()),
+            source: "codex-app-server".into(),
+            freshness: "fresh".into(),
+            fetched_at: Some(1),
+            warning: None,
+        }
+    }
+
+    #[test]
+    fn codex_creation_rejects_selection_before_worktree_or_session_effects() {
+        for (model, effort) in [(Some("missing"), None), (None, Some("unsupported"))] {
+            let result = create_with_selection(
+                true,
+                "fallback".into(),
+                model,
+                effort,
+                || Ok(codex_catalog()),
+                |_, _| panic!("must not create worktree or session"),
+            );
+            let json = serde_json::to_value(result).unwrap();
+            assert_eq!(json["error"]["code"], "INVALID_INPUT");
+        }
+    }
+
+    #[test]
+    fn codex_mutation_rejects_mixed_patch_without_commit() {
+        let engine = test_engine_with(test_session());
+        let before = engine.with_session("s1", |s| (s.name.clone(), s.model_id.clone()));
+        let result = update_codex_settings_with(
+            &fake_accounts(),
+            &engine,
+            "s1",
+            &SessionSettingsPatch {
+                name: Some("changed".into()),
+                model_id: Some("future-model".into()),
+                effort: Some("unsupported".into()),
+                ..Default::default()
+            },
+            |_| Ok(codex_catalog()),
+            |_| panic!("must not persist or emit"),
+        );
+        assert_eq!(result.err().unwrap().code, ErrorCode::InvalidInput);
+        assert_eq!(
+            engine.with_session("s1", |s| (s.name.clone(), s.model_id.clone())),
+            before
+        );
+    }
+
+    #[test]
+    fn codex_mutation_rechecks_revision_after_unlocked_probe() {
+        let engine = test_engine_with(test_session());
+        let result = update_codex_settings_with(
+            &fake_accounts(),
+            &engine,
+            "s1",
+            &SessionSettingsPatch {
+                model_id: Some("future-model".into()),
+                ..Default::default()
+            },
+            |_| {
+                engine.with_session_mut("s1", |s| s.name = "concurrent rename".into());
+                Ok(codex_catalog())
+            },
+            |_| panic!("stale patch must not commit"),
+        );
+        let error = result.err().unwrap();
+        assert_eq!(error.code, ErrorCode::InvalidInput);
+        assert!(error.message.contains("retry"));
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("concurrent rename".into())
+        );
+    }
+
+    #[test]
+    fn codex_mutation_clear_and_unrelated_edit_work_offline() {
+        let mut session = test_session();
+        session.effort = Some("saved-effort".into());
+        let engine = test_engine_with(session);
+        for patch in [
+            SessionSettingsPatch {
+                allow_git: Some(true),
+                ..Default::default()
+            },
+            SessionSettingsPatch {
+                effort: Some(" ".into()),
+                ..Default::default()
+            },
+        ] {
+            let mut events = Vec::new();
+            let meta = update_codex_settings_with(
+                &fake_accounts(),
+                &engine,
+                "s1",
+                &patch,
+                |_| panic!("offline edit must not discover"),
+                |event| events.push(event),
+            )
+            .unwrap();
+            assert_eq!(events.len(), 1);
+            assert!(
+                matches!(&events[0], SessionEvent::Meta { meta: event_meta } if event_meta.id == meta.id)
+            );
+            if patch.effort.is_none() {
+                assert_eq!(meta.effort.as_deref(), Some("saved-effort"));
+            } else {
+                assert_eq!(meta.effort, None);
+            }
+        }
+    }
+
+    #[test]
+    fn codex_mutation_model_change_clears_inherited_effort_and_emits_once() {
+        let mut session = test_session();
+        session.effort = Some("unsupported".into());
+        let engine = test_engine_with(session);
+        let mut events = Vec::new();
+        let meta = update_codex_settings_with(
+            &fake_accounts(),
+            &engine,
+            "s1",
+            &SessionSettingsPatch {
+                model_id: Some("future-model".into()),
+                ..Default::default()
+            },
+            |_| Ok(codex_catalog()),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert_eq!(meta.model.id, "future-model");
+        assert_eq!(meta.model.label, "Future model");
+        assert_eq!(meta.effort, None);
+        assert_eq!(events.len(), 1);
+        let SessionEvent::Meta { meta: emitted } = &events[0] else {
+            panic!("wrong event")
+        };
+        assert_eq!(
+            serde_json::to_value(emitted).unwrap(),
+            serde_json::to_value(meta).unwrap()
+        );
+    }
+
+    #[test]
+    fn codex_selection_uses_runtime_default_and_model_specific_efforts() {
+        let catalog = codex_catalog();
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, Some("ultra"), None).unwrap(),
+            ("future-model".into(), Some("ultra".into()))
+        );
+        for effort in ["high", "ULTRA", "bad\"value"] {
+            assert_eq!(
+                validate_catalog_selection(&catalog, None, Some(effort), None)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidInput
+            );
+        }
+        assert_eq!(
+            validate_catalog_selection(&catalog, Some("missing"), None, None)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+    }
+
+    #[test]
+    fn codex_model_change_preserves_supported_effort_and_clears_inherited_unsupported_effort() {
+        let catalog = codex_catalog();
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, None, Some("ultra"))
+                .unwrap()
+                .1,
+            Some("ultra".into())
+        );
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, None, Some("high"))
+                .unwrap()
+                .1,
+            None
+        );
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, Some("  "), Some("ultra"))
+                .unwrap()
+                .1,
+            None
+        );
+        assert!(validate_catalog_selection(&catalog, None, Some("high"), Some("ultra")).is_err());
+    }
+
+    #[test]
+    fn empty_codex_catalog_never_invents_a_default_model() {
+        let mut catalog = codex_catalog();
+        catalog.models.clear();
+        catalog.default_model_id = None;
+        assert_eq!(
+            validate_catalog_selection(&catalog, None, None, None)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+    }
+
     // ---------- rework-top-bar: the effort switch (design 11c) ----------
 
     #[test]
     fn switch_effort_in_engine_sets_and_clears_the_level() {
         let engine = test_engine_with(test_session());
 
-        let meta = switch_effort_in_engine(&engine, "s1", Some("high")).unwrap();
+        let meta = switch_effort_in_engine(&engine, &fake_accounts(), "s1", Some("high")).unwrap();
         assert_eq!(meta.effort.as_deref(), Some("high"));
         assert_eq!(
             engine.with_session("s1", |s| s.effort.clone()),
@@ -1011,7 +1796,7 @@ mod tests {
         // same omit-not-null convention projectId uses.
         assert_eq!(serde_json::to_value(&meta).unwrap()["effort"], "high");
 
-        let cleared = switch_effort_in_engine(&engine, "s1", None).unwrap();
+        let cleared = switch_effort_in_engine(&engine, &fake_accounts(), "s1", None).unwrap();
         assert_eq!(cleared.effort, None);
         assert!(serde_json::to_value(&cleared)
             .unwrap()
@@ -1022,19 +1807,21 @@ mod tests {
     #[test]
     fn switch_effort_in_engine_rejects_an_unknown_or_terminal_session() {
         let engine = test_engine_with(test_session());
-        let Err(unknown) = switch_effort_in_engine(&engine, "nope", Some("high")) else {
+        let Err(unknown) = switch_effort_in_engine(&engine, &fake_accounts(), "nope", Some("high"))
+        else {
             panic!("expected an error");
         };
-        assert_eq!(unknown.0, "SESSION_NOT_FOUND");
+        assert_eq!(unknown.code, ErrorCode::SessionNotFound);
         assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
 
         let mut done = test_session();
         done.status = status::DONE.into();
         let engine = test_engine_with(done);
-        let Err(terminal) = switch_effort_in_engine(&engine, "s1", Some("high")) else {
+        let Err(terminal) = switch_effort_in_engine(&engine, &fake_accounts(), "s1", Some("high"))
+        else {
             panic!("expected an error");
         };
-        assert_eq!(terminal.0, "SESSION_NOT_RUNNING");
+        assert_eq!(terminal.code, ErrorCode::SessionNotRunning);
         assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
     }
 
@@ -1069,8 +1856,8 @@ mod tests {
             // Stripped, not replaced by a space — FR-1 step 1 is a filter.
             Some("apirefactor".to_string())
         );
-        let (code, _) = create_name(Some("a".repeat(81))).unwrap_err();
-        assert_eq!(code, "INVALID_INPUT");
+        let code = create_name(Some("a".repeat(81))).unwrap_err().code;
+        assert_eq!(code, ErrorCode::InvalidInput);
         assert_eq!(
             create_name(Some("a".repeat(80))).unwrap(),
             Some("a".repeat(80))
@@ -1082,7 +1869,8 @@ mod tests {
         // FR-4: the returned SessionMeta is the post-rename snapshot, and it is
         // exactly what the accompanying session.meta emission carries.
         let engine = test_engine_with(test_session());
-        let meta = rename_in_engine(&engine, "s1", "shipping lane".into()).unwrap();
+        let meta =
+            rename_in_engine(&engine, &fake_accounts(), "s1", "shipping lane".into()).unwrap();
         assert_eq!(meta.name, "shipping lane");
         assert_eq!(
             engine.with_session("s1", |s| s.name.clone()),
@@ -1097,7 +1885,7 @@ mod tests {
     fn rename_in_engine_is_none_for_an_unknown_id_and_mutates_nothing() {
         // FR-3.
         let engine = test_engine_with(test_session());
-        assert!(rename_in_engine(&engine, "nope", "x".into()).is_none());
+        assert!(rename_in_engine(&engine, &fake_accounts(), "nope", "x".into()).is_none());
         assert_eq!(
             engine.with_session("s1", |s| s.name.clone()),
             Some("n".into())
@@ -1113,7 +1901,7 @@ mod tests {
             s.status = status.into();
             s.claude_session_id = Some("claude-1".into());
             let engine = test_engine_with(s);
-            let meta = rename_in_engine(&engine, "s1", "n".into()).unwrap();
+            let meta = rename_in_engine(&engine, &fake_accounts(), "s1", "n".into()).unwrap();
             assert_eq!(meta.name, "n");
             assert_eq!(meta.status, status);
             assert_eq!(
@@ -1125,6 +1913,331 @@ mod tests {
                 Some(true)
             );
         }
+    }
+
+    // ---------- session-settings-sheet ----------
+
+    /// display-openai-model-name: a bare id list, shaped into the `ModelInfo`
+    /// catalog `validate_settings_patch`/`update_settings_in_engine` now take
+    /// (FR-7 — the same fetch resolves the new label/window, not just the id).
+    fn model_catalog(ids: &[&str]) -> Vec<ModelInfo> {
+        ids.iter().map(|id| model(id, id)).collect()
+    }
+
+    fn patch_with_name(name: &str) -> SessionSettingsPatch {
+        SessionSettingsPatch {
+            name: Some(name.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_empty_patch_touches_no_run_key_and_is_empty() {
+        let patch = SessionSettingsPatch::default();
+        assert!(patch.is_empty());
+        assert!(!patch.touches_run_key());
+    }
+
+    #[test]
+    fn a_name_only_patch_is_not_empty_but_touches_no_run_key() {
+        let patch = patch_with_name("new name");
+        assert!(!patch.is_empty());
+        assert!(!patch.touches_run_key());
+    }
+
+    #[test]
+    fn any_other_key_touches_a_run_key() {
+        let allow_git = SessionSettingsPatch {
+            allow_git: Some(true),
+            ..Default::default()
+        };
+        assert!(allow_git.touches_run_key());
+        assert!(!allow_git.is_empty());
+
+        let model = SessionSettingsPatch {
+            model_id: Some("opus".into()),
+            ..Default::default()
+        };
+        assert!(model.touches_run_key());
+    }
+
+    // ---------- validate_settings_patch (FR-6, §7 cases 3-5) ----------
+
+    #[test]
+    fn validate_settings_patch_accepts_every_field_when_well_formed() {
+        let patch = SessionSettingsPatch {
+            name: Some("renamed".into()),
+            model_id: Some("opus".into()),
+            effort: Some("high".into()),
+            permission_mode: Some("acceptEdits".into()),
+            response_mode: Some("concise".into()),
+            allow_git: Some(true),
+        };
+        let validated =
+            validate_settings_patch(&patch, &model_catalog(&["sonnet", "opus"])).unwrap();
+        assert_eq!(validated.name.as_deref(), Some("renamed"));
+        assert_eq!(validated.model_id.as_deref(), Some("opus"));
+        assert_eq!(validated.effort, Some(Some("high".to_string())));
+        assert_eq!(validated.permission_mode, Some("acceptEdits"));
+        assert_eq!(validated.response_mode, Some(ResponseMode::Concise));
+        assert_eq!(validated.allow_git, Some(true));
+    }
+
+    #[test]
+    fn validate_settings_patch_clears_effort_on_a_blank_value() {
+        // §5: '' clears back to the model's own default, mirroring
+        // session_switch_effort's absent/blank rule.
+        let patch = SessionSettingsPatch {
+            effort: Some("".into()),
+            ..Default::default()
+        };
+        let validated = validate_settings_patch(&patch, &[]).unwrap();
+        assert_eq!(validated.effort, Some(None));
+    }
+
+    #[test]
+    fn validate_settings_patch_rejects_a_blank_name() {
+        let patch = patch_with_name("   ");
+        let err = validate_settings_patch(&patch, &[]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn validate_settings_patch_rejects_a_model_the_account_does_not_advertise() {
+        // §7 case 4: the picker cannot produce it, so this is the
+        // tampered-payload path.
+        let patch = SessionSettingsPatch {
+            model_id: Some("claude-nonexistent".into()),
+            ..Default::default()
+        };
+        let err = validate_settings_patch(&patch, &model_catalog(&["sonnet"])).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn validate_settings_patch_rejects_unknown_effort_permission_and_response_modes() {
+        let bad_effort = SessionSettingsPatch {
+            effort: Some("turbo".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_settings_patch(&bad_effort, &[]).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+
+        let bad_permission = SessionSettingsPatch {
+            permission_mode: Some("yolo".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_settings_patch(&bad_permission, &[])
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+
+        let bad_response = SessionSettingsPatch {
+            response_mode: Some("terse".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_settings_patch(&bad_response, &[])
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+    }
+
+    // ---------- update_settings_in_engine (FR-2/FR-3/FR-4/§7 cases 1-5) ----------
+
+    #[test]
+    fn update_settings_in_engine_rejects_an_unknown_session() {
+        let engine = test_engine_with(test_session());
+        let Err(err) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "nope",
+            &patch_with_name("x"),
+            &[],
+        ) else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
+    }
+
+    #[test]
+    fn an_empty_patch_is_a_no_op_success_that_the_caller_must_not_persist_or_emit() {
+        // FR-3.
+        let engine = test_engine_with(test_session());
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &SessionSettingsPatch::default(),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(meta.name, "n");
+        assert!(!should_persist);
+    }
+
+    #[test]
+    fn a_name_only_patch_succeeds_on_a_terminal_session() {
+        // §7 case 2: matches session_rename — name touches no process.
+        let mut session = test_session();
+        session.status = status::DONE.into();
+        let engine = test_engine_with(session);
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch_with_name("renamed"),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(meta.name, "renamed");
+        assert!(should_persist);
+    }
+
+    #[test]
+    fn adding_a_run_key_to_a_terminal_session_is_rejected_whole() {
+        // §7 case 2: adding modelId to a name patch on a done session rejects
+        // the WHOLE patch — the name does not silently apply either.
+        let mut session = test_session();
+        session.status = status::DONE.into();
+        let engine = test_engine_with(session);
+        let patch = SessionSettingsPatch {
+            name: Some("renamed".into()),
+            model_id: Some("sonnet".into()),
+            ..Default::default()
+        };
+        let Err(err) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch,
+            &model_catalog(&["sonnet"]),
+        ) else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.code, ErrorCode::SessionNotRunning);
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("n".into())
+        );
+    }
+
+    #[test]
+    fn a_patch_with_one_invalid_key_writes_none_of_its_keys() {
+        // §7 cases 3-5: validate all, write all — nothing partial.
+        let engine = test_engine_with(test_session());
+        let patch = SessionSettingsPatch {
+            name: Some("renamed".into()),
+            allow_git: Some(true),
+            permission_mode: Some("not-a-mode".into()),
+            ..Default::default()
+        };
+        let Err(err) = update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[])
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        assert_eq!(
+            engine.with_session("s1", |s| s.name.clone()),
+            Some("n".into())
+        );
+        assert_eq!(engine.with_session("s1", |s| s.allow_git), Some(false));
+    }
+
+    #[test]
+    fn four_changed_keys_apply_in_one_pass() {
+        // FR-2: validate all -> write all in a single mutation.
+        let engine = test_engine_with(test_session());
+        let patch = SessionSettingsPatch {
+            model_id: Some("opus".into()),
+            permission_mode: Some("acceptEdits".into()),
+            response_mode: Some("concise".into()),
+            allow_git: Some(true),
+            ..Default::default()
+        };
+        let (meta, should_persist) = update_settings_in_engine(
+            &engine,
+            &fake_accounts(),
+            "s1",
+            &patch,
+            &model_catalog(&["opus"]),
+        )
+        .unwrap();
+        assert!(should_persist);
+        assert_eq!(meta.model.id, "opus");
+        assert_eq!(meta.permission_mode, "acceptEdits");
+        assert_eq!(meta.response_mode, ResponseMode::Concise);
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["allowGit"], true);
+        assert!(meta.permission_mode_since > 0);
+    }
+
+    #[test]
+    fn a_model_change_re_resolves_the_label_and_context_window_from_the_catalog() {
+        // display-openai-model-name FR-7: the settings-sheet model change
+        // re-resolves BOTH stored values from the account's own catalog,
+        // exactly like session_switch_model's apply_model_switch.
+        let engine = test_engine_with(test_session());
+        let catalog = vec![ModelInfo {
+            context_tokens: Some(128_000),
+            ..model("gpt-4o", "gpt-4o")
+        }];
+        let patch = SessionSettingsPatch {
+            model_id: Some("gpt-4o".into()),
+            ..Default::default()
+        };
+        let (meta, should_persist) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &catalog).unwrap();
+        assert!(should_persist);
+        assert_eq!(meta.model.id, "gpt-4o");
+        assert_eq!(meta.model.label, "gpt-4o"); // never "Gpt"
+        assert_eq!(meta.context_limit_tokens, 128_000);
+    }
+
+    #[test]
+    fn permission_mode_stamps_since_even_on_a_no_op_re_pick() {
+        // FR-4: mirrors switch_permission_mode_in_engine's rule exactly.
+        let mut session = test_session();
+        session.permission_mode_since = 1;
+        let engine = test_engine_with(session);
+        let patch = SessionSettingsPatch {
+            permission_mode: Some("default".into()),
+            ..Default::default()
+        };
+        let (meta, _) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[]).unwrap();
+        assert!(meta.permission_mode_since > 1);
+    }
+
+    #[test]
+    fn re_sending_the_current_value_is_an_idempotent_success() {
+        // FR-3: not special-cased — same mutation, same persist+emit signal.
+        let engine = test_engine_with(test_session()); // name "n"
+        let (meta, should_persist) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch_with_name("n"), &[])
+                .unwrap();
+        assert_eq!(meta.name, "n");
+        assert!(should_persist);
+    }
+
+    #[test]
+    fn effort_clears_through_the_full_pipeline() {
+        let mut session = test_session();
+        session.effort = Some("high".into());
+        let engine = test_engine_with(session);
+        let patch = SessionSettingsPatch {
+            effort: Some("".into()),
+            ..Default::default()
+        };
+        let (meta, _) =
+            update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[]).unwrap();
+        assert_eq!(meta.effort, None);
+        assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
     }
 
     // ---------- session-profiles: session_create's profile resolution ----------
@@ -1187,7 +2300,7 @@ mod tests {
         assert!(check_system_prompt_bound(&"x".repeat(crate::profiles::MAX_SYSTEM_PROMPT)).is_ok());
         let err = check_system_prompt_bound(&"x".repeat(crate::profiles::MAX_SYSTEM_PROMPT + 1))
             .unwrap_err();
-        assert_eq!(err.0, "INVALID_INPUT");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
     }
 
     #[test]
@@ -1207,7 +2320,7 @@ mod tests {
 #[cfg(test)]
 mod capability_guard_tests {
     use super::*;
-    use crate::session::testutil::{test_engine_with, test_session};
+    use crate::session::testutil::{fake_accounts, test_engine_with, test_session};
     #[test]
     fn model_switch_rechecks_capability_after_preliminary_check() {
         let session = test_session();
@@ -1228,11 +2341,18 @@ mod capability_guard_tests {
             );
         });
         assert_eq!(
-            switch_model_in_engine(&engine, "s1", "new-model")
-                .err()
-                .unwrap()
-                .0,
-            "RUNTIME_UNSUPPORTED"
+            switch_model_in_engine(
+                &engine,
+                &fake_accounts(),
+                "s1",
+                "new-model",
+                "New model".into(),
+                1
+            )
+            .err()
+            .unwrap()
+            .code,
+            ErrorCode::RuntimeUnsupported
         );
         assert_eq!(
             engine.with_session("s1", |s| (s.model_id.clone(), s.context_limit_tokens)),
@@ -1265,11 +2385,11 @@ mod capability_guard_tests {
             let engine = test_engine_with(session);
             for effort in [Some("high"), None] {
                 assert_eq!(
-                    switch_effort_in_engine(&engine, "s1", effort)
+                    switch_effort_in_engine(&engine, &fake_accounts(), "s1", effort)
                         .err()
                         .unwrap()
-                        .0,
-                    "RUNTIME_UNSUPPORTED"
+                        .code,
+                    ErrorCode::RuntimeUnsupported
                 );
                 assert_eq!(
                     engine.with_session("s1", |s| s.effort.clone()).unwrap(),
@@ -1286,11 +2406,11 @@ mod capability_guard_tests {
         session.agent_runtime = AgentRuntime::Pi;
         let engine = test_engine_with(session);
         assert_eq!(
-            switch_permission_mode_in_engine(&engine, &id, "plan")
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), &id, "plan")
                 .err()
                 .unwrap()
-                .0,
-            "RUNTIME_UNSUPPORTED"
+                .code,
+            ErrorCode::RuntimeUnsupported
         );
         assert_eq!(
             engine
@@ -1299,6 +2419,117 @@ mod capability_guard_tests {
             "default"
         );
         engine.with_session_mut(&id, |s| s.agent_runtime = AgentRuntime::ClaudeCode);
-        assert!(switch_permission_mode_in_engine(&engine, &id, "plan").is_ok());
+        assert!(switch_permission_mode_in_engine(&engine, &fake_accounts(), &id, "plan").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod narrowed_settings_tests {
+    use super::*;
+    use crate::session::testutil::{fake_accounts, test_engine_with, test_session};
+
+    #[test]
+    fn batch_sandbox_selection_is_independent_of_approval_capabilities() {
+        for runtime in [
+            AgentRuntime::ClaudeCode,
+            AgentRuntime::Codex,
+            AgentRuntime::Grok,
+            AgentRuntime::Pi,
+        ] {
+            for available in [None, Some(false), Some(true)] {
+                let mut session = test_session();
+                let original_name = session.name.clone();
+                session.agent_runtime = runtime;
+                session.effective_capabilities = available.map(|available| {
+                    [(
+                        "permissions".into(),
+                        adapter::CapabilityState {
+                            available,
+                            reason: None,
+                        },
+                    )]
+                    .into()
+                });
+                let engine = test_engine_with(session);
+                let patch = SessionSettingsPatch {
+                    name: Some("changed".into()),
+                    permission_mode: Some("plan".into()),
+                    ..Default::default()
+                };
+                let result =
+                    update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[]);
+                if runtime == AgentRuntime::Pi {
+                    assert_eq!(result.err().unwrap().code, ErrorCode::RuntimeUnsupported);
+                    assert_eq!(
+                        engine
+                            .with_session("s1", |s| (s.name.clone(), s.permission_mode.clone()))
+                            .unwrap(),
+                        (original_name, "default".into())
+                    );
+                } else {
+                    let (meta, persist) = result.unwrap();
+                    assert!(persist);
+                    assert_eq!(meta.name, "changed");
+                    assert_eq!(meta.permission_mode, "plan");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrowed_settings_reject_entire_patch() {
+        for (key, patch) in [
+            (
+                "modelSwitching",
+                SessionSettingsPatch {
+                    model_id: Some("opus".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "modelSwitching",
+                SessionSettingsPatch {
+                    effort: Some("high".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "permissions",
+                SessionSettingsPatch {
+                    allow_git: Some(true),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let mut s = test_session();
+            let original_name = s.name.clone();
+            s.effective_capabilities = Some(
+                [(
+                    key.into(),
+                    adapter::CapabilityState {
+                        available: false,
+                        reason: Some("Disabled".into()),
+                    },
+                )]
+                .into(),
+            );
+            let engine = test_engine_with(s);
+            let patch = SessionSettingsPatch {
+                name: Some("changed".into()),
+                ..patch
+            };
+            let catalog = [crate::ipc::model("opus", "Opus")];
+            assert_eq!(
+                update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &catalog)
+                    .err()
+                    .unwrap()
+                    .code,
+                ErrorCode::RuntimeUnsupported
+            );
+            assert_eq!(
+                engine.with_session("s1", |s| s.name.clone()).unwrap(),
+                original_name
+            );
+        }
     }
 }

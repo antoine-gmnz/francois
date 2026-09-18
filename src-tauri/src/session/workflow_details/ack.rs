@@ -8,7 +8,7 @@ use super::*;
 
 /// The two paths a `Workflow` dispatch ack can carry.
 #[derive(Default, Clone, PartialEq, Debug)]
-pub(crate) struct AckPaths {
+pub struct AckPaths {
     pub(crate) transcript_dir: Option<String>,
     pub(crate) script_path: Option<String>,
 }
@@ -23,7 +23,7 @@ fn labeled_path(text: &str, label: &str) -> Option<String> {
 
 /// FR-1, pure: `Transcript dir: <path>` / `Script file: <path>`, each the
 /// remainder of its line. Neither present ⇒ both absent.
-pub(crate) fn parse_ack_paths(text: &str) -> AckPaths {
+pub fn parse_ack_paths(text: &str) -> AckPaths {
     AckPaths {
         transcript_dir: labeled_path(text, "Transcript dir:"),
         script_path: labeled_path(text, "Script file:"),
@@ -32,7 +32,7 @@ pub(crate) fn parse_ack_paths(text: &str) -> AckPaths {
 
 /// FR-2: a path is used only if it resolves — a DIRECTORY for the transcript, a
 /// FILE for the script. Nothing here ever writes inside the run directory.
-pub(crate) fn resolve_ack_paths(text: &str) -> AckPaths {
+pub fn resolve_ack_paths(text: &str) -> AckPaths {
     let parsed = parse_ack_paths(text);
     AckPaths {
         transcript_dir: parsed.transcript_dir.filter(|p| Path::new(p).is_dir()),

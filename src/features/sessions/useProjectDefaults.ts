@@ -20,6 +20,8 @@ export interface UseProjectDefaultsParams {
   project: ProjectMeta | null;
   models: ModelInfo[];
   modelsLoading: boolean;
+  accountId: string;
+  defaultModelId: string | null;
   nameTouched: boolean;
   runtimeTouched: boolean;
   setModelId: (id: string) => void;
@@ -62,6 +64,8 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     project,
     models,
     modelsLoading,
+    accountId,
+    defaultModelId,
     nameTouched,
     runtimeTouched,
     setModelId,
@@ -83,19 +87,26 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
   } = params;
 
   const appliedRef = useRef<string | null>(seeded ? projectId : null);
+  const accountAppliedRef = useRef<string | null>(seeded ? projectId : null);
   useEffect(() => {
-    if (modelsLoading) return;
     if (appliedRef.current === projectId) return;
-    appliedRef.current = projectId;
 
     // multi-account FR-20: snapshot-style like every other default. A project
     // default naming a REMOVED account falls back to the isDefault one rather
     // than sending an id session_create would refuse with ACCOUNT_NOT_FOUND.
     const wantedAccount = project?.defaults.accountId;
-    setAccountId(resolveNewSessionAccountId(accounts, wantedAccount));
-    setAccountFromProject(wantedAccount !== undefined);
+    const resolvedAccount = resolveNewSessionAccountId(accounts, wantedAccount);
+    if (accountAppliedRef.current !== projectId) {
+      accountAppliedRef.current = projectId;
+      setAccountId(resolvedAccount);
+      setAccountFromProject(wantedAccount !== undefined);
+      if (accountId !== resolvedAccount) return;
+    }
+    if (modelsLoading) return;
+    appliedRef.current = projectId;
 
     const base = baseFormValues(models);
+    base.modelId = models.find(m => m.id === defaultModelId)?.id ?? models[0]?.id ?? '';
     const applied = applyProjectDefaults(base, project?.defaults, { models, allowWsl: IS_WINDOWS });
     setModelId(applied.values.modelId);
     setEffort(applied.values.effort);
@@ -129,7 +140,7 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     const resolution = projectDefaultProfileResolution(profiles, project?.defaults.profileId, pendingProfileId);
     if (resolution) setProfileId(resolution.profileId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, project, models, modelsLoading]);
+  }, [projectId, project, models, modelsLoading, accountId, defaultModelId]);
 
   // Same "registry arrives late" re-resolve as accounts, for a project default
   // profile that named nothing until profiles_list landed.

@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 /// vocabulary, through the same `classify_block` serializer, so the tab body
 /// reuses the SESSION tab's renderer verbatim. A missing file is an EMPTY
 /// transcript, never an error (FR-10).
-pub(crate) fn read_agent_transcript(dir: &Path, agent_id: &str) -> WorkflowAgentTranscript {
+pub fn read_agent_transcript(dir: &Path, agent_id: &str) -> WorkflowAgentTranscript {
     let mut cursor = 0u64;
     let (lines, _) = read_new_lines(&dir.join(format!("agent-{agent_id}.jsonl")), &mut cursor);
     build_agent_blocks(agent_id, &lines)

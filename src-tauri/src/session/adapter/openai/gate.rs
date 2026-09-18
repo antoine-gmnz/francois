@@ -20,6 +20,7 @@
 //! consulted, in every mode including `bypassPermissions`.
 
 use super::FrancoisTool;
+use crate::ipc::{AppError, ErrorCode};
 use crate::permissions::{path_key, path_relative_to_cwd, split_pattern, PermissionRule};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -27,11 +28,11 @@ use std::path::{Path, PathBuf};
 /// FR-10's exact tool-result string for a `deny` rule. `pub(crate)` so
 /// `runner.rs`'s park path (the same refusal, reached via a card rather than
 /// a rule match) reuses this literal instead of keeping its own copy.
-pub(crate) const DENY_MESSAGE: &str = "Permission denied by a Francois rule.";
+pub const DENY_MESSAGE: &str = "Permission denied by a Francois rule.";
 
 /// The outcome of evaluating one tool call against the gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum GateDecision {
+pub enum GateDecision {
     /// Execute the call; no card.
     Allow,
     /// Do NOT execute; the `String` is the tool result handed back to the model.
@@ -63,7 +64,7 @@ fn normalize_mode(raw: &str) -> Mode {
 }
 
 /// FR-9..FR-13: decide what happens to one tool call, before it executes.
-pub(crate) fn evaluate(
+pub fn evaluate(
     tool: FrancoisTool,
     input: &Value,
     cwd: &str,
@@ -75,8 +76,10 @@ pub(crate) fn evaluate(
     // a card — or bypassPermissions — can never approve a path the tool would
     // then refuse.
     if let Some(raw) = path_arg(tool, input, cwd) {
-        if let Err(msg) = resolve_in_cwd(Path::new(cwd), raw) {
-            return GateDecision::Deny(msg);
+        if let Err(e) = resolve_in_cwd(Path::new(cwd), raw) {
+            // The tool result the model reads is the message; the code never
+            // crosses the IPC boundary from here (FR-6).
+            return GateDecision::Deny(e.message);
         }
     }
 
@@ -209,7 +212,12 @@ fn path_arg<'a>(tool: FrancoisTool, input: &'a Value, cwd: &'a str) -> Option<&'
 /// by walking `joined`'s ancestors up to the first that exists on disk,
 /// canonicalizing THAT (so a symlink anywhere in the existing prefix still
 /// resolves and is still checked), then rejoining the still-missing tail.
-pub(crate) fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
+pub fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, AppError> {
+    // core-architecture-wave3 FR-6: INVALID_INPUT on every rejection. The
+    // message is what `GateDecision::Deny` hands the model; the code exists so
+    // this signature is the same `Result<T, AppError>` as every other fallible
+    // one in the core, not because a caller branches on it.
+    let refused = |m: String| AppError::new(ErrorCode::InvalidInput, m);
     let candidate = Path::new(raw);
     let joined = if candidate.is_absolute() {
         candidate.to_path_buf()
@@ -218,8 +226,8 @@ pub(crate) fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
     };
     let joined = lexically_normalize(&joined);
 
-    let canonical_cwd =
-        std::fs::canonicalize(cwd).map_err(|e| format!("session cwd is not accessible: {e}"))?;
+    let canonical_cwd = std::fs::canonicalize(cwd)
+        .map_err(|e| refused(format!("session cwd is not accessible: {e}")))?;
 
     let canonical_target = match std::fs::canonicalize(&joined) {
         Ok(p) => p,
@@ -227,12 +235,12 @@ pub(crate) fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
             let existing = joined
                 .ancestors()
                 .find(|p| p.exists())
-                .ok_or_else(|| format!("{raw} is outside the session directory."))?;
+                .ok_or_else(|| refused(format!("{raw} is outside the session directory.")))?;
             let canonical_existing = std::fs::canonicalize(existing)
-                .map_err(|_| format!("{raw} is outside the session directory."))?;
+                .map_err(|_| refused(format!("{raw} is outside the session directory.")))?;
             let remainder = joined
                 .strip_prefix(existing)
-                .map_err(|_| format!("{raw} is outside the session directory."))?;
+                .map_err(|_| refused(format!("{raw} is outside the session directory.")))?;
             canonical_existing.join(remainder)
         }
     };
@@ -240,7 +248,7 @@ pub(crate) fn resolve_in_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
     if canonical_target.starts_with(&canonical_cwd) {
         Ok(canonical_target)
     } else {
-        Err(format!("{raw} is outside the session directory."))
+        Err(refused(format!("{raw} is outside the session directory.")))
     }
 }
 
@@ -296,7 +304,7 @@ mod tests {
         if std::os::windows::fs::symlink_dir(target, link).is_ok() {
             return true;
         }
-        std::process::Command::new("cmd")
+        crate::process_util::spawn("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(link)
             .arg(target)

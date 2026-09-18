@@ -9,10 +9,8 @@
 // module only changes behavior behind the existing diff/shell channels.
 
 use std::collections::{HashMap, HashSet};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
-
-use crate::process_util::no_window;
 
 // ---------- FR-1/FR-2: path vocabulary (mirrors contract/wsl-filesystem.ts) ----------
 
@@ -132,15 +130,13 @@ pub fn wsl_unc_root(distro: Option<&str>) -> Option<String> {
     if let Some(root) = cache.lock().unwrap().get(&key).cloned() {
         return Some(root);
     }
-    let mut cmd = Command::new("wsl.exe");
+    let mut cmd = crate::process_util::spawn("wsl.exe");
     if let Some(d) = distro {
-        cmd.args(["-d", d]);
+        cmd = cmd.args(["-d", d]);
     }
-    cmd.args(["--", "wslpath", "-w", "/"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    no_window(&mut cmd);
+    let cmd = cmd
+        .args(["--", "wslpath", "-w", "/"])
+        .stdout(Stdio::piped());
     match cmd.output() {
         Ok(out) if out.status.success() => {
             let root = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -198,16 +194,15 @@ fn wsl_home_linux(distro: Option<&str>) -> Option<String> {
     if let Some(home) = cache.lock().unwrap().get(&key).cloned() {
         return Some(home);
     }
-    let mut cmd = Command::new("wsl.exe");
+    let mut cmd = crate::process_util::spawn("wsl.exe");
     if let Some(d) = distro {
-        cmd.args(["-d", d]);
+        cmd = cmd.args(["-d", d]);
     }
-    cmd.args(["--", "printenv", "HOME"])
-        .stdin(Stdio::null())
+    let out = cmd
+        .args(["--", "printenv", "HOME"])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    no_window(&mut cmd);
-    let out = cmd.output().ok()?;
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }

@@ -23,7 +23,7 @@ use std::sync::Mutex;
 /// modal renders next to `unavailable here` — always present when the answer
 /// is negative, so a panel is never silently missing.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Detection {
+pub struct Detection {
     pub detected: bool,
     pub reason: Option<String>,
 }
@@ -46,27 +46,27 @@ impl Detection {
 
 /// FR-14: with no active session there is no root to evaluate against, so
 /// every extension reports `detected: false` WITH a reason.
-pub(crate) const NO_ROOT_REASON: &str = "select a session";
+pub const NO_ROOT_REASON: &str = "select a session";
 
 /// FR-7/FR-17: an exec predicate for a disabled OR unconsented extension is
 /// not run AT ALL. The two filesystem predicates spawn nothing, so they still
 /// answer honestly.
-pub(crate) const NOT_PROBED_REASON: &str = "not evaluated — enable to detect";
+pub const NOT_PROBED_REASON: &str = "not evaluated — enable to detect";
 
 /// FR-4: the cache key. Trailing separators and `.`/`..` segments must not
 /// mint a second entry for the same project.
-pub(crate) fn normalize_root(root: &str) -> PathBuf {
+pub fn normalize_root(root: &str) -> PathBuf {
     let path = PathBuf::from(root);
     std::fs::canonicalize(&path).unwrap_or(path)
 }
 
 #[derive(Default)]
-pub(crate) struct DetectCache {
+pub struct DetectCache {
     entries: HashMap<PathBuf, HashMap<String, Detection>>,
 }
 
 impl DetectCache {
-    pub(crate) fn get(&self, root: &Path, extension_id: &str) -> Option<&Detection> {
+    pub fn get(&self, root: &Path, extension_id: &str) -> Option<&Detection> {
         self.entries.get(root)?.get(extension_id)
     }
 
@@ -105,7 +105,7 @@ impl DetectCache {
 /// `resolve_under_root` containment proof the `file` log-tail source uses —
 /// never a raw `root.join(rel)` — or a symlink could turn this into a
 /// boolean oracle for reading arbitrary files outside the project root.
-pub(crate) fn json_pointer_equals(root: &Path, rel: &str, pointer: &str, equals: &str) -> bool {
+pub fn json_pointer_equals(root: &Path, rel: &str, pointer: &str, equals: &str) -> bool {
     let Ok(resolved) = resolve_under_root(root, rel) else {
         return false;
     };
@@ -124,7 +124,7 @@ pub(crate) fn json_pointer_equals(root: &Path, rel: &str, pointer: &str, equals:
 /// FR-12/FR-17: resolved through `resolve_under_root` first, same reasoning
 /// as `json_pointer_equals` above — a predicate is evaluated before consent,
 /// so it must never stat a path that escapes the root even via a symlink.
-pub(crate) fn path_exists(root: &Path, rel: &str) -> bool {
+pub fn path_exists(root: &Path, rel: &str) -> bool {
     let Ok(resolved) = resolve_under_root(root, rel) else {
         return false;
     };
@@ -145,7 +145,7 @@ fn sanitize_reason_field(input: &str) -> String {
 /// the exec predicate ONLY (FR-17 — an unconsented/disabled extension never
 /// spawns, including for detection); the two filesystem predicates keep
 /// answering honestly.
-pub(crate) fn evaluate(spec: &DetectPredicate, root: &Path, enabled: bool) -> Detection {
+pub fn evaluate(spec: &DetectPredicate, root: &Path, enabled: bool) -> Detection {
     match spec {
         DetectPredicate::PathExists { path } => {
             if path_exists(root, path) {
@@ -189,7 +189,7 @@ pub(crate) fn evaluate(spec: &DetectPredicate, root: &Path, enabled: bool) -> De
 /// exec) with the lock released, and only re-acquires it to record the
 /// result, so a slow predicate for one root cannot stall every other root's
 /// `extensions_list`/`extensions_detect`/`extensions_panel` call.
-pub(crate) fn detect_cached_locked(
+pub fn detect_cached_locked(
     cache_mutex: &Mutex<DetectCache>,
     ext: &LoadedExtension,
     root: &Path,

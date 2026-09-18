@@ -2,6 +2,7 @@
 
 use super::*;
 
+use crate::ipc::AppError;
 use serde_json::{Map, Value};
 use std::path::Path;
 
@@ -13,7 +14,7 @@ pub fn rule_id(tier: &str, effect: &str, pattern: &str) -> String {
 
 /// Split a rule id back into its parts. `splitn(3)` because a pattern may itself
 /// contain `|` (`Bash(a || b)`) while a tier and an effect never can.
-pub(crate) fn parse_rule_id(id: &str) -> Option<(String, String, String)> {
+pub fn parse_rule_id(id: &str) -> Option<(String, String, String)> {
     let mut it = id.splitn(3, '|');
     let tier = it.next()?;
     let effect = it.next()?;
@@ -29,7 +30,7 @@ pub(crate) fn parse_rule_id(id: &str) -> Option<(String, String, String)> {
 /// `(effect, pattern)` pairs parked in the sidecar. A missing or unparseable
 /// sidecar reads as empty — it is a Francois convenience, never a source of truth
 /// worth failing an operation over.
-pub(crate) fn read_disabled(settings: &Path) -> Vec<(String, String)> {
+pub fn read_disabled(settings: &Path) -> Vec<(String, String)> {
     let Ok(doc) = read_json_object(&sidecar_path(settings)) else {
         return Vec::new();
     };
@@ -50,7 +51,7 @@ pub(crate) fn read_disabled(settings: &Path) -> Vec<(String, String)> {
 }
 
 /// Rewrite the sidecar's `disabled` array, preserving any other key it carries.
-pub(crate) fn write_disabled(settings: &Path, entries: &[(String, String)]) -> Result<(), String> {
+pub fn write_disabled(settings: &Path, entries: &[(String, String)]) -> Result<(), AppError> {
     let path = sidecar_path(settings);
     let mut doc = read_json_object(&path).unwrap_or_else(|_| Value::Object(Map::new()));
     let arr: Vec<Value> = entries
@@ -58,18 +59,21 @@ pub(crate) fn write_disabled(settings: &Path, entries: &[(String, String)]) -> R
         .map(|(effect, pattern)| serde_json::json!({ "effect": effect, "pattern": pattern }))
         .collect();
     let Some(obj) = doc.as_object_mut() else {
-        return Err(format!("{} is not a JSON object", path.display()));
+        return Err(settings_err(format!(
+            "{} is not a JSON object",
+            path.display()
+        )));
     };
     obj.insert("disabled".into(), Value::Array(arr));
     write_json_atomic(&path, &doc)
 }
 
-pub(crate) fn set_disabled(
+pub fn set_disabled(
     settings: &Path,
     effect: &str,
     pattern: &str,
     on: bool,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let mut entries = read_disabled(settings);
     let present = entries.iter().any(|(e, p)| e == effect && p == pattern);
     if on == present {
@@ -85,7 +89,7 @@ pub(crate) fn set_disabled(
 
 // ---------- FR-17: listing ----------
 
-pub(crate) fn rules_of_tier(tier: &str, settings: &Path) -> Vec<PermissionRule> {
+pub fn rules_of_tier(tier: &str, settings: &Path) -> Vec<PermissionRule> {
     // A tier whose settings file is unreadable/unparseable contributes NOTHING
     // rather than failing the whole listing — the editor must still open so the
     // user can see (and fix) the other tier. Writes are where we hard-fail.
@@ -115,7 +119,7 @@ pub(crate) fn rules_of_tier(tier: &str, settings: &Path) -> Vec<PermissionRule> 
     out
 }
 
-pub(crate) fn make_rule(tier: &str, effect: &str, pattern: &str, enabled: bool) -> PermissionRule {
+pub fn make_rule(tier: &str, effect: &str, pattern: &str, enabled: bool) -> PermissionRule {
     PermissionRule {
         id: rule_id(tier, effect, pattern),
         pattern: pattern.to_string(),
@@ -152,7 +156,7 @@ pub fn write_rule(
     tier: &str,
     effect: &str,
     pattern: &str,
-) -> Result<PermissionRule, String> {
+) -> Result<PermissionRule, AppError> {
     let mut doc = read_json_object(settings)?;
     if merge_pattern(&mut doc, effect, pattern) {
         write_json_atomic(settings, &doc)?;
@@ -171,7 +175,7 @@ pub fn write_rule(
 /// happens FIRST, so a failure between the two steps leaves the rule visible in
 /// settings.json rather than deleted from both files. `permissions_set_tier`
 /// reasons the same way ("present in both, visible and fixable" beats "vanished").
-pub(crate) fn park_rule(settings: &Path, effect: &str, pattern: &str) -> Result<(), String> {
+pub fn park_rule(settings: &Path, effect: &str, pattern: &str) -> Result<(), AppError> {
     set_disabled(settings, effect, pattern, true)?;
     let mut doc = read_json_object(settings)?;
     if remove_pattern(&mut doc, effect, pattern) {
@@ -191,7 +195,7 @@ pub fn move_rule(
     effect: &str,
     pattern: &str,
     enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     if enabled {
         write_rule(to, to_tier, effect, pattern)?;
     } else {
@@ -200,7 +204,7 @@ pub fn move_rule(
     drop_rule(from, effect, pattern)
 }
 
-pub(crate) fn drop_rule(settings: &Path, effect: &str, pattern: &str) -> Result<(), String> {
+pub fn drop_rule(settings: &Path, effect: &str, pattern: &str) -> Result<(), AppError> {
     let mut doc = read_json_object(settings)?;
     if remove_pattern(&mut doc, effect, pattern) {
         write_json_atomic(settings, &doc)?;

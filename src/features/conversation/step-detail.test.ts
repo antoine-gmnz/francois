@@ -120,6 +120,31 @@ describe('stepHeaderGroups', () => {
     ]);
   });
 
+  it("carries the input's description between the tool and the cwd", () => {
+    const detail = baseDetail({
+      tool: 'PowerShell',
+      body: { kind: 'command', command: { command: 'Get-ChildItem', description: 'List every file' }, output: emptyOutput() },
+    });
+    expect(stepHeaderGroups(detail).left).toEqual([
+      { text: 'powershell', tone: 'tool' },
+      { text: 'List every file', tone: 'description' },
+      { text: '/repo', tone: 'plain' },
+    ]);
+  });
+
+  it('omits the description outright when it is absent, blank or on a generic step', () => {
+    expect(stepHeaderGroups(baseDetail()).left).toHaveLength(2);
+    const blank = baseDetail({
+      body: { kind: 'command', command: { command: 'npm test', description: '   ' }, output: emptyOutput() },
+    });
+    expect(stepHeaderGroups(blank).left).toHaveLength(2);
+    const generic = baseDetail({ tool: 'Read', body: { kind: 'generic', inputJson: '{}', output: emptyOutput() } });
+    expect(stepHeaderGroups(generic).left).toEqual([
+      { text: 'read', tone: 'tool' },
+      { text: '/repo', tone: 'plain' },
+    ]);
+  });
+
   it('omits duration when endedAt is absent', () => {
     const detail = baseDetail({ endedAt: undefined });
     expect(stepHeaderGroups(detail).right).toEqual([{ text: '12:06:41', tone: 'plain' }]);

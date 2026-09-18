@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// written on the way. The gitignore is (re)created whenever it is missing —
 /// never edited if it already exists, and the user's own `.gitignore` is never
 /// touched.
-pub(crate) fn ensure_attachments_dir(cwd: &str, session_id: &str) -> Result<PathBuf, AttachError> {
+pub fn ensure_attachments_dir(cwd: &str, session_id: &str) -> Result<PathBuf, AttachError> {
     let dir = attachments_dir(cwd, session_id);
     std::fs::create_dir_all(&dir).map_err(|e| {
         AttachError::io(
@@ -34,7 +34,7 @@ pub(crate) fn ensure_attachments_dir(cwd: &str, session_id: &str) -> Result<Path
 /// Already under the session cwd ⇒ referenced IN PLACE (`copied: false`,
 /// `storedPath` unchanged, ref relative to the cwd) and NO attachments dir is
 /// created. Otherwise the file is copied in under a never-overwriting name.
-pub(crate) fn ingest_path(
+pub fn ingest_path(
     session_id: &str,
     cwd: &str,
     src: &str,
@@ -110,7 +110,7 @@ pub(crate) fn ingest_path(
 /// rest, and it is reported rather than dropped — the frontend cannot otherwise
 /// tell a silently skipped file from one the user never picked. The refusal
 /// names the file (basename), because that is what the copy is about.
-pub(crate) fn ingest_picks(
+pub fn ingest_picks(
     session_id: &str,
     cwd: &str,
     paths: &[String],
@@ -132,7 +132,7 @@ pub(crate) fn ingest_picks(
 /// FR-6: write clipboard bytes out as `pasted-<YYYYMMDD>-<HHMMSS>.<ext>` in LOCAL
 /// time. Always `copied: true`, always without an `originPath` — the bytes came
 /// from the clipboard, not from a file.
-pub(crate) fn ingest_clipboard_image(
+pub fn ingest_clipboard_image(
     session_id: &str,
     cwd: &str,
     mime: &str,
@@ -230,7 +230,7 @@ fn stored_attachment(
 /// copy plus the decoded bytes) before the cap can refuse it — the same
 /// "cap enforced after the work" shape `copy_into`'s limit removed on the file
 /// path. The encoding's length already proves what it cannot fit into.
-pub(crate) fn decode_base64(data: &str) -> Result<Vec<u8>, AttachError> {
+pub fn decode_base64(data: &str) -> Result<Vec<u8>, AttachError> {
     use base64::Engine as _;
     if data.len() as u64 > ATTACHMENT_MAX_BASE64_CHARS {
         return Err(AttachError::too_large(base64_decoded_bytes(
@@ -251,6 +251,7 @@ pub(crate) fn decode_base64(data: &str) -> Result<Vec<u8>, AttachError> {
 mod tests {
     use super::testutil::*;
     use super::*;
+    use crate::ipc::ErrorCode;
 
     #[test]
     fn a_file_under_the_cwd_is_referenced_in_place_and_creates_no_dir() {
@@ -364,16 +365,16 @@ mod tests {
         );
         assert!(response.attached[0].copied); // from outside: copied in
         assert!(!response.attached[1].copied); // FR-1: referenced in place
-        let failed: Vec<(String, String)> = response
+        let failed: Vec<(String, ErrorCode)> = response
             .failed
             .iter()
-            .map(|f| (f.name.clone(), f.error.code.clone()))
+            .map(|f| (f.name.clone(), f.error.code))
             .collect();
         assert_eq!(
             failed,
             vec![
-                ("huge.bin".to_string(), "ATTACHMENT_TOO_LARGE".to_string()),
-                (file_name_of(&folder), "ATTACHMENT_IS_DIRECTORY".to_string()),
+                ("huge.bin".to_string(), ErrorCode::AttachmentTooLarge),
+                (file_name_of(&folder), ErrorCode::AttachmentIsDirectory),
             ]
         );
         // an empty pick list (a cancelled dialog) refuses nothing
@@ -396,7 +397,7 @@ mod tests {
 
         let e = ingest_path(SID, &cwd_s, &big.to_string_lossy(), 0).unwrap_err();
 
-        assert_eq!(e.code, "ATTACHMENT_TOO_LARGE");
+        assert_eq!(e.code, ErrorCode::AttachmentTooLarge);
         assert_eq!(e.detail.unwrap()["cap"], ATTACHMENT_MAX_BYTES);
         assert!(
             !attachments_root(&cwd_s).exists(),
@@ -418,7 +419,7 @@ mod tests {
 
         let e = enforce_cap(&target, ATTACHMENT_MAX_BYTES + 1).unwrap_err();
 
-        assert_eq!(e.code, "ATTACHMENT_TOO_LARGE");
+        assert_eq!(e.code, ErrorCode::AttachmentTooLarge);
         let detail = e.detail.unwrap();
         assert_eq!(detail["bytes"], ATTACHMENT_MAX_BYTES + 1);
         assert_eq!(detail["cap"], ATTACHMENT_MAX_BYTES);
@@ -473,7 +474,7 @@ mod tests {
         );
         assert_eq!(
             enforce_cap(&target, written).unwrap_err().code,
-            "ATTACHMENT_TOO_LARGE"
+            ErrorCode::AttachmentTooLarge
         );
         assert!(!target.exists());
         std::fs::remove_dir_all(&dir).ok();
@@ -500,7 +501,7 @@ mod tests {
 
         let e = ingest_path(SID, &cwd_s, &folder.to_string_lossy(), 0).unwrap_err();
 
-        assert_eq!(e.code, "ATTACHMENT_IS_DIRECTORY");
+        assert_eq!(e.code, ErrorCode::AttachmentIsDirectory);
         assert!(!attachments_root(&cwd_s).exists());
         std::fs::remove_dir_all(&cwd).ok();
         std::fs::remove_dir_all(&folder).ok();
@@ -512,14 +513,14 @@ mod tests {
         let cwd_s = cwd.to_string_lossy().to_string();
         assert_eq!(
             ingest_path(SID, &cwd_s, "   ", 0).unwrap_err().code,
-            "INVALID_INPUT"
+            ErrorCode::InvalidInput
         );
         let ghost = cwd.join("nope.txt");
         assert_eq!(
             ingest_path(SID, &cwd_s, &ghost.to_string_lossy(), 0)
                 .unwrap_err()
                 .code,
-            "INVALID_INPUT"
+            ErrorCode::InvalidInput
         );
         std::fs::remove_dir_all(&cwd).ok();
     }
@@ -535,7 +536,7 @@ mod tests {
 
         let e = ingest_path(SID, &cwd_s, "logo.png", 0).unwrap_err();
 
-        assert_eq!(e.code, "INVALID_INPUT");
+        assert_eq!(e.code, ErrorCode::InvalidInput);
         assert!(
             !attachments_root(&cwd_s).exists(),
             "a refused relative path creates no dir"
@@ -591,13 +592,13 @@ mod tests {
             ingest_clipboard_image(SID, &cwd_s, "image/png", "!!not base64!!", 0)
                 .unwrap_err()
                 .code,
-            "INVALID_INPUT"
+            ErrorCode::InvalidInput
         );
         assert_eq!(
             ingest_clipboard_image(SID, &cwd_s, "image/png", "", 0)
                 .unwrap_err()
                 .code,
-            "INVALID_INPUT"
+            ErrorCode::InvalidInput
         );
         // over the cap, decoded
         let big = base64_encode(&vec![7u8; (ATTACHMENT_MAX_BYTES + 1) as usize]);
@@ -605,7 +606,7 @@ mod tests {
             ingest_clipboard_image(SID, &cwd_s, "image/png", &big, 0)
                 .unwrap_err()
                 .code,
-            "ATTACHMENT_TOO_LARGE"
+            ErrorCode::AttachmentTooLarge
         );
         assert!(
             !attachments_root(&cwd_s).exists(),
@@ -627,7 +628,7 @@ mod tests {
 
         let e = decode_base64(&junk).unwrap_err();
 
-        assert_eq!(e.code, "ATTACHMENT_TOO_LARGE");
+        assert_eq!(e.code, ErrorCode::AttachmentTooLarge);
         let detail = e.detail.unwrap();
         assert_eq!(detail["cap"], ATTACHMENT_MAX_BYTES);
         assert!(

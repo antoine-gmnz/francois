@@ -37,7 +37,7 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 ///
 /// `ext` is the target's own extension (`"json"`, `"md"`) — kept in the temp
 /// name so a leaked temp file is still recognizable as what it came from.
-pub(crate) fn unique_temp_path(path: &Path, ext: &str) -> PathBuf {
+pub fn unique_temp_path(path: &Path, ext: &str) -> PathBuf {
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     path.with_extension(format!("{ext}.{}.{seq}.tmp", std::process::id()))
 }
@@ -63,7 +63,7 @@ pub(crate) fn unique_temp_path(path: &Path, ext: &str) -> PathBuf {
 /// UNPRIVILEGED account can read the key. On Windows the machine's own
 /// `SYSTEM` and `Administrators` may still appear in the ACL, which is not a
 /// leak — see `BROAD_SIDS`.
-pub(crate) fn write_user_only_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub fn write_user_only_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -196,10 +196,10 @@ fn restrict_to_current_user_only(path: &Path) -> std::io::Result<()> {
 
 #[cfg(windows)]
 fn icacls(path: &Path, args: &[&str]) -> std::io::Result<()> {
-    let mut cmd = std::process::Command::new("icacls");
-    cmd.arg(path).args(args);
-    crate::process_util::no_window(&mut cmd); // no console flash
-    let output = cmd.output()?;
+    let output = crate::process_util::spawn("icacls")
+        .arg(path)
+        .args(args)
+        .output()?;
     if !output.status.success() {
         return Err(std::io::Error::other(format!(
             "icacls {} could not restrict {}: {}",
@@ -303,7 +303,7 @@ mod tests {
     fn dacl_sddl(path: &Path) -> String {
         let dir = path.parent().expect("a parent directory");
         let save = tmp_path("sddl-save");
-        let out = std::process::Command::new("icacls")
+        let out = crate::process_util::spawn("icacls")
             .arg(dir)
             .arg("/save")
             .arg(&save)
@@ -413,7 +413,7 @@ mod tests {
         }
         // 4. The current user can still read its own key.
         assert!(!aces.is_empty(), "expected at least one ACE: {sddl}");
-        let report = std::process::Command::new("icacls")
+        let report = crate::process_util::spawn("icacls")
             .arg(&path)
             .output()
             .unwrap();
@@ -441,7 +441,7 @@ mod tests {
         std::fs::write(&path, b"sk-test").unwrap();
 
         // Explicit, not inherited — the case /inheritance:r cannot reach.
-        let granted = std::process::Command::new("icacls")
+        let granted = crate::process_util::spawn("icacls")
             .arg(&path)
             .args(["/grant", "*S-1-5-32-545:R"])
             .output()
@@ -518,20 +518,20 @@ mod tests {
 /// resolution only — nothing is created here, so a test can call this freely
 /// without touching the real machine's home directory. `ensure_dir_0700` is
 /// the (separate, explicit) side-effecting half.
-pub(crate) fn francois_home_dir() -> Option<PathBuf> {
+pub fn francois_home_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".francois"))
 }
 
 /// `~/.francois/extensions` — the one directory `extension-install` FR-1 reads
 /// manifests from, and nowhere else.
-pub(crate) fn extensions_dir() -> Option<PathBuf> {
+pub fn extensions_dir() -> Option<PathBuf> {
     francois_home_dir().map(|h| h.join("extensions"))
 }
 
 /// Create `dir` (and its ancestors) if missing, at mode `0700` on unix. A
 /// pre-existing directory is left as-is — never re-chmod'd, so a user who
 /// loosened it on purpose is not fought.
-pub(crate) fn ensure_dir_0700(dir: &Path) -> std::io::Result<()> {
+pub fn ensure_dir_0700(dir: &Path) -> std::io::Result<()> {
     if dir.exists() {
         return Ok(());
     }

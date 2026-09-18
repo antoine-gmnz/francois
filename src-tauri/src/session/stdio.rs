@@ -60,7 +60,7 @@ const CLOSER_POLL_MS: u64 = 100;
 
 /// What the closer thread should do on this tick.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ChannelClose {
+pub enum ChannelClose {
     /// Close the stdin writer — the CLI has nothing left that could need it.
     Now,
     /// Keep it open; something is still outstanding.
@@ -70,12 +70,12 @@ pub(crate) enum ChannelClose {
 /// FR-2: may the turn's `result` line close the control channel outright?
 /// Only when the CLI has nothing left in flight — no background task that will
 /// keep making tool calls, no ask already parked on a card.
-pub(crate) fn result_closes_channel(bg_tasks: usize, parked: usize) -> bool {
+pub fn result_closes_channel(bg_tasks: usize, parked: usize) -> bool {
     bg_tasks == 0 && parked == 0
 }
 
 /// FR-2: the held-open channel's close decision. Pure; unit-tested.
-pub(crate) fn post_result_close(bg_tasks: usize, parked: usize, quiet_ms: u64) -> ChannelClose {
+pub fn post_result_close(bg_tasks: usize, parked: usize, quiet_ms: u64) -> ChannelClose {
     if quiet_ms >= POST_RESULT_IDLE_CEILING_MS {
         return ChannelClose::Now; // backstop — nothing has spoken for the ceiling
     }
@@ -92,7 +92,7 @@ pub(crate) fn post_result_close(bg_tasks: usize, parked: usize, quiet_ms: u64) -
 /// arm the closer thread that will. `armed` makes the arming once-only — a turn
 /// that emits several `result` lines (the CLI runs a follow-up turn to report a
 /// finished background task) must not spawn a closer per result.
-pub(crate) fn close_or_hold_channel(
+pub fn close_or_hold_channel(
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
     pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
     pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
@@ -144,7 +144,7 @@ fn parked_count(
 /// write goes through the handle's own mutex (reader-thread denies vs.
 /// command-thread answers) and is NEVER made while holding Engine.sessions.
 /// false ⇔ the pipe is gone (turn over / child dead).
-pub(crate) fn write_control_line(stdin: &Arc<Mutex<Option<ChildStdin>>>, payload: &Value) -> bool {
+pub fn write_control_line(stdin: &Arc<Mutex<Option<ChildStdin>>>, payload: &Value) -> bool {
     use std::io::Write as _;
     let mut line = payload.to_string();
     line.push('\n');
@@ -158,7 +158,7 @@ pub(crate) fn write_control_line(stdin: &Arc<Mutex<Option<ChildStdin>>>, payload
 /// Apply a `control_request` line (session-questions FR-6..FR-9): park an
 /// AskUserQuestion as a pending entry + question block + question.asked event, or
 /// answer everything else on the spot.
-pub(crate) fn handle_control_request(
+pub fn handle_control_request(
     env: &dyn SessionEnv,
     session_id: &str,
     v: &Value,
@@ -304,10 +304,7 @@ pub(crate) fn resolve_question(
 /// entry owns the resolution, and every other path (a concurrent decide, a
 /// `control_cancel_request`, the turn-end drain, `kill_all`) then finds nothing.
 /// Extracted so that discipline is unit-testable without an `AppHandle`.
-pub(crate) fn claim_pending<T>(
-    pending: &Arc<Mutex<HashMap<String, T>>>,
-    block_id: &str,
-) -> Option<T> {
+pub fn claim_pending<T>(pending: &Arc<Mutex<HashMap<String, T>>>, block_id: &str) -> Option<T> {
     pending.lock().unwrap().remove(block_id)
 }
 

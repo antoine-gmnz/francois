@@ -13,6 +13,7 @@
 use super::registry::build_list;
 use super::{emit, AccountEvent, AccountInner, AccountKind, AccountRecord, AccountState};
 use crate::account::Account;
+use crate::ipc::{AppError, ErrorCode};
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -30,7 +31,7 @@ const POLL: Duration = Duration::from_millis(500);
 ///
 /// FR-19: **no mirror of `~/.claude`**, and no seeding of any kind. The dir
 /// starts empty and `grok login` is what fills it.
-pub(crate) fn apply_add_grok(
+pub fn apply_add_grok(
     inner: &mut AccountInner,
     id: String,
     config_dir: String,
@@ -42,7 +43,7 @@ pub(crate) fn apply_add_grok(
         email: None,
         organization: None,
         config_dir,
-        created_at: crate::session::now_ms(),
+        created_at: crate::ids::now_ms(),
         kind: AccountKind::GrokCli,
         endpoint: None,
     });
@@ -57,55 +58,48 @@ pub(crate) fn apply_add_grok(
 /// Returns as soon as the process is spawned — the browser round-trip happens
 /// out of band, and the poller below publishes the refreshed list once
 /// `auth.json` lands (which is what flips the row's `signedIn`, FR-22).
-pub(crate) fn spawn_grok_login(
-    config_dir: &str,
-) -> Result<std::process::Child, (&'static str, String)> {
-    let mut cmd = std::process::Command::new(crate::session::grok_program());
-    cmd.arg("login");
-    cmd.env("GROK_HOME", config_dir);
-    // Same reasoning as `spawn_codex_login`: a GUI-launched app inherits
-    // launchd's minimal PATH on macOS, not the login shell's.
-    if let Some(path) = crate::session::claude_path_env() {
-        cmd.env("PATH", path);
-    }
+pub fn spawn_grok_login(config_dir: &str) -> Result<std::process::Child, AppError> {
+    // Same reasoning as `spawn_codex_login` for the login-shell PATH, and the
+    // facade's null stdout/stderr are the same trap that function documents:
+    // nothing here reads grok's output, and a piped stream with no reader can
+    // turn an early status line into a broken pipe that kills the login before
+    // the browser round-trip finishes.
+    let mut cmd = crate::process_util::spawn(crate::process_util::grok_program())
+        .arg("login")
+        .env("GROK_HOME", config_dir);
     if let Some(home) = dirs::home_dir() {
-        cmd.current_dir(home);
+        cmd = cmd.current_dir(home);
     }
-    crate::session::no_window(&mut cmd);
-    // `null`, not `piped` — same trap `spawn_codex_login` documents: nothing
-    // here reads grok's output, and a piped stream with no reader can turn an
-    // early status line into a broken pipe that kills the login before the
-    // browser round-trip finishes.
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    cmd.spawn().map_err(|e| {
+    cmd.start().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            (
-                "SPAWN_FAILED",
+            AppError::new(
+                ErrorCode::SpawnFailed,
                 "could not start grok — install it with `npm i -g @xai-official/grok`".to_string(),
             )
         } else {
-            ("SPAWN_FAILED", format!("could not start grok login: {e}"))
+            AppError::new(
+                ErrorCode::SpawnFailed,
+                format!("could not start grok login: {e}"),
+            )
         }
     })
 }
 
 /// Watch for `auth.json` and republish the account list when it appears —
 /// identical shape and reasoning to `start_codex_login_poller`.
-pub(crate) fn start_grok_login_poller(
+pub fn start_grok_login_poller(
     app: &AppHandle,
     config_dir: String,
     mut child: std::process::Child,
 ) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let deadline = crate::session::now_ms() + LOGIN_TIMEOUT_SECS * 1_000;
+        let deadline = crate::ids::now_ms() + LOGIN_TIMEOUT_SECS * 1_000;
         loop {
             std::thread::sleep(POLL);
             let signed_in = super::grok_auth_file_exists(&config_dir);
             let exited = matches!(child.try_wait(), Ok(Some(_)) | Err(_));
-            let expired = crate::session::now_ms() >= deadline;
+            let expired = crate::ids::now_ms() >= deadline;
             match poll_step(signed_in, exited, expired) {
                 PollStep::Continue => continue,
                 PollStep::Publish => {
@@ -162,7 +156,7 @@ fn publish(app: &AppHandle) {
 /// two different vendor logins is exactly as confusing a UI as two for the
 /// same one, and one reservation flag covers every interactive login this
 /// module drives.
-pub(crate) fn grok_login_in_flight(state: &AccountState) -> bool {
+pub fn grok_login_in_flight(state: &AccountState) -> bool {
     state.1.load(Ordering::SeqCst)
 }
 

@@ -12,6 +12,8 @@
 import type {
   SessionId,
   AccountId,
+  AgentRuntime,
+  AppError,
   BlockId,
   ModelInfo,
   SessionEvent,
@@ -29,7 +31,8 @@ export interface SessionCreateInput {
   cwd: string; // absolute path; must exist and be a directory
   name?: string; // defaults to basename(cwd)
   modelId?: string; // defaults to the default model; from session:models
-  effort?: string; // effort level (low/medium/high/xhigh/max); omit for model default
+  accountId?: AccountId; // omitted uses the existing configured default-account resolution
+  effort?: string; // Codex: selected model's advertised effort; omit/blank for model default
   /** omit for 'default' (inherit ~/.claude settings). Passed to every turn incl. --resume. */
   permissionMode?: PermissionMode;
   /** omit for 'native'. 'wsl' is INVALID_INPUT off Windows. */
@@ -116,7 +119,8 @@ export interface SessionSwitchEffortInput {
    * The level, or omitted/null to CLEAR it and hand the model back its own
    * default — a real choice, not an error, and the only state available for a
    * model whose ModelInfo advertises no `efforts`. The core re-validates a
-   * non-blank value against low|medium|high|xhigh|max and answers INVALID_INPUT
+   * non-blank Codex value against the selected model's advertised efforts
+   * (other runtimes retain their existing validation) and answers INVALID_INPUT
    * rather than silently falling back, which would read as "the pick did not take".
    */
   effort?: string | null;
@@ -139,22 +143,35 @@ export interface SessionCompactInput {
 
 // ---------- francois:session:models ----------
 
-/**
- * multi-provider-openai FR-18/FR-21's account-keyed wire fix: `accountId`,
- * NOT `sessionId` — the model picker's only mount is the New Session modal
- * (`useModelCatalog`), which is choosing a model in order to create a
- * session and so has no session id yet, only the account the user picked in
- * the form. Omitted/undefined (every pre-existing call site — the palette
- * prefetch, the project registry warm-up) resolves EXACTLY as before, the
- * default account's Claude Code catalog. When present and resolvable, the
- * core routes through THAT account's own runtime (derived from its
- * `AccountKind`), which is what makes an `openai-compatible` account's model
- * list reachable at all.
- */
+/** Account resolved at request time; discovery emits no session event. */
 export interface SessionModelsInput {
-  accountId?: AccountId;
+  accountId?: AccountId; // omitted -> 'default'; trimmed; explicit blank -> INVALID_INPUT
+  refresh?: boolean; // omitted -> false; bypasses age freshness only
 }
-// invoke('session_models', req?: SessionModelsInput): Promise<Result<ModelInfo[]>>
+
+export interface ModelCatalog {
+  accountId: AccountId;
+  agentRuntime: AgentRuntime;
+  models: ModelInfo[];
+  defaultModelId: string | null;
+  source: 'codex-app-server' | 'memory-cache' | 'legacy-adapter';
+  freshness: 'fresh' | 'stale' | 'unverified';
+  fetchedAt: number | null; // epoch ms of successful core probe; null for legacy
+  warning: AppError | null;
+}
+
+export type SessionModelsResponse = Result<ModelCatalog>;
+export type ModelCatalogFailureReason =
+  | 'timeout' | 'protocol' | 'unsupported-cli' | 'runtime' | 'limit';
+export interface ModelCatalogFailureDetail { reason: ModelCatalogFailureReason }
+
+// invoke('session_models', req?: SessionModelsInput): Promise<SessionModelsResponse>
+// Errors: INVALID_INPUT, ACCOUNT_NOT_FOUND, ACCOUNT_NOT_AUTHENTICATED,
+// SPAWN_FAILED, MODEL_CATALOG_UNAVAILABLE, INTERNAL; legacy adapter errors unchanged.
+// Codex mutations validate against this same catalogue before side effects.
+// An explicit incompatible effort rejects atomically; a model change clears an
+// incompatible inherited effort. Clear-only effort/unrelated edits do not probe.
+// Discovery never changes persisted selections. See specs/codex-model-catalog.md §5.
 
 // ---------- v1 static model catalog (§5.1) ----------
 // Mirrors the Rust core's catalog; UIs may use it directly for labels.
