@@ -51,6 +51,7 @@ pub fn apply_add_codex(
         created_at: crate::ids::now_ms(),
         kind: AccountKind::CodexCli,
         endpoint: None,
+        pi: None,
     });
     build_list(inner)
         .into_iter()
@@ -274,6 +275,7 @@ mod tests {
             created_at: 0,
             kind: AccountKind::ClaudeCodeOauth,
             endpoint: None,
+            pi: None,
         });
         apply_add_codex(
             &mut inner,

@@ -14,6 +14,31 @@ pub(crate) fn record_fixture(id: &str, label: &str) -> AccountRecord {
         created_at: 1_000,
         kind: AccountKind::ClaudeCodeOauth,
         endpoint: None,
+        pi: None,
+    }
+}
+
+/// pi-provider-auth: a `pi` row pointing at a real temp dir (`tmp_account_dir`)
+/// so fingerprint/trust tests can write configuration files into it.
+pub(crate) fn pi_record_fixture(id: &str, label: &str, trusted: bool) -> AccountRecord {
+    let dir = tmp_account_dir(&format!("pi-{id}"));
+    let fingerprint = trusted.then(|| super::compute_fingerprint(&dir.to_string_lossy()));
+    AccountRecord {
+        id: id.into(),
+        label: label.into(),
+        email: None,
+        organization: None,
+        config_dir: dir.to_string_lossy().into_owned(),
+        created_at: 1_000,
+        kind: AccountKind::Pi,
+        endpoint: None,
+        pi: Some(PiRecord {
+            runtime: "native".into(),
+            distro: None,
+            inherit_environment_credentials: false,
+            trusted,
+            fingerprint,
+        }),
     }
 }
 
@@ -34,6 +59,7 @@ pub(crate) fn endpoint_record_fixture(id: &str, label: &str, base_url: &str) -> 
             base_url: base_url.into(),
             model_ids: None,
         }),
+        pi: None,
     }
 }
 
@@ -52,6 +78,7 @@ pub(crate) fn inner_fixture(ids: &[&str], default_id: &str) -> AccountInner {
         default_email: None,
         default_organization: None,
         login: None,
+        pi_setups: HashMap::new(),
     }
 }
 

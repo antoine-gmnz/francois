@@ -67,16 +67,19 @@ pub fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String>) {
     (records, default_id)
 }
 
-/// multi-provider-endpoint FR-1: `endpoint` is present IFF `kind ==
-/// OpenAiCompatible` — a record violating that invariant (hand-edited JSON,
-/// or a kind flip that left the sidecar field behind) is dropped rather than
-/// repaired into a half-account.
+/// multi-provider-endpoint FR-1 / pi-provider-auth FR-1: `endpoint` is present
+/// IFF `kind == OpenAiCompatible`, and `pi` is present IFF `kind == Pi` — a
+/// record violating either invariant (hand-edited JSON, or a kind flip that
+/// left the sidecar field behind) is dropped rather than repaired into a
+/// half-account.
 fn account_record_invariant_holds(r: &AccountRecord) -> bool {
-    let ok = matches!(r.kind, AccountKind::OpenAiCompatible) == r.endpoint.is_some();
+    let endpoint_ok = matches!(r.kind, AccountKind::OpenAiCompatible) == r.endpoint.is_some();
+    let pi_ok = matches!(r.kind, AccountKind::Pi) == r.pi.is_some();
+    let ok = endpoint_ok && pi_ok;
     if !ok {
         eprintln!(
-            "accounts: dropping record {} on load — endpoint/kind mismatch \
-             (multi-provider-endpoint FR-1)",
+            "accounts: dropping record {} on load — endpoint/pi/kind mismatch \
+             (multi-provider-endpoint FR-1 / pi-provider-auth FR-1)",
             r.id
         );
     }
@@ -138,6 +141,7 @@ pub(crate) fn build_list(inner: &AccountInner) -> Vec<Account> {
         kind: AccountKind::ClaudeCodeOauth,
         endpoint: None,
         signed_in: None,
+        pi: None,
     }];
     out.extend(inner.records.iter().map(|r| {
         Account {
@@ -166,8 +170,19 @@ pub(crate) fn build_list(inner: &AccountInner) -> Vec<Account> {
                     Some(crate::account::codex_auth_file_exists(&r.config_dir))
                 }
                 AccountKind::GrokCli => Some(crate::account::grok_auth_file_exists(&r.config_dir)),
-                AccountKind::ClaudeCodeOauth | AccountKind::OpenAiCompatible => None,
+                AccountKind::ClaudeCodeOauth | AccountKind::OpenAiCompatible | AccountKind::Pi => {
+                    None
+                }
             },
+            // pi-provider-auth FR-1: present iff `kind == Pi` — `configDir` is
+            // NOT repeated here (`Account.config_dir` above already carries
+            // it).
+            pi: r.pi.as_ref().map(|p| PiAccountConfig {
+                runtime: p.runtime.clone(),
+                distro: p.distro.clone(),
+                inherit_environment_credentials: p.inherit_environment_credentials,
+                trusted: p.trusted,
+            }),
         }
     }));
     out
@@ -339,8 +354,18 @@ pub fn read_default_identity() -> (Option<String>, Option<String>) {
 /// could point it anywhere, and `account_remove` later `remove_dir_all`s this
 /// path. Every row's config dir is derived from its id, not read off disk, so a
 /// spoofed value can never survive a load.
+///
+/// pi-provider-auth FR-1/FR-8: a `Pi` account's `configDir` is a REFERENCE to
+/// the user's own, pre-existing Pi directory — Francois never created it and
+/// `account_remove` never deletes it (unlike every other kind, which owns and
+/// later destroys its directory). Rewriting it to `<accounts_dir>/<id>` here
+/// would silently point every Pi session at an app-owned folder Pi never
+/// wrote to, so Pi rows are left exactly as registered.
 pub fn sanitize_config_dirs(records: &mut [AccountRecord], accounts_dir: &Path) {
     for r in records.iter_mut() {
+        if r.kind == AccountKind::Pi {
+            continue;
+        }
         r.config_dir = accounts_dir.join(&r.id).to_string_lossy().into_owned();
     }
 }
@@ -516,6 +541,25 @@ mod tests {
                     "builtIn": false, "isDefault": false, "createdAt": 1_000,
                     "authFailedAt": 4_242, "kind": "claude-code-oauth" })
         );
+    }
+
+    #[test]
+    fn a_pi_account_serializes_its_pi_config_with_no_configdir_repeated_inside_it() {
+        let mut inner = inner_fixture(&[], "default");
+        inner.records.push(pi_record_fixture("p1", "Home Pi", true));
+        let dir = inner.records[0].config_dir.clone();
+        let list = build_list(&inner);
+        let added = serde_json::to_value(&list[1]).unwrap();
+        assert_eq!(added["kind"], "pi");
+        assert_eq!(added["configDir"], dir);
+        assert!(added["signedIn"].is_null());
+        // FR-1: `Account.pi` never repeats `configDir` — `Account.configDir`
+        // above already carries it.
+        assert!(added["pi"].get("configDir").is_none());
+        assert_eq!(added["pi"]["runtime"], "native");
+        assert_eq!(added["pi"]["trusted"], true);
+        assert_eq!(added["pi"]["inheritEnvironmentCredentials"], false);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -756,6 +800,48 @@ mod tests {
             records[1].config_dir,
             dir.join("a2").to_string_lossy().into_owned()
         );
+    }
+
+    #[test]
+    fn sanitize_config_dirs_leaves_a_pi_accounts_directory_untouched() {
+        // pi-provider-auth FR-1/FR-8: a Pi account's directory is a REFERENCE
+        // to the user's own — rewriting it to an app-owned path would point
+        // every Pi session at a directory Pi never wrote to.
+        let mut records = vec![pi_record_fixture("p1", "Home Pi", false)];
+        let original = records[0].config_dir.clone();
+        sanitize_config_dirs(&mut records, Path::new("/app-data/accounts"));
+        assert_eq!(records[0].config_dir, original);
+        std::fs::remove_dir_all(&original).ok();
+    }
+
+    #[test]
+    fn a_pi_record_without_its_pi_field_is_dropped_on_load() {
+        // pi-provider-auth FR-1: `pi` present iff `kind == Pi` — same
+        // discipline as multi-provider-endpoint's `endpoint`/`kind` invariant.
+        let doc = json!({
+            "version": 1,
+            "accounts": [
+                { "id": "p1", "label": "Pi", "configDir": "/pi/home", "kind": "pi" },
+                { "id": "a1", "label": "keep", "configDir": "/x/a1" },
+            ],
+        });
+        let (records, _) = parse_registry(doc.to_string().as_bytes());
+        assert_eq!(
+            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["a1"]
+        );
+    }
+
+    #[test]
+    fn a_pi_record_round_trips_its_kind_and_pi_config() {
+        let records = vec![pi_record_fixture("p1", "Home Pi", true)];
+        let dir = records[0].config_dir.clone();
+        let doc = registry_doc(&records, "default");
+        let (back, _) = parse_registry(doc.to_string().as_bytes());
+        assert_eq!(back, records);
+        assert_eq!(back[0].kind, AccountKind::Pi);
+        assert!(back[0].pi.as_ref().unwrap().trusted);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

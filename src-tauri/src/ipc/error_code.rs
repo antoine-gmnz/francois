@@ -95,6 +95,12 @@ pub enum ErrorCode {
     CliInstallUnavailable,
     /// multi-account: `npm i -g <package>` exited non-zero (detail: { code, tail })
     CliInstallFailed,
+    /// pi-provider-auth: trust/remove refused while a session or setup PTY holds the account
+    AccountInUse,
+    /// pi-provider-auth: a Pi account's configDir was never explicitly trusted
+    AccountConfigUntrusted,
+    /// pi-provider-auth FR-4: the trusted executable-config fingerprint no longer matches
+    AccountConfigChanged,
     /// workflow-details: runId matches no run this session has seen
     WorkflowNotFound,
     /// workflow-details FR-2/FR-7: the run has no usable transcriptDir
@@ -249,6 +255,9 @@ impl ErrorCode {
         ErrorCode::AccountKeyWriteFailed,
         ErrorCode::CliInstallUnavailable,
         ErrorCode::CliInstallFailed,
+        ErrorCode::AccountInUse,
+        ErrorCode::AccountConfigUntrusted,
+        ErrorCode::AccountConfigChanged,
         ErrorCode::WorkflowNotFound,
         ErrorCode::WorkflowNoTranscript,
         ErrorCode::WorkflowAgentNotFound,
@@ -349,6 +358,9 @@ impl ErrorCode {
             ErrorCode::AccountKeyWriteFailed => "ACCOUNT_KEY_WRITE_FAILED",
             ErrorCode::CliInstallUnavailable => "CLI_INSTALL_UNAVAILABLE",
             ErrorCode::CliInstallFailed => "CLI_INSTALL_FAILED",
+            ErrorCode::AccountInUse => "ACCOUNT_IN_USE",
+            ErrorCode::AccountConfigUntrusted => "ACCOUNT_CONFIG_UNTRUSTED",
+            ErrorCode::AccountConfigChanged => "ACCOUNT_CONFIG_CHANGED",
             ErrorCode::WorkflowNotFound => "WORKFLOW_NOT_FOUND",
             ErrorCode::WorkflowNoTranscript => "WORKFLOW_NO_TRANSCRIPT",
             ErrorCode::WorkflowAgentNotFound => "WORKFLOW_AGENT_NOT_FOUND",

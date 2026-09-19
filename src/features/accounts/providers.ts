@@ -254,6 +254,16 @@ export function providerIdForAccount(account: Account): ProviderId {
       if (host === '') return 'custom';
       return PROVIDERS.find((p) => p.hosts.includes(host))?.id ?? 'custom';
     }
+    case 'pi':
+      // pi-provider-auth: a Pi account is not a vendor credential — Pi can
+      // itself speak to any provider (see PiProviderAuthObservation), so
+      // there is no single vendor bucket it truthfully belongs to, and its
+      // add/trust/setup/refresh lifecycle is nothing like the generic
+      // CLI-login/API-key pair this rail renders (see accounts/pi.ts, which
+      // owns Pi's own section of the modal instead). `providerGroups` filters
+      // Pi accounts out before this function ever sees one — this arm exists
+      // only so the switch stays exhaustive over `AccountKind`.
+      return 'custom';
   }
 }
 
@@ -328,7 +338,10 @@ export function providerGroups(
   sessionCounts: Record<string, number> = {},
 ): ProviderGroup[] {
   const byProvider = new Map<ProviderId, Account[]>();
-  for (const account of accounts) {
+  // pi-provider-auth: Pi accounts render in their own section (see
+  // PiAccountsSection), never through this vendor rail — see
+  // `providerIdForAccount`'s 'pi' arm for why.
+  for (const account of accounts.filter((a) => a.kind !== 'pi')) {
     const id = providerIdForAccount(account);
     const bucket = byProvider.get(id);
     if (bucket) bucket.push(account);

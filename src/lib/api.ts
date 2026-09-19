@@ -16,6 +16,7 @@ import type {
   AccountAddEndpointPayload,
   AccountAddEndpointResponse,
   AccountAddPayload,
+  AccountAddPiResponse,
   AccountAddResponse,
   AccountEvent,
   AccountAddCodexPayload,
@@ -34,13 +35,20 @@ import type {
   AccountLoginCancelPayload,
   AccountLoginResizePayload,
   AccountLoginWritePayload,
+  AccountPiRefreshResponse,
+  AccountPiSetupResponse,
   AccountRemoveResponse,
   AccountRenameResponse,
   AccountSetDefaultResponse,
   AccountTestEndpointPayload,
   AccountTestEndpointResponse,
+  AccountTrustPiPayload,
+  AccountTrustPiResponse,
   AccountUpdateEndpointPayload,
   AccountUpdateEndpointResponse,
+  PiAccountCreateInput,
+  PiRefreshAuthInput,
+  PiSetupInput,
 } from '../../contract/multi-account';
 import type {
   GroupId,
@@ -460,6 +468,18 @@ export const accountAddGrok = (payload: AccountAddGrokPayload) =>
   ipc<AccountAddGrokResponse>('account_add_grok', payload);
 export const accountGrokLogin = (payload: AccountGrokLoginPayload) =>
   ipc<AccountGrokLoginResponse>('account_grok_login', payload);
+// pi-provider-auth (§5). `addPi` registers a reference to an existing,
+// user-trusted `PI_CODING_AGENT_DIR` and resolves the same fresh list every
+// other mutation does; `trustPi` mirrors it. `piSetup` starts the SAME
+// login-PTY infrastructure `accountAdd` already uses — its bytes and outcome
+// arrive on the shared francois://account/event stream, not the response —
+// and `piRefresh` runs a stateless per-account probe with no event of its own.
+export const accountAddPi = (payload: PiAccountCreateInput) => ipc<AccountAddPiResponse>('account_add_pi', payload);
+export const accountTrustPi = (payload: AccountTrustPiPayload) =>
+  ipc<AccountTrustPiResponse>('account_trust_pi', payload);
+export const accountPiSetup = (payload: PiSetupInput) => ipc<AccountPiSetupResponse>('account_pi_setup', payload);
+export const accountPiRefresh = (payload: PiRefreshAuthInput) =>
+  ipc<AccountPiRefreshResponse>('account_pi_refresh', payload);
 // The vendor CLIs the login routes are driven by. `cliTools` re-probes PATH on
 // every call (never cached — installing one in a terminal is the normal case);
 // `installCli` resolves as soon as `npm i -g` is spawned, and its output plus

@@ -8,7 +8,7 @@
 use super::*;
 use crate::ipc::ErrorCode;
 
-use crate::ipc::{err, ok, IpcResult};
+use crate::ipc::{err, err_detail, ok, IpcResult};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
@@ -37,12 +37,15 @@ impl<'de, R: Runtime> CommandArg<'de, R> for ModelIdsUpdate {
 }
 
 /// Mirrors `AccountLoginStarted` (§5) — what the modal needs to size its xterm.
+/// Fields `pub(crate)` (not the default private) so `pi_commands.rs` — a
+/// SIBLING module, not a descendant of this one — can construct it for
+/// `account_pi_setup`, which answers with this exact shape (FR-3).
 #[derive(Serialize)]
 pub struct AccountLoginStarted {
     #[serde(rename = "loginId")]
-    login_id: String,
-    cols: u16,
-    rows: u16,
+    pub(crate) login_id: String,
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
 }
 
 /// Snapshot the mutable half of the registry, so a failed accounts.json write can
@@ -308,13 +311,41 @@ pub fn account_set_default(
 /// francois:account:remove (FR-8/FR-9): drop the row, delete its config dir
 /// (credentials included), then repoint every session that was bound to it onto
 /// `default` — with the account lock already released (mod.rs LOCK ORDER).
+///
+/// pi-provider-auth FR-6/FR-8: a `Pi` account never falls back to `default` —
+/// removal is refused with `ACCOUNT_IN_USE` (carrying the stranded session ids
+/// as `blockedSessions`) while any session is still pinned to it, and even
+/// once removal succeeds its directory is NEVER deleted (it is the user's own,
+/// not one Francois created).
 #[tauri::command(async)]
 pub fn account_remove(
     app: AppHandle,
     state: State<'_, AccountState>,
     account_id: String,
 ) -> IpcResult<AccountRemoveData> {
-    let (accounts, config_dir) = {
+    let is_pi = {
+        let Ok(inner) = state.0.lock() else {
+            return err(ErrorCode::Internal, "account state is unavailable");
+        };
+        inner
+            .records
+            .iter()
+            .find(|r| r.id == account_id)
+            .map(|r| r.kind == AccountKind::Pi)
+            .unwrap_or(false)
+    };
+    if is_pi {
+        let blocked = sessions_pinned_to(&app, &account_id);
+        if !blocked.is_empty() {
+            return err_detail(
+                ErrorCode::AccountInUse,
+                "this account still has sessions using it — stop them before removing it",
+                serde_json::json!({ "blockedSessions": blocked }),
+            );
+        }
+    }
+
+    let (accounts, config_dir, removed_kind, removed_record) = {
         let Ok(mut inner) = state.0.lock() else {
             return err(ErrorCode::Internal, "account state is unavailable");
         };
@@ -328,15 +359,56 @@ pub fn account_remove(
         }
         // A login in flight for the row just removed must not resurrect it.
         cancel_login_for_account(&mut inner, &account_id);
-        (build_list(&inner), removed.config_dir)
+        let config_dir = removed.config_dir.clone();
+        let removed_kind = removed.kind;
+        (build_list(&inner), config_dir, removed_kind, removed)
     };
 
-    // FR-8: the directory goes with the row — credentials included. A delete
-    // failure is never fatal to the removal itself (the row is already gone
-    // from the registry), but it is logged rather than silently discarded, so
-    // a leftover credential directory is at least visible somewhere.
-    if let Err(e) = std::fs::remove_dir_all(&config_dir) {
-        eprintln!("accounts: could not remove {config_dir}: {e}");
+    // pi-provider-auth FR-6/FR-8: close the TOCTOU window between the
+    // pre-write check above and the write just committed — a session that
+    // started using this Pi account in between must not have its row
+    // disappear under it. Mirrors `account_trust_pi`'s
+    // pre-check/write/post-write-recheck-and-rollback shape: roll the row
+    // back onto the registry, persist and emit, then refuse exactly like the
+    // pre-write check would have.
+    if removed_kind == AccountKind::Pi {
+        let blocked = sessions_pinned_to(&app, &account_id);
+        if !blocked.is_empty() {
+            let accounts = {
+                let Ok(mut inner) = state.0.lock() else {
+                    return err(ErrorCode::Internal, "account state is unavailable");
+                };
+                inner.records.push(removed_record);
+                if let Err(msg) = persist(&app, &inner) {
+                    eprintln!("accounts: could not persist accounts.json: {msg}");
+                }
+                build_list(&inner)
+            };
+            emit(
+                &app,
+                AccountEvent::List {
+                    accounts: accounts.clone(),
+                },
+            );
+            return err_detail(
+                ErrorCode::AccountInUse,
+                "this account still has sessions using it — stop them before removing it",
+                serde_json::json!({ "blockedSessions": blocked }),
+            );
+        }
+    }
+
+    // FR-8: the directory goes with the row — credentials included — for
+    // every OTHER kind. A `Pi` account's directory is the user's own
+    // pre-existing one; Francois never created it and never deletes it.
+    if removed_kind != AccountKind::Pi {
+        // A delete failure is never fatal to the removal itself (the row is
+        // already gone from the registry), but it is logged rather than
+        // silently discarded, so a leftover credential directory is at least
+        // visible somewhere.
+        if let Err(e) = std::fs::remove_dir_all(&config_dir) {
+            eprintln!("accounts: could not remove {config_dir}: {e}");
+        }
     }
     // FR-9: driven from here, never from under the account lock.
     // core-architecture-wave3 FR-9: through the removal-observer seam, so this
@@ -357,6 +429,7 @@ pub fn account_remove(
     ok(AccountRemoveData {
         accounts,
         reassigned_sessions,
+        blocked_sessions: Vec::new(),
     })
 }
 
@@ -595,9 +668,11 @@ mod tests {
         let v = serde_json::to_value(AccountRemoveData {
             accounts: build_list(&inner_fixture(&["a1"], "default")),
             reassigned_sessions: vec!["s1".into(), "s2".into()],
+            blocked_sessions: Vec::new(),
         })
         .unwrap();
         assert_eq!(v["reassignedSessions"], serde_json::json!(["s1", "s2"]));
+        assert_eq!(v["blockedSessions"], serde_json::json!([]));
         assert_eq!(v["accounts"][0]["id"], "default");
         assert_eq!(v["accounts"][1]["id"], "a1");
     }

@@ -46,6 +46,7 @@ pub fn apply_add_grok(
         created_at: crate::ids::now_ms(),
         kind: AccountKind::GrokCli,
         endpoint: None,
+        pi: None,
     });
     build_list(inner)
         .into_iter()

@@ -22,9 +22,18 @@
 //  * commands.rs — the francois:account:<verb> Tauri command surface.
 //
 // LOCK ORDER: `AccountState` is a LEAF like `usage::UsageState` — nothing here
-// ever takes `session::Engine.sessions`. FR-9's session repointing (an account
-// was removed) is driven from commands.rs AFTER the registry write returns,
-// by calling into `session::reassign_account_sessions` with no account lock held.
+// ever takes `session::Engine.sessions` WHILE `AccountState` IS HELD. FR-9's
+// session repointing (an account was removed) is driven from commands.rs AFTER
+// the registry write returns, by calling into `session::reassign_account_sessions`
+// with no account lock held. pi-provider-auth's `sessions_pinned_to` (via the
+// `AccountSessionQuery` hook) is the same shape: `session::Session::meta()`
+// already locks `AccountState` FROM INSIDE an `Engine.sessions`-locked closure
+// (`kind_of`, called by every `with_session(_mut)` that builds a `SessionMeta`),
+// so the established order is `Engine.sessions` → `AccountState`. Calling
+// `sessions_pinned_to` with `AccountState` already held would take the two in
+// the OPPOSITE order — see pi/mod.rs's `sessions_currently_use` doc comment and
+// `account_trust_pi`/`account_remove` (pi_commands.rs/commands.rs) for the
+// two-phase (check unlocked, mutate separately) shape this requires.
 
 /// The vendor CLIs the login routes are driven by (`claude`, `codex`, `grok`):
 /// is one installed on this machine, and `npm i -g` it if not. A CHILD here
@@ -46,6 +55,14 @@ mod endpoint;
 mod grok;
 mod login;
 mod mirror;
+/// pi-provider-auth: `pi` accounts — a reference to an existing, user-owned
+/// `PI_CODING_AGENT_DIR` rather than a Francois-owned config dir (see the
+/// module doc there for why that makes this child unlike every other one).
+mod pi;
+/// pi-provider-auth: the `francois:account:addPi/trustPi/piSetup/piRefresh`
+/// Tauri command surface — a SIBLING of commands.rs rather than a section
+/// inside it, purely for CLAUDE.md's ~1000-line file cap (see its module doc).
+mod pi_commands;
 mod registry;
 
 pub(crate) use cli_tools::*;
@@ -55,6 +72,14 @@ pub(crate) use endpoint::*;
 pub(crate) use grok::*;
 pub use login::*;
 pub(crate) use mirror::*;
+pub(crate) use pi::*;
+// `account_pi_refresh` (pi_commands.rs) answers with these — like
+// `AccountLoginStarted`, a command's wire return type must be reachable from
+// `main.rs` (an external crate relative to this lib, core-architecture-wave3
+// FR-2), so these two need the genuinely-`pub` re-export the rest of `pi`'s
+// (internal-only) surface does not.
+pub use pi::{PiAuthState, PiInstallProbe, PiProviderAuthObservation};
+pub use pi_commands::*;
 pub use registry::*;
 
 #[cfg(test)]
@@ -100,6 +125,11 @@ pub enum AccountKind {
     /// `GROK_HOME` — the same trade again, a third time (FR-19).
     #[serde(rename = "grok-cli")]
     GrokCli,
+    /// pi-provider-auth FR-1: a REFERENCE to an existing, user-owned
+    /// `PI_CODING_AGENT_DIR` — NOT a fourth interactive-CLI trade. Francois
+    /// never runs a login of its own for this kind; see `PiAccountConfig`.
+    #[serde(rename = "pi")]
+    Pi,
 }
 
 impl AccountKind {
@@ -117,6 +147,8 @@ impl AccountKind {
             AccountKind::CodexCli => Some("CODEX_HOME"),
             // multi-provider-grok FR-19.
             AccountKind::GrokCli => Some("GROK_HOME"),
+            // pi-provider-auth FR-1: Pi's own config-dir variable.
+            AccountKind::Pi => Some("PI_CODING_AGENT_DIR"),
             AccountKind::OpenAiCompatible => None,
         }
     }
@@ -157,6 +189,23 @@ pub struct Account {
     /// look healthy right up until the first message bounced.
     #[serde(rename = "signedIn", skip_serializing_if = "Option::is_none")]
     signed_in: Option<bool>,
+    /// pi-provider-auth FR-1. Present iff `kind == Pi`. `configDir` is omitted
+    /// here — `Account.config_dir` above already carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pi: Option<PiAccountConfig>,
+}
+
+/// Mirrors `PiAccountConfig` with `configDir` OMITTED (contract:
+/// `Omit<PiAccountConfig,'configDir'>` — `Account.config_dir` already carries
+/// the same absolute path, so it is never stored twice on the wire).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct PiAccountConfig {
+    pub(crate) runtime: String, // "native" | "wsl"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) distro: Option<String>,
+    #[serde(rename = "inheritEnvironmentCredentials")]
+    pub(crate) inherit_environment_credentials: bool,
+    pub(crate) trusted: bool,
 }
 
 /// Mirrors `EndpointConfig` (contract/multi-account.ts). Carries NO key
@@ -178,6 +227,13 @@ pub struct AccountRemoveData {
     accounts: Vec<Account>,
     #[serde(rename = "reassignedSessions")]
     reassigned_sessions: Vec<String>,
+    /// pi-provider-auth FR-6/FR-8: sessions this removal would STRAND (pinned
+    /// to the removed Pi account, with no reassignment target). Non-empty ⇒
+    /// the call instead rejects with `ACCOUNT_IN_USE` and carries this same
+    /// list on the error's `detail`; legacy (non-Pi) removal never populates
+    /// this and keeps its existing reassignment behaviour.
+    #[serde(rename = "blockedSessions")]
+    blocked_sessions: Vec<String>,
 }
 
 // francois:account:event → francois://account/event (§5).
@@ -250,6 +306,28 @@ pub struct AccountRecord {
     /// the sidecar `<configDir>/endpoint-key` file is the key's only home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     endpoint: Option<EndpointRecord>,
+    /// pi-provider-auth FR-1: present iff `kind == Pi` — enforced on load by
+    /// `registry::account_record_invariant_holds`, same discipline as
+    /// `endpoint` above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pi: Option<PiRecord>,
+}
+
+/// The persisted half of a `pi` account (pi-provider-auth FR-1/FR-4).
+/// `fingerprint` is INTERNAL ONLY — never serialized onto `Account.pi`
+/// (`PiAccountConfig` carries no such field) — it is compared on every
+/// trust-gated call to detect a changed executable configuration.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PiRecord {
+    pub(crate) runtime: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) distro: Option<String>,
+    #[serde(rename = "inheritEnvironmentCredentials", default)]
+    pub(crate) inherit_environment_credentials: bool,
+    #[serde(default)]
+    pub(crate) trusted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) fingerprint: Option<String>,
 }
 
 /// The persisted half of an `openai-compatible` account (multi-provider-endpoint
@@ -281,6 +359,14 @@ pub struct LoginHandle {
     /// Set the moment one of the four finishers claims the login, so the losers
     /// stop early rather than racing on a handle that is already gone.
     pub(crate) settled: Arc<AtomicBool>,
+    /// pi-provider-auth FR-3/FR-8: which kind of PTY this is — every
+    /// pre-existing construction site is `ClaudeCodeOauth` (its own login);
+    /// Pi setup is the one carrying `Pi`. `discard()` (login.rs) reads this to
+    /// decide whether the directory goes with the process: a Claude/Codex/Grok
+    /// login owns and creates its dir, so an abandoned one is cleaned up, but a
+    /// Pi account's dir is the user's OWN pre-existing directory and must
+    /// never be deleted by Francois (FR-8).
+    pub(crate) kind: AccountKind,
 }
 
 /// The second field is FR-16's `login_pending` reservation flag, kept OUTSIDE
@@ -304,6 +390,14 @@ pub struct AccountInner {
     default_organization: Option<String>,
     /// FR-16: at most one login in flight, app-wide.
     login: Option<LoginHandle>,
+    /// pi-provider-auth FR-3: open Pi setup PTYs, keyed by `login_id`. A
+    /// SEPARATE collection from `login` (rather than sharing its single slot)
+    /// because `piSetup`'s own error list (contract/multi-account.ts) carries
+    /// no "a login is already in progress" code — an unrelated Claude login
+    /// and a Pi setup, or two Pi setups, must not collide with one another.
+    /// `pi::setup_pty_open_for` is what still caps ONE PER ACCOUNT for the
+    /// FR-4/FR-8 trust/remove gate.
+    pi_setups: HashMap<String, LoginHandle>,
 }
 
 impl Default for AccountState {
@@ -316,6 +410,7 @@ impl Default for AccountState {
                 default_email: None,
                 default_organization: None,
                 login: None,
+                pi_setups: HashMap::new(),
             }),
             AtomicBool::new(false),
         )
@@ -435,6 +530,34 @@ pub fn notify_credentials_changing(account_id: &str) {
             observer.credentials_changing(account_id);
         }
     }
+}
+
+/// pi-provider-auth FR-4/FR-6/FR-8: whether the given account currently has
+/// any LIVE session pinned to it — checked before `trustPi`/Pi removal refuse
+/// with `ACCOUNT_IN_USE`. Same inversion as `AccountRemovalObserver`: this
+/// domain only declares that it needs the answer; `session` (the domain that
+/// actually owns the registry the answer comes from) supplies it, wired once
+/// in the crate root's `.setup()`, so `account` still never names `session`.
+pub trait AccountSessionQuery: Send + Sync {
+    fn sessions_pinned_to(&self, app: &AppHandle, account_id: &str) -> Vec<String>;
+}
+
+static SESSION_QUERY: std::sync::OnceLock<Box<dyn AccountSessionQuery>> =
+    std::sync::OnceLock::new();
+
+/// Called ONCE, from the crate root's `.setup()`. A second call is ignored —
+/// see `session::register_teardown` for why that is not a panic.
+pub fn register_session_query(query: Box<dyn AccountSessionQuery>) {
+    let _ = SESSION_QUERY.set(query);
+}
+
+/// Empty when nothing is registered (every unit test): a test with no session
+/// registry has no session to report, so "in use" reads `false` there.
+pub(crate) fn sessions_pinned_to(app: &AppHandle, account_id: &str) -> Vec<String> {
+    SESSION_QUERY
+        .get()
+        .map(|q| q.sessions_pinned_to(app, account_id))
+        .unwrap_or_default()
 }
 
 pub trait AccountKinds {

@@ -65,6 +65,9 @@ export type ErrorCode =
   | 'ACCOUNT_ENDPOINT_UNREACHABLE' // multi-provider-endpoint: the base URL did not answer a usable /models
   | 'ACCOUNT_ENDPOINT_UNAUTHORIZED' // multi-provider-endpoint: the endpoint rejected the key (401/403)
   | 'ACCOUNT_KEY_WRITE_FAILED' // multi-provider-endpoint: the key file could not be written or removed
+  | 'ACCOUNT_IN_USE' // pi-provider-auth: trust/remove refused while a session or setup PTY holds the account
+  | 'ACCOUNT_CONFIG_UNTRUSTED' // pi-provider-auth: a Pi account's configDir was never explicitly trusted
+  | 'ACCOUNT_CONFIG_CHANGED' // pi-provider-auth FR-4: the trusted executable-config fingerprint no longer matches
   | 'CLI_INSTALL_UNAVAILABLE' // multi-account: npm is not on PATH, so no vendor CLI can be installed from here
   | 'CLI_INSTALL_FAILED' // multi-account: `npm i -g <package>` exited non-zero (detail: { code, tail })
   | 'WORKFLOW_NOT_FOUND' // workflow-details: runId matches no run this session has seen

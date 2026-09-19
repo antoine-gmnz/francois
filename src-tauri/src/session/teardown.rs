@@ -22,7 +22,9 @@
 //! it did when it was called directly.
 
 use std::sync::OnceLock;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+
+use super::Engine;
 
 /// A domain that holds per-session resources and can release them.
 ///
@@ -73,6 +75,16 @@ impl crate::account::AccountRemovalObserver for SessionAccountObserver {
     fn account_removed(&self, app: &AppHandle, account_id: &str) -> Vec<String> {
         super::adapter::codex::invalidate_catalog(account_id);
         super::reassign_account_sessions(app, account_id)
+    }
+}
+
+/// pi-provider-auth FR-4/FR-6/FR-8: the read-only twin of
+/// `AccountRemovalObserver` — `account` asks "does any session still hold
+/// this account?" before `trustPi`/Pi removal refuse with `ACCOUNT_IN_USE`,
+/// and this domain (the one that actually owns `Engine.sessions`) answers it.
+impl crate::account::AccountSessionQuery for SessionAccountObserver {
+    fn sessions_pinned_to(&self, app: &AppHandle, account_id: &str) -> Vec<String> {
+        app.state::<Engine>().sessions_for_account(account_id)
     }
 }
 

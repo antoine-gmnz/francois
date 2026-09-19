@@ -41,6 +41,9 @@ fn main() {
         // multi-account §6: the account registry + the single in-flight login.
         // Another LEAF lock — nothing under account/ ever takes Engine.sessions.
         .manage(account::AccountState::default())
+        // pi-provider-auth FR-7: account/ reaches the Pi install preflight
+        // through this injected probe — session/ already depends on account/.
+        .manage(account::PiInstallProbe(session::installation_preflight))
         // self-update §6/FR-19: the last UpdateCheck, in memory only. Another
         // LEAF lock — `update::app_apply_update` reads the engine's running
         // count BEFORE it ever touches this.
@@ -61,6 +64,10 @@ fn main() {
             // sessions bound to it, and `account` no longer names `session` to
             // say so.
             account::register_removal_observers(vec![Box::new(session::SessionAccountObserver)]);
+            // pi-provider-auth FR-4/FR-6/FR-8: the read-only counterpart —
+            // `account` asks whether a Pi account is still in use; `session`
+            // (which owns the sessions registry) answers.
+            account::register_session_query(Box::new(session::SessionAccountObserver));
             // Tint with the dark caption up front; the webview re-tints with the
             // persisted theme (app_set_window_theme) once it mounts. See §theme.
             #[cfg(windows)]
@@ -217,6 +224,10 @@ fn main() {
             account::account_test_endpoint,
             account::account_cli_tools,
             account::account_install_cli,
+            account::account_add_pi,
+            account::account_trust_pi,
+            account::account_pi_setup,
+            account::account_pi_refresh,
             extensions::extensions_list,
             extensions::extensions_set_enabled,
             extensions::extensions_detect,

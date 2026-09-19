@@ -49,6 +49,6 @@ pub(crate) use dispatcher::connect;
 // FR-2) — the same reason every other command re-export chain here ends in
 // `pub use` rather than `pub(crate) use`.
 pub use discovery::{
-    __cmd__runtime_installation, __tauri_command_name_runtime_installation, runtime_installation,
-    InstallState, Provenance, RuntimeInstallStatus,
+    __cmd__runtime_installation, __tauri_command_name_runtime_installation, installation_preflight,
+    runtime_installation, InstallState, Provenance, RuntimeInstallStatus,
 };

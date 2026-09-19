@@ -348,6 +348,8 @@ function accountRuntime(account: Account): AgentRuntime {
       return 'codex';
     case 'grok-cli':
       return 'grok';
+    case 'pi':
+      return 'pi';
   }
 }
 
@@ -495,8 +497,8 @@ export const LOGIN_TITLE = 'LOGGING IN — complete the Claude Code sign-in belo
 /** §Notes: Esc is intercepted by the modal, so the hint must be visible. */
 export const LOGIN_CANCEL_HINT = 'Esc to cancel';
 
-/** Design brief: at most five session names, then a `+N more`. */
-const MAX_CONFIRM_SESSIONS = 5;
+/** Design brief: at most five session names, then a `+N more`. Shared with pi.ts's own confirm view. */
+export const MAX_CONFIRM_SESSIONS = 5;
 
 export interface RemoveConfirmView {
   title: string;

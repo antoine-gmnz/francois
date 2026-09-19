@@ -67,35 +67,15 @@ pub(crate) struct ProcessHandle {
     pub(crate) stderr_ring: Arc<Mutex<Vec<u8>>>,
 }
 
-/// FR-1: turn a discovery verdict into the executable to spawn — anything
-/// short of `Ready` fails with the verdict's own error. Pure, so the
-/// not-ready branch is testable without depending on what the host has
-/// installed.
-fn ready_executable(status: super::discovery::RuntimeInstallStatus) -> Result<String, AppError> {
-    if status.state != super::discovery::InstallState::Ready {
-        return Err(status.error.unwrap_or_else(|| {
-            AppError::new(ErrorCode::RuntimeUnavailable, "Pi is not available")
-        }));
-    }
-    status.executable_path.ok_or_else(|| {
-        AppError::new(
-            ErrorCode::RuntimeUnavailable,
-            "Pi reported ready with no resolved executable path",
-        )
-    })
-}
-
 /// FR-1: resolve the certified executable, build the baseline argv, and
 /// spawn it in `ctx.cwd` — the session's OWN working directory/worktree,
 /// which is what makes it an "owned session directory": no two concurrent
 /// Pi children ever share one. Never touches the session lock (it doesn't
 /// have one) and never blocks past the spawn itself.
 pub(crate) fn spawn(ctx: &RuntimeConnectContext) -> Result<ProcessHandle, AppError> {
-    let exe = ready_executable(super::discovery::probe_installation(
-        &ctx.runtime,
-        ctx.worktree_distro.as_deref(),
-        false,
-    )?)?;
+    let status =
+        super::discovery::probe_installation(&ctx.runtime, ctx.worktree_distro.as_deref(), false)?;
+    let exe = certified_executable(status)?;
 
     let mut child = crate::process_util::spawn(&exe)
         .args(pi_args(ctx))
@@ -137,6 +117,26 @@ pub(crate) fn spawn(ctx: &RuntimeConnectContext) -> Result<ProcessHandle, AppErr
         wait_timeout: Box::new(move |timeout| wait_for_exit(&wait_child, timeout)),
         kill: Box::new(move || crate::process_util::kill_tree(&mut kill_child.lock().unwrap())),
         stderr_ring,
+    })
+}
+
+/// FR-1: spend discovery's verdict — only a `Ready` status with a resolved
+/// path may be spawned; anything else fails with discovery's own error.
+/// Split out of `spawn` so the verdict branch is testable without depending
+/// on whether the test host happens to have Pi installed.
+fn certified_executable(
+    status: super::discovery::RuntimeInstallStatus,
+) -> Result<String, AppError> {
+    if status.state != super::discovery::InstallState::Ready {
+        return Err(status.error.unwrap_or_else(|| {
+            AppError::new(ErrorCode::RuntimeUnavailable, "Pi is not available")
+        }));
+    }
+    status.executable_path.ok_or_else(|| {
+        AppError::new(
+            ErrorCode::RuntimeUnavailable,
+            "Pi reported ready with no resolved executable path",
+        )
     })
 }
 
@@ -256,25 +256,33 @@ mod tests {
         }
     }
 
+    // Built from a constructed verdict, not a live probe: whether the test
+    // host has a certified Pi installed must not decide the outcome.
     #[test]
     fn a_missing_certified_pi_fails_spawn_with_the_discovery_verdict() {
-        // Synthetic verdicts, not a live probe: whether the test host has Pi
-        // installed must not decide the outcome.
-        let verdict = AppError::new(ErrorCode::RuntimeIncompatible, "pi 0.1 unsupported");
+        let missing = AppError::new(ErrorCode::RuntimeUnavailable, "Pi is not installed.");
         let err =
-            ready_executable(status(InstallState::Incompatible, None, Some(verdict))).unwrap_err();
-        assert_eq!(err.code, ErrorCode::RuntimeIncompatible);
-
-        let err = ready_executable(status(InstallState::Missing, None, None)).unwrap_err();
+            certified_executable(status(InstallState::Missing, None, Some(missing))).unwrap_err();
         assert_eq!(err.code, ErrorCode::RuntimeUnavailable);
+        assert_eq!(err.message, "Pi is not installed.");
+
+        let incompatible = AppError::new(ErrorCode::RuntimeIncompatible, "not certified");
+        let err = certified_executable(status(
+            InstallState::Incompatible,
+            Some("/bin/pi"),
+            Some(incompatible),
+        ))
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::RuntimeIncompatible);
     }
 
     #[test]
-    fn a_ready_verdict_yields_its_executable_or_fails_without_one() {
-        let exe = ready_executable(status(InstallState::Ready, Some("/bin/pi"), None)).unwrap();
-        assert_eq!(exe, "/bin/pi");
-
-        let err = ready_executable(status(InstallState::Ready, None, None)).unwrap_err();
+    fn a_ready_verdict_yields_its_path_and_a_pathless_one_is_unavailable() {
+        assert_eq!(
+            certified_executable(status(InstallState::Ready, Some("/bin/pi"), None)).unwrap(),
+            "/bin/pi"
+        );
+        let err = certified_executable(status(InstallState::Ready, None, None)).unwrap_err();
         assert_eq!(err.code, ErrorCode::RuntimeUnavailable);
     }
 

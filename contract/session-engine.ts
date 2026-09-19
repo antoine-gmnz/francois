@@ -32,6 +32,14 @@ export interface SessionCreateInput {
   name?: string; // defaults to basename(cwd)
   modelId?: string; // defaults to the default model; from session:models
   accountId?: AccountId; // omitted uses the existing configured default-account resolution
+  /**
+   * pi-provider-auth: closes a contract drift — `session_create` has always
+   * accepted this (linking the session to a project for standards/defaults);
+   * it was simply never declared here. For a Pi account, `accountId` must
+   * resolve to a Pi account and the runtime is derived from that account's
+   * kind (its own `runtime`/`distro`, not this field).
+   */
+  projectId?: string;
   effort?: string; // Codex: selected model's advertised effort; omit/blank for model default
   /** omit for 'default' (inherit ~/.claude settings). Passed to every turn incl. --resume. */
   permissionMode?: PermissionMode;

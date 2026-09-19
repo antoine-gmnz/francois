@@ -88,8 +88,8 @@ mod worktree;
 /// pi-runtime-distribution §5: `francois:runtime:installation` — installation
 /// discovery only, independent of `adapter::pi`'s (still-stub) RPC transport.
 pub use adapter::pi::{
-    __cmd__runtime_installation, __tauri_command_name_runtime_installation, runtime_installation,
-    InstallState, Provenance, RuntimeInstallStatus,
+    __cmd__runtime_installation, __tauri_command_name_runtime_installation, installation_preflight,
+    runtime_installation, InstallState, Provenance, RuntimeInstallStatus,
 };
 pub(crate) use adapter::{
     adapter_for, child_stdout_lines, openai_context_tokens_for, spawn_claude, AgentRuntime,
@@ -1607,6 +1607,20 @@ impl Engine {
                 // left to resync — moving the account is the whole change.
                 s.meta(accounts)
             })
+            .collect()
+    }
+
+    /// pi-provider-auth FR-4/FR-6/FR-8: every session currently pinned to
+    /// `account_id`, regardless of status — the read-only counterpart of
+    /// `clear_account`, used to answer "is this account in use?" before
+    /// `trustPi`/Pi removal refuse rather than after they mutate anything.
+    pub(crate) fn sessions_for_account(&self, account_id: &str) -> Vec<String> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|s| s.account_id == account_id)
+            .map(|s| s.id.clone())
             .collect()
     }
 

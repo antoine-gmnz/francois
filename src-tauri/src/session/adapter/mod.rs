@@ -157,6 +157,14 @@ impl AgentRuntime {
             // dialect, so `Openai` is the honest protocol value even though the
             // vendor is neither Anthropic nor OpenAI.
             crate::account::AccountKind::GrokCli => (AgentRuntime::Grok, ProviderProtocol::Openai),
+            // pi-provider-auth FR-1: closes the "no account kind maps to Pi
+            // yet" gap `meta()`/`begin_turn`/`apply_model_switch` special-cased
+            // (mod.rs/turn.rs/lifecycle.rs) — those call sites are left as-is
+            // (harmless: they now agree with this arm for every REAL Pi
+            // account, and still protect a fixture that forces `agent_runtime
+            // = Pi` on a non-Pi account id). Pi owns its own RPC transport, so
+            // it has no provider API protocol value (FR-2 of the seam spec).
+            crate::account::AccountKind::Pi => (AgentRuntime::Pi, ProviderProtocol::Pi),
         }
     }
 }
@@ -502,6 +510,11 @@ mod tests {
         assert_eq!(
             AgentRuntime::from_account_kind(crate::account::AccountKind::GrokCli),
             (AgentRuntime::Grok, ProviderProtocol::Openai)
+        );
+        // pi-provider-auth FR-1.
+        assert_eq!(
+            AgentRuntime::from_account_kind(crate::account::AccountKind::Pi),
+            (AgentRuntime::Pi, ProviderProtocol::Pi)
         );
     }
 

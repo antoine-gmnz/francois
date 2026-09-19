@@ -5,7 +5,7 @@
 // Physical Tauri binding: `francois:account:<verb>` → `invoke('account_<verb>')`;
 // `francois:account:event` → `listen('francois://account/event')`.
 
-import type { AppError, AccountId, ModelInfo, Result, SessionId } from './common';
+import type { AppError, AccountId, ClaudeRuntime, ModelInfo, Result, SessionId } from './common';
 
 // AccountId lives in common.ts (SessionMeta.accountId / ProjectDefaults.accountId need it
 // and common.ts never imports from feature files) — re-exported here for import-site parity.
@@ -24,8 +24,13 @@ export const DEFAULT_ACCOUNT_ID: AccountId = 'default';
  * config dir the vendor's own CLI fills in — and differ only in which CLI and
  * which env var (CLAUDE_CONFIG_DIR vs CODEX_HOME vs GROK_HOME, see
  * multi-provider-codex FR-18 / multi-provider-grok FR-19).
+ *
+ * 'pi' (pi-provider-auth FR-1) is NOT a fourth interactive-CLI trade: François
+ * never runs a login RPC of its own, only references an existing, user-trusted
+ * `PI_CODING_AGENT_DIR` and launches the certified Pi binary for its own
+ * native `/login`. See `PiAccountConfig`.
  */
-export type AccountKind = 'claude-code-oauth' | 'openai-compatible' | 'codex-cli' | 'grok-cli';
+export type AccountKind = 'claude-code-oauth' | 'openai-compatible' | 'codex-cli' | 'grok-cli' | 'pi';
 
 /**
  * The endpoint half of an 'openai-compatible' account. Present on `Account` iff
@@ -66,6 +71,12 @@ export interface Account {
    * must still read as "sign in first" rather than as healthy.
    */
   signedIn?: boolean;
+  /**
+   * pi-provider-auth FR-1. Present iff kind === 'pi'. `configDir` is omitted
+   * here (Account.configDir already carries it — see `PiAccountConfig`) so the
+   * same absolute path is never stored twice.
+   */
+  pi?: Omit<PiAccountConfig, 'configDir'>;
 }
 
 // francois:account:list — no payload
@@ -97,9 +108,18 @@ export interface AccountRemovePayload { accountId: AccountId }
 export interface AccountRemoveData {
   accounts: Account[];
   reassignedSessions: SessionId[]; // now on 'default' (FR-9)
+  /**
+   * pi-provider-auth FR-6/FR-8. Sessions this removal would strand (pinned to
+   * the removed account, no reassignment target — unlike `reassignedSessions`,
+   * a Pi account never falls back to 'default'). Non-empty ⇒ the call instead
+   * REJECTS with 'ACCOUNT_IN_USE' and this same list is carried on the error's
+   * `detail`; legacy (non-Pi) removal never populates this and keeps its
+   * existing behaviour unchanged.
+   */
+  blockedSessions: SessionId[];
 }
 export type AccountRemoveResponse = Result<AccountRemoveData>;
-// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_NOT_REMOVABLE', 'INTERNAL'
+// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_NOT_REMOVABLE', 'ACCOUNT_IN_USE' (detail: { blockedSessions }), 'INTERNAL'
 
 // francois:account:addEndpoint → invoke('account_add_endpoint')
 export interface AccountAddEndpointPayload {
@@ -150,6 +170,95 @@ export interface AccountGrokLoginPayload {
 }
 export type AccountGrokLoginResponse = Result<void>;
 // errors: 'INVALID_INPUT', 'SPAWN_FAILED', 'INTERNAL'
+
+// ------------------------------------------------------------------- Pi
+//
+// pi-provider-auth. A Pi account references an existing, user-owned
+// `PI_CODING_AGENT_DIR` — François never mints or refreshes Pi credentials
+// (FR-2/FR-3). Unlike Codex/Grok, the directory must already exist (no
+// `addPi` + separate first-login pair): registering IS pointing at a
+// directory, and trusting it is a distinct, explicit step (FR-4) because that
+// directory's provider configuration can contain executable credential
+// helpers.
+
+/**
+ * The Pi-specific half of an account. Present on `Account.pi` with
+ * `configDir` omitted (Account.configDir carries it — FR-1).
+ */
+export interface PiAccountConfig {
+  configDir: string;
+  runtime: ClaudeRuntime;
+  distro?: string; // WSL distro name; present iff runtime === 'wsl'
+  /**
+   * FR-5. Explicit and snapshotted per session at creation — never silently
+   * on. When true, the account's environment MAY override/augment Pi's own
+   * file-based credentials per Pi's own resolution rules; this flag is not a
+   * guarantee that two directories fully isolate inherited global keys.
+   */
+  inheritEnvironmentCredentials: boolean;
+  /**
+   * FR-4. False ⇒ setup/session-creation using this account is refused with
+   * 'ACCOUNT_CONFIG_UNTRUSTED'. Sticky across token refreshes; only a changed
+   * executable-configuration fingerprint (FR-4) or an explicit `trustPi` call
+   * flips it.
+   */
+  trusted: boolean;
+}
+
+// francois:account:addPi → invoke('account_add_pi')
+export interface PiAccountCreateInput {
+  kind: 'pi';
+  label: string; // trimmed 1..60 chars
+  configDir: string; // existing absolute directory; canonicalized in core. Duplicate (configDir, runtime) pair ⇒ INVALID_INPUT (FR-1)
+  runtime: ClaudeRuntime;
+  distro?: string; // required iff runtime === 'wsl'
+  inheritEnvironmentCredentials: boolean;
+  trustConfiguration: boolean; // explicit user action; false saves the account with trusted=false, not a rejected call
+}
+export type AccountAddPiResponse = Result<Account[]>;
+// errors: 'INVALID_INPUT' (blank label, non-absolute/missing configDir, duplicate configDir+runtime, missing distro for wsl), 'INTERNAL'
+
+// francois:account:trustPi → invoke('account_trust_pi')
+// Fingerprints the account's current executable configuration and records
+// trust (or revokes it — FR-4). Refused while the account has a connected
+// session or an open setup PTY, so trust can never flip under a running turn.
+export interface AccountTrustPiPayload {
+  accountId: AccountId;
+  trustConfiguration: boolean;
+}
+export type AccountTrustPiResponse = Result<Account[]>;
+// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_IN_USE', 'INTERNAL'
+
+// francois:account:piSetup → invoke('account_pi_setup')
+// Launches the certified Pi interactive binary in a login PTY (reusing the
+// existing login-PTY infrastructure, FR-3) from a neutral app-owned setup cwd
+// with extensions disabled, so the user can run Pi's own native `/login` or
+// key configuration. Resolves as soon as the PTY is spawned; closing setup
+// never by itself implies auth succeeded — `piRefresh` is the only source of
+// a 'verified' observation. PTY input/resize/close reuse the existing
+// `AccountLoginWritePayload` / `AccountLoginResizePayload` /
+// `AccountLoginCancelPayload` shapes and `account.login.data` /
+// `account.login.done` / `account.login.failed` events; PTY bytes are never
+// captured into diagnostics, transcripts or persisted storage.
+export interface PiSetupInput { accountId: AccountId }
+export type AccountPiSetupResponse = Result<AccountLoginStarted>;
+// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_CONFIG_UNTRUSTED', 'SPAWN_FAILED', 'PTY_ERROR', 'INTERNAL'
+
+// francois:account:piRefresh → invoke('account_pi_refresh')
+// Runs a per-account model probe (FR-7/FR-9: same launch policy as sessions,
+// no cross-account cache) and returns the observed state per provider Pi
+// reports models for. A local model MAY be 'configured' with no API key.
+export interface PiRefreshAuthInput { accountId: AccountId }
+export interface PiProviderAuthObservation {
+  providerId: string;
+  state: 'unknown' | 'configured' | 'verified' | 'failed';
+  checkedAt: number; // epoch ms
+  message?: string;
+}
+export type AccountPiRefreshResponse = Result<PiProviderAuthObservation[]>;
+// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_CONFIG_UNTRUSTED', 'RUNTIME_UNAVAILABLE',
+//         'RUNTIME_INCOMPATIBLE', 'RUNTIME_TIMEOUT', 'RUNTIME_PROTOCOL_ERROR',
+//         'PROVIDER_AUTH_FAILED' (a provider observed later as failed, never a login-return success), 'INTERNAL'
 
 // francois:account:updateEndpoint → invoke('account_update_endpoint')
 export interface AccountUpdateEndpointPayload {

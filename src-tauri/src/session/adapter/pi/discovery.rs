@@ -387,6 +387,17 @@ pub fn runtime_installation(
     }
 }
 
+/// pi-provider-auth FR-7: the same preflight, shaped as `account::PiInstallProbe`
+/// — main.rs injects it so account/ never names `crate::session` (session/
+/// already depends on account/). Always `refresh`: Refresh is an explicit user
+/// action (FR-9's "no shared cache").
+pub fn installation_preflight(runtime: &str, distro: Option<&str>) -> Result<(), AppError> {
+    match probe_installation(runtime, distro, true)?.error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

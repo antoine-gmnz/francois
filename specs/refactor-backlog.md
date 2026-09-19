@@ -342,3 +342,6 @@ filtering relative PATH entries is right for extension spawns, it is right every
 ## deferred:pi-runtime-distribution — out-of-scope findings (review, pi-runtime-boundary code on this branch)
 - [ ] MEDIUM · src/lib/sessionsStore.ts:2044 · quality · `applyRuntimeEvent` maps `run.state: 'stopping'` onto the running branch — add an explicit stopping mapping or document the collapse · deferred:pi-runtime-distribution
 - [ ] LOW · contract/common.ts:284 · quality · `STEP_DETAIL_NOT_FOUND` sits inside the new `RUNTIME_*` block of `ErrorCode` (merge artifact) — move it back beside command-inspect's codes · deferred:pi-runtime-distribution
+
+## deferred:pi-provider-auth
+- [ ] LOW · src-tauri/src/account/pi/mod.rs · quality · probe_provider_auth returns empty observations; populate FR-7 states once a live Pi session can be probed · deferred:pi-provider-auth

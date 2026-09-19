@@ -162,6 +162,7 @@ pub fn apply_add_endpoint(
             base_url,
             model_ids,
         }),
+        pi: None,
     });
     build_list(inner)
         .into_iter()

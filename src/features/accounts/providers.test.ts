@@ -80,6 +80,20 @@ function endpoint(baseUrl: string, over: Partial<Account> = {}): Account {
   };
 }
 
+function pi(over: Partial<Account> = {}): Account {
+  return {
+    id: 'p1',
+    label: 'Work Pi',
+    configDir: '/home/u/.pi/agent',
+    builtIn: false,
+    isDefault: false,
+    createdAt: 5,
+    kind: 'pi',
+    pi: { runtime: 'native', inheritEnvironmentCredentials: false, trusted: false },
+    ...over,
+  };
+}
+
 describe('baseUrlHost', () => {
   it('reads the host of a normalized URL', () => {
     expect(baseUrlHost('https://openrouter.ai/api/v1')).toBe('openrouter.ai');
@@ -114,6 +128,12 @@ describe('providerIdForAccount', () => {
   it('falls back to `custom` for a host the catalog never heard of', () => {
     expect(providerIdForAccount(endpoint('http://127.0.0.1:11434/v1'))).toBe('custom');
     expect(providerIdForAccount(endpoint(''))).toBe('custom');
+  });
+
+  // pi-provider-auth: this arm only exists to keep the switch exhaustive over
+  // AccountKind — providerGroups filters Pi accounts out before this runs.
+  it('never actually renders a Pi account through the vendor rail', () => {
+    expect(providerIdForAccount(pi())).toBe('custom');
   });
 });
 
@@ -197,6 +217,14 @@ describe('providerGroups', () => {
     expect(findGroup(idle, 'anthropic').status).toBe('idle');
 
     expect(findGroup(providerGroups([]), 'anthropic').status).toBe('none');
+  });
+
+  // pi-provider-auth: Pi has its own section (PiAccountsSection) and never
+  // shows up in the vendor rail this function builds — see providers.ts.
+  it('excludes Pi accounts from every provider bucket', () => {
+    const groups = providerGroups([claude({ id: 'a' }), pi({ id: 'p' })]);
+    expect(groups.flatMap((g) => g.accounts).map((a) => a.id)).toEqual(['a']);
+    expect(findGroup(groups, 'custom').accounts).toEqual([]);
   });
 });
 
