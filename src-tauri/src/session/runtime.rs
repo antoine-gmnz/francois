@@ -38,6 +38,7 @@ impl Engine {
     #[allow(dead_code)]
     pub(crate) fn connect_runtime(
         &self,
+        app: &tauri::AppHandle,
         accounts: &dyn crate::account::AccountKinds,
         ctx: adapter::RuntimeConnectContext,
         runtime: AgentRuntime,
@@ -45,10 +46,57 @@ impl Engine {
         let ctx = ctx.validate()?;
         let id = ctx.session_id.clone();
         let model = ctx.model.clone();
-        let connection = adapter_for(runtime).connect_session(ctx)?;
+        let connection = adapter_for(runtime).connect_session(app, ctx)?;
         let capabilities = connection.capabilities();
         self.install_runtime_connection(accounts, id, connection, model, capabilities)
     }
+
+    /// pi-rpc-sessions FR-4: what a connection's OWN background reader calls
+    /// to publish a `run.state`/`failure` envelope — re-deriving the
+    /// session's CURRENT generation from `runtime_events` on every call
+    /// rather than caching one, so it can never go stale across a reconnect
+    /// (the connection itself is built by `connect_session`, before
+    /// `install_runtime_connection` has even minted a `RuntimeProducer`).
+    #[allow(dead_code)]
+    pub(crate) fn runtime_event_for_session(
+        &self,
+        accounts: &dyn crate::account::AccountKinds,
+        session_id: &str,
+        at: u64,
+        run_id: Option<String>,
+        request_id: Option<String>,
+        event: events::RuntimeEventPayload,
+    ) -> Result<Vec<SessionEvent>, AppError> {
+        let generation = self
+            .runtime_events
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(|s| s.generation().to_string())
+            .ok_or_else(|| {
+                AppError::runtime(
+                    crate::ipc::RuntimeErrorCode::Unavailable,
+                    "runtime event producer is retired",
+                )
+            })?;
+        let producer = RuntimeProducer {
+            session_id: session_id.to_string(),
+            generation,
+        };
+        self.runtime_event(accounts, &producer, at, run_id, request_id, event)
+    }
+    /// pi-rpc-sessions FR-8: the session's CURRENT generation, for
+    /// diagnostics logging only (`pi-rpc.log`'s `generation=` field) — `None`
+    /// once the connection has been retired/replaced, in which case a caller
+    /// logs `"-"` rather than a stale generation.
+    pub(crate) fn generation_for_session(&self, session_id: &str) -> Option<String> {
+        self.runtime_events
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(|s| s.generation().to_string())
+    }
+
     #[allow(dead_code)]
     pub(crate) fn install_runtime_connection(
         &self,
@@ -660,5 +708,66 @@ mod connection_tests {
         assert_eq!(core["errorMessage"], "the child exited");
         let ui = serde_json::to_value(&batch[0]).unwrap();
         assert_eq!(ui["meta"], core);
+    }
+
+    /// pi-rpc-sessions FR-4/FR-8: `runtime_event_for_session` is what a
+    /// connection's OWN reader thread calls (it holds no `RuntimeProducer`
+    /// of its own) — confirm it round-trips to the SAME generation
+    /// `install_runtime_connection` minted, and that once the connection is
+    /// retired it fails with the same "retired" error `runtime_event` itself
+    /// raises for a stale generation, rather than panicking or silently
+    /// dropping the event.
+    #[test]
+    fn runtime_event_for_session_round_trips_the_current_generation_then_retires() {
+        let mut session = testutil::test_session();
+        session.id = uuid();
+        let id = session.id.clone();
+        let engine = Arc::new(testutil::test_engine_with(session));
+        let c = Arc::new(MockConnection {
+            engine: Arc::downgrade(&engine),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }) as Arc<dyn RuntimeSessionControl>;
+        let (producer, _) = engine
+            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
+            .unwrap();
+
+        let batch = engine
+            .runtime_event_for_session(
+                &fake_accounts(),
+                &id,
+                1,
+                None,
+                None,
+                events::RuntimeEventPayload::RunState {
+                    state: events::RuntimeRunState::Running,
+                },
+            )
+            .unwrap();
+        assert!(matches!(batch.as_slice(), [SessionEvent::Meta { .. }, _]));
+        assert!(engine
+            .with_session(&id, |s| s.runtime_generation.as_deref()
+                == Some(producer.generation.as_str()))
+            .unwrap());
+        assert!(engine
+            .with_session(&id, |s| s.status == status::RUNNING)
+            .unwrap());
+
+        engine.shutdown_runtime(&id).unwrap();
+        let result = engine.runtime_event_for_session(
+            &fake_accounts(),
+            &id,
+            2,
+            None,
+            None,
+            events::RuntimeEventPayload::RunState {
+                state: events::RuntimeRunState::Idle,
+            },
+        );
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected the retired producer to be rejected"),
+        };
+        assert_eq!(err.code, ErrorCode::RuntimeUnavailable);
+        assert!(err.message.contains("retired"));
     }
 }

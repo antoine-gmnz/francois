@@ -310,9 +310,9 @@ describe('runtimeInstallNote', () => {
     );
   });
 
-  it('flags unverified provenance on an otherwise ready probe', () => {
-    expect(runtimeInstallNote(runtimeStatus({ state: 'ready', provenance: 'unverified' }))).toContain(
-      'could not be verified',
+  it('leads with ready on an unverified probe, then notes the unverified build', () => {
+    expect(runtimeInstallNote(runtimeStatus({ state: 'ready', provenance: 'unverified' }))).toBe(
+      "Ready to run Pi sessions. Build identity isn't verified yet.",
     );
   });
 

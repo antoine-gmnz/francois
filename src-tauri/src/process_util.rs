@@ -634,6 +634,51 @@ impl CommandBuilder {
     }
 }
 
+/// pi-rpc-sessions FR-7: put a long-lived child in its own process group so a
+/// tree cleanup (`kill_tree`) can reach grandchildren it spawns, not just the
+/// direct child. Mirrors `extensions::provider::own_process_group` — that copy
+/// is private to `extensions` (not reachable from `session::adapter`), and
+/// this is the cross-cutting home CLAUDE.md names for a helper every future
+/// long-lived-child owner would otherwise re-private-copy.
+#[cfg(unix)]
+pub(crate) fn own_process_group(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: `pre_exec` runs in the forked child, after `fork()` and before
+    // `exec()` — at that point the child is single-threaded and this is its
+    // only thread, so calling the async-signal-safe `setpgid(0, 0)` here is
+    // sound. `pgid=0`/`pid=0` both mean "this process", so it only ever
+    // touches the child's own brand-new process group, never a sibling or
+    // the parent's.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+}
+#[cfg(not(unix))]
+pub(crate) fn own_process_group(_cmd: &mut Command) {}
+
+/// pi-rpc-sessions FR-7: terminate the tracked process tree, not just the
+/// direct child — a `killpg` on its own process group on unix (see
+/// `own_process_group`); `Child::kill` alone on Windows, where a job object
+/// would be needed for true tree cleanup and none is wired up yet (tracked as
+/// a known gap, matching `extensions::provider::kill_group`'s same platform
+/// split).
+pub(crate) fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // SAFETY: `child.id()` is this process's own tracked child, spawned
+        // through `own_process_group` — so its pid IS its pgid, and
+        // `killpg` on it can only ever signal that child's own process
+        // group (itself plus whatever it forked), never an unrelated group.
+        unsafe {
+            libc::killpg(child.id() as i32, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+}
+
 /// The result of one [`CommandBuilder::run_bounded`] spawn: raw, undecoded —
 /// a native spawn's output is plain UTF-8; a WSL spawn's bytes need
 /// `wsl::decode_wsl_output` first (wsl.exe's OWN errors are UTF-16LE).
