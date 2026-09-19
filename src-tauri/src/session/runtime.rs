@@ -1,6 +1,28 @@
 //! Session-scoped connections and capability enforcement.
 use super::*;
 
+/// pi-transcript-events FR-6: which `blockId`, if any, `runtime_event_for_session`
+/// should read back off the session's `block_buffer` after applying `event` —
+/// exactly the events that reach a TERMINAL, persistable state. A still-open
+/// assistant delta or a `pending`/`running` tool update returns `None`: it is
+/// visible live (the envelope still carries it to the frontend), but nothing
+/// is written to disk for it yet, matching every other runtime's own
+/// stream-then-settle split (`buf_assistant_streaming`/`finish_assistant`,
+/// `buf_tool`/`buf_tool_done`).
+fn transcript_persist_id(event: &events::RuntimeEventPayload) -> Option<&str> {
+    match event {
+        events::RuntimeEventPayload::MessageUser { block_id, .. }
+        | events::RuntimeEventPayload::AssistantComplete { block_id, .. }
+        | events::RuntimeEventPayload::Notice { block_id, .. } => Some(block_id),
+        events::RuntimeEventPayload::ToolUpdate { block_id, tool } => matches!(
+            tool.status.as_str(),
+            "succeeded" | "failed" | "cancelled" | "unknown"
+        )
+        .then_some(block_id.as_str()),
+        _ => None,
+    }
+}
+
 /// Core-minted producer identity, retained by one connection's reader.
 #[allow(dead_code)]
 pub(crate) struct RuntimeProducer {
@@ -57,6 +79,14 @@ impl Engine {
     /// rather than caching one, so it can never go stale across a reconnect
     /// (the connection itself is built by `connect_session`, before
     /// `install_runtime_connection` has even minted a `RuntimeProducer`).
+    ///
+    /// pi-transcript-events FR-6: also returns the `BufBlock` this event just
+    /// settled in the session's own transcript buffer, if any — `None` for
+    /// every event that carries no persistable finalization (run.state,
+    /// capabilities, failure, a still-open assistant/tool block). The caller
+    /// (`AppPublisher::publish`, which alone holds the `AppHandle`) is what
+    /// then calls `persistence::append_transcript` with it — this method has
+    /// no I/O of its own, same as `runtime_event`.
     #[allow(dead_code)]
     pub(crate) fn runtime_event_for_session(
         &self,
@@ -66,7 +96,7 @@ impl Engine {
         run_id: Option<String>,
         request_id: Option<String>,
         event: events::RuntimeEventPayload,
-    ) -> Result<Vec<SessionEvent>, AppError> {
+    ) -> Result<(Vec<SessionEvent>, Option<BufBlock>), AppError> {
         let generation = self
             .runtime_events
             .lock()
@@ -83,7 +113,15 @@ impl Engine {
             session_id: session_id.to_string(),
             generation,
         };
-        self.runtime_event(accounts, &producer, at, run_id, request_id, event)
+        let persist_id = transcript_persist_id(&event).map(str::to_string);
+        let batch = self.runtime_event(accounts, &producer, at, run_id, request_id, event)?;
+        let block = persist_id.and_then(|id| {
+            self.with_session(session_id, |s| {
+                s.block_buffer.iter().find(|b| b.block_id == id).cloned()
+            })
+            .flatten()
+        });
+        Ok((batch, block))
     }
     /// pi-rpc-sessions FR-8: the session's CURRENT generation, for
     /// diagnostics logging only (`pi-rpc.log`'s `generation=` field) — `None`
@@ -264,6 +302,57 @@ impl Engine {
                     s.meta(accounts)
                 })
             }
+            // pi-transcript-events §5/FR-6: the five transcript-normalization
+            // variants (`message.user` .. `notice`) carry no session-level
+            // status/capability mutation of their own — a `session.meta`
+            // re-publish here would be a no-op (`meta` stays `None`). They
+            // DO fold into the session's own `block_buffer`, so
+            // `conversation_get_transcript`/a reload sees exactly what the
+            // live envelope just showed — `runtime_event_for_session` reads
+            // the settled block back out afterward for the caller to persist.
+            events::RuntimeEventPayload::MessageUser {
+                block_id,
+                text,
+                attachments,
+                ..
+            } => {
+                self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_message_user_pi(&block_id, text, attachments);
+                });
+                None
+            }
+            events::RuntimeEventPayload::AssistantDelta { block_id, text, .. } => {
+                self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_assistant_streaming(&block_id, &text, &text);
+                });
+                None
+            }
+            events::RuntimeEventPayload::AssistantComplete {
+                block_id,
+                text,
+                outcome,
+            } => {
+                self.with_session_mut(&producer.session_id, |s| {
+                    s.finish_assistant_pi(&block_id, text, &outcome);
+                });
+                None
+            }
+            events::RuntimeEventPayload::ToolUpdate { block_id, tool } => {
+                self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_tool_update_pi(&block_id, tool);
+                });
+                None
+            }
+            events::RuntimeEventPayload::Notice {
+                block_id,
+                tone,
+                text,
+            } => {
+                self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_notice_pi(&block_id, tone, text);
+                });
+                None
+            }
         };
         if let Some(meta) = meta {
             batch.push(SessionEvent::Meta { meta });
@@ -417,6 +506,7 @@ mod connection_tests {
                 &id,
                 RuntimeSubmission {
                     text: "hello".into(),
+                    attachments: Vec::new(),
                 },
             )
             .unwrap();
@@ -731,7 +821,7 @@ mod connection_tests {
             .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
             .unwrap();
 
-        let batch = engine
+        let (batch, block) = engine
             .runtime_event_for_session(
                 &fake_accounts(),
                 &id,
@@ -744,6 +834,7 @@ mod connection_tests {
             )
             .unwrap();
         assert!(matches!(batch.as_slice(), [SessionEvent::Meta { .. }, _]));
+        assert!(block.is_none()); // run.state settles no transcript block
         assert!(engine
             .with_session(&id, |s| s.runtime_generation.as_deref()
                 == Some(producer.generation.as_str()))
@@ -769,5 +860,87 @@ mod connection_tests {
         };
         assert_eq!(err.code, ErrorCode::RuntimeUnavailable);
         assert!(err.message.contains("retired"));
+    }
+
+    /// pi-transcript-events (review remediation): `runtime_event_for_session`
+    /// reads back the settled block off `Session.block_buffer` for exactly
+    /// the events `transcript_persist_id` names — a `ToolUpdate` in a
+    /// non-terminal status (`pending`) must read back `None` (visible live,
+    /// nothing to persist yet), and the SAME call id settling
+    /// (`succeeded`) must read back `Some` with the block's own `blockId`.
+    #[test]
+    fn tool_update_for_session_reads_back_no_block_while_pending_and_the_settled_block_once_it_succeeds(
+    ) {
+        let mut session = testutil::test_session();
+        session.id = uuid();
+        let id = session.id.clone();
+        let engine = Arc::new(testutil::test_engine_with(session));
+        let c = Arc::new(MockConnection {
+            engine: Arc::downgrade(&engine),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }) as Arc<dyn RuntimeSessionControl>;
+        engine
+            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
+            .unwrap();
+
+        let pending_call = events::RuntimeToolCall {
+            id: "t1".into(),
+            name: "Read".into(),
+            status: "pending".into(),
+            input_text: String::new(),
+            output_text: String::new(),
+            input_truncated: false,
+            output_truncated: false,
+            started_at: None,
+            completed_at: None,
+        };
+        let (_, block) = engine
+            .runtime_event_for_session(
+                &fake_accounts(),
+                &id,
+                1,
+                None,
+                None,
+                events::RuntimeEventPayload::ToolUpdate {
+                    block_id: "b1".into(),
+                    tool: pending_call,
+                },
+            )
+            .unwrap();
+        assert!(
+            block.is_none(),
+            "a pending tool call has nothing to persist yet"
+        );
+
+        let succeeded_call = events::RuntimeToolCall {
+            id: "t1".into(),
+            name: "Read".into(),
+            status: "succeeded".into(),
+            input_text: serde_json::json!({ "file_path": "/x/a.rs" }).to_string(),
+            output_text: "contents".into(),
+            input_truncated: false,
+            output_truncated: false,
+            started_at: Some(0),
+            completed_at: Some(10),
+        };
+        let (_, block) = engine
+            .runtime_event_for_session(
+                &fake_accounts(),
+                &id,
+                2,
+                None,
+                None,
+                events::RuntimeEventPayload::ToolUpdate {
+                    block_id: "b1".into(),
+                    tool: succeeded_call,
+                },
+            )
+            .unwrap();
+        let block = block.expect("a terminal tool status settles the block for persistence");
+        assert_eq!(block.block_id, "b1");
+        assert_eq!(
+            engine.with_session(&id, |s| s.block_buffer.len()).unwrap(),
+            1
+        );
     }
 }

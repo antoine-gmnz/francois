@@ -24,6 +24,7 @@ import { getSessionCommands, setSessionCommands } from '../commands/slash-menu';
 import {
   applySessionEvent,
   decideEarlierActivation,
+  deltaFromEvent,
   deriveShowSkeleton,
   drainDeltas,
   earlierRowState,
@@ -188,17 +189,26 @@ export function useConversationTranscript(sessionId: string, visible = true): Co
     for (const action of drainDeltas(deltaBufferRef.current)) dispatch(action);
   };
 
+  // Shared by both delta sources below (plain Claude `assistant.delta` and
+  // Pi's nested `runtime.event` kind 'assistant.delta', pi-transcript-events
+  // FR-8: "retain frame batching") — same buffer, same rAF schedule, so a
+  // burst from either still coalesces into one deltaBatch dispatch per frame.
+  const bufferDelta = (blockId: string, text: string, offset: number) => {
+    pushDelta(deltaBufferRef.current, blockId, text, offset);
+    // A HIDDEN transcript buffers and does nothing else: a frame scheduled
+    // for a `display: none` subtree spends the visible session's frame budget
+    // rendering markdown nobody can see. The buffer is drained the moment
+    // this session comes back (the effect below), by the next non-delta event
+    // (FR-6), and on unmount (FR-7) — so nothing is ever lost, only deferred.
+    if (shouldScheduleDeltaFlush(visibleRef.current, rafRef.current !== null)) {
+      rafRef.current = requestAnimationFrame(flushDeltas);
+    }
+  };
+
   const onTranscriptEvent = (e: SessionEvent) => {
-    if (e.type === 'assistant.delta') {
-      pushDelta(deltaBufferRef.current, e.blockId, e.text, e.offset);
-      // A HIDDEN transcript buffers and does nothing else: a frame scheduled
-      // for a `display: none` subtree spends the visible session's frame budget
-      // rendering markdown nobody can see. The buffer is drained the moment
-      // this session comes back (the effect below), by the next non-delta event
-      // (FR-6), and on unmount (FR-7) — so nothing is ever lost, only deferred.
-      if (shouldScheduleDeltaFlush(visibleRef.current, rafRef.current !== null)) {
-        rafRef.current = requestAnimationFrame(flushDeltas);
-      }
+    const delta = deltaFromEvent(e);
+    if (delta) {
+      bufferDelta(delta.blockId, delta.text, delta.offset);
       return;
     }
     // FR-6: any non-delta event flushes the pending buffer BEFORE it applies,

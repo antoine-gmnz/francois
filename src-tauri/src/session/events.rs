@@ -8,9 +8,53 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
+/// pi-transcript-events: a normalized generic tool-call lifecycle, sanitized in
+/// the adapter before it crosses IPC — never the raw Pi RPC input/output object.
+/// Mirrors contract/common.ts `RuntimeToolCall`.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct RuntimeToolCall {
+    pub id: String,
+    pub name: String,
+    /// 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown'
+    pub status: String,
+    #[serde(rename = "inputText")]
+    pub input_text: String,
+    #[serde(rename = "outputText")]
+    pub output_text: String,
+    /// true ⇒ `inputText` was cut at the 64 KiB preview bound (FR-4).
+    #[serde(rename = "inputTruncated")]
+    pub input_truncated: bool,
+    /// true ⇒ `outputText` was cut at the 64 KiB preview bound (FR-4).
+    #[serde(rename = "outputTruncated")]
+    pub output_truncated: bool,
+    #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
+    #[serde(rename = "completedAt", skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<u64>,
+}
+
+/// pi-transcript-events FR-7: a user-attached file/image, resolved against the
+/// existing attachment ingest/asset scopes — never a base64 payload over IPC.
+/// Mirrors contract/common.ts `RuntimeAttachmentRef`.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct RuntimeAttachmentRef {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    /// 'available' | 'missing'
+    pub state: String,
+}
+
 /// Ordered, session-scoped runtime events. This intentionally carries only
 /// core-normalised values; Pi's wire DTOs stay inside its future adapter.
-#[derive(Serialize, Clone)]
+///
+/// pi-transcript-events §5: the five transcript-normalization variants below
+/// (`message.user` .. `notice`) mirror contract/common.ts's
+/// `TranscriptRuntimePayload`, merged into `RuntimeEventPayload` there exactly
+/// as they are merged into this enum here. `blockId` ties each to the
+/// conversation block it creates/updates (contract/conversation-view.ts).
+#[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind")]
 #[allow(dead_code)]
 pub enum RuntimeEventPayload {
@@ -23,6 +67,46 @@ pub enum RuntimeEventPayload {
     },
     #[serde(rename = "failure")]
     Failure { failure: RuntimeFailure },
+    #[serde(rename = "message.user")]
+    MessageUser {
+        #[serde(rename = "blockId")]
+        block_id: String,
+        text: String,
+        attachments: Vec<RuntimeAttachmentRef>,
+        #[serde(rename = "clientMessageId", skip_serializing_if = "Option::is_none")]
+        client_message_id: Option<String>,
+    },
+    #[serde(rename = "assistant.delta")]
+    AssistantDelta {
+        #[serde(rename = "blockId")]
+        block_id: String,
+        #[serde(rename = "contentIndex")]
+        content_index: u32,
+        text: String,
+        offset: usize,
+    },
+    #[serde(rename = "assistant.complete")]
+    AssistantComplete {
+        #[serde(rename = "blockId")]
+        block_id: String,
+        text: String,
+        /// 'complete' | 'interrupted' | 'error'
+        outcome: String,
+    },
+    #[serde(rename = "tool.update")]
+    ToolUpdate {
+        #[serde(rename = "blockId")]
+        block_id: String,
+        tool: RuntimeToolCall,
+    },
+    #[serde(rename = "notice")]
+    Notice {
+        #[serde(rename = "blockId")]
+        block_id: String,
+        /// 'info' | 'warning' | 'error'
+        tone: String,
+        text: String,
+    },
 }
 
 // ---------- SessionEvent (contract/common.ts, reproduced) ----------
@@ -293,6 +377,96 @@ mod tests {
             )
             .unwrap(),
         };
+    }
+
+    /// pi-transcript-events §5: each transcript-normalization variant
+    /// serializes to the contract's `TranscriptRuntimePayload` shape — the
+    /// `kind` tag plus its own field set, `blockId` always camelCase.
+    #[test]
+    fn transcript_runtime_payload_variants_serialize_to_contract_shape() {
+        let user = serde_json::to_value(RuntimeEventPayload::MessageUser {
+            block_id: "b1".into(),
+            text: "hi".into(),
+            attachments: vec![RuntimeAttachmentRef {
+                id: "a1".into(),
+                name: "cat.png".into(),
+                mime_type: "image/png".into(),
+                state: "available".into(),
+            }],
+            client_message_id: Some("c1".into()),
+        })
+        .unwrap();
+        assert_eq!(
+            user,
+            json!({ "kind": "message.user", "blockId": "b1", "text": "hi",
+                "attachments": [{ "id": "a1", "name": "cat.png", "mimeType": "image/png", "state": "available" }],
+                "clientMessageId": "c1" })
+        );
+
+        let user_no_client_id = serde_json::to_value(RuntimeEventPayload::MessageUser {
+            block_id: "b1".into(),
+            text: "hi".into(),
+            attachments: vec![],
+            client_message_id: None,
+        })
+        .unwrap();
+        assert!(user_no_client_id.get("clientMessageId").is_none());
+
+        let delta = serde_json::to_value(RuntimeEventPayload::AssistantDelta {
+            block_id: "b2".into(),
+            content_index: 0,
+            text: "Hel".into(),
+            offset: 0,
+        })
+        .unwrap();
+        assert_eq!(
+            delta,
+            json!({ "kind": "assistant.delta", "blockId": "b2", "contentIndex": 0, "text": "Hel", "offset": 0 })
+        );
+
+        let complete = serde_json::to_value(RuntimeEventPayload::AssistantComplete {
+            block_id: "b2".into(),
+            text: "Hello".into(),
+            outcome: "complete".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            complete,
+            json!({ "kind": "assistant.complete", "blockId": "b2", "text": "Hello", "outcome": "complete" })
+        );
+
+        let tool = serde_json::to_value(RuntimeEventPayload::ToolUpdate {
+            block_id: "b3".into(),
+            tool: RuntimeToolCall {
+                id: "t1".into(),
+                name: "Read".into(),
+                status: "running".into(),
+                input_text: "file.rs".into(),
+                output_text: "".into(),
+                input_truncated: false,
+                output_truncated: false,
+                started_at: Some(1_000),
+                completed_at: None,
+            },
+        })
+        .unwrap();
+        assert_eq!(tool["kind"], "tool.update");
+        assert_eq!(tool["blockId"], "b3");
+        assert_eq!(tool["tool"]["id"], "t1");
+        assert_eq!(tool["tool"]["status"], "running");
+        assert_eq!(tool["tool"]["startedAt"], 1_000);
+        assert!(tool["tool"].get("completedAt").is_none());
+
+        let notice = serde_json::to_value(RuntimeEventPayload::Notice {
+            block_id: "b4".into(),
+            tone: "warning".into(),
+            text: "unsupported content".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            notice,
+            json!({ "kind": "notice", "blockId": "b4", "tone": "warning", "text": "unsupported content" })
+        );
     }
 
     #[test]

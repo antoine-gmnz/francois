@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
+use super::normalize::TranscriptReducer;
 use super::process::{self, ProcessHandle};
 use super::protocol::{LineOutcome, PendingOutcome, ProtocolEngine};
 use super::wire::{self, PiCommandBody};
@@ -58,6 +59,13 @@ pub(crate) trait EventPublisher: Send + Sync {
     fn run_state(&self, state: RuntimeRunState);
     fn failure(&self, code: ErrorCode, reason: &str, ctx: DiagnosticContext);
     fn diagnostic(&self, message: &str, ctx: DiagnosticContext);
+    /// pi-transcript-events FR-6/FR-8: one normalized transcript payload off
+    /// `normalize::TranscriptReducer` — `message.user`/`assistant.delta`/
+    /// `assistant.complete`/`tool.update`/`notice`. Same envelope/ordering
+    /// path as `run_state`/`failure` (one `RuntimeEventSequence` per
+    /// connection), so the frontend's single listener sees transcript and
+    /// run-state events interleaved in the order they actually happened.
+    fn transcript(&self, event: RuntimeEventPayload);
 }
 
 /// The real publisher: re-derives the session's CURRENT generation itself on
@@ -73,9 +81,15 @@ impl AppPublisher {
         Self { app, session_id }
     }
 
+    /// pi-transcript-events FR-6: `runtime_event_for_session` also hands back
+    /// the `BufBlock` this event just settled in the session's own
+    /// `block_buffer` (if any) — persisted here, the one call site that
+    /// actually holds an `AppHandle`, before the wire envelope goes out. A
+    /// run-state/capabilities/failure publish never settles a block, so
+    /// `block` is `None` on those and this is a no-op for them.
     fn publish(&self, event: RuntimeEventPayload) {
         let engine = self.app.state::<crate::session::Engine>();
-        if let Ok(batch) = engine.runtime_event_for_session(
+        if let Ok((batch, block)) = engine.runtime_event_for_session(
             &self.app,
             &self.session_id,
             crate::ids::now_ms(),
@@ -83,6 +97,9 @@ impl AppPublisher {
             None,
             event,
         ) {
+            if let Some(block) = &block {
+                crate::session::persistence::append_transcript(&self.app, &self.session_id, block);
+            }
             for ev in batch {
                 crate::session::emit(&self.app, ev);
             }
@@ -144,6 +161,10 @@ impl EventPublisher for AppPublisher {
     fn diagnostic(&self, message: &str, ctx: DiagnosticContext) {
         self.log(message, ctx);
     }
+
+    fn transcript(&self, event: RuntimeEventPayload) {
+        self.publish(event);
+    }
 }
 
 fn publish(publisher: &Arc<dyn EventPublisher>, outcome: LineOutcome, ctx: DiagnosticContext) {
@@ -190,6 +211,13 @@ pub(crate) struct PiConnection {
     /// story instead of the dispatcher silently dropping its own failure.
     publisher: Arc<dyn EventPublisher>,
     stderr_ring: Arc<Mutex<Vec<u8>>>,
+    /// pi-transcript-events FR-6/FR-9: one transcript normalizer for this
+    /// connection's whole life — shared with the reader thread (which is the
+    /// only side that ever calls `on_event`) so `dispatch()`'s OWN
+    /// write-failure/timeout paths, which fail the whole connection just
+    /// like a disconnect does, can finalize the SAME reducer state rather
+    /// than a second, empty one.
+    reducer: Arc<Mutex<TranscriptReducer>>,
 }
 
 #[derive(Default, Clone)]
@@ -273,11 +301,61 @@ fn counts_ctx(engine: &Arc<Mutex<ProtocolEngine>>) -> DiagnosticContext {
     }
 }
 
+/// pi-transcript-events FR-1/FR-6: hand one already-framed line to the
+/// transcript reducer and publish whatever it produces — but only for
+/// EVENT-shaped lines (`wire::looks_like_response` false). A response line
+/// carries no `type` field, so the reducer would misread it as "missing its
+/// type" and fail; `ProtocolEngine::on_line` (called separately, right
+/// beside this) already owns response correlation. Malformed JSON is not
+/// reported here a second time — `ProtocolEngine::on_line`'s own parse
+/// already fails the whole connection for that line.
+fn apply_transcript_line(
+    reducer: &Arc<Mutex<TranscriptReducer>>,
+    publisher: &Arc<dyn EventPublisher>,
+    line: &str,
+) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    if wire::looks_like_response(&value) {
+        return;
+    }
+    let events = reducer
+        .lock()
+        .unwrap()
+        .on_event(&value, crate::ids::now_ms());
+    for event in events {
+        publisher.transcript(event);
+    }
+}
+
+/// pi-transcript-events FR-9: crash/stop finalizes every still-open assistant
+/// slot as `interrupted` and every unsettled tool call as `cancelled`/
+/// `unknown` — called once, right after this connection reaches ANY terminal
+/// `LineOutcome` (EOF, a read error, an oversize/malformed frame, or a
+/// protocol failure), the same "whole connection is now failed" moment
+/// `on_disconnect`/`on_frame_error`/`fail` already latch. Idempotent by
+/// construction: `spawn_reader`'s loop breaks right after, so this can only
+/// ever run once per connection.
+fn finalize_transcript(
+    reducer: &Arc<Mutex<TranscriptReducer>>,
+    publisher: &Arc<dyn EventPublisher>,
+) {
+    let events = reducer
+        .lock()
+        .unwrap()
+        .finalize_interrupted(crate::ids::now_ms());
+    for event in events {
+        publisher.transcript(event);
+    }
+}
+
 fn spawn_reader(
     mut stdout: Box<dyn Read + Send>,
     engine: Arc<Mutex<ProtocolEngine>>,
     publisher: Arc<dyn EventPublisher>,
     stderr_ring: Arc<Mutex<Vec<u8>>>,
+    reducer: Arc<Mutex<TranscriptReducer>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut framer = wire::FrameReader::new();
@@ -291,16 +369,19 @@ fn spawn_reader(
                         .on_disconnect("the Pi child closed its output");
                     let ctx = counts_ctx(&engine);
                     publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
+                    finalize_transcript(&reducer, &publisher);
                     break;
                 }
                 Ok(n) => match framer.feed(&buf[..n]) {
                     Ok(lines) => {
                         for line in lines {
+                            apply_transcript_line(&reducer, &publisher, &line);
                             let outcome = engine.lock().unwrap().on_line(&line);
                             let terminal = outcome.failure.is_some();
                             let ctx = counts_ctx(&engine);
                             publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
                             if terminal {
+                                finalize_transcript(&reducer, &publisher);
                                 break 'reader;
                             }
                         }
@@ -315,6 +396,7 @@ fn spawn_reader(
                         let outcome = engine.lock().unwrap().on_frame_error(reason);
                         let ctx = counts_ctx(&engine);
                         publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
+                        finalize_transcript(&reducer, &publisher);
                         break;
                     }
                 },
@@ -337,6 +419,7 @@ fn spawn_reader(
                         .on_disconnect(&format!("read error: {e}"));
                     let ctx = counts_ctx(&engine);
                     publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
+                    finalize_transcript(&reducer, &publisher);
                     break;
                 }
             }
@@ -367,11 +450,13 @@ impl PiConnection {
     ) -> Result<Arc<Self>, AppError> {
         let engine = Arc::new(Mutex::new(engine));
         let stderr_ring = handle.stderr_ring.clone();
+        let reducer = Arc::new(Mutex::new(TranscriptReducer::new()));
         let reader = spawn_reader(
             handle.stdout,
             engine.clone(),
             publisher.clone(),
             stderr_ring.clone(),
+            reducer.clone(),
         );
         let conn = Arc::new(Self {
             engine,
@@ -384,6 +469,7 @@ impl PiConnection {
             handshake_info: Mutex::new(HandshakeInfo::default()),
             publisher,
             stderr_ring,
+            reducer,
         });
         // FR-4: no model call or user prompt needed — `get_state` alone.
         match conn.dispatch(PiCommandBody::GetState) {
@@ -472,6 +558,7 @@ impl PiConnection {
                 let ctx = self.command_ctx(&command, started);
                 let outcome = self.engine.lock().unwrap().on_disconnect(&reason);
                 publish_with_stderr(&self.publisher, outcome, &self.stderr_ring, ctx);
+                finalize_transcript(&self.reducer, &self.publisher);
                 return Err(AppError::new(ErrorCode::RuntimeExited, reason));
             }
         }
@@ -491,6 +578,7 @@ impl PiConnection {
                 let ctx = self.command_ctx(&command, started);
                 let outcome = self.engine.lock().unwrap().on_timeout(&reason);
                 publish_with_stderr(&self.publisher, outcome, &self.stderr_ring, ctx);
+                finalize_transcript(&self.reducer, &self.publisher);
                 Err(AppError::new(ErrorCode::RuntimeTimeout, reason))
             }
         }
@@ -498,11 +586,17 @@ impl PiConnection {
 }
 
 impl RuntimeSessionControl for PiConnection {
+    /// FR-7: resolve any attachments `input.text` references into the
+    /// prompt's own image content, rejecting BEFORE anything is dispatched
+    /// when a referenced image outruns this connection's own `images`
+    /// capability — checked here (not only by the generic session-level
+    /// gate) because `PiConnection` alone knows what the wire actually needs.
     fn submit(&self, input: RuntimeSubmission) -> Result<SubmissionReceipt, AppError> {
-        self.dispatch(PiCommandBody::Prompt { text: input.text })
-            .map(|resp| SubmissionReceipt {
-                request_id: resp.id,
-            })
+        let images_supported = self.capabilities.get("images").is_some_and(|c| c.available);
+        let body = wire::build_prompt_body(input.text, &input.attachments, images_supported)?;
+        self.dispatch(body).map(|resp| SubmissionReceipt {
+            request_id: resp.id,
+        })
     }
 
     fn capabilities(&self) -> RuntimeCapabilities {
@@ -561,224 +655,5 @@ pub(crate) fn connect(
 }
 
 #[cfg(test)]
-mod connection_tests {
-    use super::*;
-    use std::net::{TcpListener, TcpStream};
-
-    /// The "fake child" the spec's acceptance criteria ask for: a loopback
-    /// TCP pair stands in for the process's stdin/stdout, so these tests
-    /// exercise the REAL reader thread, REAL `mpsc` timeouts, and the REAL
-    /// `RuntimeSessionControl` implementation with no external `pi` binary
-    /// and no AppHandle.
-    fn test_pipe_pair() -> (TcpStream, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = TcpStream::connect(addr).unwrap();
-        let (server, _) = listener.accept().unwrap();
-        client.set_nodelay(true).ok();
-        server.set_nodelay(true).ok();
-        (client, server)
-    }
-
-    #[derive(Default)]
-    struct Recording {
-        run_states: Mutex<Vec<RuntimeRunState>>,
-        failures: Mutex<Vec<(ErrorCode, String)>>,
-    }
-    impl EventPublisher for Recording {
-        fn run_state(&self, s: RuntimeRunState) {
-            self.run_states.lock().unwrap().push(s);
-        }
-        fn failure(&self, code: ErrorCode, reason: &str, _ctx: DiagnosticContext) {
-            self.failures
-                .lock()
-                .unwrap()
-                .push((code, reason.to_string()));
-        }
-        fn diagnostic(&self, _message: &str, _ctx: DiagnosticContext) {}
-    }
-
-    /// `dispatcher_end` is what `PiConnection` writes to/reads from;
-    /// `fake_child_end` is driven directly by the test, standing in for the
-    /// Pi process on the other side of the pipe.
-    fn handle_over(dispatcher_end: TcpStream, kill_flag: Arc<Mutex<bool>>) -> ProcessHandle {
-        let stdout = dispatcher_end.try_clone().unwrap();
-        // A short read timeout makes a killed fake child's socket-shutdown
-        // observable on the READER's next poll rather than depending on an
-        // in-flight blocking `read()` being interrupted by a shutdown on a
-        // different cloned handle, which is not reliable cross-platform —
-        // see `spawn_reader`'s WouldBlock/TimedOut handling.
-        stdout
-            .set_read_timeout(Some(Duration::from_millis(50)))
-            .unwrap();
-        // A real `kill_tree` on a real child closes ITS end of the pipe,
-        // which is what unblocks the dispatcher's blocking `read()` — a fake
-        // `kill` that only flips a flag would leave the reader thread (and
-        // so `shutdown()`'s `join()`) hanging forever whenever the fake
-        // child is still "alive" (i.e. `fake_child` not yet dropped) at
-        // shutdown time. `TcpStream::shutdown` affects the whole socket, not
-        // just this one cloned handle, so it is the honest stand-in here.
-        let socket = dispatcher_end.try_clone().unwrap();
-        ProcessHandle {
-            stdin: Box::new(dispatcher_end),
-            stdout: Box::new(stdout),
-            wait_timeout: Box::new({
-                let kill_flag = kill_flag.clone();
-                move |_| *kill_flag.lock().unwrap()
-            }),
-            kill: Box::new(move || {
-                *kill_flag.lock().unwrap() = true;
-                let _ = socket.shutdown(std::net::Shutdown::Both);
-            }),
-            stderr_ring: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    fn read_line(child: &mut TcpStream) -> String {
-        let mut byte = [0u8; 1];
-        let mut line = Vec::new();
-        loop {
-            let n = child.read(&mut byte).unwrap();
-            assert!(
-                n > 0,
-                "the dispatcher's peer closed before a full line arrived"
-            );
-            if byte[0] == b'\n' {
-                break;
-            }
-            line.push(byte[0]);
-        }
-        String::from_utf8(line).unwrap()
-    }
-
-    fn write_line(child: &mut TcpStream, line: &str) {
-        child.write_all(line.as_bytes()).unwrap();
-        child.write_all(b"\n").unwrap();
-    }
-
-    fn extract_id(line: &str) -> String {
-        serde_json::from_str::<serde_json::Value>(line).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-
-    fn resp(id: &str, command: &str, success: bool) -> String {
-        serde_json::json!({ "id": id, "command": command, "success": success }).to_string()
-    }
-
-    #[test]
-    fn a_fake_child_completes_the_handshake_and_two_prompts_on_one_connection() {
-        let (dispatcher_end, mut fake_child) = test_pipe_pair();
-        let handle = handle_over(dispatcher_end, Arc::new(Mutex::new(false)));
-        let publisher = Arc::new(Recording::default());
-        let publisher_for_connect = publisher.clone();
-        let connect =
-            std::thread::spawn(move || PiConnection::connect_with(publisher_for_connect, handle));
-
-        let req = read_line(&mut fake_child);
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&req).unwrap()["type"],
-            "get_state"
-        );
-        write_line(&mut fake_child, &resp(&extract_id(&req), "get_state", true));
-
-        let conn = connect.join().unwrap().unwrap();
-        assert_eq!(conn.engine.lock().unwrap().state(), RuntimeRunState::Idle);
-
-        // FR acceptance: "Two prompts use one child."
-        for _ in 0..2 {
-            let conn2 = conn.clone();
-            let submit =
-                std::thread::spawn(move || conn2.submit(RuntimeSubmission { text: "hi".into() }));
-            let req = read_line(&mut fake_child);
-            let v: serde_json::Value = serde_json::from_str(&req).unwrap();
-            assert_eq!(v["type"], "prompt");
-            write_line(
-                &mut fake_child,
-                &resp(v["id"].as_str().unwrap(), "prompt", true),
-            );
-            submit.join().unwrap().unwrap();
-            write_line(&mut fake_child, r#"{"type":"agent_settled"}"#);
-            wait_until(|| conn.engine.lock().unwrap().state() == RuntimeRunState::Idle);
-        }
-
-        conn.shutdown().unwrap();
-        assert!(publisher
-            .run_states
-            .lock()
-            .unwrap()
-            .contains(&RuntimeRunState::Running));
-    }
-
-    #[test]
-    fn eof_after_the_handshake_fails_the_connection_once_and_refuses_further_submits() {
-        let (dispatcher_end, mut fake_child) = test_pipe_pair();
-        let handle = handle_over(dispatcher_end, Arc::new(Mutex::new(false)));
-        let publisher = Arc::new(Recording::default());
-        let publisher_for_connect = publisher.clone();
-        let connect =
-            std::thread::spawn(move || PiConnection::connect_with(publisher_for_connect, handle));
-        let req = read_line(&mut fake_child);
-        write_line(&mut fake_child, &resp(&extract_id(&req), "get_state", true));
-        let conn = connect.join().unwrap().unwrap();
-
-        drop(fake_child); // EOF on the dispatcher's stdout
-        wait_until(|| conn.engine.lock().unwrap().is_failed());
-
-        assert!(conn.submit(RuntimeSubmission { text: "x".into() }).is_err());
-        assert_eq!(publisher.failures.lock().unwrap().len(), 1); // exactly once
-    }
-
-    #[test]
-    fn shutdown_terminates_the_tracked_process_when_it_does_not_exit_on_its_own_and_is_idempotent()
-    {
-        let (dispatcher_end, mut fake_child) = test_pipe_pair();
-        let kill_flag = Arc::new(Mutex::new(false));
-        let handle = handle_over(dispatcher_end, kill_flag.clone());
-        let publisher = Arc::new(Recording::default());
-        let connect = std::thread::spawn(move || PiConnection::connect_with(publisher, handle));
-        let req = read_line(&mut fake_child);
-        write_line(&mut fake_child, &resp(&extract_id(&req), "get_state", true));
-        let conn = connect.join().unwrap().unwrap();
-
-        conn.shutdown().unwrap();
-        assert!(
-            *kill_flag.lock().unwrap(),
-            "a process that never exits on its own must be terminated"
-        );
-        conn.shutdown().unwrap(); // FR-7: session_remove + app-exit may both call this
-    }
-
-    #[test]
-    fn a_handshake_that_never_answers_times_out_bounded_and_kills_the_child() {
-        let (dispatcher_end, _fake_child) = test_pipe_pair(); // never responds
-        let kill_flag = Arc::new(Mutex::new(false));
-        let handle = handle_over(dispatcher_end, kill_flag.clone());
-        let publisher = Arc::new(Recording::default());
-        let deadlines = Deadlines {
-            init: Duration::from_millis(100),
-            read_only: Duration::from_millis(100),
-            prompt: Duration::from_millis(100),
-            compaction: Duration::from_millis(100),
-        };
-        let started = std::time::Instant::now();
-        let err = PiConnection::connect_with_deadlines(publisher, handle, deadlines)
-            .err()
-            .unwrap();
-        assert_eq!(err.code, ErrorCode::RuntimeTimeout);
-        assert!(started.elapsed() < Duration::from_secs(2));
-        assert!(*kill_flag.lock().unwrap());
-    }
-
-    fn wait_until(mut condition: impl FnMut() -> bool) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while !condition() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "condition never became true"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-}
+#[path = "dispatcher_tests.rs"]
+mod connection_tests;

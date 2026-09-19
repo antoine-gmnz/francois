@@ -6,7 +6,7 @@
 // Physical Tauri binding: `francois:conversation:getTranscript` → command
 // `conversation_get_transcript`.
 
-import type { SessionId, BlockId, Result } from './common';
+import type { SessionId, BlockId, Result, RuntimeToolCall, RuntimeAttachmentRef } from './common';
 import type { CommandConversationBlock } from './interactive-commands';
 import type { PermissionConversationBlock } from './permission-guardrails';
 import type { QuestionConversationBlock } from './session-questions';
@@ -24,7 +24,7 @@ export interface GetTranscriptRequest {
 }
 
 export type ConversationGlyph = '●' | '⧉' | '⌕' | '✎' | '⇉' | '';
-export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent' | 'command' | 'question' | 'permission';
+export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent' | 'command' | 'question' | 'permission' | 'notice';
 
 interface ConversationBlockBase {
   blockId: BlockId;
@@ -48,6 +48,9 @@ export interface UserConversationBlock extends ConversationBlockBase {
   // `queued: boolean` REMOVED (transcript-perf FR-21) — a queued prompt is no
   // longer a transcript block; see session-engine.ts SessionUnqueue* + the
   // frontend's pending-queue strip (specs/transcript-perf.md §6).
+  /** pi-transcript-events FR-7: attachments resolved against the existing
+   *  attachment ingest/asset scopes. Absent on runtimes with no attachment support. */
+  attachments?: RuntimeAttachmentRef[];
 }
 
 export interface AssistantConversationBlock extends ConversationBlockBase {
@@ -56,6 +59,9 @@ export interface AssistantConversationBlock extends ConversationBlockBase {
   glyphColor: '#8b93a3' | '#c3f53f';
   bodyColor: '#c3c9d4' | '#e6e9ef';
   text: string;
+  /** pi-transcript-events FR-9: how the block finalized. Absent ⇒ a normal
+   *  completion on runtimes that predate this field. */
+  outcome?: 'complete' | 'interrupted' | 'error';
 }
 
 export interface ToolConversationBlock extends ConversationBlockBase {
@@ -73,6 +79,13 @@ export interface ToolConversationBlock extends ConversationBlockBase {
    * agent/workflow blocks (FR-8) — those never carry a record.
    */
   hasDetail?: boolean;
+  /**
+   * pi-transcript-events FR-3/FR-4: the normalized generic tool-call lifecycle
+   * (pending → running → succeeded/failed/cancelled/unknown), sanitized
+   * input/output previews and timing. Required on every Pi-produced tool block;
+   * absent on tool blocks from runtimes that predate this field.
+   */
+  execution?: RuntimeToolCall;
 }
 
 export interface SubagentConversationBlock extends ConversationBlockBase {
@@ -91,6 +104,18 @@ export interface SubagentConversationBlock extends ConversationBlockBase {
   meta?: string;
 }
 
+/**
+ * pi-transcript-events FR-5: a neutral notice for content that is not assistant
+ * prose or a tool result — unsupported/thinking content, compaction/retry
+ * progress (task 08), and protocol-level diagnostics. Never streamed.
+ */
+export interface NoticeConversationBlock extends ConversationBlockBase {
+  kind: 'notice';
+  isStreaming: false;
+  tone: 'info' | 'warning' | 'error';
+  text: string;
+}
+
 export type ConversationBlock =
   | UserConversationBlock
   | AssistantConversationBlock
@@ -98,7 +123,8 @@ export type ConversationBlock =
   | SubagentConversationBlock
   | CommandConversationBlock // interactive-commands (contract/interactive-commands.ts)
   | QuestionConversationBlock // session-questions (contract/session-questions.ts)
-  | PermissionConversationBlock; // permission-guardrails (contract/permission-guardrails.ts)
+  | PermissionConversationBlock // permission-guardrails (contract/permission-guardrails.ts)
+  | NoticeConversationBlock; // pi-transcript-events
 
 export interface TranscriptPage {
   /** Oldest-first and contiguous, already folded — a re-appended question or
@@ -169,17 +195,17 @@ export function classifyToolStart(
     // leaves the key out when the dispatch inherits the session's model.
     return model ? { ...block, agentModel: model } : block;
   }
-  let glyph: ToolConversationBlock['glyph'] = '●';
-  let glyphColor: ToolConversationBlock['glyphColor'] = '#8b93a3';
-  if (tool === 'Read') {
-    glyph = '⧉';
-  } else if (tool === 'Grep' || tool === 'Search') {
-    glyph = '⌕';
-  } else if (tool === 'Edit' || tool === 'Write') {
-    glyph = '✎';
-    glyphColor = '#8fbab8';
-  }
+  const { glyph, glyphColor } = toolGlyphFor(tool);
   return { kind: 'tool', blockId, isStreaming: true, tool, glyph, glyphColor, bodyColor: '#8b93a3', summary };
+}
+
+/** The tool-name → glyph table, shared by `classifyToolStart` and the Pi
+ *  runtime tool rows (pi-transcript-events) so the two cannot drift. */
+export function toolGlyphFor(tool: string): Pick<ToolConversationBlock, 'glyph' | 'glyphColor'> {
+  if (tool === 'Read') return { glyph: '⧉', glyphColor: '#8b93a3' };
+  if (tool === 'Grep' || tool === 'Search') return { glyph: '⌕', glyphColor: '#8b93a3' };
+  if (tool === 'Edit' || tool === 'Write') return { glyph: '✎', glyphColor: '#8fbab8' };
+  return { glyph: '●', glyphColor: '#8b93a3' };
 }
 
 /** Body text prefix for a tool block: `Read  <summary>` (two spaces). */

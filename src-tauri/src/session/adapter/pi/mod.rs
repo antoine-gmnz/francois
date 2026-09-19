@@ -24,6 +24,12 @@
 
 mod discovery;
 mod dispatcher;
+/// pi-transcript-events FR-1..FR-9: the pure Pi-transcript-event → generic
+/// tool-call/text/notice reducer. A sibling of `protocol` rather than a part
+/// of it — same "one concern per child" split, this time content vs.
+/// connection/run state. Wired into `dispatcher`'s live reader thread — see
+/// its own module doc.
+mod normalize;
 /// FR-1/FR-2/FR-8: the bounded spawn + native/WSL resolution `discovery`
 /// builds a verdict from. Split out purely for CLAUDE.md's ~1000-line file
 /// cap — `discovery` is the only caller and the only thing that needs it.

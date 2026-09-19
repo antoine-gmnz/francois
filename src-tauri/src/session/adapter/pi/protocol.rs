@@ -283,6 +283,13 @@ impl ProtocolEngine {
             // deliberately no state change. `turn_end` is informational too
             // in this MVP (its `reason` field is validated, not acted on).
             wire::PiEvent::AgentEnd | wire::PiEvent::TurnEnd => Default::default(),
+            // pi-transcript-events FR-1 (review round 3): known, healthy
+            // transcript traffic that `normalize::TranscriptReducer` already
+            // owns (fed the same raw line by
+            // `dispatcher::apply_transcript_line`) — no run-state change, no
+            // error/diagnostic. `Unknown` stays the only path that counts an
+            // error and notifies.
+            wire::PiEvent::Recognized(_) => Default::default(),
             wire::PiEvent::Unknown(kind) => {
                 *self.event_counts.entry(kind.clone()).or_insert(0) += 1;
                 self.error_count += 1;
@@ -385,7 +392,12 @@ mod tests {
         e.on_line(&resp_line(&h.id, "get_state", true));
 
         for _ in 0..2 {
-            let (p, _, prx) = e.send(PiCommandBody::Prompt { text: "hi".into() }).unwrap();
+            let (p, _, prx) = e
+                .send(PiCommandBody::Prompt {
+                    text: "hi".into(),
+                    images: Vec::new(),
+                })
+                .unwrap();
             let outcome = e.on_line(&resp_line(&p.id, "prompt", true));
             assert_eq!(outcome.run_state, Some(RuntimeRunState::Running));
             match prx.recv().unwrap() {
@@ -403,7 +415,12 @@ mod tests {
         let mut e = engine_for_test();
         let (h, _, _) = e.send(PiCommandBody::GetState).unwrap();
         e.on_line(&resp_line(&h.id, "get_state", true));
-        let (p, _, _) = e.send(PiCommandBody::Prompt { text: "hi".into() }).unwrap();
+        let (p, _, _) = e
+            .send(PiCommandBody::Prompt {
+                text: "hi".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
         e.on_line(&resp_line(&p.id, "prompt", true));
         let outcome = e.on_line(r#"{"type":"agent_end"}"#);
         assert!(outcome.run_state.is_none());
@@ -454,6 +471,38 @@ mod tests {
         assert!(!e.is_failed());
     }
 
+    /// pi-transcript-events FR-1 (review round 3): the FR-1 transcript event
+    /// vocabulary must never be misclassified as `Unknown` — no diagnostic,
+    /// no error count, no run-state change, for a batch representative of
+    /// normal, healthy transcript traffic on a turn.
+    #[test]
+    fn fr1_transcript_events_produce_no_diagnostic_or_error() {
+        let mut e = engine_for_test();
+        for line in [
+            r#"{"type":"message_start"}"#,
+            r#"{"type":"content_delta"}"#,
+            r#"{"type":"text_end"}"#,
+            r#"{"type":"message_end"}"#,
+            r#"{"type":"toolcall_start"}"#,
+            r#"{"type":"toolcall_delta"}"#,
+            r#"{"type":"toolcall_end"}"#,
+            r#"{"type":"tool_execution_start"}"#,
+            r#"{"type":"tool_execution_update"}"#,
+            r#"{"type":"tool_execution_end"}"#,
+            r#"{"type":"compaction_start"}"#,
+            r#"{"type":"compaction_end"}"#,
+            r#"{"type":"retry"}"#,
+            r#"{"type":"queue_update"}"#,
+        ] {
+            let outcome = e.on_line(line);
+            assert!(outcome.diagnostic.is_none(), "{line} produced a diagnostic");
+            assert!(outcome.failure.is_none(), "{line} produced a failure");
+            assert!(outcome.run_state.is_none(), "{line} changed run state");
+        }
+        assert!(!e.is_failed());
+        assert_eq!(e.counts().1, 0, "no FR-1 event should count as an error");
+    }
+
     #[test]
     fn a_known_event_missing_a_required_field_fails_the_protocol() {
         let mut e = engine_for_test();
@@ -477,7 +526,12 @@ mod tests {
     fn eof_rejects_every_outstanding_request_exactly_once() {
         let mut e = engine_for_test();
         let (_h, _, rx1) = e.send(PiCommandBody::GetState).unwrap();
-        let (_p, _, rx2) = e.send(PiCommandBody::Prompt { text: "x".into() }).unwrap();
+        let (_p, _, rx2) = e
+            .send(PiCommandBody::Prompt {
+                text: "x".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
         let outcome = e.on_disconnect("the child exited");
         assert_eq!(outcome.run_state, Some(RuntimeRunState::Failed));
         for rx in [rx1, rx2] {
@@ -512,7 +566,12 @@ mod tests {
     fn on_timeout_fails_the_whole_connection_and_rejects_every_outstanding_request() {
         let mut e = engine_for_test();
         let (_h, _, rx1) = e.send(PiCommandBody::GetState).unwrap();
-        let (_p, _, rx2) = e.send(PiCommandBody::Prompt { text: "x".into() }).unwrap();
+        let (_p, _, rx2) = e
+            .send(PiCommandBody::Prompt {
+                text: "x".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
         let outcome = e.on_timeout("get_state did not respond in time");
         assert!(e.is_failed());
         assert_eq!(outcome.run_state, Some(RuntimeRunState::Failed));

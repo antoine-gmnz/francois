@@ -254,10 +254,50 @@ export interface RuntimeFailure {
   toolCallId?: string;
 }
 
+/**
+ * pi-transcript-events: a normalized generic tool-call lifecycle, sanitized in the
+ * adapter before it crosses IPC — never the raw Pi RPC input/output object.
+ */
+export interface RuntimeToolCall {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
+  inputText: string;
+  outputText: string;
+  /** true ⇒ `inputText` was cut at the 64 KiB preview bound (pi-transcript-events FR-4). */
+  inputTruncated: boolean;
+  /** true ⇒ `outputText` was cut at the 64 KiB preview bound (pi-transcript-events FR-4). */
+  outputTruncated: boolean;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+/** pi-transcript-events FR-7: a user-attached file/image, resolved against the
+ *  existing attachment ingest/asset scopes — never a base64 payload over IPC. */
+export interface RuntimeAttachmentRef {
+  id: string; // existing core attachment ID
+  name: string;
+  mimeType: string;
+  state: 'available' | 'missing';
+}
+
+/**
+ * pi-transcript-events §5: runtime-sourced transcript normalization events, merged
+ * into `RuntimeEventPayload` below. `blockId` ties each event to the conversation
+ * block it updates/creates (contract/conversation-view.ts).
+ */
+export type TranscriptRuntimePayload =
+  | { kind: 'message.user'; blockId: BlockId; text: string; attachments: RuntimeAttachmentRef[]; clientMessageId?: string }
+  | { kind: 'assistant.delta'; blockId: BlockId; contentIndex: number; text: string; offset: number }
+  | { kind: 'assistant.complete'; blockId: BlockId; text: string; outcome: 'complete' | 'interrupted' | 'error' }
+  | { kind: 'tool.update'; blockId: BlockId; tool: RuntimeToolCall }
+  | { kind: 'notice'; blockId: BlockId; tone: 'info' | 'warning' | 'error'; text: string };
+
 export type RuntimeEventPayload =
   | { kind: 'run.state'; state: 'starting' | 'running' | 'idle' | 'stopping' | 'failed' }
   | { kind: 'capabilities'; capabilities: RuntimeCapabilities }
-  | { kind: 'failure'; failure: RuntimeFailure };
+  | { kind: 'failure'; failure: RuntimeFailure }
+  | TranscriptRuntimePayload;
 
 export interface RuntimeEventEnvelope {
   type: 'runtime.event';

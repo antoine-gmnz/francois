@@ -42,8 +42,12 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
         BlockKind::Assistant => "assistant",
         BlockKind::Tool => "tool",
         BlockKind::Subagent => "subagent",
-        // agent-tab FR-6: notice blocks only ever live in a per-agent transcript,
-        // which is in-memory and never persisted — this arm is exhaustiveness only.
+        // agent-tab FR-6: an agent-tab AgentNoticeBlock only ever lives in a
+        // per-agent transcript, which is in-memory and never persisted — for
+        // THAT producer this arm is exhaustiveness only. pi-transcript-events
+        // FR-5/FR-6 gives Notice a second producer: a normalized Pi notice
+        // appended to the session's own `block_buffer`, which IS persisted —
+        // parse_persisted_block's own "notice" arm is this arm's read-back.
         BlockKind::Notice => "notice",
         BlockKind::Command => {
             // interactive-commands FR-24: finalized command blocks persist the card as JSON.
@@ -95,6 +99,30 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
     if kind == "tool" && b.has_detail {
         o["hasDetail"] = Value::Bool(true);
     }
+    // pi-transcript-events: the four fields the contract added to the base
+    // block kinds, each written only for the kind that carries it and only
+    // when present — a pre-feature line, or a line from a runtime that never
+    // sets these, stays byte-identical.
+    if kind == "tool" {
+        if let Some(execution) = &b.execution {
+            o["execution"] = execution.clone();
+        }
+    }
+    if kind == "user" {
+        if let Some(attachments) = &b.attachments {
+            o["attachments"] = attachments.clone();
+        }
+    }
+    if kind == "assistant" {
+        if let Some(outcome) = &b.outcome {
+            o["outcome"] = Value::String(outcome.clone());
+        }
+    }
+    if kind == "notice" {
+        if let Some(tone) = &b.tone {
+            o["tone"] = Value::String(tone.clone());
+        }
+    }
     o
 }
 
@@ -139,6 +167,12 @@ pub fn parse_persisted_block(line: &str) -> Option<BufBlock> {
         "assistant" => BlockKind::Assistant,
         "tool" => BlockKind::Tool,
         "subagent" => BlockKind::Subagent,
+        // pi-transcript-events: a Notice block appended to the SESSION
+        // transcript (as opposed to an agent-tab notice, which never reaches
+        // this parser — see persisted_block_json's own doc). Always final
+        // (`isStreaming` is hardcoded `false` in classify_block), so there is
+        // no pending state to normalize on reload, unlike question/permission.
+        "notice" => BlockKind::Notice,
         "command" => {
             // A persisted command block always carries its card (FR-24 — pending blocks
             // are never persisted); treat a card-less line as malformed and skip it.
@@ -239,6 +273,13 @@ pub fn parse_persisted_block(line: &str) -> Option<BufBlock> {
             .get("hasDetail")
             .and_then(|h| h.as_bool())
             .unwrap_or(false),
+        // pi-transcript-events: absent on every line written before this
+        // feature, and on every kind that never writes the matching key —
+        // reads back as `None`, byte-identical to a pre-feature line.
+        execution: v.get("execution").filter(|e| !e.is_null()).cloned(),
+        attachments: v.get("attachments").filter(|a| !a.is_null()).cloned(),
+        outcome: v.get("outcome").and_then(|o| o.as_str()).map(String::from),
+        tone: v.get("tone").and_then(|t| t.as_str()).map(String::from),
         ..BufBlock::new(&block_id, kind)
     })
 }
@@ -1087,6 +1128,10 @@ mod tests {
             card: None,
             streaming: true, // in-memory streaming flag must NOT round-trip
             at: 1_760_000_000_000,
+            execution: None,
+            attachments: None,
+            outcome: None,
+            tone: None,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         let back = parse_persisted_block(&line).expect("parse");
@@ -1100,6 +1145,120 @@ mod tests {
         // session states when the turn happened rather than when it was read.
         assert_eq!(back.at, 1_760_000_000_000);
         assert_eq!(classify_block(&back)["at"], 1_760_000_000_000u64);
+    }
+
+    #[test]
+    fn transcript_tool_block_roundtrips_a_populated_execution_field() {
+        // MEDIUM (review round 2): the prior round-trip test only exercised
+        // `execution: None` — a Pi-produced tool block always carries it
+        // (contract: `ToolConversationBlock.execution` is REQUIRED for Pi).
+        let execution = serde_json::json!({
+            "id": "t1", "name": "Read", "status": "succeeded",
+            "inputText": "{\"path\":\"a.rs\"}", "outputText": "fn main() {}",
+            "inputTruncated": false, "outputTruncated": false,
+            "startedAt": 100u64, "completedAt": 150u64,
+        });
+        let b = BufBlock {
+            has_detail: false,
+            block_id: "b1".into(),
+            kind: BlockKind::Tool,
+            text: String::new(),
+            tool: "Read".into(),
+            summary: "a.rs".into(),
+            meta: None,
+            card: None,
+            streaming: false,
+            at: 1_760_000_000_000,
+            execution: Some(execution.clone()),
+            attachments: None,
+            outcome: None,
+            tone: None,
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        assert!(line.contains("\"execution\""));
+        let back = parse_persisted_block(&line).expect("parse");
+        assert_eq!(back.execution, Some(execution));
+    }
+
+    #[test]
+    fn transcript_user_block_roundtrips_populated_attachments() {
+        // MEDIUM (review round 2): a user block with real attachment refs.
+        let attachments = serde_json::json!([
+            { "id": "a1", "name": "shot.png", "mimeType": "image/png", "state": "available" },
+            { "id": "a2", "name": "gone.png", "mimeType": "image/png", "state": "missing" },
+        ]);
+        let b = BufBlock {
+            has_detail: false,
+            block_id: "u1".into(),
+            kind: BlockKind::User,
+            text: "see this".into(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+            at: 1_760_000_000_000,
+            execution: None,
+            attachments: Some(attachments.clone()),
+            outcome: None,
+            tone: None,
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        assert!(line.contains("\"attachments\""));
+        let back = parse_persisted_block(&line).expect("parse");
+        assert_eq!(back.attachments, Some(attachments));
+    }
+
+    #[test]
+    fn transcript_assistant_block_roundtrips_a_populated_outcome() {
+        // MEDIUM (review round 2): FR-9 — a crash/stop-finalized assistant
+        // block persists its 'interrupted' outcome, not just 'complete'.
+        let b = BufBlock {
+            has_detail: false,
+            block_id: "as1".into(),
+            kind: BlockKind::Assistant,
+            text: "partial reply".into(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+            at: 1_760_000_000_000,
+            execution: None,
+            attachments: None,
+            outcome: Some("interrupted".into()),
+            tone: None,
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        assert!(line.contains("\"outcome\":\"interrupted\""));
+        let back = parse_persisted_block(&line).expect("parse");
+        assert_eq!(back.outcome.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
+    fn transcript_notice_block_roundtrips_a_populated_tone() {
+        // MEDIUM (review round 2): a persisted Pi notice carries its tone.
+        let b = BufBlock {
+            has_detail: false,
+            block_id: "n1".into(),
+            kind: BlockKind::Notice,
+            text: "Retrying: rate limited".into(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+            at: 1_760_000_000_000,
+            execution: None,
+            attachments: None,
+            outcome: None,
+            tone: Some("warning".into()),
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        assert!(line.contains("\"tone\":\"warning\""));
+        let back = parse_persisted_block(&line).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Notice));
+        assert_eq!(back.tone.as_deref(), Some("warning"));
     }
 
     #[test]
@@ -1128,6 +1287,10 @@ mod tests {
             card: None,
             streaming: false,
             at: 1_760_000_000_000,
+            execution: None,
+            attachments: None,
+            outcome: None,
+            tone: None,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         assert!(line.contains("\"meta\":null"));
@@ -1158,6 +1321,10 @@ mod tests {
             card: None,
             streaming: false,
             at: 1_760_000_000_000,
+            execution: None,
+            attachments: None,
+            outcome: None,
+            tone: None,
         };
         let back =
             parse_persisted_block(&serde_json::to_string(&persisted_block_json(&b)).unwrap())

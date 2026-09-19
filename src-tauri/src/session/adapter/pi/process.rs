@@ -67,25 +67,35 @@ pub(crate) struct ProcessHandle {
     pub(crate) stderr_ring: Arc<Mutex<Vec<u8>>>,
 }
 
+/// FR-1: turn a discovery verdict into the executable to spawn — anything
+/// short of `Ready` fails with the verdict's own error. Pure, so the
+/// not-ready branch is testable without depending on what the host has
+/// installed.
+fn ready_executable(status: super::discovery::RuntimeInstallStatus) -> Result<String, AppError> {
+    if status.state != super::discovery::InstallState::Ready {
+        return Err(status.error.unwrap_or_else(|| {
+            AppError::new(ErrorCode::RuntimeUnavailable, "Pi is not available")
+        }));
+    }
+    status.executable_path.ok_or_else(|| {
+        AppError::new(
+            ErrorCode::RuntimeUnavailable,
+            "Pi reported ready with no resolved executable path",
+        )
+    })
+}
+
 /// FR-1: resolve the certified executable, build the baseline argv, and
 /// spawn it in `ctx.cwd` — the session's OWN working directory/worktree,
 /// which is what makes it an "owned session directory": no two concurrent
 /// Pi children ever share one. Never touches the session lock (it doesn't
 /// have one) and never blocks past the spawn itself.
 pub(crate) fn spawn(ctx: &RuntimeConnectContext) -> Result<ProcessHandle, AppError> {
-    let status =
-        super::discovery::probe_installation(&ctx.runtime, ctx.worktree_distro.as_deref(), false)?;
-    if status.state != super::discovery::InstallState::Ready {
-        return Err(status.error.unwrap_or_else(|| {
-            AppError::new(ErrorCode::RuntimeUnavailable, "Pi is not available")
-        }));
-    }
-    let exe = status.executable_path.ok_or_else(|| {
-        AppError::new(
-            ErrorCode::RuntimeUnavailable,
-            "Pi reported ready with no resolved executable path",
-        )
-    })?;
+    let exe = ready_executable(super::discovery::probe_installation(
+        &ctx.runtime,
+        ctx.worktree_distro.as_deref(),
+        false,
+    )?)?;
 
     let mut child = crate::process_util::spawn(&exe)
         .args(pi_args(ctx))
@@ -168,9 +178,15 @@ fn drain_stderr_ring(mut stderr: impl Read, ring: Arc<Mutex<Vec<u8>>>) {
 
 /// FR-8: a bounded, control-character-free snippet safe to write to the
 /// diagnostics log — never the raw ring content, never prompt text.
+///
+/// pi-transcript-events (review remediation): also strips bidi override
+/// characters (`crate::ipc::is_bidi_control`) — every caller of this helper
+/// includes `normalize::on_retry`/`on_unknown`, whose output rides straight
+/// into a rendered `Notice` block, and a bidi override is not
+/// `char::is_control` (it's Unicode category `Cf`, not `Cc`).
 pub(crate) fn sanitize_diagnostic(text: &str, max_chars: usize) -> String {
     text.chars()
-        .filter(|c| !c.is_control() || *c == ' ')
+        .filter(|c| (!c.is_control() || *c == ' ') && !crate::ipc::is_bidi_control(*c))
         .take(max_chars)
         .collect()
 }
@@ -178,6 +194,7 @@ pub(crate) fn sanitize_diagnostic(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::adapter::pi::discovery::{InstallState, Provenance, RuntimeInstallStatus};
     use crate::session::adapter::{RuntimeLaunchPolicy, RuntimeModelRef, RuntimeProfileSnapshot};
 
     fn ctx(resume: Option<&str>) -> RuntimeConnectContext {
@@ -221,15 +238,44 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--resume", "pi-ref-1"]));
     }
 
+    fn status(
+        state: InstallState,
+        executable_path: Option<&str>,
+        error: Option<AppError>,
+    ) -> RuntimeInstallStatus {
+        RuntimeInstallStatus {
+            state,
+            executable_path: executable_path.map(String::from),
+            detected_version: None,
+            node_version: None,
+            supported_versions: Vec::new(),
+            provenance: Provenance::Unknown,
+            checked_at: 0,
+            install_command: String::new(),
+            error,
+        }
+    }
+
     #[test]
     fn a_missing_certified_pi_fails_spawn_with_the_discovery_verdict() {
-        // No real Pi is installed on the test host, so this exercises the
-        // "not ready" branch honestly rather than assuming a fixture.
-        let err = spawn(&ctx(None)).err().unwrap();
-        assert!(matches!(
-            err.code,
-            ErrorCode::RuntimeUnavailable | ErrorCode::RuntimeIncompatible
-        ));
+        // Synthetic verdicts, not a live probe: whether the test host has Pi
+        // installed must not decide the outcome.
+        let verdict = AppError::new(ErrorCode::RuntimeIncompatible, "pi 0.1 unsupported");
+        let err =
+            ready_executable(status(InstallState::Incompatible, None, Some(verdict))).unwrap_err();
+        assert_eq!(err.code, ErrorCode::RuntimeIncompatible);
+
+        let err = ready_executable(status(InstallState::Missing, None, None)).unwrap_err();
+        assert_eq!(err.code, ErrorCode::RuntimeUnavailable);
+    }
+
+    #[test]
+    fn a_ready_verdict_yields_its_executable_or_fails_without_one() {
+        let exe = ready_executable(status(InstallState::Ready, Some("/bin/pi"), None)).unwrap();
+        assert_eq!(exe, "/bin/pi");
+
+        let err = ready_executable(status(InstallState::Ready, None, None)).unwrap_err();
+        assert_eq!(err.code, ErrorCode::RuntimeUnavailable);
     }
 
     /// FR-2/FR-8 + acceptance §9 "stderr flood remain[s] bounded":
@@ -275,5 +321,17 @@ mod tests {
         assert!(!out.contains('\n'));
         assert!(!out.contains('\u{7}'));
         assert_eq!(sanitize_diagnostic(&"x".repeat(50), 10).len(), 10);
+    }
+
+    /// pi-transcript-events (review remediation): a bidi override character
+    /// is category `Cf`, not `Cc` — `char::is_control` alone lets it through,
+    /// and this diagnostic feeds straight into a rendered Notice block
+    /// (`normalize::on_retry`/`on_unknown`).
+    #[test]
+    fn sanitize_diagnostic_strips_bidi_override_characters() {
+        let out = sanitize_diagnostic("safe\u{202e}text\u{2066}here", 100);
+        assert!(!out.contains('\u{202e}'));
+        assert!(!out.contains('\u{2066}'));
+        assert_eq!(out, "safetexthere");
     }
 }

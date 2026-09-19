@@ -9,15 +9,25 @@
 // agent trail keep saying the same thing the same way; only the container
 // around them differs.
 
-import { memo, useState } from 'react';
-import { toolBody, type ConversationBlock, type SubagentConversationBlock, type ToolConversationBlock, type UserConversationBlock } from '../../../contract/conversation-view';
+import { memo, useState, type KeyboardEvent } from 'react';
+import {
+  formatElapsed,
+  toolBody,
+  type ConversationBlock,
+  type NoticeConversationBlock,
+  type SubagentConversationBlock,
+  type ToolConversationBlock,
+  type UserConversationBlock,
+} from '../../../contract/conversation-view';
 import type { AssistantConversationBlock } from '../../../contract/conversation-view';
-import type { SessionId } from '../../../contract/common';
+import type { RuntimeToolCall, SessionId } from '../../../contract/common';
 import type { StepDetail } from '../../../contract/command-inspect';
 import CommandBlock from '../commands/CommandCard';
 import { toneVar } from '../../lib/tone';
 import { stepDetail as fetchStepDetail } from '../../lib/api';
+import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useMounted } from '../../lib/hooks/useMounted';
+import { runtimeToolElapsedMs, runtimeToolStatusLabel } from './runtime-tool-blocks';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
@@ -52,6 +62,11 @@ function BlockImpl({
   // permission-guardrails: approval cards for gated tool calls (spec §8)
   if (block.kind === 'permission') {
     return <PermissionCard b={block} sessionId={sessionId} />;
+  }
+  // pi-transcript-events FR-5: a neutral notice — unsupported/thinking
+  // content, compaction/retry progress, protocol-level diagnostics.
+  if (block.kind === 'notice') {
+    return <NoticeRow b={block} />;
   }
   if (block.kind === 'user') {
     // design 7a: the prompt is an accent `›` line in the terminal's own type,
@@ -105,7 +120,27 @@ function UserBodyImpl({ b }: { b: UserConversationBlock }) {
   // prompt no longer becomes a transcript block at all (see ./pending-queue
   // and the composer's own pending strip), so `queued` is no longer a field
   // this body could read.
-  return <div className="block-user__body">{b.text}</div>;
+  return (
+    <>
+      <div className="block-user__body">{b.text}</div>
+      {/* pi-transcript-events FR-7: attachments resolved against the existing
+          ingest/asset scopes; a missing one renders a named placeholder
+          rather than dropping the reference silently (design brief). */}
+      {b.attachments && b.attachments.length > 0 && (
+        <div className="block-user__attachments">
+          {b.attachments.map((att) => (
+            <span
+              key={att.id}
+              className={'block-user__attachment' + (att.state === 'missing' ? ' block-user__attachment--missing' : '')}
+            >
+              {att.name}
+              {att.state === 'missing' && ' — Attachment unavailable'}
+            </span>
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 export const UserBody = memo(UserBodyImpl);
 
@@ -114,10 +149,28 @@ function AssistantBodyImpl({ b }: { b: AssistantConversationBlock }) {
     <>
       <Markdown text={b.text} streaming={b.isStreaming} />
       {b.isStreaming && <span className="block-caret" />}
+      {/* pi-transcript-events FR-9: the word a non-'complete' outcome states —
+          crash/stop finalizes partial output as interrupted, never as
+          succeeded. 'interrupted'/'error' already read as their own label. */}
+      {b.outcome && b.outcome !== 'complete' && (
+        <span className={`block-outcome block-outcome--${b.outcome}`}>{b.outcome}</span>
+      )}
     </>
   );
 }
 export const AssistantBody = memo(AssistantBodyImpl);
+
+/** pi-transcript-events FR-5: a neutral notice row — never streamed, tone as
+ *  well as colour (design brief). Reuses the transcript's own typography;
+ *  no new border/shadow treatment. */
+function NoticeRowImpl({ b }: { b: NoticeConversationBlock }) {
+  return (
+    <div className={`block-notice block-notice--${b.tone}`}>
+      <span className="block-notice__text">{b.text}</span>
+    </div>
+  );
+}
+export const NoticeRow = memo(NoticeRowImpl);
 
 /**
  * design-refresh FR-7: dispatch renders as a purple-tinted banner, not a bare
@@ -158,6 +211,12 @@ export const SubagentBanner = memo(SubagentBannerImpl);
  * carries `hasDetail` (FR-8) — regardless of `sessionId`, which AgentView and
  * WorkflowView do pass — so the chevron/click path below is never reachable
  * there.
+ *
+ * pi-transcript-events FR-3/FR-4: a row carrying `execution` (a Pi-produced
+ * tool call) is expandable the same way, but needs no fetch — the sanitized
+ * input/output preview already rode the block over IPC (§5/§6). Mutually
+ * exclusive with `hasDetail` in practice (command-inspect is Claude-only), so
+ * `hasDetail` keeps first claim on the fetch path below.
  */
 function ToolRowImpl({
   b,
@@ -175,9 +234,16 @@ function ToolRowImpl({
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const mountedRef = useMounted();
+  const expandable = b.hasDetail === true || b.execution !== undefined;
 
   function handleClick() {
-    if (!b.hasDetail || !sessionId) return;
+    if (!expandable) return;
+    if (b.execution !== undefined && !b.hasDetail) {
+      // Sanitized input/output already rode the block — toggle in place, no fetch.
+      setOpen((o) => !o);
+      return;
+    }
+    if (!sessionId) return;
     const next = !open;
     setOpen(next);
     // FR-13: fetched once per mount, never re-fetched — a settled step is
@@ -196,13 +262,26 @@ function ToolRowImpl({
     }
   }
 
+  // design brief: "Click or Enter/Space expands tool details" — Space's
+  // default action (page scroll) is suppressed only when this row is
+  // actually the thing about to toggle.
+  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (!expandable) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleClick();
+    }
+  }
+
   return (
     <>
       <div
-        className={
-          'toolrow' + (b.isStreaming ? ' toolrow--live' : '') + (b.hasDetail ? ' toolrow--expandable' : '') + (open ? ' toolrow--open' : '')
-        }
-        onClick={b.hasDetail ? handleClick : undefined}
+        className={'toolrow' + (b.isStreaming ? ' toolrow--live' : '') + (expandable ? ' toolrow--expandable' : '') + (open ? ' toolrow--open' : '')}
+        onClick={expandable ? handleClick : undefined}
+        onKeyDown={expandable ? handleKeyDown : undefined}
+        role={expandable ? 'button' : undefined}
+        tabIndex={expandable ? 0 : undefined}
+        aria-expanded={expandable ? open : undefined}
       >
         <span className="toolrow__glyph" style={{ color: toneVar(b.glyphColor) }}>
           {b.glyph}
@@ -230,24 +309,77 @@ function ToolRowImpl({
               ))
             )}
           </span>
-          {b.hasDetail && (
+          {expandable && (
             <span className="toolrow__disclosure">
               open <span className="toolrow__chevron">⌄</span>
             </span>
           )}
         </span>
       </div>
-      {open && sessionId && (
+      {open && sessionId && b.hasDetail && (
         <div className="step-detail-wrap">
           {loading && <div className="step-detail__loading">loading…</div>}
           {fetchError && <div className="step-detail__error">{fetchError}</div>}
           {detail && <StepDetailPanel detail={detail} sessionId={sessionId} onOpenShell={onOpenShell} />}
         </div>
       )}
+      {open && b.execution && !b.hasDetail && <RuntimeToolDetail tool={b.execution} />}
     </>
   );
 }
 export const ToolRow = memo(ToolRowImpl);
+
+/**
+ * pi-transcript-events FR-3/FR-4/design brief: the sanitized input/output
+ * preview for a Pi tool call, unfolded in place — reuses the existing
+ * `.step-detail*` typography/geometry (StepDetailPanel) rather than a new
+ * treatment. No raw input/output JSON is parsed/executed here — both fields
+ * are already bounded, sanitized text (contract/common.ts RuntimeToolCall).
+ *
+ * FR-4/design brief §Data shown: timing rides the same right-aligned header
+ * cell as the status word. The clock only ticks (`useElapsedClock`) while the
+ * call is genuinely in flight and unsettled — a completed/failed/cancelled
+ * call's duration is fixed, so no interval is scheduled for it.
+ */
+function RuntimeToolDetailImpl({ tool }: { tool: RuntimeToolCall }) {
+  const unsettled = tool.completedAt === undefined;
+  const now = useElapsedClock(unsettled);
+  const elapsedMs = runtimeToolElapsedMs(tool, now);
+  const statusLabel = runtimeToolStatusLabel(tool.status);
+  return (
+    <div className="step-detail-wrap">
+      <div className="step-detail">
+        <div className="step-detail__header">
+          <span className="step-detail__header-seg step-detail__header-seg--tool">{tool.name}</span>
+          <span className="step-detail__header-right">
+            {elapsedMs !== null && (
+              <span className="step-detail__header-seg">{formatElapsed(elapsedMs)}</span>
+            )}
+            {statusLabel && (
+              <>
+                {elapsedMs !== null && <span className="step-detail__header-sep"> · </span>}
+                <span className="step-detail__header-seg">{statusLabel}</span>
+              </>
+            )}
+          </span>
+        </div>
+        {tool.inputText && (
+          <div className="step-detail__json">
+            {tool.inputText}
+            {tool.inputTruncated && ' …'}
+          </div>
+        )}
+        {tool.outputText && (
+          <div className="step-detail__output">
+            <div className="step-detail__output-strip">output{tool.outputTruncated ? ' (truncated)' : ''}</div>
+            <pre className="step-detail__output-body">{tool.outputText}</pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+export const RuntimeToolDetail = memo(RuntimeToolDetailImpl);
 
 /**
  * design 9a: a run of consecutive tool calls hangs off a single vertical rail

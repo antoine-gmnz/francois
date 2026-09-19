@@ -235,14 +235,19 @@ pub struct CapabilityState {
 
 pub type RuntimeCapabilities = BTreeMap<String, CapabilityState>;
 
-/// Task 08 expands this message vocabulary. The boundary only supports normal
-/// text now, so later runtimes cannot accidentally expose a wire DTO here.
+/// Task 08 expands this message vocabulary further. pi-transcript-events FR-7
+/// adds the one already-validated multimodal shape every session-scoped
+/// runtime needs: the session's OWN attachment records, so an adapter can
+/// resolve whichever ones its text actually references into its own wire
+/// content — never a base64 blob built in the frontend and handed across IPC.
 #[allow(dead_code)]
 pub(crate) struct RuntimeSubmission {
     pub(crate) text: String,
+    pub(crate) attachments: Vec<crate::session::attachments::Attachment>,
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct SubmissionReceipt {
     pub(crate) request_id: String,
 }

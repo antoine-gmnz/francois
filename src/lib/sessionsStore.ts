@@ -159,12 +159,31 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       return { sessions: next };
     }),
   applyRuntimeEvent: (event) =>
-    set((s) => ({
-      sessions: s.sessions.map((session) => {
-        // A fresh session.meta establishes the new generation. An old child is
-        // allowed to finish emitting, but it must never repaint the new child.
-        if (session.id !== event.sessionId || session.runtimeGeneration !== event.generation) return session;
-        switch (event.event.kind) {
+    set((s) => {
+      // Transcript events belong to the conversation reducer. Bail before
+      // mapping so fleet subscribers retain the sessions array reference.
+      switch (event.event.kind) {
+        case 'message.user':
+        case 'assistant.delta':
+        case 'assistant.complete':
+        case 'tool.update':
+        case 'notice':
+          return {};
+        case 'capabilities':
+        case 'failure':
+        case 'run.state':
+          break;
+        default: {
+          const unhandled: never = event.event;
+          return unhandled;
+        }
+      }
+      return {
+        sessions: s.sessions.map((session) => {
+          // A fresh session.meta establishes the new generation. An old child is
+          // allowed to finish emitting, but it must never repaint the new child.
+          if (session.id !== event.sessionId || session.runtimeGeneration !== event.generation) return session;
+          switch (event.event.kind) {
           case 'capabilities':
             return { ...session, effectiveCapabilities: event.event.capabilities };
           case 'failure':
@@ -181,9 +200,19 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
                       ? 'starting'
                       : 'running',
             };
-        }
-      }),
-    })),
+          // pi-transcript-events: transcript-block kinds are owned by the
+          // conversation-view transcript reducer (conversation-blocks.ts), not
+          // the session cache — no session field changes here. Listed
+          // explicitly (rather than a `default`) so adding a sixth
+          // RuntimeEventPayload kind fails typecheck here instead of
+          // silently falling through unhandled.
+          }
+          // The exhaustive guard above makes this unreachable at runtime, but
+          // TypeScript does not carry that narrowing into the map callback.
+          return session;
+        }),
+      };
+    }),
   removeSession: (id) =>
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id);

@@ -106,7 +106,12 @@ pub(crate) fn valid_correlation(id: &str) -> bool {
 pub(crate) const MAX_RUNTIME_MESSAGE_BYTES: usize = 1024;
 pub(crate) const MAX_CAPABILITY_REASON_BYTES: usize = 512;
 
-fn is_bidi_control(c: char) -> bool {
+/// pi-transcript-events (review remediation): shared with
+/// `session::adapter::pi::process::sanitize_diagnostic` — a bidi override
+/// character is not `char::is_control` (it's category `Cf`, not `Cc`), so a
+/// diagnostic sanitizer that filters only control characters lets one ride
+/// straight into a rendered notice/transcript line.
+pub(crate) fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 

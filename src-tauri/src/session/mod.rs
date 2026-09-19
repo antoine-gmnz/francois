@@ -516,6 +516,23 @@ fn is_subagent_tool(tool: &str) -> bool {
     matches!(tool, "Task" | "Agent")
 }
 
+/// pi-transcript-events review round 3 (MEDIUM): `tool_summary` wants a
+/// parsed `Value`, but Pi's own `RuntimeToolCall::input_text` is a raw JSON
+/// preview that is only guaranteed complete/valid at `toolcall_end` — a
+/// `toolcall_delta` mid-stream may carry a truncated or not-yet-valid
+/// fragment. Best-effort parse; a non-JSON (or still-empty) preview falls
+/// back to a bounded raw-text preview rather than losing the summary or
+/// failing the update.
+fn tool_summary_from_input_text(tool: &str, input_text: &str, cwd: &str) -> String {
+    if input_text.is_empty() {
+        return tool_summary(tool, &Value::Null, cwd);
+    }
+    match serde_json::from_str::<Value>(input_text) {
+        Ok(value) => tool_summary(tool, &value, cwd),
+        Err(_) => truncate(input_text, 60),
+    }
+}
+
 /// contract WorkflowRun (workflow-panel §5) — one dispatch of the harness's
 /// `Workflow` tool, tracked from the stream. Everything here is derived from
 /// the session's own NDJSON: the panel is read-only, so there is no verb that
@@ -636,6 +653,20 @@ pub struct BufBlock {
     /// transcript written before the field existed — and is serialized as an
     /// ABSENT key rather than as an epoch that would render as 01:00.
     at: u64,
+    /// pi-transcript-events FR-3/FR-4: `ToolConversationBlock.execution`,
+    /// serialized `RuntimeToolCall` JSON. Only ever set on a `Tool` block.
+    execution: Option<Value>,
+    /// pi-transcript-events FR-7: `UserConversationBlock.attachments`,
+    /// serialized `RuntimeAttachmentRef[]` JSON. Only ever set on a `User` block.
+    attachments: Option<Value>,
+    /// pi-transcript-events FR-9: `AssistantConversationBlock.outcome`
+    /// ('complete' | 'interrupted' | 'error'). Only ever set on an `Assistant` block.
+    outcome: Option<String>,
+    /// pi-transcript-events FR-5: `NoticeConversationBlock.tone`
+    /// ('info' | 'warning' | 'error'). Only ever set on a `Notice` block appended
+    /// to the SESSION transcript — agent-tab's `AgentNoticeBlock` carries no
+    /// tone, so its notices leave this `None`.
+    tone: Option<String>,
 }
 
 impl BufBlock {
@@ -660,6 +691,10 @@ impl BufBlock {
             card: None,
             streaming: false,
             at: now_ms(),
+            execution: None,
+            attachments: None,
+            outcome: None,
+            tone: None,
         }
     }
 }
@@ -1299,6 +1334,138 @@ impl Session {
         }
         self.agents.insert(a.id.clone(), a);
     }
+
+    // ---------------------------------------------------------- pi-transcript-events
+
+    /// FR-6/FR-7: append a normalized Pi user block, with resolved attachment
+    /// refs riding alongside (never base64) — present only when non-empty,
+    /// matching every other optional `BufBlock` field's omit-when-absent
+    /// convention (see `classify_block_user_attachments_present_only_when_set`).
+    fn buf_message_user_pi(
+        &mut self,
+        block_id: &str,
+        text: String,
+        attachments: Vec<events::RuntimeAttachmentRef>,
+    ) {
+        let attachments = (!attachments.is_empty()).then(|| {
+            serde_json::to_value(&attachments).unwrap_or_else(|_| Value::Array(Vec::new()))
+        });
+        self.block_buffer.push(BufBlock {
+            text,
+            attachments,
+            ..BufBlock::new(block_id, BlockKind::User)
+        });
+        self.trim_block_buffer();
+    }
+
+    /// FR-2/FR-9: settle a normalized Pi assistant content slot in place, or
+    /// append one that streamed no prior delta — same upsert `finish_assistant`
+    /// performs for every other runtime, plus the `outcome` field. Left absent
+    /// for a normal completion (contract note: "absent ⇒ a normal completion"),
+    /// set only for `interrupted`/`error`. Returns the finalized block so the
+    /// caller persists it exactly once, at settlement.
+    fn finish_assistant_pi(
+        &mut self,
+        block_id: &str,
+        text: String,
+        outcome: &str,
+    ) -> Option<BufBlock> {
+        let outcome_field = (outcome != "complete").then(|| outcome.to_string());
+        let out = match self
+            .block_buffer
+            .iter_mut()
+            .rev()
+            .find(|b| b.block_id == block_id)
+        {
+            Some(b) => {
+                b.text = text;
+                b.streaming = false;
+                b.outcome = outcome_field;
+                Some(b.clone())
+            }
+            None => {
+                self.block_buffer.push(BufBlock {
+                    text,
+                    outcome: outcome_field,
+                    ..BufBlock::new(block_id, BlockKind::Assistant)
+                });
+                self.block_buffer.last().cloned()
+            }
+        };
+        self.trim_block_buffer();
+        out
+    }
+
+    /// FR-3/FR-4: append (pending) or update (running/settled) a normalized
+    /// Pi tool block in place — one row for the whole lifecycle, never a
+    /// second one for the same call id (edge cases §7: "do not append a
+    /// second tool row"). `execution` carries the whole sanitized snapshot on
+    /// every call; only a TERMINAL status (never `pending`/`running`) returns
+    /// the block, so a caller persists exactly once, at settlement — mid-
+    /// lifecycle rows stay live-only, matching every other runtime's own
+    /// `buf_tool`/`buf_tool_done` split.
+    fn buf_tool_update_pi(
+        &mut self,
+        block_id: &str,
+        tool: events::RuntimeToolCall,
+    ) -> Option<BufBlock> {
+        let streaming = matches!(tool.status.as_str(), "pending" | "running");
+        let name = tool.name.clone();
+        // MEDIUM (review round 3): derive a genuinely informative summary
+        // from the tool's own input the same way every other adapter does
+        // (`grok`/`codex`/`openai`/`stream` all call `tools::tool_summary`),
+        // and recompute it on EVERY update — `input_text` starts empty at
+        // `toolcall_start`, accumulates through `toolcall_delta`, and becomes
+        // authoritative at `toolcall_end`, so the bare tool name from the
+        // first insert must not be left standing once real input exists.
+        let summary = tool_summary_from_input_text(&name, &tool.input_text, &self.cwd);
+        let execution = serde_json::to_value(&tool).ok();
+        match self
+            .block_buffer
+            .iter_mut()
+            .find(|b| b.block_id == block_id)
+        {
+            Some(b) => {
+                b.tool = name;
+                b.summary = summary;
+                b.execution = execution;
+                b.streaming = streaming;
+            }
+            None => {
+                self.block_buffer.push(BufBlock {
+                    tool: name,
+                    summary,
+                    execution,
+                    streaming,
+                    ..BufBlock::new(block_id, BlockKind::Tool)
+                });
+            }
+        }
+        self.trim_block_buffer();
+        if streaming {
+            return None;
+        }
+        self.block_buffer
+            .iter()
+            .find(|b| b.block_id == block_id)
+            .cloned()
+    }
+
+    /// FR-5/FR-8: append a normalized Pi notice — always final, like every
+    /// other `NoticeConversationBlock` producer (agent-tab's own notices carry
+    /// no `tone`; this one, appended to the SESSION transcript, always does).
+    fn buf_notice_pi(&mut self, block_id: &str, tone: String, text: String) -> BufBlock {
+        self.block_buffer.push(BufBlock {
+            text,
+            tone: Some(tone),
+            ..BufBlock::new(block_id, BlockKind::Notice)
+        });
+        self.trim_block_buffer();
+        self.block_buffer
+            .last()
+            .cloned()
+            .expect("just pushed above")
+    }
 }
 
 #[derive(Default)]
@@ -1631,6 +1798,76 @@ mod tests {
         assert!(!is_subagent_tool("Bash"));
     }
 
+    /// MEDIUM (review round 3): `buf_tool_update_pi` must derive `summary`
+    /// from the tool's own input the same way every other adapter does
+    /// (`tool_summary`), and recompute it as the input settles — not leave
+    /// the bare tool name standing from `toolcall_start` through
+    /// `toolcall_end`.
+    #[test]
+    fn buf_tool_update_pi_derives_and_updates_summary_from_input_text() {
+        let mut s = test_session(); // cwd "/x"
+        let block_id = "b1";
+        let pending = events::RuntimeToolCall {
+            id: "t1".into(),
+            name: "Read".into(),
+            status: "pending".into(),
+            input_text: String::new(),
+            output_text: String::new(),
+            input_truncated: false,
+            output_truncated: false,
+            started_at: None,
+            completed_at: None,
+        };
+        assert!(s.buf_tool_update_pi(block_id, pending).is_none());
+        let inserted = s
+            .block_buffer
+            .iter()
+            .find(|b| b.block_id == block_id)
+            .unwrap();
+        assert_eq!(inserted.tool, "Read");
+        // No args are known yet at toolcall_start — the summary must reflect
+        // that honestly rather than stand in the bare tool name for it.
+        assert_ne!(inserted.summary, "Read");
+
+        let settled_call = events::RuntimeToolCall {
+            id: "t1".into(),
+            name: "Read".into(),
+            status: "succeeded".into(),
+            input_text: serde_json::json!({ "file_path": "/x/src/y.ts" }).to_string(),
+            output_text: "ok".into(),
+            input_truncated: false,
+            output_truncated: false,
+            started_at: None,
+            completed_at: None,
+        };
+        let settled = s
+            .buf_tool_update_pi(block_id, settled_call)
+            .expect("a non-streaming status settles the block");
+        assert_eq!(settled.summary, "src/y.ts");
+    }
+
+    /// The out-of-scope fallback: an unparsable (or still-partial) input
+    /// preview still produces a bounded, non-empty summary rather than an
+    /// error or a lost update.
+    #[test]
+    fn buf_tool_update_pi_falls_back_to_a_bounded_raw_preview_for_non_json_input() {
+        let mut s = test_session();
+        let call = events::RuntimeToolCall {
+            id: "t1".into(),
+            name: "Bash".into(),
+            status: "running".into(),
+            input_text: "{\"command\":\"echo hi".repeat(10), // deliberately not valid JSON
+            output_text: String::new(),
+            input_truncated: false,
+            output_truncated: false,
+            started_at: None,
+            completed_at: None,
+        };
+        s.buf_tool_update_pi("b1", call.clone());
+        let b = s.block_buffer.iter().find(|b| b.block_id == "b1").unwrap();
+        assert_eq!(b.summary, truncate(&call.input_text, 60));
+    }
+
     #[test]
     fn with_session_mut_locks_mutates_and_returns_the_closure_value() {
         let engine = test_engine_with(test_session());
@@ -1727,6 +1964,72 @@ mod tests {
         // SAME call — the returned clone was captured before that happened.
         assert_eq!(s.block_buffer.len(), TRANSCRIPT_BUFFER_CAP);
         assert_eq!(s.block_buffer[0].block_id, "b20");
+    }
+
+    // ---------- pi-transcript-events: buf_*_pi direct unit coverage ----------
+
+    #[test]
+    fn buf_message_user_pi_appends_text_and_omits_attachments_when_none() {
+        let mut s = test_session();
+        s.buf_message_user_pi("u1", "hi".into(), Vec::new());
+        let block = &s.block_buffer[0];
+        assert_eq!(block.block_id, "u1");
+        assert!(matches!(block.kind, BlockKind::User));
+        assert_eq!(block.text, "hi");
+        assert!(block.attachments.is_none());
+    }
+
+    #[test]
+    fn buf_message_user_pi_carries_resolved_attachment_refs() {
+        let mut s = test_session();
+        let attachments = vec![events::RuntimeAttachmentRef {
+            id: "a1".into(),
+            name: "cat.png".into(),
+            mime_type: "image/png".into(),
+            state: "available".into(),
+        }];
+        s.buf_message_user_pi("u1", "see this".into(), attachments);
+        let stored = s.block_buffer[0].attachments.as_ref().unwrap();
+        assert_eq!(stored[0]["id"], "a1");
+        assert_eq!(stored[0]["state"], "available");
+    }
+
+    #[test]
+    fn finish_assistant_pi_appends_when_no_delta_ever_opened_the_block() {
+        let mut s = test_session();
+        let finished = s
+            .finish_assistant_pi("a1", "Hello".into(), "complete")
+            .expect("block");
+        assert_eq!(finished.block_id, "a1");
+        assert!(!finished.streaming);
+        // A normal completion leaves `outcome` unset (contract note: "absent
+        // ⇒ a normal completion").
+        assert!(finished.outcome.is_none());
+    }
+
+    #[test]
+    fn finish_assistant_pi_settles_a_streaming_block_in_place_with_its_outcome() {
+        let mut s = test_session();
+        s.buf_assistant_streaming("a1", "Hel", "Hel");
+        let finished = s
+            .finish_assistant_pi("a1", "Hello".into(), "interrupted")
+            .expect("block");
+        assert_eq!(s.block_buffer.len(), 1);
+        assert_eq!(finished.text, "Hello");
+        assert!(!finished.streaming);
+        assert_eq!(finished.outcome.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
+    fn buf_notice_pi_appends_an_already_final_block_with_its_tone() {
+        let mut s = test_session();
+        let notice = s.buf_notice_pi("n1", "warning".into(), "Retrying: rate limited".into());
+        assert_eq!(notice.block_id, "n1");
+        assert!(matches!(notice.kind, BlockKind::Notice));
+        assert!(!notice.streaming);
+        assert_eq!(notice.tone.as_deref(), Some("warning"));
+        assert_eq!(notice.text, "Retrying: rate limited");
+        assert_eq!(s.block_buffer.len(), 1);
     }
 
     #[test]

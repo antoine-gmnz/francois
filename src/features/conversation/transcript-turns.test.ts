@@ -275,4 +275,9 @@ describe('toolResultChips (design 9a: a result is chips, not a trailing sentence
   it('keeps a multi-part result as one chip rather than fanning it out', () => {
     expect(toolResultChips('7 matches · 3 files')).toEqual([{ tone: 'plain', text: '7 matches · 3 files' }]);
   });
+
+  it('marks a runtime tool call that never settled cleanly as warn, not plain or error', () => {
+    expect(toolResultChips('cancelled')).toEqual([{ tone: 'warn', text: 'cancelled' }]);
+    expect(toolResultChips('unknown')).toEqual([{ tone: 'warn', text: 'unknown' }]);
+  });
 });

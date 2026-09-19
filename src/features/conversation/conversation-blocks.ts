@@ -5,17 +5,32 @@
 // Every rule is a keyed upsert on blockId: replaying an event is a no-op or an
 // identical replace, and out-of-order arrivals insert rather than drop.
 
-import type { BlockId, CommandCard, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion, SessionStatus, SlashCommandInfo } from '../../../contract/common';
+import type {
+  BlockId,
+  CommandCard,
+  PermissionAsk,
+  PermissionRule,
+  Result,
+  RuntimeAttachmentRef,
+  RuntimeToolCall,
+  SessionEvent,
+  SessionQuestion,
+  SessionStatus,
+  SlashCommandInfo,
+} from '../../../contract/common';
 import {
   assistantColors,
   classifyToolStart,
   type ConversationBlock,
+  type NoticeConversationBlock,
   type ToolConversationBlock,
   type UserConversationBlock,
 } from '../../../contract/conversation-view';
 import type { CommandConversationBlock } from '../../../contract/interactive-commands';
 import type { PermissionConversationBlock } from '../../../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
+import { runtimeToolBlock } from './runtime-tool-blocks';
+import { toolResultChips } from './transcript-turns';
 
 // mac-text-selection FR-1: the transcript container overrides the app-wide
 // `body { user-select: none }` chrome rule (styles.css) so transcript CONTENT
@@ -136,14 +151,26 @@ export interface DeltaChunk {
 export type TranscriptAction =
   | { t: 'seed'; blocks: ConversationBlock[] }
   | { t: 'optimisticUser'; blockId: string; text: string }
-  | { t: 'msgUser'; blockId: string; text: string }
+  // pi-transcript-events FR-7: attachments ride the Pi runtime's message.user
+  // event only — the plain Claude message.user carries none.
+  // FR-6: clientMessageId is the optimistic blockId ComposerPane minted
+  // (crypto.randomUUID(), see 'optimisticUser' below) — when Pi's confirmed
+  // event carries it, the reducer rekeys that block instead of appending.
+  | { t: 'msgUser'; blockId: string; text: string; attachments?: RuntimeAttachmentRef[]; clientMessageId?: string }
   | { t: 'delta'; blockId: string; text: string; offset: number }
   // transcript-perf FR-5: one or more same-blockId chunks accumulated over one
   // animation frame, applied in ONE reducer pass — see the 'deltaBatch' case.
   | { t: 'deltaBatch'; blockId: string; chunks: DeltaChunk[] }
-  | { t: 'assistantDone'; blockId: string; text: string }
+  // pi-transcript-events FR-9: `outcome` rides the Pi runtime's
+  // assistant.complete event only — a plain Claude assistant.done carries none.
+  | { t: 'assistantDone'; blockId: string; text: string; outcome?: 'complete' | 'interrupted' | 'error' }
   | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string }
   | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean } // hasDetail: command-inspect FR-10
+  // pi-transcript-events FR-1/FR-3/FR-4: a normalized RuntimeToolCall snapshot —
+  // insert-or-settle, keyed on the tool call's stable blockId.
+  | { t: 'toolUpdate'; blockId: string; tool: RuntimeToolCall }
+  // pi-transcript-events FR-5: a neutral notice — never streamed.
+  | { t: 'notice'; blockId: string; tone: 'info' | 'warning' | 'error'; text: string }
   | { t: 'commandStarted'; blockId: string; command: string } // interactive-commands FR-20
   | { t: 'commandOutput'; blockId: string; card: CommandCard } // interactive-commands FR-20
   | { t: 'questionAsked'; blockId: string; questions: SessionQuestion[] } // session-questions FR-16
@@ -251,13 +278,39 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       return { blocks: [...state.blocks, b], windowSize: state.windowSize };
     }
     case 'msgUser': {
+      // FR-6: Pi's message.user always mints a fresh core blockId — never the
+      // optimistic id ComposerPane's 'optimisticUser' inserted under. When
+      // clientMessageId names that still-live optimistic block (and the
+      // confirmed blockId hasn't already been applied, e.g. on replay),
+      // rekey it in place instead of appending a duplicate.
+      if (a.clientMessageId !== undefined && idx(a.blockId) === -1) {
+        const oi = idx(a.clientMessageId);
+        if (oi !== -1) {
+          const ob = state.blocks[oi];
+          if (ob.kind === 'user') {
+            const rekeyed: UserConversationBlock = {
+              ...ob,
+              blockId: a.blockId,
+              text: a.text,
+              ...(a.attachments !== undefined ? { attachments: a.attachments } : {}),
+            };
+            return replace(oi, rekeyed);
+          }
+        }
+      }
       const i = idx(a.blockId);
       if (i !== -1) {
         const b = state.blocks[i];
         if (b.kind !== 'user') return state;
-        return replace(i, { ...b, text: a.text });
+        return replace(i, { ...b, text: a.text, ...(a.attachments !== undefined ? { attachments: a.attachments } : {}) });
       }
-      const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text };
+      const b: UserConversationBlock = {
+        kind: 'user',
+        blockId: a.blockId,
+        isStreaming: false,
+        text: a.text,
+        ...(a.attachments !== undefined ? { attachments: a.attachments } : {}),
+      };
       return { blocks: [...state.blocks, b], windowSize: state.windowSize };
     }
     case 'delta': {
@@ -312,7 +365,16 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
         return {
           blocks: [
             ...state.blocks,
-            { kind: 'assistant', blockId: a.blockId, isStreaming: false, glyph: '●', glyphColor, bodyColor, text: a.text },
+            {
+              kind: 'assistant',
+              blockId: a.blockId,
+              isStreaming: false,
+              glyph: '●',
+              glyphColor,
+              bodyColor,
+              text: a.text,
+              ...(a.outcome !== undefined ? { outcome: a.outcome } : {}),
+            },
           ],
           windowSize: state.windowSize,
         };
@@ -320,7 +382,14 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       const b = state.blocks[i];
       if (b.kind !== 'assistant') return state;
       // Authoritative repair: whatever the stream lost, the final text wins.
-      return replace(i, { ...b, isStreaming: false, glyphColor, bodyColor, text: a.text });
+      return replace(i, {
+        ...b,
+        isStreaming: false,
+        glyphColor,
+        bodyColor,
+        text: a.text,
+        ...(a.outcome !== undefined ? { outcome: a.outcome } : {}),
+      });
     }
     case 'toolStart': {
       if (idx(a.blockId) !== -1) return state;
@@ -336,6 +405,29 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       // record. `??` keeps an established flag when a later done omits it; a
       // subagent block never carries one (FR-8).
       return replace(i, { ...b, meta: a.meta, isStreaming: false, hasDetail: a.hasDetail ?? b.hasDetail });
+    }
+    case 'toolUpdate': {
+      // FR-3: a tool call must settle exactly once, in place — insert on
+      // first sight, replace on every later snapshot of the same blockId.
+      const i = idx(a.blockId);
+      if (i === -1) {
+        return { blocks: [...state.blocks, runtimeToolBlock(a.blockId, a.tool)], windowSize: state.windowSize };
+      }
+      const b = state.blocks[i];
+      if (b.kind !== 'tool') return state;
+      return replace(i, runtimeToolBlock(a.blockId, a.tool));
+    }
+    case 'notice': {
+      // FR-5: keyed idempotent upsert, like every other rule in this reducer —
+      // a re-emitted diagnostic replaces in place rather than duplicating.
+      const i = idx(a.blockId);
+      const block: NoticeConversationBlock = { kind: 'notice', blockId: a.blockId, isStreaming: false, tone: a.tone, text: a.text };
+      if (i === -1) {
+        return { blocks: [...state.blocks, block], windowSize: state.windowSize };
+      }
+      const b = state.blocks[i];
+      if (b.kind !== 'notice') return state;
+      return replace(i, block);
     }
     case 'commandStarted': {
       // FR-20: insert a pending command block (loading card); replay is a no-op.
@@ -558,6 +650,12 @@ type SessionEventHandler<T extends SessionEvent['type']> = (
  * `default: break`. */
 function ignoreEvent(): void {}
 
+/** A new user turn dismisses transient notices from the previous turn. */
+function clearUserTurnNotices(setters: ConversationEventSetters): void {
+  setters.setResumeFailed(false);
+  setters.setLimitNotice(null);
+}
+
 /**
  * Per-`SessionEvent['type']` handler table, replacing the 21-branch `route(e)`
  * switch that used to live inline in ConversationView's hydration effect. A
@@ -592,8 +690,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'context.usage': (_dispatch, setters, e) => setters.patchUsage(e.usedTokens, e.limitTokens),
   'message.user': (dispatch, setters, e) => {
     dispatch({ t: 'msgUser', blockId: e.blockId, text: e.text });
-    setters.setResumeFailed(false); // a new user turn clears the resume-fail notice (FR-14)
-    setters.setLimitNotice(null); // …and the usage-limit notice: the user is retrying
+    clearUserTurnNotices(setters);
   },
   // the --resume was rejected; core continued fresh (FR-9/14)
   'session.resumeFailed': (_dispatch, setters) => setters.setResumeFailed(true),
@@ -625,8 +722,45 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
     dispatch({ t: 'permissionResolved', blockId: e.blockId, state: e.state, rule: e.rule }),
   // slash-menu FR-10: idempotent replace — an open popup refilters in place
   'session.commands': (_dispatch, setters, e) => setters.setCommands(e.commands),
-  // Runtime lifecycle and capability signals update the session fleet, not transcript blocks.
-  'runtime.event': ignoreEvent,
+  // pi-transcript-events §5: the transcript-block kinds of RuntimeEventPayload
+  // (TranscriptRuntimePayload) forward to the same reducer actions their
+  // plain-Claude counterparts use; run.state/capabilities/failure stay
+  // ignored here — sessionsStore.applyRuntimeEvent (useSessionFleetSync) owns
+  // the session fleet, not this view.
+  'runtime.event': (dispatch, setters, e) => {
+    switch (e.event.kind) {
+      case 'message.user':
+        // FR-6: clientMessageId (when present) is the optimistic blockId
+        // ComposerPane minted — see the 'msgUser' reducer case for the rekey.
+        dispatch({
+          t: 'msgUser',
+          blockId: e.event.blockId,
+          text: e.event.text,
+          attachments: e.event.attachments,
+          clientMessageId: e.event.clientMessageId,
+        });
+        clearUserTurnNotices(setters);
+        return;
+      case 'assistant.delta':
+        // contentIndex is unused here — each streamed slot already carries
+        // its own stable blockId, so the reducer needs no separate slot key.
+        dispatch({ t: 'delta', blockId: e.event.blockId, text: e.event.text, offset: e.event.offset });
+        return;
+      case 'assistant.complete':
+        dispatch({ t: 'assistantDone', blockId: e.event.blockId, text: e.event.text, outcome: e.event.outcome });
+        return;
+      case 'tool.update':
+        dispatch({ t: 'toolUpdate', blockId: e.event.blockId, tool: e.event.tool });
+        return;
+      case 'notice':
+        dispatch({ t: 'notice', blockId: e.event.blockId, tone: e.event.tone, text: e.event.text });
+        return;
+      case 'run.state':
+      case 'capabilities':
+      case 'failure':
+        return;
+    }
+  },
   'session.removed': ignoreEvent,
   'agent.update': ignoreEvent,
   'agent.step': ignoreEvent,
@@ -657,6 +791,22 @@ export function isTranscriptRelevantEvent(e: SessionEvent): boolean {
   return e.type !== 'agent.update' && e.type !== 'workflow.update';
 }
 
+/**
+ * useConversationTranscript's `onTranscriptEvent` delta match — extracted so
+ * the routing itself (pi-transcript-events FR-8: "retain frame batching") is
+ * unit-testable without a DOM/rAF environment. Both the plain Claude
+ * `assistant.delta` SessionEvent and Pi's nested `runtime.event` kind
+ * `assistant.delta` land here; anything else is `null`, telling the caller to
+ * flush the buffer and fall through to `applySessionEvent` instead.
+ */
+export function deltaFromEvent(e: SessionEvent): { blockId: string; text: string; offset: number } | null {
+  if (e.type === 'assistant.delta') return { blockId: e.blockId, text: e.text, offset: e.offset };
+  if (e.type === 'runtime.event' && e.event.kind === 'assistant.delta') {
+    return { blockId: e.event.blockId, text: e.event.text, offset: e.event.offset };
+  }
+  return null;
+}
+
 // ---------- render-time compaction of duplicate tool rows ----------
 
 /** The core's tool_meta line-change shape: `+N −M` (U+2212 minus). */
@@ -671,8 +821,10 @@ const LINE_CHANGE_META = /^\+(\d+) −(\d+)$/;
  *
  * The newest block represents the run: its blockId keys the row and its
  * streaming state wins (a still-streaming edit shows the run total so far).
- * An `error` meta never merges — it stays its own visible row and breaks the
- * run on both sides.
+ * A non-plain meta — plain `error`, or any Pi runtime status chip that reads
+ * `error`/`warn` toned (`failed`, `cancelled`, `unknown` — toolResultChips)
+ * — never merges: it stays its own visible row and breaks the run on both
+ * sides, so a failed call is never absorbed into a neighboring success.
  */
 export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] {
   const out: ConversationBlock[] = [];
@@ -684,8 +836,9 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
       prev.kind === 'tool' &&
       prev.tool === b.tool &&
       prev.summary === b.summary &&
-      prev.meta !== 'error' &&
-      b.meta !== 'error'
+      prev.execution?.id === b.execution?.id &&
+      !hasNonPlainToolMeta(prev.meta) &&
+      !hasNonPlainToolMeta(b.meta)
     ) {
       out[out.length - 1] = mergeToolRun(prev, b);
       continue;
@@ -693,6 +846,12 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
     out.push(b);
   }
   return out;
+}
+
+/** True for a meta that renders an error/warn-toned chip (toolResultChips) —
+ *  `error` plus the Pi runtime terminal states `failed`/`cancelled`/`unknown`. */
+function hasNonPlainToolMeta(meta: string | undefined): boolean {
+  return toolResultChips(meta).some((chip) => chip.tone === 'error' || chip.tone === 'warn');
 }
 
 function mergeToolRun(acc: ToolConversationBlock, b: ToolConversationBlock): ToolConversationBlock {

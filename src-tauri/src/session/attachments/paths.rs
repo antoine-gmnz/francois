@@ -31,8 +31,40 @@ pub fn base64_decoded_bytes(chars: u64) -> u64 {
     chars / 4 * 3
 }
 
+/// FR-5. (extension, mime type) pairs — the single source both
+/// `ATTACHMENT_IMAGE_EXTENSIONS` and [`mime_type_for_extension`] derive from,
+/// so a supported image type is added or removed in exactly one place.
+const ATTACHMENT_IMAGE_TYPES: [(&str, &str); 5] = [
+    (".png", "image/png"),
+    (".jpg", "image/jpeg"),
+    (".jpeg", "image/jpeg"),
+    (".gif", "image/gif"),
+    (".webp", "image/webp"),
+];
+
 /// FR-5. Extensions (lowercase, with dot) that classify as kind `image`.
-pub const ATTACHMENT_IMAGE_EXTENSIONS: [&str; 5] = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+pub const ATTACHMENT_IMAGE_EXTENSIONS: [&str; 5] = {
+    let mut out = [""; 5];
+    let mut i = 0;
+    while i < ATTACHMENT_IMAGE_TYPES.len() {
+        out[i] = ATTACHMENT_IMAGE_TYPES[i].0;
+        i += 1;
+    }
+    out
+};
+
+/// pi-transcript-events FR-7 (`wire::build_prompt_body`): mime type for a
+/// file name, case-insensitive, keyed on the same list
+/// `ATTACHMENT_IMAGE_EXTENSIONS` derives from — a name with no matching
+/// extension falls back to `application/octet-stream`.
+pub fn mime_type_for_extension(name: &str) -> &'static str {
+    let lower = name.to_lowercase();
+    ATTACHMENT_IMAGE_TYPES
+        .iter()
+        .find(|(ext, _)| lower.ends_with(ext))
+        .map(|(_, mime)| *mime)
+        .unwrap_or("application/octet-stream")
+}
 
 /// FR-2. Directory segments appended to the session cwd.
 pub const ATTACHMENTS_DIR_ROOT: &str = ".francois";
@@ -267,6 +299,20 @@ mod tests {
         ] {
             assert_eq!(attachment_kind_for_name(name), "file", "{name}");
         }
+    }
+
+    #[test]
+    fn mime_type_for_extension_matches_the_five_image_extensions_case_insensitively() {
+        assert_eq!(mime_type_for_extension("a.png"), "image/png");
+        assert_eq!(mime_type_for_extension("b.JPG"), "image/jpeg");
+        assert_eq!(mime_type_for_extension("c.jpeg"), "image/jpeg");
+        assert_eq!(mime_type_for_extension("d.GIF"), "image/gif");
+        assert_eq!(mime_type_for_extension("e.webp"), "image/webp");
+        assert_eq!(
+            mime_type_for_extension("report.pdf"),
+            "application/octet-stream"
+        );
+        assert_eq!(mime_type_for_extension("noext"), "application/octet-stream");
     }
 
     #[test]

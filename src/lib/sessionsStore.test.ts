@@ -5,7 +5,7 @@
 // never swapped out of it or dropped from it.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { SessionMeta } from '../../contract/common';
+import type { RuntimeEventPayload, SessionMeta } from '../../contract/common';
 import { useStore } from './store';
 
 function meta(id: string): SessionMeta {
@@ -193,6 +193,23 @@ describe('runtime events (pi-runtime-boundary FR-4/FR-5/FR-6)', () => {
       event: { kind: 'run.state', state: 'failed' },
     });
     expect(useStore.getState().sessions[0].status).toBe('idle');
+  });
+
+  it.each<RuntimeEventPayload>([
+    { kind: 'message.user', blockId: 'b1', text: 'hi', attachments: [] },
+    { kind: 'assistant.delta', blockId: 'b1', contentIndex: 0, text: 'hi', offset: 0 },
+    { kind: 'assistant.complete', blockId: 'b1', text: 'hi', outcome: 'complete' },
+    { kind: 'tool.update', blockId: 'b1', tool: { id: 't1', name: 'Read', status: 'pending', inputText: '', outputText: '', inputTruncated: false, outputTruncated: false } },
+    { kind: 'notice', blockId: 'b1', tone: 'info', text: 'hi' },
+  ])('preserves the sessions array reference for transcript kind $kind', (event) => {
+    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1' };
+    useStore.getState().setSessions([session]);
+    const before = useStore.getState().sessions;
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event,
+    });
+    expect(useStore.getState().sessions).toBe(before);
   });
 });
 
