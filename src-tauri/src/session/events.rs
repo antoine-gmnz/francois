@@ -515,7 +515,9 @@ mod tests {
     }
 }
 
-#[derive(Serialize, Clone, Copy)]
+// pi-rpc-sessions: PartialEq/Eq/Debug added so the adapter's dispatcher can
+// compare/log its own connection state without a duplicate enum.
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 #[allow(dead_code)]
 pub enum RuntimeRunState {
