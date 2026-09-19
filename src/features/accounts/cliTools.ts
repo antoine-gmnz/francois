@@ -225,7 +225,7 @@ export function runtimeInstallNote(status: RuntimeInstallStatus | null): string 
       return 'Checking the Pi installation failed.';
     case 'ready':
       return status.provenance === 'unverified'
-        ? 'Matches a certified version, but its build identity could not be verified.'
+        ? "Ready to run Pi sessions. Build identity isn't verified yet."
         : 'Certified and ready to run Pi sessions.';
   }
 }
