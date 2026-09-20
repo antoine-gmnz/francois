@@ -24,17 +24,32 @@ const OUTPUT_CAP: usize = 64 * 1024;
 // `--version` probe" shape. This module only wires the FR-2 deadline/cap into
 // it.
 
-fn run_bounded(program: impl AsRef<OsStr>, args: &[&str]) -> BoundedRun {
-    run_bounded_with(program, args, PROBE_TIMEOUT)
+fn run_bounded(program: impl AsRef<OsStr>, args: &[&str], env: ProbeEnv<'_>) -> BoundedRun {
+    run_bounded_with(program, args, PROBE_TIMEOUT, env)
 }
+
+/// The environment a probe spawn runs under (PR #142 §5). `None` is the
+/// ambient one — what `francois:runtime:installation` has always used, since
+/// it nominates no account and only reads a version banner. `Some` is an
+/// ACCOUNT's environment (`account::pi_account_env`), applied with
+/// `exact_env` exactly as a real Pi session's spawn applies it, so a probe run
+/// on an account's behalf resolves the same directory its sessions will.
+pub(crate) type ProbeEnv<'a> = Option<&'a [(String, String)]>;
 
 /// Timeout injected as a parameter — same reason `process_util`'s
 /// `login_shell_path_with` splits the deadline out of `login_shell_path`: a
 /// test proving the FR-2 deadline is enforced must not actually wait 5s.
-fn run_bounded_with(program: impl AsRef<OsStr>, args: &[&str], timeout: Duration) -> BoundedRun {
-    crate::process_util::spawn(program)
-        .args(args)
-        .run_bounded(timeout, OUTPUT_CAP)
+fn run_bounded_with(
+    program: impl AsRef<OsStr>,
+    args: &[&str],
+    timeout: Duration,
+    env: ProbeEnv<'_>,
+) -> BoundedRun {
+    let mut cmd = crate::process_util::spawn(program).args(args);
+    if let Some(env) = env {
+        cmd = cmd.exact_env(env.iter().cloned());
+    }
+    cmd.run_bounded(timeout, OUTPUT_CAP)
 }
 
 // ---------------------------------------------------------------- resolution
@@ -60,10 +75,10 @@ pub(crate) enum ResolutionOutcome {
 /// Windows) returns the `.cmd`/`.exe` shim with its extension explicit, which
 /// is what makes spawning it argv-safe with no shell interpolation (the same
 /// reasoning `process_util::codex_program` documents).
-pub(crate) fn probe_native() -> ResolutionOutcome {
+pub(crate) fn probe_native(env: ProbeEnv<'_>) -> ResolutionOutcome {
     match crate::process_util::resolve_program(PI_BIN) {
         None => ResolutionOutcome::Missing,
-        Some(path) => probe_binary_at(&path),
+        Some(path) => probe_binary_at(&path, env),
     }
 }
 
@@ -72,8 +87,8 @@ pub(crate) fn probe_native() -> ResolutionOutcome {
 /// script/shim without mutating process-wide `PATH` (mirrors `probe_native`
 /// calling `resolve_program` — that half is `process_util`'s own, already
 /// tested there against spaces/Unicode/npm-shim fixtures).
-fn probe_binary_at(path: &std::path::Path) -> ResolutionOutcome {
-    let run = run_bounded(path, &["--version"]);
+fn probe_binary_at(path: &std::path::Path, env: ProbeEnv<'_>) -> ResolutionOutcome {
+    let run = run_bounded(path, &["--version"], env);
     if run.timed_out {
         return ResolutionOutcome::TimedOut;
     }
@@ -86,9 +101,9 @@ fn probe_binary_at(path: &std::path::Path) -> ResolutionOutcome {
     }
 }
 
-pub(crate) fn probe_node_at_native() -> Option<String> {
+pub(crate) fn probe_node_at_native(env: ProbeEnv<'_>) -> Option<String> {
     let path = crate::process_util::resolve_program(NODE_BIN)?;
-    let run = run_bounded(&path, &["--version"]);
+    let run = run_bounded(&path, &["--version"], env);
     (!run.timed_out && !run.spawn_failed).then(|| preferred_text(&run))
 }
 
@@ -108,7 +123,7 @@ fn preferred_text(run: &BoundedRun) -> String {
 /// request — never the ambient default (spec: "no implicit cross-environment
 /// fallback"). One spawn does both jobs (`command -v pi` then `pi --version`,
 /// `&&`-chained) so the FR-2 deadline is paid once, not twice.
-pub(crate) fn probe_wsl(distro: &str) -> ResolutionOutcome {
+pub(crate) fn probe_wsl(distro: &str, env: ProbeEnv<'_>) -> ResolutionOutcome {
     let run = run_bounded(
         "wsl.exe",
         &[
@@ -119,6 +134,7 @@ pub(crate) fn probe_wsl(distro: &str) -> ResolutionOutcome {
             "-lc",
             "command -v pi && pi --version",
         ],
+        env,
     );
     if run.spawn_failed {
         return ResolutionOutcome::Unavailable(
@@ -161,8 +177,8 @@ fn parse_wsl_probe_output(decoded: &str) -> Option<(String, String)> {
     Some((path.to_string(), rest))
 }
 
-pub(crate) fn probe_node_wsl(distro: &str) -> Option<String> {
-    let run = run_bounded("wsl.exe", &["-d", distro, "--", NODE_BIN, "--version"]);
+pub(crate) fn probe_node_wsl(distro: &str, env: ProbeEnv<'_>) -> Option<String> {
+    let run = run_bounded("wsl.exe", &["-d", distro, "--", NODE_BIN, "--version"], env);
     if run.timed_out || run.spawn_failed || run.status.map(|s| !s.success()).unwrap_or(true) {
         return None;
     }
@@ -269,10 +285,42 @@ mod tests {
         FakeScript { dir, path }
     }
 
+    /// PR #142 §5: the probe must run in the ACCOUNT's environment, not this
+    /// process's. Proven end to end against a real spawn: the fake binary
+    /// prints what `PI_CODING_AGENT_DIR` holds, and it holds what was passed —
+    /// not whatever the test runner inherited.
+    #[test]
+    fn a_probe_spawn_runs_in_the_environment_it_was_given() {
+        let script = fake_script(
+            "#!/bin/sh\necho \"$PI_CODING_AGENT_DIR\"\n",
+            "@echo off\r\necho %PI_CODING_AGENT_DIR%\r\n",
+        );
+        let dir = std::env::temp_dir().join("francois-probe-env-fixture");
+        // Over the REAL ambient snapshot (plus a stale directory to displace):
+        // the OS baseline has to survive the FR-5 scrub for the child to start
+        // at all on Windows, which is half of what this proves.
+        let ambient: Vec<(String, String)> = std::env::vars()
+            .chain([(
+                "PI_CODING_AGENT_DIR".to_string(),
+                "/ambient/other".to_string(),
+            )])
+            .collect();
+        let env =
+            crate::account::pi_account_env(&ambient, &dir.to_string_lossy(), false, "native", &[]);
+        match probe_binary_at(&script.path, Some(&env)) {
+            ResolutionOutcome::Found { version_output, .. } => assert_eq!(
+                version_output.trim(),
+                dir.to_string_lossy(),
+                "the account's directory, never the ambient one"
+            ),
+            _ => panic!("expected Found"),
+        }
+    }
+
     #[test]
     fn probe_binary_at_reads_a_version_banner_from_a_path_with_spaces_and_unicode() {
         let script = fake_script("#!/bin/sh\necho 0.85.1\n", "@echo off\r\necho 0.85.1\r\n");
-        match probe_binary_at(&script.path) {
+        match probe_binary_at(&script.path, None) {
             ResolutionOutcome::Found { version_output, .. } => {
                 assert_eq!(
                     parse_version_line(&version_output).as_deref(),
@@ -293,7 +341,7 @@ mod tests {
             "#!/bin/sh\necho 0.85.1\nexit 1\n",
             "@echo off\r\necho 0.85.1\r\nexit /b 1\r\n",
         );
-        match probe_binary_at(&script.path) {
+        match probe_binary_at(&script.path, None) {
             ResolutionOutcome::Found { version_output, .. } => {
                 assert_eq!(
                     parse_version_line(&version_output).as_deref(),
@@ -311,7 +359,12 @@ mod tests {
             "@echo off\r\n:loop\r\ngoto loop\r\n",
         );
         let started = Instant::now();
-        let run = run_bounded_with(&script.path, &["--version"], Duration::from_millis(80));
+        let run = run_bounded_with(
+            &script.path,
+            &["--version"],
+            Duration::from_millis(80),
+            None,
+        );
         assert!(run.timed_out);
         assert!(started.elapsed() < Duration::from_secs(2));
     }
@@ -330,7 +383,7 @@ mod tests {
         // and the run is NOT reported as timed out.
         let script = fake_script("#!/bin/sh\nhead -c 200000 /dev/zero | tr '\\0' 'a'\n", "");
         let started = Instant::now();
-        let run = run_bounded_with(&script.path, &[], Duration::from_secs(5));
+        let run = run_bounded_with(&script.path, &[], Duration::from_secs(5), None);
         assert_eq!(run.stdout.len(), OUTPUT_CAP);
         assert!(!run.timed_out);
         assert!(started.elapsed() < Duration::from_secs(2));

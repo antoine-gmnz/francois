@@ -22,55 +22,45 @@
 //! is already in progress" code — an unrelated Claude login and a Pi setup
 //! must not collide.
 //!
-//! This module owns the shared data model — the fingerprint/trust primitives
-//! every other concern in this domain reads (`compute_fingerprint`,
-//! `effective_trust`, `reconcile_trust_drift`, `find_pi_record`,
-//! `apply_trust_pi`, the in-use gates and `pi_execution_preflight`).
-//! CLAUDE.md's ~1000-line file cap split every other concern out into its own
-//! child: FR-1 (registering a row) into `add`, FR-3 (the setup PTY) into
-//! `setup`, FR-5 (spawn-environment isolation) into `env`, and FR-7/9 (the
-//! provider/model refresh probe) into `refresh` — the same "one concern per
+//! This module owns the shared data model — the TRUST primitives every other
+//! concern in this domain reads (`effective_trust`, `reconcile_trust_drift`,
+//! `find_pi_record`, `apply_trust_pi`, the in-use gates and
+//! `pi_execution_preflight`). CLAUDE.md's ~1000-line file cap split every
+//! other concern out into its own child: FR-1 (registering a row) into `add`,
+//! FR-3 (the setup PTY) into `setup`, FR-5 (spawn-environment isolation) into
+//! `env`, FR-7/9 (the provider/model refresh probe) into `refresh`, FR-6/8's
+//! removal gate and undo into `remove`, and FR-4's fingerprint itself — what
+//! `effective_trust` compares — into `fingerprint`, the same "one concern per
 //! child" shape the rest of the crate follows.
 
 mod add;
 mod env;
+mod fingerprint;
 mod refresh;
+mod remove;
 mod setup;
 
 pub(crate) use add::*;
 pub(crate) use env::*;
-pub(crate) use refresh::*;
+pub(crate) use fingerprint::*;
+pub(crate) use remove::*;
+// `pub`, unlike its siblings: `refresh` declares three items genuinely `pub`
+// (`PiAuthState`, `PiInstallProbe`, `PiProviderAuthObservation` — wire and
+// managed-state types `main.rs`, an external crate relative to this lib, must
+// be able to name; core-architecture-wave3 FR-2). A glob re-exports each item
+// at the LESSER of its own visibility and the `use`'s, so a `pub(crate)` glob
+// would cap those three, while this one leaves every item at exactly what
+// `refresh` declared — its `pub(crate)` items stay `pub(crate)`. Do not pair a
+// `pub(crate)` glob with an explicit `pub use` of the same names instead: that
+// imports each name at two visibilities (rustc: `ambiguous_import_visibilities`).
+pub use refresh::*;
 pub(crate) use setup::*;
-
-// `account::mod.rs` re-exports these three genuinely `pub` (an external-crate
-// wire type, core-architecture-wave3 FR-2 — see its own comment on the same
-// re-export) — a glob (`pub(crate) use refresh::*` above) caps what it
-// re-exports at `pub(crate)`, so that outer `pub use` needs its own explicit,
-// fully-`pub` path through this module too, not just through `refresh`
-// itself.
-pub use refresh::{PiAuthState, PiInstallProbe, PiProviderAuthObservation};
 
 use super::*;
 use crate::ipc::{AppError, ErrorCode};
 
-use std::path::Path;
-
-// ---------------------------------------------------------------- FR-4: the
-// executable-configuration fingerprint.
-
-/// pi-provider-auth §6/FR-4: the top-level files inside a Pi `configDir` that
-/// can carry EXECUTABLE configuration — a custom/local provider naming a
-/// command Pi runs to resolve a credential (`specs/research/
-/// pi-integration-audit.md`'s "Models"/"Provider authentication" rows).
-/// `auth.json` is deliberately EXCLUDED: Pi's own OAuth refresh rewrites it on
-/// an ordinary token refresh, and FR-4 requires that a refresh ALONE never
-/// invalidates consent.
-///
-/// The audit ran no live Pi install/capture, so these exact filenames are not
-/// independently confirmed — see the feature handoff for this limit and what
-/// would replace it (a captured fixture naming the certified release's real
-/// executable-config surface, recorded in the Pi adapter's manifest per §6).
-const CONFIG_FINGERPRINT_FILES: &[&str] = &["config.json", "models.json", "providers.json"];
+// ---------------------------------------------------------------- FR-4: trust
+// over the executable-configuration fingerprint (`fingerprint.rs`).
 
 /// §6, verbatim: "If they cannot be enumerated reliably, configuration
 /// remains untrusted for MVP." `CONFIG_FINGERPRINT_FILES` above is
@@ -85,45 +75,71 @@ const CONFIG_FINGERPRINT_FILES: &[&str] = &["config.json", "models.json", "provi
 /// already exercised with this flag forced `true` in `pi.rs`'s own tests.
 const FINGERPRINT_INPUTS_VERIFIED: bool = false;
 
-/// A deterministic fingerprint of `CONFIG_FINGERPRINT_FILES`' (existence,
-/// size, mtime) inside `config_dir`. Two directories with the same content
-/// hash the same; a changed/added/removed candidate file changes the hash.
-/// Never reads file CONTENTS (only metadata) — cheap enough to run on every
-/// trust-gated call, and it never needs to open a file it has not been
-/// consented to touch.
-pub(crate) fn compute_fingerprint(config_dir: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for name in CONFIG_FINGERPRINT_FILES {
-        let path = Path::new(config_dir).join(name);
-        match std::fs::metadata(&path) {
-            Ok(meta) => {
-                name.hash(&mut hasher);
-                true.hash(&mut hasher);
-                meta.len().hash(&mut hasher);
-                if let Ok(modified) = meta.modified() {
-                    if let Ok(dur) = modified.duration_since(std::time::UNIX_EPOCH) {
-                        dur.as_secs().hash(&mut hasher);
-                    }
-                }
-            }
-            Err(_) => {
-                name.hash(&mut hasher);
-                false.hash(&mut hasher);
-            }
-        }
+/// PR #142 §5: the spelling of a Pi row's `configDir` a WINDOWS-side reader
+/// must open — the one every `compute_fingerprint` call site goes through, so
+/// a fingerprint taken at add/trust time and one taken at check time can never
+/// read two different spellings of the same directory.
+///
+/// A `wsl` row stores the path the DISTRO uses (`/home/u/.pi`, FR-1): nothing
+/// on this side can open that, and `std::fs` on the raw string answers
+/// "gone" — which `effective_trust` would read as drift, on every check,
+/// forever. `\\wsl.localhost\<distro>\…` is the spelling that opens it, and
+/// `wsl::linux_to_wsl_unc` is what builds it (it asks the distro for its own
+/// FR-3 root rather than assuming a prefix).
+///
+/// `None` means "there is nothing readable here" — never a guess: a `wsl` row
+/// with no distro, or a distro whose UNC root could not be discovered. Every
+/// caller treats that exactly like an unfingerprintable directory, which is
+/// FR-4's safe direction (untrusted), not a silent pass.
+pub(crate) fn readable_config_dir(
+    config_dir: &str,
+    runtime: &str,
+    distro: Option<&str>,
+) -> Option<String> {
+    readable_config_dir_with(config_dir, runtime, distro, |distro, path| {
+        crate::wsl::linux_to_wsl_unc(Some(distro), path)
+    })
+}
+
+/// The pure decision behind it, with the distro translation INJECTED — the
+/// same split `process_util::login_shell_path_with` uses for its deadline:
+/// `linux_to_wsl_unc` spawns `wsl.exe` (once per distro, cached), so the
+/// choice of spelling is testable without one.
+fn readable_config_dir_with(
+    config_dir: &str,
+    runtime: &str,
+    distro: Option<&str>,
+    translate: impl Fn(&str, &str) -> Option<String>,
+) -> Option<String> {
+    if runtime != "wsl" {
+        // Byte-identical to the pre-fix behaviour on every OS.
+        return Some(config_dir.to_string());
     }
-    format!("{:016x}", hasher.finish())
+    // Already a Windows spelling of an in-distro path — a row registered
+    // through the folder picker before `canonicalize_config_dir_for`
+    // normalized the stored value to the Linux one.
+    if crate::wsl::is_wsl_unc_path(config_dir) {
+        return Some(config_dir.to_string());
+    }
+    let distro = distro.map(str::trim).filter(|d| !d.is_empty())?;
+    translate(distro, config_dir)
 }
 
 /// FR-4: is this record CURRENTLY trusted — `trusted` alone is not enough,
-/// the fingerprint recorded at the last explicit trust must still match.
+/// the fingerprint recorded at the last explicit trust must still match. A
+/// configuration that cannot be fingerprinted AT ALL (`None` — a gone
+/// directory, a symlinked or oversized input; see `compute_fingerprint`) is
+/// never trusted: an unprovable configuration reads exactly like a changed
+/// one, which is the FR-4-safe direction. An in-distro directory this side
+/// cannot even name (`readable_config_dir` → `None`) is the same answer.
 pub(crate) fn effective_trust(record: &PiRecord, config_dir: &str) -> bool {
+    let current = readable_config_dir(config_dir, &record.runtime, record.distro.as_deref())
+        .and_then(|path| compute_fingerprint(&path).into_baseline());
     record.trusted
-        && record
-            .fingerprint
-            .as_deref()
-            .is_some_and(|fp| fp == compute_fingerprint(config_dir))
+        && match (record.fingerprint.as_deref(), current) {
+            (Some(recorded), Some(current)) => recorded == current,
+            _ => false,
+        }
 }
 
 /// FR-4: a trust that has DRIFTED — the row still SAYS trusted, but the
@@ -187,13 +203,40 @@ fn apply_trust_pi_with(
     trust_configuration: bool,
     verified: bool,
 ) -> Result<(), AppError> {
-    let config_dir = find_pi_record(inner, id)?.config_dir.clone();
+    let record = find_pi_record(inner, id)?;
+    let config_dir = record.config_dir.clone();
+    // PR #142 §5: the SAME spelling `effective_trust` will read back — a
+    // baseline taken through one and compared through another is a row that
+    // reads as drifted the moment it is checked.
+    let cfg = record
+        .pi
+        .as_ref()
+        .expect("kind==Pi invariant (find_pi_record filtered on it)");
+    let readable = readable_config_dir(&config_dir, &cfg.runtime, cfg.distro.as_deref());
     if trust_configuration && !verified {
         return Err(AppError::new(
             ErrorCode::AccountConfigUntrusted,
             "Pi configuration trust cannot be granted yet — the fingerprint inputs are unverified for this build",
         ));
     }
+    // FR-4: trust is only ever granted over a fingerprint that could actually
+    // be computed — a configuration we cannot prove is unchanged later must
+    // not be recorded as trusted now (§6's "remains untrusted" stance).
+    let fingerprint = if trust_configuration {
+        match readable
+            .and_then(|path| compute_fingerprint(&path).into_baseline())
+        {
+            Some(fp) => Some(fp),
+            None => {
+                return Err(AppError::new(
+                    ErrorCode::AccountConfigUntrusted,
+                    "this Pi configuration cannot be fingerprinted — check that the directory exists and that its configuration files are regular files under 1 MiB",
+                ))
+            }
+        }
+    } else {
+        None
+    };
     let record = inner
         .records
         .iter_mut()
@@ -205,7 +248,7 @@ fn apply_trust_pi_with(
         .expect("kind==Pi invariant (find_pi_record filtered on it)");
     if trust_configuration {
         pi.trusted = true;
-        pi.fingerprint = Some(compute_fingerprint(&config_dir));
+        pi.fingerprint = fingerprint;
     } else {
         pi.trusted = false;
         pi.fingerprint = None;
@@ -306,65 +349,109 @@ pub(crate) fn pi_execution_preflight(
 mod tests {
     use super::*;
     use crate::account::testutil::*;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
+    use std::path::Path;
 
-    // ---------- fingerprint (FR-4) ----------
+    // ---------- PR #142 §5: which spelling the fingerprint reads ----------
+    //
+    // `readable_config_dir` itself ends in a live `wsl.exe` probe
+    // (`linux_to_wsl_unc`), so only the DECISION is tested — the translation
+    // is injected. The `std::fs` read behind it stays untested: it needs a
+    // real distro.
 
-    #[test]
-    fn an_empty_directory_fingerprints_deterministically() {
-        let dir = tmp_account_dir("pi-fp-empty");
-        let a = compute_fingerprint(&dir.to_string_lossy());
-        let b = compute_fingerprint(&dir.to_string_lossy());
-        assert_eq!(a, b);
-        std::fs::remove_dir_all(&dir).ok();
+    /// A translation that answers like a discovered distro root would, and
+    /// records nothing else — anything reaching it is the in-distro branch.
+    fn fake_translate(distro: &str, path: &str) -> Option<String> {
+        Some(format!(
+            "\\\\wsl.localhost\\{distro}{}",
+            path.replace('/', "\\")
+        ))
     }
 
     #[test]
-    fn adding_a_candidate_config_file_changes_the_fingerprint() {
-        let dir = tmp_account_dir("pi-fp-add");
-        let before = compute_fingerprint(&dir.to_string_lossy());
-        std::fs::write(dir.join("models.json"), "{}").unwrap();
-        let after = compute_fingerprint(&dir.to_string_lossy());
-        assert_ne!(before, after);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_token_refresh_in_auth_json_never_changes_the_fingerprint() {
-        // FR-4: "token refresh alone does not invalidate consent" — auth.json
-        // is deliberately excluded from the fingerprint inputs.
-        let dir = tmp_account_dir("pi-fp-auth-refresh");
-        std::fs::write(dir.join("auth.json"), r#"{"token":"a"}"#).unwrap();
-        let before = compute_fingerprint(&dir.to_string_lossy());
-        std::fs::write(dir.join("auth.json"), r#"{"token":"b-refreshed"}"#).unwrap();
-        let after = compute_fingerprint(&dir.to_string_lossy());
-        assert_eq!(before, after);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn two_directories_with_the_same_configuration_fingerprint_identically() {
-        let a = tmp_account_dir("pi-fp-cross-a");
-        let b = tmp_account_dir("pi-fp-cross-b");
-        std::fs::write(a.join("config.json"), "same").unwrap();
-        std::fs::write(b.join("config.json"), "same").unwrap();
-        // Two distinct directories with byte-identical candidate files hash
-        // the same — the fingerprint proves "this configuration", not "this
-        // path"; cross-account isolation is `configDir` itself (FR-1/9), not
-        // this value.
+    fn a_native_row_is_read_exactly_as_stored_on_every_platform() {
+        // The unchanged half: no translation is even consulted.
         assert_eq!(
-            compute_fingerprint(&a.to_string_lossy()),
-            compute_fingerprint(&b.to_string_lossy())
+            readable_config_dir_with("/pi/home", "native", None, |_, _| panic!(
+                "native must never translate"
+            )),
+            Some("/pi/home".to_string())
         );
-        std::fs::remove_dir_all(&a).ok();
-        std::fs::remove_dir_all(&b).ok();
+        assert_eq!(
+            readable_config_dir_with(r"D:\pi\home", "native", None, |_, _| panic!()),
+            Some(r"D:\pi\home".to_string())
+        );
     }
+
+    #[test]
+    fn a_wsl_row_is_read_through_its_distros_unc_root() {
+        // FR-1 stores the path the DISTRO uses; `std::fs` on that string is
+        // "gone" from here, which `effective_trust` would read as drift on
+        // every single check.
+        assert_eq!(
+            readable_config_dir_with("/home/u/.pi", "wsl", Some("Ubuntu"), fake_translate),
+            Some("\\\\wsl.localhost\\Ubuntu\\home\\u\\.pi".to_string())
+        );
+    }
+
+    #[test]
+    fn a_wsl_row_already_stored_as_a_unc_path_is_left_alone() {
+        assert_eq!(
+            readable_config_dir_with(
+                "\\\\wsl.localhost\\Ubuntu\\home\\u\\.pi",
+                "wsl",
+                Some("Ubuntu"),
+                |_, _| panic!("already a Windows spelling")
+            ),
+            Some("\\\\wsl.localhost\\Ubuntu\\home\\u\\.pi".to_string())
+        );
+    }
+
+    #[test]
+    fn a_wsl_row_with_no_distro_or_no_discoverable_root_refuses_rather_than_guessing() {
+        // FR-4's safe direction: no readable directory ⇒ no baseline ⇒ never
+        // trusted. Guessing a prefix would fingerprint some OTHER directory.
+        assert_eq!(
+            readable_config_dir_with("/home/u/.pi", "wsl", None, fake_translate),
+            None
+        );
+        assert_eq!(
+            readable_config_dir_with("/home/u/.pi", "wsl", Some("   "), fake_translate),
+            None
+        );
+        assert_eq!(
+            readable_config_dir_with("/home/u/.pi", "wsl", Some("Ubuntu"), |_, _| None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_wsl_row_this_side_cannot_name_is_never_trusted() {
+        // The end-to-end consequence, through the production accessor: no
+        // distro ⇒ no readable path ⇒ no current fingerprint ⇒ untrusted,
+        // whatever the row claims. (A `wsl` row WITH a distro needs a live
+        // distro to read, which is why only this half is asserted here.)
+        let record = PiRecord {
+            runtime: "wsl".into(),
+            distro: None,
+            inherit_environment_credentials: false,
+            trusted: true,
+            fingerprint: Some("v2:whatever".into()),
+        };
+        assert!(!effective_trust(&record, "/home/u/.pi"));
+    }
+
+    // ---------- trust over the fingerprint (FR-4) ----------
+    //
+    // The fingerprint VALUE's own behaviour (content hashing, the refusal
+    // cases, the format version) is tested in `fingerprint.rs`; what follows
+    // is what the trust model does with it.
 
     #[test]
     fn effective_trust_requires_both_the_flag_and_a_matching_fingerprint() {
         let dir = tmp_account_dir("pi-effective-trust");
-        let fp = compute_fingerprint(&dir.to_string_lossy());
+        let fp = compute_fingerprint(&dir.to_string_lossy())
+            .into_baseline()
+            .unwrap();
         let trusted = PiRecord {
             runtime: "native".into(),
             distro: None,
@@ -380,7 +467,11 @@ mod tests {
 
         drifted.trusted = false;
         assert!(!effective_trust(&drifted, &dir.to_string_lossy()));
-        std::fs::remove_dir_all(&dir).ok();
+
+        // An UNPROVABLE configuration (the directory is gone) reads exactly
+        // like a changed one, never like a matching one.
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(!effective_trust(&trusted, &dir.to_string_lossy()));
     }
 
     #[test]
@@ -422,6 +513,22 @@ mod tests {
     }
 
     #[test]
+    fn granting_trust_over_a_configuration_that_cannot_be_fingerprinted_is_refused() {
+        // FR-4/§6: a row must never be recorded as trusted with no baseline to
+        // drift from — `trusted=true, fingerprint=None` would read as
+        // untrusted forever while claiming the opposite on the wire.
+        let mut inner = inner_fixture(&[], "default");
+        inner.records.push(pi_record_fixture("p1", "Pi", false));
+        let dir = inner.records[0].config_dir.clone();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let err = apply_trust_pi_with(&mut inner, "p1", true, true).unwrap_err();
+        assert_eq!(err.code, ErrorCode::AccountConfigUntrusted);
+        let pi = inner.records[0].pi.as_ref().unwrap();
+        assert!(!pi.trusted);
+        assert!(pi.fingerprint.is_none());
+    }
+
+    #[test]
     fn granting_trust_through_the_production_entry_point_is_refused_while_unverified() {
         // §6/CRITICAL: no caller of the real `apply_trust_pi` can grant trust
         // off today's unverified `CONFIG_FINGERPRINT_FILES` guess. Pins
@@ -452,53 +559,14 @@ mod tests {
 
     // ---------- FR-6/FR-8: in-use gate ----------
 
-    // Minimal fakes for the portable_pty types a live `LoginHandle` fixture
-    // needs below — never spawned, never read.
-    fn fake_master() -> Box<dyn portable_pty::MasterPty + Send> {
-        portable_pty::native_pty_system()
-            .openpty(portable_pty::PtySize {
-                rows: 1,
-                cols: 1,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap()
-            .master
-    }
-    fn fake_killer() -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
-        #[derive(Debug)]
-        struct NoopKiller;
-        impl portable_pty::ChildKiller for NoopKiller {
-            fn kill(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-            fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
-                Box::new(NoopKiller)
-            }
-        }
-        Box::new(NoopKiller)
-    }
-
     #[test]
     fn an_open_pi_setup_pty_for_the_account_marks_it_in_use() {
         let mut inner = inner_fixture(&[], "default");
         inner.records.push(pi_record_fixture("p1", "Pi", true));
         assert!(!setup_pty_open_for(&inner, "p1"));
-        inner.pi_setups.insert(
-            "login-1".into(),
-            LoginHandle {
-                login_id: "login-1".into(),
-                account_id: "p1".into(),
-                label: None,
-                config_dir: "/pi/home".into(),
-                existing: true,
-                writer: Box::new(std::io::sink()),
-                master: fake_master(),
-                killer: fake_killer(),
-                settled: Arc::new(AtomicBool::new(false)),
-                kind: AccountKind::Pi,
-            },
-        );
+        inner
+            .pi_setups
+            .insert("login-1".into(), pi_setup_handle_fixture("p1"));
         assert!(setup_pty_open_for(&inner, "p1"));
         assert!(!setup_pty_open_for(&inner, "other"));
     }
@@ -520,21 +588,9 @@ mod tests {
         inner.records.push(pi_record_fixture("p1", "Pi", true));
         assert!(trust_pi_gate(&inner, "p1").is_ok());
 
-        inner.pi_setups.insert(
-            "login-1".into(),
-            LoginHandle {
-                login_id: "login-1".into(),
-                account_id: "p1".into(),
-                label: None,
-                config_dir: "/pi/home".into(),
-                existing: true,
-                writer: Box::new(std::io::sink()),
-                master: fake_master(),
-                killer: fake_killer(),
-                settled: Arc::new(AtomicBool::new(false)),
-                kind: AccountKind::Pi,
-            },
-        );
+        inner
+            .pi_setups
+            .insert("login-1".into(), pi_setup_handle_fixture("p1"));
         assert_eq!(
             trust_pi_gate(&inner, "p1").unwrap_err().code,
             ErrorCode::AccountInUse

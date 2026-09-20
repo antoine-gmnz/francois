@@ -369,34 +369,11 @@ mod path_filter_tests {
 // `Command` from this module with the defaults un-applied, which is the whole
 // point — `into_command()` hands back one that has already been through them.
 
-/// The allowlist a scrubbed child keeps. Everything else — API keys, tokens,
-/// `ANTHROPIC_*`, the user's whole shell environment — is dropped, so a
-/// third-party binary this app spawns on the user's behalf cannot read a
-/// credential out of its own environment. `PATH` is a member, so overriding it
-/// with the login shell's is a value change rather than a widening.
-pub const ENV_ALLOWLIST: &[&str] = &[
-    "PATH",
-    "HOME",
-    "USER",
-    "LANG",
-    "TMPDIR",
-    "SystemRoot",
-    "windir",
-    "PATHEXT",
-    "COMSPEC",
-    "TEMP",
-    "TMP",
-    "USERPROFILE",
-    "HOMEDRIVE",
-    "HOMEPATH",
-];
+// Concern 3's data — the allowlist and how environment names compare — lives
+// in `env.rs`; the methods that apply it are below.
+mod env;
 
-/// The pure half of the scrub: keep only `ENV_ALLOWLIST` members, in order.
-pub fn scrub_env<I: IntoIterator<Item = (String, String)>>(vars: I) -> Vec<(String, String)> {
-    vars.into_iter()
-        .filter(|(k, _)| ENV_ALLOWLIST.contains(&k.as_str()))
-        .collect()
-}
+pub use env::{env_name_eq, scrub_env, ENV_ALLOWLIST};
 
 /// A `Command` with the four spawn concerns already applied. Build it with
 /// [`spawn`]; every method mirrors the `Command` method of the same name, so a
@@ -805,24 +782,6 @@ mod bounded_run_tests {
 #[cfg(test)]
 mod facade_tests {
     use super::*;
-
-    /// The scrub is the security-relevant half: a secret in this process's
-    /// environment must not reach a child spawned on the user's behalf.
-    #[test]
-    fn scrubbing_keeps_the_allowlist_and_drops_everything_else() {
-        let kept = scrub_env([
-            ("PATH".to_string(), "/usr/bin".to_string()),
-            ("ANTHROPIC_API_KEY".to_string(), "sk-leak".to_string()),
-            ("HOME".to_string(), "/home/u".to_string()),
-        ]);
-        assert_eq!(
-            kept,
-            vec![
-                ("PATH".to_string(), "/usr/bin".to_string()),
-                ("HOME".to_string(), "/home/u".to_string()),
-            ]
-        );
-    }
 
     /// Concern 4 by construction: a child that names no stdio still cannot read
     /// the app's stdin. Proven by running one — a `Command` exposes none of its

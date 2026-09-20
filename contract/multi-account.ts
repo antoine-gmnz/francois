@@ -119,7 +119,11 @@ export interface AccountRemoveData {
   blockedSessions: SessionId[];
 }
 export type AccountRemoveResponse = Result<AccountRemoveData>;
-// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_NOT_REMOVABLE', 'ACCOUNT_IN_USE' (detail: { blockedSessions }), 'INTERNAL'
+// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_NOT_REMOVABLE',
+//         'ACCOUNT_IN_USE' (detail: { blockedSessions } when sessions pin the account; NO detail when a Pi
+//           account's setup PTY is open — pi-provider-auth, same gate as trustPi),
+//         'INTERNAL' (may carry detail: { blockedSessions } — a refused Pi removal whose undo could not be
+//           written back)
 
 // francois:account:addEndpoint → invoke('account_add_endpoint')
 export interface AccountAddEndpointPayload {
@@ -216,7 +220,12 @@ export interface PiAccountCreateInput {
   trustConfiguration: boolean; // explicit user action; false saves the account with trusted=false, not a rejected call
 }
 export type AccountAddPiResponse = Result<Account[]>;
-// errors: 'INVALID_INPUT' (blank label, non-absolute/missing configDir, duplicate configDir+runtime, missing distro for wsl), 'INTERNAL'
+// errors: 'INVALID_INPUT' (blank or over-60 label · non-absolute, missing or not-a-directory configDir ·
+//           duplicate configDir+runtime+distro · missing distro for wsl, or a distro without it · 'wsl' off
+//           Windows · configDir inside or containing the app data directory · configDir overlapping another
+//           account's directory — equality with another Pi row under a different runtime/distro is the one
+//           allowed overlap, FR-1),
+//         'INTERNAL'
 
 // francois:account:trustPi → invoke('account_trust_pi')
 // Fingerprints the account's current executable configuration and records
@@ -227,7 +236,9 @@ export interface AccountTrustPiPayload {
   trustConfiguration: boolean;
 }
 export type AccountTrustPiResponse = Result<Account[]>;
-// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_IN_USE', 'INTERNAL'
+// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_IN_USE',
+//         'ACCOUNT_CONFIG_UNTRUSTED' (a GRANT refused: this build's fingerprint inputs are unverified, or the
+//           configuration cannot be fingerprinted at all — a symlinked or oversized input), 'INTERNAL'
 
 // francois:account:piSetup → invoke('account_pi_setup')
 // Launches the certified Pi interactive binary in a login PTY (reusing the
@@ -242,7 +253,8 @@ export type AccountTrustPiResponse = Result<Account[]>;
 // captured into diagnostics, transcripts or persisted storage.
 export interface PiSetupInput { accountId: AccountId }
 export type AccountPiSetupResponse = Result<AccountLoginStarted>;
-// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_CONFIG_UNTRUSTED', 'SPAWN_FAILED', 'PTY_ERROR', 'INTERNAL'
+// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_CONFIG_UNTRUSTED', 'ACCOUNT_CONFIG_CHANGED' (fingerprint drift since
+//         trust was recorded), 'SPAWN_FAILED', 'PTY_ERROR', 'INTERNAL'
 
 // francois:account:piRefresh → invoke('account_pi_refresh')
 // Runs a per-account model probe (FR-7/FR-9: same launch policy as sessions,
@@ -256,7 +268,8 @@ export interface PiProviderAuthObservation {
   message?: string;
 }
 export type AccountPiRefreshResponse = Result<PiProviderAuthObservation[]>;
-// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_CONFIG_UNTRUSTED', 'RUNTIME_UNAVAILABLE',
+// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_CONFIG_UNTRUSTED', 'ACCOUNT_CONFIG_CHANGED', 'INVALID_INPUT' (a stored
+//         runtime/distro that no longer validates), 'RUNTIME_UNAVAILABLE',
 //         'RUNTIME_INCOMPATIBLE', 'RUNTIME_TIMEOUT', 'RUNTIME_PROTOCOL_ERROR',
 //         'PROVIDER_AUTH_FAILED' (a provider observed later as failed, never a login-return success), 'INTERNAL'
 

@@ -167,3 +167,21 @@ Add Pi account tile/detail/configuration controls to existing Accounts modal and
 ### 2026-09-19 — round 2 (/cohorte-review, verdict REVISE — core REVISE · frontend SHIP)
 
 - 2026-09-19 — 9 findings, all fixed (no-inherit Pi env now built on `process_util::scrub_env`; distro-aware duplicate check; `ACCOUNT_CONFIG_CHANGED` on drift; Pi remove post-write recheck + rollback; shared `useLoginPty` hook; `.acc-pill--attn`). Deferred: `probe_provider_auth` empty observations (FR-7), same root cause as the FR-5 RPC-wiring deferral.
+
+### 2026-09-20 — round 3 (PR #142 review, §5)
+
+- 11 findings (2 HIGH / 4 MEDIUM / 4 LOW / 1 note) + 1 found while fixing, all fixed: the fingerprint is a
+  versioned sha256 CONTENT hash (`v2:<hex>`; a symlinked or oversized input refuses it; a legacy value can
+  only read as "changed"); `configDir` is normalized, and refused inside/around app-data or another
+  account's directory; the env allowlist is case-insensitive on Windows (`Path`/`ComSpec` were dropped from
+  every scrubbed child); a refused removal is a targeted undo and a failed write-back is the command's
+  error; removal is refused while a setup PTY is open (the code comment claiming it could not happen was
+  wrong); `wsl` is refused off Windows. **WSL end to end**: a `wsl` account's `configDir` is a Linux path
+  validated THROUGH the distro, fingerprinted through its `\wsl.localhost` spelling, and every Pi child
+  (setup PTY, refresh probe, model probe, session) is spawned as `wsl.exe -d <distro> --cd …` by one env
+  helper that forwards `PI_CODING_AGENT_DIR` through `WSLENV`. The refresh probe runs in the ACCOUNT's
+  environment and the probe cache is keyed per config dir (FR-9).
+- New, live: `account_add(accountId)` (re-login) never checked the row's kind — it would have started a
+  Claude login PTY in, and mirrored `~/.claude` into, a Pi account's user-owned directory. Now refused.
+- Untested by design (needs a real distro): the `wsl.exe` spawn shells. Everything they decide — argv, env,
+  `WSLENV`, path classification and translation — is pure and tested.

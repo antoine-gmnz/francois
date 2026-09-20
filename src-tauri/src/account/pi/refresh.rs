@@ -43,7 +43,9 @@ pub enum PiAuthState {
 /// (`session::installation_preflight`), injected as managed state by main.rs.
 /// A function pointer rather than a direct call because session/ already
 /// depends on account/ — naming `crate::session` here would close a cycle.
-pub struct PiInstallProbe(pub fn(&str, Option<&str>) -> Result<(), AppError>);
+pub struct PiInstallProbe(
+    pub fn(&str, Option<&str>, &str, &[(String, String)]) -> Result<(), AppError>,
+);
 
 /// FR-7/FR-9: run the account's provider/model probe. "Same launch policy as
 /// sessions" is satisfied by reusing the injected `PiInstallProbe` — the
@@ -51,6 +53,16 @@ pub struct PiInstallProbe(pub fn(&str, Option<&str>) -> Result<(), AppError>);
 /// session's create-time preflight runs — rather than re-implementing
 /// discovery here. It always refreshes (FR-9's "no shared cache") since
 /// Refresh is an explicit user action every time.
+///
+/// FR-9 also means the probe's ENVIRONMENT is the account's (PR #142 §5, the
+/// gap this used to document): the child gets exactly what a session of this
+/// account would — `PI_CODING_AGENT_DIR` pointing at ITS directory, the
+/// `inheritEnvironmentCredentials` choice honoured, and for a `wsl` account
+/// the `WSLENV` entry that carries the variable across the distro boundary.
+/// Built here because `account` owns that rule (`pi_spawn_env`, FR-5); the
+/// probe side only applies it, and keys its 60s cache on the config dir so no
+/// entry is ever shared between two accounts (or with the ambient
+/// `runtime_installation` probe).
 ///
 /// **Known MVP limit** (see the feature handoff): this proves the certified
 /// Pi binary is present and compatible for the account's runtime/distro, and
@@ -65,6 +77,9 @@ pub(crate) fn probe_provider_auth(
     install: &PiInstallProbe,
     runtime: &str,
     distro: Option<&str>,
+    config_dir: &str,
+    inherit_environment_credentials: bool,
 ) -> Result<Vec<PiProviderAuthObservation>, AppError> {
-    (install.0)(runtime, distro).map(|()| Vec::new())
+    let env = super::pi_spawn_env(config_dir, inherit_environment_credentials, runtime, &[]);
+    (install.0)(runtime, distro, config_dir, &env).map(|()| Vec::new())
 }

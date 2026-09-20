@@ -117,16 +117,6 @@ pub(crate) fn spawn_pi_setup(
         })
         .map_err(|e| AppError::new(ErrorCode::PtyError, format!("could not open a pty: {e}")))?;
 
-    // The login-shell PATH (ext-path-resolution) wins over whatever ambient
-    // PATH this process happens to carry — resolved BEFORE filtering, so the
-    // `inheritEnvironmentCredentials=false` branch (PATH-only) still gets the
-    // resolved value rather than a bare `argv0`'s ambient one.
-    let mut ambient: Vec<(String, String)> = std::env::vars().collect();
-    if let Some(path) = crate::process_util::login_shell_path_env() {
-        ambient.retain(|(k, _)| k != "PATH");
-        ambient.push(("PATH".to_string(), path));
-    }
-
     let mut cmd = portable_pty::CommandBuilder::new(bin);
     cmd.args(args);
     // FR-5: a clean slate — `CommandBuilder::new` seeds its own base
@@ -138,7 +128,18 @@ pub(crate) fn spawn_pi_setup(
     // cannot route through that std::process::Command-based facade at all,
     // so this stays its own distinct, narrower removal rather than a second
     // copy of that one.
-    let desired = pi_account_env(&ambient, config_dir, inherit_environment_credentials);
+    // The login-shell PATH (ext-path-resolution) and the FR-5 filter are both
+    // `pi_spawn_env`'s job — the same environment the refresh probe and a
+    // session's own RPC child get, including the `WSLENV` entry that carries
+    // `PI_CODING_AGENT_DIR` into the distro for a `wsl` account (PR #142 §5).
+    // `TERM/u` rides the same list: a PTY inside the distro needs the terminal
+    // type this side sets below, and it crosses only if named here.
+    let desired = pi_spawn_env(
+        config_dir,
+        inherit_environment_credentials,
+        runtime,
+        &["TERM/u"],
+    );
     let keep: std::collections::HashSet<&str> = desired.iter().map(|(k, _)| k.as_str()).collect();
     let seeded: Vec<String> = cmd
         .iter_full_env_as_str()
@@ -229,10 +230,14 @@ pub(crate) fn start_pi_setup_thread(
 /// FR-3: the PTY closed (the user exited it, or the process ended on its
 /// own). Closing setup NEVER implies auth succeeded — this reports the
 /// account UNCHANGED via `account.login.done`, running no identity check and
-/// no registry mutation. `account.login.failed` only if the row is somehow
-/// gone by now (defensive: `sessions_currently_use`/removal's own preflight
-/// already keeps `account_remove` from reaching a Pi account mid-setup in
-/// practice).
+/// no registry mutation.
+///
+/// `account.login.failed` when the row is gone by the time we look. That is a
+/// narrow but REAL race, not a defensive impossibility: `pi::remove`'s
+/// `pi_remove_gate` refuses `account_remove` while this setup is registered in
+/// `pi_setups`, but `claim_pi_setup` (above) has already taken the handle OUT
+/// of that map before this function re-takes the lock — so a removal that
+/// lands in between is accepted and finds nothing left to gate on.
 fn settle_pi_setup(app: &AppHandle, login_id: &str) {
     let Some(mut handle) = claim_pi_setup(app, login_id) else {
         return;

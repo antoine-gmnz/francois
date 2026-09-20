@@ -112,8 +112,58 @@ pub(crate) fn connect_env(
     ambient: &[(String, String)],
     config_dir: &str,
     inherit_environment_credentials: bool,
+    runtime: &str,
 ) -> Vec<(String, String)> {
-    crate::account::pi_account_env(ambient, config_dir, inherit_environment_credentials)
+    crate::account::pi_account_env(
+        ambient,
+        config_dir,
+        inherit_environment_credentials,
+        runtime,
+        &[],
+    )
+}
+
+/// PR #142 §5: (program, argv, Windows-side cwd) launching the resolved Pi
+/// binary under the session's runtime — the Pi counterpart of
+/// `session::spawn::claude_invocation`, and the piece whose absence made a
+/// `wsl` Pi session run an IN-DISTRO path natively (`/home/u/.nvm/…/pi`, or
+/// its `\\wsl.localhost\…` spelling, handed straight to CreateProcess).
+///
+/// `exe` is whatever `discovery` resolved: for `wsl` that is the distro's own
+/// path, spelled as a UNC path when the FR-3 root was discoverable and as a
+/// bare Linux path when it was not — both are translated back to the Linux
+/// spelling `wsl.exe` needs after `--`.
+///
+/// The cwd is the other half: a `wsl.exe` child cannot take a Linux (or UNC)
+/// path as its WINDOWS working directory, so for `wsl` the session's cwd rides
+/// `--cd` inside the distro and the Windows side inherits ours — `None`. A
+/// stored `distro` (session-worktree FR-10) overrides the one a UNC cwd names,
+/// exactly as it does for `claude`.
+pub(crate) fn pi_invocation(
+    runtime: &str,
+    cwd: &str,
+    distro: Option<&str>,
+    exe: &str,
+    args: Vec<String>,
+) -> (String, Vec<String>, Option<String>) {
+    if runtime != "wsl" {
+        return (exe.to_string(), args, Some(cwd.to_string()));
+    }
+    let mut argv = match distro {
+        Some(d) => vec![
+            "-d".to_string(),
+            d.to_string(),
+            "--cd".to_string(),
+            cwd.to_string(),
+        ],
+        None => crate::wsl::wsl_base_args(cwd),
+    };
+    argv.push("--".to_string());
+    argv.push(
+        crate::wsl::wsl_unc_to_linux(exe).map_or_else(|| exe.to_string(), |(_, linux)| linux),
+    );
+    argv.extend(args);
+    ("wsl.exe".to_string(), argv, None)
 }
 
 /// FR-1: resolve the certified executable, build the baseline argv, and
@@ -130,8 +180,13 @@ pub(crate) fn connect_env(
 /// attempted), and `exact_env` clears whatever this process would otherwise
 /// hand the child before applying exactly that set. The login-shell `PATH`
 /// resolution `process_util` provides for locating binaries is preserved by
-/// folding it into `ambient` first, same as `setup::spawn_pi_setup` already
-/// does for the setup PTY.
+/// folding it into `ambient` first (`account::pi_spawn_ambient`), the same
+/// snapshot `setup::spawn_pi_setup` and the refresh probe start from.
+///
+/// PR #142 §5: a `wsl` session does NOT spawn the resolved path natively —
+/// `pi_invocation` wraps it as `wsl.exe -d <distro> --cd <dir> -- <pi> …`,
+/// and `connect_env` puts `PI_CODING_AGENT_DIR` in `WSLENV` so the account's
+/// directory crosses the boundary with it.
 pub(crate) fn spawn(ctx: &RuntimeConnectContext) -> Result<ProcessHandle, AppError> {
     // Checked before any I/O (installation discovery included) — a missing
     // pinned directory is a wiring bug, not something worth a live probe to
@@ -146,28 +201,36 @@ pub(crate) fn spawn(ctx: &RuntimeConnectContext) -> Result<ProcessHandle, AppErr
         super::discovery::probe_installation(&ctx.runtime, ctx.worktree_distro.as_deref(), false)?;
     let exe = certified_executable(status)?;
 
-    let mut ambient: Vec<(String, String)> = std::env::vars().collect();
-    if let Some(path) = crate::process_util::login_shell_path_env() {
-        ambient.retain(|(k, _)| k != "PATH");
-        ambient.push(("PATH".to_string(), path));
-    }
-    let env = connect_env(&ambient, config_dir, ctx.inherit_environment_credentials);
+    let env = connect_env(
+        &crate::account::pi_spawn_ambient(),
+        config_dir,
+        ctx.inherit_environment_credentials,
+        &ctx.runtime,
+    );
+    let (program, argv, spawn_cwd) = pi_invocation(
+        &ctx.runtime,
+        &ctx.cwd,
+        ctx.worktree_distro.as_deref(),
+        &exe,
+        full_pi_args(ctx)?,
+    );
 
-    let mut child = crate::process_util::spawn(&exe)
-        .args(full_pi_args(ctx)?)
-        .current_dir(&ctx.cwd)
+    let mut command = crate::process_util::spawn(&program)
+        .args(argv)
         .exact_env(env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .configure(crate::process_util::own_process_group)
-        .start()
-        .map_err(|e| {
-            AppError::new(
-                ErrorCode::RuntimeUnavailable,
-                format!("could not start pi: {e}"),
-            )
-        })?;
+        .configure(crate::process_util::own_process_group);
+    if let Some(cwd) = spawn_cwd {
+        command = command.current_dir(cwd);
+    }
+    let mut child = command.start().map_err(|e| {
+        AppError::new(
+            ErrorCode::RuntimeUnavailable,
+            format!("could not start pi: {e}"),
+        )
+    })?;
 
     let stdin = child
         .stdin
@@ -444,7 +507,7 @@ mod tests {
                 "/accounts/other".to_string(),
             ),
         ];
-        let env = connect_env(&ambient, "/pi/acct-a", false);
+        let env = connect_env(&ambient, "/pi/acct-a", false, "native");
         let map: std::collections::HashMap<_, _> = env.into_iter().collect();
         assert_eq!(
             map.get("PI_CODING_AGENT_DIR").map(String::as_str),
@@ -457,7 +520,7 @@ mod tests {
     #[test]
     fn connect_env_inherits_ambient_credentials_only_when_opted_in() {
         let ambient = vec![("OPENAI_API_KEY".to_string(), "secret-openai".to_string())];
-        let env = connect_env(&ambient, "/pi/acct-b", true);
+        let env = connect_env(&ambient, "/pi/acct-b", true, "native");
         let map: std::collections::HashMap<_, _> = env.into_iter().collect();
         assert_eq!(
             map.get("OPENAI_API_KEY").map(String::as_str),
@@ -467,6 +530,78 @@ mod tests {
             map.get("PI_CODING_AGENT_DIR").map(String::as_str),
             Some("/pi/acct-b")
         );
+    }
+
+    /// PR #142 §5: a `wsl` session's child is `wsl.exe`, its cwd rides `--cd`
+    /// INSIDE the distro (a Linux path cannot be a Windows working directory),
+    /// and the in-distro Pi path is spelled the way the distro spells it —
+    /// whichever way `discovery` happened to report it.
+    #[test]
+    fn a_wsl_session_launches_pi_inside_the_distro_never_natively() {
+        let (program, argv, cwd) = pi_invocation(
+            "wsl",
+            "\\\\wsl.localhost\\Ubuntu\\home\\u\\api",
+            None,
+            "\\\\wsl.localhost\\Ubuntu\\home\\u\\.nvm\\bin\\pi",
+            vec!["--mode".into(), "rpc".into()],
+        );
+        assert_eq!(program, "wsl.exe");
+        assert_eq!(
+            argv,
+            vec![
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/home/u/api",
+                "--",
+                "/home/u/.nvm/bin/pi",
+                "--mode",
+                "rpc"
+            ]
+        );
+        assert!(cwd.is_none(), "a Linux cwd is never a Windows cwd");
+    }
+
+    #[test]
+    fn a_wsl_worktree_session_targets_its_stored_distro_with_the_paths_it_already_has() {
+        // session-worktree FR-10: the cwd is a bare Linux path with no distro
+        // in it, and `discovery` fell back to the Linux path for the binary
+        // because the FR-3 UNC root could not be discovered. Both pass through.
+        let (program, argv, cwd) = pi_invocation(
+            "wsl",
+            "/home/u/.francois-worktrees/api/feat-x",
+            Some("Debian"),
+            "/usr/local/bin/pi",
+            vec!["--mode".into()],
+        );
+        assert_eq!(program, "wsl.exe");
+        assert_eq!(
+            argv,
+            vec![
+                "-d",
+                "Debian",
+                "--cd",
+                "/home/u/.francois-worktrees/api/feat-x",
+                "--",
+                "/usr/local/bin/pi",
+                "--mode"
+            ]
+        );
+        assert!(cwd.is_none());
+    }
+
+    #[test]
+    fn a_native_session_spawns_the_resolved_binary_in_its_own_cwd_unchanged() {
+        let (program, argv, cwd) = pi_invocation(
+            "native",
+            "D:\\acme-api",
+            None,
+            "C:\\bin\\pi.cmd",
+            vec!["--mode".into(), "rpc".into()],
+        );
+        assert_eq!(program, "C:\\bin\\pi.cmd");
+        assert_eq!(argv, vec!["--mode", "rpc"]);
+        assert_eq!(cwd.as_deref(), Some("D:\\acme-api"));
     }
 
     /// A `ctx` with no pinned account directory (a test-only shape —

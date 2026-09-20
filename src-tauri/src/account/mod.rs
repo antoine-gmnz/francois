@@ -48,6 +48,10 @@ mod commands;
 /// registry.rs's OAuth-focused FRs, even though both touch `AccountRecord` —
 /// same "one concern per child" shape as `cloud` inside `session`.
 mod endpoint;
+/// PR #142 §5: "can this account be used from THIS session's environment?"
+/// — multi-account FR-25's config-dir reachability plus pi-provider-auth's
+/// pinned runtime/distro, one concern, out of this file for the size cap.
+mod environment;
 /// multi-provider-grok FR-19..FR-22: `grok-cli` accounts — a per-account
 /// `GROK_HOME` that `grok login` fills in. Structurally identical to codex.rs
 /// (same trade, same file layout); a CHILD of its own rather than folded into
@@ -69,16 +73,19 @@ pub(crate) use cli_tools::*;
 pub(crate) use codex::*;
 pub use commands::*;
 pub(crate) use endpoint::*;
+pub use environment::*;
 pub(crate) use grok::*;
 pub use login::*;
 pub(crate) use mirror::*;
-pub(crate) use pi::*;
-// `account_pi_refresh` (pi_commands.rs) answers with these — like
-// `AccountLoginStarted`, a command's wire return type must be reachable from
-// `main.rs` (an external crate relative to this lib, core-architecture-wave3
-// FR-2), so these two need the genuinely-`pub` re-export the rest of `pi`'s
-// (internal-only) surface does not.
-pub use pi::{PiAuthState, PiInstallProbe, PiProviderAuthObservation};
+// `pub` for the three types `pi::refresh` declares `pub` — `account_pi_refresh`
+// (pi_commands.rs) answers with `PiProviderAuthObservation`/`PiAuthState`, and
+// `main.rs` manages a `PiInstallProbe`; like `AccountLoginStarted`, a type
+// `main.rs` must name has to be reachable from an external crate
+// (core-architecture-wave3 FR-2). The rest of `pi`'s surface is declared
+// `pub(crate)` at its definition and stays that way through this glob — see
+// pi/mod.rs for why this is one glob and not a `pub(crate)` glob plus an
+// explicit `pub use`.
+pub use pi::*;
 pub use pi_commands::*;
 pub use registry::*;
 
@@ -132,7 +139,31 @@ pub enum AccountKind {
     Pi,
 }
 
+/// PR #142 §5: what `account_add` answers when a Re-login names a row that does
+/// not sign in through the Claude login PTY (see `uses_claude_login`).
+pub const MSG_NOT_CLAUDE_KIND: &str = "this account does not sign in through the Claude login";
+
 impl AccountKind {
+    /// PR #142 §5: does this kind sign in through the CLAUDE login PTY —
+    /// `account_add`'s Re-login? That PTY runs `claude` against the row's
+    /// `configDir` and seeds it from `~/.claude` (`mirror_global`), so a Pi
+    /// row must never reach it: its directory is the USER's own, not one
+    /// Francois creates and owns (pi-provider-auth FR-1/FR-2). Codex and Grok
+    /// rows have their own login commands (`account_codex_login`/
+    /// `account_grok_login`), and an endpoint row has no PTY login at all.
+    ///
+    /// A `match` rather than a `==` for the same reason `config_dir_env_var`
+    /// is one: a sixth kind has to answer this question explicitly.
+    pub(crate) fn uses_claude_login(self) -> bool {
+        match self {
+            AccountKind::ClaudeCodeOauth => true,
+            AccountKind::CodexCli
+            | AccountKind::GrokCli
+            | AccountKind::Pi
+            | AccountKind::OpenAiCompatible => false,
+        }
+    }
+
     /// multi-provider-codex FR-18: the environment variable that points this
     /// kind's CLI at an account's own config dir. `None` for kinds whose
     /// credential is not a config dir at all (`OpenAiCompatible` keys off a
@@ -662,6 +693,10 @@ pub(crate) fn pi_execution_preflight_for(
         if let Err(msg) = persist(app, &inner) {
             eprintln!("accounts: could not persist accounts.json: {msg}");
         }
+        // pi-models-metrics FR-2/FR-9: the configuration this account's models
+        // were probed under just changed — its cached catalogue must not be
+        // served back by the keep-the-last-snapshot fallback.
+        notify_credentials_changing(account_id);
     }
     pi_execution_preflight(&inner, account_id, blocked_action, drifted)
 }
@@ -716,13 +751,6 @@ pub fn default_account_id(app: &AppHandle) -> String {
             Some(inner.default_account_id.clone())
         })
         .unwrap_or_else(|| DEFAULT_ACCOUNT_ID.to_string())
-}
-
-/// FR-25: an account `configDir` a `wsl.exe` spawn can reach. Only a
-/// drive-letter Windows path is (wsl.exe maps it to `/mnt/...` itself); a UNC
-/// path (including a `\\wsl$\...`/`\\wsl.localhost\...` one) is not.
-pub fn wsl_translatable_config_dir(path: &str) -> bool {
-    !path.trim_start().starts_with("\\\\") && !path.trim_start().starts_with("//")
 }
 
 /// FR-22: does this account's config dir report an identity on disk?
@@ -796,6 +824,23 @@ mod tests {
     use crate::account::testutil::*;
     use serde_json::json;
 
+    /// PR #142 §5: `account_add(account_id)` — Re-login — starts the CLAUDE
+    /// login PTY against the row's own `configDir` and mirrors `~/.claude`
+    /// into it. Answering `true` for a Pi row would run a Claude login against
+    /// a directory Francois does not own and write into it.
+    #[test]
+    fn only_a_claude_row_signs_in_through_the_claude_login_pty() {
+        assert!(AccountKind::ClaudeCodeOauth.uses_claude_login());
+        for kind in [
+            AccountKind::Pi,
+            AccountKind::CodexCli,
+            AccountKind::GrokCli,
+            AccountKind::OpenAiCompatible,
+        ] {
+            assert!(!kind.uses_claude_login(), "{kind:?}");
+        }
+    }
+
     #[test]
     fn every_account_event_member_serializes_to_the_contract_shape() {
         // §5: the tagged union on francois://account/event.
@@ -843,18 +888,6 @@ mod tests {
             json!({ "type": "account.login.failed", "loginId": "l1",
                     "error": { "code": "ACCOUNT_DUPLICATE", "message": "already registered" } })
         );
-    }
-
-    #[test]
-    fn wsl_translatable_config_dir_rejects_unc_and_accepts_drive_paths() {
-        assert!(wsl_translatable_config_dir("D:\\francois\\accounts\\a1"));
-        assert!(!wsl_translatable_config_dir(
-            "\\\\wsl$\\Ubuntu\\home\\u\\.francois"
-        ));
-        assert!(!wsl_translatable_config_dir(
-            "\\\\server\\share\\accounts\\a1"
-        ));
-        assert!(!wsl_translatable_config_dir("//server/share/accounts/a1"));
     }
 
     #[test]

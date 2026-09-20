@@ -61,9 +61,7 @@ fn commit(
     match persist(app, inner) {
         Ok(()) => Ok(()),
         Err(e) => {
-            inner.records = previous.0;
-            inner.default_account_id = previous.1;
-            inner.auth_failed_at = previous.2;
+            restore(inner, previous);
             // core-architecture-wave3 FR-6: a rolled-back write is INTERNAL at
             // this boundary, the code all three call sites used to stamp.
             Err(AppError::new(ErrorCode::Internal, e.message))
@@ -71,9 +69,21 @@ fn commit(
     }
 }
 
-type RegistrySnapshot = (Vec<AccountRecord>, String, HashMap<String, u64>);
+/// Undo a mutation by re-applying the snapshot taken before it — `commit`'s own
+/// rollback and `account_remove`'s refused-removal rollback are the same three
+/// assignments, and they move TOGETHER: `apply_remove` drops the row, its
+/// `auth_failed_at` stamp and (when it carried the flag) `default_account_id`,
+/// so putting the record back alone leaves the default moved and the row at
+/// the bottom of a registration-ordered list.
+fn restore(inner: &mut AccountInner, previous: RegistrySnapshot) {
+    inner.records = previous.0;
+    inner.default_account_id = previous.1;
+    inner.auth_failed_at = previous.2;
+}
 
-fn snapshot(inner: &AccountInner) -> RegistrySnapshot {
+pub(crate) type RegistrySnapshot = (Vec<AccountRecord>, String, HashMap<String, u64>);
+
+pub(crate) fn snapshot(inner: &AccountInner) -> RegistrySnapshot {
     (
         inner.records.clone(),
         inner.default_account_id.clone(),
@@ -141,7 +151,10 @@ pub fn account_add(
         // a uuid-v4 id and owns `<app_data>/accounts/<accountId>` (FR-6).
         let (id, config_dir, existing) = match account_id.as_deref() {
             Some(id) => match inner.records.iter().find(|r| r.id == id) {
-                Some(record) => (record.id.clone(), record.config_dir.clone(), true),
+                // PR #142 §5: this starts the CLAUDE login PTY against the
+                // row's directory — never a kind that does not log in there.
+                Some(r) if r.kind.uses_claude_login() => (r.id.clone(), r.config_dir.clone(), true),
+                Some(_) => return err(ErrorCode::InvalidInput, MSG_NOT_CLAUDE_KIND),
                 None => return err(ErrorCode::InvalidInput, NOT_FOUND_MSG),
             },
             None => {
@@ -314,9 +327,11 @@ pub fn account_set_default(
 ///
 /// pi-provider-auth FR-6/FR-8: a `Pi` account never falls back to `default` —
 /// removal is refused with `ACCOUNT_IN_USE` (carrying the stranded session ids
-/// as `blockedSessions`) while any session is still pinned to it, and even
-/// once removal succeeds its directory is NEVER deleted (it is the user's own,
-/// not one Francois created).
+/// as `blockedSessions`) while any session is still pinned to it or its setup
+/// PTY is open, and even once removal succeeds its directory is NEVER deleted
+/// (it is the user's own, not one Francois created). The Pi-specific halves —
+/// the setup gate, the post-write recheck and its targeted undo — live in
+/// `pi::remove`.
 #[tauri::command(async)]
 pub fn account_remove(
     app: AppHandle,
@@ -327,12 +342,18 @@ pub fn account_remove(
         let Ok(inner) = state.0.lock() else {
             return err(ErrorCode::Internal, "account state is unavailable");
         };
-        inner
+        let is_pi = inner
             .records
             .iter()
             .find(|r| r.id == account_id)
             .map(|r| r.kind == AccountKind::Pi)
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if is_pi {
+            if let Err(e) = pi_remove_gate(&inner, &account_id) {
+                return e.into();
+            }
+        }
+        is_pi
     };
     if is_pi {
         let blocked = sessions_pinned_to(&app, &account_id);
@@ -345,57 +366,47 @@ pub fn account_remove(
         }
     }
 
-    let (accounts, config_dir, removed_kind, removed_record) = {
+    let (accounts, config_dir, removed_kind, previous) = {
         let Ok(mut inner) = state.0.lock() else {
             return err(ErrorCode::Internal, "account state is unavailable");
         };
+        // Kept past the write: the Pi post-write recheck below undoes this
+        // removal from it — `apply_remove` touches three things, and
+        // `pi::undo_remove` needs all three to put exactly them back.
         let previous = snapshot(&inner);
         let removed = match apply_remove(&mut inner, &account_id) {
             Ok(r) => r,
             Err(e) => return e.into(),
         };
-        if let Err(e) = commit(&app, &mut inner, previous) {
+        if let Err(e) = commit(&app, &mut inner, previous.clone()) {
             return e.into();
         }
-        // A login in flight for the row just removed must not resurrect it.
-        cancel_login_for_account(&mut inner, &account_id);
         let config_dir = removed.config_dir.clone();
-        let removed_kind = removed.kind;
-        (build_list(&inner), config_dir, removed_kind, removed)
+        (build_list(&inner), config_dir, removed.kind, previous)
     };
 
     // pi-provider-auth FR-6/FR-8: close the TOCTOU window between the
     // pre-write check above and the write just committed — a session that
     // started using this Pi account in between must not have its row
     // disappear under it. Mirrors `account_trust_pi`'s
-    // pre-check/write/post-write-recheck-and-rollback shape: roll the row
-    // back onto the registry, persist and emit, then refuse exactly like the
-    // pre-write check would have.
+    // pre-check/write/post-write-recheck-and-rollback shape.
     if removed_kind == AccountKind::Pi {
-        let blocked = sessions_pinned_to(&app, &account_id);
-        if !blocked.is_empty() {
-            let accounts = {
-                let Ok(mut inner) = state.0.lock() else {
-                    return err(ErrorCode::Internal, "account state is unavailable");
-                };
-                inner.records.push(removed_record);
-                if let Err(msg) = persist(&app, &inner) {
-                    eprintln!("accounts: could not persist accounts.json: {msg}");
-                }
-                build_list(&inner)
-            };
-            emit(
-                &app,
-                AccountEvent::List {
-                    accounts: accounts.clone(),
-                },
-            );
-            return err_detail(
-                ErrorCode::AccountInUse,
-                "this account still has sessions using it — stop them before removing it",
-                serde_json::json!({ "blockedSessions": blocked }),
-            );
+        if let Some(refusal) = refuse_removal_if_in_use(&app, &state, &account_id, &previous) {
+            return refusal;
         }
+    }
+
+    // Only NOW is the removal final, so only now may an in-flight login for
+    // this row be killed: a refused Pi removal above must leave it running,
+    // and a PTY cannot be un-killed. Deferring it is safe because the registry
+    // itself refuses resurrection — `login::register` returns `None` for a
+    // row that is gone, which `settle_success` reports as ACCOUNT_NOT_FOUND
+    // rather than re-adding it.
+    {
+        let Ok(mut inner) = state.0.lock() else {
+            return err(ErrorCode::Internal, "account state is unavailable");
+        };
+        cancel_login_for_account(&mut inner, &account_id);
     }
 
     // FR-8: the directory goes with the row — credentials included — for
@@ -675,6 +686,31 @@ mod tests {
         assert_eq!(v["blockedSessions"], serde_json::json!([]));
         assert_eq!(v["accounts"][0]["id"], "default");
         assert_eq!(v["accounts"][1]["id"], "a1");
+    }
+
+    /// `restore`'s own contract: all three of the things `apply_remove`
+    /// mutates go back, not just the record it hands back. (The Pi refusal
+    /// path uses the TARGETED `pi::undo_remove` instead — tested there.)
+    #[test]
+    fn restoring_a_snapshot_puts_back_the_flag_the_failures_and_the_row_order() {
+        let mut inner = inner_fixture(&["a1", "a2"], "a1");
+        inner.auth_failed_at.insert("a1".into(), 7);
+        let previous = snapshot(&inner);
+
+        apply_remove(&mut inner, "a1").unwrap();
+        restore(&mut inner, previous);
+
+        assert_eq!(
+            inner
+                .records
+                .iter()
+                .map(|r| r.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a1", "a2"],
+            "the row goes back where it was registered, not at the bottom"
+        );
+        assert_eq!(inner.default_account_id, "a1");
+        assert_eq!(inner.auth_failed_at.get("a1"), Some(&7));
     }
 
     #[test]

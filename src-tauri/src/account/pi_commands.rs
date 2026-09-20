@@ -36,19 +36,42 @@ pub fn account_add_pi(
         Ok(l) => l,
         Err(e) => return e.into(),
     };
-    let config_dir = match canonicalize_config_dir(&config_dir) {
-        Ok(d) => d,
-        Err(e) => return e.into(),
-    };
+    // PR #142 §5: the runtime/distro pair is settled FIRST — for `wsl` it is
+    // what decides WHERE `configDir` is canonicalized (inside that distro,
+    // never with `std::fs` on the Windows side).
     let distro = match validate_pi_runtime(&runtime, distro.as_deref()) {
         Ok(d) => d,
         Err(e) => return e.into(),
     };
+    let config_dir = match canonicalize_config_dir_for(&config_dir, &runtime, distro.as_deref()) {
+        Ok(d) => d,
+        Err(e) => return e.into(),
+    };
+
+    // FR-2/FR-9: resolved before the lock (it touches the path API, not the
+    // registry); `None` only if the app data directory cannot be resolved at
+    // all, in which case there is no app-data overlap to check against.
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.to_string_lossy().into_owned());
 
     let accounts = {
         let Ok(mut inner) = state.0.lock() else {
             return err(ErrorCode::Internal, "account state is unavailable");
         };
+        // FR-1/FR-2: not Francois's own app data, and not another account's
+        // credential directory.
+        if let Err(e) = validate_config_dir_location(
+            &config_dir,
+            &runtime,
+            distro.as_deref(),
+            app_data.as_deref(),
+            &inner,
+        ) {
+            return e.into();
+        }
         // FR-1: "same directory/environment cannot be registered twice".
         if duplicate_pi_directory(&inner, &config_dir, &runtime, distro.as_deref()) {
             return err(
@@ -143,6 +166,12 @@ pub fn account_trust_pi(
         }
         previous
     };
+    // pi-models-metrics FR-2/FR-9: trust just changed in EITHER direction, so
+    // the per-account model catalogue cached under the old fingerprint must
+    // not be served back by FR-9's keep-the-last-snapshot fallback. Announced,
+    // never called directly — `session` owns that cache (see
+    // `notify_credentials_changing`).
+    notify_credentials_changing(&account_id);
     if sessions_currently_use(&app, &account_id) {
         let accounts = {
             let Ok(mut inner) = state.0.lock() else {
@@ -205,6 +234,9 @@ pub fn account_pi_setup(app: AppHandle, account_id: String) -> IpcResult<Account
             if let Err(msg) = persist(&app, &inner) {
                 eprintln!("accounts: could not persist accounts.json: {msg}");
             }
+            // The configuration this account's models were probed under is
+            // gone (pi-models-metrics FR-2/FR-9) — drop its catalogue too.
+            notify_credentials_changing(&account_id);
         }
         match pi_execution_preflight(&inner, &account_id, "running setup", drifted) {
             Ok(v) => v,
@@ -251,7 +283,7 @@ pub fn account_pi_refresh(
     account_id: String,
 ) -> IpcResult<Vec<PiProviderAuthObservation>> {
     let state = app.state::<AccountState>();
-    let (runtime, distro) = {
+    let (config_dir, runtime, distro, inherit_environment_credentials) = {
         let Ok(mut inner) = state.0.lock() else {
             return err(ErrorCode::Internal, "account state is unavailable");
         };
@@ -263,13 +295,22 @@ pub fn account_pi_refresh(
             if let Err(msg) = persist(&app, &inner) {
                 eprintln!("accounts: could not persist accounts.json: {msg}");
             }
+            notify_credentials_changing(&account_id);
         }
         match pi_execution_preflight(&inner, &account_id, "refreshing it", drifted) {
-            Ok((_config_dir, runtime, distro, _inherit)) => (runtime, distro),
+            Ok(v) => v,
             Err(e) => return e.into(),
         }
     };
-    match probe_provider_auth(&app.state::<PiInstallProbe>(), &runtime, distro.as_deref()) {
+    // PR #142 §5: the probe runs in THIS account's environment, not the
+    // ambient one — `configDir` and the inherit choice both ride along.
+    match probe_provider_auth(
+        &app.state::<PiInstallProbe>(),
+        &runtime,
+        distro.as_deref(),
+        &config_dir,
+        inherit_environment_credentials,
+    ) {
         Ok(observations) => ok(observations),
         Err(e) => e.into(),
     }
