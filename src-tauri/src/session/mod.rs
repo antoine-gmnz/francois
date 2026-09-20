@@ -206,8 +206,8 @@ pub(crate) use events::emit;
 pub use events::SessionEvent;
 pub(crate) use interactive::{
     classify_local_answer, command_fallback_fires, finalize_command_block, help_entries,
-    intercepted_command, parse_command, probe_card, run_intercepted_command, CommandCard,
-    HelpEntry,
+    intercepted_command, parse_command, probe_card, run_intercepted_command, usage_card,
+    CommandCard, HelpEntry,
 };
 pub use mcp::{
     __cmd__mcp_attach, __cmd__mcp_detach, __cmd__mcp_detail, __cmd__mcp_list, __cmd__mcp_reconnect,

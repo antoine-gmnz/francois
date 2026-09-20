@@ -404,26 +404,7 @@ pub fn run_intercepted_command(
     match command {
         // FR-5: a present arg is ignored for usage/cost/status/help.
         "usage" | "cost" => {
-            // The probe is Claude Code-specific (`claude -p` plus Anthropic
-            // plan-limit output). Codex has no equivalent command on its
-            // `exec --json` transport, so answer visibly instead of starting
-            // the wrong vendor CLI under the Codex session.
-            let runtime = app
-                .state::<Engine>()
-                .with_session(session_id, |s| s.agent_runtime);
-            if runtime == Some(AgentRuntime::Codex) {
-                finalize_command_block(
-                    app,
-                    session_id,
-                    &uuid(),
-                    command,
-                    &CommandCard::Notice {
-                        text: "usage limits aren't available for Codex sessions yet".into(),
-                    },
-                );
-            } else {
-                start_usage_probe(app, session_id, command);
-            }
+            start_usage_probe(app, session_id, command);
         }
         "model" => run_model_command(app, session_id, arg),
         "status" => {
