@@ -52,7 +52,8 @@ pub use registry::*;
 mod testutil;
 
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use tauri::AppHandle;
 
 // ---------- bounds (contract/session-profiles.ts, mirrored — FR-6) ----------
 
@@ -292,6 +293,45 @@ impl Default for ProfileRegistry {
     }
 }
 
+// ---------- cross-domain: removal notification ----------
+
+/// pr-142 §9: the `profiles ↔ project` inversion, the same one
+/// `session::SessionTeardown` and `account::AccountRemovalObserver` already
+/// are. Removing a profile has a side-effect on another domain's state —
+/// a project default naming it must stop naming it (FR-7) — and
+/// `profiles_remove` used to reach across and call
+/// `project::clear_default_profile` by name, closing a module cycle
+/// (`project` reads `profiles::known_ids` to reconcile those same defaults at
+/// boot). This domain now only declares what has to happen; `project`, which
+/// owns the affected state and already depends on this one, implements it,
+/// and the crate root wires the two together at startup.
+///
+/// **No new lock edge**: observers are called with the profile registry lock
+/// already RELEASED, exactly as the direct call was, and the observer list is
+/// a write-once `OnceLock` with no mutex of its own.
+pub trait ProfileRemovalObserver: Send + Sync {
+    fn profile_removed(&self, app: &AppHandle, profile_id: &str);
+}
+
+static REMOVAL_OBSERVERS: OnceLock<Vec<Box<dyn ProfileRemovalObserver>>> = OnceLock::new();
+
+/// Called ONCE, from the crate root's `.setup()`. A second call is ignored —
+/// see `session::register_teardown` for why that is not a panic.
+pub fn register_removal_observers(observers: Vec<Box<dyn ProfileRemovalObserver>>) {
+    let _ = REMOVAL_OBSERVERS.set(observers);
+}
+
+/// Notify every registered observer that `profile_id` is gone. A no-op when
+/// nothing is registered, which is the case in every unit test and is correct
+/// there: a test with no project registry has no default to clear.
+pub(crate) fn notify_profile_removed(app: &AppHandle, profile_id: &str) {
+    if let Some(observers) = REMOVAL_OBSERVERS.get() {
+        for observer in observers {
+            observer.profile_removed(app, profile_id);
+        }
+    }
+}
+
 // ---------- shared messages ----------
 
 pub const NOT_FOUND_MSG: &str = "no such profile";
@@ -306,6 +346,11 @@ pub const RUNTIME_MISMATCH_MSG: &str = "a profile's runtime kind cannot change";
 /// registry's on-disk schema could not be safely migrated.
 pub const REGISTRY_UNWRITABLE_MSG: &str =
     "the profile registry could not be migrated — it is left untouched and read-only";
+/// pr-142 §6: `profiles_remove` refuses when it cannot read sessions.json —
+/// it would otherwise report "no sessions reference this profile" on a file
+/// it never managed to parse (FR-7).
+pub const UNREADABLE_SESSIONS_MSG: &str =
+    "could not read the session registry, so the profile's references are unknown";
 
 #[cfg(test)]
 mod tests {
@@ -323,5 +368,27 @@ mod tests {
     #[test]
     fn an_unknown_tool_name_does_not_parse() {
         assert_eq!(PiBuiltinTool::parse("exec"), None);
+    }
+
+    /// The seam itself, without an `AppHandle`: registration is the only piece
+    /// with state, and the only piece that can silently be forgotten.
+    ///
+    /// This is the ONLY test that touches `REMOVAL_OBSERVERS` — the `OnceLock`
+    /// is process-global, so a second test registering its own observers would
+    /// make both non-deterministic under the parallel runner.
+    #[test]
+    fn removal_observer_registration_is_once_and_the_second_call_is_ignored() {
+        struct Noop;
+        impl ProfileRemovalObserver for Noop {
+            fn profile_removed(&self, _app: &AppHandle, _profile_id: &str) {}
+        }
+        register_removal_observers(vec![Box::new(Noop)]);
+        assert_eq!(REMOVAL_OBSERVERS.get().map(|o| o.len()), Some(1));
+        register_removal_observers(vec![Box::new(Noop), Box::new(Noop)]);
+        assert_eq!(
+            REMOVAL_OBSERVERS.get().map(|o| o.len()),
+            Some(1),
+            "a second registration must not replace the wiring the app booted with"
+        );
     }
 }

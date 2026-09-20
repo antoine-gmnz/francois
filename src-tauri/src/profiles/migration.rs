@@ -83,17 +83,50 @@ fn migrate_registry_inner(path: &Path, fp: FailPoint) -> MigrationOutcome {
         Ok(b) => b,
         // No file at all — a fresh install has nothing to migrate; it starts
         // at the current version the moment something is first saved.
-        Err(_) => return MigrationOutcome::UpToDate,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return MigrationOutcome::UpToDate,
+        // Any OTHER read error means the file is there and this launch could
+        // not see it (a sharing violation from an AV scanner / the indexer / a
+        // OneDrive placeholder is the ordinary case on Windows). That must
+        // never read as a fresh install: `UpToDate` is writable, so the
+        // registry would load empty and the first save would replace the
+        // user's real file — with no backup, since this returns before one.
+        Err(e) => {
+            return MigrationOutcome::Failed(format!("could not read {}: {e}", path.display()));
+        }
     };
     let Ok(doc) = serde_json::from_slice::<Value>(&bytes) else {
         return MigrationOutcome::Failed(format!("{} is not valid JSON", path.display()));
     };
-    let version = doc.get("version").and_then(Value::as_u64).unwrap_or(1);
-    if version == PROFILE_SCHEMA_VERSION {
-        return MigrationOutcome::UpToDate;
+    // Valid JSON is not yet a profile registry. Without an object root there
+    // is no `version` to read, and `unwrap_or(1)` below would take a stray
+    // array for a v1 registry and "migrate" it into an empty one.
+    let unrecognizable = || {
+        MigrationOutcome::Failed(format!(
+            "{} is not a recognizable profile registry",
+            path.display()
+        ))
+    };
+    if !doc.is_object() {
+        return unrecognizable();
     }
+    let version = doc.get("version").and_then(Value::as_u64).unwrap_or(1);
+    // BEFORE the shape check below: a newer schema may legitimately have
+    // reshaped `profiles`, and must be reported as what it is — never
+    // inspected, never touched.
     if version > PROFILE_SCHEMA_VERSION {
         return MigrationOutcome::FutureSchema(version);
+    }
+    // For every version this build claims to understand, `profiles` — when
+    // present — must be an array; an ABSENT key stays legal (an empty
+    // registry). This guards both writable outcomes below: a non-array would
+    // otherwise be defaulted to `[]` and the live file emptied as `Migrated`,
+    // or — already at the current version — pass as `UpToDate`, parse as
+    // empty, and be overwritten by the first save.
+    if !doc.get("profiles").is_none_or(Value::is_array) {
+        return unrecognizable();
+    }
+    if version == PROFILE_SCHEMA_VERSION {
+        return MigrationOutcome::UpToDate;
     }
 
     let backup_path = backup_path_for(path, version);
@@ -289,6 +322,112 @@ mod tests {
             other => panic!("expected Failed, got {other:?}"),
         }
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// Only "there is no file" may read as a fresh install. Any OTHER read
+    /// failure means a file the user cares about is there and this launch
+    /// could not see it — a sharing violation from an AV scanner, the search
+    /// indexer or a OneDrive placeholder on Windows is the ordinary case. If
+    /// that reads as `UpToDate` the registry loads empty AND writable, and the
+    /// first profile saved replaces the real file with no backup.
+    ///
+    /// A directory stands in for the unreadable file: `fs::read` on one fails
+    /// with `IsADirectory` on Unix and `PermissionDenied` on Windows — never
+    /// `NotFound`, on either platform, with nothing to mock.
+    #[test]
+    fn an_unreadable_file_fails_and_is_never_mistaken_for_a_fresh_install() {
+        let path = tmp_path("unreadable");
+        std::fs::create_dir(&path).unwrap();
+        let outcome = migrate_registry(&path);
+        assert!(
+            matches!(outcome, MigrationOutcome::Failed(_)),
+            "a read error other than NotFound must be Failed, got {outcome:?}"
+        );
+        assert!(
+            !outcome.is_writable(),
+            "an unreadable registry must load read-only, or the next save overwrites it"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// Valid JSON that is not a profile registry must not be "migrated" into
+    /// an empty one: with `profiles` defaulted to `[]` the live file would be
+    /// emptied and the outcome reported as `Migrated` — writable, no warning.
+    #[test]
+    fn an_unrecognizable_document_fails_without_touching_the_file() {
+        for (tag, body) in [
+            (
+                "shape-object",
+                r#"{"version":1,"profiles":{"p1":{"name":"role-a"}}}"#,
+            ),
+            ("shape-null", r#"{"version":1,"profiles":null}"#),
+            ("shape-root-array", r#"[{"id":"p1","name":"role-a"}]"#),
+        ] {
+            let path = tmp_path(tag);
+            std::fs::write(&path, body).unwrap();
+            let outcome = migrate_registry(&path);
+            assert!(
+                matches!(outcome, MigrationOutcome::Failed(_)),
+                "{tag}: expected Failed, got {outcome:?}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                body,
+                "{tag}: the file must be left byte-identical"
+            );
+            std::fs::remove_dir_all(path.parent().unwrap()).ok();
+        }
+    }
+
+    /// The shape check must not pre-empt the future-schema answer: a newer
+    /// build may legitimately have reshaped `profiles`, and the user is owed
+    /// "this file is from a newer Francois", not "this is not a registry".
+    #[test]
+    fn a_future_schema_is_reported_as_such_even_when_its_shape_is_unfamiliar() {
+        let path = tmp_path("future-reshaped");
+        let body = format!(
+            r#"{{"version":{},"profiles":{{"p1":{{"name":"role-a"}}}}}}"#,
+            PROFILE_SCHEMA_VERSION + 1
+        );
+        std::fs::write(&path, &body).unwrap();
+        assert_eq!(
+            migrate_registry(&path),
+            MigrationOutcome::FutureSchema(PROFILE_SCHEMA_VERSION + 1)
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// Same hazard as the unreadable file, through the other writable outcome:
+    /// already at the current version, a non-array `profiles` would pass as
+    /// `UpToDate`, parse as an empty registry, and be overwritten by the first
+    /// save. It needs no migration, but it must not load writable.
+    #[test]
+    fn a_current_version_document_with_an_unrecognizable_shape_is_not_writable() {
+        let path = tmp_path("current-bad-shape");
+        let body = format!(r#"{{"version":{PROFILE_SCHEMA_VERSION},"profiles":null}}"#);
+        std::fs::write(&path, &body).unwrap();
+        let outcome = migrate_registry(&path);
+        assert!(
+            !outcome.is_writable(),
+            "expected a non-writable outcome, got {outcome:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// The control for the test above: a v1 document with NO `profiles` key is
+    /// a legitimately empty registry, not an unrecognizable one, and still
+    /// migrates — the shape check must not refuse what it has no reason to.
+    #[test]
+    fn a_v1_document_without_a_profiles_key_still_migrates_as_empty() {
+        let path = tmp_path("no-profiles-key");
+        std::fs::write(&path, r#"{"version":1}"#).unwrap();
+        assert_eq!(migrate_registry(&path), MigrationOutcome::Migrated);
+        let doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(doc["version"], PROFILE_SCHEMA_VERSION);
+        assert_eq!(doc["profiles"], serde_json::json!([]));
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 

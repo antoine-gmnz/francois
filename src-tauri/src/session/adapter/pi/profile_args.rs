@@ -123,8 +123,19 @@ pub(crate) fn resolve_launch_prompt(
 /// `instructionPaths` (read once into the snapshot above), this re-checks on
 /// EVERY connect. Kept separate from the pure argv builder below so that
 /// function performs no filesystem access at all.
+///
+/// Both halves of save-time validation are re-checked (pr-142 §6), not just
+/// existence: a relative path resolves against whatever cwd the child is
+/// given, so it names a different file there than it did in the editor —
+/// which makes "it exists" an answer about the wrong file. Same reasons,
+/// same two messages as `profiles::pi_settings::validate_pi_settings`.
 pub(crate) fn validate_skill_paths(settings: &PiProfileSettings) -> Result<(), ProfileError> {
     for path in &settings.skill_paths {
+        if !std::path::Path::new(path).is_absolute() {
+            return Err(ProfileError::InvalidInput(
+                crate::profiles::BAD_PI_SKILL_PATH_MSG,
+            ));
+        }
         let is_file = std::fs::metadata(path)
             .map(|m| m.is_file())
             .unwrap_or(false);
@@ -189,7 +200,7 @@ fn combine(prompt: Option<&str>, instructions: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profiles::{PiBuiltinTool, PiProjectResources};
+    use crate::profiles::{PiBuiltinTool, PiProjectResources, BAD_PI_SKILL_PATH_MSG};
 
     fn base_settings() -> PiProfileSettings {
         PiProfileSettings {
@@ -357,6 +368,30 @@ mod tests {
         assert!(matches!(
             err,
             ProfileError::InvalidInput(MISSING_SKILL_PATH_MSG)
+        ));
+    }
+
+    /// pr-142 §6: the spawn-time recheck covers SHAPE as well as existence.
+    /// A relative path resolves against whatever cwd the child is given, so it
+    /// names a different file there than it did in the editor — refuse it with
+    /// the same reason save-time validation gives.
+    ///
+    /// `Cargo.toml` is the fixture because cargo runs a test binary with its
+    /// cwd set to the package root: it is a relative path that really exists,
+    /// which is the only way to prove the check rejects on shape rather than
+    /// on the file simply being absent.
+    #[test]
+    fn a_relative_skill_path_is_refused_at_spawn_even_when_it_exists() {
+        assert!(
+            std::path::Path::new("Cargo.toml").is_file(),
+            "cargo runs test binaries with cwd = the package root"
+        );
+        let mut settings = base_settings();
+        settings.skill_paths = vec!["Cargo.toml".into()];
+        let err = validate_skill_paths(&settings).expect_err("a relative path must be refused");
+        assert!(matches!(
+            err,
+            ProfileError::InvalidInput(BAD_PI_SKILL_PATH_MSG)
         ));
     }
 

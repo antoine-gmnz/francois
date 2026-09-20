@@ -68,6 +68,10 @@ fn main() {
             // `account` asks whether a Pi account is still in use; `session`
             // (which owns the sessions registry) answers.
             account::register_session_query(Box::new(session::SessionAccountObserver));
+            // pr-142 §9: the same inversion once more — removing a profile
+            // clears the project defaults naming it, and `profiles` no longer
+            // names `project` to say so.
+            profiles::register_removal_observers(vec![Box::new(project::ProjectProfileObserver)]);
             // Tint with the dark caption up front; the webview re-tints with the
             // persisted theme (app_set_window_theme) once it mounts. See §theme.
             #[cfg(windows)]

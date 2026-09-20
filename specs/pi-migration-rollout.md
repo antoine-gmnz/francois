@@ -162,4 +162,17 @@ their labels and controls; Pi limitations are stated at setup and the relevant a
 
 ## Remediation
 
-(Empty.)
+### 2026-09-20 — round 1 (PR #142 review, §6)
+
+- 7 findings (1 MEDIUM / 6 LOW), all fixed: a skill run matches the listed entry's exact `invocation`
+  (contract `SkillsRunRequest.invocation`), never the derived name; preserved registry entries count as
+  known ids; a relative skill path is refused at spawn; built-ins beat a runtime command of the same name;
+  the `profiles<->project` cycle is inverted through `ProfileRemovalObserver`.
+- **FR-6/FR-10 read-only, as implemented.** On `FutureSchema`/`Failed` the registry is READABLE and every
+  mutating command is refused (`INTERNAL`); nothing on disk is rewritten; Pi creation stays disabled through
+  readiness. Consequence, accepted: a legacy (Claude) session can be created from a profile in a
+  future-schema file — read-only access, writes nothing.
+- **Profile delete fails closed.** `sessions_referencing` is a typed read; an unreadable or reshaped
+  `sessions.json` refuses the delete. Accepted cost: one malformed session record blocks every profile
+  delete until the file is fixed. Residual: a rename of the record's outer `profile` KEY would still read as
+  "no profile" — close it with a reader injected from `session` if that key ever moves.

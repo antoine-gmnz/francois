@@ -183,12 +183,17 @@ pub fn parse_registry(bytes: &[u8]) -> ParsedRegistry {
         match kind {
             None | Some("legacy") | Some("pi") => {
                 let normalized = normalize_entry_kind_for_parse(entry.clone());
-                if let Ok(p) = serde_json::from_value::<SessionProfile>(normalized) {
-                    profiles.push(p);
+                match serde_json::from_value::<SessionProfile>(normalized) {
+                    Ok(p) => profiles.push(p),
+                    // A recognized (or absent) kind this build still cannot
+                    // deserialize. "One bad entry does not sink the registry"
+                    // holds either way — but it is PRESERVED, not skipped:
+                    // `save_to` writes `profiles ++ unknown`, so an entry in
+                    // neither list is deleted from disk by the next unrelated
+                    // save. The original `entry`, not `normalized`, so it
+                    // round-trips byte-for-byte like any other unknown.
+                    Err(_) => unknown.push(entry.clone()),
                 }
-                // else: a recognized (or absent) kind but genuinely
-                // undeserializable entry — skipped, matching the pre-existing
-                // "one bad entry does not sink the registry" tolerance.
             }
             Some(_unrecognized) => unknown.push(entry.clone()),
         }
@@ -250,10 +255,17 @@ pub fn persist_registry(
 
 /// Load the registry once, at startup. pi-migration-rollout FR-6: runs the
 /// versioned migration FIRST — a schema this build cannot safely rewrite
-/// (`MigrationOutcome::FutureSchema`/`Failed`) leaves the in-memory registry
-/// EMPTY and unwritable rather than guessing at a partial read, so every
-/// `profiles_*` command refuses cleanly instead of risking a later write that
-/// would drop what it could not parse.
+/// (`MigrationOutcome::FutureSchema`/`Failed`) marks the registry READ-ONLY,
+/// so every MUTATING `profiles_*` command refuses cleanly and nothing is ever
+/// written back that would drop what this build could not parse.
+///
+/// pr-142 §6: read-only is not the same as unreadable. FR-10 asks for
+/// "read-only access" after a failed migration and §7 for "preserve/read-only"
+/// on an unknown discriminator, so whatever the file yields is still LOADED
+/// and still listed — this used to blank the registry, which cost the user
+/// the sight of their own profiles (and every project default naming one, via
+/// `known_ids` below). Pi session creation stays disabled independently, off
+/// `is_writable` (`adapter::pi::readiness::check`).
 pub fn load_profiles(app: &AppHandle) {
     let Some(path) = profiles_json_path(app) else {
         return;
@@ -262,27 +274,23 @@ pub fn load_profiles(app: &AppHandle) {
     let Some(state) = app.try_state::<ProfileRegistry>() else {
         return;
     };
-    if !outcome.is_writable() {
-        *state.profiles.lock().unwrap() = Vec::new();
-        *state.unknown.lock().unwrap() = Vec::new();
-        *state.writable.lock().unwrap() = false;
-        match &outcome {
-            MigrationOutcome::Failed(msg) => {
-                eprintln!("profiles: migration failed, profiles.json left untouched: {msg}");
-            }
-            MigrationOutcome::FutureSchema(v) => {
-                eprintln!(
-                    "profiles: profiles.json is schema v{v}, newer than this build (v{PROFILE_SCHEMA_VERSION}) supports — left untouched"
-                );
-            }
-            _ => unreachable!(),
+    match &outcome {
+        MigrationOutcome::Failed(msg) => {
+            eprintln!(
+                "profiles: migration failed, profiles.json left untouched and read-only: {msg}"
+            );
         }
-        return;
+        MigrationOutcome::FutureSchema(v) => {
+            eprintln!(
+                "profiles: profiles.json is schema v{v}, newer than this build (v{PROFILE_SCHEMA_VERSION}) supports — left untouched and read-only"
+            );
+        }
+        _ => {}
     }
     let parsed = load_from(&path);
     *state.profiles.lock().unwrap() = parsed.profiles;
     *state.unknown.lock().unwrap() = parsed.unknown;
-    *state.writable.lock().unwrap() = true;
+    *state.writable.lock().unwrap() = outcome.is_writable();
 }
 
 /// Every profile id currently in the registry, of ANY kind. Mirrors
@@ -292,15 +300,31 @@ pub fn load_profiles(app: &AppHandle) {
 /// never as "none exist".
 pub fn known_ids(app: &AppHandle) -> std::collections::HashSet<String> {
     app.try_state::<ProfileRegistry>()
-        .map(|s| {
-            s.profiles
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|p| p.id().to_string())
-                .collect()
-        })
+        .map(|s| known_ids_in(&s.profiles.lock().unwrap(), &s.unknown.lock().unwrap()))
         .unwrap_or_default()
+}
+
+/// Pure half, so the rule is testable without an AppHandle.
+///
+/// pr-142 §6: a PRESERVED entry's id counts as known. `unknown` holds entries
+/// this build could not interpret but did not delete (FR-6) — an unrecognized
+/// `kind`, or a recognized one whose body a newer build reshaped. They are
+/// still profiles, and `save_to` writes them straight back out, so a project
+/// default naming one must not be swept as dangling by
+/// `project::reconcile_defaults`.
+pub(crate) fn known_ids_in(
+    profiles: &[SessionProfile],
+    unknown: &[Value],
+) -> std::collections::HashSet<String> {
+    profiles
+        .iter()
+        .map(|p| p.id().to_string())
+        .chain(
+            unknown
+                .iter()
+                .filter_map(|e| e.get("id").and_then(Value::as_str).map(String::from)),
+        )
+        .collect()
 }
 
 /// Whether the registry is currently safe to mutate/list (FR-6) — `false`
@@ -516,8 +540,13 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// One bad entry does not sink the registry — and is not destroyed either.
+    /// This build cannot tell junk from a profile a newer build wrote in a
+    /// shape it does not know, so the one rule is "never delete what you could
+    /// not parse": everything undeserializable rides along in `unknown`,
+    /// verbatim and in order, and `save_to` writes it back.
     #[test]
-    fn one_undeserializable_entry_is_skipped_not_fatal() {
+    fn an_undeserializable_entry_is_not_fatal_and_is_preserved_verbatim() {
         let doc = json!({
             "version": 1,
             "profiles": [
@@ -531,7 +560,13 @@ mod tests {
             parsed.profiles.iter().map(|p| p.id()).collect::<Vec<_>>(),
             vec!["p1"]
         );
-        assert!(parsed.unknown.is_empty());
+        assert_eq!(
+            parsed.unknown,
+            vec![
+                json!({ "name": "no id at all" }),
+                json!("not even an object")
+            ],
+        );
     }
 
     #[test]
@@ -573,6 +608,37 @@ mod tests {
         assert_eq!(parsed.unknown[0]["someField"], true);
     }
 
+    /// An entry whose `kind` this build DOES recognize but whose body it cannot
+    /// deserialize must be preserved exactly like an unrecognized kind. `save_to`
+    /// writes `profiles ++ unknown`, so an entry in neither list is deleted from
+    /// disk by the next unrelated save. A `pi` entry is the realistic case: its
+    /// `settings` are required, and a later build adding an eighth built-in tool
+    /// is an additive change that need not bump the schema version — this build
+    /// then fails on the unknown tool name and would silently drop the profile.
+    #[test]
+    fn a_recognized_kind_that_cannot_be_deserialized_is_preserved_not_dropped() {
+        let doc = json!({
+            "version": 2,
+            "profiles": [
+                { "id": "p1", "name": "keep", "kind": "legacy", "createdAt": 1, "updatedAt": 2 },
+                { "id": "p2", "name": "pi without settings", "kind": "pi", "createdAt": 3, "updatedAt": 4 },
+            ]
+        });
+        let parsed = parse_registry(doc.to_string().as_bytes());
+        assert_eq!(
+            parsed.profiles.iter().map(|p| p.id()).collect::<Vec<_>>(),
+            vec!["p1"],
+            "the undeserializable entry must not appear in the typed list"
+        );
+        assert_eq!(
+            parsed.unknown.len(),
+            1,
+            "…but it must be carried in `unknown`, or the next save deletes it"
+        );
+        assert_eq!(parsed.unknown[0]["id"], "p2");
+        assert_eq!(parsed.unknown[0]["kind"], "pi");
+    }
+
     #[test]
     fn the_registry_round_trips_and_omits_absent_fields() {
         let dir = tmp_root("roundtrip");
@@ -604,6 +670,61 @@ mod tests {
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("\"kind\": \"pi\""));
         assert_eq!(load_from(&path).profiles, profiles);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---------- FR-6/FR-10: preserved entries, and read-only access ----------
+
+    /// pr-142 §6: a preserved entry is still a profile — `save_to` writes it
+    /// straight back out — so its id is KNOWN. Counting only the typed list
+    /// made `project::reconcile_defaults` sweep a project default naming one
+    /// as if the profile had been deleted.
+    #[test]
+    fn known_ids_counts_preserved_entries_as_known() {
+        let profiles = vec![legacy_fixture("p1", "role-a")];
+        let unknown = vec![
+            json!({ "id": "p2", "kind": "grok", "someField": true }),
+            json!({ "id": "p3", "kind": "pi" }), // recognized kind, undeserializable body
+            json!({ "name": "no id at all" }),   // nothing to count
+            json!("not even an object"),
+        ];
+        let ids = known_ids_in(&profiles, &unknown);
+        assert!(ids.contains("p1"));
+        assert!(ids.contains("p2"));
+        assert!(ids.contains("p3"));
+        assert_eq!(ids.len(), 3);
+    }
+
+    /// pr-142 §6 / FR-10: a registry this build may not REWRITE is still one
+    /// it may READ. `load_profiles` pairs exactly these two calls — the
+    /// outcome decides `writable`, the parse decides what is listed — so a
+    /// future-schema file leaves the user their profiles and refuses only the
+    /// edits (`commands::ensure_writable`).
+    #[test]
+    fn a_future_schema_registry_is_read_only_yet_still_readable() {
+        let dir = tmp_root("future-readonly");
+        let path = dir.join("profiles.json");
+        let doc = json!({
+            "version": PROFILE_SCHEMA_VERSION + 1,
+            "profiles": [
+                { "id": "p1", "name": "role-a", "kind": "legacy", "createdAt": 1, "updatedAt": 2 },
+            ]
+        });
+        std::fs::write(&path, doc.to_string()).unwrap();
+
+        assert!(
+            !migrate_registry(&path).is_writable(),
+            "a newer schema is never rewritten"
+        );
+        assert_eq!(
+            load_from(&path)
+                .profiles
+                .iter()
+                .map(|p| p.id())
+                .collect::<Vec<_>>(),
+            vec!["p1"],
+            "…but its entries are still readable, which is what read-only access means"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

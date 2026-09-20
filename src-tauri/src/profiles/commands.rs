@@ -12,8 +12,9 @@ use crate::ipc::{AppError, ErrorCode};
 use crate::ipc::IpcResult;
 use tauri::{AppHandle, Manager, State};
 
-/// FR-6: every `profiles_*` command refuses while the on-disk schema could
-/// not be safely migrated — see `registry::load_profiles`.
+/// FR-6: every MUTATING `profiles_*` command refuses while the on-disk schema
+/// could not be safely migrated — see `registry::load_profiles`. Listing is
+/// deliberately not gated on it (FR-10: "rollback is read-only access").
 fn ensure_writable(state: &ProfileRegistry) -> Result<(), AppError> {
     if is_writable(state) {
         Ok(())
@@ -102,19 +103,19 @@ fn commit(
     }
 }
 
-/// francois:profiles:list (FR-4). Never fails for registry reasons on a
-/// writable registry (FR-3) — present and `ok:true` (possibly empty) on a
-/// first run with no profiles.json at all. pi-migration-rollout FR-6: fails
-/// INTERNAL while the registry could not be migrated — the "migration
-/// status" the roadmap mentions has no IPC shape of its own (spec §5 is
-/// silent), so a failed migration surfaces through this existing error path.
+/// francois:profiles:list (FR-4). Never fails for registry reasons (FR-3) —
+/// present and `ok:true` (possibly empty) on a first run with no profiles.json
+/// at all, AND on a registry that could not be migrated: pi-migration-rollout
+/// FR-10 makes that state read-only access, not no access, so the user can
+/// still see what they have while every mutating command refuses. The
+/// "migration status" the roadmap mentions has no IPC shape of its own (spec
+/// §5 is silent) — the refusal a user meets is the one on the edit they try.
 #[tauri::command(async)]
 pub fn profiles_list(state: State<'_, ProfileRegistry>) -> IpcResult<Vec<SessionProfile>> {
     list(&state).into()
 }
 
 fn list(state: &ProfileRegistry) -> Result<Vec<SessionProfile>, AppError> {
-    ensure_writable(state)?;
     let snapshot = state.profiles.lock().unwrap().clone();
     Ok(list_ordered(&snapshot))
 }
@@ -154,7 +155,7 @@ fn create(
 ) -> Result<SessionProfile, AppError> {
     ensure_writable(state)?;
     let id = uuid::Uuid::new_v4().to_string();
-    let now = crate::session::now_ms();
+    let now = crate::ids::now_ms();
     let profile = build_new_profile(
         id,
         kind.as_deref(),
@@ -221,7 +222,7 @@ fn update(
         SessionProfile::Legacy(l) => l.created_at,
         SessionProfile::Pi(p) => p.created_at,
     };
-    let now = crate::session::now_ms();
+    let now = crate::ids::now_ms();
     let patched = build_new_profile(
         id,
         kind.as_deref(),
@@ -243,6 +244,11 @@ fn update(
 /// PROFILE_RUNTIME_MISMATCH — it is already a Pi profile); the original is
 /// always kept. Only `name`/`settings` as reviewed by the caller carry over —
 /// `extraArgs` are never translated (no `--mcp-config`, no `--allowedTools`).
+///
+/// Answers with the tagged `SessionProfile`, never the bare `PiSessionProfile`:
+/// the contract's `PiSessionProfile.kind: 'pi'` is the wrapping enum's serde
+/// tag, not a field of the struct, so the bare struct would reach the webview
+/// with no discriminant for the modal's `kind` switch.
 #[tauri::command(async)]
 pub fn profiles_copy_to_pi(
     app: AppHandle,
@@ -250,7 +256,7 @@ pub fn profiles_copy_to_pi(
     id: String,
     name: String,
     settings: PiProfileSettingsInput,
-) -> IpcResult<PiSessionProfile> {
+) -> IpcResult<SessionProfile> {
     copy_to_pi(&app, &state, id, name, settings).into()
 }
 
@@ -260,7 +266,7 @@ fn copy_to_pi(
     id: String,
     name: String,
     settings: PiProfileSettingsInput,
-) -> Result<PiSessionProfile, AppError> {
+) -> Result<SessionProfile, AppError> {
     ensure_writable(state)?;
     let mut profiles = state.profiles.lock().unwrap();
     let Some(source) = profiles.iter().find(|p| p.id() == id) else {
@@ -274,16 +280,16 @@ fn copy_to_pi(
     }
     let name = validate_name(&name).map_err(ProfileError::InvalidInput)?;
     let validated = validate_pi_settings(settings)?;
-    let now = crate::session::now_ms();
-    let copy = PiSessionProfile {
+    let now = crate::ids::now_ms();
+    let copy = SessionProfile::Pi(PiSessionProfile {
         id: uuid::Uuid::new_v4().to_string(),
         name,
         settings: validated,
         created_at: now,
         updated_at: now,
-    };
+    });
     let mut next = profiles.clone();
-    next.push(SessionProfile::Pi(copy.clone()));
+    next.push(copy.clone());
     commit(app, state, &mut profiles, next)?;
     Ok(copy)
 }
@@ -291,8 +297,8 @@ fn copy_to_pi(
 /// francois:profiles:remove. Sessions created from this profile keep working
 /// and keep showing the snapshotted name (FR-22) — nothing else is touched.
 /// pi-migration-rollout FR-7: project defaults naming this profile are
-/// cleared exactly as before (kind-agnostic, `project::clear_default_profile`)
-/// and any session still referencing it is logged for visibility.
+/// cleared exactly as before (kind-agnostic) and any session still
+/// referencing it is logged for visibility.
 #[tauri::command(async)]
 pub fn profiles_remove(
     app: AppHandle,
@@ -308,59 +314,79 @@ fn remove(app: &AppHandle, state: &ProfileRegistry, id: &str) -> Result<Option<(
     if find_index(&profiles, id).is_none() {
         return Err(AppError::new(ErrorCode::ProfileNotFound, NOT_FOUND_MSG));
     }
+    // FR-7's report is read BEFORE anything is committed, and it FAILS CLOSED
+    // (pr-142 §6): a sessions.json this build cannot read says nothing about
+    // whether the profile is in use, and "no references" is the one answer it
+    // must not be allowed to imply. Refusing leaves the profile, the file and
+    // every project default exactly as they were.
+    let affected = sessions_referencing(app, id)?;
     let next: Vec<SessionProfile> = profiles.iter().filter(|p| p.id() != id).cloned().collect();
     commit(app, state, &mut profiles, next)?;
     // A deleted profile must not stay named as any project's default.
-    // Best-effort and AFTER the removal committed — see
-    // `project::clear_default_profile`. Sessions already created from the
-    // profile are untouched: they snapshot it (FR-16) and keep showing
-    // its name (FR-22).
-    crate::project::clear_default_profile(app, id);
-    report_affected_sessions(app, id);
-    Ok(None)
-}
-
-/// pi-migration-rollout FR-7's "and reports affected sessions" half.
-/// Read-only, straight off sessions.json's own on-disk shape (never the live
-/// Engine — that belongs to `session`, out of this wave's scope). Diagnostic
-/// only: a referencing session's OWN snapshot (FR-16/FR-22) is unaffected
-/// either way, so nothing here changes behaviour.
-fn report_affected_sessions(app: &AppHandle, profile_id: &str) {
-    let affected = sessions_referencing(app, profile_id);
+    // Best-effort and AFTER the removal committed, through the observer seam
+    // (`ProfileRemovalObserver`) rather than a direct call into `project` —
+    // and with this registry's lock released first, because the observer takes
+    // another domain's. Sessions already created from the profile are
+    // untouched: they snapshot it (FR-16) and keep showing its name (FR-22).
+    drop(profiles);
+    notify_profile_removed(app, id);
     if !affected.is_empty() {
         eprintln!(
-            "profiles: removed profile {profile_id} — {} session(s) still reference it: {}",
+            "profiles: removed profile {id} — {} session(s) still reference it: {}",
             affected.len(),
             affected.join(", ")
         );
     }
+    Ok(None)
 }
 
-fn sessions_referencing(app: &AppHandle, profile_id: &str) -> Vec<String> {
-    let Some(dir) = app.path().app_data_dir().ok() else {
-        return Vec::new();
+/// pi-migration-rollout FR-7's "and reports affected sessions" half.
+/// Read-only, straight off sessions.json (never the live Engine — that
+/// belongs to `session`, and reaching for it would close the `profiles ↔
+/// session` cycle this PR just removed).
+fn sessions_referencing(app: &AppHandle, profile_id: &str) -> Result<Vec<String>, AppError> {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return Err(AppError::new(ErrorCode::Internal, UNREADABLE_SESSIONS_MSG));
     };
-    let Ok(bytes) = std::fs::read(dir.join("sessions.json")) else {
-        return Vec::new();
-    };
-    let Ok(list) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) else {
-        return Vec::new();
-    };
-    sessions_referencing_in(&list, profile_id)
+    match std::fs::read(dir.join("sessions.json")) {
+        Ok(bytes) => sessions_referencing_in(&bytes, profile_id),
+        // No file at all is not a failed read: a fleet that has never been
+        // persisted genuinely has no session referencing anything.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(AppError::new(
+            ErrorCode::Internal,
+            format!("{UNREADABLE_SESSIONS_MSG}: {e}"),
+        )),
+    }
 }
 
-/// Pure half of `sessions_referencing`, split out purely so this is
+/// The record shape this domain needs out of sessions.json, and nothing more.
+/// TYPED rather than a raw `Value` walk (pr-142 §6): a walk answers "no
+/// references" to every question it cannot understand, so a change to the
+/// persisted shape would silently re-permit deleting a profile that is in
+/// use. `SessionProfileRef` is this domain's own contract type (see mod.rs),
+/// so reading it here needs no import from `session`.
+#[derive(serde::Deserialize)]
+struct SessionRecordRef {
+    id: String,
+    #[serde(default)]
+    profile: Option<SessionProfileRef>,
+}
+
+/// Pure half of `sessions_referencing`, split out so the fail-closed rule is
 /// unit-testable without an AppHandle.
-fn sessions_referencing_in(list: &[serde_json::Value], profile_id: &str) -> Vec<String> {
-    list.iter()
-        .filter(|rec| {
-            rec.get("profile")
-                .and_then(|p| p.get("id"))
-                .and_then(|v| v.as_str())
-                == Some(profile_id)
-        })
-        .filter_map(|rec| rec.get("id").and_then(|v| v.as_str()).map(String::from))
-        .collect()
+fn sessions_referencing_in(bytes: &[u8], profile_id: &str) -> Result<Vec<String>, AppError> {
+    let records: Vec<SessionRecordRef> = serde_json::from_slice(bytes).map_err(|e| {
+        AppError::new(
+            ErrorCode::Internal,
+            format!("{UNREADABLE_SESSIONS_MSG}: {e}"),
+        )
+    })?;
+    Ok(records
+        .into_iter()
+        .filter(|rec| rec.profile.as_ref().is_some_and(|p| p.id == profile_id))
+        .map(|rec| rec.id)
+        .collect())
 }
 
 #[cfg(test)]
@@ -386,6 +412,53 @@ mod tests {
 
         let writable = registry(true);
         assert!(ensure_writable(&writable).is_ok());
+    }
+
+    /// pr-142 §6 / FR-10: an unmigratable registry is READ-ONLY, not
+    /// unreadable — listing keeps working (that is the whole of "rollback is
+    /// read-only access"), and only the mutating commands refuse.
+    #[test]
+    fn listing_still_works_while_the_registry_is_read_only() {
+        let state = registry(false);
+        state
+            .profiles
+            .lock()
+            .unwrap()
+            .push(testutil::legacy_fixture("p1", "role-a"));
+        let listed = list(&state).expect("a read-only registry must still list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id(), "p1");
+    }
+
+    // ---------- FR-4: copyToPi's wire shape ----------
+
+    /// contract/session-profiles.ts: `PiSessionProfile.kind: 'pi'` is REQUIRED
+    /// — it is the discriminant of the `SessionProfile` union the Profiles
+    /// modal switches on. `kind` is the wrapping enum's serde tag, not a field
+    /// of the struct, so a bare `PiSessionProfile` reaches the webview with no
+    /// `kind` at all. `copy_to_pi` needs an `AppHandle`, which this crate has
+    /// no test harness for, so the pin is in two halves: the first line fails
+    /// to COMPILE if the command ever answers with the bare struct again, and
+    /// the assertions record why that matters on the wire.
+    #[test]
+    fn copy_to_pi_answers_with_the_tagged_union_so_kind_reaches_the_webview() {
+        let _returns_the_tagged_union: fn(
+            &AppHandle,
+            &ProfileRegistry,
+            String,
+            String,
+            PiProfileSettingsInput,
+        ) -> Result<SessionProfile, AppError> = copy_to_pi;
+
+        let tagged = testutil::pi_fixture("p1", "pi-role");
+        assert_eq!(serde_json::to_value(&tagged).unwrap()["kind"], "pi");
+        let SessionProfile::Pi(bare) = tagged else {
+            panic!("pi_fixture must build a Pi profile");
+        };
+        assert!(
+            serde_json::to_value(&bare).unwrap().get("kind").is_none(),
+            "the bare struct carries no discriminant — which is why it must never be the wire type"
+        );
     }
 
     // ---------- pi-migration-rollout FR-2: kind-change guard ----------
@@ -485,14 +558,54 @@ mod tests {
 
     // ---------- FR-7: affected-sessions report ----------
 
+    fn sessions_json(records: serde_json::Value) -> Vec<u8> {
+        records.to_string().into_bytes()
+    }
+
     #[test]
     fn sessions_referencing_in_finds_only_matching_sessions() {
-        let list = vec![
-            json!({ "id": "s1", "profile": { "id": "p1", "name": "role-a" } }),
-            json!({ "id": "s2", "profile": { "id": "p2", "name": "role-b" } }),
-            json!({ "id": "s3" }),
-        ];
-        assert_eq!(sessions_referencing_in(&list, "p1"), vec!["s1".to_string()]);
-        assert!(sessions_referencing_in(&list, "unknown").is_empty());
+        let bytes = sessions_json(json!([
+            { "id": "s1", "profile": { "id": "p1", "name": "role-a", "replacesSystemPrompt": false } },
+            { "id": "s2", "profile": { "id": "p2", "name": "role-b", "replacesSystemPrompt": true } },
+            { "id": "s3" },
+        ]));
+        assert_eq!(
+            sessions_referencing_in(&bytes, "p1").unwrap(),
+            vec!["s1".to_string()]
+        );
+        assert!(sessions_referencing_in(&bytes, "unknown")
+            .unwrap()
+            .is_empty());
+        assert!(sessions_referencing_in(&sessions_json(json!([])), "p1")
+            .unwrap()
+            .is_empty());
+    }
+
+    /// pr-142 §6: the whole point of the typed read. A file this build cannot
+    /// parse — corrupt, or written in a shape it does not know — must not
+    /// answer "nothing references this profile", because that answer is what
+    /// lets a profile still in use be deleted.
+    #[test]
+    fn sessions_referencing_in_fails_closed_on_anything_it_cannot_read() {
+        for (tag, bytes) in [
+            ("corrupt", b"{ not json".to_vec()),
+            ("not an array", sessions_json(json!({ "sessions": [] }))),
+            // the record shape changed: `id` is no longer a plain string
+            (
+                "record reshaped",
+                sessions_json(json!([{ "id": { "value": "s1" } }])),
+            ),
+            // the profile ref shape changed: a present-but-malformed object is
+            // an error, where `Option` alone would only have excused an
+            // absent key
+            (
+                "profile ref reshaped",
+                sessions_json(json!([{ "id": "s1", "profile": { "profileId": "p1" } }])),
+            ),
+        ] {
+            let outcome = sessions_referencing_in(&bytes, "p1");
+            assert!(outcome.is_err(), "{tag}: must fail closed, got {outcome:?}");
+            assert_eq!(outcome.unwrap_err().code, ErrorCode::Internal, "{tag}");
+        }
     }
 }

@@ -25,11 +25,15 @@ mod commands;
 mod registry;
 mod repo_brief;
 mod standards;
+/// pr-142 §9: this domain's half of the `profiles ↔ project` inversion — the
+/// observer `profiles_remove` notifies instead of calling in here by name.
+mod teardown;
 
 pub use commands::*;
 pub use registry::*;
 pub use repo_brief::*;
 pub(crate) use standards::*;
+pub use teardown::*;
 
 #[cfg(test)]
 mod testutil;
