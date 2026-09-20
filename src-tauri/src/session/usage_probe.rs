@@ -199,7 +199,10 @@ pub fn run_probe(
     }
 
     if is_codex {
-        let Some(mut input) = stdin.take() else {
+        // Keep stdin alive while reading: app-server processes requests
+        // asynchronously, and closing it here can make it exit after only the
+        // initialize response before account/rateLimits/read is handled.
+        let Some(input) = stdin.as_mut() else {
             finish_probe(
                 &app,
                 &session_id,
@@ -211,7 +214,7 @@ pub fn run_probe(
             );
             return;
         };
-        if let Err(error) = write_codex_usage_requests(&mut input) {
+        if let Err(error) = write_codex_usage_requests(input) {
             if let Some(mut c) = slot.lock().unwrap().take() {
                 let _ = c.kill();
                 let _ = c.wait();
@@ -263,6 +266,7 @@ pub fn run_probe(
             }
         }
     }
+    drop(stdin);
     if let Some(mut c) = slot.lock().unwrap().take() {
         if is_codex {
             let _ = c.kill();
