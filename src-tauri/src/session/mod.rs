@@ -147,6 +147,9 @@ pub(crate) use blocks::classify_block;
 // Every name this module exports is `cloud_`/`Cloud`-prefixed or otherwise
 // domain-specific for that reason — see cloud/mod.rs.
 pub use adapter::codex::models::kill_probes as kill_model_probes;
+pub(crate) use adapter::codex::usage::{
+    launch as launch_codex_usage_probe, request as request_codex_usage_probe,
+};
 pub use cloud::{
     __cmd__cloud_adopt, __cmd__cloud_list, __cmd__cloud_resolve, __tauri_command_name_cloud_adopt,
     __tauri_command_name_cloud_list, __tauri_command_name_cloud_resolve, cloud_adopt, cloud_list,

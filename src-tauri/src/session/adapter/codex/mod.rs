@@ -27,6 +27,7 @@ pub(crate) mod models;
 pub(crate) use catalog::{get as model_catalog, invalidate as invalidate_catalog};
 mod runner;
 mod translate;
+pub(crate) mod usage;
 mod wire;
 
 use super::*;

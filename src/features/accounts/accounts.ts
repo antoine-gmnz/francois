@@ -319,11 +319,9 @@ export function accountIsGrok(account: Account): boolean {
  * Does a plan-limit probe make sense for this account?
  *
  * Derived from the capability table via the account's own runtime, so it is the
- * SAME source of truth the disabled usage bar reads — rather than a hand-kept
- * list of kinds to exclude. That distinction is not cosmetic: the previous
- * `!accountIsEndpoint(a)` negation silently admitted `codex-cli` the day that
- * kind was added, and the probe spawns `claude` pointed at the account's config
- * dir, which `claude` then initializes as its own.
+ * SAME source of truth the usage bar reads — rather than a hand-kept list of
+ * kinds to exclude. Each supported runtime owns its own account probe, so a
+ * provider is never queried through another CLI's config directory.
  */
 export function accountUsageProbeable(account: Account): boolean {
   return runtimeCapabilities(accountRuntime(account)).usageBar.available;

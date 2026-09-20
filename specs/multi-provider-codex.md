@@ -12,6 +12,13 @@ design_files: []
 
 # Codex CLI sessions
 
+## 0. Amendment — account rate limits in the usage bar
+
+Codex account limits are now supported. The app-server `account/rateLimits/read`
+response is polled under the account's `CODEX_HOME`; its primary and secondary
+windows populate the existing usage-bar meters. This supersedes the original
+`usageBar` gap described in §2, §3 and FR-16.
+
 ## 1. Summary
 
 A third agent runtime: **OpenAI's `codex` CLI**, driven the same way Francois already drives
@@ -47,8 +54,8 @@ loop owner. A collapsed enum could not name it.
   user's own `~/.codex/config.toml` cannot silently widen it.
 - A real model catalog, read from Codex's own `models_cache.json`.
 - The disabled-pane treatment for everything this runtime does not carry, with **honest per-runtime
-  wording** — a Codex session bills against a ChatGPT plan, so `usageBar`'s existing `francois`
-  reason ("bills per token, not against a plan") would be a lie here.
+  wording**. Codex's account limits are shown by the shared usage bar; the remaining unsupported
+  surfaces retain their explicit reasons.
 
 **Non-goals**
 
@@ -94,7 +101,8 @@ is there (durable-sessions) and so is the thread anchor, so the next message con
 starting over.
 
 **The panes.** Agents, MCP, Skills and Workflows render the disabled notice with their reason. The
-usage bar hides. The slash menu says slash commands aren't available on this provider yet.
+usage bar shows the Codex account's rate-limit meters. The slash menu says slash commands aren't
+available on this provider yet.
 
 ## 4. Functional requirements
 
@@ -234,7 +242,8 @@ usage bar hides. The slash menu says slash commands aren't available on this pro
   **`permissions`** member (FR-11) — which means the existing `claude-code` and `francois` rows must
   both gain it too, since `RuntimeCapabilities` is an exhaustive `Record`. `claude-code`:
   `available: true`. `francois`: `available: true` (that adapter *is* the gate —
-  `multi-provider-openai` FR-9..FR-13). `codex`: `false`, because the sandbox replaces the cards.
+  `multi-provider-openai` FR-9..FR-13). `codex`: `false` for permissions, because the sandbox
+  replaces the cards; `usageBar` is `true` via the App Server rate-limit probe.
 
   The `codex` row, with reasons worded per runtime rather than copied:
 
@@ -248,11 +257,11 @@ usage bar hides. The slash menu says slash commands aren't available on this pro
   | `interactiveCommands` | false | "Slash commands aren't available on this provider yet." |
   | `permissions` | false | "Codex enforces permissions with its own sandbox." |
   | `remoteControl` | false | "Remote Control is an Anthropic service." |
-  | `usageBar` | false | "Plan limits aren't available on this provider yet." |
+  | `usageBar` | true | — |
   | `compaction` | false | "Compaction isn't available on this provider yet." |
 
-  `usageBar`'s reason is deliberately **not** `francois`' "bills per token, not against a plan": a
-  Codex session on a ChatGPT plan bills against exactly such a plan. It is a gap, not a property.
+  `usageBar` is available through Codex App Server's account rate-limit endpoint, not Claude's
+  `/usage` command.
 
 - **FR-17** `CodexAdapter::models` reads `<CODEX_HOME>/models_cache.json` and maps each entry —
   `slug` → `id`, `display_name` → `label`, `description` → `brief`,

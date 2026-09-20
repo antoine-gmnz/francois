@@ -39,6 +39,10 @@ const POST_TURN_DEBOUNCE_SECS: u64 = 15;
 // §5.4 — the exact user-facing message for each failure condition.
 const MSG_SPAWN_FAILED: &str =
     "Claude Code CLI not found. Install it and ensure 'claude' is on PATH.";
+const MSG_CODEX_SPAWN_FAILED: &str =
+    "Codex CLI not found. Install it and ensure 'codex' is on PATH.";
+const MSG_CODEX_UNAVAILABLE: &str =
+    "Could not read Codex usage. Check that the Codex account is signed in.";
 const MSG_TIMED_OUT: &str = "Timed out fetching usage.";
 const MSG_NO_ANSWER: &str =
     "The Claude Code CLI returned no answer. Run 'claude' once in a terminal to authenticate.";
@@ -345,19 +349,15 @@ fn emit_snapshot(app: &AppHandle, account_id: &str, snapshot: &UsageSnapshot) {
 /// `CLAUDE_CONFIG_DIR` is resolved BEFORE that lock is taken — account state is
 /// another leaf, and the two are never held at once.
 fn request_probe(app: &AppHandle, account_id: &str, manual: bool) -> bool {
-    // multi-provider-codex FR-16: the usage probe runs `claude` with this
-    // account's config dir as CLAUDE_CONFIG_DIR. On a non-Claude account that is
-    // not merely useless — it POINTS THE WRONG CLI AT THE WRONG HOME, and
-    // `claude` writes `.claude.json` + `projects/` + `sessions/` into a
-    // directory that belongs to `codex` (observed: a freshly added Codex account
-    // came back carrying a full Claude profile). `usageBar` is already
-    // `available: false` for both non-Claude runtimes, so there is nothing to
-    // probe for either; this is where that becomes true rather than merely
-    // rendered.
-    if crate::account::kind_of(app, account_id) != crate::account::AccountKind::ClaudeCodeOauth {
+    let kind = crate::account::kind_of(app, account_id);
+    let is_codex = kind == crate::account::AccountKind::CodexCli;
+    if kind != crate::account::AccountKind::ClaudeCodeOauth && !is_codex {
         return false;
     }
     let config_dir = crate::account::config_dir_of(app, account_id);
+    if is_codex && config_dir.is_none() {
+        return false;
+    }
     let Some(state) = app.try_state::<UsageState>() else {
         return false;
     };
@@ -376,37 +376,87 @@ fn request_probe(app: &AppHandle, account_id: &str, manual: bool) -> bool {
     mark_loading(&mut inner.snapshot);
     emit_snapshot(app, account_id, &inner.snapshot); // FR-17 — before the spawn
 
-    let (program, args) = probe_invocation();
-    // multi-account FR-28: each probe reports plan limits from ITS account's
-    // perspective. The probe is always native (FR-6), so there is no WSLENV leg.
-    let mut cmd = crate::process_util::spawn(program)
-        .args(args)
-        .envs(account_env(config_dir.as_deref(), "native", &[]))
-        .stdout(Stdio::piped());
-    if let Some(home) = probe_cwd() {
-        cmd = cmd.current_dir(home);
-    }
-
-    let mut child = match cmd.start() {
-        Ok(c) => c,
-        Err(_) => {
-            apply_outcome(
-                &mut inner.snapshot,
-                ProbeOutcome::Failed(spawn_failed()),
-                now_ms(),
-            );
-            emit_snapshot(app, account_id, &inner.snapshot); // FR-16 — exactly one outcome event
-            return true;
+    let (mut child, codex_io) = if is_codex {
+        let home = config_dir
+            .as_deref()
+            .expect("codex config dir checked above");
+        match crate::session::launch_codex_usage_probe(
+            &crate::process_util::codex_program(),
+            std::path::Path::new(home),
+        ) {
+            Ok((child, stdin, stdout)) => (child, Some((stdin, stdout))),
+            Err(_) => {
+                apply_outcome(
+                    &mut inner.snapshot,
+                    ProbeOutcome::Failed(unavailable(MSG_CODEX_SPAWN_FAILED)),
+                    now_ms(),
+                );
+                emit_snapshot(app, account_id, &inner.snapshot);
+                return true;
+            }
+        }
+    } else {
+        let (program, args) = probe_invocation();
+        // multi-account FR-28: each probe reports plan limits from ITS account's
+        // perspective. The probe is always native (FR-6), so there is no WSLENV leg.
+        let mut cmd = crate::process_util::spawn(program)
+            .args(args)
+            .envs(account_env(config_dir.as_deref(), "native", &[]))
+            .stdout(Stdio::piped());
+        if let Some(home) = probe_cwd() {
+            cmd = cmd.current_dir(home);
+        }
+        match cmd.start() {
+            Ok(child) => (child, None),
+            Err(_) => {
+                apply_outcome(
+                    &mut inner.snapshot,
+                    ProbeOutcome::Failed(spawn_failed()),
+                    now_ms(),
+                );
+                emit_snapshot(app, account_id, &inner.snapshot); // FR-16 — exactly one outcome event
+                return true;
+            }
         }
     };
-    let stdout = child.stdout.take();
+    let stdout = if codex_io.is_none() {
+        child.stdout.take()
+    } else {
+        None
+    };
     inner.probe = Some(child);
     drop(map);
 
     let handle = app.clone();
     let account_id = account_id.to_string();
-    std::thread::spawn(move || drain_probe(handle, account_id, generation, stdout));
+    if let Some((stdin, stdout)) = codex_io {
+        std::thread::spawn(move || {
+            drain_codex_probe(handle, account_id, generation, stdin, stdout)
+        });
+    } else {
+        std::thread::spawn(move || drain_probe(handle, account_id, generation, stdout));
+    }
     true
+}
+
+fn drain_codex_probe(
+    app: AppHandle,
+    account_id: String,
+    generation: u64,
+    mut stdin: std::process::ChildStdin,
+    stdout: std::process::ChildStdout,
+) {
+    let outcome = match crate::session::request_codex_usage_probe(
+        &mut stdin,
+        stdout,
+        std::time::Instant::now() + Duration::from_secs(PROBE_TIMEOUT_SECS),
+    ) {
+        Ok(meters) => ProbeOutcome::Ready(meters),
+        Err(_) => ProbeOutcome::Failed(unavailable(MSG_CODEX_UNAVAILABLE)),
+    };
+    if let Some(mut child) = settle(&app, &account_id, generation, outcome) {
+        let _ = child.wait();
+    }
 }
 
 /// The detached probe body: read stdout to EOF under a 30s watchdog, then fold the

@@ -92,8 +92,8 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
   // Two reasons here deliberately DIVERGE from the francois row rather than being
   // copied, because the same word would be false:
   //   - usageBar: a Codex session authenticated with `codex login` bills against a
-  //     ChatGPT PLAN. "Bills per token, not against a plan" would be a lie — this
-  //     is a gap we have not built, so it reads "yet" like the other gaps.
+  //     ChatGPT PLAN. The App Server rate-limit endpoint now feeds the same
+  //     account-level meters shown for Claude.
   //   - permissions: not a gap at all. Codex enforces with an OS-level sandbox
   //     chosen from permissionMode (FR-9). Stating that is honest; "isn't
   //     available yet" would imply the calls run ungoverned, which is the opposite
@@ -118,7 +118,7 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
       reason: 'Codex enforces permissions with its own sandbox.',
     },
     remoteControl: { available: false, reason: 'Remote Control is an Anthropic service.' },
-    usageBar: { available: false, reason: "Plan limits aren't available on this provider yet." },
+    usageBar: { available: true },
     compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
     steering: { available: false, reason: "Steering isn't available on this provider yet." },
     followUps: { available: false, reason: "Follow-ups aren't available on this provider yet." },
