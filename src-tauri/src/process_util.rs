@@ -12,6 +12,7 @@
 // `Command::new` anywhere outside this file.
 
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 
@@ -538,6 +539,203 @@ impl CommandBuilder {
 
     pub fn start(mut self) -> std::io::Result<Child> {
         self.cmd.spawn()
+    }
+
+    /// Run to completion (or `timeout`, or `output_cap` bytes per stream,
+    /// whichever comes first), draining stdout and stderr concurrently from
+    /// the moment the child is spawned.
+    ///
+    /// pi-runtime-distribution FR-2 / account-cli-tools: a version probe needs
+    /// a hard deadline (a CLI that hangs must not hang the caller with it) AND
+    /// output bounded in memory. Reading a child's stdio only AFTER `try_wait`
+    /// reports exit — the shape this replaces at both call sites — deadlocks a
+    /// child that fills the OS pipe buffer before it exits: the child blocks on
+    /// `write`, so it never exits, and the whole deadline elapses for nothing.
+    /// Draining both pipes on their own threads from the moment the child is
+    /// spawned is what `account/cli_tools.rs::watch_install`'s (uncapped,
+    /// unbounded) pump already did for the install stream; this is the same
+    /// shape with a deadline and a per-stream cap, shared so neither probe
+    /// site hand-rolls it again.
+    ///
+    /// A stream the call site already named (via [`Self::stdout`]/
+    /// [`Self::stderr`]) is left alone; otherwise both default to piped, same
+    /// as [`Self::output`].
+    pub fn run_bounded(mut self, timeout: std::time::Duration, output_cap: usize) -> BoundedRun {
+        if !self.stdout_set {
+            self.cmd.stdout(Stdio::piped());
+        }
+        if !self.stderr_set {
+            self.cmd.stderr(Stdio::piped());
+        }
+        let mut child = match self.cmd.spawn() {
+            Ok(c) => c,
+            Err(_) => {
+                return BoundedRun {
+                    status: None,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                    spawn_failed: true,
+                    timed_out: false,
+                }
+            }
+        };
+
+        let stdout_pump = child
+            .stdout
+            .take()
+            .map(|s| std::thread::spawn(move || pump_capped(s, output_cap)));
+        let stderr_pump = child
+            .stderr
+            .take()
+            .map(|s| std::thread::spawn(move || pump_capped(s, output_cap)));
+
+        let deadline = std::time::Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(BOUNDED_RUN_POLL)
+                }
+                _ => break None,
+            }
+        };
+
+        let Some(status) = status else {
+            let _ = child.kill();
+            let _ = child.wait();
+            // Reclaim the pump threads (killing the child closes its ends of
+            // the pipes, so a blocked read unblocks with EOF) — their output
+            // is discarded, since a timeout never surfaces stdout/stderr
+            // anyway.
+            if let Some(p) = stdout_pump {
+                let _ = p.join();
+            }
+            if let Some(p) = stderr_pump {
+                let _ = p.join();
+            }
+            return BoundedRun {
+                status: None,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                spawn_failed: false,
+                timed_out: true,
+            };
+        };
+
+        let stdout = stdout_pump.and_then(|p| p.join().ok()).unwrap_or_default();
+        let stderr = stderr_pump.and_then(|p| p.join().ok()).unwrap_or_default();
+        BoundedRun {
+            status: Some(status),
+            stdout,
+            stderr,
+            spawn_failed: false,
+            timed_out: false,
+        }
+    }
+}
+
+/// The result of one [`CommandBuilder::run_bounded`] spawn: raw, undecoded —
+/// a native spawn's output is plain UTF-8; a WSL spawn's bytes need
+/// `wsl::decode_wsl_output` first (wsl.exe's OWN errors are UTF-16LE).
+pub struct BoundedRun {
+    pub status: Option<std::process::ExitStatus>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub spawn_failed: bool,
+    pub timed_out: bool,
+}
+
+const BOUNDED_RUN_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Read `stream` to EOF or `cap` bytes, whichever comes first — the per-stream
+/// half of the pump [`CommandBuilder::run_bounded`] spawns for stdout and
+/// stderr each. Once it returns it drops its end of the pipe, so a child still
+/// writing past the cap gets a broken pipe on its next write — which is what
+/// lets it exit (and the waiter loop notice) well inside the deadline instead
+/// of hanging until it.
+fn pump_capped(stream: impl Read, cap: usize) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let _ = stream.take(cap as u64).read_to_end(&mut buf);
+    buf
+}
+
+#[cfg(test)]
+mod bounded_run_tests {
+    use super::*;
+
+    /// A directory whose name carries a space and a non-ASCII character —
+    /// mirrors `process_util`'s own PATH-resolution fixtures; proves the
+    /// spawn/pump pipeline is untroubled by such a path.
+    struct FakeScript {
+        dir: PathBuf,
+        path: PathBuf,
+    }
+    impl Drop for FakeScript {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+    fn fake_script(contents_unix: &str, contents_windows_cmd: &str) -> FakeScript {
+        let dir = std::env::temp_dir().join(format!(
+            "francois-bounded-run-\u{00e9}migr\u{00e9} space-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = if cfg!(windows) {
+            let p = dir.join("probe.cmd");
+            std::fs::write(&p, contents_windows_cmd).unwrap();
+            p
+        } else {
+            let p = dir.join("probe");
+            std::fs::write(&p, contents_unix).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            p
+        };
+        FakeScript { dir, path }
+    }
+
+    #[test]
+    fn a_quick_child_reports_its_output_undecoded() {
+        let script = fake_script("#!/bin/sh\necho 0.85.1\n", "@echo off\r\necho 0.85.1\r\n");
+        let run = spawn(&script.path).run_bounded(std::time::Duration::from_secs(5), 64 * 1024);
+        assert!(!run.timed_out && !run.spawn_failed);
+        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0.85.1");
+    }
+
+    #[test]
+    fn a_child_that_never_exits_is_timed_out_within_the_injected_deadline() {
+        let script = fake_script(
+            "#!/bin/sh\nwhile true; do sleep 1; done\n",
+            "@echo off\r\n:loop\r\ngoto loop\r\n",
+        );
+        let started = std::time::Instant::now();
+        let run = spawn(&script.path).run_bounded(std::time::Duration::from_millis(80), 64 * 1024);
+        assert!(run.timed_out);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_child_that_writes_past_the_pipe_buffer_before_exiting_does_not_deadlock() {
+        if cfg!(windows) {
+            // `head`/`/dev/zero` are POSIX-only; the cap itself is
+            // platform-independent code, exercised on the unix runner.
+            return;
+        }
+        // 200000 bytes is well past the 64 KiB cap: once the pump reads its
+        // cap it drops its end of the pipe, `tr` gets a broken pipe on its
+        // next write and dies well inside the deadline — proving both halves:
+        // output is truncated exactly at the cap, and the run is NOT reported
+        // as timed out (the bug this helper exists to fix).
+        let script = fake_script("#!/bin/sh\nhead -c 200000 /dev/zero | tr '\\0' 'a'\n", "");
+        let started = std::time::Instant::now();
+        let run = spawn(&script.path).run_bounded(std::time::Duration::from_secs(5), 64 * 1024);
+        assert_eq!(run.stdout.len(), 64 * 1024);
+        assert!(!run.timed_out);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }
 

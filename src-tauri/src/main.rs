@@ -187,6 +187,7 @@ fn main() {
             session::session_worktree_probe,
             session::session_worktree_status,
             session::session_worktree_remove,
+            session::runtime_installation,
             editor::session_editor_list,
             editor::session_open_in_editor,
             permissions::permissions_list,
