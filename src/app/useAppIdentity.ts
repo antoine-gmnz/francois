@@ -42,9 +42,16 @@ export function useAppIdentity(activeSessionName: string | undefined): AppIdenti
   }, []);
 
   useEffect(() => {
-    void getCurrentWindow()
-      .setTitle(activeSessionName ? `${activeSessionName} — ${appName}` : appName)
-      .catch(() => {});
+    // With no Tauri runtime (the demo build opened in a plain browser)
+    // `getCurrentWindow()` throws SYNCHRONOUSLY, which the promise's `.catch()`
+    // never sees — and an effect that throws unmounts the tree.
+    try {
+      void getCurrentWindow()
+        .setTitle(activeSessionName ? `${activeSessionName} — ${appName}` : appName)
+        .catch(() => {});
+    } catch {
+      // No window to title.
+    }
   }, [activeSessionName, appName]);
 
   return { home, appName, appVersion };

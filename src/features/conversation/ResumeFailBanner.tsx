@@ -6,9 +6,9 @@ export default function ResumeFailBanner({ onDismiss }: { onDismiss: () => void 
   return (
     <div className="resume-banner">
       <span className="resume-banner__text">previous thread unavailable — continuing fresh</span>
-      <span onClick={onDismiss} className="resume-banner__dismiss" title="dismiss">
+      <button type="button" onClick={onDismiss} className="resume-banner__dismiss" title="dismiss">
         ✕
-      </span>
+      </button>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import type { AppError, RuntimeResourcePolicy, SkillInfo } from '../../../contra
 import type { CapabilityState } from '../../../contract/multi-provider-seam';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { ListRow } from '../../ui/ListRow';
-import { isSkillRunnable, projectResourcesNote, skillInvocationLabel } from './skills-loaded';
+import { isSkillRunnable, projectResourcesNote, skillInvocationLabel, skillRowKey } from './skills-loaded';
 
 // pi-skills-capabilities FR-1: 'path' is the Pi-only scope (a profile's skillPaths).
 const scopeTag: Record<string, string> = { project: 'proj', user: 'user', plugin: 'plugin', path: 'path' };
@@ -85,7 +85,7 @@ export function SkillsListBody({
           const sel = i === selected;
           return (
             <Row
-              key={skill.name}
+              key={skillRowKey(skill)}
               skill={skill}
               selected={sel}
               installCapability={installCapability}
@@ -126,9 +126,14 @@ function Row({
       selected={selected}
       className={rowClassName}
       title={!runnable ? skill.unavailableReason : undefined}
+      // B2: SELECT always happens (arrow-key navigation already lands here) —
+      // activation stays gated inside SkillsPanel.activate, which is `onClick`
+      // here, so a `loaded: false` row is never silently unresponsive to a
+      // click, only to the activation it already refuses.
+      aria-disabled={!runnable || undefined}
       onClick={(e) => {
         e.stopPropagation();
-        if (runnable) onClick();
+        onClick();
       }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}

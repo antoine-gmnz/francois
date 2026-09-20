@@ -13,7 +13,7 @@
 // audio cue (FR-8), without this module having to know trigger.ts exists.
 
 import { useSyncExternalStore } from 'react';
-import type { ControlRuntimePayload } from '../../../contract/common';
+import type { ControlRuntimePayload } from '../../contract/common';
 
 export type CompactionProgress = Extract<ControlRuntimePayload, { kind: 'compaction' }>;
 export type RetryProgress = Extract<ControlRuntimePayload, { kind: 'retry' }>;

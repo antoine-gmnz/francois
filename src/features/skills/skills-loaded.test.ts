@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RuntimeResourcePolicy, SkillInfo } from '../../../contract/common';
-import { isSkillRunnable, projectResourcesNote, skillInvocationLabel } from './skills-loaded';
+import { isSkillRunnable, projectResourcesNote, skillInvocationLabel, skillRowKey } from './skills-loaded';
 
 const skill = (extra: Partial<SkillInfo> = {}): SkillInfo => ({
   name: 'review',
@@ -39,6 +39,22 @@ describe('isSkillRunnable (FR-1)', () => {
 
   it('is NOT runnable when loaded: false — visible, not runnable', () => {
     expect(isSkillRunnable(skill({ loaded: false }))).toBe(false);
+  });
+});
+
+describe('skillRowKey (pr-142 §B1)', () => {
+  it('uses invocation, so a colon command and a bare command with the same derived name stay distinct', () => {
+    const skillCmd = skill({ name: 'deploy', invocation: '/skill:deploy', kind: 'command' });
+    const userCmd = skill({ name: 'deploy', invocation: '/deploy', kind: 'command' });
+    expect(skillRowKey(skillCmd)).not.toBe(skillRowKey(userCmd));
+  });
+
+  it('falls back to kind:name for a non-Pi entry (no invocation)', () => {
+    expect(skillRowKey(skill({ name: 'pdf-reader', kind: 'skill' }))).toBe('skill:pdf-reader');
+  });
+
+  it('falls back to skill:name when kind is absent too', () => {
+    expect(skillRowKey(skill({ name: 'pdf-reader' }))).toBe('skill:pdf-reader');
   });
 });
 

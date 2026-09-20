@@ -23,6 +23,17 @@ export function isSkillRunnable(skill: Pick<SkillInfo, 'loaded'>): boolean {
 }
 
 /**
+ * pr-142 §B1: a Pi row's `name` is DERIVED from `invocation` by stripping `/`
+ * and `skill:` — so `/skill:deploy` and `/deploy` both derive to `deploy` and
+ * collide as a React `key`. `invocation` is unique per listed entry; fall back
+ * to `kind:name` (never bare `name` alone) for every other runtime, which
+ * carries no `invocation` at all.
+ */
+export function skillRowKey(skill: Pick<SkillInfo, 'name' | 'kind' | 'invocation'>): string {
+  return skill.invocation ?? `${skill.kind ?? 'skill'}:${skill.name}`;
+}
+
+/**
  * FR-8: the one status line every Pi skills list carries (never shown for a
  * non-Pi session, since `resourcePolicy` is Pi-only per SessionMeta) — stated
  * up front rather than inferred from an empty list, so "no skills" is never

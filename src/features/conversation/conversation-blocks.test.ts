@@ -1510,16 +1510,39 @@ describe('compactBlocks (render-time merge of duplicate consecutive tool rows)',
     expect(out).toHaveLength(3);
   });
 
-  it('never merges a Pi runtime tool "failed" row into an adjacent "done" row (pi-transcript-events §3)', () => {
-    const out = compactBlocks([tool('t1', 'Edit', 'src/a.ts', 'failed'), tool('t2', 'Edit', 'src/a.ts', 'done')]);
-    expect(out).toHaveLength(2);
+  // A Pi row decides from `execution.status`, a plain Claude row from an
+  // exact `error` meta — the two runtimes never share a rule. Claude's metas
+  // are free-form (tools.rs: a Task row's is the first line of the subagent's
+  // own result), so a WORD match on them would break a run on prose that
+  // merely mentions a failure.
+  it('merges consecutive Claude rows whose free-form meta merely mentions failure', () => {
+    const out = compactBlocks([
+      tool('t1', 'Read', 'src/a.ts', '2 unknown symbols'),
+      tool('t2', 'Read', 'src/a.ts', '3 unknown symbols'),
+    ]);
+    expect(out).toHaveLength(1);
+    const b = out[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.meta).toBe('3 unknown symbols');
   });
 
-  it('never merges a "cancelled" or "unknown" Pi runtime meta with a plain one', () => {
-    const cancelled = compactBlocks([tool('t1', 'Edit', 'src/a.ts', 'cancelled'), tool('t2', 'Edit', 'src/a.ts', 'done')]);
-    expect(cancelled).toHaveLength(2);
-    const unknown = compactBlocks([tool('t1', 'Edit', 'src/a.ts', 'done'), tool('t2', 'Edit', 'src/a.ts', 'unknown')]);
-    expect(unknown).toHaveLength(2);
+  it('merges consecutive Claude rows whose meta says “cancelled” inside a sentence', () => {
+    const out = compactBlocks([
+      tool('t1', 'Read', 'src/a.ts', 'the run was cancelled upstream'),
+      tool('t2', 'Read', 'src/a.ts', 'the run was cancelled upstream'),
+    ]);
+    expect(out).toHaveLength(1);
+  });
+
+  it('never merges a Pi runtime tool whose call did not settle cleanly (pi-transcript-events §3)', () => {
+    // Same execution id on both rows, so ONLY the status can break the run.
+    for (const status of ['failed', 'cancelled', 'unknown'] as const) {
+      const out = compactBlocks([
+        runtimeToolBlock('t1', runtimeTool({ id: 'call-1', inputText: 'src/a.ts', status })),
+        runtimeToolBlock('t2', runtimeTool({ id: 'call-1', inputText: 'src/a.ts', status: 'succeeded' })),
+      ]);
+      expect(out).toHaveLength(2);
+    }
   });
 
   it('does not merge Pi tool rows whose execution IDs differ', () => {

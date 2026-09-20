@@ -444,7 +444,11 @@ function ContextBar({ session, wide = false }: { session: SessionMeta; wide?: bo
   if (!readout) return null;
   return (
     <span className={wide ? 'roster-row__bar roster-row__bar--wide' : 'roster-row__bar'}>
-      <span className="roster-row__bar-fill" style={{ width: `${readout.fraction * 100}%` }} />
+      <span
+        className="roster-row__bar-fill"
+        // eslint-disable-next-line no-restricted-syntax -- runtime-computed fill width (the clamped 0..1 context fraction), per CLAUDE.md's inline-style exception
+        style={{ width: `${readout.fraction * 100}%` }}
+      />
     </span>
   );
 }

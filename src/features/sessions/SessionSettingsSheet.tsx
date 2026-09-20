@@ -29,7 +29,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
 import { ChipGroup } from '../../ui/ChipGroup';
 import { StatusDot } from '../../ui/StatusDot';
-import { GitRow, PermissionsRow, ResponseRow, RUNTIME_CHIP_OPTIONS } from './SharedSettingsRows';
+import { GitRow, PermissionsRow, ResponseRow } from './SharedSettingsRows';
 import { accountIdForSessionCreate, modelPickerProviderHeading } from '../../lib/account-selection';
 import { accountIsPi } from '../accounts/pi';
 import { PiPolicyField } from './PiPolicyField';
@@ -55,6 +55,7 @@ import { useRuntimeModelCatalog } from './useRuntimeModelCatalog';
 import { runtimeSelectionIsFresh } from './runtime-model';
 import { recordRecentModel } from './runtime-model-favorites';
 import {
+  RUNTIME_CHIP_OPTIONS,
   SET_PROJECT_DEFAULT_COPY,
   SET_PROJECT_DEFAULT_TITLE,
   buildPatch,
@@ -265,8 +266,11 @@ function CreateSheet({
   // pi-models-metrics FR-4: belt-and-suspenders against the exact shape the
   // core itself validates (SessionCreateInput) — the branches below never
   // construct a mismatched payload, but this keeps the guard honest if that
-  // ever changes.
-  const modelMismatch = modelSelectionMismatch(selectedAccount, isPiAccount ? '' : modelId, isPiAccount ? piModel : undefined);
+  // ever changes. A5 (review addendum): fed the RAW selection on both tracks
+  // (not the already-sanitized values `createSession` sends) — the helper is
+  // the one place that decides, so a future bug in those branches still trips
+  // this guard instead of being validated against dead-code inputs.
+  const modelMismatch = modelSelectionMismatch(selectedAccount, modelId, piModel);
   // pi-models-metrics FR-2/FR-4: a stale, loading or errored catalogue never
   // authorizes Create — nor does a saved/default selection that vanished from
   // a fresh snapshot (it stays visible, disabled, per runtime-model.ts).

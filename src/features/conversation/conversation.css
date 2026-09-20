@@ -34,6 +34,10 @@
   flex: 1;
 }
 .resume-banner__dismiss {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
   font-size: var(--font-size-10);
   color: var(--text-faint);
   cursor: pointer;
@@ -60,6 +64,10 @@
   flex: 1;
 }
 .limit-banner__dismiss {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
   font-size: var(--font-size-10);
   color: var(--text-faint);
   cursor: pointer;
@@ -94,6 +102,10 @@
   color: var(--text-faint);
 }
 .worktree-notice__dismiss {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
   font-size: var(--font-size-10);
   color: var(--text-faint);
   cursor: pointer;

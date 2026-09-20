@@ -17,10 +17,10 @@ import {
   piObservationCheckedAtLabel,
   piObservationLabel,
   piObservationTone,
+  piActionBlockedReason,
   piObservationsSummary,
   piRemoveConfirmView,
   piSaveDisabled,
-  piSetupBlockedReason,
   piTrustActionLabel,
   piTrustLabel,
 } from './pi';
@@ -156,10 +156,14 @@ describe('display copy', () => {
   });
 });
 
-describe('piSetupBlockedReason', () => {
-  it('blocks setup while untrusted and clears once trusted', () => {
-    expect(piSetupBlockedReason({ trusted: false })).not.toBeNull();
-    expect(piSetupBlockedReason({ trusted: true })).toBeNull();
+describe('piActionBlockedReason', () => {
+  it('blocks setup/refresh while untrusted and clears once trusted', () => {
+    expect(piActionBlockedReason({ trusted: false })).not.toBeNull();
+    expect(piActionBlockedReason({ trusted: true })).toBeNull();
+  });
+
+  it('blocks with a distinct reason when the account carries no Pi config at all', () => {
+    expect(piActionBlockedReason(undefined)).toBe('No Pi configuration on this account.');
   });
 });
 

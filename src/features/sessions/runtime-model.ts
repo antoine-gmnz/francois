@@ -1,13 +1,18 @@
-// runtime-model (pi-models-metrics §5) — RuntimeModelDescriptor <-> ModelInfo,
-// and the pure catalogue pipeline the picker renders: merge in a vanished saved
-// selection (FR-3), group by PROVIDER (grouping by family/label would collapse
-// two providers advertising the same modelId into one row — FR-1). Reuses
-// model-picker.ts's generic `groupModelsBy` so the existing family path
-// (multi-provider-openai/codex consumers) is untouched.
+// runtime-model (pi-models-metrics §5) — the pure catalogue pipeline the
+// picker renders: merge in a vanished saved selection (FR-3), group by
+// PROVIDER (grouping by family/label would collapse two providers advertising
+// the same modelId into one row — FR-1). Reuses model-picker.ts's generic
+// `groupModelsBy` so the existing family path (multi-provider-openai/codex
+// consumers) is untouched.
+//
+// RuntimeModelDescriptor <-> ModelInfo itself (`modelInfoFromRuntimeDescriptor`,
+// `runtimeModelBrief`) lives in src/lib/runtime-model-info.ts — sessionsStore
+// (src/lib) needs it too, and src/lib is what every feature imports, not the
+// other way round. This module stays feature-local because it also pulls in
+// ./model-picker, which the lib module has no business importing.
 
 import type { AccountId, ModelInfo, RuntimeModelDescriptor, RuntimeModelRef } from '../../../contract/common';
-import { formatContextTokens } from '../../../contract/conversation-view';
-import { runtimeModelKey } from '../../../contract/pi-models-metrics';
+import { modelInfoFromRuntimeDescriptor } from '../../lib/runtime-model-info';
 import { groupModelsBy, type ModelFamilyGroup } from './model-picker';
 
 /** Identity is the `(providerId, modelId)` pair — display name is presentation only (FR-1). */
@@ -51,33 +56,6 @@ export function providerIdOf(model: ModelInfo): string {
 
 export function groupByProvider(models: ModelInfo[]): ModelFamilyGroup[] {
   return groupModelsBy(models, providerIdOf);
-}
-
-/** A short factual line: context window + input modes, or the unavailable reason. */
-export function runtimeModelBrief(descriptor: RuntimeModelDescriptor): string {
-  if (descriptor.availability === 'unavailable') return descriptor.unavailableReason ?? 'unavailable';
-  const parts: string[] = [];
-  if (descriptor.contextWindow !== null) parts.push(`${formatContextTokens(descriptor.contextWindow)} context`);
-  if (descriptor.input.includes('image')) parts.push('text + image');
-  return parts.join(' · ');
-}
-
-/**
- * The picker's row shape for one Pi descriptor. `id` is the composite
- * (accountId, providerId, modelId) key — the ONLY thing that disambiguates two
- * providers sharing a modelId in a plain-string-keyed picker (FR-1). `efforts`
- * is deliberately left unset: the descriptor advertises only a `reasoning`
- * boolean, not a discrete level list — see this feature's handoff notes.
- */
-export function modelInfoFromRuntimeDescriptor(descriptor: RuntimeModelDescriptor, accountId: AccountId): ModelInfo {
-  return {
-    id: runtimeModelKey(accountId, descriptor.ref.providerId, descriptor.ref.modelId),
-    label: descriptor.displayName,
-    brief: runtimeModelBrief(descriptor),
-    contextTokens: descriptor.contextWindow ?? undefined,
-    runtimeModel: descriptor.ref,
-    descriptor,
-  };
 }
 
 /**

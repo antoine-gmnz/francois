@@ -433,6 +433,19 @@ export function piRuntimeModelDefaultLabel(defaults: ProjectDefaults): string | 
   return ref ? `${ref.providerId} / ${ref.modelId}` : null;
 }
 
+/**
+ * pr-142 §C1: whether `fieldDefs` — `defaultFieldDefs`'s own output — is
+ * showing the modelId/effort selects. `defaultFieldDefs` omits them for
+ * exactly one reason (the default account resolving to Pi), so this is the
+ * SAME predicate DefaultsSection's read-only "model (pi)" row must gate on:
+ * switching the default account away from Pi has to make the stale row
+ * disappear together with the selects it stands in for, not just add them
+ * back above it.
+ */
+export function fieldDefsShowModelSelect(fieldDefs: DefaultFieldDef[]): boolean {
+  return fieldDefs.some((f) => f.key === 'modelId');
+}
+
 /** The select's current value; '' ⇒ inherit (rendered dim, §8 C). */
 export function defaultsSelectValue(defaults: ProjectDefaults, key: DefaultsKey): string {
   if (key === 'allowGit') {
@@ -445,12 +458,23 @@ export function defaultsSelectValue(defaults: ProjectDefaults, key: DefaultsKey)
 /**
  * FR-7: `defaults` is replaced wholesale on every update, so a cleared field is
  * expressed by OMITTING it. This returns the next whole object for one edit.
+ *
+ * pr-142 §C1: `modelId` and `runtimeModel` are mutually exclusive per the
+ * contract and `src-tauri/src/project/mod.rs` — nothing else in this editor
+ * ever clears a stale `runtimeModel` (or a stale `modelId`/`effort`), so this
+ * is the one place that enforces it, on every edit that could create the
+ * conflict: committing `modelId` drops `runtimeModel`; committing a Pi
+ * `accountId` drops `modelId`/`effort` (the selects that account can never
+ * resolve — `fieldDefsShowModelSelect` hides them for the same reason);
+ * committing a non-Pi `accountId` drops `runtimeModel` (only a Pi session's
+ * "Set as project default" ever writes one).
  */
 export function patchDefaults(
   defaults: ProjectDefaults,
   key: DefaultsKey,
   value: string,
   models?: ModelInfo[],
+  accounts?: AccountOptionSource[],
 ): ProjectDefaults {
   const next: ProjectDefaults = { ...defaults };
   if (value === '') {
@@ -461,6 +485,7 @@ export function patchDefaults(
     case 'modelId':
       next.modelId = value;
       if (models && next.effort && !effortOptions(models, value).includes(next.effort)) delete next.effort;
+      delete next.runtimeModel;
       break;
     case 'effort':
       next.effort = value;
@@ -477,6 +502,12 @@ export function patchDefaults(
     // multi-account FR-20: the account a new session under this project opens on.
     case 'accountId':
       next.accountId = value;
+      if (accounts?.find((a) => a.id === value)?.kind === 'pi') {
+        delete next.modelId;
+        delete next.effort;
+      } else {
+        delete next.runtimeModel;
+      }
       break;
     // session-profiles FR-20: the profile a new session under this project opens on.
     case 'profileId':

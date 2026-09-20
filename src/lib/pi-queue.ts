@@ -1,11 +1,19 @@
 // pi-turn-controls §5/§6 — the per-session Pi admissions ledger, mirrored
 // client-side from `queue.changed` (ControlRuntimePayload, contract/common.ts).
-// Same shape as ./pending-queue (a plain module map + a subscriber set, kept
-// outside React so it survives ConversationView's keyed remount, plus a
-// subscription because the strip renders this state directly) — but a
-// DIFFERENT ledger entirely: transcript-perf's PendingPrompt is a client-only
+//
+// Lives in src/lib rather than features/conversation because sessionsStore
+// writes it (the runtime event router) and the palette reads it: src/lib is
+// what every feature imports, so a store three features share belongs here and
+// the arrow points one way.
+//
+// Same shape as features/conversation/pending-queue (a plain module map + a
+// subscriber set, kept outside React so it survives ConversationView's keyed
+// remount, plus a subscription because the strip renders this state directly)
+// — but a DIFFERENT ledger entirely: transcript-perf's PendingPrompt is a client-only
 // park list for the legacy `session_send` queue and stays untouched. Pi
-// sessions never touch it; every other runtime never touches this module.
+// sessions never touch it. Every other runtime never WRITES this module, but
+// does read it: ComposerPane calls `useQueueEntries` for every session (a hook
+// cannot sit behind the `isPi` branch), so the empty case runs everywhere.
 //
 // `queue.changed` always carries the session's FULL pending ledger (contract
 // comment) — this module is a pure mirror of the latest snapshot, never a
@@ -19,10 +27,14 @@
 // sessionsStore.ts, the one place every session's lifecycle is final.
 
 import { useSyncExternalStore } from 'react';
-import type { RuntimeQueueEntry } from '../../../contract/common';
-import { MAX_MESSAGE_BYTES, MAX_PENDING_INTENTS } from '../../../contract/pi-turn-controls';
+import type { RuntimeQueueEntry } from '../../contract/common';
+import { MAX_MESSAGE_BYTES, MAX_PENDING_INTENTS } from '../../contract/pi-turn-controls';
 
 const ledgers = new Map<string, readonly RuntimeQueueEntry[]>();
+// Each ledger's strip rows (`visibleQueueEntries` of it), derived ONCE per
+// ledger change — written next to every `ledgers` write and before `notify`,
+// because React reads the snapshot from inside that callback.
+const visible = new Map<string, readonly RuntimeQueueEntry[]>();
 const listeners = new Map<string, Set<() => void>>();
 
 const EMPTY: readonly RuntimeQueueEntry[] = Object.freeze([]);
@@ -54,6 +66,7 @@ export function subscribeQueueEntries(sessionId: string, listener: () => void): 
 /** `queue.changed`'s handler — replaces the session's ledger snapshot wholesale. */
 export function setQueueEntries(sessionId: string, entries: readonly RuntimeQueueEntry[]): void {
   ledgers.set(sessionId, entries);
+  visible.set(sessionId, visibleQueueEntries(entries));
   notify(sessionId);
 }
 
@@ -61,14 +74,26 @@ export function setQueueEntries(sessionId: string, entries: readonly RuntimeQueu
 export function clearQueueState(sessionId: string): void {
   if (!ledgers.has(sessionId)) return;
   ledgers.delete(sessionId);
+  visible.delete(sessionId);
   notify(sessionId);
+}
+
+/**
+ * The strip's rows for this session — `useQueueEntries`' snapshot, and so held
+ * to useSyncExternalStore's rule for one: the SAME reference on every call
+ * until the store changes. It is read from `visible`, never derived here —
+ * `visibleQueueEntries(...)` on the fly is a fresh array per call, which React
+ * takes for a store change after every commit and re-renders without end.
+ */
+export function getVisibleQueueEntries(sessionId: string): readonly RuntimeQueueEntry[] {
+  return visible.get(sessionId) ?? EMPTY;
 }
 
 /** This session's queue strip rows, reactive. */
 export function useQueueEntries(sessionId: string): readonly RuntimeQueueEntry[] {
   return useSyncExternalStore(
     (onStoreChange) => subscribeQueueEntries(sessionId, onStoreChange),
-    () => visibleQueueEntries(getQueueEntries(sessionId)),
+    () => getVisibleQueueEntries(sessionId),
   );
 }
 
@@ -126,6 +151,29 @@ export function isQueueFull(entries: readonly RuntimeQueueEntry[]): boolean {
 /** FR-4: the client-side pre-check mirroring the core's 1 MiB UTF-8 text cap. */
 export function exceedsMessageByteCap(text: string): boolean {
   return new TextEncoder().encode(text).byteLength > MAX_MESSAGE_BYTES;
+}
+
+/**
+ * frontend fix loop (double-Resend defect): a synchronous check-and-add
+ * against a caller-owned in-flight set — the guard that stops two fast clicks
+ * on the SAME row (two Resends, or a Resend racing a Discard) from both
+ * reaching the core before either round trip resolves. Must run BEFORE the
+ * caller's first `await`: React state set by a first click is not yet visible
+ * to a second click in the same tick, so only a plain ref-backed `Set`
+ * checked synchronously actually dedupes — a `useState` guard would not.
+ * Returns true (and claims the id) iff it was free.
+ */
+export function beginResend(inFlight: Set<string>, clientMessageId: string): boolean {
+  if (inFlight.has(clientMessageId)) return false;
+  inFlight.add(clientMessageId);
+  return true;
+}
+
+/** Releases a claim made by `beginResend` — call from a `finally`, so a
+ *  thrown exception or an error `Result` never leaves a row stuck disabled.
+ *  Safe to call for an id that was never claimed (or already released). */
+export function endResend(inFlight: Set<string>, clientMessageId: string): void {
+  inFlight.delete(clientMessageId);
 }
 
 /** design brief "Data shown": the row's one-line status. */

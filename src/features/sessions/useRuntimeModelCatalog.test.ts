@@ -64,6 +64,53 @@ describe('runtime model catalog controller (pi-models-metrics §5)', () => {
     expect(c.getState().stale).toBe(true);
   });
 
+  // FR-2/FR-4: `stale` means "these rows came from a cache past its TTL" — it
+  // only ever qualifies rows the controller actually holds. Every branch that
+  // empties `models` must therefore clear it too, or the caller renders "0
+  // models" under a stale banner and, worse, a consumer reading `stale` alone
+  // keeps refusing to authorize on the strength of a catalogue that is gone.
+  it('clears stale when a failed refresh drops the rows it described', async () => {
+    const d = deferred();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: { ...catalog(), stale: true } })
+      .mockReturnValueOnce(d.promise);
+    const c = createRuntimeModelCatalogController(fetch);
+    await c.load('A');
+    expect(c.getState().stale).toBe(true);
+    const p = c.load('A', true);
+    d.resolve({ ok: false, error: { code: 'RUNTIME_TIMEOUT', message: 'Timed out' } });
+    await p;
+    expect(c.getState().models).toEqual([]);
+    expect(c.getState().stale).toBe(false);
+  });
+
+  it('clears stale when a rejected fetch drops the rows it described', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: { ...catalog(), stale: true } })
+      .mockRejectedValueOnce(new Error('secret'));
+    const c = createRuntimeModelCatalogController(fetch);
+    await c.load('A');
+    await c.load('A', true);
+    expect(c.getState().stale).toBe(false);
+  });
+
+  it('clears stale when a rekey drops the previous account’s rows', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: { ...catalog('A'), stale: true } })
+      .mockResolvedValueOnce({ ok: true, data: catalog('B') });
+    const c = createRuntimeModelCatalogController(fetch);
+    await c.load('A');
+    const p = c.load('B');
+    // Already cleared while the request is in flight — the rows it described
+    // left `models` in that same publish.
+    expect(c.getState().stale).toBe(false);
+    await p;
+    expect(c.getState().stale).toBe(false);
+  });
+
   it('handles a rejected fetch without throwing', async () => {
     const c = createRuntimeModelCatalogController(vi.fn().mockRejectedValueOnce(new Error('secret')));
     await c.load('A');

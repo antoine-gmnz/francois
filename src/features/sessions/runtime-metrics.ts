@@ -5,7 +5,7 @@
 // only pair that feeds the bar, and it stays null (⇒ no bar at all) after a
 // compaction until the runtime reports a trustworthy value.
 
-import type { RuntimeMetrics, SessionMeta } from '../../../contract/common';
+import type { Result, RuntimeMetrics, SessionMeta } from '../../../contract/common';
 import { formatContextTokens } from '../../../contract/conversation-view';
 import { isBusyStatus } from '../../../contract/fleet-board';
 import { sessionCapability } from '../../lib/runtimeCapability';
@@ -86,4 +86,34 @@ export const NO_MODELS_MESSAGE = 'No models available for this Pi account';
 export function piModelSwitchBlockedReason(session: SessionMeta): string | null {
   if (isBusyStatus(session.status)) return 'Available when this run finishes.';
   return modelSwitchUnavailableReason(session);
+}
+
+export interface ModelSwitchSubmitArgs<T> {
+  /** Bound sessionSwitchRuntimeModel/sessionSwitchEffort call. */
+  call: () => Promise<Result<T>>;
+  /** In-flight flag — both the model field and the effort chips disable while true. */
+  setSwitching: (switching: boolean) => void;
+  /** Inline, transient error line; `null` clears it. */
+  setError: (message: string | null) => void;
+  /** setTimeout injection point (fake in tests). */
+  schedule: (fn: () => void, ms: number) => void;
+}
+
+/**
+ * One model/effort switch round trip, extracted from PiRunModelSwitch so the
+ * setter calls can be wrapped in the caller's `useMounted` guard — same split
+ * as `submitRecoveryAction` (./pi-recovery.ts) for the same reason: a switch
+ * outliving the component (pane closed, session torn down mid-round-trip)
+ * must not call `setState` on an unmounted component.
+ */
+export async function submitModelSwitch<T>(a: ModelSwitchSubmitArgs<T>): Promise<Result<T>> {
+  a.setSwitching(true);
+  a.setError(null);
+  const res = await a.call();
+  a.setSwitching(false);
+  if (!res.ok) {
+    a.setError(res.error.message);
+    a.schedule(() => a.setError(null), 4000);
+  }
+  return res;
 }

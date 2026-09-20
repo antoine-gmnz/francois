@@ -93,12 +93,30 @@ export function toggleFavoriteModel(accountId: AccountId, ref: RuntimeModelRef, 
   return !wasFavorite;
 }
 
-/** Most-recent-first, deduped per (accountId, ref), capped at 5 — a picker footnote, not a registry. */
+/**
+ * A4 (review addendum): every favorited key in one read, so a caller (a
+ * rendered list of options) reads storage once per render instead of once per
+ * row via `isFavoriteModel`.
+ */
+export function favoriteKeys(store: KeyValueStore = globalStorage): Set<string> {
+  return new Set(readPrefs(store).favorites);
+}
+
+/**
+ * Most-recent-first, deduped per (accountId, ref), capped at 5 PER ACCOUNT —
+ * a picker footnote, not a registry. A6 (review addendum): the cap applies to
+ * this account's own entries only; another account's recents are carried
+ * through untouched, never evicted by this account's own churn.
+ */
 export function recordRecentModel(accountId: AccountId, ref: RuntimeModelRef, store: KeyValueStore = globalStorage): void {
   const prefs = readPrefs(store);
   const key = runtimeModelKey(accountId, ref.providerId, ref.modelId);
-  const without = prefs.recents.filter((r) => runtimeModelKey(r.accountId, r.ref.providerId, r.ref.modelId) !== key);
-  writePrefs(store, { ...prefs, recents: [{ accountId, ref }, ...without].slice(0, RECENTS_CAP) });
+  const otherAccounts = prefs.recents.filter((r) => r.accountId !== accountId);
+  const ownWithoutDup = prefs.recents.filter(
+    (r) => r.accountId === accountId && runtimeModelKey(r.accountId, r.ref.providerId, r.ref.modelId) !== key,
+  );
+  const own = [{ accountId, ref }, ...ownWithoutDup].slice(0, RECENTS_CAP);
+  writePrefs(store, { ...prefs, recents: [...own, ...otherAccounts] });
 }
 
 /** This account's recents, most-recent-first — never another account's (FR-3's "UI preference, not a credential"). */
@@ -106,4 +124,18 @@ export function recentModels(accountId: AccountId, store: KeyValueStore = global
   return readPrefs(store)
     .recents.filter((r) => r.accountId === accountId)
     .map((r) => r.ref);
+}
+
+/**
+ * A6 (review addendum): this account's recents as a rank lookup (0 = most
+ * recent), keyed the same way `favoriteKeys` keys favorites — one read for a
+ * whole render instead of one per row. Built on `recentModels`, so the
+ * per-account scoping is the same code path, not a second copy of it.
+ */
+export function recentRankByKey(accountId: AccountId, store: KeyValueStore = globalStorage): Map<string, number> {
+  const ranks = new Map<string, number>();
+  recentModels(accountId, store).forEach((ref, index) => {
+    ranks.set(runtimeModelKey(accountId, ref.providerId, ref.modelId), index);
+  });
+  return ranks;
 }

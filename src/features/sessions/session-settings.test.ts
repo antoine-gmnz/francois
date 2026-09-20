@@ -368,7 +368,11 @@ describe("'session-settings' palette command (FR-19)", () => {
 import { submitSettingsOnEnter } from './session-settings';
 
 describe('sheet Enter capture delegates interactive controls', () => {
-  it.each(['button', '[role="listbox"]', '[role="option"]', 'select', 'textarea', '[data-worktree-row]'])('lets %s select or refresh without creating/applying', (selector) => {
+  // A3 TRAP (review addendum): the model search box moved out of `[role="listbox"]`
+  // to fix its a11y structure and now identifies as `[role="combobox"]` — this
+  // guard must widen to match it, or Enter in the search box creates/applies
+  // the sheet instead of selecting a model.
+  it.each(['button', '[role="listbox"]', '[role="option"]', '[role="combobox"]', 'select', 'textarea', '[data-worktree-row]'])('lets %s select or refresh without creating/applying', (selector) => {
     const submit = vi.fn();
     const activate = vi.fn();
     const event = {

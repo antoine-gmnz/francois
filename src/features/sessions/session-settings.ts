@@ -16,8 +16,30 @@ import type { AccountId, ClaudeRuntime, PermissionMode, ProjectDefaults, Project
 import { NEXT_TURN_KEYS, SETTING_LABELS, type SessionSettingsPatch } from '../../../contract/session-settings-sheet';
 import type { Account } from '../../../contract/multi-account';
 import type { ProjectMeta } from '../../../contract/projects';
+import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
+import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
 import { wslUncToLinux } from '../../../contract/wsl-filesystem';
+import type { ChipOption } from '../../ui/ChipGroup';
 import { accountDisplayLabel, findAccount, middleTruncate } from '../accounts/accounts';
+
+// session-permission-mode FR-8 / response-mode FR-13: the contract tables are
+// the single source for label/hint/danger — no component maps a mode on its own.
+// They live here rather than beside the rows that render them (SharedSettingsRows.tsx)
+// because a file that exports components must export nothing else, or Fast
+// Refresh falls back to a full reload for it (react-refresh/only-export-components).
+export const PERMISSION_CHIP_OPTIONS: ChipOption<PermissionMode>[] = PERMISSION_MODE_OPTIONS.map((opt) => ({
+  value: opt.mode,
+  label: opt.label,
+  danger: opt.danger,
+}));
+export const RESPONSE_CHIP_OPTIONS: ChipOption<ResponseMode>[] = RESPONSE_MODE_OPTIONS.map((opt) => ({
+  value: opt.mode,
+  label: opt.label,
+}));
+export const RUNTIME_CHIP_OPTIONS: ChipOption<ClaudeRuntime>[] = (['native', 'wsl'] as const).map((runtime) => ({
+  value: runtime,
+  label: runtime,
+}));
 
 /** The six rows the sheet keeps live in both modes — everything FR-14 can dirty. */
 export interface SettingsDraft {
@@ -260,11 +282,17 @@ export function settingCapability(session: SessionMeta, key: keyof SettingsDraft
   return { available: true };
 }
 
-/** Window capture must leave activation/navigation to the focused control. */
+/**
+ * Window capture must leave activation/navigation to the focused control.
+ * A3 (review addendum): `[role="combobox"]` covers the model picker's search
+ * input, which lives OUTSIDE `[role="listbox"]` (a11y fix) but must still be
+ * excluded here — otherwise Enter there creates/applies the sheet instead of
+ * selecting the highlighted model.
+ */
 export function submitSettingsOnEnter(event: KeyboardEvent, submit: () => unknown): void {
   if (event.key !== 'Enter' || event.defaultPrevented || event.isComposing) return;
   const target = event.target as Element | null;
-  if (target?.closest?.('button, [role="button"], [role="listbox"], [role="option"], select, textarea, [data-worktree-row], [contenteditable="true"]')) return;
+  if (target?.closest?.('button, [role="button"], [role="listbox"], [role="option"], [role="combobox"], select, textarea, [data-worktree-row], [contenteditable="true"]')) return;
   event.preventDefault();
   void submit();
 }

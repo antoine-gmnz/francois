@@ -47,7 +47,7 @@ import { useStore, type MainTab } from '../lib/store';
 import { toneVar } from '../lib/tone';
 import { StatusDot } from '../ui/StatusDot';
 import TopbarOverflow from './TopbarOverflow';
-import { branchDisplay, contextDisplay, extTabDisplay, layoutDisplay, showsStatusWord, topbarShows, topbarTier } from './topbar';
+import { branchDisplay, contextDisplay, extTabDisplay, layoutDisplay, showsStatusWord, statusToneClass, topbarShows, topbarTier } from './topbar';
 
 const ICON = { size: 13, strokeWidth: 1.75 } as const;
 
@@ -260,7 +260,7 @@ export default function SessionRow({
           narrowest width the merged clock carries the state on its own, and the
           colour and the dot were always the part doing the work. */}
       {active && (
-        <span className="session-row__status" style={{ color: statusColor }}>
+        <span className={`session-row__status ${statusToneClass(active.status)}`}>
           <StatusDot color={statusColor} size={5} pulsing={statusPulses(active.status)} />
           {showsStatusWord(tier) && (STATUS_LABEL[active.status] ?? active.status)}
           {isBusyStatus(active.status) && <span className="session-row__status-age">{formatElapsed(elapsedMs)}</span>}
@@ -274,7 +274,11 @@ export default function SessionRow({
         <span className="session-row__context" title={`context ${contextFigure}`}>
           {contextFraction !== null && (
             <span className="session-row__context-track">
-              <span className="session-row__context-fill" style={{ width: `${Math.round(contextFraction * 100)}%` }} />
+              <span
+                className="session-row__context-fill"
+                // eslint-disable-next-line no-restricted-syntax -- runtime-computed fill width (the live context fraction), per CLAUDE.md's inline-style exception
+                style={{ width: `${Math.round(contextFraction * 100)}%` }}
+              />
             </span>
           )}
           {context === 'bar+figure' && <span className="session-row__figure">{contextFigure}</span>}

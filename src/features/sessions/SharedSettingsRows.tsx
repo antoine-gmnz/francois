@@ -4,27 +4,12 @@
 // SessionSettingsSheet.tsx to keep that file's own size headroom for the
 // pi-models-metrics/pi-migration-rollout Pi tracks it now also carries.
 
-import type { ClaudeRuntime, PermissionMode, ResponseMode } from '../../../contract/common';
+import type { PermissionMode, ResponseMode } from '../../../contract/common';
 import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
 import { Chip } from '../../ui/Chip';
-import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
-
-// session-permission-mode FR-8 / response-mode FR-13: the contract tables are
-// the single source for label/hint/danger — no component maps a mode on its own.
-export const PERMISSION_CHIP_OPTIONS: ChipOption<PermissionMode>[] = PERMISSION_MODE_OPTIONS.map((opt) => ({
-  value: opt.mode,
-  label: opt.label,
-  danger: opt.danger,
-}));
-export const RESPONSE_CHIP_OPTIONS: ChipOption<ResponseMode>[] = RESPONSE_MODE_OPTIONS.map((opt) => ({
-  value: opt.mode,
-  label: opt.label,
-}));
-export const RUNTIME_CHIP_OPTIONS: ChipOption<ClaudeRuntime>[] = (['native', 'wsl'] as const).map((runtime) => ({
-  value: runtime,
-  label: runtime,
-}));
+import { ChipGroup } from '../../ui/ChipGroup';
+import { PERMISSION_CHIP_OPTIONS, RESPONSE_CHIP_OPTIONS } from './session-settings';
 
 export function PermissionsRow({ value, onChange }: { value: PermissionMode; onChange: (mode: PermissionMode) => void }) {
   return (

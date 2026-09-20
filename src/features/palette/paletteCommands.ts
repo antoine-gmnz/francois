@@ -18,10 +18,11 @@ import { requestUsageRefresh } from '../usage/usage';
 import { checkUpdateManually } from '../update/update';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
-import { clearableCount, getQueueEntries } from '../conversation/pi-queue';
+import { clearableCount, getQueueEntries } from '../../lib/pi-queue';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
 import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../lib/layoutStore';
-import { piSkillDelivery } from '../skills/skills-run';
+import { skillRowKey } from '../skills/skills-loaded';
+import { buildSkillsRunRequest, piSkillDelivery } from '../skills/skills-run';
 
 const commandCapabilities: Record<string, RuntimeCapability> = {
   'switch-model': 'modelSwitching', 'compact-context': 'compaction',
@@ -192,19 +193,29 @@ export function registerBuiltinCommands(): void {
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: (ctx) => {
       const sid = ctx.activeSessionId;
+      // pr-142 §6: id keyed on skillRowKey (invocation when present), same
+      // fix as SkillsListBody's B1 — a repo's '/skill:deploy' and the user's
+      // '/deploy' both derive to the bare name 'deploy' and must not collide.
+      const skills = getPaletteSkills(sid);
       return {
         placeholder: 'browse installed skills',
-        items: getPaletteSkills(sid).map((s) => ({ id: s.name, label: s.name, hint: s.description })),
-        onPick: (name) => {
+        items: skills.map((s) => ({ id: skillRowKey(s), label: s.name, hint: s.description })),
+        onPick: (id) => {
           if (!sid) return;
+          const skill = skills.find((s) => skillRowKey(s) === id);
+          if (!skill) return;
           // pi-skills-capabilities §5: this must agree with the Skills panel's
           // own Run — a fresh clientMessageId + the session's idle/busy delivery,
-          // ignored by every runtime but Pi (skills-run.ts's piSkillDelivery).
+          // ignored by every runtime but Pi (skills-run.ts's piSkillDelivery) —
+          // and, per pr-142 §6, the picked entry's own `invocation`.
           const status = useStore.getState().sessions.find((s) => s.id === sid)?.status ?? 'idle';
           delegate(
-            skillsRun(sid, name, undefined, { clientMessageId: crypto.randomUUID(), delivery: piSkillDelivery(status) }) as Promise<
-              Result<unknown>
-            >,
+            skillsRun(
+              buildSkillsRunRequest(sid, skill, undefined, {
+                clientMessageId: crypto.randomUUID(),
+                delivery: piSkillDelivery(status),
+              }),
+            ) as Promise<Result<unknown>>,
           );
         },
       };

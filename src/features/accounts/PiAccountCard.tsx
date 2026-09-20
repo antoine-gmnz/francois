@@ -6,13 +6,13 @@
 
 import type { Account, PiProviderAuthObservation } from '../../../contract/multi-account';
 import {
+  piActionBlockedReason,
   piEnvironmentLabel,
   piInheritLabel,
   piObservationCheckedAtLabel,
   piObservationLabel,
   piObservationTone,
   piObservationsSummary,
-  piSetupBlockedReason,
   piTrustActionLabel,
   piTrustLabel,
   PI_LOGOUT_HINT,
@@ -42,7 +42,10 @@ export interface PiAccountCardProps {
 export function PiAccountCard(p: PiAccountCardProps): JSX.Element {
   const pi = p.account.pi;
   const trusted = pi?.trusted ?? false;
-  const blocked = pi ? piSetupBlockedReason(pi) : 'No Pi configuration on this account.';
+  // Setup and Refresh both round-trip through the core's Pi PTY/probe
+  // machinery, which refuses either untrusted — one shared reason gates both
+  // buttons identically instead of Refresh discovering the refusal live.
+  const blocked = piActionBlockedReason(pi);
 
   const footerParts: string[] = [];
   if (p.account.configDir) footerParts.push(p.account.configDir);
@@ -95,7 +98,13 @@ export function PiAccountCard(p: PiAccountCardProps): JSX.Element {
               {piTrustActionLabel(trusted)}
             </button>
           )}
-          <button type="button" className="acc-cred-action" disabled={p.refreshing} onClick={p.onRefresh}>
+          <button
+            type="button"
+            className="acc-cred-action"
+            disabled={p.refreshing || blocked !== null}
+            title={blocked ?? undefined}
+            onClick={p.onRefresh}
+          >
             {p.refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
           <button type="button" className="acc-cred-action acc-cred-action--danger" onClick={p.onRemove}>

@@ -18,9 +18,9 @@ export default function WorktreeNotice({ worktree, onDismiss }: { worktree: Sess
         {baseLine && <div className="worktree-notice__base">{baseLine}</div>}
         {fetchWarning && <div className="worktree-notice__warning">{fetchWarning}</div>}
       </div>
-      <span onClick={onDismiss} className="worktree-notice__dismiss" title="dismiss">
+      <button type="button" onClick={onDismiss} className="worktree-notice__dismiss" title="dismiss">
         ✕
-      </span>
+      </button>
     </div>
   );
 }

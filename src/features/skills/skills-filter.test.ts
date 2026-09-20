@@ -32,6 +32,23 @@ describe('filterSkills', () => {
   it('returns an empty array when nothing matches', () => {
     expect(filterSkills(skills, 'zzz')).toEqual([]);
   });
+
+  // pr-142 §B3: rows DISPLAY skillInvocationLabel(skill) and, when unloaded,
+  // unavailableReason — the filter must match what is actually shown.
+  it('matches the displayed invocation label, not just the derived name', () => {
+    const withInvocation = [skill({ name: 'deploy', invocation: '/skill:deploy', description: '' })];
+    expect(filterSkills(withInvocation, 'skill:deploy').map((s) => s.name)).toEqual(['deploy']);
+  });
+
+  it('matches unavailableReason for an unloaded row', () => {
+    const unloaded = [skill({ name: 'deploy', loaded: false, unavailableReason: 'resource policy disabled', description: '' })];
+    expect(filterSkills(unloaded, 'resource policy').map((s) => s.name)).toEqual(['deploy']);
+  });
+
+  it('does not match unavailableReason for a loaded row (it is never shown)', () => {
+    const loaded = [skill({ name: 'deploy', loaded: true, unavailableReason: 'stale text nobody sees', description: '' })];
+    expect(filterSkills(loaded, 'stale text')).toEqual([]);
+  });
 });
 
 describe('clampSelection', () => {

@@ -36,6 +36,8 @@ export interface ModelFieldProps {
   searchable?: boolean;
   isFavorite?: (model: ModelInfo) => boolean;
   onToggleFavorite?: (model: ModelInfo) => void;
+  /** A6 (review addendum): passed straight through to ModelPicker. */
+  recentRank?: (model: ModelInfo) => number | null;
   /** pi-models-metrics: renders the Pi status row instead of the legacy ModelCatalogStatus. */
   runtimeStatus?: RuntimeModelFieldStatus;
 }
@@ -51,6 +53,7 @@ export function ModelField({
   searchable,
   isFavorite,
   onToggleFavorite,
+  recentRank,
   runtimeStatus,
 }: ModelFieldProps): JSX.Element {
   return (
@@ -84,6 +87,7 @@ export function ModelField({
         searchable={searchable}
         isFavorite={isFavorite}
         onToggleFavorite={onToggleFavorite}
+        recentRank={recentRank}
         emptyMessage={runtimeStatus ? NO_MODELS_MESSAGE : undefined}
       />
     </div>

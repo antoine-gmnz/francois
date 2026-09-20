@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RuntimeQueueEntry } from '../../../contract/common';
-import { MAX_PENDING_INTENTS } from '../../../contract/pi-turn-controls';
+import type { RuntimeQueueEntry } from '../../contract/common';
+import { MAX_PENDING_INTENTS } from '../../contract/pi-turn-controls';
 import {
+  beginResend,
   canUnqueueIndividually,
   clearableCount,
   clearQueueState,
+  endResend,
   exceedsMessageByteCap,
   getQueueEntries,
+  getVisibleQueueEntries,
   isLocalOnly,
   isQueueFull,
   needsResend,
@@ -63,6 +66,56 @@ describe('clearQueueState', () => {
     clearQueueState('s4');
     expect(listener).not.toHaveBeenCalled();
     unsub();
+  });
+});
+
+// `useQueueEntries` hands this to useSyncExternalStore as `getSnapshot`, and
+// React's contract for one is strict: while the store has not changed, every
+// call must return the SAME reference (it compares with Object.is after each
+// commit). A snapshot derived on the fly — `entries.filter(...)` — is a fresh
+// array every time, which React reads as "the store changed" and re-renders,
+// forever ("Maximum update depth exceeded"). No renderer is wired into this
+// suite, so the hook itself cannot be mounted here; its snapshot can, and
+// reference stability is the whole of what React asks of it.
+describe('getVisibleQueueEntries (useQueueEntries’ snapshot)', () => {
+  it('returns the same reference on every call for a session that has no ledger', () => {
+    // Every non-Pi session, permanently: ComposerPane subscribes for all runtimes.
+    expect(getVisibleQueueEntries('snap-none')).toBe(getVisibleQueueEntries('snap-none'));
+    expect(getVisibleQueueEntries('snap-none')).toEqual([]);
+  });
+
+  it('returns the same reference on every call while the ledger is unchanged', () => {
+    setQueueEntries('snap-stable', [entry({ clientMessageId: 'a' }), entry({ clientMessageId: 'b', state: 'consumed' })]);
+    const first = getVisibleQueueEntries('snap-stable');
+    expect(getVisibleQueueEntries('snap-stable')).toBe(first);
+    expect(first.map((e) => e.clientMessageId)).toEqual(['a']);
+  });
+
+  it('returns a new reference once the ledger is replaced, so the strip re-renders', () => {
+    setQueueEntries('snap-change', [entry({ clientMessageId: 'a' })]);
+    const before = getVisibleQueueEntries('snap-change');
+    setQueueEntries('snap-change', [entry({ clientMessageId: 'a' }), entry({ clientMessageId: 'b' })]);
+    const after = getVisibleQueueEntries('snap-change');
+    expect(after).not.toBe(before);
+    expect(after.map((e) => e.clientMessageId)).toEqual(['a', 'b']);
+  });
+
+  it('is current by the time a subscriber is notified', () => {
+    // React calls getSnapshot from inside the store-change callback.
+    const seen: string[][] = [];
+    const unsub = subscribeQueueEntries('snap-notify', () => {
+      seen.push(getVisibleQueueEntries('snap-notify').map((e) => e.clientMessageId));
+    });
+    setQueueEntries('snap-notify', [entry({ clientMessageId: 'a' })]);
+    clearQueueState('snap-notify');
+    unsub();
+    expect(seen).toEqual([['a'], []]);
+  });
+
+  it('goes back to one stable empty reference after the session is cleared', () => {
+    setQueueEntries('snap-clear', [entry({ clientMessageId: 'a' })]);
+    clearQueueState('snap-clear');
+    expect(getVisibleQueueEntries('snap-clear')).toBe(getVisibleQueueEntries('snap-none'));
   });
 });
 
@@ -148,6 +201,46 @@ describe('exceedsMessageByteCap', () => {
 
   it('is true past the 1 MiB UTF-8 cap', () => {
     expect(exceedsMessageByteCap('a'.repeat(1024 * 1024 + 1))).toBe(true);
+  });
+});
+
+// frontend fix loop (double-Resend defect): the synchronous check-and-add
+// guard ComposerPane uses to stop two fast clicks (Resend, or Resend racing
+// Discard on the SAME row) from both reaching the core before either resolves.
+describe('beginResend / endResend (Resend/Discard in-flight guard)', () => {
+  it('the first begin for an id claims it', () => {
+    const inFlight = new Set<string>();
+    expect(beginResend(inFlight, 'a')).toBe(true);
+    expect(inFlight.has('a')).toBe(true);
+  });
+
+  it('a second begin for the same id before end is refused', () => {
+    const inFlight = new Set<string>();
+    beginResend(inFlight, 'a');
+    expect(beginResend(inFlight, 'a')).toBe(false);
+    // still just the one claim — a refused begin never re-adds/duplicates
+    expect(inFlight.size).toBe(1);
+  });
+
+  it('begins again once end releases the claim', () => {
+    const inFlight = new Set<string>();
+    beginResend(inFlight, 'a');
+    endResend(inFlight, 'a');
+    expect(inFlight.has('a')).toBe(false);
+    expect(beginResend(inFlight, 'a')).toBe(true);
+  });
+
+  it('different ids are independent', () => {
+    const inFlight = new Set<string>();
+    expect(beginResend(inFlight, 'a')).toBe(true);
+    expect(beginResend(inFlight, 'b')).toBe(true);
+    expect(inFlight.size).toBe(2);
+  });
+
+  it('endResend is safe to call on an id that was never claimed', () => {
+    const inFlight = new Set<string>();
+    expect(() => endResend(inFlight, 'ghost')).not.toThrow();
+    expect(inFlight.has('ghost')).toBe(false);
   });
 });
 

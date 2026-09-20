@@ -30,7 +30,6 @@ import type { CommandConversationBlock } from '../../../contract/interactive-com
 import type { PermissionConversationBlock } from '../../../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
 import { runtimeToolBlock } from './runtime-tool-blocks';
-import { toolResultChips } from './transcript-turns';
 
 // mac-text-selection FR-1: the transcript container overrides the app-wide
 // `body { user-select: none }` chrome rule (styles.css) so transcript CONTENT
@@ -821,10 +820,10 @@ const LINE_CHANGE_META = /^\+(\d+) −(\d+)$/;
  *
  * The newest block represents the run: its blockId keys the row and its
  * streaming state wins (a still-streaming edit shows the run total so far).
- * A non-plain meta — plain `error`, or any Pi runtime status chip that reads
- * `error`/`warn` toned (`failed`, `cancelled`, `unknown` — toolResultChips)
- * — never merges: it stays its own visible row and breaks the run on both
- * sides, so a failed call is never absorbed into a neighboring success.
+ * A call that did not settle cleanly never merges — see `breaksToolRun` — so a
+ * failure is never absorbed into a neighbouring success. Two Pi rows are
+ * additionally held apart by their execution id: each `tool.update` is its own
+ * call, and folding two of them would hide one from the transcript entirely.
  */
 export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] {
   const out: ConversationBlock[] = [];
@@ -837,8 +836,8 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
       prev.tool === b.tool &&
       prev.summary === b.summary &&
       prev.execution?.id === b.execution?.id &&
-      !hasNonPlainToolMeta(prev.meta) &&
-      !hasNonPlainToolMeta(b.meta)
+      !breaksToolRun(prev) &&
+      !breaksToolRun(b)
     ) {
       out[out.length - 1] = mergeToolRun(prev, b);
       continue;
@@ -848,10 +847,22 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
   return out;
 }
 
-/** True for a meta that renders an error/warn-toned chip (toolResultChips) —
- *  `error` plus the Pi runtime terminal states `failed`/`cancelled`/`unknown`. */
-function hasNonPlainToolMeta(meta: string | undefined): boolean {
-  return toolResultChips(meta).some((chip) => chip.tone === 'error' || chip.tone === 'warn');
+/**
+ * Whether this row must stay visible on its own. The two runtimes are read
+ * differently ON PURPOSE:
+ *  - a Pi block carries the normalized lifecycle, so the STATUS answers —
+ *    never the displayed word, which is presentation;
+ *  - a plain Claude block has no status, and `error` is the only meta the core
+ *    writes for a failure (stream/tool_results.rs). Every other Claude meta is
+ *    free-form — a Task row's is the first line of the subagent's own result —
+ *    so matching words inside it would break a run on prose.
+ */
+function breaksToolRun(b: ToolConversationBlock): boolean {
+  if (b.execution !== undefined) {
+    const { status } = b.execution;
+    return status === 'failed' || status === 'cancelled' || status === 'unknown';
+  }
+  return b.meta === 'error';
 }
 
 function mergeToolRun(acc: ToolConversationBlock, b: ToolConversationBlock): ToolConversationBlock {

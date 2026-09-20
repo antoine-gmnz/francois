@@ -6,7 +6,7 @@ import type { RuntimeMetricsInput, RuntimeMetricsResult, RuntimeModelsInput, Run
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { demoInvoke, demoListen } from '../demo/demo';
-import type { AccountId, BlockId, DeliveryMode, Result, RuntimeMessageReceipt, SessionMeta, PermissionMode, ResponseMode, RuntimeModelRef, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, BlockId, Result, RuntimeMessageReceipt, SessionMeta, PermissionMode, ResponseMode, RuntimeModelRef, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
   WorkflowDetail,
@@ -109,7 +109,7 @@ import type {
   ShellRestartPayload,
   ShellWritePayload,
 } from '../../contract/shell-terminal';
-import type { SkillsEvent } from '../../contract/skills-panel';
+import type { SkillsEvent, SkillsRunRequest } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
@@ -447,11 +447,12 @@ export const mcpDecide = (sessionId: SessionId, decision: McpDecision) =>
 
 export const skillsList = (sessionId: SessionId) => ipc<Result<SkillInfo[]>>('skills_list', { sessionId });
 export const skillsInstall = (sessionId: SessionId, name: string) => ipc<Result<null>>('skills_install', { sessionId, name });
-// pi-skills-capabilities §5: `delivery` REQUIRED for a Pi session, ignored by
-// every other runtime — every caller mints its own clientMessageId and picks
-// delivery (see skills-run.ts's piSkillDelivery), so it's safe to always send.
-export const skillsRun = (sessionId: SessionId, name: string, args?: string, pi?: { clientMessageId: string; delivery: DeliveryMode }) =>
-  ipc<Result<null>>('skills_run', { sessionId, name, args, clientMessageId: pi?.clientMessageId, delivery: pi?.delivery });
+// pi-skills-capabilities §5 / pr-142 §6: `invocation`/`delivery` REQUIRED for a
+// Pi session, ignored by every other runtime — every caller builds the whole
+// request with skills-run.ts's buildSkillsRunRequest (which carries the LISTED
+// entry's own `invocation`, never the derived `name` alone), so it's safe to
+// send them unconditionally rather than branching on agentRuntime.
+export const skillsRun = (request: SkillsRunRequest) => ipc<Result<null>>('skills_run', request);
 
 // pi-skills-capabilities FR-5 (LEAD ADDITION, session-engine §5): records the
 // per-SESSION unrestricted-tools acknowledgment after creation — idempotent,

@@ -48,14 +48,15 @@ import {
 import DropOverlay from './DropOverlay';
 import { useSessionAttachments } from './useSessionAttachments';
 import { appendToDraft, parkPrompt, resolvePrompt, usePendingQueue, wasWronglyOptimistic } from './pending-queue';
-import { exceedsMessageByteCap, isQueueFull, shouldUnqueueAfterResend, useQueueEntries } from './pi-queue';
+import { beginResend, endResend, exceedsMessageByteCap, isQueueFull, shouldUnqueueAfterResend, useQueueEntries } from '../../lib/pi-queue';
+import { useMounted } from '../../lib/hooks/useMounted';
 import {
   compactionBannerText,
   dismissCompactionProgress,
   retryBannerText,
   useCompactionProgress,
   useRetryProgress,
-} from './pi-turn-progress';
+} from '../../lib/pi-turn-progress';
 import './conversation.css';
 
 export interface ComposerPaneProps {
@@ -137,6 +138,15 @@ export default function ComposerPane({
   const retry = useRetryProgress(sessionId);
   const [deliveryChoice, setDeliveryChoice] = useState<DeliveryChoice>('followUp');
   const [stopping, setStopping] = useState(false);
+  // frontend fix loop (double-Resend defect): a per-row in-flight guard for
+  // Resend/Discard, modelled on `stopping` above. The ref is the actual
+  // dedupe — checked-and-claimed synchronously (pi-queue's beginResend)
+  // before either handler's first `await`, since React state from a first
+  // click is not yet visible to a fast second click in the same tick. The
+  // state mirror exists only so QueueStrip can render the disabled row.
+  const resendingRef = useRef<Set<string>>(new Set());
+  const [resendingIds, setResendingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const mountedRef = useMounted();
   // pi-skills-capabilities FR-5: a send refused with RUNTIME_POLICY_REQUIRED —
   // the acknowledgment prompt (Composer's `pi.policyRequired`) replaces the
   // plain error banner until the user acts; never set for any other failure.
@@ -372,42 +382,77 @@ export default function ComposerPane({
   // between the click and this response — the strip's own next
   // `queue.changed` is what actually repaints/clears the row either way, so
   // there is nothing to reconcile locally.
+  // frontend fix loop: shares the resend in-flight set — a Discard racing a
+  // Resend of the SAME row is the same double-submit bug from the other
+  // side, so both go through the one guard, keyed by clientMessageId.
   const onUnqueuePi = async (clientMessageId: string) => {
-    const res = await sessionUnqueue(sessionId, clientMessageId);
-    if (!res.ok) {
-      setSendError(res.error.message);
-      setTimeout(() => setSendError(null), 4000);
+    if (!beginResend(resendingRef.current, clientMessageId)) return;
+    setResendingIds(new Set(resendingRef.current));
+    try {
+      const res = await sessionUnqueue(sessionId, clientMessageId);
+      if (!res.ok) {
+        setSendError(res.error.message);
+        setTimeout(() => setSendError(null), 4000);
+      }
+    } finally {
+      endResend(resendingRef.current, clientMessageId);
+      if (mountedRef.current) setResendingIds(new Set(resendingRef.current));
     }
   };
 
   // FR-3: Resend always mints a NEW clientMessageId, and reuses the entry's
   // OWN attachmentIds — never the composer's currently-staged ones, which may
   // be unrelated to this historical entry or already released.
+  //
+  // frontend fix loop (double-Resend defect): a double click used to mint TWO
+  // fresh clientMessageIds and submit the same text twice — nothing
+  // downstream can dedupe distinct ids. `beginResend` is the synchronous
+  // check-and-claim, before this function's first `await`; `endResend` always
+  // runs in the `finally`, so an error `Result` or a thrown exception never
+  // leaves the row stuck disabled.
   const onResendPi = async (entry: RuntimeQueueEntry) => {
-    const delivery = resolveKeyDelivery(status, false, effectiveChoice);
-    if (delivery === null) {
-      setSendError('No delivery mode is available for this session right now.');
-      setTimeout(() => setSendError(null), 4000);
-      return;
-    }
-    const res = await sessionSubmit({
-      sessionId,
-      clientMessageId: crypto.randomUUID(),
-      text: entry.text,
-      delivery,
-      attachmentIds: entry.attachmentIds,
-    });
-    if (!res.ok) {
-      setSendError(res.error.message);
-      setTimeout(() => setSendError(null), 4000);
-      return;
-    }
-    // FR-3 (amended): the resend landed under a NEW id — drop the stale
-    // recovery row so the strip does not show both. Never reached on the
-    // failure above (shouldUnqueueAfterResend(false)): the user must not
-    // lose the only copy of the text.
-    if (shouldUnqueueAfterResend(res.ok)) {
-      void sessionUnqueue(sessionId, entry.clientMessageId);
+    if (!beginResend(resendingRef.current, entry.clientMessageId)) return;
+    setResendingIds(new Set(resendingRef.current));
+    try {
+      const delivery = resolveKeyDelivery(status, false, effectiveChoice);
+      if (delivery === null) {
+        setSendError('No delivery mode is available for this session right now.');
+        setTimeout(() => setSendError(null), 4000);
+        return;
+      }
+      const res = await sessionSubmit({
+        sessionId,
+        clientMessageId: crypto.randomUUID(),
+        text: entry.text,
+        delivery,
+        attachmentIds: entry.attachmentIds,
+      });
+      if (!res.ok) {
+        setSendError(res.error.message);
+        setTimeout(() => setSendError(null), 4000);
+        return;
+      }
+      // FR-3 (amended): the resend landed under a NEW id — drop the stale
+      // recovery row so the strip does not show both. Never reached on the
+      // failure above (shouldUnqueueAfterResend(false)): the user must not
+      // lose the only copy of the text.
+      //
+      // AWAITED, not fired and forgotten: the claim below must outlive the
+      // stale row. With `void`, the `finally` re-enabled a row still on
+      // screen (it only goes on the next `queue.changed`), and a second click
+      // in that gap resent the message — the very bug this guard is for. The
+      // core publishes `queue.changed` before this command answers, so by the
+      // time the claim is released the row is already on its way out.
+      if (shouldUnqueueAfterResend(res.ok)) {
+        const dropped = await sessionUnqueue(sessionId, entry.clientMessageId);
+        if (!dropped.ok && mountedRef.current) {
+          setSendError(dropped.error.message);
+          setTimeout(() => setSendError(null), 4000);
+        }
+      }
+    } finally {
+      endResend(resendingRef.current, entry.clientMessageId);
+      if (mountedRef.current) setResendingIds(new Set(resendingRef.current));
     }
   };
 
@@ -556,6 +601,7 @@ export default function ComposerPane({
         onUnqueue: (clientMessageId) => void onUnqueuePi(clientMessageId),
         onResend: (entry) => void onResendPi(entry),
         onClearQueue: () => void onClearQueuePi(),
+        resendingIds,
         stopping,
         onStop: () => void handleStop(),
         compactionNotice: compactionBannerText(compaction),

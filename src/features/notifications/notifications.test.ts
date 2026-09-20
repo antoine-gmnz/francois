@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionEvent, SessionMeta, SessionStatus } from '../../../contract/common';
 import { NOTIFICATION_TITLE } from '../../../contract/notifications';
 import type { NotifyTrigger } from '../../../contract/notifications';
+import { demoFocusWindow, demoWindowIsFocused, demoWindowOnFocusChanged } from '../../demo/demo';
 import { shouldFire } from './notifications';
 
 const { listenMock, isPermissionGrantedMock, requestPermissionMock, sendNotificationMock, onActionMock, windowMock } =
@@ -120,6 +121,27 @@ describe('shouldFire (FR-7/FR-8)', () => {
     expect(shouldFire(settle, { enabled: { attention: true, turnDone: false }, visibleSessionIds: ['s2'], windowFocused: false })).toBe(
       false,
     );
+  });
+});
+
+// pr-142 §9: notifications.ts routes its window access through these when
+// __FRANCOIS_DEMO__ is set (the demo build has no Tauri runtime to back
+// getCurrentWindow() with) — tested directly here, bypassing the compile-time
+// literal (dead in every test build) and Tauri itself, per the fix's brief.
+describe('demo window seam (pr-142 §9)', () => {
+  it('demoWindowIsFocused resolves the conservative "focused" default with no Tauri window', async () => {
+    await expect(demoWindowIsFocused()).resolves.toBe(true);
+  });
+
+  it('demoWindowOnFocusChanged never invokes the callback and hands back a safe unlisten', async () => {
+    const cb = vi.fn();
+    const unlisten = await demoWindowOnFocusChanged(cb);
+    expect(cb).not.toHaveBeenCalled();
+    expect(() => unlisten()).not.toThrow();
+  });
+
+  it('demoFocusWindow is a safe no-op — there is no OS window to raise', () => {
+    expect(() => demoFocusWindow()).not.toThrow();
   });
 });
 

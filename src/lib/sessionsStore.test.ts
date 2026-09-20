@@ -5,7 +5,9 @@
 // never swapped out of it or dropped from it.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { RuntimeEventPayload, SessionMeta } from '../../contract/common';
+import type { RuntimeEventPayload, RuntimeQueueEntry, SessionMeta } from '../../contract/common';
+import { clearQueueState, getQueueEntries, subscribeQueueEntries } from './pi-queue';
+import { clearTurnProgress, getCompactionProgress, getRetryProgress } from './pi-turn-progress';
 import { useStore } from './store';
 
 function meta(id: string): SessionMeta {
@@ -213,6 +215,31 @@ describe('runtime events (pi-runtime-boundary FR-4/FR-5/FR-6)', () => {
   });
 });
 
+// frontend fix loop: the `default` arm's compile-time `never` exhaustiveness
+// check used to `return unhandled` — the raw runtime payload OBJECT — straight
+// into the zustand updater, which merges whatever it returns into ROOT state.
+// A future core emitting a kind this build's union does not know about must
+// never let its fields land on the store root.
+describe('applyRuntimeEvent — an unrecognised future event kind (defect: bare `never` arm)', () => {
+  it('drops the unknown payload instead of merging its fields into store state', () => {
+    useStore.getState().setSessions([meta('s1')]);
+    const beforeKeys = Object.keys(useStore.getState()).sort();
+    const beforeSessions = useStore.getState().sessions;
+    // Cast through `unknown` — the type system rightly refuses this at the
+    // call site; a real occurrence would arrive from an older webview talking
+    // to a newer core, not from TypeScript-checked code in this repo.
+    const bogus = { kind: 'session.renamed', sessions: 'CLOBBERED' } as unknown as RuntimeEventPayload;
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event: bogus,
+    });
+    const after = useStore.getState();
+    expect(Object.keys(after).sort()).toEqual(beforeKeys);
+    expect(after.sessions).toBe(beforeSessions);
+    expect((after as unknown as Record<string, unknown>).kind).toBeUndefined();
+  });
+});
+
 describe('runtime events — model.changed / metrics (pi-models-metrics)', () => {
   const descriptor = {
     ref: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
@@ -284,6 +311,87 @@ describe('runtime events — model.changed / metrics (pi-models-metrics)', () =>
   });
 });
 
+// pi-turn-controls: `queue.changed` / `compaction` / `retry` never touch the
+// `sessions` array — they route to their own per-session stores. Those are
+// EXTERNAL stores with their own subscribers, so the write may not happen
+// inside the zustand updater (an updater must be pure: it is allowed to run
+// more than once, and it runs BEFORE the new state is committed).
+describe('applyRuntimeEvent — control events route to their own stores (pi-turn-controls)', () => {
+  const piSession = (generation: string | undefined = 'g1'): SessionMeta => ({
+    ...meta('s1'),
+    agentRuntime: 'pi',
+    protocol: null,
+    runtimeGeneration: generation,
+  });
+
+  const entries: RuntimeQueueEntry[] = [
+    { clientMessageId: 'c1', state: 'queued', delivery: 'normal', text: 'hi', attachmentIds: [], createdAt: 1 },
+  ];
+
+  const control = (event: RuntimeEventPayload, generation = 'g1') =>
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation, sequence: 1, at: 1, event,
+    });
+
+  beforeEach(() => {
+    clearQueueState('s1');
+    clearTurnProgress('s1');
+  });
+
+  it('mirrors the ledger and both progress records on a matching generation', () => {
+    useStore.getState().setSessions([piSession()]);
+    const before = useStore.getState().sessions;
+    control({ kind: 'queue.changed', entries });
+    control({ kind: 'compaction', state: 'started', automatic: false });
+    control({ kind: 'retry', state: 'waiting', attempt: 2 });
+    expect(getQueueEntries('s1')).toEqual(entries);
+    expect(getCompactionProgress('s1')?.state).toBe('started');
+    expect(getRetryProgress('s1')?.attempt).toBe(2);
+    // …without invalidating the fleet cache for every other subscriber.
+    expect(useStore.getState().sessions).toBe(before);
+  });
+
+  it('refuses a stale generation — an old child must never repaint a reconnected session', () => {
+    useStore.getState().setSessions([piSession('g2')]);
+    control({ kind: 'queue.changed', entries }, 'g1');
+    control({ kind: 'compaction', state: 'started', automatic: false }, 'g1');
+    control({ kind: 'retry', state: 'waiting', attempt: 2 }, 'g1');
+    expect(getQueueEntries('s1')).toEqual([]);
+    expect(getCompactionProgress('s1')).toBeNull();
+    expect(getRetryProgress('s1')).toBeNull();
+  });
+
+  // The generation-unknown guard, previously untested: a session the fleet
+  // cache does not hold (removed, or never hydrated) has no generation to
+  // check the event against, and there is nothing that would ever clear a
+  // ledger written under an id the cache never knew.
+  it('writes nothing for a session the cache does not hold', () => {
+    useStore.getState().setSessions([]);
+    control({ kind: 'queue.changed', entries });
+    control({ kind: 'compaction', state: 'started', automatic: false });
+    control({ kind: 'retry', state: 'waiting', attempt: 2 });
+    expect(getQueueEntries('s1')).toEqual([]);
+    expect(getCompactionProgress('s1')).toBeNull();
+    expect(getRetryProgress('s1')).toBeNull();
+  });
+
+  // removeSession cleared the ledger from INSIDE the updater, so a queue
+  // subscriber ran while zustand still held the pre-removal state and saw the
+  // session it was being told to forget.
+  it('removeSession clears the ledger only after the session is gone from the cache', () => {
+    useStore.getState().setSessions([piSession()]);
+    control({ kind: 'queue.changed', entries });
+    let sessionsSeenByLedgerSubscriber: string[] | null = null;
+    const unsubscribe = subscribeQueueEntries('s1', () => {
+      sessionsSeenByLedgerSubscriber = useStore.getState().sessions.map((s) => s.id);
+    });
+    useStore.getState().removeSession('s1');
+    unsubscribe();
+    expect(getQueueEntries('s1')).toEqual([]);
+    expect(sessionsSeenByLedgerSubscriber).toEqual([]);
+  });
+});
+
 // pi-session-durability: `recovery` rides on the ordinary full-snapshot
 // session.meta event, so upsertSession is where it has to land — and where a
 // refused Retry's otherwise-identical republish has to bail, same convention
@@ -325,6 +433,42 @@ describe('upsertSession and RuntimeRecovery (pi-session-durability)', () => {
     expect(sessions).toHaveLength(2);
     expect(sessions[0]).toEqual(source);
     expect(sessions[1]).toEqual(created);
+  });
+});
+
+// The `upsertSession` no-op guard used to compare `JSON.stringify` of both
+// sides, which answers "changed" for the same payload written in a different
+// field order — and serialises two whole SessionMetas on the hottest event in
+// the app before it can find the first difference. `deepEqual` replaces it.
+describe('upsertSession no-op guard is structural, not textual', () => {
+  it('keeps the sessions array reference when the SAME meta arrives with its keys in another order', () => {
+    const cached = meta('s1');
+    useStore.getState().setSessions([cached]);
+    const before = useStore.getState().sessions;
+    // Same 20 fields, written back-to-front — exactly what a serde-built
+    // snapshot and a store-built spread can differ by.
+    const reordered = Object.fromEntries(Object.entries(cached).reverse()) as SessionMeta;
+    expect(Object.keys(reordered)).not.toEqual(Object.keys(cached));
+    useStore.getState().upsertSession(reordered);
+    expect(useStore.getState().sessions).toBe(before);
+  });
+
+  it('still replaces the entry on a NESTED change the top-level fields hide', () => {
+    const cached: SessionMeta = { ...meta('s1'), model: { id: 'm', label: 'M', brief: '200K context' } };
+    useStore.getState().setSessions([cached]);
+    const before = useStore.getState().sessions;
+    useStore.getState().upsertSession({ ...cached, model: { id: 'm', label: 'M', brief: '1M context' } });
+    expect(useStore.getState().sessions).not.toBe(before);
+    expect(useStore.getState().sessions[0].model.brief).toBe('1M context');
+  });
+
+  it('reads an explicitly-undefined field as absent, as the JSON comparison did', () => {
+    useStore.getState().setSessions([meta('s1')]);
+    const before = useStore.getState().sessions;
+    // What `applyRuntimeEvent`'s model.changed arm writes when the accepted
+    // model reports no effort level — the wire snapshot simply omits the key.
+    useStore.getState().upsertSession({ ...meta('s1'), effort: undefined });
+    expect(useStore.getState().sessions).toBe(before);
   });
 });
 

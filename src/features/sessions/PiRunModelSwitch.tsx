@@ -18,12 +18,13 @@ import { useState } from 'react';
 import type { RuntimeModelRef, SessionMeta } from '../../../contract/common';
 import { modelPickerProviderHeading } from '../../lib/account-selection';
 import { sessionSwitchEffort, sessionSwitchRuntimeModel } from '../../lib/api';
+import { useMounted } from '../../lib/hooks/useMounted';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import { useStore } from '../../lib/store';
 import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
 import { PiModelField } from './PiModelField';
 import { recordRecentModel } from './runtime-model-favorites';
-import { piModelSwitchBlockedReason } from './runtime-metrics';
+import { piModelSwitchBlockedReason, submitModelSwitch } from './runtime-metrics';
 import { useRuntimeModelCatalog } from './useRuntimeModelCatalog';
 
 export function PiRunModelSwitch({ session }: { session: SessionMeta }): JSX.Element {
@@ -31,22 +32,23 @@ export function PiRunModelSwitch({ session }: { session: SessionMeta }): JSX.Ele
   const catalog = useRuntimeModelCatalog(session.accountId);
   const [switching, setSwitching] = useState(false);
   const { error, setError, schedule } = useTimedError();
+  const mountedRef = useMounted();
 
   const blockedReason = piModelSwitchBlockedReason(session);
   const disabled = blockedReason !== null || switching;
   const efforts = session.model.efforts ?? [];
 
-  const runGuarded = async (call: () => ReturnType<typeof sessionSwitchRuntimeModel>) => {
-    setSwitching(true);
-    setError(null);
-    const res = await call();
-    setSwitching(false);
-    if (!res.ok) {
-      setError(res.error.message);
-      schedule(() => setError(null), 4000);
-    }
-    return res;
-  };
+  const runGuarded = (call: () => ReturnType<typeof sessionSwitchRuntimeModel>) =>
+    submitModelSwitch({
+      call,
+      setSwitching: (v) => {
+        if (mountedRef.current) setSwitching(v);
+      },
+      setError: (m) => {
+        if (mountedRef.current) setError(m);
+      },
+      schedule,
+    });
 
   const onSelect = async (ref: RuntimeModelRef) => {
     if (disabled) return;

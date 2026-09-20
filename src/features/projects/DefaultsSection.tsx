@@ -6,7 +6,7 @@ import type { ModelCatalogState } from '../../lib/hooks/useModelCatalog';
 
 import type { ProjectDefaults } from '../../../contract/common';
 import { InlineError } from './InlineError';
-import { defaultsSelectValue, piRuntimeModelDefaultLabel, type DefaultFieldDef, type DefaultsKey } from './projects';
+import { defaultsSelectValue, fieldDefsShowModelSelect, piRuntimeModelDefaultLabel, type DefaultFieldDef, type DefaultsKey } from './projects';
 
 export function DefaultsSection({
   catalogState,
@@ -23,7 +23,10 @@ export function DefaultsSection({
   error: string | null;
   disabled: boolean;
 }) {
-  const piModelLabel = piRuntimeModelDefaultLabel(defaults);
+  // pr-142 §C1: gated on the SAME predicate that hides the selects below —
+  // not on whether `runtimeModel` happens to still be saved, which used to
+  // leave this row standing even after the default account moved off Pi.
+  const piModelLabel = fieldDefsShowModelSelect(fieldDefs) ? null : piRuntimeModelDefaultLabel(defaults);
 
   return (
     <div className={disabled ? 'pj-group is-disabled' : 'pj-group'}>
@@ -37,7 +40,9 @@ export function DefaultsSection({
       {piModelLabel && (
         <div className="pj-row">
           <span className="pj-row-label">model (pi)</span>
-          <span className="pj-input" title="set from a Pi session's run chip — this editor cannot change it yet">
+          {/* pr-142 §C1: the run chip never writes project defaults — a
+              session's own "Set as project default" (settings sheet) does. */}
+          <span className="pj-input" title={`set from a session's "Set as project default" — this editor cannot change it yet`}>
             {piModelLabel}
           </span>
         </div>

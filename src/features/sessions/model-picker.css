@@ -108,6 +108,14 @@
 
 .model-picker__provider-heading { grid-column: 1 / -1; }
 
+/* A3(a) (review addendum): the listbox role sits on a node whose only children
+   are the families/submenu columns (no non-option descendant) — `display:
+   contents` keeps those two columns direct items of `.model-picker__popover`'s
+   grid, so row 2's two-column layout is byte-for-byte the same as before. */
+.model-picker__listbox {
+  display: contents;
+}
+
 .model-picker__families,
 .model-picker__submenu {
   min-height: 0;

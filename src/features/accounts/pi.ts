@@ -114,8 +114,15 @@ export function piInheritLabel(inherit: boolean): string {
   return inherit ? 'inherits environment credentials' : 'no inherited credentials';
 }
 
-/** FR-4: setup (and any session use) is refused untrusted — say so before the click. */
-export function piSetupBlockedReason(pi: Pick<PiAccountConfig, 'trusted'>): string | null {
+/**
+ * FR-4: setup, refresh (and any session use) are all refused untrusted by the
+ * core — say so before the click rather than let the button round-trip into a
+ * refusal. `undefined` covers a card with no Pi config block at all, which
+ * blocks every action the same way. Shared by both PiAccountCard buttons so
+ * "which actions are enabled" has exactly one answer.
+ */
+export function piActionBlockedReason(pi: Pick<PiAccountConfig, 'trusted'> | undefined): string | null {
+  if (!pi) return 'No Pi configuration on this account.';
   return pi.trusted ? null : 'Trust this configuration first.';
 }
 

@@ -1,6 +1,6 @@
 import type { RuntimeQueueEntry } from '../../../contract/common';
 import { firstLine } from './pending-queue';
-import { clearableCount, isLocalOnly, needsResend, queueEntryStatusLabel } from './pi-queue';
+import { clearableCount, isLocalOnly, needsResend, queueEntryStatusLabel } from '../../lib/pi-queue';
 import './conversation.css';
 import './pi-turn-controls.css';
 
@@ -23,6 +23,13 @@ export interface QueueStripProps {
   onResend: (entry: RuntimeQueueEntry) => void;
   /** FR-5: "Clear queued messages" — every entry Pi has already accepted. */
   onClearAll: () => void;
+  /**
+   * frontend fix loop (double-Resend defect): clientMessageIds currently
+   * awaiting a Resend or Discard round trip — that row's Resend AND Discard
+   * both render disabled while its id is a member, so a fast double click
+   * cannot submit (or discard) the same row twice.
+   */
+  resendingIds: ReadonlySet<string>;
 }
 
 /**
@@ -31,7 +38,7 @@ export interface QueueStripProps {
  * rendering the LIVE admissions ledger (RuntimeQueueEntry) instead of a
  * client-only park list, with per-state actions (FR-3/FR-5).
  */
-export default function QueueStrip({ entries, inert, onUnqueue, onResend, onClearAll }: QueueStripProps) {
+export default function QueueStrip({ entries, inert, onUnqueue, onResend, onClearAll, resendingIds }: QueueStripProps) {
   if (entries.length === 0) return null;
   const clearable = clearableCount(entries);
   return (
@@ -41,39 +48,56 @@ export default function QueueStrip({ entries, inert, onUnqueue, onResend, onClea
           Clear queued messages ({clearable})
         </button>
       )}
-      {entries.map((entry) => (
-        <div key={entry.clientMessageId} className="composer-pending__row" title={entry.text}>
-          <span className="composer-pending__glyph" aria-hidden="true">
-            ⟳
-          </span>
-          <span className="composer-pending__text">{firstLine(entry.text)}</span>
-          <span className="composer-pending__status">{queueEntryStatusLabel(entry)}</span>
-          {!inert && (
-            <span className="composer-pending__actions">
-              {isLocalOnly(entry) && (
-                <button
-                  type="button"
-                  className="composer-pending__remove"
-                  aria-label="remove queued message"
-                  onClick={() => onUnqueue(entry.clientMessageId)}
-                >
-                  ✕
-                </button>
-              )}
-              {needsResend(entry) && (
-                <>
-                  <button type="button" className="composer-pending__action" onClick={() => onResend(entry)}>
-                    Resend
-                  </button>
-                  <button type="button" className="composer-pending__action" onClick={() => onUnqueue(entry.clientMessageId)}>
-                    Discard
-                  </button>
-                </>
-              )}
+      {entries.map((entry) => {
+        // frontend fix loop (double-Resend defect): this row's own Resend/
+        // Discard round trip is in flight — both actions render disabled
+        // until the `finally` in ComposerPane releases the claim.
+        const busy = resendingIds.has(entry.clientMessageId);
+        return (
+          <div key={entry.clientMessageId} className="composer-pending__row" title={entry.text}>
+            <span className="composer-pending__glyph" aria-hidden="true">
+              ⟳
             </span>
-          )}
-        </div>
-      ))}
+            <span className="composer-pending__text">{firstLine(entry.text)}</span>
+            <span className="composer-pending__status">{queueEntryStatusLabel(entry)}</span>
+            {!inert && (
+              <span className="composer-pending__actions">
+                {isLocalOnly(entry) && (
+                  <button
+                    type="button"
+                    className="composer-pending__remove"
+                    aria-label="remove queued message"
+                    disabled={busy}
+                    onClick={() => onUnqueue(entry.clientMessageId)}
+                  >
+                    ✕
+                  </button>
+                )}
+                {needsResend(entry) && (
+                  <>
+                    <button
+                      type="button"
+                      className={busy ? 'composer-pending__action is-disabled' : 'composer-pending__action'}
+                      disabled={busy}
+                      onClick={() => onResend(entry)}
+                    >
+                      Resend
+                    </button>
+                    <button
+                      type="button"
+                      className={busy ? 'composer-pending__action is-disabled' : 'composer-pending__action'}
+                      disabled={busy}
+                      onClick={() => onUnqueue(entry.clientMessageId)}
+                    >
+                      Discard
+                    </button>
+                  </>
+                )}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

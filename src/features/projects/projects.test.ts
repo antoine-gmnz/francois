@@ -27,6 +27,7 @@ import {
   defaultsSelectValue,
   dropRule,
   effortOptions,
+  fieldDefsShowModelSelect,
   filteredEmptyLabel,
   firstSessionInProject,
   loadActiveProjectId,
@@ -557,6 +558,59 @@ describe('project defaults form (FR-34)', () => {
     expect(piRuntimeModelDefaultLabel({ runtimeModel: { providerId: 'anthropic', modelId: 'claude-sonnet-5' } })).toBe(
       'anthropic / claude-sonnet-5',
     );
+  });
+
+  // pr-142 §C1: DefaultsSection's read-only "model (pi)" row must gate on the
+  // SAME predicate that hides the modelId/effort selects above — not on
+  // whether a (possibly stale) runtimeModel happens to be saved.
+  describe('fieldDefsShowModelSelect (pr-142 §C1)', () => {
+    const accounts = [
+      { id: 'default', label: 'Default' },
+      { id: 'pi-1', label: 'Pi', kind: 'pi' },
+    ];
+
+    it('is true when the selects are present (a Claude default account)', () => {
+      const defs = defaultFieldDefs(MODELS, { accountId: 'default' }, true, accounts);
+      expect(fieldDefsShowModelSelect(defs)).toBe(true);
+    });
+
+    it('is false when the selects are hidden (a Pi default account)', () => {
+      const defs = defaultFieldDefs(MODELS, { accountId: 'pi-1' }, true, accounts);
+      expect(fieldDefsShowModelSelect(defs)).toBe(false);
+    });
+  });
+
+  // pr-142 §C1: modelId/runtimeModel are mutually exclusive (contract +
+  // src-tauri/src/project/mod.rs) — patchDefaults is the one place that must
+  // never leave both set after an edit that could create the conflict.
+  describe('patchDefaults — runtimeModel/modelId exclusion (pr-142 §C1)', () => {
+    const accounts = [
+      { id: 'default', label: 'Default' },
+      { id: 'pi-1', label: 'Pi', kind: 'pi' },
+    ];
+
+    it('committing modelId drops a stale runtimeModel', () => {
+      const d = { runtimeModel: { providerId: 'pi', modelId: 'gpt' }, accountId: 'pi-1' };
+      expect(patchDefaults(d, 'modelId', 'claude-opus-5')).toEqual({ accountId: 'pi-1', modelId: 'claude-opus-5' });
+    });
+
+    it('committing a Pi accountId drops modelId/effort but keeps runtimeModel', () => {
+      const d = { modelId: 'claude-opus-5', effort: 'high', runtimeModel: { providerId: 'pi', modelId: 'gpt' } };
+      expect(patchDefaults(d, 'accountId', 'pi-1', undefined, accounts)).toEqual({
+        accountId: 'pi-1',
+        runtimeModel: { providerId: 'pi', modelId: 'gpt' },
+      });
+    });
+
+    it('committing a non-Pi accountId drops a stale runtimeModel', () => {
+      const d = { runtimeModel: { providerId: 'pi', modelId: 'gpt' } };
+      expect(patchDefaults(d, 'accountId', 'default', undefined, accounts)).toEqual({ accountId: 'default' });
+    });
+
+    it('is a no-op on the exclusion when neither side is set', () => {
+      expect(patchDefaults({}, 'accountId', 'default', undefined, accounts)).toEqual({ accountId: 'default' });
+      expect(patchDefaults({}, 'modelId', 'claude-opus-5')).toEqual({ modelId: 'claude-opus-5' });
+    });
   });
 });
 

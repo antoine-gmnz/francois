@@ -119,6 +119,14 @@ export interface PiComposerProps {
   onUnqueue: (clientMessageId: string) => void;
   onResend: (entry: RuntimeQueueEntry) => void;
   onClearQueue: () => void;
+  /**
+   * frontend fix loop (double-Resend defect): clientMessageIds whose Resend
+   * or Discard is currently awaiting its round trip — QueueStrip disables
+   * BOTH actions for that row while its id is a member (a Discard racing a
+   * Resend of the same row is the same double-submit bug from the other
+   * side).
+   */
+  resendingIds: ReadonlySet<string>;
   /** FR-6/FR-7: Stop stays visible (and disabled) until session_interrupt confirms. */
   stopping: boolean;
   onStop: () => void;
@@ -208,9 +216,14 @@ export default function Composer({
               <div className={pi.compactionFailed ? 'composer-progress-banner composer-progress-banner--error' : 'composer-progress-banner'}>
                 <span>{pi.compactionNotice}</span>
                 {pi.compactionFailed && (
-                  <span onClick={pi.onDismissCompaction} className="composer-progress-banner__dismiss" title="dismiss">
+                  <button
+                    type="button"
+                    onClick={pi.onDismissCompaction}
+                    className="composer-progress-banner__dismiss"
+                    title="dismiss"
+                  >
                     ✕
-                  </span>
+                  </button>
                 )}
               </div>
             )}
@@ -222,9 +235,14 @@ export default function Composer({
             {pi?.policyRequired && (
               <div className="composer-progress-banner composer-progress-banner--attn">
                 <span>{PI_UNRESTRICTED_TOOLS_NOTICE}</span>
-                <span onClick={pi.onAcknowledgePolicy} className="composer-progress-banner__dismiss" title="acknowledge and retry">
+                <button
+                  type="button"
+                  onClick={pi.onAcknowledgePolicy}
+                  className="composer-progress-banner__dismiss"
+                  title="acknowledge and retry"
+                >
                   Acknowledge
-                </span>
+                </button>
               </div>
             )}
           </div>
@@ -267,6 +285,7 @@ export default function Composer({
             onUnqueue={pi.onUnqueue}
             onResend={pi.onResend}
             onClearAll={pi.onClearQueue}
+            resendingIds={pi.resendingIds}
           />
         )}
         {pi && pi.busy && !inert && (

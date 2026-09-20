@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RuntimeMetrics, SessionMeta } from '../../../contract/common';
 import {
   UNKNOWN_METRIC,
@@ -8,6 +8,7 @@ import {
   formatUsd,
   modelSwitchUnavailableReason,
   piModelSwitchBlockedReason,
+  submitModelSwitch,
 } from './runtime-metrics';
 
 function metrics(over: Partial<RuntimeMetrics> = {}): RuntimeMetrics {
@@ -158,5 +159,33 @@ describe('piModelSwitchBlockedReason (FR-5, the run chip live switch)', () => {
   it('is null when idle and the capability is available', () => {
     const s = session({ status: 'idle', effectiveCapabilities: { modelSwitching: { available: true } } as never });
     expect(piModelSwitchBlockedReason(s)).toBeNull();
+  });
+});
+
+describe('submitModelSwitch (PiRunModelSwitch, unmount-guard extraction)', () => {
+  function harness() {
+    return { setSwitching: vi.fn(), setError: vi.fn(), schedule: vi.fn() };
+  }
+
+  it('marks switching, clears any stale error, then clears switching again on success', async () => {
+    const h = harness();
+    const res = await submitModelSwitch({ call: () => Promise.resolve({ ok: true, data: {} as never }), ...h });
+    expect(h.setSwitching).toHaveBeenNthCalledWith(1, true);
+    expect(h.setError).toHaveBeenNthCalledWith(1, null);
+    expect(h.setSwitching).toHaveBeenNthCalledWith(2, false);
+    expect(h.setError).toHaveBeenCalledTimes(1); // no failure to show
+    expect(h.schedule).not.toHaveBeenCalled();
+    expect(res).toEqual({ ok: true, data: {} });
+  });
+
+  it('clears switching AND surfaces the message on a domain failure, scheduling its auto-clear', async () => {
+    const h = harness();
+    await submitModelSwitch({
+      call: () => Promise.resolve({ ok: false, error: { code: 'RUNTIME_UNAVAILABLE', message: 'Pi is not connected' } }),
+      ...h,
+    });
+    expect(h.setSwitching).toHaveBeenLastCalledWith(false);
+    expect(h.setError).toHaveBeenLastCalledWith('Pi is not connected');
+    expect(h.schedule).toHaveBeenCalledWith(expect.any(Function), 4000);
   });
 });

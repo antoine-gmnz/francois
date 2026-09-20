@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { RuntimeModelDescriptor } from '../../../contract/common';
 import { runtimeModelKey } from '../../../contract/pi-models-metrics';
+import { modelInfoFromRuntimeDescriptor } from '../../lib/runtime-model-info';
 import {
   ensureSelectionVisible,
   groupByProvider,
-  modelInfoFromRuntimeDescriptor,
   providerIdOf,
   runtimeCatalogModels,
-  runtimeModelBrief,
   runtimeSelectionIsFresh,
   sameRuntimeModel,
 } from './runtime-model';
@@ -72,39 +71,10 @@ describe('groupByProvider / providerIdOf (FR-1)', () => {
   });
 });
 
-describe('runtimeModelBrief', () => {
-  it('summarizes context window and input modes', () => {
-    expect(runtimeModelBrief(descriptor({ contextWindow: 200_000, input: ['text', 'image'] }))).toBe('200K context · text + image');
-  });
-
-  it('is just the context window when there is no image input', () => {
-    expect(runtimeModelBrief(descriptor({ input: ['text'] }))).toBe('200K context');
-  });
-
-  it('is empty when nothing is known', () => {
-    expect(runtimeModelBrief(descriptor({ contextWindow: null, input: [] }))).toBe('');
-  });
-
-  it('is the unavailable reason for a disabled row, not a context summary', () => {
-    expect(runtimeModelBrief(descriptor({ availability: 'unavailable', unavailableReason: 'Removed from models.json' }))).toBe(
-      'Removed from models.json',
-    );
-  });
-});
-
-describe('modelInfoFromRuntimeDescriptor', () => {
-  it('keys the row by the composite (account, provider, model) identity — not the bare modelId', () => {
-    const info = modelInfoFromRuntimeDescriptor(descriptor(), 'acct-1');
-    expect(info.id).toBe(runtimeModelKey('acct-1', 'anthropic', 'claude-sonnet-5'));
-    expect(info.label).toBe('Sonnet 5');
-    expect(info.runtimeModel).toEqual({ providerId: 'anthropic', modelId: 'claude-sonnet-5' });
-    expect(info.descriptor).toEqual(descriptor());
-  });
-
-  it('does not fabricate an efforts list the descriptor never advertised', () => {
-    expect(modelInfoFromRuntimeDescriptor(descriptor({ reasoning: true }), 'acct-1').efforts).toBeUndefined();
-  });
-});
+// runtimeModelBrief / modelInfoFromRuntimeDescriptor's own tests moved to
+// src/lib/runtime-model-info.test.ts with the functions (frontend fix loop §7
+// item 5). `modelInfoFromRuntimeDescriptor` is still imported here to build
+// ModelInfo fixtures for the groupByProvider/providerIdOf test below.
 
 describe('runtimeCatalogModels (the catalogue → picker pipeline)', () => {
   it('merges the vanished selection in, then maps every row', () => {

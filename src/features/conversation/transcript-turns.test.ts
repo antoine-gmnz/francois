@@ -280,4 +280,15 @@ describe('toolResultChips (design 9a: a result is chips, not a trailing sentence
     expect(toolResultChips('cancelled')).toEqual([{ tone: 'warn', text: 'cancelled' }]);
     expect(toolResultChips('unknown')).toEqual([{ tone: 'warn', text: 'unknown' }]);
   });
+
+  // The warn tone belongs to the two words `runtimeToolStatusLabel` emits, and
+  // it matches them WHOLE. A Claude meta is free-form (tools.rs: a Task row's
+  // is the first line of the subagent's own result), so a word match inside it
+  // would paint an ordinary result amber for mentioning the word.
+  it('leaves a free-form Claude meta that merely contains the word quiet', () => {
+    expect(toolResultChips('2 unknown symbols')).toEqual([{ tone: 'plain', text: '2 unknown symbols' }]);
+    expect(toolResultChips('the run was cancelled upstream')).toEqual([
+      { tone: 'plain', text: 'the run was cancelled upstream' },
+    ]);
+  });
 });

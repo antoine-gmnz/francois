@@ -66,9 +66,14 @@ export function createRuntimeModelCatalogController(fetchModels: (input: Runtime
       if (pending && state.accountId === accountId && !refresh) return pending;
       const request = ++generation;
       clearTimeout(timer);
+      // FR-2/FR-9: `stale` only ever qualifies the rows the controller is
+      // holding, so it travels with `models` in every publish below — a rekey
+      // that empties the list leaves nothing for it to describe.
+      const keptModels = state.accountId === accountId ? state.models : [];
       publish({
         accountId,
-        models: state.accountId === accountId ? state.models : [],
+        models: keptModels,
+        stale: keptModels.length > 0 && state.stale,
         loading: true,
         showLoading: false,
         error: null,
@@ -83,10 +88,10 @@ export function createRuntimeModelCatalogController(fetchModels: (input: Runtime
           if (result.ok && result.data.accountId === accountId) {
             publish({ models: result.data.models, checkedAt: result.data.checkedAt, stale: result.data.stale, error: null });
           } else {
-            publish({ models: [], error: result.ok ? "Couldn't load models" : result.error.message });
+            publish({ models: [], stale: false, error: result.ok ? "Couldn't load models" : result.error.message });
           }
         } catch {
-          if (generation === request) publish({ models: [], error: "Couldn't load models" });
+          if (generation === request) publish({ models: [], stale: false, error: "Couldn't load models" });
         } finally {
           if (generation === request) {
             clearTimeout(timer);
