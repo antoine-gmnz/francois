@@ -65,6 +65,9 @@ export type ErrorCode =
   | 'ACCOUNT_ENDPOINT_UNREACHABLE' // multi-provider-endpoint: the base URL did not answer a usable /models
   | 'ACCOUNT_ENDPOINT_UNAUTHORIZED' // multi-provider-endpoint: the endpoint rejected the key (401/403)
   | 'ACCOUNT_KEY_WRITE_FAILED' // multi-provider-endpoint: the key file could not be written or removed
+  | 'ACCOUNT_IN_USE' // pi-provider-auth: trust/remove refused while a session or setup PTY holds the account
+  | 'ACCOUNT_CONFIG_UNTRUSTED' // pi-provider-auth: a Pi account's configDir was never explicitly trusted
+  | 'ACCOUNT_CONFIG_CHANGED' // pi-provider-auth FR-4: the trusted executable-config fingerprint no longer matches
   | 'CLI_INSTALL_UNAVAILABLE' // multi-account: npm is not on PATH, so no vendor CLI can be installed from here
   | 'CLI_INSTALL_FAILED' // multi-account: `npm i -g <package>` exited non-zero (detail: { code, tail })
   | 'WORKFLOW_NOT_FOUND' // workflow-details: runId matches no run this session has seen
@@ -123,6 +126,13 @@ export type ErrorCode =
   | 'PROVIDER_UNAVAILABLE'
   | 'MODEL_UNAVAILABLE'
   | 'TOOL_FAILED'
+  | 'SESSION_BUSY' // pi-session-durability: reconnect/newFrom refused while a turn or another recovery is in flight
+  | 'RUNTIME_SESSION_MISSING' // pi-session-durability FR-3: the recorded native conversation file is gone
+  | 'RUNTIME_SESSION_CORRUPT' // pi-session-durability FR-3: the native file/identity failed validation or its parent chain is broken
+  | 'RUNTIME_ACCOUNT_MISSING' // pi-session-durability FR-3: the pinned account was removed; never falls back to a default
+  | 'QUEUE_FULL' // pi-turn-controls FR-4: the session already holds 20 pending intents (detail: { cap })
+  | 'RUNTIME_POLICY_REQUIRED' // pi-skills-capabilities FR-5: first submit refused until the session's unrestricted-tools acknowledgment is recorded
+  | 'PROFILE_RUNTIME_MISMATCH' // pi-migration-rollout: a legacy profile selected for a Pi account, or Pi settings for another runtime
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -218,6 +228,104 @@ export interface RuntimeModelRef {
   modelId: string;
 }
 
+/**
+ * pi-models-metrics §5: one provider/model row as the runtime reports it. Identity is
+ * the `(providerId, modelId)` pair in `ref` — `displayName` is presentation only, and
+ * two providers advertising the same `modelId` are two distinct rows (FR-1).
+ *
+ * `authState` is an observation, never a claim: catalogue presence does not establish
+ * that credentials work. `unavailableReason` is present iff `availability` is
+ * 'unavailable' — the shape a saved/default/favorite selection keeps after its model
+ * disappears, so it renders disabled with its exact identity instead of being silently
+ * replaced (FR-3).
+ *
+ * `contextWindow` / `maxOutputTokens` are positive safe integers, or null when unknown.
+ */
+export interface RuntimeModelDescriptor {
+  ref: RuntimeModelRef;
+  displayName: string;
+  input: ('text' | 'image')[];
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  reasoning: boolean;
+  authState: 'unknown' | 'configured' | 'verified' | 'failed';
+  availability: 'available' | 'unavailable';
+  unavailableReason?: string;
+}
+
+/**
+ * pi-models-metrics §5: usage as the runtime reports it, with explicit unknowns.
+ * Every non-null counter is a finite nonnegative number. `null` means UNKNOWN and
+ * renders as an em dash — never as zero, and never as an empty or full bar (FR-7).
+ *
+ * `contextTokens` is CURRENT context occupancy; the four token counters are cumulative
+ * totals. They are tracked separately, and the sum of historical input tokens is never
+ * presented as occupancy. After compaction `contextTokens` stays null until the runtime
+ * reports a trustworthy value, with `contextBasis: 'unknown'`.
+ *
+ * `costUsd` is an estimate at best: `costBasis` is 'estimated' only when the runtime
+ * supplied pricing-derived values. Zero pricing does not establish free execution and
+ * missing/untrusted pricing yields null + 'unknown' (FR-8).
+ *
+ * `stale: true` ⇒ the values predate a restart or a failed refresh (FR-9).
+ */
+export interface RuntimeMetrics {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  contextTokens: number | null;
+  contextWindow: number | null;
+  contextBasis: 'reported' | 'estimated' | 'unknown';
+  costUsd: number | null;
+  costBasis: 'estimated' | 'unknown';
+  measuredAt: number; // epoch ms
+  stale: boolean;
+}
+
+/**
+ * pi-turn-controls §5: how a message is delivered to a runtime-owned session.
+ * 'normal' is valid only when idle (busy ⇒ SESSION_BUSY); 'steer' only when busy
+ * (idle ⇒ INVALID_INPUT); 'followUp' when idle is submitted as a normal prompt while
+ * the recorded intent stays 'followUp' (FR-1).
+ */
+export type DeliveryMode = 'normal' | 'steer' | 'followUp';
+
+/**
+ * pi-turn-controls §5: where one client message stands in the core's admissions ledger.
+ * `clientMessageId` is the core-owned identity — two messages with identical text are
+ * two receipts. 'delivery-unknown' means identity could not be resolved: it is never
+ * upgraded to delivered on the strength of matching text (FR-3).
+ * `queuePosition` is 1-based and present iff `state` is 'queued'.
+ */
+export interface RuntimeMessageReceipt {
+  clientMessageId: string;
+  state: 'admitting' | 'queued' | 'consumed' | 'cancelled' | 'delivery-unknown' | 'rejected';
+  delivery: DeliveryMode;
+  queuePosition?: number;
+}
+
+/** pi-turn-controls §5: a ledger entry as the composer strip renders it. */
+export interface RuntimeQueueEntry extends RuntimeMessageReceipt {
+  text: string;
+  attachmentIds: string[];
+  createdAt: number; // epoch ms
+}
+
+/**
+ * pi-skills-capabilities §5: the launch policy a Pi session is pinned to. Snapshotted
+ * at creation and never converted into an allow/deny tool rule. `extensions` has one
+ * member on purpose — arbitrary Pi extensions are disabled in this release (FR-6).
+ * `acknowledgedUnrestrictedTools` records that the user saw "Pi tools run with your
+ * user permissions"; the core refuses the first submit with RUNTIME_POLICY_REQUIRED
+ * while it is false (FR-5). It is distinct from account consent.
+ */
+export interface RuntimeResourcePolicy {
+  projectResources: 'ignore' | 'allow';
+  extensions: 'disabled';
+  acknowledgedUnrestrictedTools: boolean;
+}
+
 export type RuntimeCapability =
   | 'mcp'
   | 'subagents'
@@ -245,6 +353,28 @@ export interface CapabilityState {
 
 export type RuntimeCapabilities = Record<RuntimeCapability, CapabilityState>;
 
+/**
+ * pi-session-durability: whether a runtime-owned session can continue its
+ * native conversation. Presentation only — the native file path stays
+ * core-private and never crosses IPC.
+ *
+ * - `ready`: connected, or verified resumable on the next send.
+ * - `disconnected`: history is readable; the next send (or an explicit
+ *   reconnect) re-attaches to the recorded native session.
+ * - `missing` / `corrupt` / `incompatible` / `account-missing`: resume is
+ *   refused with one cause; the user picks Retry or Create new session. None of
+ *   these ever falls back to a fresh thread (FR-3).
+ *
+ * `message` is user-facing English copy naming the single cause; present for
+ * every state except `ready`. `lastVerifiedAt` is epoch ms of the last
+ * successful identity/file validation, absent if never verified.
+ */
+export interface RuntimeRecovery {
+  state: 'ready' | 'disconnected' | 'missing' | 'corrupt' | 'incompatible' | 'account-missing';
+  lastVerifiedAt?: number;
+  message?: string;
+}
+
 export interface RuntimeFailure {
   origin: 'application' | 'runtime' | 'provider' | 'tool';
   code: ErrorCode;
@@ -254,10 +384,84 @@ export interface RuntimeFailure {
   toolCallId?: string;
 }
 
+/**
+ * pi-transcript-events: a normalized generic tool-call lifecycle, sanitized in the
+ * adapter before it crosses IPC — never the raw Pi RPC input/output object.
+ */
+export interface RuntimeToolCall {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
+  inputText: string;
+  outputText: string;
+  /** true ⇒ `inputText` was cut at the 64 KiB preview bound (pi-transcript-events FR-4). */
+  inputTruncated: boolean;
+  /** true ⇒ `outputText` was cut at the 64 KiB preview bound (pi-transcript-events FR-4). */
+  outputTruncated: boolean;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+/** pi-transcript-events FR-7: a user-attached file/image, resolved against the
+ *  existing attachment ingest/asset scopes — never a base64 payload over IPC. */
+export interface RuntimeAttachmentRef {
+  id: string; // existing core attachment ID
+  name: string;
+  mimeType: string;
+  state: 'available' | 'missing';
+}
+
+/**
+ * pi-transcript-events §5: runtime-sourced transcript normalization events, merged
+ * into `RuntimeEventPayload` below. `blockId` ties each event to the conversation
+ * block it updates/creates (contract/conversation-view.ts).
+ */
+export type TranscriptRuntimePayload =
+  | { kind: 'message.user'; blockId: BlockId; text: string; attachments: RuntimeAttachmentRef[]; clientMessageId?: string }
+  | { kind: 'assistant.delta'; blockId: BlockId; contentIndex: number; text: string; offset: number }
+  | { kind: 'assistant.complete'; blockId: BlockId; text: string; outcome: 'complete' | 'interrupted' | 'error' }
+  | { kind: 'tool.update'; blockId: BlockId; tool: RuntimeToolCall }
+  | { kind: 'notice'; blockId: BlockId; tone: 'info' | 'warning' | 'error'; text: string };
+
+/**
+ * pi-models-metrics §5: published only AFTER the core read the accepted value back
+ * from the runtime (FR-5/FR-6) — `effort` is the actual read-back level, absent when
+ * the model runs at its own default or a model change cleared an incompatible one.
+ *
+ * Where the AVAILABLE levels travel: a descriptor only says `reasoning: boolean`. The
+ * list the runtime reports for the CURRENT model rides on `SessionMeta.model.efforts`
+ * (the existing ModelInfo field — runtime-reported strings in reported order, empty when
+ * the model reports none; never Claude's subset). Ordering is pinned so the list is never
+ * clobbered: the core emits `model.changed` FIRST, then the authoritative `session.meta`
+ * snapshot carrying `model.efforts` and `effort`. A consumer handling `model.changed`
+ * must therefore not treat its own efforts-less projection as final.
+ */
+export type ModelRuntimePayload =
+  | { kind: 'model.changed'; model: RuntimeModelDescriptor; effort?: string }
+  | { kind: 'metrics'; metrics: RuntimeMetrics };
+
+/**
+ * pi-turn-controls §5. `queue.changed` always carries the session's FULL unresolved
+ * ledger (an empty array clears the strip) — raw runtime queue texts are normalized to
+ * ledger ids in the core before emission. "Unresolved" means: 'admitting' and 'queued'
+ * entries, PLUS the recoverable terminal ones — 'cancelled', 'delivery-unknown' and
+ * 'rejected' — which stay listed (text intact, FR-6/FR-9) until the user removes them
+ * with session_unqueue. A 'consumed' entry drops out: its transcript block replaces it.
+ * Entries keep admission order. `compaction` with `automatic: true` and
+ * `retry` are progress inside the current run: neither is a turn completion (FR-8).
+ */
+export type ControlRuntimePayload =
+  | { kind: 'queue.changed'; entries: RuntimeQueueEntry[] }
+  | { kind: 'compaction'; state: 'started' | 'completed' | 'failed'; automatic: boolean; message?: string }
+  | { kind: 'retry'; state: 'waiting' | 'running' | 'finished'; attempt: number; delayMs?: number };
+
 export type RuntimeEventPayload =
   | { kind: 'run.state'; state: 'starting' | 'running' | 'idle' | 'stopping' | 'failed' }
   | { kind: 'capabilities'; capabilities: RuntimeCapabilities }
-  | { kind: 'failure'; failure: RuntimeFailure };
+  | { kind: 'failure'; failure: RuntimeFailure }
+  | TranscriptRuntimePayload
+  | ModelRuntimePayload
+  | ControlRuntimePayload;
 
 export interface RuntimeEventEnvelope {
   type: 'runtime.event';
@@ -281,6 +485,15 @@ export interface ModelInfo {
   efforts?: string[];
   /** Advertised default, present only when included in efforts. */
   defaultEffort?: string;
+  /** pi-models-metrics: the exact provider/model pair this row stands for. Present on
+   *  every Pi row, where `id` alone is NOT an identity (FR-1/FR-4).
+   *  WEBVIEW-SIDE ONLY, like `descriptor` below: the core never serializes either on a
+   *  `ModelInfo` (its serde mirror has no such fields). A Pi picker row is built in the
+   *  webview from a `runtime_models` descriptor; the core's own identity for a session's
+   *  Pi model is `SessionMeta.runtimeModel`. */
+  runtimeModel?: RuntimeModelRef;
+  /** pi-models-metrics: required on Pi catalogue rows; absent for every other runtime. */
+  descriptor?: RuntimeModelDescriptor;
 }
 
 export interface SessionMeta {
@@ -357,6 +570,15 @@ export interface SessionMeta {
   effectiveCapabilities?: RuntimeCapabilities;
   /** Core-minted UUID for the currently connected runtime child; never persisted as a live handle. */
   runtimeGeneration?: string;
+  /** Present for Pi sessions only (pi-session-durability); absent for every other runtime.
+   *  Republished on the existing `session.meta` event whenever it changes. */
+  recovery?: RuntimeRecovery;
+  /** pi-models-metrics: the most recent runtime-reported usage. Persisted with the
+   *  session and loaded `stale: true` after a restart until refreshed. Absent for a
+   *  runtime that reports none — never synthesized from `contextUsedTokens`. */
+  metrics?: RuntimeMetrics;
+  /** pi-skills-capabilities: present for Pi sessions only; the pinned launch policy. */
+  resourcePolicy?: RuntimeResourcePolicy;
   /** Present ⇔ created from a profile; snapshot-only (session-profiles FR-16). */
   profile?: SessionProfileRef;
   /** How this session's NEXT turn is told to write. A persisted record without
@@ -418,6 +640,10 @@ export type ProjectId = string; // uuid v4
  */
 export interface ProjectDefaults {
   modelId?: string;
+  /** pi-models-metrics FR-4: the default for a Pi account — an exact pair, mutually
+   *  exclusive with `modelId`. A pair that is no longer available stays saved and renders
+   *  disabled (FR-3); it is never swapped for a similarly named model. */
+  runtimeModel?: RuntimeModelRef;
   /** Runtime/model-advertised value. Codex membership is checked on relevant edits,
    * while syntactically valid saved values survive catalogue changes. */
   effort?: string;
@@ -577,7 +803,8 @@ export interface McpServerInfo {
 export type SkillScope =
   | 'project' // <cwd>/.claude/{skills,commands}
   | 'user' //   ~/.claude/{skills,commands}
-  | 'plugin'; // an enabled (installed) or marketplace (available) plugin
+  | 'plugin' // an enabled (installed) or marketplace (available) plugin
+  | 'path'; // pi-skills-capabilities: loaded from an explicit path (a Pi profile's skillPaths)
 
 /** SKILL.md skill vs. a slash-command markdown file — both invoked as /<name>. */
 export type SkillKind = 'skill' | 'command';
@@ -589,6 +816,17 @@ export interface SkillInfo {
   scope?: SkillScope; // where it was discovered
   kind?: SkillKind; // skill (SKILL.md) or command (*.md)
   pluginId?: string; // for plugin entries: '<plugin>@<marketplace>' (enabling target)
+  // ---- pi-skills-capabilities §5 (RuntimeSkillFields). Optional on the type, REQUIRED
+  // on every entry a Pi session lists; absent for every other runtime. ----
+  /** The exact command text the runtime resolves, spelling preserved — e.g.
+   *  '/skill:review' or '/summarize'. Never rebuilt from `name` (FR-1). */
+  invocation?: string;
+  /** A Pi skill vs. a Pi prompt template. */
+  source?: 'skill' | 'prompt';
+  sourcePath?: string;
+  /** false ⇒ listed but not runnable under the session's policy; see `unavailableReason`. */
+  loaded?: boolean;
+  unavailableReason?: string;
 }
 
 // ---------- interactive commands ----------
@@ -701,7 +939,12 @@ export interface SlashCommandInfo {
   description: string; // '' when the source provides none (cli)
   source: SlashCommandSource;
   /** skill entries only: the SkillInfo scope, shown as the source tag. */
-  scope?: 'project' | 'user' | 'plugin';
+  scope?: SkillScope;
+  /** pi-skills-capabilities: the exact text to submit for a runtime-listed command
+   *  (e.g. '/skill:review'). Absent ⇒ the legacy '/' + name. A Pi session's menu holds
+   *  only runtime-listed commands plus François-owned actions — never a TUI-only
+   *  command such as '/login'. */
+  invocation?: string;
 }
 
 // ---------- session event stream ----------

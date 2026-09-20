@@ -25,11 +25,15 @@ mod commands;
 mod registry;
 mod repo_brief;
 mod standards;
+/// pr-142 §9: this domain's half of the `profiles ↔ project` inversion — the
+/// observer `profiles_remove` notifies instead of calling in here by name.
+mod teardown;
 
 pub use commands::*;
 pub use registry::*;
 pub use repo_brief::*;
 pub(crate) use standards::*;
+pub use teardown::*;
 
 #[cfg(test)]
 mod testutil;
@@ -52,6 +56,20 @@ use std::sync::Mutex;
 pub struct ProjectDefaults {
     #[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
     model_id: Option<String>,
+    /// pi-models-metrics FR-4: the default for a Pi account — an exact pair,
+    /// mutually exclusive with `modelId`. Stored verbatim like every other
+    /// default here: a pair the account no longer advertises stays saved and
+    /// renders disabled in the modal (FR-3) rather than being dropped or
+    /// swapped for a similarly named model. A LOCAL mirror of the wire shape
+    /// (not `session::RuntimeModelRef`) — `project` must not depend on
+    /// `session` (the existing dependency runs the other way; see
+    /// `account::pi::env`'s module doc for the same module-cycle rule).
+    #[serde(
+        rename = "runtimeModel",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    runtime_model: Option<ProjectRuntimeModelRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     effort: Option<String>,
     #[serde(
@@ -90,6 +108,17 @@ pub struct ProjectDefaults {
         skip_serializing_if = "Option::is_none"
     )]
     response_mode: Option<String>,
+}
+
+/// pi-models-metrics FR-4: `RuntimeModelRef`'s wire shape, mirrored locally —
+/// see `ProjectDefaults.runtime_model`'s doc for why this is not an import of
+/// `session::RuntimeModelRef`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ProjectRuntimeModelRef {
+    #[serde(rename = "providerId")]
+    provider_id: String,
+    #[serde(rename = "modelId")]
+    model_id: String,
 }
 
 /// One registry entry, exactly as persisted in projects.json (FR-1). `rootExists`

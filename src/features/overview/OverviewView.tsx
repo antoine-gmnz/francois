@@ -35,6 +35,7 @@ import {
 import { useStore } from '../../lib/store';
 import { abbreviate } from '../../lib/path';
 import { toneVar } from '../../lib/tone';
+import { formatMetricTokens } from '../sessions/runtime-metrics';
 import { ListRow } from '../../ui/ListRow';
 import { StatusDot } from '../../ui/StatusDot';
 import { formatGroupSubtitle, totalsSegments, type TotalsSegment } from './overview';
@@ -343,7 +344,12 @@ function SessionRow({
       <span className="ov-session-model truncate">{s.model.label}</span>
       <span className="ov-session-ctx">
         <span className="ov-session-ctx-label">ctx </span>
-        <span className="ov-session-ctx-value">{formatContextTokens(s.contextUsedTokens)}</span>
+        {/* pi-models-metrics §6: no Claude context fallback for Pi — a Pi
+            session with no reported occupancy reads as an em dash, never the
+            legacy fields' fabricated 0 (runtime-metrics.ts `formatMetricTokens`). */}
+        <span className="ov-session-ctx-value">
+          {s.agentRuntime === 'pi' ? formatMetricTokens(s.metrics?.contextTokens ?? null) : formatContextTokens(s.contextUsedTokens)}
+        </span>
       </span>
       {/* The last two cells are fixed-width so the columns line up down the whole
           rollup even when most rows have neither a diff nor an agent. */}

@@ -1,11 +1,12 @@
 import type { SessionModelsInput, SessionModelsResponse } from '../../contract/session-engine';
+import type { RuntimeMetricsInput, RuntimeMetricsResult, RuntimeModelsInput, RuntimeModelsResult } from '../../contract/pi-models-metrics';
 // Typed wrappers over the Tauri session commands + the session event stream.
 // Each command resolves a Result<T> (never rejects) per the contract.
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { demoInvoke, demoListen } from '../demo/demo';
-import type { AccountId, BlockId, Result, SessionMeta, PermissionMode, ResponseMode, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, BlockId, Result, RuntimeMessageReceipt, SessionMeta, PermissionMode, ResponseMode, RuntimeModelRef, SessionEvent, SessionId, AgentInfo, AgentStep, McpServerInfo, SkillInfo, SlashCommandInfo, ProjectId, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
   WorkflowAgentTranscript,
   WorkflowDetail,
@@ -16,6 +17,7 @@ import type {
   AccountAddEndpointPayload,
   AccountAddEndpointResponse,
   AccountAddPayload,
+  AccountAddPiResponse,
   AccountAddResponse,
   AccountEvent,
   AccountAddCodexPayload,
@@ -34,13 +36,20 @@ import type {
   AccountLoginCancelPayload,
   AccountLoginResizePayload,
   AccountLoginWritePayload,
+  AccountPiRefreshResponse,
+  AccountPiSetupResponse,
   AccountRemoveResponse,
   AccountRenameResponse,
   AccountSetDefaultResponse,
   AccountTestEndpointPayload,
   AccountTestEndpointResponse,
+  AccountTrustPiPayload,
+  AccountTrustPiResponse,
   AccountUpdateEndpointPayload,
   AccountUpdateEndpointResponse,
+  PiAccountCreateInput,
+  PiRefreshAuthInput,
+  PiSetupInput,
 } from '../../contract/multi-account';
 import type {
   GroupId,
@@ -57,10 +66,19 @@ import type {
   StandardsRead,
 } from '../../contract/projects';
 import type { RepoBrief } from '../../contract/session-welcome';
-import type { ProfileCreateInput, ProfileRemoveInput, ProfileUpdateInput, SessionProfile } from '../../contract/session-profiles';
+import type {
+  PiSessionProfile,
+  ProfileCopyToPiInput,
+  ProfileCreateInput,
+  ProfileRemoveInput,
+  ProfileUpdateInput,
+  SessionProfile,
+} from '../../contract/session-profiles';
 import type { PermissionDecision, PermissionRule, PermissionTier } from '../../contract/permission-guardrails';
 import type { NewSessionRequest, PickDirectoryData } from '../../contract/sessions-sidebar';
-import type { SessionCreateInput } from '../../contract/session-engine';
+import type { RuntimePolicyAcknowledgeInput, SessionCreateInput } from '../../contract/session-engine';
+// pi-turn-controls §5: session_submit / session_clear_queue payload types.
+import type { RuntimeMessageInput, RuntimeQueueClearInput, RuntimeQueueClearOutput } from '../../contract/session-engine';
 import type { WorktreeProbeData, WorktreeProbeRequest, WorktreeStatusData } from '../../contract/session-worktree';
 import type { SessionRenameRequest, SessionRenameResponse } from '../../contract/session-rename';
 import type { SessionUpdateSettingsRequest, SessionUpdateSettingsResponse } from '../../contract/session-settings-sheet';
@@ -91,7 +109,7 @@ import type {
   ShellRestartPayload,
   ShellWritePayload,
 } from '../../contract/shell-terminal';
-import type { SkillsEvent } from '../../contract/skills-panel';
+import type { SkillsEvent, SkillsRunRequest } from '../../contract/skills-panel';
 import type { DiffSummary, FileDiff, CommitResult, DiffEvent } from '../../contract/diff-view';
 import type { AppEvent, UsageRefreshAck, UsageSnapshot } from '../../contract/usage-bar';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
@@ -106,6 +124,7 @@ import type {
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
 import type { DndState } from '../../contract/audio-cues';
 import type { RuntimeInstallProbeInput, RuntimeInstallStatus } from '../../contract/pi-runtime-distribution';
+import type { RuntimeNewFromSessionInput, RuntimeReconnectInput } from '../../contract/pi-session-durability';
 import type {
   CloseStreamRequest,
   CloseStreamResponse,
@@ -157,6 +176,17 @@ export const sessionList = () => ipc<Result<SessionMeta[]>>('session_list');
 // Account-scoped discovery; core owns cache freshness and validation.
 export const sessionModels = (input: SessionModelsInput = {}) =>
   ipc<SessionModelsResponse>('session_models', input);
+// pi-models-metrics §5: the Pi-only model catalog — a short-lived no-session RPC
+// probe under the same launch policy as a session, cached by the core for 60s
+// keyed by account/config fingerprint/environment (FR-1/FR-2). `refresh: true`
+// bypasses that cache; a failed refresh keeps the previous catalogue, `stale: true`.
+export const runtimeModels = (input: RuntimeModelsInput) =>
+  ipc<RuntimeModelsResult>('runtime_models', input);
+// pi-models-metrics §5: session-scoped usage. Without `refresh` this returns the
+// stored (possibly stale-after-restart) value; the core also reads it on its own
+// after every settled run and after compaction, rate-limited to 1/s either way (FR-7).
+export const sessionMetrics = (input: RuntimeMetricsInput) =>
+  ipc<RuntimeMetricsResult>('session_metrics', input);
 // projects FR-19: session_create gained an optional projectId, stored verbatim —
 // the frontend (NewSessionModal) resolves the project and applies its defaults.
 // session-worktree: session_create also gained an optional `worktree` (spec §5),
@@ -166,10 +196,17 @@ export const sessionModels = (input: SessionModelsInput = {}) =>
 // snapshots the profile's name from the registry itself.
 // response-mode FR-17: and an optional responseMode — omitted for 'default', which
 // IS the absence of an instruction rather than an instruction to be normal.
+// pi-skills-capabilities §5: and an optional resourcePolicy — REQUIRED by the
+// core for a Pi account (INVALID_INPUT otherwise); the New Session form only
+// ever sends it for a Pi account (PiPolicyField).
+// pi-models-metrics FR-4: `modelId` widened to optional here — a Pi account
+// sends `runtimeModel` (SessionCreateInput's own field) INSTEAD, never both;
+// `NewSessionRequest.modelId` stays required for every other caller of that
+// shared shape.
 export const sessionCreate = (
-  req: NewSessionRequest &
+  req: Omit<NewSessionRequest, 'modelId'> & { modelId?: string } &
     Pick<ProjectAwareSessionCreateRequest, 'projectId'> &
-    Pick<SessionCreateInput, 'worktree' | 'systemPrompt' | 'extraArgs' | 'profileId' | 'responseMode'>,
+    Pick<SessionCreateInput, 'worktree' | 'systemPrompt' | 'extraArgs' | 'profileId' | 'responseMode' | 'resourcePolicy' | 'piProfile' | 'runtimeModel'>,
 ) => ipc<Result<SessionMeta>>('session_create', req);
 export const sessionRemove = (sessionId: SessionId) => ipc<Result<null>>('session_remove', { sessionId });
 // session-rename §5: mutate a session's display name. The core validates/cleans it
@@ -198,7 +235,21 @@ export const sessionSend = (sessionId: SessionId, blockId: string, text: string)
 // never queued) — the caller leaves the composer alone.
 export const sessionUnqueue = (sessionId: SessionId, blockId: string) =>
   ipc<Result<{ removed: boolean }>>('session_unqueue', { sessionId, blockId });
+// pi-turn-controls §5: the explicit-delivery send — Pi callers use this;
+// session_send (above) stays valid for the existing runtimes. Both route
+// through ONE per-session admissions owner in the core, never two independent
+// queues. Acceptance creates/updates a pending ledger entry (published as
+// `queue.changed`); the transcript block is created only by the eventual
+// `message.user` runtime event.
+export const sessionSubmit = (req: RuntimeMessageInput) => ipc<Result<RuntimeMessageReceipt>>('session_submit', req);
+// pi-turn-controls §5/FR-5/FR-6: drains every entry Pi has not yet consumed,
+// returned with state 'cancelled' and its text intact — the same internal
+// step Stop/session_interrupt runs before it aborts.
+export const sessionClearQueue = (sessionId: SessionId) =>
+  ipc<Result<RuntimeQueueClearOutput>>('session_clear_queue', { sessionId } satisfies RuntimeQueueClearInput);
 // Kill the running turn (⌃C). No-op if the session isn't running (core FR-23).
+// pi-turn-controls FR-6/FR-7, for a Pi session: resolves only AFTER the stop
+// is confirmed (admission closed → clear_queue → abort → settled).
 export const sessionInterrupt = (sessionId: SessionId) =>
   ipc<Result<null>>('session_interrupt', { sessionId });
 // session-attachments (§5.2). Request/response only — no event channel. Each call
@@ -292,10 +343,15 @@ export const projectAssignGroup = (projectId: ProjectId, groupId: GroupId | null
 
 // session-profiles (§5.2). Four commands, no event channel: every mutation is
 // initiated by this frontend and resolves with the new state (spec §5 preamble).
+// pi-migration-rollout §5: create/update now take the SessionProfile union
+// (ProfileCreateInput/ProfileUpdateInput), and a fifth command — copyToPi —
+// spins a reviewed Pi copy off a legacy profile (FR-4) without touching it.
 export const profilesList = () => ipc<Result<SessionProfile[]>>('profiles_list');
 export const profilesCreate = (req: ProfileCreateInput) => ipc<Result<SessionProfile>>('profiles_create', req);
 export const profilesUpdate = (req: ProfileUpdateInput) => ipc<Result<SessionProfile>>('profiles_update', req);
 export const profilesRemove = (req: ProfileRemoveInput) => ipc<Result<null>>('profiles_remove', req);
+export const profilesCopyToPi = (req: ProfileCopyToPiInput) =>
+  ipc<Result<PiSessionProfile>>('profiles_copy_to_pi', req);
 
 // slash-menu FR-1/4: merged per-session command registry (francois:session:listCommands)
 export const sessionListCommands = (sessionId: SessionId) =>
@@ -303,6 +359,16 @@ export const sessionListCommands = (sessionId: SessionId) =>
 
 export const sessionSwitchModel = (sessionId: SessionId, modelId: string) =>
   ipc<Result<SessionMeta>>('session_switch_model', { sessionId, modelId });
+// pi-models-metrics FR-5: the Pi twin of sessionSwitchModel above — an EXACT
+// provider/model pair rather than a bare id (the amended SessionSwitchModelInput
+// takes exactly one of the two). Kept as its own wrapper, not an overload, so
+// every existing `sessionSwitchModel(sessionId, modelId)` call site is untouched.
+// Accepted only when the session is settled with no dispatch/compaction pending
+// (else SESSION_BUSY); a failure preserves the previous selection. Same single
+// update path as its sibling: the accompanying session.meta / model.changed
+// events, never this Result, which is read only to surface a failure inline.
+export const sessionSwitchRuntimeModel = (sessionId: SessionId, runtimeModel: RuntimeModelRef) =>
+  ipc<Result<SessionMeta>>('session_switch_model', { sessionId, runtimeModel });
 // session-permission-mode FR-1: the twin of sessionSwitchModel above — sets
 // SessionMeta.permissionMode for the session's NEXT turn (FR-6: a running
 // turn is unaffected). The frontend's only update path is the session.meta
@@ -381,8 +447,19 @@ export const mcpDecide = (sessionId: SessionId, decision: McpDecision) =>
 
 export const skillsList = (sessionId: SessionId) => ipc<Result<SkillInfo[]>>('skills_list', { sessionId });
 export const skillsInstall = (sessionId: SessionId, name: string) => ipc<Result<null>>('skills_install', { sessionId, name });
-export const skillsRun = (sessionId: SessionId, name: string, args?: string) =>
-  ipc<Result<null>>('skills_run', { sessionId, name, args });
+// pi-skills-capabilities §5 / pr-142 §6: `invocation`/`delivery` REQUIRED for a
+// Pi session, ignored by every other runtime — every caller builds the whole
+// request with skills-run.ts's buildSkillsRunRequest (which carries the LISTED
+// entry's own `invocation`, never the derived `name` alone), so it's safe to
+// send them unconditionally rather than branching on agentRuntime.
+export const skillsRun = (request: SkillsRunRequest) => ipc<Result<null>>('skills_run', request);
+
+// pi-skills-capabilities FR-5 (LEAD ADDITION, session-engine §5): records the
+// per-SESSION unrestricted-tools acknowledgment after creation — idempotent,
+// changes nothing else. The frontend's only update path is the accompanying
+// session.meta event; this Result is read only to surface a failure inline.
+export const sessionAcknowledgePolicy = (sessionId: SessionId) =>
+  ipc<Result<SessionMeta>>('session_acknowledge_policy', { sessionId } satisfies RuntimePolicyAcknowledgeInput);
 
 /** Subscribe to francois://skills/event (skills.changed). */
 export function onSkillsEvent(cb: (e: SkillsEvent) => void): Promise<UnlistenFn> {
@@ -460,6 +537,18 @@ export const accountAddGrok = (payload: AccountAddGrokPayload) =>
   ipc<AccountAddGrokResponse>('account_add_grok', payload);
 export const accountGrokLogin = (payload: AccountGrokLoginPayload) =>
   ipc<AccountGrokLoginResponse>('account_grok_login', payload);
+// pi-provider-auth (§5). `addPi` registers a reference to an existing,
+// user-trusted `PI_CODING_AGENT_DIR` and resolves the same fresh list every
+// other mutation does; `trustPi` mirrors it. `piSetup` starts the SAME
+// login-PTY infrastructure `accountAdd` already uses — its bytes and outcome
+// arrive on the shared francois://account/event stream, not the response —
+// and `piRefresh` runs a stateless per-account probe with no event of its own.
+export const accountAddPi = (payload: PiAccountCreateInput) => ipc<AccountAddPiResponse>('account_add_pi', payload);
+export const accountTrustPi = (payload: AccountTrustPiPayload) =>
+  ipc<AccountTrustPiResponse>('account_trust_pi', payload);
+export const accountPiSetup = (payload: PiSetupInput) => ipc<AccountPiSetupResponse>('account_pi_setup', payload);
+export const accountPiRefresh = (payload: PiRefreshAuthInput) =>
+  ipc<AccountPiRefreshResponse>('account_pi_refresh', payload);
 // The vendor CLIs the login routes are driven by. `cliTools` re-probes PATH on
 // every call (never cached — installing one in a terminal is the normal case);
 // `installCli` resolves as soon as `npm i -g` is spawned, and its output plus
@@ -467,6 +556,21 @@ export const accountGrokLogin = (payload: AccountGrokLoginPayload) =>
 export const accountCliTools = () => ipc<AccountCliToolsResponse>('account_cli_tools');
 export const accountInstallCli = (payload: AccountInstallCliPayload) =>
   ipc<AccountInstallCliResponse>('account_install_cli', payload);
+
+// pi-session-durability (§5): explicit, read-only re-attachment to a Pi
+// session's RECORDED native conversation — never a fresh-thread fallback on
+// failure (FR-3). Same single update path as every other switch verb: the
+// accompanying session.meta event (recovery flips to 'ready' on success, or to
+// the matching non-ready state on a RUNTIME_SESSION_*/RUNTIME_ACCOUNT_MISSING/
+// RUNTIME_INCOMPATIBLE failure) — this Result is read only to surface a
+// failure inline.
+export const sessionReconnect = (sessionId: SessionId) =>
+  ipc<Result<SessionMeta>>('session_reconnect', { sessionId } satisfies RuntimeReconnectInput);
+// "Create new session" from one whose native conversation cannot be resumed:
+// a NEW session id, no messages, no native resume anchor — the source session
+// is left untouched. `name` optional (session-rename FR-1's cleaning rule).
+export const sessionNewFrom = (sessionId: SessionId, name?: string) =>
+  ipc<Result<SessionMeta>>('session_new_from', { sessionId, name } satisfies RuntimeNewFromSessionInput);
 
 // pi-runtime-distribution §5: francois:runtime:installation. Missing/incompatible/
 // probe-failed are successful health responses carrying `error` on the payload

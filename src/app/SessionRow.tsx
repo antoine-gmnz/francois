@@ -36,6 +36,7 @@ import ExtensionsBarMenu from '../features/extensions/ExtensionsBarMenu';
 import ProjectSwitcher from '../features/projects/ProjectSwitcher';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import RunChip from '../features/sessions/RunChip';
+import { UNKNOWN_METRIC, contextReadout } from '../features/sessions/runtime-metrics';
 import { truncateBranchLeft, worktreeChipLabel } from '../features/sessions/worktree';
 import LayoutToggle from '../features/usage/LayoutToggle';
 import { sessionCapability } from '../lib/runtimeCapability';
@@ -46,7 +47,7 @@ import { useStore, type MainTab } from '../lib/store';
 import { toneVar } from '../lib/tone';
 import { StatusDot } from '../ui/StatusDot';
 import TopbarOverflow from './TopbarOverflow';
-import { branchDisplay, contextDisplay, extTabDisplay, layoutDisplay, showsStatusWord, topbarShows, topbarTier } from './topbar';
+import { branchDisplay, contextDisplay, extTabDisplay, layoutDisplay, showsStatusWord, statusToneClass, topbarShows, topbarTier } from './topbar';
 
 const ICON = { size: 13, strokeWidth: 1.75 } as const;
 
@@ -118,11 +119,24 @@ export default function SessionRow({
   const statusColor = toneVar(active ? (STATUS_COLOR[active.status] ?? 'var(--text-dim)') : 'var(--text-dim)');
 
   const branchLabel = active?.worktree ? worktreeChipLabel(active.worktree) : null;
+  // pi-models-metrics §6: "remove the use of the Claude context fallback for
+  // Pi" — a Pi session's contextUsedTokens/contextLimitTokens are never
+  // populated, so this row reads `session.metrics` through the same pure
+  // selector the roster already uses (runtime-metrics.ts `contextReadout`),
+  // never the legacy fields. `null` ⇒ no bar at all, not a false empty one.
+  const piContext = active?.agentRuntime === 'pi' ? contextReadout(active.metrics) : null;
   const contextFigure = active
-    ? `${formatContextTokens(active.contextUsedTokens)}${active.contextLimitTokens > 0 ? `/${formatContextTokens(active.contextLimitTokens)}` : ''}`
+    ? active.agentRuntime === 'pi'
+      ? (piContext?.label ?? UNKNOWN_METRIC)
+      : `${formatContextTokens(active.contextUsedTokens)}${active.contextLimitTokens > 0 ? `/${formatContextTokens(active.contextLimitTokens)}` : ''}`
     : '';
-  const contextFraction =
-    active && active.contextLimitTokens > 0 ? Math.min(1, Math.max(0, active.contextUsedTokens / active.contextLimitTokens)) : 0;
+  const contextFraction = active
+    ? active.agentRuntime === 'pi'
+      ? piContext?.fraction ?? null
+      : active.contextLimitTokens > 0
+        ? Math.min(1, Math.max(0, active.contextUsedTokens / active.contextLimitTokens))
+        : 0
+    : 0;
 
   // What `⋯` has to state rather than render. Built here because the bar already
   // computed both strings for its own row (topbar.ts owns WHICH, not WHAT).
@@ -246,7 +260,7 @@ export default function SessionRow({
           narrowest width the merged clock carries the state on its own, and the
           colour and the dot were always the part doing the work. */}
       {active && (
-        <span className="session-row__status" style={{ color: statusColor }}>
+        <span className={`session-row__status ${statusToneClass(active.status)}`}>
           <StatusDot color={statusColor} size={5} pulsing={statusPulses(active.status)} />
           {showsStatusWord(tier) && (STATUS_LABEL[active.status] ?? active.status)}
           {isBusyStatus(active.status) && <span className="session-row__status-age">{formatElapsed(elapsedMs)}</span>}
@@ -258,9 +272,15 @@ export default function SessionRow({
 
       {active && context !== 'overflow' && (
         <span className="session-row__context" title={`context ${contextFigure}`}>
-          <span className="session-row__context-track">
-            <span className="session-row__context-fill" style={{ width: `${Math.round(contextFraction * 100)}%` }} />
-          </span>
+          {contextFraction !== null && (
+            <span className="session-row__context-track">
+              <span
+                className="session-row__context-fill"
+                // eslint-disable-next-line no-restricted-syntax -- runtime-computed fill width (the live context fraction), per CLAUDE.md's inline-style exception
+                style={{ width: `${Math.round(contextFraction * 100)}%` }}
+              />
+            </span>
+          )}
           {context === 'bar+figure' && <span className="session-row__figure">{contextFigure}</span>}
         </span>
       )}

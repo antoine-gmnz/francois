@@ -369,34 +369,11 @@ mod path_filter_tests {
 // `Command` from this module with the defaults un-applied, which is the whole
 // point — `into_command()` hands back one that has already been through them.
 
-/// The allowlist a scrubbed child keeps. Everything else — API keys, tokens,
-/// `ANTHROPIC_*`, the user's whole shell environment — is dropped, so a
-/// third-party binary this app spawns on the user's behalf cannot read a
-/// credential out of its own environment. `PATH` is a member, so overriding it
-/// with the login shell's is a value change rather than a widening.
-pub const ENV_ALLOWLIST: &[&str] = &[
-    "PATH",
-    "HOME",
-    "USER",
-    "LANG",
-    "TMPDIR",
-    "SystemRoot",
-    "windir",
-    "PATHEXT",
-    "COMSPEC",
-    "TEMP",
-    "TMP",
-    "USERPROFILE",
-    "HOMEDRIVE",
-    "HOMEPATH",
-];
+// Concern 3's data — the allowlist and how environment names compare — lives
+// in `env.rs`; the methods that apply it are below.
+mod env;
 
-/// The pure half of the scrub: keep only `ENV_ALLOWLIST` members, in order.
-pub fn scrub_env<I: IntoIterator<Item = (String, String)>>(vars: I) -> Vec<(String, String)> {
-    vars.into_iter()
-        .filter(|(k, _)| ENV_ALLOWLIST.contains(&k.as_str()))
-        .collect()
-}
+pub use env::{env_name_eq, scrub_env, ENV_ALLOWLIST};
 
 /// A `Command` with the four spawn concerns already applied. Build it with
 /// [`spawn`]; every method mirrors the `Command` method of the same name, so a
@@ -496,9 +473,8 @@ impl CommandBuilder {
     /// `cwd` must never make a bare `argv0` resolve inside the open repo);
     /// `None` keeps whatever `PATH` survived the scrub.
     ///
-    /// This is the ONLY `env_clear()` in the tree. Everything a scrubbed child
-    /// needs beyond the allowlist has to be named with [`Self::env`] *after*
-    /// this call, which is what makes the widening visible in review.
+    /// `env_clear()` appears here and in [`Self::exact_env`] only — see that
+    /// method's doc and the crate-wide test below.
     pub fn scrubbed_env(mut self, path_override: Option<&str>) -> Self {
         self.cmd.env_clear();
         for (k, v) in scrub_env(std::env::vars()) {
@@ -506,6 +482,25 @@ impl CommandBuilder {
         }
         if let Some(path) = path_override {
             self.cmd.env("PATH", path);
+        }
+        self
+    }
+
+    /// Concern 3's third answer, for a caller that already computed the
+    /// EXACT child environment it wants (`account::pi_account_env`'s FR-5
+    /// isolation rule, spent by `session::adapter::pi::process::spawn`):
+    /// clear whatever this builder would otherwise inherit, then set exactly
+    /// the given pairs. Unlike [`Self::scrubbed_env`], this never re-reads
+    /// `std::env::vars()` — the caller already decided the child's env.
+    pub fn exact_env<I, K, V>(mut self, vars: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.cmd.env_clear();
+        for (k, v) in vars {
+            self.cmd.env(k, v);
         }
         self
     }
@@ -788,24 +783,6 @@ mod bounded_run_tests {
 mod facade_tests {
     use super::*;
 
-    /// The scrub is the security-relevant half: a secret in this process's
-    /// environment must not reach a child spawned on the user's behalf.
-    #[test]
-    fn scrubbing_keeps_the_allowlist_and_drops_everything_else() {
-        let kept = scrub_env([
-            ("PATH".to_string(), "/usr/bin".to_string()),
-            ("ANTHROPIC_API_KEY".to_string(), "sk-leak".to_string()),
-            ("HOME".to_string(), "/home/u".to_string()),
-        ]);
-        assert_eq!(
-            kept,
-            vec![
-                ("PATH".to_string(), "/usr/bin".to_string()),
-                ("HOME".to_string(), "/home/u".to_string()),
-            ]
-        );
-    }
-
     /// Concern 4 by construction: a child that names no stdio still cannot read
     /// the app's stdin. Proven by running one — a `Command` exposes none of its
     /// configuration for inspection, so behaviour is the only observable. With
@@ -842,10 +819,46 @@ mod facade_tests {
         assert!(stdout.contains("inherited"), "stdout: {stdout:?}");
     }
 
+    /// pi-session-durability: an EXACT, precomputed environment reaches the
+    /// child verbatim — nothing this process happens to have set survives
+    /// alongside it. Tolerant of a spawn failure, like
+    /// `a_scrubbed_child_does_not_see_a_secret` above.
+    #[test]
+    fn exact_env_clears_ambient_vars_and_carries_only_the_given_pairs() {
+        // Own var name: tests run concurrently and `set_var` is process-global
+        // — reusing `FRANCOIS_FACADE_TEST_VAR` raced with the test above.
+        std::env::set_var("FRANCOIS_FACADE_TEST_EXACT_ENV_VAR", "ambient-leak");
+        let (program, args): (&str, Vec<&str>) = if cfg!(windows) {
+            (
+                "cmd",
+                vec!["/C", "echo %FRANCOIS_FACADE_TEST_EXACT_ENV_VAR%%ONLY_VAR%"],
+            )
+        } else {
+            (
+                "/bin/sh",
+                vec![
+                    "-c",
+                    "printf %s \"$FRANCOIS_FACADE_TEST_EXACT_ENV_VAR$ONLY_VAR\"",
+                ],
+            )
+        };
+        let out = spawn(program)
+            .args(args)
+            .exact_env([("ONLY_VAR", "kept")])
+            .output();
+        std::env::remove_var("FRANCOIS_FACADE_TEST_EXACT_ENV_VAR");
+        if let Ok(out) = out {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            assert!(!stdout.contains("ambient-leak"), "stdout: {stdout:?}");
+            assert!(stdout.contains("kept"), "stdout: {stdout:?}");
+        }
+    }
+
     /// ext-path-resolution FR-4, raised to the whole crate by FR-7: the scrub
     /// is a security boundary, and a second implementation of it is how such a
-    /// boundary drifts. `scrubbed_env` is the only `env_clear()` in the tree, so
-    /// there is exactly one answer to "what can a child this app spawns read?".
+    /// boundary drifts. `scrubbed_env`/`exact_env` are the only `env_clear()`
+    /// call sites in the tree, so there is exactly one answer to "what can a
+    /// child this app spawns read?".
     ///
     /// Asserted per FILE rather than per line: this file may name `env_clear()`
     /// as often as it likes (here, in the doc comments, in a future test), and

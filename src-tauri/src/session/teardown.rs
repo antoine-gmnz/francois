@@ -22,7 +22,9 @@
 //! it did when it was called directly.
 
 use std::sync::OnceLock;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+
+use super::Engine;
 
 /// A domain that holds per-session resources and can release them.
 ///
@@ -67,12 +69,30 @@ pub fn dispose_session_resources(app: &AppHandle, session_id: &str) -> usize {
 pub struct SessionAccountObserver;
 
 impl crate::account::AccountRemovalObserver for SessionAccountObserver {
+    // pi-models-metrics FR-2/FR-9 (PR #142 §5): Pi's model catalogue is cached
+    // per account and read back by FR-9's keep-the-last-snapshot fallback, so
+    // it must go the moment the account's identity changes — the same rule,
+    // and the same seam, Codex's catalogue already rides. `account/` states
+    // that it needs this; `session/` (which owns both caches) supplies it,
+    // rather than `account/` calling into `session/` and closing a cycle.
     fn credentials_changing(&self, account_id: &str) {
         super::adapter::codex::invalidate_catalog(account_id);
+        super::adapter::pi::evict_catalog(account_id);
     }
     fn account_removed(&self, app: &AppHandle, account_id: &str) -> Vec<String> {
         super::adapter::codex::invalidate_catalog(account_id);
+        super::adapter::pi::evict_catalog(account_id);
         super::reassign_account_sessions(app, account_id)
+    }
+}
+
+/// pi-provider-auth FR-4/FR-6/FR-8: the read-only twin of
+/// `AccountRemovalObserver` — `account` asks "does any session still hold
+/// this account?" before `trustPi`/Pi removal refuse with `ACCOUNT_IN_USE`,
+/// and this domain (the one that actually owns `Engine.sessions`) answers it.
+impl crate::account::AccountSessionQuery for SessionAccountObserver {
+    fn sessions_pinned_to(&self, app: &AppHandle, account_id: &str) -> Vec<String> {
+        app.state::<Engine>().sessions_for_account(account_id)
     }
 }
 

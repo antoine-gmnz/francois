@@ -1,9 +1,11 @@
 //! session/adapter/pi/dispatcher.rs — FR-1/FR-5/FR-7: the live per-session Pi
 //! RPC connection. `protocol::ProtocolEngine` (a sibling module — split out
 //! purely for CLAUDE.md's ~1000-line file cap) is the pure correlation/
-//! state-machine core; this file owns the I/O around it: the reader thread,
-//! the child's stdin, the `RuntimeSessionControl` implementation, and
-//! publishing `francois://session/event` runtime envelopes.
+//! state-machine core; this file owns the I/O around it: the child's stdin,
+//! the `RuntimeSessionControl` implementation, and publishing
+//! `francois://session/event` runtime envelopes. The inbound half — the
+//! reader thread and everything it runs per line — lives in the `reader`
+//! child module, for the same cap.
 //!
 //! `PiConnection` is the live wrapper `PiAdapter::connect_session` hands back
 //! — it owns the reader thread, the child's stdin, and the wait/kill pair
@@ -15,18 +17,26 @@
 
 use crate::ipc::{AppError, ErrorCode, RuntimeFailure};
 use crate::session::adapter::{
-    CapabilityState, RuntimeCapabilities, RuntimeConnectContext, RuntimeSessionControl,
-    RuntimeSubmission, SubmissionReceipt, RUNTIME_CAPABILITIES,
+    CapabilityState, RuntimeCapabilities, RuntimeCommandInfo, RuntimeConnectContext,
+    RuntimeModelRef, RuntimeSessionControl, RuntimeSubmission, SubmissionReceipt,
+    RUNTIME_CAPABILITIES,
 };
+use crate::session::events;
 use crate::session::events::{RuntimeEventPayload, RuntimeRunState};
-use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
+use super::normalize::TranscriptReducer;
 use super::process::{self, ProcessHandle};
 use super::protocol::{LineOutcome, PendingOutcome, ProtocolEngine};
 use super::wire::{self, PiCommandBody};
+
+mod child;
+mod reader;
+
+use child::{ChildLink, WriteFault, EXIT_GRACE};
+use reader::{counts_ctx, finalize_transcript, publish_with_stderr, spawn_reader};
 
 #[cfg(test)]
 use super::protocol::Deadlines;
@@ -58,6 +68,13 @@ pub(crate) trait EventPublisher: Send + Sync {
     fn run_state(&self, state: RuntimeRunState);
     fn failure(&self, code: ErrorCode, reason: &str, ctx: DiagnosticContext);
     fn diagnostic(&self, message: &str, ctx: DiagnosticContext);
+    /// pi-transcript-events FR-6/FR-8: one normalized transcript payload off
+    /// `normalize::TranscriptReducer` — `message.user`/`assistant.delta`/
+    /// `assistant.complete`/`tool.update`/`notice`. Same envelope/ordering
+    /// path as `run_state`/`failure` (one `RuntimeEventSequence` per
+    /// connection), so the frontend's single listener sees transcript and
+    /// run-state events interleaved in the order they actually happened.
+    fn transcript(&self, event: RuntimeEventPayload);
 }
 
 /// The real publisher: re-derives the session's CURRENT generation itself on
@@ -73,9 +90,15 @@ impl AppPublisher {
         Self { app, session_id }
     }
 
+    /// pi-transcript-events FR-6: `runtime_event_for_session` also hands back
+    /// the `BufBlock` this event just settled in the session's own
+    /// `block_buffer` (if any) — persisted here, the one call site that
+    /// actually holds an `AppHandle`, before the wire envelope goes out. A
+    /// run-state/capabilities/failure publish never settles a block, so
+    /// `block` is `None` on those and this is a no-op for them.
     fn publish(&self, event: RuntimeEventPayload) {
         let engine = self.app.state::<crate::session::Engine>();
-        if let Ok(batch) = engine.runtime_event_for_session(
+        if let Ok((batch, block)) = engine.runtime_event_for_session(
             &self.app,
             &self.session_id,
             crate::ids::now_ms(),
@@ -83,6 +106,9 @@ impl AppPublisher {
             None,
             event,
         ) {
+            if let Some(block) = &block {
+                crate::session::persistence::append_transcript(&self.app, &self.session_id, block);
+            }
             for ev in batch {
                 crate::session::emit(&self.app, ev);
             }
@@ -144,17 +170,9 @@ impl EventPublisher for AppPublisher {
     fn diagnostic(&self, message: &str, ctx: DiagnosticContext) {
         self.log(message, ctx);
     }
-}
 
-fn publish(publisher: &Arc<dyn EventPublisher>, outcome: LineOutcome, ctx: DiagnosticContext) {
-    if let Some(state) = outcome.run_state {
-        publisher.run_state(state);
-    }
-    if let Some((code, reason)) = &outcome.failure {
-        publisher.failure(*code, reason, ctx.clone());
-    }
-    if let Some(diag) = &outcome.diagnostic {
-        publisher.diagnostic(diag, ctx);
+    fn transcript(&self, event: RuntimeEventPayload) {
+        self.publish(event);
     }
 }
 
@@ -166,21 +184,21 @@ fn publish(publisher: &Arc<dyn EventPublisher>, outcome: LineOutcome, ctx: Diagn
 /// way to reach.
 pub(crate) struct PiConnection {
     engine: Arc<Mutex<ProtocolEngine>>,
-    /// FR-5: one per-session dispatcher — every user-affecting command
-    /// (submit/cancel) holds this for its whole round trip, so two can never
-    /// race on the wire.
-    write_lock: Mutex<()>,
-    stdin: Mutex<Option<Box<dyn Write + Send>>>,
-    wait_timeout: Mutex<Option<Box<dyn FnMut(Duration) -> bool + Send>>>,
-    kill: Mutex<Option<Box<dyn FnMut() + Send>>>,
+    /// HIGH (review round 4): the child itself — its stdin, its wait/kill
+    /// pair and the retirement latch — `Arc`-shared with the reader thread,
+    /// because BOTH sides end connections and both must take the child down
+    /// with them (`child.rs`'s own doc). Nothing here reaches back into
+    /// `PiConnection`, so the share is one-way and the connection is still
+    /// dropped when its owner lets go of it.
+    child: Arc<ChildLink>,
     reader: Mutex<Option<std::thread::JoinHandle<()>>>,
-    capabilities: RuntimeCapabilities,
+    /// pi-skills-capabilities FR-3: mutable — `images` is corrected once the
+    /// connect handshake's model descriptor is known, after the baseline
+    /// snapshot below is built with no model in hand yet.
+    capabilities: Mutex<RuntimeCapabilities>,
     /// FR-4: "snapshot runtime ID and sessionFile" — captured off the
-    /// `get_state` handshake's `data`. Neither is read anywhere yet (no
-    /// dependent feature exists in this repo to consume them); they are
-    /// still snapshotted now because FR-4 names it as part of the handshake
-    /// itself, not as a later feature's job to add.
-    #[allow(dead_code)]
+    /// `get_state` handshake's `data`. Read by `handshake_info()` below,
+    /// pi-session-durability's cross-check after a resume handshake.
     handshake_info: Mutex<HandshakeInfo>,
     /// CRITICAL fix (review round 1): `dispatch()`'s own write-failure/
     /// timeout branches must fail the WHOLE connection and publish the
@@ -190,45 +208,115 @@ pub(crate) struct PiConnection {
     /// story instead of the dispatcher silently dropping its own failure.
     publisher: Arc<dyn EventPublisher>,
     stderr_ring: Arc<Mutex<Vec<u8>>>,
+    /// pi-transcript-events FR-6/FR-9: one transcript normalizer for this
+    /// connection's whole life — shared with the reader thread (which is the
+    /// only side that ever calls `on_event`) so `dispatch()`'s OWN
+    /// write-failure/timeout paths, which fail the whole connection just
+    /// like a disconnect does, can finalize the SAME reducer state rather
+    /// than a second, empty one.
+    reducer: Arc<Mutex<TranscriptReducer>>,
 }
 
+/// pi-session-durability: `session_file` is what `recovery::run_reconnect`
+/// cross-checks after a `--resume` handshake — Pi reporting a DIFFERENT file
+/// than the one just resumed is corruption worth catching, not a value to
+/// discard. `runtime_id` rides along on the same response; still unread by
+/// anything (no dependent feature needs it yet).
 #[derive(Default, Clone)]
 pub(crate) struct HandshakeInfo {
     #[allow(dead_code)]
     pub(crate) runtime_id: Option<String>,
-    #[allow(dead_code)]
     pub(crate) session_file: Option<String>,
+    /// pi-models-metrics: the model/effort/available-levels the SAME
+    /// `get_state` handshake reported, when parseable — lets the connect
+    /// path populate `SessionMeta.model.efforts`/`effort` on the FIRST
+    /// `session.meta` after connecting, per the lead's clarification, without
+    /// a second round trip. `None`/empty when the handshake reply carries no
+    /// parseable model (never treated as a connect failure — see
+    /// `parse_model_from_state`'s own doc).
+    pub(crate) model: Option<(events::RuntimeModelDescriptor, Option<String>, Vec<String>)>,
 }
 
-/// Baseline: nothing is advertised as supported yet (non-goals: no MCP/
-/// subagents/skills UI, no model/auth UI for Pi in this feature) — an
-/// explicit, valid "unsupported" snapshot rather than a missing one, so
-/// `resolve_capability` never falls back to a legacy default for Pi.
+/// Baseline: nothing is advertised as supported yet beyond what a real
+/// feature actually implements — an explicit, valid "unsupported" snapshot
+/// rather than a missing one, so `resolve_capability` never falls back to a
+/// legacy default for Pi.
 ///
-/// KNOWN GAP (review round 1, MEDIUM): FR-4 says the handshake initializes
-/// "using get_state and required capability probes", but no such probe RPC
-/// is named anywhere in `wire.rs`'s (provisional, uncaptured — see its own
-/// doc comment) command set, and every capability here is hardcoded `false`
-/// rather than actually probed. Every capability being unsupported is
-/// consistent with this feature's own non-goals (no MCP/subagents/skills/
-/// model/auth UI for Pi), so it is not user-visible yet — but it means FR-4
-/// is only half-implemented, not signed off as a no-op. Flagged in this
-/// feature's handoff for the lead to either amend FR-4 to say "get_state
-/// only, no capability probes, in this MVP" or supply the real probe RPC
-/// shape once a certified capture exists.
+/// pi-turn-controls: `steering`/`followUps`/`compaction` flip to `available`
+/// here — the three capability keys that feature actually implements
+/// (`session_submit`'s steer/followUp modes, `session_compact`'s Pi branch).
+///
+/// pi-models-metrics: `modelSwitching`/`contextMetrics`/`costMetrics` flip
+/// too — `session_switch_model`/`session_switch_effort`'s Pi branch and
+/// `session_metrics` are real for every connected Pi session, independent of
+/// which model is selected.
+///
+/// pi-skills-capabilities FR-3: `skills` flips true — `get_commands` is
+/// dispatchable the instant a connection exists (this function only ever
+/// runs on an already-certified, already-connected child, so "discovery is
+/// available" is unconditional here). `resumableSessions` flips true too —
+/// this adapter's own `recovery` module implements `--resume`/`get_entries`,
+/// so a Pi session genuinely IS resumable ("follow certified adapter
+/// support"). Every OTHER named-false key gets its OWN plain-English
+/// reason (FR-3's "skillsInstall, mcp, subagents, workflows, permissions,
+/// remoteControl and usageBar false"); `images`/`interactiveCommands` (not
+/// named by FR-3) keep the generic placeholder — `images` is corrected
+/// right after this call, once the connect handshake's model descriptor is
+/// known (see `connect_engine`'s own comment); this MVP implements no
+/// interactive-commands routing for Pi at all.
 fn baseline_capabilities() -> RuntimeCapabilities {
     RUNTIME_CAPABILITIES
         .iter()
         .map(|key| {
-            (
-                key.to_string(),
-                CapabilityState {
-                    available: false,
-                    reason: Some("not yet supported for Pi sessions".into()),
+            let state = match *key {
+                "steering" | "followUps" | "compaction" | "modelSwitching" | "contextMetrics"
+                | "costMetrics" | "skills" | "resumableSessions" => CapabilityState {
+                    available: true,
+                    reason: None,
                 },
-            )
+                "skillsInstall" => capability_unavailable(
+                    "Pi has no separate install step — only running an already-loaded skill is supported",
+                ),
+                "mcp" => capability_unavailable("Pi has no MCP server control surface in this release"),
+                "subagents" => {
+                    capability_unavailable("Pi has no subagent dispatch equivalent in this release")
+                }
+                "workflows" => {
+                    capability_unavailable("Pi has no Workflow-tool equivalent in this release")
+                }
+                "permissions" => capability_unavailable(
+                    "Pi tools run with your user permissions; François does not approve each tool call",
+                ),
+                "remoteControl" => {
+                    capability_unavailable("Remote Control has no Pi equivalent in this release")
+                }
+                "usageBar" => {
+                    capability_unavailable("Pi reports no plan-limit meters the usage bar can read")
+                }
+                _ => capability_unavailable("not yet supported for Pi sessions"),
+            };
+            (key.to_string(), state)
         })
         .collect()
+}
+
+fn capability_unavailable(reason: &str) -> CapabilityState {
+    CapabilityState {
+        available: false,
+        reason: Some(reason.to_string()),
+    }
+}
+
+/// pi-skills-capabilities FR-3: `images` follows the CURRENT model's
+/// advertised input list — nothing else observes it in this MVP (no
+/// separate images probe).
+fn images_capability_state(input: &[String]) -> CapabilityState {
+    let available = input.iter().any(|k| k == "image");
+    CapabilityState {
+        available,
+        reason: (!available)
+            .then(|| "the connected model does not report image input support".to_string()),
+    }
 }
 
 fn response_error(resp: &wire::PiResponse) -> AppError {
@@ -240,125 +328,6 @@ fn response_error(resp: &wire::PiResponse) -> AppError {
     )
 }
 
-/// FR-2/FR-8: never log the stderr ring's TEXT, sanitized or not — a
-/// control-character strip does nothing to redact a secret-shaped substring
-/// (an API key, a bearer token) a misbehaving or malicious child might write
-/// to its own stderr. Only its size and a non-reversible digest are safe to
-/// write to `pi-rpc.log`; still logged alongside the failure (never as the
-/// failure's own message, which stays the protocol/EOF reason).
-fn stderr_tail_digest(ring: &Arc<Mutex<Vec<u8>>>) -> Option<String> {
-    use std::hash::{Hash, Hasher};
-    let bytes = ring.lock().unwrap();
-    if bytes.is_empty() {
-        return None;
-    }
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    Some(format!(
-        "stderr tail: {} bytes (digest {:016x})",
-        bytes.len(),
-        hasher.finish()
-    ))
-}
-
-/// FR-8: a `DiagnosticContext` carrying only the connection-wide counts off
-/// `ProtocolEngine::counts` — the reader thread has no in-flight command to
-/// attach a requestId/command/duration to.
-fn counts_ctx(engine: &Arc<Mutex<ProtocolEngine>>) -> DiagnosticContext {
-    let (frame_count, error_count) = engine.lock().unwrap().counts();
-    DiagnosticContext {
-        frame_count,
-        error_count,
-        ..Default::default()
-    }
-}
-
-fn spawn_reader(
-    mut stdout: Box<dyn Read + Send>,
-    engine: Arc<Mutex<ProtocolEngine>>,
-    publisher: Arc<dyn EventPublisher>,
-    stderr_ring: Arc<Mutex<Vec<u8>>>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut framer = wire::FrameReader::new();
-        let mut buf = [0u8; 8192];
-        'reader: loop {
-            match stdout.read(&mut buf) {
-                Ok(0) => {
-                    let outcome = engine
-                        .lock()
-                        .unwrap()
-                        .on_disconnect("the Pi child closed its output");
-                    let ctx = counts_ctx(&engine);
-                    publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                    break;
-                }
-                Ok(n) => match framer.feed(&buf[..n]) {
-                    Ok(lines) => {
-                        for line in lines {
-                            let outcome = engine.lock().unwrap().on_line(&line);
-                            let terminal = outcome.failure.is_some();
-                            let ctx = counts_ctx(&engine);
-                            publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                            if terminal {
-                                break 'reader;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let reason = match e {
-                            wire::FrameError::OversizeRecord => {
-                                "a wire record exceeded the 32 MiB cap"
-                            }
-                            wire::FrameError::InvalidUtf8 => "a wire record was not valid UTF-8",
-                        };
-                        let outcome = engine.lock().unwrap().on_frame_error(reason);
-                        let ctx = counts_ctx(&engine);
-                        publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                        break;
-                    }
-                },
-                // A real `ChildStdout` carries no read timeout and blocks
-                // indefinitely, which is exactly what a long-lived Pi child
-                // needs — but a test transport MAY set one (to make a killed
-                // fake child's socket-shutdown observable promptly rather
-                // than depending on an in-flight blocking call being
-                // interrupted, which is not reliable cross-platform); a
-                // timeout is not a disconnect, just an empty poll.
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) => {}
-                Err(e) => {
-                    let outcome = engine
-                        .lock()
-                        .unwrap()
-                        .on_disconnect(&format!("read error: {e}"));
-                    let ctx = counts_ctx(&engine);
-                    publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                    break;
-                }
-            }
-        }
-    })
-}
-
-fn publish_with_stderr(
-    publisher: &Arc<dyn EventPublisher>,
-    outcome: LineOutcome,
-    stderr_ring: &Arc<Mutex<Vec<u8>>>,
-    ctx: DiagnosticContext,
-) {
-    let is_failure = outcome.failure.is_some();
-    publish(publisher, outcome, ctx.clone());
-    if is_failure {
-        if let Some(tail) = stderr_tail_digest(stderr_ring) {
-            publisher.diagnostic(&tail, ctx);
-        }
-    }
-}
-
 impl PiConnection {
     fn connect_engine(
         publisher: Arc<dyn EventPublisher>,
@@ -366,29 +335,56 @@ impl PiConnection {
         engine: ProtocolEngine,
     ) -> Result<Arc<Self>, AppError> {
         let engine = Arc::new(Mutex::new(engine));
-        let stderr_ring = handle.stderr_ring.clone();
+        let ProcessHandle {
+            stdin,
+            stdout,
+            wait_timeout,
+            kill,
+            stderr_ring,
+        } = handle;
+        let reducer = Arc::new(Mutex::new(TranscriptReducer::new()));
+        // HIGH (review round 4): the child is shared with the reader thread,
+        // which ends connections too (EOF, a read error, a frame error, the
+        // extension-policy gate) and has to take it down when it does — see
+        // `child.rs`'s own doc.
+        let child = Arc::new(ChildLink::new(stdin, wait_timeout, kill));
         let reader = spawn_reader(
-            handle.stdout,
+            stdout,
             engine.clone(),
             publisher.clone(),
             stderr_ring.clone(),
+            reducer.clone(),
+            child.clone(),
         );
         let conn = Arc::new(Self {
             engine,
-            write_lock: Mutex::new(()),
-            stdin: Mutex::new(Some(handle.stdin)),
-            wait_timeout: Mutex::new(Some(handle.wait_timeout)),
-            kill: Mutex::new(Some(handle.kill)),
+            child,
             reader: Mutex::new(Some(reader)),
-            capabilities: baseline_capabilities(),
+            capabilities: Mutex::new(baseline_capabilities()),
             handshake_info: Mutex::new(HandshakeInfo::default()),
             publisher,
             stderr_ring,
+            reducer,
         });
         // FR-4: no model call or user prompt needed — `get_state` alone.
         match conn.dispatch(PiCommandBody::GetState) {
             Ok(resp) => {
                 if let Some(data) = &resp.data {
+                    // pi-models-metrics: best-effort — the SAME handshake
+                    // reply, read through the ONE mapping function this
+                    // adapter owns for it.
+                    let model = super::models::parse_model_from_state(Some(data));
+                    // pi-skills-capabilities FR-3: `images` follows the
+                    // CURRENT model's advertised input — unknown at the
+                    // moment `baseline_capabilities()` ran above (before this
+                    // handshake reply existed), corrected here the instant
+                    // it does.
+                    if let Some((descriptor, _, _)) = &model {
+                        conn.capabilities.lock().unwrap().insert(
+                            "images".to_string(),
+                            images_capability_state(&descriptor.input),
+                        );
+                    }
                     *conn.handshake_info.lock().unwrap() = HandshakeInfo {
                         runtime_id: data
                             .get("runtimeId")
@@ -398,6 +394,7 @@ impl PiConnection {
                             .get("sessionFile")
                             .and_then(|v| v.as_str())
                             .map(String::from),
+                        model,
                     };
                 }
                 Ok(conn)
@@ -419,8 +416,11 @@ impl PiConnection {
         Self::connect_engine(publisher, handle, ProtocolEngine::new())
     }
 
+    /// `pub(super)` (pi-turn-controls): `adapter::pi::controls`'s own tests
+    /// use this too, to prove `clear_queue`/`abort`/`compact` each surface a
+    /// bounded `RUNTIME_TIMEOUT` rather than waiting on a silent child forever.
     #[cfg(test)]
-    fn connect_with_deadlines(
+    pub(super) fn connect_with_deadlines(
         publisher: Arc<dyn EventPublisher>,
         handle: ProcessHandle,
         deadlines: Deadlines,
@@ -442,39 +442,25 @@ impl PiConnection {
 
     /// FR-1/FR-5: never called while holding a session lock (this type has no
     /// way to reach one) — writes and waits entirely on its own state.
-    fn dispatch(&self, body: PiCommandBody) -> Result<wire::PiResponse, AppError> {
-        let _write_guard = self.write_lock.lock().unwrap(); // FR-5: one dispatcher at a time
+    ///
+    /// `pub(super)` (pi-turn-controls): `adapter::pi::controls` — a SIBLING
+    /// module of this one, not a child — dispatches its own new command
+    /// kinds (`clear_queue`/`abort`/`compact`) through this exact method
+    /// rather than duplicating the write/correlate/timeout machinery above.
+    ///
+    /// §4 (review round 4): the WRITE is the only exclusive part of a round
+    /// trip. It used to hold a connection-wide `write_lock` until the answer
+    /// came back, so every verb queued behind the slowest one in flight — a
+    /// manual compaction (180s deadline) parked Stop, a model switch and a
+    /// metrics read for as long as it ran. Nothing needed that: each command
+    /// is correlated by its OWN request id (`ProtocolEngine::send` registers
+    /// one pending entry per id; `on_response` routes each reply by it and
+    /// rejects one naming a different command), so replies may interleave
+    /// freely — only the bytes on the wire may not.
+    pub(super) fn dispatch(&self, body: PiCommandBody) -> Result<wire::PiResponse, AppError> {
         let started = Instant::now();
         let (command, deadline, rx) = self.engine.lock().unwrap().send(body)?;
-        {
-            let mut stdin = self.stdin.lock().unwrap();
-            let Some(writer) = stdin.as_mut() else {
-                // The connection is already shutting down (stdin taken by
-                // `shutdown()`) — this command was never sent, so there is
-                // nothing to fail the WHOLE connection over; drop just this
-                // entry, silently.
-                self.engine.lock().unwrap().forget(&command.id);
-                return Err(AppError::new(
-                    ErrorCode::RuntimeUnavailable,
-                    "the Pi connection is shutting down",
-                ));
-            };
-            if let Err(e) = writer
-                .write_all(command.to_line().as_bytes())
-                .and_then(|_| writer.flush())
-            {
-                // FR-6: a write failure means the pipe (and so the
-                // connection) is gone — fail the WHOLE connection, not just
-                // this command, and publish the terminal outcome exactly
-                // like the reader thread's own EOF/read-error path does
-                // (contradicted the method's own doc before this fix).
-                let reason = format!("could not write to pi: {e}");
-                let ctx = self.command_ctx(&command, started);
-                let outcome = self.engine.lock().unwrap().on_disconnect(&reason);
-                publish_with_stderr(&self.publisher, outcome, &self.stderr_ring, ctx);
-                return Err(AppError::new(ErrorCode::RuntimeExited, reason));
-            }
-        }
+        self.write_command(&command, started, deadline)?;
         match rx.recv_timeout(deadline) {
             Ok(PendingOutcome::Response(resp)) if resp.success => Ok(resp),
             Ok(PendingOutcome::Response(resp)) => Err(response_error(&resp)),
@@ -490,61 +476,252 @@ impl PiConnection {
                 let reason = format!("{} did not respond in time", command.kind().wire_name());
                 let ctx = self.command_ctx(&command, started);
                 let outcome = self.engine.lock().unwrap().on_timeout(&reason);
-                publish_with_stderr(&self.publisher, outcome, &self.stderr_ring, ctx);
+                self.fail_connection(outcome, ctx);
                 Err(AppError::new(ErrorCode::RuntimeTimeout, reason))
             }
         }
     }
+
+    /// One command's bytes, and nothing else, under the stdin lock. The lock
+    /// is acquired with THIS command's own deadline: a verb that cannot even
+    /// reach the wire within the time it was willing to wait for an answer
+    /// gives up with `RUNTIME_TIMEOUT` instead of parking behind whatever is
+    /// writing (§4, review round 4).
+    fn write_command(
+        &self,
+        command: &wire::PiCommand,
+        started: Instant,
+        deadline: Duration,
+    ) -> Result<(), AppError> {
+        match self
+            .child
+            .write_line(&command.to_line(), started + deadline)
+        {
+            Ok(()) => Ok(()),
+            // Neither of these two reached the wire, and neither says anything
+            // is wrong with the CONNECTION — only this command's entry is
+            // dropped.
+            Err(WriteFault::Busy) => {
+                self.engine.lock().unwrap().forget(&command.id);
+                Err(AppError::new(
+                    ErrorCode::RuntimeTimeout,
+                    "another Pi command was still writing to the child",
+                ))
+            }
+            Err(WriteFault::Closed) => {
+                self.engine.lock().unwrap().forget(&command.id);
+                Err(AppError::new(
+                    ErrorCode::RuntimeUnavailable,
+                    "the Pi connection is shutting down",
+                ))
+            }
+            Err(WriteFault::Io(e)) => {
+                // FR-6: a write failure means the pipe (and so the connection)
+                // is gone — fail the WHOLE connection, not just this command,
+                // and publish the terminal outcome exactly like the reader
+                // thread's own EOF/read-error path does (contradicted the
+                // method's own doc before this fix).
+                let reason = format!("could not write to pi: {e}");
+                let ctx = self.command_ctx(command, started);
+                let outcome = self.engine.lock().unwrap().on_disconnect(&reason);
+                self.fail_connection(outcome, ctx);
+                Err(AppError::new(ErrorCode::RuntimeExited, reason))
+            }
+        }
+    }
+
+    /// HIGH (review round 4): the dispatch-side twin of the reader thread's
+    /// terminal branches — a write failure and a wait that ran out both mean
+    /// this connection is over. It publishes the SAME terminal outcome,
+    /// stderr digest and finalized transcript the reader would, and RETIRES
+    /// the connection with them: before this, the reader thread stayed alive
+    /// on a failed connection, kept normalizing lines into it, and nothing
+    /// ever reaped the child.
+    ///
+    /// The order is load-bearing: retirement is latched first, so no further
+    /// line can reach the errored session while the failure goes out, but the
+    /// child's own grace period is spent last, so the frontend never waits on
+    /// it to learn the connection failed.
+    fn fail_connection(&self, outcome: LineOutcome, ctx: DiagnosticContext) {
+        self.child.latch();
+        publish_with_stderr(&self.publisher, outcome, &self.stderr_ring, ctx);
+        finalize_transcript(&self.reducer, &self.publisher);
+        self.child.retire(EXIT_GRACE);
+    }
+}
+
+impl PiConnection {
+    /// pi-session-durability FR-4: fetch the durable entry list (+ leaf id)
+    /// for projection rebuild. Read-only, and never called while a prompt is
+    /// in flight — `recovery::reconnect_session` runs this right after the
+    /// handshake, before the connection is handed to the engine for ordinary
+    /// use. Not part of `RuntimeSessionControl`: no other runtime has an
+    /// equivalent verb, so this stays a Pi-specific method on the concrete
+    /// type the adapter's own reconnect flow holds.
+    pub(crate) fn get_entries(&self, cursor: Option<String>) -> Result<wire::PiResponse, AppError> {
+        self.dispatch(PiCommandBody::GetEntries { cursor })
+    }
+
+    /// pi-session-durability: the identity `get_state`'s handshake reported
+    /// for THIS connection — a clone, since the live value is behind a mutex
+    /// no caller should hold onto.
+    pub(crate) fn handshake_info(&self) -> HandshakeInfo {
+        self.handshake_info.lock().unwrap().clone()
+    }
+
+    /// pi-models-metrics FR-5/FR-6: raw `set_model` dispatch — the mapping
+    /// from the read-back response into `RuntimeModelDescriptor` lives in
+    /// `adapter::pi::models` (one mapping function per command, per this
+    /// adapter's provenance convention), not here.
+    fn set_model(&self, model: &RuntimeModelRef, effort: Option<&str>) -> Result<(), AppError> {
+        self.dispatch(PiCommandBody::SetModel {
+            provider_id: model.provider_id.clone(),
+            model_id: model.model_id.clone(),
+            effort: effort.map(str::to_string),
+        })
+        .map(|_| ())
+    }
+
+    /// pi-models-metrics FR-7: raw `get_session_stats` dispatch.
+    fn get_session_stats_raw(&self) -> Result<wire::PiResponse, AppError> {
+        self.dispatch(PiCommandBody::GetSessionStats)
+    }
 }
 
 impl RuntimeSessionControl for PiConnection {
+    /// FR-7: resolve any attachments `input.text` references into the
+    /// prompt's own image content, rejecting BEFORE anything is dispatched
+    /// when a referenced image outruns this connection's own `images`
+    /// capability — checked here (not only by the generic session-level
+    /// gate) because `PiConnection` alone knows what the wire actually needs.
     fn submit(&self, input: RuntimeSubmission) -> Result<SubmissionReceipt, AppError> {
-        self.dispatch(PiCommandBody::Prompt { text: input.text })
-            .map(|resp| SubmissionReceipt {
-                request_id: resp.id,
-            })
+        let images_supported = self
+            .capabilities
+            .lock()
+            .unwrap()
+            .get("images")
+            .is_some_and(|c| c.available);
+        let body = wire::build_prompt_body(input.text, &input.attachments, images_supported)?;
+        self.dispatch(body).map(|resp| SubmissionReceipt {
+            request_id: resp.id,
+        })
     }
 
     fn capabilities(&self) -> RuntimeCapabilities {
-        self.capabilities.clone()
+        self.capabilities.lock().unwrap().clone()
     }
 
     fn cancel(&self) -> Result<(), AppError> {
         self.dispatch(PiCommandBody::Interrupt).map(|_| ())
     }
 
-    /// FR-7: stop admissions, close stdin (letting Pi's own shutdown cleanup
-    /// run — the audit's linked RPC implementation notes "EOF follows
-    /// shutdown cleanup"), wait up to 5s, then terminate the tracked process
-    /// tree and join the reader. Idempotent: `session_remove` and app-exit
-    /// invoke the same owner (FR-7), and either may call this twice.
+    /// FR-7: retire this connection (`reap`: stop admissions, close stdin so
+    /// Pi's own shutdown cleanup runs — the audit's linked RPC implementation
+    /// notes "EOF follows shutdown cleanup" — wait out the grace period, then
+    /// terminate the tracked process tree) and join the reader. Idempotent:
+    /// `session_remove` and app-exit invoke the same owner (FR-7), either may
+    /// call this twice, and a dispatch-side failure may have retired the
+    /// connection already — the reap runs once and every caller reports the
+    /// exit status it recorded.
+    ///
+    /// Bounded end to end (MED, review round 4), which is the whole point: a
+    /// child that has stopped draining its stdin must never be able to stop
+    /// the app from quitting.
     fn shutdown(&self) -> Result<(), AppError> {
         self.engine.lock().unwrap().stop_admissions();
-        self.stdin.lock().unwrap().take();
-        let exited = match self.wait_timeout.lock().unwrap().as_mut() {
-            Some(wait) => wait(Duration::from_secs(5)),
-            None => true,
-        };
-        if !exited {
-            if let Some(kill) = self.kill.lock().unwrap().as_mut() {
-                kill();
-            }
-        }
+        let exit_status = self.child.retire(EXIT_GRACE);
         if let Some(handle) = self.reader.lock().unwrap().take() {
             let _ = handle.join();
         }
         // FR-7/FR-8: "exit status" logged once per shutdown call —
         // best-effort: `ProcessHandle` exposes only whether the child
-        // exited on its own within the 5s grace period or had to be
+        // exited on its own within the grace period or had to be
         // terminated, not a real OS exit code (see this feature's handoff).
         self.publisher.diagnostic(
             "shutdown complete",
             DiagnosticContext {
-                exit_status: Some(if exited { "exited" } else { "killed" }),
+                exit_status: Some(exit_status),
                 ..counts_ctx(&self.engine)
             },
         );
         Ok(())
+    }
+
+    /// pi-models-metrics FR-5/FR-6: send `set_model`, then read state back
+    /// (a fresh `get_state`) BEFORE reporting success — never trust the
+    /// `set_model` acceptance alone. A read-back that does not carry a
+    /// parseable current model, or whose effort does not match what was
+    /// requested (Pi silently declining/clamping the level), is
+    /// `RUNTIME_PROTOCOL_ERROR`/`INVALID_INPUT` respectively; either way the
+    /// session's previous selection is left untouched by the CALLER, because
+    /// this method never mutates anything itself (FR-5's "failure preserves
+    /// the previous selection").
+    ///
+    /// KNOWN GAP (this feature's handoff): a malformed-but-wire-successful
+    /// read-back does not additionally force this whole connection into a
+    /// failed state the way a genuine protocol violation
+    /// (`ProtocolEngine::fail`) does — the edge case "read-back failure
+    /// leaves the session unavailable for sending" is only partially covered
+    /// (the switch itself is refused and nothing is applied; the connection
+    /// stays otherwise usable) until a certified wire capture says what a
+    /// real malformed reply looks like.
+    fn switch_model(
+        &self,
+        model: RuntimeModelRef,
+        effort: Option<String>,
+    ) -> Result<(events::RuntimeModelDescriptor, Option<String>, Vec<String>), AppError> {
+        self.set_model(&model, effort.as_deref())?;
+        let state = self.dispatch(PiCommandBody::GetState)?;
+        let Some((descriptor, applied_effort, efforts)) =
+            super::models::parse_model_from_state(state.data.as_ref())
+        else {
+            return Err(AppError::new(
+                ErrorCode::RuntimeProtocolError,
+                "Pi's model read-back was malformed",
+            ));
+        };
+        if !super::models::effort_matches(effort.as_deref(), applied_effort.as_deref()) {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "this model does not support the requested effort level",
+            ));
+        }
+        Ok((descriptor, applied_effort, efforts))
+    }
+
+    /// pi-models-metrics FR-7: `get_session_stats`, mapped by the ONE mapping
+    /// function `adapter::pi::models` owns for this command.
+    fn read_metrics(&self) -> Result<events::RuntimeMetrics, AppError> {
+        let resp = self.get_session_stats_raw()?;
+        Ok(super::models::parse_metrics_response(
+            resp.data.as_ref(),
+            crate::ids::now_ms(),
+        ))
+    }
+
+    /// pi-turn-controls FR-5/FR-6: delegates to `controls::clear_queue` — the
+    /// wire construction lives there (this feature's own file), not here.
+    fn clear_queue(&self) -> Result<(), AppError> {
+        super::controls::clear_queue(self)
+    }
+
+    /// pi-turn-controls FR-6.
+    fn abort(&self) -> Result<(), AppError> {
+        super::controls::abort(self)
+    }
+
+    /// pi-turn-controls FR-8.
+    fn compact(&self) -> Result<(), AppError> {
+        super::controls::compact(self)
+    }
+
+    /// pi-skills-capabilities FR-1: `get_commands`, mapped by the ONE
+    /// mapping function `adapter::pi::resources` owns for it.
+    fn list_commands(&self) -> Result<Vec<RuntimeCommandInfo>, AppError> {
+        let resp = self.dispatch(PiCommandBody::GetCommands)?;
+        Ok(super::resources::parse_get_commands_response(
+            resp.data.as_ref(),
+        ))
     }
 }
 
@@ -560,225 +737,17 @@ pub(crate) fn connect(
     PiConnection::connect_with(publisher, handle)
 }
 
+/// The fake child every Pi fake-process test drives. `pub(in …::pi)` rather
+/// than private: `controls.rs` and `recovery/shell_tests.rs` used to keep
+/// their own copies of it, each with its own hand-rolled read deadline.
 #[cfg(test)]
-mod connection_tests {
-    use super::*;
-    use std::net::{TcpListener, TcpStream};
+#[path = "dispatcher_testutil.rs"]
+pub(in crate::session::adapter::pi) mod testutil;
 
-    /// The "fake child" the spec's acceptance criteria ask for: a loopback
-    /// TCP pair stands in for the process's stdin/stdout, so these tests
-    /// exercise the REAL reader thread, REAL `mpsc` timeouts, and the REAL
-    /// `RuntimeSessionControl` implementation with no external `pi` binary
-    /// and no AppHandle.
-    fn test_pipe_pair() -> (TcpStream, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = TcpStream::connect(addr).unwrap();
-        let (server, _) = listener.accept().unwrap();
-        client.set_nodelay(true).ok();
-        server.set_nodelay(true).ok();
-        (client, server)
-    }
+#[cfg(test)]
+#[path = "dispatcher_tests.rs"]
+mod connection_tests;
 
-    #[derive(Default)]
-    struct Recording {
-        run_states: Mutex<Vec<RuntimeRunState>>,
-        failures: Mutex<Vec<(ErrorCode, String)>>,
-    }
-    impl EventPublisher for Recording {
-        fn run_state(&self, s: RuntimeRunState) {
-            self.run_states.lock().unwrap().push(s);
-        }
-        fn failure(&self, code: ErrorCode, reason: &str, _ctx: DiagnosticContext) {
-            self.failures
-                .lock()
-                .unwrap()
-                .push((code, reason.to_string()));
-        }
-        fn diagnostic(&self, _message: &str, _ctx: DiagnosticContext) {}
-    }
-
-    /// `dispatcher_end` is what `PiConnection` writes to/reads from;
-    /// `fake_child_end` is driven directly by the test, standing in for the
-    /// Pi process on the other side of the pipe.
-    fn handle_over(dispatcher_end: TcpStream, kill_flag: Arc<Mutex<bool>>) -> ProcessHandle {
-        let stdout = dispatcher_end.try_clone().unwrap();
-        // A short read timeout makes a killed fake child's socket-shutdown
-        // observable on the READER's next poll rather than depending on an
-        // in-flight blocking `read()` being interrupted by a shutdown on a
-        // different cloned handle, which is not reliable cross-platform —
-        // see `spawn_reader`'s WouldBlock/TimedOut handling.
-        stdout
-            .set_read_timeout(Some(Duration::from_millis(50)))
-            .unwrap();
-        // A real `kill_tree` on a real child closes ITS end of the pipe,
-        // which is what unblocks the dispatcher's blocking `read()` — a fake
-        // `kill` that only flips a flag would leave the reader thread (and
-        // so `shutdown()`'s `join()`) hanging forever whenever the fake
-        // child is still "alive" (i.e. `fake_child` not yet dropped) at
-        // shutdown time. `TcpStream::shutdown` affects the whole socket, not
-        // just this one cloned handle, so it is the honest stand-in here.
-        let socket = dispatcher_end.try_clone().unwrap();
-        ProcessHandle {
-            stdin: Box::new(dispatcher_end),
-            stdout: Box::new(stdout),
-            wait_timeout: Box::new({
-                let kill_flag = kill_flag.clone();
-                move |_| *kill_flag.lock().unwrap()
-            }),
-            kill: Box::new(move || {
-                *kill_flag.lock().unwrap() = true;
-                let _ = socket.shutdown(std::net::Shutdown::Both);
-            }),
-            stderr_ring: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    fn read_line(child: &mut TcpStream) -> String {
-        let mut byte = [0u8; 1];
-        let mut line = Vec::new();
-        loop {
-            let n = child.read(&mut byte).unwrap();
-            assert!(
-                n > 0,
-                "the dispatcher's peer closed before a full line arrived"
-            );
-            if byte[0] == b'\n' {
-                break;
-            }
-            line.push(byte[0]);
-        }
-        String::from_utf8(line).unwrap()
-    }
-
-    fn write_line(child: &mut TcpStream, line: &str) {
-        child.write_all(line.as_bytes()).unwrap();
-        child.write_all(b"\n").unwrap();
-    }
-
-    fn extract_id(line: &str) -> String {
-        serde_json::from_str::<serde_json::Value>(line).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-
-    fn resp(id: &str, command: &str, success: bool) -> String {
-        serde_json::json!({ "id": id, "command": command, "success": success }).to_string()
-    }
-
-    #[test]
-    fn a_fake_child_completes_the_handshake_and_two_prompts_on_one_connection() {
-        let (dispatcher_end, mut fake_child) = test_pipe_pair();
-        let handle = handle_over(dispatcher_end, Arc::new(Mutex::new(false)));
-        let publisher = Arc::new(Recording::default());
-        let publisher_for_connect = publisher.clone();
-        let connect =
-            std::thread::spawn(move || PiConnection::connect_with(publisher_for_connect, handle));
-
-        let req = read_line(&mut fake_child);
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&req).unwrap()["type"],
-            "get_state"
-        );
-        write_line(&mut fake_child, &resp(&extract_id(&req), "get_state", true));
-
-        let conn = connect.join().unwrap().unwrap();
-        assert_eq!(conn.engine.lock().unwrap().state(), RuntimeRunState::Idle);
-
-        // FR acceptance: "Two prompts use one child."
-        for _ in 0..2 {
-            let conn2 = conn.clone();
-            let submit =
-                std::thread::spawn(move || conn2.submit(RuntimeSubmission { text: "hi".into() }));
-            let req = read_line(&mut fake_child);
-            let v: serde_json::Value = serde_json::from_str(&req).unwrap();
-            assert_eq!(v["type"], "prompt");
-            write_line(
-                &mut fake_child,
-                &resp(v["id"].as_str().unwrap(), "prompt", true),
-            );
-            submit.join().unwrap().unwrap();
-            write_line(&mut fake_child, r#"{"type":"agent_settled"}"#);
-            wait_until(|| conn.engine.lock().unwrap().state() == RuntimeRunState::Idle);
-        }
-
-        conn.shutdown().unwrap();
-        assert!(publisher
-            .run_states
-            .lock()
-            .unwrap()
-            .contains(&RuntimeRunState::Running));
-    }
-
-    #[test]
-    fn eof_after_the_handshake_fails_the_connection_once_and_refuses_further_submits() {
-        let (dispatcher_end, mut fake_child) = test_pipe_pair();
-        let handle = handle_over(dispatcher_end, Arc::new(Mutex::new(false)));
-        let publisher = Arc::new(Recording::default());
-        let publisher_for_connect = publisher.clone();
-        let connect =
-            std::thread::spawn(move || PiConnection::connect_with(publisher_for_connect, handle));
-        let req = read_line(&mut fake_child);
-        write_line(&mut fake_child, &resp(&extract_id(&req), "get_state", true));
-        let conn = connect.join().unwrap().unwrap();
-
-        drop(fake_child); // EOF on the dispatcher's stdout
-        wait_until(|| conn.engine.lock().unwrap().is_failed());
-
-        assert!(conn.submit(RuntimeSubmission { text: "x".into() }).is_err());
-        assert_eq!(publisher.failures.lock().unwrap().len(), 1); // exactly once
-    }
-
-    #[test]
-    fn shutdown_terminates_the_tracked_process_when_it_does_not_exit_on_its_own_and_is_idempotent()
-    {
-        let (dispatcher_end, mut fake_child) = test_pipe_pair();
-        let kill_flag = Arc::new(Mutex::new(false));
-        let handle = handle_over(dispatcher_end, kill_flag.clone());
-        let publisher = Arc::new(Recording::default());
-        let connect = std::thread::spawn(move || PiConnection::connect_with(publisher, handle));
-        let req = read_line(&mut fake_child);
-        write_line(&mut fake_child, &resp(&extract_id(&req), "get_state", true));
-        let conn = connect.join().unwrap().unwrap();
-
-        conn.shutdown().unwrap();
-        assert!(
-            *kill_flag.lock().unwrap(),
-            "a process that never exits on its own must be terminated"
-        );
-        conn.shutdown().unwrap(); // FR-7: session_remove + app-exit may both call this
-    }
-
-    #[test]
-    fn a_handshake_that_never_answers_times_out_bounded_and_kills_the_child() {
-        let (dispatcher_end, _fake_child) = test_pipe_pair(); // never responds
-        let kill_flag = Arc::new(Mutex::new(false));
-        let handle = handle_over(dispatcher_end, kill_flag.clone());
-        let publisher = Arc::new(Recording::default());
-        let deadlines = Deadlines {
-            init: Duration::from_millis(100),
-            read_only: Duration::from_millis(100),
-            prompt: Duration::from_millis(100),
-            compaction: Duration::from_millis(100),
-        };
-        let started = std::time::Instant::now();
-        let err = PiConnection::connect_with_deadlines(publisher, handle, deadlines)
-            .err()
-            .unwrap();
-        assert_eq!(err.code, ErrorCode::RuntimeTimeout);
-        assert!(started.elapsed() < Duration::from_secs(2));
-        assert!(*kill_flag.lock().unwrap());
-    }
-
-    fn wait_until(mut condition: impl FnMut() -> bool) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while !condition() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "condition never became true"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-}
+#[cfg(test)]
+#[path = "dispatcher_lifecycle_tests.rs"]
+mod lifecycle_tests;

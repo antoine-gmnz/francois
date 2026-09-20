@@ -14,9 +14,9 @@ export default function UsageLimitBanner({ message, onDismiss }: { message: stri
   return (
     <div className="limit-banner">
       <span className="limit-banner__text">{usageLimitNoticeText(message)}</span>
-      <span onClick={onDismiss} className="limit-banner__dismiss" title="dismiss">
+      <button type="button" onClick={onDismiss} className="limit-banner__dismiss" title="dismiss">
         ✕
-      </span>
+      </button>
     </div>
   );
 }

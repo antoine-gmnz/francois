@@ -2,9 +2,9 @@
 // effort levels a model row offers, and the second line `bypass` earns.
 
 import { describe, expect, it } from 'vitest';
-import type { ModelInfo, ResponseMode, SessionMeta } from '../../../contract/common';
+import type { ModelInfo, ResponseMode, RuntimeMetrics, SessionMeta } from '../../../contract/common';
 import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
-import { bypassNote, effortHint, effortLevels, formatClock, responseModeOption, runChipParts } from './run-chip';
+import { bypassNote, effortHint, effortLevels, formatClock, responseModeOption, runChipMetricsTitle, runChipParts } from './run-chip';
 
 const OPUS: ModelInfo = { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh'] };
 const SONNET: ModelInfo = { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['low', 'medium', 'high'] };
@@ -140,3 +140,47 @@ describe('bypassNote', () => {
 // session-settings-sheet FR-17/FR-20: the footer's "Set as project default" and
 // its nextProjectDefaults/canSetProjectDefault helpers moved to
 // session-settings.ts/.test.ts with the run chip's popover — see there.
+
+function metrics(over: Partial<RuntimeMetrics> = {}): RuntimeMetrics {
+  return {
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    contextTokens: null,
+    contextWindow: null,
+    contextBasis: 'unknown',
+    costUsd: null,
+    costBasis: 'unknown',
+    measuredAt: 0,
+    stale: false,
+    ...over,
+  };
+}
+
+describe('runChipMetricsTitle (pi-models-metrics)', () => {
+  it('is null when the session has no metrics — every non-Pi tooltip is unchanged', () => {
+    expect(runChipMetricsTitle(undefined)).toBeNull();
+  });
+
+  it('is null when metrics exist but carry nothing knowable yet', () => {
+    expect(runChipMetricsTitle(metrics())).toBeNull();
+  });
+
+  it('reports context and an estimated cost together', () => {
+    const m = metrics({ contextTokens: 84_000, contextWindow: 200_000, contextBasis: 'reported', costUsd: 0.02, costBasis: 'estimated' });
+    expect(runChipMetricsTitle(m)).toBe('context 84K/200K · $0.02 est.');
+  });
+
+  it('reports context alone when cost is unknown — never an em dash cluttering the tooltip', () => {
+    const m = metrics({ contextTokens: 84_000, contextWindow: 200_000, contextBasis: 'reported' });
+    expect(runChipMetricsTitle(m)).toBe('context 84K/200K');
+  });
+
+  it('appends "stale" only once there is something to call stale', () => {
+    const m = metrics({ contextTokens: 84_000, contextWindow: 200_000, contextBasis: 'reported', stale: true });
+    expect(runChipMetricsTitle(m)).toBe('context 84K/200K · stale');
+    // Nothing to report yet ⇒ still null, even though the record is stale.
+    expect(runChipMetricsTitle(metrics({ stale: true }))).toBeNull();
+  });
+});

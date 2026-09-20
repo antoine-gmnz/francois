@@ -4,8 +4,6 @@
     "account<->project",
     "diff<->session",
     "permissions<->session",
-    "profiles<->project",
-    "profiles<->session",
     "project<->session",
     "session<->usage"
   ]

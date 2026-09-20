@@ -1,0 +1,76 @@
+// contract/pi-models-metrics.ts — Pi model selection, context and cost.
+// Authored from specs/pi-models-metrics.md §5.
+//
+// Shared vocabulary lives in common.ts and is imported, never redefined:
+// RuntimeModelRef · RuntimeModelDescriptor · RuntimeMetrics, the optional
+// `ModelInfo.runtimeModel` / `ModelInfo.descriptor`, `SessionMeta.metrics`,
+// `ProjectDefaults.runtimeModel`, and the `model.changed` / `metrics` members of
+// RuntimeEventPayload. The amended `SessionCreateInput.runtimeModel` and
+// `SessionSwitchModelInput` live in session-engine.ts. This file owns the catalogue
+// envelope and the two new commands.
+//
+// Physical binding: `francois:runtime:models` → command `runtime_models`;
+// `francois:session:metrics` → command `session_metrics`. Flat payloads, like every
+// other command. Neither emits an event of its own — a metrics read that changes the
+// session's stored value also publishes `{kind:'metrics'}` on francois://session/event.
+import type { AccountId, Result, RuntimeMetrics, RuntimeModelDescriptor, SessionId } from './common';
+
+export type { RuntimeMetrics, RuntimeModelDescriptor, RuntimeModelRef } from './common';
+
+// ---------- francois:runtime:models ----------
+
+export interface RuntimeModelsInput {
+  accountId: AccountId; // must resolve to a Pi account
+  /** true ⇒ bypass the 60 s cache and run a fresh no-session probe (FR-2). */
+  refresh?: boolean;
+}
+
+/**
+ * The AVAILABLE snapshot for one account — not a registry of every provider Pi could
+ * reach. `models` is empty when the account has none ("No models available for this Pi
+ * account"); it is never padded with a fallback. Rows keep the runtime's own order.
+ *
+ * `stale: true` ⇒ served from cache after the 60 s TTL lapsed, or after a refresh failed
+ * and the previous catalogue was retained (FR-9). A stale catalogue still renders, but it
+ * does NOT authorize a new submission or a new session (FR-2/FR-4).
+ *
+ * The cache key is account + config fingerprint + environment: a models.json edit or a
+ * credential-environment change misses the cache.
+ */
+export interface RuntimeModelCatalog {
+  accountId: AccountId;
+  models: RuntimeModelDescriptor[];
+  checkedAt: number; // epoch ms of the probe that produced `models`
+  stale: boolean;
+}
+export type RuntimeModelsResult = Result<RuntimeModelCatalog>;
+// invoke('runtime_models', req: RuntimeModelsInput): Promise<RuntimeModelsResult>
+//   The probe is a short-lived no-session RPC child under the SAME launch policy as a
+//   session, closed when it answers. A malformed required model id fails the whole probe
+//   (RUNTIME_PROTOCOL_ERROR); unknown optional fields stay core-private.
+//   errors: ACCOUNT_NOT_FOUND · ACCOUNT_CONFIG_UNTRUSTED · ACCOUNT_CONFIG_CHANGED ·
+//     RUNTIME_UNAVAILABLE · RUNTIME_INCOMPATIBLE · RUNTIME_TIMEOUT ·
+//     RUNTIME_PROTOCOL_ERROR · RUNTIME_UNSUPPORTED (not a Pi account) · INTERNAL
+
+// ---------- francois:session:metrics ----------
+
+export interface RuntimeMetricsInput {
+  sessionId: SessionId;
+  /** true ⇒ ask the runtime now; still rate-limited to one read per second (FR-7). */
+  refresh?: boolean;
+}
+export type RuntimeMetricsResult = Result<RuntimeMetrics>;
+// invoke('session_metrics', req: RuntimeMetricsInput): Promise<RuntimeMetricsResult>
+//   Without `refresh` this returns the stored value (stale after a restart). The core also
+//   reads stats on its own after every settled run and after compaction.
+//   errors: SESSION_NOT_FOUND · RUNTIME_UNSUPPORTED (not a Pi session) · RUNTIME_EXITED ·
+//     RUNTIME_TIMEOUT · RUNTIME_PROTOCOL_ERROR
+
+// ---------- UI preferences (frontend-only; never sent to the core) ----------
+
+/**
+ * Favorites/recents are UI preferences keyed by account + exact pair — not credentials
+ * and not availability (FR-3). This is the canonical key so every consumer agrees.
+ */
+export const runtimeModelKey = (accountId: AccountId, providerId: string, modelId: string): string =>
+  `${accountId}\u0000${providerId}\u0000${modelId}`;

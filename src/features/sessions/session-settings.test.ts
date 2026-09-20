@@ -274,6 +274,33 @@ describe('moved from run-chip.ts (FR-17/FR-20)', () => {
       allowGit: false,
     });
   });
+
+  // pi-models-metrics FR-4: `draft.modelId` is the Pi picker's own composite
+  // (accountId, providerId, modelId) key, never a real modelId — the project
+  // default must carry the session's exact `runtimeModel` pair instead.
+  it('writes the exact runtimeModel pair for a Pi session, never modelId', () => {
+    const piSession = session({
+      agentRuntime: 'pi',
+      accountId: 'pi-1',
+      model: { id: 'pi-1 anthropic claude-sonnet-5', label: 'claude-sonnet-5' },
+      runtimeModel: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
+    });
+    const piDraft = draftFromSession(piSession);
+    expect(nextProjectDefaults({}, piDraft, piSession)).toEqual({
+      runtimeModel: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
+      permissionMode: 'default',
+      responseMode: 'default',
+      allowGit: false,
+    });
+  });
+
+  it('drops a stale runtimeModel default when the project default moves to a non-Pi session', () => {
+    const legacy = session();
+    const legacyDraft = draftFromSession(legacy);
+    const next = nextProjectDefaults({ runtimeModel: { providerId: 'anthropic', modelId: 'x' } }, legacyDraft, legacy);
+    expect(next.runtimeModel).toBeUndefined();
+    expect(next.modelId).toBe('claude-opus-5');
+  });
 });
 
 describe('sessionUpdateSettings wrapper (§5)', () => {
@@ -341,7 +368,11 @@ describe("'session-settings' palette command (FR-19)", () => {
 import { submitSettingsOnEnter } from './session-settings';
 
 describe('sheet Enter capture delegates interactive controls', () => {
-  it.each(['button', '[role="listbox"]', '[role="option"]', 'select', 'textarea', '[data-worktree-row]'])('lets %s select or refresh without creating/applying', (selector) => {
+  // A3 TRAP (review addendum): the model search box moved out of `[role="listbox"]`
+  // to fix its a11y structure and now identifies as `[role="combobox"]` — this
+  // guard must widen to match it, or Enter in the search box creates/applies
+  // the sheet instead of selecting a model.
+  it.each(['button', '[role="listbox"]', '[role="option"]', '[role="combobox"]', 'select', 'textarea', '[data-worktree-row]'])('lets %s select or refresh without creating/applying', (selector) => {
     const submit = vi.fn();
     const activate = vi.fn();
     const event = {

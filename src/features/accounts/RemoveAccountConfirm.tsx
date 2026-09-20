@@ -1,25 +1,24 @@
 // multi-account FR-35 — the remove confirmation: a compact dialog inside the
 // modal (not a second modal), naming the sessions that will fall back to
 // Default (FR-9) and stating that the credentials on disk are deleted (FR-8).
-// All the copy lives in ./accounts (removeConfirmView) so it is unit-tested.
+//
+// pi-provider-auth: takes the view rather than computing it from an account,
+// so PiAccountsSection can reuse this same banner with `piRemoveConfirmView`'s
+// FR-8-accurate copy (Pi's removal neither reassigns nor deletes credentials)
+// instead of the legacy `removeConfirmView` text, which would misdescribe both.
 
-import type { SessionMeta } from '../../../contract/common';
-import type { Account } from '../../../contract/multi-account';
+import type { RemoveConfirmView } from './accounts';
 import { Button } from '../../ui/Button';
-import { removeConfirmView } from './accounts';
 
 export function RemoveAccountConfirm({
-  account,
-  sessions,
+  view,
   onCancel,
   onConfirm,
 }: {
-  account: Account;
-  sessions: SessionMeta[];
+  view: RemoveConfirmView;
   onCancel: () => void;
   onConfirm: () => void;
 }): JSX.Element {
-  const view = removeConfirmView(account, sessions);
   return (
     <div className="acc-confirm">
       <span className="acc-confirm-title">{view.title}</span>

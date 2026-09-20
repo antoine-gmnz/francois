@@ -107,33 +107,13 @@ pub(crate) fn wsl_env_list(entries: &[&str]) -> String {
     merge_wsl_env(std::env::var("WSLENV").ok().as_deref(), entries)
 }
 
-/// The pure half of `wsl_env_list`: merge `entries` into an existing `WSLENV`
-/// value. Kept separate from the process environment so the merge rules are
-/// unit-testable without mutating a global every other test can see.
-pub(crate) fn merge_wsl_env(existing: Option<&str>, entries: &[&str]) -> String {
-    let mut list: Vec<String> = existing
-        .filter(|v| !v.is_empty())
-        .map(|v| {
-            v.trim_end_matches(':')
-                .split(':')
-                .filter(|e| !e.is_empty())
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
-    for entry in entries {
-        // `NAME/flags` — an entry already forwarding this variable (whatever its
-        // flags) wins, so we never emit the same variable twice.
-        let name = entry.split('/').next().unwrap_or(entry);
-        let already = list
-            .iter()
-            .any(|e| e == entry || e.split('/').next().unwrap_or(e) == name);
-        if !already {
-            list.push((*entry).to_string());
-        }
-    }
-    list.join(":")
-}
+/// The pure half of `wsl_env_list`. It lived here until PR #142 §5 needed the
+/// same merge for Pi's own spawn sites, which are in `account/` and cannot
+/// name `crate::session` (that would close a module cycle) — so the rules
+/// moved to `wsl.rs`, beside the rest of the WSL path/argv vocabulary, and
+/// this is the name `claude`'s call sites already use. One merge, one set of
+/// tests (`wsl.rs`), whichever runtime asks.
+pub(crate) use crate::wsl::merge_wsl_env;
 
 /// multi-account FR-21/FR-24: the environment EVERY spawn made on behalf of a
 /// session must add — the turn spawn, the /usage-/cost side-probe, the
@@ -367,29 +347,12 @@ mod tests {
         .is_empty());
     }
 
-    #[test]
-    fn wslenv_merging_appends_without_clobbering_or_duplicating() {
-        // The pre-feature TERM/u behavior, unchanged:
-        assert_eq!(merge_wsl_env(None, &["TERM/u"]), "TERM/u");
-        assert_eq!(merge_wsl_env(Some(""), &["TERM/u"]), "TERM/u");
-        assert_eq!(merge_wsl_env(Some("FOO/u"), &["TERM/u"]), "FOO/u:TERM/u");
-        assert_eq!(merge_wsl_env(Some("FOO/u:"), &["TERM/u"]), "FOO/u:TERM/u");
-        // an entry already forwarding the variable wins, whatever its flags
-        assert_eq!(merge_wsl_env(Some("TERM/u"), &["TERM/u"]), "TERM/u");
-        assert_eq!(merge_wsl_env(Some("TERM/w"), &["TERM/u"]), "TERM/w");
-        // FR-24: both entries land, in one list, exactly once each
-        assert_eq!(
-            merge_wsl_env(Some("FOO/u"), &["TERM/u", "CLAUDE_CONFIG_DIR/up"]),
-            "FOO/u:TERM/u:CLAUDE_CONFIG_DIR/up"
-        );
-        assert_eq!(
-            merge_wsl_env(
-                Some("CLAUDE_CONFIG_DIR/up"),
-                &["TERM/u", "CLAUDE_CONFIG_DIR/up"]
-            ),
-            "CLAUDE_CONFIG_DIR/up:TERM/u"
-        );
-    }
+    // The merge rules themselves are tested where they now live
+    // (`wsl::tests::merging_wslenv_appends_without_clobbering_or_duplicating`),
+    // including the two FR-24 cases this file used to own: an entry already
+    // forwarding the variable wins whatever its flags, and a caller's own
+    // entries land exactly once each. What stays here is what is SESSION-
+    // shaped — `account_env`'s per-kind variable and its WSLENV entry, below.
 
     #[test]
     fn claude_invocation_distro_override_targets_the_stored_distro_from_a_linux_path() {

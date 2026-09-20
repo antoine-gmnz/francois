@@ -164,6 +164,9 @@ pub fn test_session() -> Session {
         system_prompt: None,
         extra_args: Vec::new(),
         profile: None,
+        pi_profile_settings: None,
+        pi_launch_prompt: None,
+        resource_policy: None,
         response_mode: ResponseMode::Default,
         response_mode_sent: None,
         queue: VecDeque::new(),
@@ -190,6 +193,11 @@ pub fn test_session() -> Session {
         workflow_scripts: HashMap::new(),
         cli_commands: Vec::new(),
         grok_sandbox_notice_emitted: false,
+        recovery: events::RuntimeRecovery::disconnected(),
+        recovery_busy: false,
+        pi_resume: None,
+        metrics: None,
+        model_efforts: Vec::new(),
     }
 }
 

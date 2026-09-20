@@ -19,6 +19,8 @@
 // ellipsises. Everything else is `flex-shrink: 0` in the CSS, which is what stops
 // mid-string crops from coming back.
 
+import type { SessionStatus } from '../../contract/common';
+
 /** Anything that can leave the bar as it narrows. Never includes TOPBAR_NEVER_DROPS. */
 export type TopbarItem =
   | 'path'
@@ -157,4 +159,17 @@ export function overflowItems(tier: TopbarTier): TopbarItem[] {
 /** `Opus 5 · bypass · 180K/1M · ⑂ feat-context-count · layout` — the `⋯` tooltip. */
 export function overflowTooltip(parts: readonly (string | null | undefined)[]): string {
   return parts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0).join(' · ');
+}
+
+/**
+ * `.session-row__status--<status>` — replaces the old inline
+ * `style={{ color: statusColor }}` (ESLint's `no-restricted-syntax` ratchet
+ * debt), mapping exactly the colours `STATUS_COLOR`/`toneVar` already resolve
+ * to for the pill. `SessionStatus` (contract/common.ts) is a closed union, so
+ * this is a fixed, exhaustive set of classes — never an open-ended computed
+ * colour — and app.css owns the actual hues, ready for `color-mix`'s
+ * `currentColor` read exactly as the inline style was.
+ */
+export function statusToneClass(status: SessionStatus): string {
+  return `session-row__status--${status}`;
 }

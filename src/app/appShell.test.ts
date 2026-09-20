@@ -167,6 +167,7 @@ describe('buildShortcutActions', () => {
       setNewAgentOpen: vi.fn(),
       closeAgentTab: vi.fn(),
       toggleLeftPane: vi.fn(),
+      notifyUnavailable: vi.fn(),
     };
     const ctx: ShortcutActionsContext = {
       preventDefault: spies.preventDefault,
@@ -179,6 +180,8 @@ describe('buildShortcutActions', () => {
       setNewAgentOpen: spies.setNewAgentOpen,
       closeAgentTab: spies.closeAgentTab,
       toggleLeftPane: spies.toggleLeftPane,
+      getSubagentsCapability: () => ({ available: true }),
+      notifyUnavailable: spies.notifyUnavailable,
       ...overrides,
     };
     return { ctx, spies };
@@ -220,6 +223,31 @@ describe('buildShortcutActions', () => {
     expect(spies.setFocusedPane).toHaveBeenCalledWith('main');
     expect(spies.setMainTab).toHaveBeenCalledWith('agents');
     expect(spies.setNewAgentOpen).toHaveBeenCalledWith(true);
+  });
+
+  // pi-skills-capabilities FR-4: the shortcut must not silently no-op when
+  // the focused session's runtime cannot run subagents — same gate the AGENTS
+  // tab body and the palette's `new-agent` command already apply.
+  it('a/A surfaces the reason and does not open agents when subagents is unavailable', () => {
+    const { ctx, spies } = fakeCtx({
+      getActiveSessionId: () => 'sess-1',
+      getSubagentsCapability: () => ({ available: false, reason: 'not yet supported for Pi sessions' }),
+    });
+    buildShortcutActions(ctx).a();
+    expect(spies.preventDefault).toHaveBeenCalledTimes(1);
+    expect(spies.notifyUnavailable).toHaveBeenCalledWith('not yet supported for Pi sessions');
+    expect(spies.setFocusedPane).not.toHaveBeenCalled();
+    expect(spies.setMainTab).not.toHaveBeenCalled();
+    expect(spies.setNewAgentOpen).not.toHaveBeenCalled();
+  });
+
+  it('a/A falls back to a generic reason when the capability narrows without one', () => {
+    const { ctx, spies } = fakeCtx({
+      getActiveSessionId: () => 'sess-1',
+      getSubagentsCapability: () => ({ available: false }),
+    });
+    buildShortcutActions(ctx).a();
+    expect(spies.notifyUnavailable).toHaveBeenCalledWith('Action unavailable.');
   });
 
   // design 7a: 1/2 still move focus between the roster and the pane; 3-6 open

@@ -18,6 +18,15 @@ export interface AccountsSlice {
   /** Consumed once by AccountsModal's mount effect, then cleared — palette's "Add account". */
   accountsAutoAdd: boolean;
   setAccountsAutoAdd: (v: boolean) => void;
+  /**
+   * pi-models-metrics FR-1: one-shot request to open a Pi account's setup
+   * takeover the moment the modal mounts — `RuntimeModelFieldStatus.onOpenSetup`'s
+   * caller (the New Session form) closes itself and sets this before opening
+   * the Accounts modal. Same idiom as `accountsAutoAdd`: consumed once, then
+   * cleared, so re-opening the modal normally lands on the list.
+   */
+  accountsAutoPiSetupId: string | null;
+  setAccountsAutoPiSetupId: (accountId: string | null) => void;
 }
 
 export const createAccountsSlice: StateCreator<AppState, [], [], AccountsSlice> = (set) => ({
@@ -27,4 +36,6 @@ export const createAccountsSlice: StateCreator<AppState, [], [], AccountsSlice> 
   setAccountsOpen: (accountsOpen) => set({ accountsOpen }),
   accountsAutoAdd: false,
   setAccountsAutoAdd: (accountsAutoAdd) => set({ accountsAutoAdd }),
+  accountsAutoPiSetupId: null,
+  setAccountsAutoPiSetupId: (accountsAutoPiSetupId) => set({ accountsAutoPiSetupId }),
 });

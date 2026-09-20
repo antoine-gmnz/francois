@@ -9,10 +9,31 @@
 
 mod decisions;
 mod lifecycle;
+/// pi-migration-rollout FR-2/FR-3/FR-5: `session_create`'s whole
+/// `piProfile`/`profileId` decision, pure and testable without an
+/// `AppHandle` — a new file per `lifecycle.rs` already being over
+/// CLAUDE.md's ~1000-line cap, rather than growing it further.
+mod pi_profile;
+/// pi-skills-capabilities FR-5: `session_acknowledge_policy` — a LEAD
+/// ADDITION (see contract/session-engine.ts's own comment on
+/// `RuntimePolicyAcknowledgeInput`). A new file rather than growing
+/// `lifecycle.rs` (already over CLAUDE.md's ~1000-line cap).
+mod policy;
 mod queries;
+/// pi-models-metrics §5: `francois:runtime:models` / `francois:session:metrics`
+/// — a new file per this feature's own ownership notes, rather than growing
+/// `queries.rs`.
+mod runtime_models;
+/// pi-turn-controls: `session_submit` / `session_clear_queue` — the explicit-
+/// delivery send and the bulk queue clear. A new file per this feature's own
+/// ownership notes, rather than growing `turn.rs`.
+mod submit;
 mod turn;
 
 pub use decisions::*;
 pub use lifecycle::*;
+pub use policy::*;
 pub use queries::*;
+pub use runtime_models::*;
+pub use submit::*;
 pub use turn::*;

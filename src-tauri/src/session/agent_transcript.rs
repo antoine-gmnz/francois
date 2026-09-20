@@ -137,6 +137,13 @@ fn buf_block(
         // command-inspect FR-8: an agent tab's transcript is in-memory-only
         // and never captures — always false, never set anywhere else here.
         has_detail: false,
+        // pi-transcript-events: an agent-tab block is never Pi-produced (Pi
+        // has no subagent support, non-goals §2) — always absent here.
+        execution: None,
+        attachments: None,
+        outcome: None,
+        tone: None,
+        native_entry_id: None,
     }
 }
 
@@ -356,13 +363,12 @@ mod tests {
         let mut s = test_session();
         mint_agent(&mut s, "a1", "explorer", "toolu_d", true);
         let nb = push_agent_notice(&mut s, "a1", "ended with the turn").unwrap();
-        assert_eq!(
-            emitted_block(&nb.emission),
-            json!({
-                "kind": "notice", "blockId": "a1:1", "isStreaming": false,
-                "text": "ended with the turn",
-            })
-        );
+        let block = emitted_block(&nb.emission);
+        assert_eq!(block["kind"], "notice");
+        assert_eq!(block["blockId"], "a1:1");
+        assert_eq!(block["isStreaming"], false);
+        assert_eq!(block["text"], "ended with the turn");
+        assert!(block["at"].as_u64().is_some());
         assert!(push_agent_notice(&mut s, "a1", "").is_none());
     }
 

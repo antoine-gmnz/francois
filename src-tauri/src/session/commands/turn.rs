@@ -189,12 +189,39 @@ pub fn apply_unqueue(
 /// the running turn drains it (transcript-perf FR-19). Emits no event: the
 /// caller (conversation-view) removes the pending row itself on `removed:
 /// true`, and lets the eventual `message.user` clear it on `removed: false`.
+///
+/// pi-turn-controls FR-5: for a Pi session, the legacy `Session.queue` FIFO is
+/// not what holds a pending intent at all — the admissions ledger does, keyed
+/// by `clientMessageId` (a still-pending Pi intent has no transcript block to
+/// carry a `blockId` yet). `block_id` is read as that id for a Pi session
+/// only. Once Pi has accepted it (ledger state `queued`), individual removal
+/// answers `RUNTIME_UNSUPPORTED` — `session_clear_queue` is the only way to
+/// cancel it (never clear-and-re-enqueue, which could duplicate consumed work).
 #[tauri::command(async)]
 pub fn session_unqueue(
+    app: AppHandle,
     engine: State<'_, Engine>,
     session_id: String,
     block_id: String,
 ) -> IpcResult<UnqueueOutput> {
+    let agent_runtime = match engine.with_session(&session_id, |s| s.agent_runtime) {
+        Some(rt) => rt,
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
+    };
+    if agent_runtime == AgentRuntime::Pi {
+        return match engine.with_admissions(&session_id, |l| l.unqueue(&block_id)) {
+            admission::UnqueueOutcome::Removed => {
+                admission::write_admission_sidecar(&app, &engine, &session_id);
+                admission::publish_queue_changed(&app, &engine, &app, &session_id);
+                ok(UnqueueOutput { removed: true })
+            }
+            admission::UnqueueOutcome::Unsupported => err(
+                ErrorCode::RuntimeUnsupported,
+                "this message has already been accepted by the runtime — use Clear queue",
+            ),
+            admission::UnqueueOutcome::NotFound => ok(UnqueueOutput { removed: false }),
+        };
+    }
     let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     match apply_unqueue(&mut map, &session_id, &block_id) {
         Some(removed) => ok(UnqueueOutput { removed }),
@@ -210,6 +237,12 @@ pub fn session_compact(
 ) -> IpcResult<Option<()>> {
     if let Err((code, msg)) = engine.require_capability(&session_id, "compaction") {
         return err(code, msg);
+    }
+    // pi-turn-controls FR-8: a Pi session's compaction goes through its OWN
+    // runtime connection — never `spawn_claude` — and never falls through to
+    // the claude-shaped path below.
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Pi) {
+        return session_compact_pi(&app, &engine, &session_id);
     }
     // Snapshot cwd/model/resume/effort; enforce status.
     let (
@@ -370,6 +403,161 @@ pub fn session_compact(
         },
     );
     ok(None)
+}
+
+/// pi-turn-controls FR-8 ("Mark compacting until terminal result/settled
+/// state"): a Pi compaction holds the session BUSY for its whole duration,
+/// exactly as the claude-shaped `/compact` above does.
+///
+/// HIGH (review): it used to mark nothing at all, so while a compaction was
+/// in flight — up to `Deadlines::compaction`, 180 s — the session still read
+/// `idle` and three things were accepted against a connection busy
+/// compacting: a Normal submit (`admission::admit_and_deliver`'s FR-1
+/// mode/state matrix), a model/effort switch (`pi_settled_gate`) and a SECOND
+/// compaction (this claim).
+///
+/// A GUARD rather than paired calls: the compaction returns from four places
+/// (no connection, the wire call's error, its success, a panic), and one that
+/// left the session stuck `running` would need an app restart to clear.
+/// `on_status` is the emission half, injected so the claim itself needs no
+/// `AppHandle` and stays testable — the same shape `clear_queue_bracketed`
+/// (commands/submit.rs) uses, and for the same reason.
+struct CompactingClaim<'a> {
+    engine: &'a Engine,
+    session_id: &'a str,
+    on_status: &'a dyn Fn(&str),
+}
+
+impl<'a> CompactingClaim<'a> {
+    /// FR-8: accepted only while settled. A terminal session is
+    /// `SESSION_NOT_RUNNING`; anything in flight is `SESSION_BUSY` — NOT the
+    /// claude-shaped `/compact`'s `SESSION_ALREADY_RUNNING`: the contract
+    /// (`session-engine.ts`, `session_compact` for a Pi session) names
+    /// `SESSION_BUSY`, the code every other Pi verb refuses a busy session
+    /// with, and the webview keys its "busy" handling on it. The terminal
+    /// check is load-bearing here and not merely tidy: a `done`/`error`
+    /// session is not BUSY, so without it the mark below would resurrect a
+    /// dead session as `running`.
+    fn claim(
+        engine: &'a Engine,
+        session_id: &'a str,
+        on_status: &'a dyn Fn(&str),
+    ) -> Result<Self, AppError> {
+        let marked = engine.with_session_mut(session_id, |s| {
+            if status::is_terminal(&s.status) {
+                return Err(AppError::new(
+                    ErrorCode::SessionNotRunning,
+                    "session has ended",
+                ));
+            }
+            if status::is_busy(&s.status) {
+                return Err(AppError::new(
+                    ErrorCode::SessionBusy,
+                    "a turn is already running",
+                ));
+            }
+            s.status = status::RUNNING.into();
+            s.last_activity_at = now_ms();
+            Ok(())
+        });
+        match marked {
+            None => Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
+            Some(Err(e)) => Err(e),
+            Some(Ok(())) => {
+                on_status(status::RUNNING);
+                Ok(Self {
+                    engine,
+                    session_id,
+                    on_status,
+                })
+            }
+        }
+    }
+}
+
+impl Drop for CompactingClaim<'_> {
+    fn drop(&mut self) {
+        // Undoes ONLY its own mark. A `run.state`/`failure` envelope arriving
+        // mid-compaction owns the session's status (`runtime.rs`), and
+        // stamping `idle` over an `error` it just recorded would hide the
+        // failure the user needs to see.
+        let settled = self.engine.with_session_mut(self.session_id, |s| {
+            if s.status == status::RUNNING {
+                s.status = status::IDLE.into();
+                s.last_activity_at = now_ms();
+                true
+            } else {
+                false
+            }
+        });
+        if settled == Some(true) {
+            (self.on_status)(status::IDLE);
+        }
+    }
+}
+
+/// pi-turn-controls FR-8: manual compaction over the session's OWN Pi
+/// connection — never `spawn_claude`. Accepted only while idle; a failed
+/// compaction reports the error and touches neither the conversation nor its
+/// display history (nothing here mutates either).
+fn session_compact_pi(app: &AppHandle, engine: &Engine, session_id: &str) -> IpcResult<Option<()>> {
+    let on_status = |status: &str| {
+        emit(
+            app,
+            SessionEvent::Status {
+                session_id: session_id.into(),
+                status: status.into(),
+            },
+        )
+    };
+    let _compacting = match CompactingClaim::claim(engine, session_id, &on_status) {
+        Ok(claim) => claim,
+        Err(e) => return e.into(),
+    };
+    let Some(connection) = engine.runtime_connection_for(session_id) else {
+        return err(ErrorCode::RuntimeUnavailable, "runtime is not connected");
+    };
+    publish_compaction(app, engine, session_id, "started", None);
+    match connection.compact() {
+        Ok(()) => {
+            publish_compaction(app, engine, session_id, "completed", None);
+            ok(None)
+        }
+        Err(e) => {
+            // FR-8: "failure preserves conversation + display history" —
+            // this branch mutates neither; it only reports the error.
+            publish_compaction(app, engine, session_id, "failed", Some(e.message.clone()));
+            e.into()
+        }
+    }
+}
+
+/// FR-8: publish the `compaction` runtime event through the same envelope/
+/// sequencing every other Pi event uses. Best-effort — a session with no live
+/// runtime-event producer yet has nothing to publish through.
+fn publish_compaction(
+    app: &AppHandle,
+    engine: &Engine,
+    session_id: &str,
+    state: &str,
+    message: Option<String>,
+) {
+    if let Ok((batch, _block)) = engine.runtime_event_for_session(
+        app,
+        session_id,
+        now_ms(),
+        None,
+        None,
+        events::RuntimeEventPayload::Compaction {
+            state: state.into(),
+            automatic: false,
+            message,
+        },
+    ) {
+        for ev in batch {
+            emit(app, ev);
+        }
+    }
 }
 
 /// Outcome of the /clear full-reset mutation, applied under the sessions lock.
@@ -568,6 +756,111 @@ mod tests {
         let engine = test_engine_with(test_session());
         let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(apply_unqueue(&mut map, "nope", "b1"), None);
+    }
+
+    // ---------- pi-turn-controls FR-8: a compaction marks the session busy ----------
+
+    /// HIGH (review): the Pi compaction marked nothing, so everything that
+    /// gates on the session being settled let work through while it ran.
+    ///
+    /// This proves the mark and the SECOND-compaction refusal. The other two
+    /// refusals the mark buys are covered where those gates live, against the
+    /// very status asserted here: a Normal submit in
+    /// `admission::deliver`'s `the_delivery_mode_matrix_survives_the_gate_extraction`,
+    /// a model/effort switch in `lifecycle`'s
+    /// `pi_settled_gate_rejects_a_busy_session_as_session_busy`.
+    #[test]
+    fn a_pi_compaction_marks_the_session_busy_and_refuses_a_second_one() {
+        let engine = test_engine_with(test_session());
+        let statuses = std::cell::RefCell::new(Vec::new());
+        let on_status = |s: &str| statuses.borrow_mut().push(s.to_string());
+        {
+            let _claim = CompactingClaim::claim(&engine, "s1", &on_status)
+                .expect("an idle session accepts a compaction");
+            assert_eq!(
+                engine.with_session("s1", |s| s.status.clone()).unwrap(),
+                status::RUNNING,
+                "every settled-gate in the codebase reads this status"
+            );
+            let second = CompactingClaim::claim(&engine, "s1", &on_status)
+                .err()
+                .expect("a second compaction must be refused mid-compaction");
+            assert_eq!(second.code, ErrorCode::SessionBusy);
+        }
+        assert_eq!(
+            engine.with_session("s1", |s| s.status.clone()).unwrap(),
+            status::IDLE,
+            "the claim releases on scope exit, not only on the success path"
+        );
+        assert_eq!(*statuses.borrow(), vec![status::RUNNING, status::IDLE]);
+    }
+
+    /// The guard exists because `session_compact_pi` returns from four places.
+    /// A panic is the one an explicit `s.status = idle` after the wire call
+    /// could never have covered.
+    #[test]
+    fn a_panic_during_a_compaction_still_settles_the_session() {
+        let engine = test_engine_with(test_session());
+        let on_status = |_: &str| {};
+        // The panic below prints, as any caught panic does — that is the
+        // point of the test, not a failure.
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _claim = CompactingClaim::claim(&engine, "s1", &on_status).unwrap();
+            panic!("the wire call blew up");
+        }));
+        assert!(panicked.is_err());
+        assert_eq!(
+            engine.with_session("s1", |s| s.status.clone()).unwrap(),
+            status::IDLE
+        );
+    }
+
+    #[test]
+    fn a_terminal_session_is_never_resurrected_by_a_compaction_claim() {
+        let on_status = |_: &str| {};
+        for terminal in ["done", status::ERROR] {
+            let mut s = test_session();
+            s.status = terminal.into();
+            let engine = test_engine_with(s);
+            let err = CompactingClaim::claim(&engine, "s1", &on_status)
+                .err()
+                .expect("a terminal session accepts no compaction");
+            assert_eq!(err.code, ErrorCode::SessionNotRunning, "{terminal}");
+            assert_eq!(
+                engine.with_session("s1", |s| s.status.clone()).unwrap(),
+                terminal,
+                "the refused claim must not have marked it running"
+            );
+        }
+    }
+
+    #[test]
+    fn a_compaction_claim_on_an_unknown_session_is_not_found() {
+        let engine = test_engine_with(test_session());
+        let on_status = |_: &str| {};
+        let err = CompactingClaim::claim(&engine, "nope", &on_status)
+            .err()
+            .expect("an unknown id has nothing to compact");
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
+    }
+
+    /// FR-8/`runtime.rs`: a `failure` envelope arriving mid-compaction owns
+    /// the status. Releasing the claim must not stamp `idle` over the error
+    /// the user needs to see.
+    #[test]
+    fn the_claim_never_overwrites_a_status_something_else_already_moved() {
+        let engine = test_engine_with(test_session());
+        let statuses = std::cell::RefCell::new(Vec::new());
+        let on_status = |s: &str| statuses.borrow_mut().push(s.to_string());
+        {
+            let _claim = CompactingClaim::claim(&engine, "s1", &on_status).unwrap();
+            engine.with_session_mut("s1", |s| s.status = status::ERROR.into());
+        }
+        assert_eq!(
+            engine.with_session("s1", |s| s.status.clone()).unwrap(),
+            status::ERROR
+        );
+        assert_eq!(*statuses.borrow(), vec![status::RUNNING]);
     }
 
     #[test]

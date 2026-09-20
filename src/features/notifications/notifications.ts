@@ -13,6 +13,7 @@ import {
 import type { SessionId } from '../../../contract/common';
 import type { NotifyClass, NotifyTrigger } from '../../../contract/notifications';
 import { NOTIFICATION_TITLE, notificationBody } from '../../../contract/notifications';
+import { demoFocusWindow, demoWindowIsFocused, demoWindowOnFocusChanged } from '../../demo/demo';
 import { visibleSessionIds } from '../../lib/layoutStore';
 import { useNotificationsStore } from '../../lib/notificationsStore';
 import { useStore } from '../../lib/store';
@@ -88,8 +89,17 @@ function handleTrigger(trigger: NotifyTrigger): void {
   void fire(trigger);
 }
 
-/** FR-13: click-to-focus — best-effort, see contract/notifications.ts §5 desktop limitation. */
+/**
+ * FR-13: click-to-focus — best-effort, see contract/notifications.ts §5
+ * desktop limitation. pr-142 §9: `getCurrentWindow()` throws with no Tauri
+ * runtime behind it — guarded exactly like `api.ts`'s `ipc()`/`stream()`, so
+ * the demo build (no Tauri) never constructs a real Window.
+ */
 function focusFrancois(): void {
+  if (__FRANCOIS_DEMO__) {
+    demoFocusWindow();
+    return;
+  }
   const win = getCurrentWindow();
   void win.unminimize().catch(() => {});
   void win.setFocus().catch(() => {});
@@ -114,21 +124,32 @@ export function initNotifications(): void {
   registerTriggerSink(handleTrigger);
 
   // FR-9: seed once, then track live changes; either rejecting leaves the
-  // conservative `true` default rather than over-notifying.
-  const win = getCurrentWindow();
-  void win
-    .isFocused()
-    .then((f) => {
+  // conservative `true` default rather than over-notifying. pr-142 §9: the
+  // demo build has no Tauri runtime to back getCurrentWindow() with — routed
+  // through the same demo seam focusFrancois() uses above.
+  if (__FRANCOIS_DEMO__) {
+    void demoWindowIsFocused().then((f) => {
       windowFocused = f;
-    })
-    .catch(() => {
-      windowFocused = true;
     });
-  void win
-    .onFocusChanged(({ payload }) => {
-      windowFocused = payload;
-    })
-    .catch(() => {});
+    void demoWindowOnFocusChanged((f) => {
+      windowFocused = f;
+    });
+  } else {
+    const win = getCurrentWindow();
+    void win
+      .isFocused()
+      .then((f) => {
+        windowFocused = f;
+      })
+      .catch(() => {
+        windowFocused = true;
+      });
+    void win
+      .onFocusChanged(({ payload }) => {
+        windowFocused = payload;
+      })
+      .catch(() => {});
+  }
 
   void onAction(handleNotificationAction).catch(() => {
     /* best-effort per contract/notifications.ts §5 desktop limitation */

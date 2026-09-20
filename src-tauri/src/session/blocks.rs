@@ -28,26 +28,35 @@ fn with_at(mut o: Value, b: &BufBlock) -> Value {
 /// conversation-view). Mirrors classifyToolStart in the TS contract.
 pub fn classify_block(b: &BufBlock) -> Value {
     match b.kind {
-        BlockKind::User => with_at(
-            serde_json::json!({
+        BlockKind::User => {
+            let mut o = serde_json::json!({
                 "kind": "user", "blockId": b.block_id, "isStreaming": b.streaming,
                 "text": b.text,
-            }),
-            b,
-        ),
+            });
+            // pi-transcript-events FR-7: present only on runtimes that resolve
+            // attachments (Pi) — absent, never an empty array, on every other
+            // runtime's user blocks.
+            if let Some(a) = &b.attachments {
+                o["attachments"] = a.clone();
+            }
+            with_at(o, b)
+        }
         BlockKind::Assistant => {
             let (gc, bc) = if b.streaming {
                 ("#c3f53f", "#e6e9ef")
             } else {
                 ("#8b93a3", "#c3c9d4")
             };
-            with_at(
-                serde_json::json!({
-                    "kind": "assistant", "blockId": b.block_id, "isStreaming": b.streaming,
-                    "glyph": "\u{25CF}", "glyphColor": gc, "bodyColor": bc, "text": b.text,
-                }),
-                b,
-            )
+            let mut o = serde_json::json!({
+                "kind": "assistant", "blockId": b.block_id, "isStreaming": b.streaming,
+                "glyph": "\u{25CF}", "glyphColor": gc, "bodyColor": bc, "text": b.text,
+            });
+            // pi-transcript-events FR-9: absent on runtimes that predate the
+            // field — a normal completion, not "unknown".
+            if let Some(outcome) = &b.outcome {
+                o["outcome"] = Value::String(outcome.clone());
+            }
+            with_at(o, b)
         }
         BlockKind::Tool => {
             let (glyph, gc) = tool_glyph(&b.tool);
@@ -64,6 +73,11 @@ pub fn classify_block(b: &BufBlock) -> Value {
             // pre-feature or record-less block is byte-identical to today.
             if b.has_detail {
                 o["hasDetail"] = Value::Bool(true);
+            }
+            // pi-transcript-events FR-3/FR-4: required on every Pi-produced
+            // tool block; absent on tool blocks from runtimes that predate it.
+            if let Some(execution) = &b.execution {
+                o["execution"] = execution.clone();
             }
             with_at(o, b)
         }
@@ -83,12 +97,21 @@ pub fn classify_block(b: &BufBlock) -> Value {
             }
             with_at(o, b)
         }
-        BlockKind::Notice => serde_json::json!({
+        BlockKind::Notice => {
             // agent-tab FR-4: AgentNoticeBlock — appended already final, so it
             // never streams and carries no glyph/color (the tab owns those).
-            "kind": "notice", "blockId": b.block_id, "isStreaming": false,
-            "text": b.text,
-        }),
+            let mut o = serde_json::json!({
+                "kind": "notice", "blockId": b.block_id, "isStreaming": false,
+                "text": b.text,
+            });
+            // pi-transcript-events FR-5: NoticeConversationBlock's `tone` —
+            // set only when this Notice was appended to a SESSION transcript
+            // (never on an agent-tab AgentNoticeBlock, which has no such field).
+            if let Some(tone) = &b.tone {
+                o["tone"] = Value::String(tone.clone());
+            }
+            with_at(o, b)
+        }
         BlockKind::Command => {
             // CommandConversationBlock (contract/interactive-commands.ts): `card` absent while pending.
             let mut o = serde_json::json!({
@@ -298,5 +321,81 @@ mod tests {
         let tool = classify_block(&s.block_buffer[2]);
         assert_eq!(tool["kind"], "tool");
         assert!(tool.get("agentModel").is_none());
+    }
+
+    // ---------- pi-transcript-events: execution/attachments/outcome/tone ----------
+
+    #[test]
+    fn classify_block_user_attachments_present_only_when_set() {
+        let mut s = test_session();
+        s.buf_user("u1", "hi".into());
+        assert!(classify_block(&s.block_buffer[0])
+            .get("attachments")
+            .is_none());
+
+        s.block_buffer[0].attachments = Some(json!([
+            { "id": "a1", "name": "cat.png", "mimeType": "image/png", "state": "available" }
+        ]));
+        let block = classify_block(&s.block_buffer[0]);
+        assert_eq!(block["attachments"][0]["id"], "a1");
+    }
+
+    #[test]
+    fn classify_block_assistant_outcome_present_only_when_set() {
+        let mut s = test_session();
+        s.buf_assistant("a1", "hi".into());
+        assert!(classify_block(&s.block_buffer[0]).get("outcome").is_none());
+
+        s.block_buffer[0].outcome = Some("interrupted".into());
+        assert_eq!(classify_block(&s.block_buffer[0])["outcome"], "interrupted");
+    }
+
+    #[test]
+    fn classify_block_tool_execution_present_only_when_set() {
+        let mut s = test_session();
+        s.buf_tool("t1", "Bash".into(), "npm test".into(), false, None);
+        assert!(classify_block(&s.block_buffer[0])
+            .get("execution")
+            .is_none());
+
+        s.block_buffer[0].execution = Some(json!({
+            "id": "t1", "name": "Bash", "status": "running",
+            "inputText": "npm test", "outputText": "",
+            "inputTruncated": false, "outputTruncated": false,
+        }));
+        let block = classify_block(&s.block_buffer[0]);
+        assert_eq!(block["execution"]["status"], "running");
+        assert_eq!(block["execution"]["id"], "t1");
+    }
+
+    #[test]
+    fn classify_block_notice_tone_present_only_when_set() {
+        let notice = BufBlock {
+            text: "unsupported content".into(),
+            ..BufBlock::new("n1", BlockKind::Notice)
+        };
+        // agent-tab's own notices carry no tone — the field stays absent.
+        assert!(classify_block(&notice).get("tone").is_none());
+
+        let toned = BufBlock {
+            tone: Some("warning".into()),
+            ..notice
+        };
+        let block = classify_block(&toned);
+        assert_eq!(block["kind"], "notice");
+        assert_eq!(block["tone"], "warning");
+        assert_eq!(block["text"], "unsupported content");
+    }
+
+    #[test]
+    fn classify_block_notice_preserves_its_timestamp() {
+        let notice = BufBlock {
+            text: "compacting".into(),
+            tone: Some("info".into()),
+            at: 42,
+            ..BufBlock::new("n1", BlockKind::Notice)
+        };
+
+        assert_eq!(classify_block(&notice)["at"], 42);
     }
 }

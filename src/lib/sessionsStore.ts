@@ -15,7 +15,15 @@
 import type { StateCreator } from 'zustand';
 import type { RuntimeEventEnvelope, SessionId, SessionMeta } from '../../contract/common';
 import { dropSessionTabs, mainTabAfterClose } from '../features/agents/agent-tab';
+// pi-turn-controls: queue.changed/compaction/retry route to their OWN
+// per-session stores (never the fleet cache) — see applyRuntimeEvent below.
+import { clearQueueState, setQueueEntries } from './pi-queue';
+import { clearTurnProgress, setCompactionProgress, setRetryProgress } from './pi-turn-progress';
+// pi-models-metrics: model.changed/metrics DO land on the fleet cache — the
+// run chip, roster context bar and every other SessionMeta reader need them.
+import { modelInfoFromRuntimeDescriptor } from './runtime-model-info';
 import type { MainTab } from './agentTabStore';
+import { deepEqual } from './deep-equal';
 import { closeStreamsForRemovedPanels } from './extensionsStore';
 import {
   clampPaneIndex,
@@ -111,13 +119,24 @@ function compact(s: AppState, extraPanes: PaneSlot[]): Partial<AppState> {
   };
 }
 
-export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> = (set) => ({
+export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> = (set, get) => ({
   sessions: [],
   setSessions: (sessions) => set({ sessions }),
   upsertSession: (m) =>
     set((s) => {
       const i = s.sessions.findIndex((x) => x.id === m.id);
       if (i === -1) return { sessions: [...s.sessions, m] }; // append on create (FR-2)
+      // pi-session-durability: a reconnect refused with the SAME recovery
+      // state (e.g. a Retry that still finds the native file missing)
+      // republishes an otherwise-identical session.meta — bail like every
+      // other patch here rather than mint a new array for a no-op update.
+      // Both sides are plain JSON off the same wire shape, so value equality
+      // is a safe stand-in for a hand-rolled field-by-field comparison — but
+      // it has to be STRUCTURAL: the cached side may have been rebuilt here
+      // (`{ ...session, model, runtimeModel, effort }`), which reorders the
+      // fields serde emitted, and a textual JSON compare reads that as a
+      // change while serialising both whole objects to find out.
+      if (deepEqual(s.sessions[i], m)) return {};
       const next = s.sessions.slice();
       next[i] = m; // update in place, position preserved
       return { sessions: next };
@@ -158,7 +177,64 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       next[i] = { ...cur, contextUsedTokens: used, contextLimitTokens: limit, lastActivityAt: Date.now() };
       return { sessions: next };
     }),
-  applyRuntimeEvent: (event) =>
+  applyRuntimeEvent: (event) => {
+    // The routing decision happens OUT HERE, not inside the `set` updater: an
+    // updater must be pure (it may run more than once, and it runs before the
+    // new state is committed), and the control kinds below write to external
+    // per-session stores that notify their own subscribers.
+    switch (event.event.kind) {
+      // Transcript events belong to the conversation reducer. Bail before
+      // calling `set` at all, so fleet subscribers retain the sessions array
+      // reference.
+      case 'message.user':
+      case 'assistant.delta':
+      case 'assistant.complete':
+      case 'tool.update':
+      case 'notice':
+        return;
+      // pi-turn-controls: these three never touch the `sessions` array — they
+      // route to their own per-session stores (./pi-queue, ./pi-turn-progress)
+      // so the composer/queue strip re-renders without invalidating the fleet
+      // cache for every OTHER subscriber. Same generation guard as the map
+      // below: a stale child must never repaint a session that moved on.
+      //
+      // An event for a session the cache does not hold is DROPPED rather than
+      // buffered: the router (session-events.ts `acceptsRuntimeEvent`) only
+      // forwards an event whose generation it already matched against a cursor
+      // established from the same `session.meta` this cache is upserted from,
+      // so "generation not known yet" is not an ordering the wiring produces —
+      // a missing owner means the session is gone. Buffering one would park a
+      // ledger under an id nothing ever clears (`clearQueueState` runs on
+      // removal of a CACHED session).
+      case 'queue.changed':
+      case 'compaction':
+      case 'retry': {
+        const owner = get().sessions.find((session) => session.id === event.sessionId);
+        if (!owner || owner.runtimeGeneration !== event.generation) return;
+        if (event.event.kind === 'queue.changed') setQueueEntries(event.sessionId, event.event.entries);
+        else if (event.event.kind === 'compaction') setCompactionProgress(event.sessionId, event.event);
+        else setRetryProgress(event.sessionId, event.event);
+        return;
+      }
+      case 'capabilities':
+      case 'failure':
+      case 'run.state':
+      case 'model.changed':
+      case 'metrics':
+        break;
+      // A kind this build's RuntimeEventPayload union does not know about —
+      // e.g. an older webview talking to a newer core that shipped a 14th
+      // variant. The `never` assignment is a compile-time trip wire only
+      // (it fails typecheck the day this union and the core's drift); AT
+      // RUNTIME this arm must drop the unrecognised payload rather than fall
+      // through to the `set` below, whose map would rebuild the whole fleet
+      // array for an event it cannot apply.
+      default: {
+        const _exhaustive: never = event.event;
+        void _exhaustive;
+        return;
+      }
+    }
     set((s) => ({
       sessions: s.sessions.map((session) => {
         // A fresh session.meta establishes the new generation. An old child is
@@ -169,6 +245,22 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
             return { ...session, effectiveCapabilities: event.event.capabilities };
           case 'failure':
             return { ...session, errorMessage: event.event.failure.message };
+          // pi-models-metrics FR-5/FR-6: published only AFTER the core read the
+          // switch back from the runtime — `model`/`runtimeModel` and `effort`
+          // are replaced wholesale with the ACCEPTED values, never guessed at
+          // optimistically. Absent `effort` clears any previous level, the same
+          // "no effort" state a model with no advertised levels always has.
+          case 'model.changed':
+            return {
+              ...session,
+              model: modelInfoFromRuntimeDescriptor(event.event.model, session.accountId),
+              runtimeModel: event.event.model.ref,
+              effort: event.event.effort,
+            };
+          // pi-models-metrics FR-7: the runtime's own usage snapshot, stored
+          // verbatim — never synthesized from contextUsedTokens/contextLimitTokens.
+          case 'metrics':
+            return { ...session, metrics: event.event.metrics };
           case 'run.state':
             return {
               ...session,
@@ -181,10 +273,20 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
                       ? 'starting'
                       : 'running',
             };
+          // pi-transcript-events: transcript-block kinds are owned by the
+          // conversation-view transcript reducer (conversation-blocks.ts), not
+          // the session cache — no session field changes here. Listed
+          // explicitly (rather than a `default`) so adding a sixth
+          // RuntimeEventPayload kind fails typecheck here instead of
+          // silently falling through unhandled.
         }
+        // The exhaustive guard above makes this unreachable at runtime, but
+        // TypeScript does not carry that narrowing into the map callback.
+        return session;
       }),
-    })),
-  removeSession: (id) =>
+    }));
+  },
+  removeSession: (id) => {
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id);
       // split-by-4 FR-27: the session is gone from every SESSION pane it sat in
@@ -199,7 +301,15 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       const agentTabs = dropSessionTabs(s.agentTabs, id);
       if (extraPanes.length === s.extraPanes.length) return { sessions, agentTabs };
       return { sessions, agentTabs, ...compact(s, extraPanes) };
-    }),
+    });
+    // pi-turn-controls: …and its queue ledger + compaction/retry progress — a
+    // no-op for every non-Pi session, since neither map ever held an entry.
+    // AFTER the `set`, not inside its updater: both are external stores whose
+    // subscribers read the fleet cache, and from inside the updater they woke
+    // up to a cache that still listed the session being removed.
+    clearQueueState(id);
+    clearTurnProgress(id);
+  },
 
   activeSessionId: null,
   // The USER's pick of the left pane's session (agent-tab FR-14's tab reset

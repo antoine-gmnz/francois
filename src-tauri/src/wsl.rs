@@ -77,6 +77,42 @@ pub fn wsl_base_args(cwd: &str) -> Vec<String> {
     }
 }
 
+/// Merge `entries` into an existing `WSLENV` value. A variable set on the
+/// Windows side does NOT cross `wsl.exe`'s boundary on its own; `WSLENV` is
+/// what names the ones that do (`/u` = pass it in, `/p` = translate its
+/// Windows path to the `/mnt/…` form). Appending to the inherited list rather
+/// than overwriting it keeps whatever the user's environment already forwards,
+/// and a variable already listed — whatever its flags — is never added twice.
+///
+/// Pure over an explicit `existing` so the merge rules are testable without
+/// mutating a global every other test can see. `session::spawn` carries the
+/// same merge for the `claude` runtime and should collapse onto this one (it
+/// belongs to another agent in this wave — see this PR's handoff).
+pub fn merge_wsl_env(existing: Option<&str>, entries: &[&str]) -> String {
+    let mut list: Vec<String> = existing
+        .filter(|v| !v.is_empty())
+        .map(|v| {
+            v.trim_end_matches(':')
+                .split(':')
+                .filter(|e| !e.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    for entry in entries {
+        // `NAME/flags` — an entry already forwarding this variable (whatever
+        // its flags) wins, so the same variable is never emitted twice.
+        let name = entry.split('/').next().unwrap_or(entry);
+        let already = list
+            .iter()
+            .any(|e| e == entry || e.split('/').next().unwrap_or(e) == name);
+        if !already {
+            list.push((*entry).to_string());
+        }
+    }
+    list.join(":")
+}
+
 /// Decode output from a `wsl.exe` spawn for human display. wsl.exe reports its
 /// OWN failures (unknown distro, bad `--cd`, WSL not installed) in UTF-16LE —
 /// the same trap as `wsl -l -q` — while anything a program INSIDE the distro
@@ -335,6 +371,41 @@ mod tests {
         // Drive path: wsl.exe maps it to /mnt/… itself (confirmed live); no -d —
         // there is no distro information, the default is the only sane target.
         assert_eq!(wsl_base_args("D:\\acme-api"), vec!["--cd", "D:\\acme-api"]);
+    }
+
+    // ---- merge_wsl_env ----
+
+    #[test]
+    fn merging_wslenv_appends_without_clobbering_or_duplicating() {
+        assert_eq!(
+            merge_wsl_env(None, &["PI_CODING_AGENT_DIR/u"]),
+            "PI_CODING_AGENT_DIR/u"
+        );
+        assert_eq!(merge_wsl_env(Some(""), &["TERM/u"]), "TERM/u");
+        // The inherited list survives — a variable the user's environment
+        // already forwards must keep crossing.
+        assert_eq!(
+            merge_wsl_env(Some("FOO/u"), &["TERM/u", "PI_CODING_AGENT_DIR/u"]),
+            "FOO/u:TERM/u:PI_CODING_AGENT_DIR/u"
+        );
+        assert_eq!(merge_wsl_env(Some("FOO/u:"), &["TERM/u"]), "FOO/u:TERM/u");
+        // An entry already forwarding the variable wins, whatever its flags —
+        // the same variable must never appear twice in one list.
+        assert_eq!(
+            merge_wsl_env(Some("PI_CODING_AGENT_DIR/up"), &["PI_CODING_AGENT_DIR/u"]),
+            "PI_CODING_AGENT_DIR/up"
+        );
+        assert_eq!(merge_wsl_env(Some("TERM/u"), &["TERM/u"]), "TERM/u");
+        // …and it keeps its PLACE: an already-present entry is not re-appended
+        // behind the new one (multi-account FR-24, previously pinned in
+        // `session::spawn`, which now shares this merge).
+        assert_eq!(
+            merge_wsl_env(
+                Some("CLAUDE_CONFIG_DIR/up"),
+                &["TERM/u", "CLAUDE_CONFIG_DIR/up"]
+            ),
+            "CLAUDE_CONFIG_DIR/up:TERM/u"
+        );
     }
 
     // ---- decode_wsl_output ----

@@ -14,8 +14,14 @@
 //! real captures identify the certified artifact; provisional fixtures are
 //! labelled."
 
+// `Deserialize` is in scope as a trait too: `parse_value` deserializes a
+// response straight out of a borrowed `Value`.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+mod images;
+
+pub(crate) use images::{build_prompt_body, PiPromptImage};
 
 /// FR-2: one wire record (a line, before its LF) may be at most this large.
 pub(crate) const MAX_RECORD_BYTES: usize = 32 * 1024 * 1024;
@@ -91,6 +97,36 @@ pub(crate) enum PiCommandKind {
     Prompt,
     /// The one cancellation verb this MVP wires up (`RuntimeSessionControl::cancel`).
     Interrupt,
+    /// pi-session-durability FR-4: fetch the durable entry list (+ leaf id)
+    /// used to rebuild the François projection on reconnect. Read-only, never
+    /// a model call — classified like `Interrupt`.
+    GetEntries,
+    /// pi-models-metrics FR-1/FR-2: the no-session discovery probe. Never
+    /// dispatched through `ProtocolEngine`/`PiConnection` — see
+    /// `adapter::pi::models`'s own module doc for why this command is issued
+    /// over a short-lived, ad-hoc round trip instead.
+    GetAvailableModels,
+    /// pi-models-metrics FR-5/FR-6: change the session's active model/effort.
+    /// Read-only in the FR-5 sense that it never carries a user prompt.
+    SetModel,
+    /// pi-models-metrics FR-7: read current usage/cost off the runtime.
+    GetSessionStats,
+    /// pi-turn-controls FR-5/FR-6: the audit-named verb, distinct from
+    /// `Interrupt` (the linked RPC doc: "clear_queue and abort are
+    /// separate") — clears whatever Pi is currently holding in its OWN
+    /// prompt queue. Part of the Stop sequence (`adapter::pi::controls`).
+    ClearQueue,
+    /// pi-turn-controls FR-6: aborts the in-flight turn. Sent AFTER
+    /// `ClearQueue` in the Stop sequence — never assumed to also clear the
+    /// queue (the audit's own distinction).
+    Abort,
+    /// pi-turn-controls FR-8: manual compaction over this connection — never
+    /// a claude side-spawn, and bounded by the 180s `compaction` deadline.
+    Compact,
+    /// pi-skills-capabilities FR-1: the runtime's own loaded skills/
+    /// templates — certified as a required command (`fixtures/manifest.json`).
+    /// Read-only, classified like `GetEntries`/`GetSessionStats`.
+    GetCommands,
 }
 
 impl PiCommandKind {
@@ -99,6 +135,14 @@ impl PiCommandKind {
             Self::GetState => "get_state",
             Self::Prompt => "prompt",
             Self::Interrupt => "interrupt",
+            Self::GetEntries => "get_entries",
+            Self::GetAvailableModels => "get_available_models",
+            Self::SetModel => "set_model",
+            Self::GetSessionStats => "get_session_stats",
+            Self::ClearQueue => "clear_queue",
+            Self::Abort => "abort",
+            Self::Compact => "compact",
+            Self::GetCommands => "get_commands",
         }
     }
 }
@@ -117,9 +161,58 @@ pub(crate) enum PiCommandBody {
     #[serde(rename = "get_state")]
     GetState,
     #[serde(rename = "prompt")]
-    Prompt { text: String },
+    Prompt {
+        text: String,
+        /// FR-7: empty for a text-only prompt, so the wire shape is
+        /// byte-identical to before this field existed for the common case.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        images: Vec<PiPromptImage>,
+    },
     #[serde(rename = "interrupt")]
     Interrupt,
+    /// pi-session-durability FR-4: `cursor` is the previously-recorded entry
+    /// cursor (`PiResumeRecord.lastEntryId`), absent on a first fetch — a
+    /// full re-fetch happens EVERY reconnect regardless (this feature does no
+    /// incremental sync), but a cursor still lets a certified Pi page a large
+    /// session rather than answering unbounded (FR-6).
+    #[serde(rename = "get_entries")]
+    GetEntries {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
+    },
+    /// pi-models-metrics FR-1/FR-2: no fields — the no-session probe asks for
+    /// the whole available snapshot.
+    #[serde(rename = "get_available_models")]
+    GetAvailableModels,
+    /// pi-models-metrics FR-5/FR-6: `effort` omitted clears/leaves the level
+    /// to the model's own default, matching `SessionSwitchEffortInput`'s
+    /// clear-on-absent convention.
+    #[serde(rename = "set_model")]
+    SetModel {
+        #[serde(rename = "providerId")]
+        provider_id: String,
+        #[serde(rename = "modelId")]
+        model_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
+    },
+    /// pi-models-metrics FR-7: no fields — always the CURRENT session's stats.
+    #[serde(rename = "get_session_stats")]
+    GetSessionStats,
+    /// pi-turn-controls FR-5/FR-6: no fields.
+    #[serde(rename = "clear_queue")]
+    ClearQueue,
+    /// pi-turn-controls FR-6: no fields.
+    #[serde(rename = "abort")]
+    Abort,
+    /// pi-turn-controls FR-8: no fields — always the CURRENT session's
+    /// conversation.
+    #[serde(rename = "compact")]
+    Compact,
+    /// pi-skills-capabilities FR-1: no fields — always the CURRENT
+    /// session's own loaded commands.
+    #[serde(rename = "get_commands")]
+    GetCommands,
 }
 
 impl PiCommand {
@@ -128,6 +221,14 @@ impl PiCommand {
             PiCommandBody::GetState => PiCommandKind::GetState,
             PiCommandBody::Prompt { .. } => PiCommandKind::Prompt,
             PiCommandBody::Interrupt => PiCommandKind::Interrupt,
+            PiCommandBody::GetEntries { .. } => PiCommandKind::GetEntries,
+            PiCommandBody::GetAvailableModels => PiCommandKind::GetAvailableModels,
+            PiCommandBody::SetModel { .. } => PiCommandKind::SetModel,
+            PiCommandBody::GetSessionStats => PiCommandKind::GetSessionStats,
+            PiCommandBody::ClearQueue => PiCommandKind::ClearQueue,
+            PiCommandBody::Abort => PiCommandKind::Abort,
+            PiCommandBody::Compact => PiCommandKind::Compact,
+            PiCommandBody::GetCommands => PiCommandKind::GetCommands,
         }
     }
 
@@ -157,11 +258,22 @@ pub(crate) struct PiResponse {
 /// mandatory fields are enforced — a missing one is a protocol failure).
 /// `Unknown` carries the raw kind string for the per-kind/per-generation
 /// diagnostic notice.
+///
+/// pi-transcript-events FR-1 (review round 3): `Recognized` carries the raw
+/// kind for the FR-1 transcript event vocabulary (`message_start`,
+/// `content_delta`, `text_end`, `message_end`, `toolcall_start/delta/end`,
+/// `tool_execution_start/update/end`, `compaction_start/end`, `retry`,
+/// `queue_update`) — these are known, healthy wire traffic that
+/// `normalize::TranscriptReducer` (fed the same raw line separately by
+/// `dispatcher::apply_transcript_line`) already owns; `ProtocolEngine` must
+/// not count them as errors or diagnose them as unknown. `Unknown` stays
+/// reserved for genuinely unrecognized kinds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PiEvent {
     AgentSettled,
     AgentEnd,
     TurnEnd,
+    Recognized(&'static str),
     Unknown(String),
 }
 
@@ -187,7 +299,12 @@ pub(crate) enum ParseError {
 
 /// A response carries `id`+`command`+`success`; an event carries `type` and
 /// none of those three — the discriminator between the two frame shapes.
-fn looks_like_response(value: &Value) -> bool {
+///
+/// pi-transcript-events: also what `dispatcher::spawn_reader` uses to decide
+/// whether a raw line is worth handing to `normalize::TranscriptReducer` at
+/// all — a response object has no `type` field, so feeding it there would
+/// misread as "a transcript event missing its type" and fail the reducer.
+pub(crate) fn looks_like_response(value: &Value) -> bool {
     value.get("id").and_then(Value::as_str).is_some()
         && value.get("command").and_then(Value::as_str).is_some()
         && value.get("success").and_then(Value::as_bool).is_some()
@@ -197,19 +314,27 @@ fn looks_like_event(value: &Value) -> bool {
     value.get("type").is_some()
 }
 
-/// FR-2/FR-3: parse one already-framed, already-decoded line. Pure — no
-/// correlation-table lookups here (that is the dispatcher's job); this only
-/// decides what SHAPE the line is and whether a known event's mandatory
-/// fields are present.
+/// FR-2/FR-3: parse one already-framed line. Pure — no correlation-table
+/// lookups here (that is the dispatcher's job); this only decides what SHAPE
+/// the line is and whether a known event's mandatory fields are present.
 pub(crate) fn parse_line(line: &str) -> Result<Frame, ParseError> {
     let value: Value = serde_json::from_str(line).map_err(|_| ParseError::InvalidJson)?;
-    if looks_like_response(&value) {
-        let resp: PiResponse =
-            serde_json::from_value(value).map_err(|_| ParseError::InvalidJson)?;
+    parse_value(&value)
+}
+
+/// [`parse_line`] for a line that has ALREADY been decoded to a `Value`. The
+/// reader decodes each line once (it hands the same `Value` to
+/// `normalize::TranscriptReducer` too), so `protocol.rs` classifying it from
+/// here costs no second `from_str` over a record that may be megabytes.
+pub(crate) fn parse_value(value: &Value) -> Result<Frame, ParseError> {
+    if looks_like_response(value) {
+        // By reference: only the fields `PiResponse` names are copied out,
+        // and the caller keeps its `Value`.
+        let resp = PiResponse::deserialize(value).map_err(|_| ParseError::InvalidJson)?;
         return Ok(Frame::Response(resp));
     }
-    if looks_like_event(&value) {
-        return parse_event(&value).map(Frame::Event);
+    if looks_like_event(value) {
+        return parse_event(value).map(Frame::Event);
     }
     Err(ParseError::NotAFrame)
 }
@@ -232,6 +357,24 @@ fn parse_event(value: &Value) -> Result<PiEvent, ParseError> {
             }
             Ok(PiEvent::TurnEnd)
         }
+        // pi-transcript-events FR-1: transcript-owned kinds — recognized here
+        // only so `ProtocolEngine` doesn't misclassify healthy traffic as
+        // `Unknown`; their own mandatory-field validation lives in
+        // `normalize::TranscriptReducer`, which is fed the same raw line.
+        "message_start" => Ok(PiEvent::Recognized("message_start")),
+        "content_delta" => Ok(PiEvent::Recognized("content_delta")),
+        "text_end" => Ok(PiEvent::Recognized("text_end")),
+        "message_end" => Ok(PiEvent::Recognized("message_end")),
+        "toolcall_start" => Ok(PiEvent::Recognized("toolcall_start")),
+        "toolcall_delta" => Ok(PiEvent::Recognized("toolcall_delta")),
+        "toolcall_end" => Ok(PiEvent::Recognized("toolcall_end")),
+        "tool_execution_start" => Ok(PiEvent::Recognized("tool_execution_start")),
+        "tool_execution_update" => Ok(PiEvent::Recognized("tool_execution_update")),
+        "tool_execution_end" => Ok(PiEvent::Recognized("tool_execution_end")),
+        "compaction_start" => Ok(PiEvent::Recognized("compaction_start")),
+        "compaction_end" => Ok(PiEvent::Recognized("compaction_end")),
+        "retry" => Ok(PiEvent::Recognized("retry")),
+        "queue_update" => Ok(PiEvent::Recognized("queue_update")),
         other => Ok(PiEvent::Unknown(other.to_string())),
     }
 }
@@ -316,6 +459,7 @@ mod tests {
             id: "abc".into(),
             body: PiCommandBody::Prompt {
                 text: "fix the bug".into(),
+                images: Vec::new(),
             },
         };
         let line = cmd.to_line();
@@ -344,6 +488,143 @@ mod tests {
         };
         let v: Value = serde_json::from_str(interrupt.to_line().trim_end()).unwrap();
         assert_eq!(v, serde_json::json!({ "id": "2", "type": "interrupt" }));
+    }
+
+    /// pi-turn-controls FR-5/FR-6/FR-8: the three new no-field commands the
+    /// Stop sequence and manual compaction dispatch — same "no extra fields"
+    /// shape as `get_state`/`interrupt` above.
+    #[test]
+    fn clear_queue_abort_and_compact_carry_no_extra_fields() {
+        for (id, body, kind, wire_name) in [
+            (
+                "1",
+                PiCommandBody::ClearQueue,
+                PiCommandKind::ClearQueue,
+                "clear_queue",
+            ),
+            ("2", PiCommandBody::Abort, PiCommandKind::Abort, "abort"),
+            (
+                "3",
+                PiCommandBody::Compact,
+                PiCommandKind::Compact,
+                "compact",
+            ),
+        ] {
+            let cmd = PiCommand {
+                id: id.into(),
+                body,
+            };
+            let v: Value = serde_json::from_str(cmd.to_line().trim_end()).unwrap();
+            assert_eq!(v, serde_json::json!({ "id": id, "type": wire_name }));
+            assert_eq!(cmd.kind(), kind);
+            assert_eq!(cmd.kind().wire_name(), wire_name);
+        }
+    }
+
+    /// pi-skills-capabilities FR-1: same "no extra fields" shape as
+    /// `get_state`/`get_session_stats`.
+    #[test]
+    fn get_commands_carries_no_extra_fields() {
+        let cmd = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::GetCommands,
+        };
+        let v: Value = serde_json::from_str(cmd.to_line().trim_end()).unwrap();
+        assert_eq!(v, serde_json::json!({ "id": "1", "type": "get_commands" }));
+        assert_eq!(cmd.kind(), PiCommandKind::GetCommands);
+        assert_eq!(cmd.kind().wire_name(), "get_commands");
+    }
+
+    #[test]
+    fn get_entries_serializes_cursor_only_when_present() {
+        let no_cursor = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::GetEntries { cursor: None },
+        };
+        let v: Value = serde_json::from_str(no_cursor.to_line().trim_end()).unwrap();
+        assert_eq!(v, serde_json::json!({ "id": "1", "type": "get_entries" }));
+        assert_eq!(no_cursor.kind(), PiCommandKind::GetEntries);
+        assert_eq!(no_cursor.kind().wire_name(), "get_entries");
+
+        let with_cursor = PiCommand {
+            id: "2".into(),
+            body: PiCommandBody::GetEntries {
+                cursor: Some("entry-7".into()),
+            },
+        };
+        let v: Value = serde_json::from_str(with_cursor.to_line().trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "id": "2", "type": "get_entries", "cursor": "entry-7" })
+        );
+    }
+
+    // ------------------------------------------- pi-models-metrics: new commands
+
+    /// Provisional wire shape (no real capture) — see this module's own doc
+    /// comment. Pinned here so a future certification pass has one place to
+    /// reconcile.
+    #[test]
+    fn get_available_models_carries_no_extra_fields() {
+        let cmd = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::GetAvailableModels,
+        };
+        let v: Value = serde_json::from_str(cmd.to_line().trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "id": "1", "type": "get_available_models" })
+        );
+        assert_eq!(cmd.kind(), PiCommandKind::GetAvailableModels);
+        assert_eq!(cmd.kind().wire_name(), "get_available_models");
+    }
+
+    #[test]
+    fn set_model_serializes_provider_model_and_omits_effort_when_absent() {
+        let no_effort = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::SetModel {
+                provider_id: "anthropic".into(),
+                model_id: "claude-sonnet-5".into(),
+                effort: None,
+            },
+        };
+        let v: Value = serde_json::from_str(no_effort.to_line().trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "id": "1", "type": "set_model",
+                "providerId": "anthropic", "modelId": "claude-sonnet-5"
+            })
+        );
+        assert_eq!(no_effort.kind(), PiCommandKind::SetModel);
+        assert_eq!(no_effort.kind().wire_name(), "set_model");
+
+        let with_effort = PiCommand {
+            id: "2".into(),
+            body: PiCommandBody::SetModel {
+                provider_id: "anthropic".into(),
+                model_id: "claude-sonnet-5".into(),
+                effort: Some("high".into()),
+            },
+        };
+        let v: Value = serde_json::from_str(with_effort.to_line().trim_end()).unwrap();
+        assert_eq!(v["effort"], "high");
+    }
+
+    #[test]
+    fn get_session_stats_carries_no_extra_fields() {
+        let cmd = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::GetSessionStats,
+        };
+        let v: Value = serde_json::from_str(cmd.to_line().trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "id": "1", "type": "get_session_stats" })
+        );
+        assert_eq!(cmd.kind(), PiCommandKind::GetSessionStats);
+        assert_eq!(cmd.kind().wire_name(), "get_session_stats");
     }
 
     // ---------------------------------------------------------------- parsing
@@ -425,6 +706,36 @@ mod tests {
         }
     }
 
+    /// pi-transcript-events FR-1 (review round 3): every FR-1 transcript
+    /// event kind parses as `Recognized`, never `Unknown` — this is what
+    /// keeps `ProtocolEngine::on_event` from misclassifying normal transcript
+    /// traffic as an error.
+    #[test]
+    fn fr1_transcript_event_kinds_parse_as_recognized_not_unknown() {
+        for kind in [
+            "message_start",
+            "content_delta",
+            "text_end",
+            "message_end",
+            "toolcall_start",
+            "toolcall_delta",
+            "toolcall_end",
+            "tool_execution_start",
+            "tool_execution_update",
+            "tool_execution_end",
+            "compaction_start",
+            "compaction_end",
+            "retry",
+            "queue_update",
+        ] {
+            let line = serde_json::json!({ "type": kind }).to_string();
+            match parse_line(&line).unwrap() {
+                Frame::Event(PiEvent::Recognized(k)) => assert_eq!(k, kind),
+                other => panic!("expected {kind} to parse as Recognized, got {other:?}"),
+            }
+        }
+    }
+
     #[test]
     fn an_empty_event_type_is_rejected() {
         assert_eq!(
@@ -441,5 +752,26 @@ mod tests {
     #[test]
     fn invalid_json_is_rejected() {
         assert_eq!(parse_line("not json"), Err(ParseError::InvalidJson));
+    }
+
+    /// The seam the reader uses so a line is decoded exactly once: classifying
+    /// an already-parsed `Value` must produce what classifying its text does,
+    /// for every frame shape — response, event, and both refusals.
+    #[test]
+    fn parse_value_agrees_with_parse_line_for_every_frame_shape() {
+        for line in [
+            r#"{"id":"req-1","command":"get_entries","success":true,"data":{"entries":[1,2,3]}}"#,
+            r#"{"id":"req-2","command":"prompt","success":false,"error":"queue full"}"#,
+            r#"{"type":"agent_settled"}"#,
+            r#"{"type":"turn_end","reason":"done"}"#,
+            r#"{"type":"turn_end"}"#,
+            r#"{"type":"content_delta","messageId":"m1"}"#,
+            r#"{"type":"some_future_event"}"#,
+            r#"{"type":""}"#,
+            r#"{"foo":"bar"}"#,
+        ] {
+            let value: Value = serde_json::from_str(line).unwrap();
+            assert_eq!(parse_value(&value), parse_line(line), "{line}");
+        }
     }
 }

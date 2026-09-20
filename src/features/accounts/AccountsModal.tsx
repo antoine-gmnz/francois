@@ -43,16 +43,18 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountId, AppError } from '../../../contract/common';
-import type { Account, CliToolId, CliToolStatus } from '../../../contract/multi-account';
+import type { Account, CliToolId, CliToolStatus, PiProviderAuthObservation } from '../../../contract/multi-account';
 import {
   accountCliTools,
   accountCodexLogin,
   accountGrokLogin,
   accountInstallCli,
   accountLoginCancel,
+  accountPiRefresh,
   accountRemove,
   accountRename,
   accountSetDefault,
+  accountTrustPi,
   projectList,
   runtimeInstallation,
 } from '../../lib/api';
@@ -64,6 +66,9 @@ import { PiSetupCard } from './CliToolCard';
 import { CodexForm } from './CodexForm';
 import { EndpointForm } from './EndpointForm';
 import { GrokForm } from './GrokForm';
+import { PiAccountsSection } from './PiAccountsSection';
+import { PiForm } from './PiForm';
+import PiSetupView from './PiSetupView';
 import { ProviderDetail } from './ProviderDetail';
 import { ProviderRail } from './ProviderRail';
 import { RemoveAccountConfirm } from './RemoveAccountConfirm';
@@ -76,8 +81,10 @@ import {
   accountUsageProbeable,
   moveCursor,
   newlyAddedAccountId,
+  removeConfirmView,
   startCliToolsFeed,
 } from './accounts';
+import { accountIsPi, piBlockedSessionsMessage, piErrorMessage, piRemoveConfirmView } from './pi';
 import {
   IDLE_INSTALL,
   IDLE_RUNTIME_PROBE,
@@ -119,6 +126,11 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   const setAccountUsage = useStore((s) => s.setAccountUsage);
   const autoAdd = useStore((s) => s.accountsAutoAdd);
   const setAutoAdd = useStore((s) => s.setAccountsAutoAdd);
+  // pi-models-metrics FR-1: the New Session form's "Open setup" affordance
+  // (RuntimeModelFieldStatus.onOpenSetup) opens this modal straight into that
+  // Pi account's setup takeover — same one-shot idiom as `autoAdd` above.
+  const autoPiSetupId = useStore((s) => s.accountsAutoPiSetupId);
+  const setAutoPiSetupId = useStore((s) => s.setAccountsAutoPiSetupId);
 
   // The provider the rail is pointed at. A PREFERENCE, not the answer:
   // resolveSelectedProvider re-derives the live value every render, so a
@@ -142,6 +154,19 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   const [codexForm, setCodexForm] = useState(false);
   // multi-provider-grok FR-20: the fourth add form, same shape as codexForm.
   const [grokForm, setGrokForm] = useState(false);
+  // pi-provider-auth: the Pi accounts section's own add form / setup takeover /
+  // remove confirm — lifted here (not local to PiAccountsSection) so Esc and
+  // the modal-wide `busy` flag see them exactly like codexForm/grokForm do.
+  const [piForm, setPiForm] = useState(false);
+  const [piSetupAccountId, setPiSetupAccountId] = useState<string | null>(null);
+  const [piConfirmId, setPiConfirmId] = useState<string | null>(null);
+  // FR-7: per-account, ephemeral — never a shared/cross-account cache (FR-9).
+  const [piObservations, setPiObservations] = useState<Record<AccountId, PiProviderAuthObservation[]>>({});
+  const [piRefreshing, setPiRefreshing] = useState<Record<AccountId, boolean>>({});
+  const [piTrustBusy, setPiTrustBusy] = useState<Record<AccountId, boolean>>({});
+  // The live Pi setup PTY's id, mirroring `loginIdRef` below for the same reason
+  // (FR-16-style: cancel must fire from Esc, the backdrop, and unmount alike).
+  const piLoginIdRef = useRef<string | null>(null);
   // The vendor CLIs, probed once per modal open. Machine-scoped rather than
   // account-scoped, so it lives HERE and not in the account store: the registry
   // survives the modal closing, this fact does not — a user who installs `codex`
@@ -177,6 +202,9 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // exists to avoid.
   const sessionCounts = useMemo(() => accountSessionCounts(accounts, sessions), [accounts, sessions]);
   const sessionNames = useMemo(() => accountSessionNames(accounts, sessions), [accounts, sessions]);
+  // pi-provider-auth: id → name, for turning `ACCOUNT_IN_USE`'s `blockedSessions`
+  // into readable names (piBlockedSessionsMessage) rather than raw uuids.
+  const sessionNamesById = useMemo(() => new Map(sessions.map((s) => [s.id, s.name])), [sessions]);
   const groups = useMemo(() => providerGroups(accounts, sessionCounts), [accounts, sessionCounts]);
   const providerId = resolveSelectedProvider(groups, providerPref);
   const group = findGroup(groups, providerId);
@@ -194,7 +222,12 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   // from flashing a "not installed" card at a machine that has it.
   const selectedCliTool = findCliTool(cliTools, group.spec.cliTool);
   const confirming = confirmId ? (accounts.find((a) => a.id === confirmId) ?? null) : null;
-  const busy = login !== null || endpointForm !== null || codexForm || grokForm;
+  // pi-provider-auth: kept in registry order, exactly like `group.accounts`
+  // for the vendor rail — providerGroups filters these OUT of that rail (see
+  // providers.ts), so this is their only listing anywhere in the modal.
+  const piAccounts = useMemo(() => accounts.filter(accountIsPi), [accounts]);
+  const piConfirming = piConfirmId ? (accounts.find((a) => a.id === piConfirmId) ?? null) : null;
+  const busy = login !== null || endpointForm !== null || codexForm || grokForm || piForm || piSetupAccountId !== null;
 
   // Redesign hangs a reset countdown off every quota gauge. Same granularity
   // rule the usage bar follows: one text tick a minute, not motion — the
@@ -358,7 +391,18 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     if (id) void accountLoginCancel({ loginId: id }).catch(() => {});
   };
 
-  useEffect(() => cancelLogin, []);  
+  useEffect(() => cancelLogin, []);
+
+  // FR-3: the same "every exit kills the PTY" discipline as `cancelLogin`,
+  // for the Pi setup takeover. Closing setup never implies success either
+  // way, so there is no dir to delete here — only the PTY to stop.
+  const cancelPiSetup = () => {
+    const id = piLoginIdRef.current;
+    piLoginIdRef.current = null;
+    if (id) void accountLoginCancel({ loginId: id }).catch(() => {});
+  };
+
+  useEffect(() => cancelPiSetup, []);
 
   // The palette's "Add account" opens the modal straight into the login view.
   // One-shot: cleared here so re-opening the modal normally lands on the list.
@@ -371,6 +415,17 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     setProviderPref('anthropic');
     setLogin({});
   }, [autoAdd, setAutoAdd]);
+
+  // pi-models-metrics FR-1: same one-shot idiom, opening the same setup
+  // takeover the Pi section's own "Setup" action does. Pi accounts are not
+  // part of the vendor rail (providers.ts's `providerIdForAccount`) — their
+  // section renders beneath it regardless of `providerPref`, so there is no
+  // rail selection to point anywhere here.
+  useEffect(() => {
+    if (!autoPiSetupId) return;
+    setAutoPiSetupId(null);
+    setPiSetupAccountId(autoPiSetupId);
+  }, [autoPiSetupId, setAutoPiSetupId]);
 
   const closeLogin = () => {
     cancelLogin();
@@ -434,13 +489,23 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
       .catch(onIpcRejected);
   };
 
-  const doRemove = (account: Account) => {
+  /**
+   * `onErrorMessage` is pi-provider-auth's hook: `ACCOUNT_IN_USE` (FR-6/FR-8)
+   * carries `blockedSessions` on the error's detail, and the Pi card wants
+   * those NAMED rather than the core's generic sentence — everything else
+   * about a removal (the fresh list, the cursor reset, the stale-projects
+   * re-read) is identical for every account kind, so this stays one function.
+   */
+  const doRemove = (account: Account, onErrorMessage?: (error: AppError) => string | null) => {
     setConfirmId(null);
+    setPiConfirmId(null);
     void accountRemove(account.id)
       .then((res) => {
         if (!alive.current) return;
         if (!res.ok) {
-          setError(res.error); // e.g. ACCOUNT_NOT_REMOVABLE on the built-in (FR-8)
+          // e.g. ACCOUNT_NOT_REMOVABLE on the built-in (FR-8)
+          const message = onErrorMessage?.(res.error);
+          setError(message ? { ...res.error, message } : res.error);
           return;
         }
         setError(null);
@@ -500,6 +565,53 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     else setLogin({ accountId: account.id });
   };
 
+  // pi-provider-auth. `trustPi` is refused (ACCOUNT_IN_USE) while a session
+  // or the setup PTY holds the account — surfaced in the modal's own error
+  // bar like every other mutation failure here.
+  const toggleTrust = (account: Account) => {
+    const nextTrust = !(account.pi?.trusted ?? false);
+    setPiTrustBusy((prev) => ({ ...prev, [account.id]: true }));
+    void accountTrustPi({ accountId: account.id, trustConfiguration: nextTrust })
+      .then((res) => {
+        if (!alive.current) return;
+        setPiTrustBusy((prev) => ({ ...prev, [account.id]: false }));
+        if (res.ok) {
+          setError(null);
+          setAccounts(res.data);
+        } else setError({ ...res.error, message: piErrorMessage(res.error) });
+      })
+      .catch(() => {
+        if (!alive.current) return;
+        setPiTrustBusy((prev) => ({ ...prev, [account.id]: false }));
+        onIpcRejected();
+      });
+  };
+
+  // FR-7: a stateless per-account probe — the result lives only in this
+  // modal's own state (FR-9: no cross-account cache), never the registry.
+  const refreshPi = (account: Account) => {
+    setPiRefreshing((prev) => ({ ...prev, [account.id]: true }));
+    void accountPiRefresh({ accountId: account.id })
+      .then((res) => {
+        if (!alive.current) return;
+        setPiRefreshing((prev) => ({ ...prev, [account.id]: false }));
+        if (res.ok) {
+          setError(null);
+          setPiObservations((prev) => ({ ...prev, [account.id]: res.data }));
+        } else setError({ ...res.error, message: piErrorMessage(res.error) });
+      })
+      .catch(() => {
+        if (!alive.current) return;
+        setPiRefreshing((prev) => ({ ...prev, [account.id]: false }));
+        onIpcRejected();
+      });
+  };
+
+  const closePiSetup = () => {
+    cancelPiSetup();
+    setPiSetupAccountId(null);
+  };
+
   // §3 Keyboard. Capture phase, like every other modal in the shell, so the
   // app-wide single-letter globals never see these keys.
   useEffect(() => {
@@ -508,18 +620,26 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         e.stopPropagation();
         e.preventDefault();
         if (login) closeLogin();
+        else if (piSetupAccountId) closePiSetup();
         else if (renamingId) cancelRename();
         else if (confirmId) setConfirmId(null);
+        else if (piConfirmId) setPiConfirmId(null);
         else if (endpointForm) setEndpointForm(null);
         else if (codexForm) setCodexForm(false);
         else if (grokForm) setGrokForm(false);
+        else if (piForm) setPiForm(false);
         else onClose();
         return;
       }
       // Everything below is list-state only: while the login TUI is up every
       // other key belongs to it, while renaming they belong to the input, and
-      // while a form is open every key belongs to its own fields.
-      if (login || renamingId || endpointForm || codexForm || grokForm) return;
+      // while a form is open every key belongs to its own fields. The Pi
+      // section has no ↑/↓/←/→ cursor of its own (it sits outside the
+      // provider rail this block otherwise drives), so a live setup/form
+      // there only needs to swallow the keys, not route them further.
+      // `piConfirmId` is deliberately NOT in this guard — its own Enter
+      // handler below needs to run.
+      if (login || renamingId || endpointForm || codexForm || grokForm || piForm || piSetupAccountId) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
 
@@ -557,6 +677,15 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         }
         return;
       }
+      if (piConfirmId) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          const account = accounts.find((a) => a.id === piConfirmId);
+          if (account) doRemove(account, (err) => piBlockedSessionsMessage(err, sessionNamesById));
+        }
+        return;
+      }
       if (e.key === 'Enter' && selected) {
         e.preventDefault();
         e.stopPropagation();
@@ -586,7 +715,24 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     // setDefault, startRename, addPrimary, onClose) read only refs/setters/
     // these same deps, so a version captured at that point stays correct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [login, renamingId, confirmId, endpointForm, codexForm, grokForm, selected, paneAccounts, groups, providerId, accounts, onClose]);
+  }, [
+    login,
+    renamingId,
+    confirmId,
+    endpointForm,
+    codexForm,
+    grokForm,
+    piForm,
+    piSetupAccountId,
+    piConfirmId,
+    selected,
+    paneAccounts,
+    groups,
+    providerId,
+    accounts,
+    sessionNamesById,
+    onClose,
+  ]);
 
   return (
     <div
@@ -608,10 +754,16 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
         {error && <div className="acc-error">{error.message}</div>}
         {confirming && (
           <RemoveAccountConfirm
-            account={confirming}
-            sessions={sessions}
+            view={removeConfirmView(confirming, sessions)}
             onCancel={() => setConfirmId(null)}
             onConfirm={() => doRemove(confirming)}
+          />
+        )}
+        {piConfirming && (
+          <RemoveAccountConfirm
+            view={piRemoveConfirmView(piConfirming, sessions)}
+            onCancel={() => setPiConfirmId(null)}
+            onConfirm={() => doRemove(piConfirming, (err) => piBlockedSessionsMessage(err, sessionNamesById))}
           />
         )}
 
@@ -714,10 +866,12 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
           />
         </div>
 
-        {/* pi-runtime-distribution §3: "Accounts → Pi setup". Pi is not yet a
-            selectable account (pi-runtime-boundary task 06), so this is not a
-            provider pane — a fixed section beneath the vault, visible no
-            matter which provider the rail is pointed at. */}
+        {/* pi-runtime-distribution §3 / pi-provider-auth: "Accounts → Pi
+            setup". Pi accounts are not part of the vendor rail above (see
+            providers.ts's `providerIdForAccount`), so this stays a fixed
+            section beneath the vault, visible no matter which provider the
+            rail is pointed at — the install health probe first, then the
+            accounts referencing it. */}
         <div className="acc-section acc-pi-section">
           <div className="acc-section-head">
             <span className="acc-section-eyebrow">Pi setup</span>
@@ -726,6 +880,54 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
           <div className="acc-section-body">
             <PiSetupCard probe={piProbe} onRetry={() => probePi(true)} />
           </div>
+        </div>
+
+        <div className="acc-pi-section">
+          <PiAccountsSection
+            accounts={piAccounts}
+            sessionNames={sessionNames}
+            busy={busy}
+            onAdd={() => setPiForm(true)}
+            form={
+              piForm ? (
+                <PiForm
+                  onCancel={() => setPiForm(false)}
+                  onSaved={(fresh) => {
+                    const addedId = newlyAddedAccountId(accounts, fresh);
+                    setAccounts(fresh);
+                    setPiForm(false);
+                    setError(null);
+                    flash(addedId);
+                  }}
+                />
+              ) : undefined
+            }
+            takeover={
+              piSetupAccountId ? (
+                <PiSetupView
+                  accountId={piSetupAccountId}
+                  onLoginId={(id) => {
+                    piLoginIdRef.current = id;
+                  }}
+                  onClose={closePiSetup}
+                />
+              ) : undefined
+            }
+            renamingId={renamingId}
+            renameDraft={renameDraft}
+            onRenameDraft={setRenameDraft}
+            onRenameCommit={commitRename}
+            onRenameCancel={cancelRename}
+            onStartRename={startRename}
+            onSetDefault={setDefault}
+            observations={piObservations}
+            refreshing={piRefreshing}
+            onRefresh={refreshPi}
+            trustBusy={piTrustBusy}
+            onToggleTrust={toggleTrust}
+            onSetup={(account) => setPiSetupAccountId(account.id)}
+            onRemove={(account) => setPiConfirmId(account.id)}
+          />
         </div>
 
         {/* The keyboard model this modal has always had and never named —

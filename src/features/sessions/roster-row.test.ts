@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { PermissionAsk, SessionMeta } from '../../../contract/common';
+import type { PermissionAsk, RuntimeMetrics, SessionMeta } from '../../../contract/common';
 import type { SessionDerived } from '../../../contract/fleet-board';
-import { askLine, contextFraction, formatLineCount, paneBadgeLabel, rowTitle, workLine } from './roster-row';
+import { askLine, contextFraction, formatLineCount, paneBadgeLabel, rosterContextReadout, rowTitle, runningContextFigure, workLine } from './roster-row';
+import { UNKNOWN_METRIC } from './runtime-metrics';
 
 function derived(over: Partial<SessionDerived> = {}): SessionDerived {
   return { fileCount: null, runningAgentCount: 0, addedLines: null, deletedLines: null, ...over };
@@ -152,6 +153,67 @@ describe('formatLineCount', () => {
 
   it('drops the decimal past ten thousand', () => {
     expect(formatLineCount(12_400)).toBe('12K');
+  });
+});
+
+function metrics(over: Partial<RuntimeMetrics> = {}): RuntimeMetrics {
+  return {
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    contextTokens: null,
+    contextWindow: null,
+    contextBasis: 'unknown',
+    costUsd: null,
+    costBasis: 'unknown',
+    measuredAt: 0,
+    stale: false,
+    ...over,
+  };
+}
+
+describe('rosterContextReadout (pi-models-metrics §6: no Claude context fallback for Pi)', () => {
+  it('reads the legacy fields for a non-Pi session, unchanged', () => {
+    const s = session({ contextUsedTokens: 200_000, contextLimitTokens: 1_000_000 });
+    expect(rosterContextReadout(s)).toEqual({ fraction: 0.2, usedLabel: '200K', windowLabel: '1M' });
+  });
+
+  it('is null for a non-Pi session with no window — never a bar at zero', () => {
+    expect(rosterContextReadout(session({ contextLimitTokens: 0 }))).toBeNull();
+  });
+
+  it('reads session.metrics for a Pi session — NEVER contextUsedTokens/contextLimitTokens', () => {
+    const s = session({
+      agentRuntime: 'pi',
+      contextUsedTokens: 999_999, // a legacy value that must be ignored outright
+      contextLimitTokens: 999_999,
+      metrics: metrics({ contextTokens: 84_000, contextWindow: 200_000, contextBasis: 'reported' }),
+    });
+    expect(rosterContextReadout(s)).toEqual({ fraction: 0.42, usedLabel: '84K', windowLabel: '200K' });
+  });
+
+  it('is null for a Pi session before metrics arrive, or with an unknown value', () => {
+    expect(rosterContextReadout(session({ agentRuntime: 'pi' }))).toBeNull();
+    expect(rosterContextReadout(session({ agentRuntime: 'pi', metrics: metrics({ contextTokens: 1_000, contextWindow: null }) }))).toBeNull();
+  });
+});
+
+describe('runningContextFigure', () => {
+  it('matches the legacy format for a non-Pi session', () => {
+    expect(runningContextFigure(session({ contextUsedTokens: 200_000, contextLimitTokens: 1_000_000 }))).toBe('200K/1M');
+    expect(runningContextFigure(session({ contextUsedTokens: 200_000, contextLimitTokens: 0 }))).toBe('200K');
+  });
+
+  it('is an em dash for a Pi session with nothing reported yet — never a fabricated 0', () => {
+    expect(runningContextFigure(session({ agentRuntime: 'pi' }))).toBe(UNKNOWN_METRIC);
+  });
+
+  it('formats a Pi session with a known window, and falls back to the bare count without one', () => {
+    const withWindow = session({ agentRuntime: 'pi', metrics: metrics({ contextTokens: 84_000, contextWindow: 200_000 }) });
+    expect(runningContextFigure(withWindow)).toBe('84K/200K');
+    const withoutWindow = session({ agentRuntime: 'pi', metrics: metrics({ contextTokens: 84_000, contextWindow: null }) });
+    expect(runningContextFigure(withoutWindow)).toBe('84K');
   });
 });
 

@@ -18,6 +18,7 @@ import {
   projectUpdate,
   sessionPickDirectory,
 } from '../../lib/api';
+import { useStore } from '../../lib/store';
 import {
   canCommitIdentity,
   nextSelectionAfterRemove,
@@ -89,6 +90,12 @@ export function useProjectMutations(deps: ProjectMutationsDeps): ProjectMutation
     setNewGroupDraft,
   } = deps;
   const [busy, setBusy] = useState(false);
+  // pr-142 §C1: patchDefaults needs the account's `kind` to enforce the
+  // modelId/runtimeModel exclusion when `accountId` itself is the field being
+  // committed — not part of `deps` (ProjectsModal already keeps the app-wide
+  // registry current for `defaultFieldDefs`'s own read of it), so this reads
+  // the same store `defaultFieldDefs`'s caller does, directly.
+  const accounts = useStore((s) => s.accounts);
 
   const runUpdate = async (
     patch: { name?: string; root?: string; defaults?: ProjectMeta['defaults'] },
@@ -124,7 +131,7 @@ export function useProjectMutations(deps: ProjectMutationsDeps): ProjectMutation
 
   const commitDefault = (key: DefaultsKey, value: string) => {
     if (!selected) return;
-    void runUpdate({ defaults: patchDefaults(selected.defaults, key, value, models) }, 'defaults');
+    void runUpdate({ defaults: patchDefaults(selected.defaults, key, value, models, accounts) }, 'defaults');
   };
 
   // FR-35: the whole standards object on every individual change; FR-16: repaint

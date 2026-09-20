@@ -95,6 +95,12 @@ pub enum ErrorCode {
     CliInstallUnavailable,
     /// multi-account: `npm i -g <package>` exited non-zero (detail: { code, tail })
     CliInstallFailed,
+    /// pi-provider-auth: trust/remove refused while a session or setup PTY holds the account
+    AccountInUse,
+    /// pi-provider-auth: a Pi account's configDir was never explicitly trusted
+    AccountConfigUntrusted,
+    /// pi-provider-auth FR-4: the trusted executable-config fingerprint no longer matches
+    AccountConfigChanged,
     /// workflow-details: runId matches no run this session has seen
     WorkflowNotFound,
     /// workflow-details FR-2/FR-7: the run has no usable transcriptDir
@@ -199,6 +205,20 @@ pub enum ErrorCode {
     ModelUnavailable,
     /// pi-runtime-boundary FR-6: a tool call failed
     ToolFailed,
+    /// pi-session-durability: reconnect/newFrom refused while a turn or another recovery is in flight
+    SessionBusy,
+    /// pi-session-durability FR-3: the recorded native conversation file is gone
+    RuntimeSessionMissing,
+    /// pi-session-durability FR-3: the native file/identity failed validation or its parent chain is broken
+    RuntimeSessionCorrupt,
+    /// pi-session-durability FR-3: the pinned account was removed; never falls back to a default
+    RuntimeAccountMissing,
+    /// pi-turn-controls FR-4: the session already holds 20 pending intents
+    QueueFull,
+    /// pi-skills-capabilities FR-5: first submit refused until the unrestricted-tools acknowledgment is recorded
+    RuntimePolicyRequired,
+    /// pi-migration-rollout: a legacy profile selected for a Pi account, or Pi settings for another runtime
+    ProfileRuntimeMismatch,
     Internal,
 }
 
@@ -249,6 +269,9 @@ impl ErrorCode {
         ErrorCode::AccountKeyWriteFailed,
         ErrorCode::CliInstallUnavailable,
         ErrorCode::CliInstallFailed,
+        ErrorCode::AccountInUse,
+        ErrorCode::AccountConfigUntrusted,
+        ErrorCode::AccountConfigChanged,
         ErrorCode::WorkflowNotFound,
         ErrorCode::WorkflowNoTranscript,
         ErrorCode::WorkflowAgentNotFound,
@@ -299,6 +322,13 @@ impl ErrorCode {
         ErrorCode::ProviderUnavailable,
         ErrorCode::ModelUnavailable,
         ErrorCode::ToolFailed,
+        ErrorCode::SessionBusy,
+        ErrorCode::RuntimeSessionMissing,
+        ErrorCode::RuntimeSessionCorrupt,
+        ErrorCode::RuntimeAccountMissing,
+        ErrorCode::QueueFull,
+        ErrorCode::RuntimePolicyRequired,
+        ErrorCode::ProfileRuntimeMismatch,
         ErrorCode::Internal,
     ];
 
@@ -349,6 +379,9 @@ impl ErrorCode {
             ErrorCode::AccountKeyWriteFailed => "ACCOUNT_KEY_WRITE_FAILED",
             ErrorCode::CliInstallUnavailable => "CLI_INSTALL_UNAVAILABLE",
             ErrorCode::CliInstallFailed => "CLI_INSTALL_FAILED",
+            ErrorCode::AccountInUse => "ACCOUNT_IN_USE",
+            ErrorCode::AccountConfigUntrusted => "ACCOUNT_CONFIG_UNTRUSTED",
+            ErrorCode::AccountConfigChanged => "ACCOUNT_CONFIG_CHANGED",
             ErrorCode::WorkflowNotFound => "WORKFLOW_NOT_FOUND",
             ErrorCode::WorkflowNoTranscript => "WORKFLOW_NO_TRANSCRIPT",
             ErrorCode::WorkflowAgentNotFound => "WORKFLOW_AGENT_NOT_FOUND",
@@ -399,6 +432,13 @@ impl ErrorCode {
             ErrorCode::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
             ErrorCode::ModelUnavailable => "MODEL_UNAVAILABLE",
             ErrorCode::ToolFailed => "TOOL_FAILED",
+            ErrorCode::SessionBusy => "SESSION_BUSY",
+            ErrorCode::RuntimeSessionMissing => "RUNTIME_SESSION_MISSING",
+            ErrorCode::RuntimeSessionCorrupt => "RUNTIME_SESSION_CORRUPT",
+            ErrorCode::RuntimeAccountMissing => "RUNTIME_ACCOUNT_MISSING",
+            ErrorCode::QueueFull => "QUEUE_FULL",
+            ErrorCode::RuntimePolicyRequired => "RUNTIME_POLICY_REQUIRED",
+            ErrorCode::ProfileRuntimeMismatch => "PROFILE_RUNTIME_MISMATCH",
             ErrorCode::Internal => "INTERNAL",
         }
     }

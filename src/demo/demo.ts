@@ -408,6 +408,31 @@ function route(cmd: string, a: Args): unknown {
   }
 }
 
+// ---------- window seam (pr-142 §9) ----------
+//
+// notifications.ts's focus tracking + notification-click handling calls the
+// real `@tauri-apps/api/window` `getCurrentWindow()`, which constructs against
+// `window.__TAURI_INTERNALS__` — absent from this build's plain browser tab.
+// These three stand in for it at notifications.ts's own `__FRANCOIS_DEMO__`
+// guard, mirroring `demoInvoke`/`demoListen` above, so the demo build never
+// constructs a real Window at all.
+
+/** Conservative default (matches the real seam's own rejection fallback) — a
+ *  demo capture is never "unfocused" in a way that should suppress a cue. */
+export function demoWindowIsFocused(): Promise<boolean> {
+  return Promise.resolve(true);
+}
+
+/** No real window exists to change focus, so there is nothing to subscribe to. */
+export function demoWindowOnFocusChanged(_cb: (focused: boolean) => void): Promise<UnlistenFn> {
+  return Promise.resolve(() => {});
+}
+
+/** No OS window exists in this build — a notification click has nothing to raise. */
+export function demoFocusWindow(): void {
+  /* no-op */
+}
+
 // ---------- derived views ----------
 
 /**

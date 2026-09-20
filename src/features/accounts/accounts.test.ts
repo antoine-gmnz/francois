@@ -21,16 +21,20 @@ import {
   accountAddCodex,
   accountAddEndpoint,
   accountAddGrok,
+  accountAddPi,
   accountCodexLogin,
   accountGrokLogin,
   accountList,
   accountLoginCancel,
   accountLoginResize,
   accountLoginWrite,
+  accountPiRefresh,
+  accountPiSetup,
   accountRemove,
   accountRename,
   accountSetDefault,
   accountTestEndpoint,
+  accountTrustPi,
   accountUpdateEndpoint,
   onAccountEvent,
 } from '../../lib/api';
@@ -142,7 +146,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   invokeMock.mockReset();
   listenMock.mockReset();
-  useStore.setState({ accounts: [], accountsOpen: false, accountsAutoAdd: false, usageByAccount: {} });
+  useStore.setState({ accounts: [], accountsOpen: false, accountsAutoAdd: false, accountsAutoPiSetupId: null, usageByAccount: {} });
 });
 
 afterEach(() => {
@@ -174,6 +178,17 @@ describe('accounts store slice (§6)', () => {
     expect(useStore.getState().accountsAutoAdd).toBe(true);
     useStore.getState().setAccountsAutoAdd(false);
     expect(useStore.getState().accountsOpen).toBe(true);
+  });
+
+  // pi-models-metrics FR-1: "Open setup" from a Pi model field opens the
+  // Accounts modal straight into that account's setup takeover.
+  it('setAccountsAutoPiSetupId is independent of the other flags, one-shot by convention', () => {
+    expect(useStore.getState().accountsAutoPiSetupId).toBeNull();
+    useStore.getState().setAccountsAutoPiSetupId('acc-1');
+    expect(useStore.getState().accountsAutoPiSetupId).toBe('acc-1');
+    expect(useStore.getState().accountsOpen).toBe(false);
+    useStore.getState().setAccountsAutoPiSetupId(null);
+    expect(useStore.getState().accountsAutoPiSetupId).toBeNull();
   });
 });
 
@@ -1122,5 +1137,60 @@ describe('grok accounts', () => {
   // inside its GROK_HOME.
   it('never probes plan limits for an account whose runtime has no plan', () => {
     expect(accountUsageProbeable(grok())).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pi-provider-auth — the 'pi' account kind's touch on the SHARED accounts.ts
+// derivations (the Pi-specific ones live in pi.ts / pi.test.ts).
+
+describe('pi accounts (shared derivations)', () => {
+  const pi = (over: Partial<Account> = {}) =>
+    account({
+      id: 'pi1',
+      kind: 'pi',
+      pi: { runtime: 'native', inheritEnvironmentCredentials: false, trusted: false },
+      ...over,
+    });
+
+  it('is selectable in the account picker, like every other kind', () => {
+    const options = accountFieldOptions([account({ id: 'a' }), pi()]);
+    expect(options.map((o) => o.value)).toEqual(['a', 'pi1']);
+  });
+
+  it('never probes plan limits — a Pi runtime is not yet connected', () => {
+    expect(accountUsageProbeable(pi())).toBe(false);
+  });
+
+  it('sends account_add_pi, account_trust_pi, account_pi_setup and account_pi_refresh on the right channels', async () => {
+    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
+    await accountAddPi({
+      kind: 'pi',
+      label: 'Work Pi',
+      configDir: '/home/u/.pi/agent',
+      runtime: 'native',
+      inheritEnvironmentCredentials: false,
+      trustConfiguration: false,
+    });
+    expect(invokeMock).toHaveBeenCalledWith('account_add_pi', {
+      kind: 'pi',
+      label: 'Work Pi',
+      configDir: '/home/u/.pi/agent',
+      runtime: 'native',
+      inheritEnvironmentCredentials: false,
+      trustConfiguration: false,
+    });
+
+    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
+    await accountTrustPi({ accountId: 'pi1', trustConfiguration: true });
+    expect(invokeMock).toHaveBeenCalledWith('account_trust_pi', { accountId: 'pi1', trustConfiguration: true });
+
+    invokeMock.mockResolvedValueOnce({ ok: true, data: { loginId: 'l1', cols: 80, rows: 24 } });
+    await accountPiSetup({ accountId: 'pi1' });
+    expect(invokeMock).toHaveBeenCalledWith('account_pi_setup', { accountId: 'pi1' });
+
+    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
+    await accountPiRefresh({ accountId: 'pi1' });
+    expect(invokeMock).toHaveBeenCalledWith('account_pi_refresh', { accountId: 'pi1' });
   });
 });

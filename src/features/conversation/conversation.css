@@ -34,6 +34,10 @@
   flex: 1;
 }
 .resume-banner__dismiss {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
   font-size: var(--font-size-10);
   color: var(--text-faint);
   cursor: pointer;
@@ -60,6 +64,10 @@
   flex: 1;
 }
 .limit-banner__dismiss {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
   font-size: var(--font-size-10);
   color: var(--text-faint);
   cursor: pointer;
@@ -94,9 +102,48 @@
   color: var(--text-faint);
 }
 .worktree-notice__dismiss {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
   font-size: var(--font-size-10);
   color: var(--text-faint);
   cursor: pointer;
+}
+
+/* pi-session-durability §8: the Pi recovery banner — one cause plus
+   Retry/Create new session for missing/corrupt/incompatible/account-missing
+   (FR-3/FR-7). Same geometry as .resume-banner/.worktree-notice above, tinted
+   --warn (not --error): this asks the user to act, it does not report a live
+   failure the way the usage-limit banner does. */
+.pi-recovery-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-9);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-11);
+  margin: var(--space-6) var(--space-8);
+  flex-shrink: 0;
+  animation: fadeIn 120ms ease-out;
+}
+.pi-recovery-banner__text {
+  font-size: var(--font-size-11-5);
+  color: var(--text-hint);
+  flex: 1;
+  min-width: 200px;
+}
+.pi-recovery-banner__actions {
+  display: flex;
+  gap: var(--space-8);
+  flex-shrink: 0;
+}
+.pi-recovery-banner__error {
+  flex-basis: 100%;
+  font-size: var(--font-size-11);
+  color: var(--error);
 }
 
 .conv-transcript-wrap {
@@ -1042,6 +1089,10 @@
 .toolrow--expandable {
   cursor: pointer;
 }
+.toolrow--expandable:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -1px;
+}
 .toolrow--open {
   background: var(--bg-panel);
 }
@@ -1129,6 +1180,11 @@
 .toolrow__chip--plain {
   color: var(--text-faint);
 }
+/* pi-transcript-events: a call that ended 'cancelled'/'unknown' — not a
+   failure, not an ordinary success either. */
+.toolrow__chip--warn {
+  color: var(--warn);
+}
 
 /* subagent dispatch banner (FR-7). */
 .block-subagent {
@@ -1175,6 +1231,56 @@
   color: var(--text-strong);
   line-height: 1.65;
   white-space: pre-wrap;
+}
+
+/* pi-transcript-events FR-7: attached file/image refs under the prompt —
+   plain text, no thumbnail (RuntimeAttachmentRef carries no storedPath). */
+.block-user__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-top: var(--space-5);
+}
+.block-user__attachment {
+  font-size: var(--font-size-10-5);
+  color: var(--text-hint);
+}
+.block-user__attachment--missing {
+  color: var(--error);
+}
+
+/* pi-transcript-events FR-9: a non-'complete' assistant outcome — text as
+   well as colour (design brief), so it never relies on tone alone. */
+.block-outcome {
+  display: inline-block;
+  margin-left: var(--space-6);
+  font-size: var(--font-size-10-5);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.block-outcome--interrupted {
+  color: var(--warn);
+}
+.block-outcome--error {
+  color: var(--error);
+}
+
+/* pi-transcript-events FR-5: a neutral notice row — unsupported/thinking
+   content, compaction/retry progress, protocol diagnostics. Reuses the
+   transcript's own typography; no new border/shadow treatment. */
+.block-notice {
+  padding: var(--space-6) var(--space-8);
+  font-size: var(--font-size-11-5);
+  font-family: var(--font-mono);
+}
+.block-notice__text {
+  color: var(--text-hint);
+}
+.block-notice--warning .block-notice__text {
+  color: var(--warn);
+}
+.block-notice--error .block-notice__text {
+  color: var(--error);
 }
 
 /* ── MarkdownView.tsx (design 7a: 12.5px/1.65 --font-mono terminal body) ── */

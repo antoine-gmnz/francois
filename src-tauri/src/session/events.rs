@@ -2,27 +2,85 @@
 
 use super::*;
 
-use crate::ipc::{AppError, RuntimeFailure};
+use crate::ipc::AppError;
 use crate::permissions::{PermissionAsk, PermissionRule};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-/// Ordered, session-scoped runtime events. This intentionally carries only
-/// core-normalised values; Pi's wire DTOs stay inside its future adapter.
-#[derive(Serialize, Clone)]
-#[serde(tag = "kind")]
-#[allow(dead_code)]
-pub enum RuntimeEventPayload {
-    #[serde(rename = "run.state")]
-    RunState { state: RuntimeRunState },
-    #[serde(rename = "capabilities")]
-    Capabilities {
-        #[serde(serialize_with = "serialize_capabilities")]
-        capabilities: RuntimeCapabilities,
-    },
-    #[serde(rename = "failure")]
-    Failure { failure: RuntimeFailure },
+/// pi-models-metrics/pi-transcript-events/pi-turn-controls: the
+/// `RuntimeEventPayload` wire union and the payload structs its variants
+/// carry — see that module's own doc for why it is a sibling rather than a
+/// child. Re-exported here (not glob-exported) because every other file in
+/// this crate already reaches these names through `events::*`.
+pub use runtime_events::{
+    RuntimeAttachmentRef, RuntimeEventPayload, RuntimeMetrics, RuntimeModelDescriptor,
+    RuntimeToolCall,
+};
+
+/// pi-session-durability: whether a runtime-owned session can continue its
+/// native conversation. Mirrors contract/common.ts `RuntimeRecovery` exactly —
+/// presentation only, the native file path stays core-private and never
+/// crosses IPC. `message`/`lastVerifiedAt` are validated the same way
+/// `RuntimeFailure`'s own display text is (bounded, control/bidi-free).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeRecoveryState {
+    Ready,
+    Disconnected,
+    Missing,
+    Corrupt,
+    Incompatible,
+    AccountMissing,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct RuntimeRecovery {
+    pub state: RuntimeRecoveryState,
+    #[serde(rename = "lastVerifiedAt", skip_serializing_if = "Option::is_none")]
+    pub last_verified_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl RuntimeRecovery {
+    /// The state a Pi session starts in (never connected) and returns to on
+    /// quit/reopen — history is readable, the next send or an explicit
+    /// reconnect re-attaches. Carries no message: `disconnected` is not a
+    /// fault (design brief: "Disconnected: readable history, reconnect on
+    /// send").
+    pub(crate) fn disconnected() -> Self {
+        Self {
+            state: RuntimeRecoveryState::Disconnected,
+            last_verified_at: None,
+            message: None,
+        }
+    }
+
+    /// FR-3: a successful validate-then-connect — `at` stamps `lastVerifiedAt`.
+    pub(crate) fn ready(at: u64) -> Self {
+        Self {
+            state: RuntimeRecoveryState::Ready,
+            last_verified_at: Some(at),
+            message: None,
+        }
+    }
+
+    /// FR-3/FR-7: one of the four hard-fail states, each with the single cause
+    /// the banner renders. Callers pass an already-sanitized message (the Pi
+    /// adapter's own `process::sanitize_diagnostic` — bounded, control/bidi
+    /// free) so a Pi-supplied path or reason can never break layout.
+    pub(crate) fn failed(state: RuntimeRecoveryState, message: impl Into<String>) -> Self {
+        debug_assert!(!matches!(
+            state,
+            RuntimeRecoveryState::Ready | RuntimeRecoveryState::Disconnected
+        ));
+        Self {
+            state,
+            last_verified_at: None,
+            message: Some(message.into()),
+        }
+    }
 }
 
 // ---------- SessionEvent (contract/common.ts, reproduced) ----------
@@ -235,6 +293,7 @@ pub(crate) fn emit(app: &AppHandle, ev: SessionEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::RuntimeFailure;
     use crate::session::testutil::*;
     use serde_json::json;
 
@@ -431,18 +490,21 @@ mod tests {
                     description: "plan usage limits (session + weekly)".into(),
                     source: "builtin",
                     scope: None,
+                    invocation: None,
                 },
                 SlashCommandInfo {
                     name: "deploy".into(),
                     description: "ship it".into(),
                     source: "skill",
                     scope: Some("project".into()),
+                    invocation: None,
                 },
                 SlashCommandInfo {
                     name: "compact".into(),
                     description: String::new(),
                     source: "cli",
                     scope: None,
+                    invocation: None,
                 },
             ],
         };
@@ -497,6 +559,28 @@ mod tests {
         assert_eq!(RuntimeRunState::Stopping.session_status(), status::RUNNING);
         assert_eq!(RuntimeRunState::Idle.session_status(), status::IDLE);
         assert_eq!(RuntimeRunState::Failed.session_status(), status::ERROR);
+    }
+
+    /// pi-session-durability: `RuntimeRecovery` mirrors contract/common.ts
+    /// exactly — kebab-case state, `lastVerifiedAt`/`message` omitted (never
+    /// null) when absent.
+    #[test]
+    fn runtime_recovery_serializes_to_the_contract_shape() {
+        let disconnected = serde_json::to_value(RuntimeRecovery::disconnected()).unwrap();
+        assert_eq!(disconnected, json!({ "state": "disconnected" }));
+
+        let ready = serde_json::to_value(RuntimeRecovery::ready(1_000)).unwrap();
+        assert_eq!(ready, json!({ "state": "ready", "lastVerifiedAt": 1_000 }));
+
+        for (state, wire) in [
+            (RuntimeRecoveryState::Missing, "missing"),
+            (RuntimeRecoveryState::Corrupt, "corrupt"),
+            (RuntimeRecoveryState::Incompatible, "incompatible"),
+            (RuntimeRecoveryState::AccountMissing, "account-missing"),
+        ] {
+            let failed = serde_json::to_value(RuntimeRecovery::failed(state, "cause")).unwrap();
+            assert_eq!(failed, json!({ "state": wire, "message": "cause" }));
+        }
     }
 
     #[test]
@@ -685,12 +769,4 @@ fn serialize_safe_integer<S: serde::Serializer>(
         return Err(serde::ser::Error::custom("unsafe runtime integer"));
     }
     serializer.serialize_u64(*value)
-}
-fn serialize_capabilities<S: serde::Serializer>(
-    caps: &RuntimeCapabilities,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    adapter::validate_capabilities(caps)
-        .map_err(|_| serde::ser::Error::custom("invalid capability snapshot"))?;
-    caps.serialize(serializer)
 }

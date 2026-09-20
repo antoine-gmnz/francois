@@ -217,7 +217,7 @@ export function formatTurnDuration(ms: number): string {
 
 // ---------- tool rows (9a: the result is chips, not a trailing sentence) ----------
 
-export type ToolChipTone = 'add' | 'del' | 'error' | 'plain';
+export type ToolChipTone = 'add' | 'del' | 'error' | 'warn' | 'plain';
 
 export interface ToolChip {
   tone: ToolChipTone;
@@ -247,6 +247,16 @@ export function toolResultChips(meta: string | undefined): ToolChip[] {
       { tone: 'del', text: `−${change[2]}` },
     ];
   }
-  const tone: ToolChipTone = /\b(error|failed|failure)\b/i.test(meta) ? 'error' : 'plain';
+  // pi-transcript-events: a runtime tool call that never settled cleanly —
+  // 'cancelled' (the user/session stopped it) or 'unknown' (the runtime never
+  // reported a terminal state) — reads as neither a failure nor an ordinary
+  // result: 'error' would overstate it, 'plain' would hide it next to a
+  // genuine success. Matched WHOLE, unlike the error rule above: these are the
+  // two words `runtimeToolStatusLabel` writes and nothing else, while a Claude
+  // meta is free-form (tools.rs gives a Task row the first line of the
+  // subagent's own result) and must not turn amber for mentioning one.
+  let tone: ToolChipTone = 'plain';
+  if (/\b(error|failed|failure)\b/i.test(meta)) tone = 'error';
+  else if (meta === 'cancelled' || meta === 'unknown') tone = 'warn';
   return [{ tone, text: meta }];
 }

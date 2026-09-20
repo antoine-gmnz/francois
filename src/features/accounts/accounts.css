@@ -131,6 +131,14 @@
   background: color-mix(in srgb, var(--error) 12%, transparent);
   color: var(--error-bright);
 }
+/* pi-provider-auth: UNTRUSTED means action-required (trust the directory to
+   proceed), not a fault — the attention tone, not the error one .acc-pill--alert
+   spends on a genuinely broken/rejected credential. */
+.acc-pill--attn {
+  border-color: var(--attn);
+  background: color-mix(in srgb, var(--attn) 12%, transparent);
+  color: var(--attn);
+}
 
 /* ── remove confirmation (design brief) ─────────────────────────────────── */
 /* Dressed as redesign 4a's inline alert banner — a red-tinted surface with a
@@ -1157,4 +1165,42 @@
 }
 .acc-cli-copy:hover {
   color: var(--text-2);
+}
+
+/* ── pi-provider-auth: the "+ Add Pi account" form's checkboxes ──────────
+   Reuses `.acc-endpoint-form`'s row rhythm; a checkbox row is its own shape
+   because a label/input pair reads left-to-right, not stacked. */
+.acc-pi-check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-12);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.acc-pi-check-note {
+  font-size: var(--font-size-10-5);
+  line-height: 1.5;
+  color: var(--text-faint);
+  margin-top: calc(-1 * var(--space-6));
+}
+/* FR-4's consent copy: the one warning this section carries, so it earns the
+   attention tone rather than the neutral faint text every other note uses. */
+.acc-pi-check-note--warn {
+  color: var(--attn);
+}
+
+/* ── pi-provider-auth: a card's per-provider auth observations (FR-7) ───── */
+.acc-pi-observations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-10-5);
+  color: var(--text-faint);
+}
+.acc-pi-observations-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
 }

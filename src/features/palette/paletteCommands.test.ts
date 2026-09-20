@@ -6,13 +6,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaletteContext } from '../../../contract/command-palette';
+import type { SessionMeta } from '../../../contract/common';
 
 vi.mock('../../lib/api', () => ({
   agentsKill: vi.fn(),
   sessionCompact: vi.fn(),
   sessionModels: vi.fn(() => Promise.resolve({ ok: false, error: { code: 'INTERNAL', message: 'n/a' } })),
   sessionSwitchModel: vi.fn(),
-  skillsRun: vi.fn(),
+  skillsRun: vi.fn(() => Promise.resolve({ ok: true, data: null })),
 }));
 
 function mockStorage(seed: Record<string, string> = {}): { store: Record<string, string> } {
@@ -212,5 +213,37 @@ describe('audio-cues palette toggle (FR-12)', () => {
 
     byId('toggle-sound').run(ctx);
     expect(useNotificationsStore.getState().soundEnabled).toBe(true);
+  });
+});
+
+describe('run-skill palette command (pr-142 §6, frontend half)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('gives two entries that derive the same bare name distinct item ids, and sends the picked one\'s own invocation', async () => {
+    const { useStore, byId } = await freshModules();
+    const { setPaletteSkills } = await import('./paletteData');
+    const api = await import('../../lib/api');
+    useStore.setState({
+      activeSessionId: 's1',
+      sessions: [{ id: 's1', status: 'idle', agentRuntime: 'pi', effectiveCapabilities: { skills: { available: true } } } as SessionMeta],
+    });
+    setPaletteSkills('s1', [
+      { name: 'deploy', description: 'repo skill', installed: true, invocation: '/skill:deploy' },
+      { name: 'deploy', description: 'user command', installed: true, invocation: '/deploy' },
+    ]);
+
+    const step = byId('run-skill').run({ activeSessionId: 's1', runningAgentCount: 0 });
+    const ids = step!.items.map((i) => i.id);
+    expect(new Set(ids).size).toBe(2); // no key collision, unlike a plain `name`
+
+    step!.onPick(ids[1]);
+    expect(api.skillsRun).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 's1', name: 'deploy', invocation: '/deploy' }),
+    );
   });
 });

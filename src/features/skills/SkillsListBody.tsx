@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import type { RefObject } from 'react';
-import type { AppError, SkillInfo } from '../../../contract/common';
+import type { AppError, RuntimeResourcePolicy, SkillInfo } from '../../../contract/common';
 import type { CapabilityState } from '../../../contract/multi-provider-seam';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { ListRow } from '../../ui/ListRow';
+import { isSkillRunnable, projectResourcesNote, skillInvocationLabel, skillRowKey } from './skills-loaded';
 
-const scopeTag: Record<string, string> = { project: 'proj', user: 'user', plugin: 'plugin' };
+// pi-skills-capabilities FR-1: 'path' is the Pi-only scope (a profile's skillPaths).
+const scopeTag: Record<string, string> = { project: 'proj', user: 'user', plugin: 'plugin', path: 'path' };
 
 export interface SkillsListBodyProps {
   /** multi-provider-openai FR-20: skills' capability state for this session. */
@@ -26,6 +28,10 @@ export interface SkillsListBodyProps {
   visible: SkillInfo[];
   selected: number;
   onRowClick: (index: number, skill: SkillInfo) => void;
+  /** pi-skills-capabilities FR-8: present only for a Pi session — the status
+   *  line that keeps "no skills" from being confused with "project resources
+   *  are disabled" (the empty state never has to infer it). */
+  resourcePolicy?: RuntimeResourcePolicy;
 }
 
 /** Pane [5]'s scrollable skill/command list: the "/" filter row, its
@@ -43,9 +49,12 @@ export function SkillsListBody({
   visible,
   selected,
   onRowClick,
+  resourcePolicy,
 }: SkillsListBodyProps): JSX.Element {
+  const resourcesNote = projectResourcesNote(resourcePolicy);
   return (
     <div className="scz skills-list">
+      {resourcesNote && capability.available && <div className="skills-resources-note">{resourcesNote}</div>}
       {filterOpen && (
         <div className="skills-filter">
           <span className="skills-filter-glyph">/</span>
@@ -76,7 +85,7 @@ export function SkillsListBody({
           const sel = i === selected;
           return (
             <Row
-              key={skill.name}
+              key={skillRowKey(skill)}
               skill={skill}
               selected={sel}
               installCapability={installCapability}
@@ -101,10 +110,27 @@ function Row({
   onClick: () => void;
 }) {
   const [hover, setHover] = useState(false);
+  // pi-skills-capabilities FR-1: `loaded: false` is visible, never runnable —
+  // dimmed, and its reason rides on `title` (same pattern as the disabled
+  // `enable` affordance below).
+  const runnable = isSkillRunnable(skill);
+  const rowClassName = [
+    'skills-row',
+    selected ? 'skills-row--selected' : hover ? 'skills-row--hovered' : '',
+    !runnable ? 'skills-row--unloaded' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return (
     <ListRow
       selected={selected}
-      className={`skills-row${selected ? ' skills-row--selected' : hover ? ' skills-row--hovered' : ''}`}
+      className={rowClassName}
+      title={!runnable ? skill.unavailableReason : undefined}
+      // B2: SELECT always happens (arrow-key navigation already lands here) —
+      // activation stays gated inside SkillsPanel.activate, which is `onClick`
+      // here, so a `loaded: false` row is never silently unresponsive to a
+      // click, only to the activation it already refuses.
+      aria-disabled={!runnable || undefined}
       onClick={(e) => {
         e.stopPropagation();
         onClick();
@@ -117,18 +143,22 @@ function Row({
       </span>
       <div className="skills-row-body">
         <div className={selected ? 'skills-row-name skills-row-name--selected' : 'skills-row-name'}>
-          {skill.kind === 'command' ? '/' : ''}
-          {skill.name}
+          {skillInvocationLabel(skill)}
         </div>
         <div className="skills-row-desc truncate">
-          {skill.description || (skill.kind === 'command' ? 'slash command' : 'skill')}
+          {!runnable && skill.unavailableReason
+            ? skill.unavailableReason
+            : skill.description || (skill.kind === 'command' ? 'slash command' : 'skill')}
         </div>
       </div>
       <div className="skills-row-tags">
         {skill.kind === 'command' && <span className="skills-tag skills-tag--cmd">cmd</span>}
+        {/* pi-skills-capabilities FR-1: a runtime-listed skill's own source (skill
+            vs. prompt template), distinct from its scope tag below. */}
+        {skill.source && <span className="skills-tag">{skill.source}</span>}
         {skill.scope && <span className="skills-tag">{scopeTag[skill.scope] ?? skill.scope}</span>}
-        {!skill.installed && installCapability.available && <span className="skills-row-enable">enable</span>}
-        {!skill.installed && !installCapability.available && (
+        {!skill.installed && runnable && installCapability.available && <span className="skills-row-enable">enable</span>}
+        {!skill.installed && runnable && !installCapability.available && (
           <span
             className="skills-row-enable skills-row-enable--disabled"
             title={installCapability.reason}

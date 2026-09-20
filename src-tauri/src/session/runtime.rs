@@ -57,6 +57,20 @@ impl Engine {
     /// rather than caching one, so it can never go stale across a reconnect
     /// (the connection itself is built by `connect_session`, before
     /// `install_runtime_connection` has even minted a `RuntimeProducer`).
+    ///
+    /// pi-transcript-events FR-6: also returns the `BufBlock` this event just
+    /// settled in the session's own transcript buffer, if any — `None` for
+    /// every event that carries no persistable finalization (run.state,
+    /// capabilities, failure, a still-open assistant/tool block). The caller
+    /// (`AppPublisher::publish`, which alone holds the `AppHandle`) is what
+    /// then calls `persistence::append_transcript` with it — this method has
+    /// no I/O of its own, same as `runtime_event`.
+    ///
+    /// HIGH (review round 7): the block is what the `buf_*_pi` helper itself
+    /// hands back (their own pre-trim clone), never a re-`find` by id after
+    /// the fact — settling a block is exactly what unpins `trim_transcript`,
+    /// so a re-find after the apply returns `None` for precisely the block
+    /// the trim just evicted, and that settled block is never persisted.
     #[allow(dead_code)]
     pub(crate) fn runtime_event_for_session(
         &self,
@@ -66,7 +80,7 @@ impl Engine {
         run_id: Option<String>,
         request_id: Option<String>,
         event: events::RuntimeEventPayload,
-    ) -> Result<Vec<SessionEvent>, AppError> {
+    ) -> Result<(Vec<SessionEvent>, Option<BufBlock>), AppError> {
         let generation = self
             .runtime_events
             .lock()
@@ -83,7 +97,17 @@ impl Engine {
             session_id: session_id.to_string(),
             generation,
         };
-        self.runtime_event(accounts, &producer, at, run_id, request_id, event)
+        let mut settled = None;
+        let batch = self.runtime_event_settling(
+            accounts,
+            &producer,
+            at,
+            run_id,
+            request_id,
+            event,
+            &mut settled,
+        )?;
+        Ok((batch, settled))
     }
     /// pi-rpc-sessions FR-8: the session's CURRENT generation, for
     /// diagnostics logging only (`pi-rpc.log`'s `generation=` field) — `None`
@@ -167,6 +191,16 @@ impl Engine {
             })?
             .submit(input)
     }
+    /// pi-models-metrics: the live connection for a session, if any — what
+    /// `session_switch_model`/`session_switch_effort`/`session_metrics`'s Pi
+    /// branches dispatch `switch_model`/`read_metrics` through. Same shape as
+    /// `submit_runtime`/`cancel_runtime`'s own lookup.
+    pub(crate) fn runtime_connection_for(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn adapter::RuntimeSessionControl>> {
+        self.runtime_connections.lock().unwrap().get(id).cloned()
+    }
     pub(crate) fn cancel_runtime(&self, id: &str) -> Result<(), AppError> {
         let connection = self.runtime_connections.lock().unwrap().get(id).cloned();
         if let Some(connection) = connection {
@@ -218,6 +252,24 @@ impl Engine {
         request_id: Option<String>,
         event: events::RuntimeEventPayload,
     ) -> Result<Vec<SessionEvent>, AppError> {
+        self.runtime_event_settling(accounts, producer, at, run_id, request_id, event, &mut None)
+    }
+
+    /// `runtime_event`, plus the ONE out-parameter its transcript arms have to
+    /// hand back: the `BufBlock` a `buf_*_pi` helper just settled, captured by
+    /// the helper itself before its own trim. Private, so every caller that
+    /// does not persist keeps `runtime_event`'s simpler signature.
+    #[allow(clippy::too_many_arguments)]
+    fn runtime_event_settling(
+        &self,
+        accounts: &dyn crate::account::AccountKinds,
+        producer: &RuntimeProducer,
+        at: u64,
+        run_id: Option<String>,
+        request_id: Option<String>,
+        event: events::RuntimeEventPayload,
+        settled: &mut Option<BufBlock>,
+    ) -> Result<Vec<SessionEvent>, AppError> {
         let mut streams = self.runtime_events.lock().unwrap();
         let sequence = streams
             .get_mut(&producer.session_id)
@@ -235,6 +287,11 @@ impl Engine {
         let accepted = event.clone();
         let envelope = sequence.next(at, run_id, request_id, event)?;
         let mut batch = Vec::new();
+        // pi-turn-controls FR-3: set inside the `MessageUser` arm below when a
+        // consumed user message actually settled a pending admission — never
+        // by matching text, only by the echoed `clientMessageId` or, failing
+        // that, admission order (`AdmissionLedger::mark_consumed`).
+        let mut admission_consumed = false;
         // pi-runtime-boundary: `run.state`/`failure` events settle the matching
         // Session's status/error BEFORE any later event (e.g. `capabilities`)
         // publishes `session.meta` — otherwise that later publish re-serializes
@@ -264,510 +321,125 @@ impl Engine {
                     s.meta(accounts)
                 })
             }
+            // pi-transcript-events §5/FR-6: the five transcript-normalization
+            // variants (`message.user` .. `notice`) carry no session-level
+            // status/capability mutation of their own — a `session.meta`
+            // re-publish here would be a no-op (`meta` stays `None`). They
+            // DO fold into the session's own `block_buffer`, so
+            // `conversation_get_transcript`/a reload sees exactly what the
+            // live envelope just showed — `runtime_event_for_session` reads
+            // the settled block back out afterward for the caller to persist.
+            events::RuntimeEventPayload::MessageUser {
+                block_id,
+                text,
+                attachments,
+                client_message_id,
+            } => {
+                *settled = self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_message_user_pi(&block_id, text, attachments)
+                });
+                // pi-turn-controls FR-3: this is the ONLY signal the ledger
+                // trusts to settle an admission "consumed", and the echoed
+                // `clientMessageId` `normalize` parsed off this very event is
+                // the only EXACT association there is — admission order is
+                // not wire order, so oldest-first (the fallback, for an echo
+                // that names nothing) settles the wrong row whenever Pi
+                // consumes out of order. Never by matching text.
+                if self
+                    .with_admissions(&producer.session_id, |l| {
+                        l.mark_consumed(client_message_id.as_deref())
+                    })
+                    .is_some()
+                {
+                    admission_consumed = true;
+                }
+                None
+            }
+            events::RuntimeEventPayload::AssistantDelta { block_id, text, .. } => {
+                self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_assistant_streaming(&block_id, &text, &text);
+                });
+                None
+            }
+            events::RuntimeEventPayload::AssistantComplete {
+                block_id,
+                text,
+                outcome,
+            } => {
+                *settled = self
+                    .with_session_mut(&producer.session_id, |s| {
+                        s.finish_assistant_pi(&block_id, text, &outcome)
+                    })
+                    .flatten();
+                None
+            }
+            events::RuntimeEventPayload::ToolUpdate { block_id, tool } => {
+                // `None` while the call is still pending/running: visible live
+                // through the envelope below, nothing to persist until it
+                // settles (the helper owns that rule).
+                *settled = self
+                    .with_session_mut(&producer.session_id, |s| {
+                        s.buf_tool_update_pi(&block_id, tool)
+                    })
+                    .flatten();
+                None
+            }
+            events::RuntimeEventPayload::Notice {
+                block_id,
+                tone,
+                text,
+            } => {
+                *settled = self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_notice_pi(&block_id, tone, text)
+                });
+                None
+            }
+            // pi-models-metrics (lead clarification): NO session-level
+            // mutation or `session.meta` build here, unlike every arm above —
+            // the caller (`apply_pi_model_switch`/`session_metrics`) mutates
+            // the session directly and controls emission order itself
+            // (`model.changed`/`metrics` FIRST, then the authoritative
+            // `session.meta` carrying `model.efforts`/`effort`/`metrics` —
+            // the frontend projects `model.changed` without efforts, so a
+            // `session.meta` published from in here, ahead of it in the same
+            // batch, would have its efforts clobbered by the stale ones).
+            // This arm exists only so the match stays exhaustive; the call
+            // reaches it purely for `runtime_event`'s validated, sequenced
+            // envelope.
+            events::RuntimeEventPayload::ModelChanged { .. } => None,
+            events::RuntimeEventPayload::Metrics { .. } => None,
+            // pi-turn-controls: none of these three carry a session-level
+            // status/capability mutation of their own — `queue.changed` is
+            // published EXPLICITLY (by the admissions ledger callers, or just
+            // below when a `MessageUser` in this same call settled one), and
+            // `compaction`/`retry` are progress notices with nothing to fold
+            // onto `SessionMeta`.
+            events::RuntimeEventPayload::QueueChanged { .. }
+            | events::RuntimeEventPayload::Compaction { .. }
+            | events::RuntimeEventPayload::Retry { .. } => None,
         };
         if let Some(meta) = meta {
             batch.push(SessionEvent::Meta { meta });
         }
         batch.push(envelope);
+        // pi-turn-controls FR-3: a SECOND envelope, same sequence — the FULL
+        // pending snapshot, published the instant a consumed message actually
+        // left the ledger (rather than waiting for the next submit's own publish).
+        if admission_consumed {
+            let entries = self.with_admissions(&producer.session_id, |l| l.snapshot_pending());
+            if let Ok(extra) = sequence.next(
+                at,
+                None,
+                None,
+                events::RuntimeEventPayload::QueueChanged { entries },
+            ) {
+                batch.push(extra);
+            }
+        }
         Ok(batch)
     }
 }
 
 #[cfg(test)]
-mod connection_tests {
-    use super::*;
-    use crate::session::testutil::fake_accounts;
-    use adapter::{RuntimeSessionControl, RuntimeSubmission, SubmissionReceipt};
-    struct MockConnection {
-        engine: std::sync::Weak<Engine>,
-        calls: Arc<Mutex<Vec<&'static str>>>,
-    }
-    impl MockConnection {
-        fn record(&self, call: &'static str) {
-            let engine = self.engine.upgrade().unwrap();
-            assert!(engine.sessions.try_lock().is_ok());
-            assert!(engine.runtime_connections.try_lock().is_ok());
-            assert!(engine.runtime_events.try_lock().is_ok());
-            self.calls.lock().unwrap().push(call);
-        }
-    }
-    impl RuntimeSessionControl for MockConnection {
-        fn submit(&self, input: RuntimeSubmission) -> Result<SubmissionReceipt, AppError> {
-            assert_eq!(input.text, "hello");
-            self.record("submit");
-            Ok(SubmissionReceipt { request_id: uuid() })
-        }
-        fn capabilities(&self) -> RuntimeCapabilities {
-            enabled_caps()
-        }
-        fn cancel(&self) -> Result<(), AppError> {
-            self.record("cancel");
-            Ok(())
-        }
-        fn shutdown(&self) -> Result<(), AppError> {
-            self.record("shutdown");
-            Ok(())
-        }
-    }
-    fn enabled_caps() -> RuntimeCapabilities {
-        adapter::RUNTIME_CAPABILITIES
-            .into_iter()
-            .map(|k| {
-                (
-                    k.into(),
-                    adapter::CapabilityState {
-                        available: true,
-                        reason: None,
-                    },
-                )
-            })
-            .collect()
-    }
-    fn model() -> adapter::RuntimeModelRef {
-        adapter::RuntimeModelRef {
-            provider_id: "provider".into(),
-            model_id: "model".into(),
-        }
-    }
-    #[test]
-    fn replacement_rejects_retired_child_and_publishes_authoritative_meta_first() {
-        let mut session = testutil::test_session();
-        session.id = uuid();
-        session.agent_runtime = AgentRuntime::Pi;
-        let id = session.id.clone();
-        let engine = Arc::new(testutil::test_engine_with(session));
-        let c = || {
-            Arc::new(MockConnection {
-                engine: Arc::downgrade(&engine),
-                calls: Arc::new(Mutex::new(Vec::new())),
-            }) as Arc<dyn RuntimeSessionControl>
-        };
-        let (old, first) = engine
-            .install_runtime_connection(&fake_accounts(), id.clone(), c(), model(), enabled_caps())
-            .unwrap();
-        assert!(matches!(first.as_slice(), [SessionEvent::Meta { .. }]));
-        let (current, _) = engine
-            .install_runtime_connection(&fake_accounts(), id.clone(), c(), model(), enabled_caps())
-            .unwrap();
-        let mut caps = enabled_caps();
-        caps.insert(
-            "permissions".into(),
-            adapter::CapabilityState {
-                available: false,
-                reason: Some("Disabled".into()),
-            },
-        );
-        assert!(engine
-            .runtime_event(
-                &fake_accounts(),
-                &old,
-                1,
-                None,
-                None,
-                events::RuntimeEventPayload::Capabilities {
-                    capabilities: caps.clone()
-                }
-            )
-            .is_err());
-        assert!(engine.require_capability(&id, "permissions").is_ok());
-        let batch = engine
-            .runtime_event(
-                &fake_accounts(),
-                &current,
-                2,
-                None,
-                None,
-                events::RuntimeEventPayload::Capabilities { capabilities: caps },
-            )
-            .unwrap();
-        assert!(matches!(
-            batch.as_slice(),
-            [
-                SessionEvent::Meta { .. },
-                SessionEvent::RuntimeEvent { sequence: 1, .. }
-            ]
-        ));
-        assert!(engine.require_capability(&id, "permissions").is_err());
-        let ui = serde_json::to_value(&batch[0]).unwrap();
-        let core = engine
-            .with_session(&id, |s| {
-                serde_json::to_value(s.meta(&fake_accounts())).unwrap()
-            })
-            .unwrap();
-        assert_eq!(ui["meta"], core);
-        assert_eq!(core["runtimeModel"]["modelId"], "model");
-    }
-    #[test]
-    fn idle_connection_submission_cancellation_and_shutdown_release_locks() {
-        let mut session = testutil::test_session();
-        session.id = uuid();
-        let id = session.id.clone();
-        let engine = Arc::new(testutil::test_engine_with(session));
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let c = Arc::new(MockConnection {
-            engine: Arc::downgrade(&engine),
-            calls: calls.clone(),
-        });
-        engine
-            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
-            .unwrap();
-        assert!(engine.with_session(&id, |s| s.current.is_none()).unwrap());
-        let receipt = engine
-            .submit_runtime(
-                &id,
-                RuntimeSubmission {
-                    text: "hello".into(),
-                },
-            )
-            .unwrap();
-        assert!(crate::ipc::valid_correlation(&receipt.request_id));
-        engine.cancel_runtime(&id).unwrap();
-        engine.shutdown_runtime(&id).unwrap();
-        assert_eq!(*calls.lock().unwrap(), vec!["submit", "cancel", "shutdown"]);
-        engine.shutdown_runtimes();
-        assert_eq!(calls.lock().unwrap().len(), 3);
-    }
-    #[test]
-    fn shutdown_and_replacement_share_the_installation_lock_order() {
-        for all in [false, true] {
-            let mut s = testutil::test_session();
-            s.id = uuid();
-            let id = s.id.clone();
-            let engine = Arc::new(testutil::test_engine_with(s));
-            let make = || {
-                Arc::new(MockConnection {
-                    engine: Arc::downgrade(&engine),
-                    calls: Arc::new(Mutex::new(Vec::new())),
-                }) as Arc<dyn RuntimeSessionControl>
-            };
-            engine
-                .install_runtime_connection(
-                    &fake_accounts(),
-                    id.clone(),
-                    make(),
-                    model(),
-                    enabled_caps(),
-                )
-                .unwrap();
-            let connections = engine.runtime_connections.lock().unwrap();
-            let worker = engine.clone();
-            let worker_id = id.clone();
-            let stop = std::thread::spawn(move || {
-                if all {
-                    worker.shutdown_runtimes()
-                } else {
-                    worker.shutdown_runtime(&worker_id).unwrap()
-                }
-            });
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-            while engine
-                .with_session(&id, |s| s.runtime_generation.is_some())
-                .unwrap()
-            {
-                assert!(std::time::Instant::now() < deadline);
-                std::thread::yield_now();
-            }
-            let held = engine.runtime_events.try_lock().is_err();
-            drop(connections);
-            stop.join().unwrap();
-            assert!(
-                held,
-                "shutdown must hold installation lock until the matching connection is retired"
-            );
-            let (producer, _) = engine
-                .install_runtime_connection(
-                    &fake_accounts(),
-                    id.clone(),
-                    make(),
-                    model(),
-                    enabled_caps(),
-                )
-                .unwrap();
-            assert!(engine
-                .with_session(&id, |s| s.runtime_generation.as_ref()
-                    == Some(&producer.generation))
-                .unwrap());
-            assert!(engine.runtime_connections.lock().unwrap().contains_key(&id));
-        }
-    }
-
-    struct WaitingShutdown {
-        entered: std::sync::mpsc::Sender<()>,
-        release: Mutex<std::sync::mpsc::Receiver<()>>,
-        engine: std::sync::Weak<Engine>,
-    }
-    impl RuntimeSessionControl for WaitingShutdown {
-        fn submit(&self, _: RuntimeSubmission) -> Result<SubmissionReceipt, AppError> {
-            unreachable!()
-        }
-        fn cancel(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn capabilities(&self) -> RuntimeCapabilities {
-            enabled_caps()
-        }
-        fn shutdown(&self) -> Result<(), AppError> {
-            let engine = self.engine.upgrade().unwrap();
-            assert!(engine.runtime_events.try_lock().is_ok());
-            assert!(engine.runtime_connections.try_lock().is_ok());
-            assert!(engine.sessions.try_lock().is_ok());
-            self.entered.send(()).unwrap();
-            self.release
-                .lock()
-                .unwrap()
-                .recv_timeout(std::time::Duration::from_secs(3))
-                .unwrap();
-            Ok(())
-        }
-    }
-    #[test]
-    fn concurrent_replacement_survives_single_and_all_shutdown_io() {
-        for all in [false, true] {
-            let mut s = testutil::test_session();
-            s.id = uuid();
-            let id = s.id.clone();
-            let engine = Arc::new(testutil::test_engine_with(s));
-            let (entered_tx, entered_rx) = std::sync::mpsc::channel();
-            let (release_tx, release_rx) = std::sync::mpsc::channel();
-            let old = Arc::new(WaitingShutdown {
-                entered: entered_tx,
-                release: Mutex::new(release_rx),
-                engine: Arc::downgrade(&engine),
-            });
-            let (retired, _) = engine
-                .install_runtime_connection(
-                    &fake_accounts(),
-                    id.clone(),
-                    old,
-                    model(),
-                    enabled_caps(),
-                )
-                .unwrap();
-            let worker = engine.clone();
-            let worker_id = id.clone();
-            let stop = std::thread::spawn(move || {
-                if all {
-                    worker.shutdown_runtimes()
-                } else {
-                    worker.shutdown_runtime(&worker_id).unwrap()
-                }
-            });
-            entered_rx
-                .recv_timeout(std::time::Duration::from_secs(3))
-                .unwrap();
-            let calls = Arc::new(Mutex::new(Vec::new()));
-            let current = Arc::new(MockConnection {
-                engine: Arc::downgrade(&engine),
-                calls: calls.clone(),
-            }) as Arc<dyn RuntimeSessionControl>;
-            let (producer, _) = engine
-                .install_runtime_connection(
-                    &fake_accounts(),
-                    id.clone(),
-                    current.clone(),
-                    model(),
-                    enabled_caps(),
-                )
-                .unwrap();
-            release_tx.send(()).unwrap();
-            stop.join().unwrap();
-            assert!(Arc::ptr_eq(
-                engine.runtime_connections.lock().unwrap().get(&id).unwrap(),
-                &current
-            ));
-            assert!(calls.lock().unwrap().is_empty());
-            assert!(engine
-                .with_session(&id, |s| s.runtime_generation.as_ref()
-                    == Some(&producer.generation))
-                .unwrap());
-            let event = || events::RuntimeEventPayload::Capabilities {
-                capabilities: enabled_caps(),
-            };
-            assert!(engine
-                .runtime_event(&fake_accounts(), &retired, 1, None, None, event())
-                .is_err());
-            assert!(engine
-                .runtime_event(&fake_accounts(), &producer, 1, None, None, event())
-                .is_ok());
-        }
-    }
-
-    #[test]
-    fn accepted_run_state_survives_a_later_capabilities_publish() {
-        let mut session = testutil::test_session();
-        session.id = uuid();
-        let id = session.id.clone();
-        let engine = Arc::new(testutil::test_engine_with(session));
-        let c = Arc::new(MockConnection {
-            engine: Arc::downgrade(&engine),
-            calls: Arc::new(Mutex::new(Vec::new())),
-        }) as Arc<dyn RuntimeSessionControl>;
-        let (producer, _) = engine
-            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
-            .unwrap();
-
-        let batch = engine
-            .runtime_event(
-                &fake_accounts(),
-                &producer,
-                1,
-                None,
-                None,
-                events::RuntimeEventPayload::RunState {
-                    state: events::RuntimeRunState::Running,
-                },
-            )
-            .unwrap();
-        assert!(matches!(batch.as_slice(), [SessionEvent::Meta { .. }, _]));
-        assert!(engine
-            .with_session(&id, |s| s.status == status::RUNNING)
-            .unwrap());
-
-        // A later, unrelated `capabilities` publish must NOT revert the status
-        // it just observed — the CRITICAL this regresses.
-        let batch = engine
-            .runtime_event(
-                &fake_accounts(),
-                &producer,
-                2,
-                None,
-                None,
-                events::RuntimeEventPayload::Capabilities {
-                    capabilities: enabled_caps(),
-                },
-            )
-            .unwrap();
-        let core = engine
-            .with_session(&id, |s| {
-                serde_json::to_value(s.meta(&fake_accounts())).unwrap()
-            })
-            .unwrap();
-        assert_eq!(core["status"], status::RUNNING);
-        let ui = serde_json::to_value(&batch[0]).unwrap();
-        assert_eq!(ui["meta"], core);
-    }
-
-    #[test]
-    fn accepted_failure_survives_a_later_capabilities_publish() {
-        let mut session = testutil::test_session();
-        session.id = uuid();
-        let id = session.id.clone();
-        let engine = Arc::new(testutil::test_engine_with(session));
-        let c = Arc::new(MockConnection {
-            engine: Arc::downgrade(&engine),
-            calls: Arc::new(Mutex::new(Vec::new())),
-        }) as Arc<dyn RuntimeSessionControl>;
-        let (producer, _) = engine
-            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
-            .unwrap();
-        let failure = crate::ipc::RuntimeFailure::validated(
-            "runtime",
-            "RUNTIME_EXITED",
-            "the child exited",
-            false,
-            None,
-            None,
-        )
-        .unwrap();
-
-        engine
-            .runtime_event(
-                &fake_accounts(),
-                &producer,
-                1,
-                None,
-                None,
-                events::RuntimeEventPayload::Failure { failure },
-            )
-            .unwrap();
-        assert!(engine
-            .with_session(&id, |s| s.status == status::ERROR
-                && s.error_message.as_deref() == Some("the child exited"))
-            .unwrap());
-
-        // A later, unrelated `capabilities` publish must NOT clear the failure
-        // it just observed — the CRITICAL this regresses.
-        let batch = engine
-            .runtime_event(
-                &fake_accounts(),
-                &producer,
-                2,
-                None,
-                None,
-                events::RuntimeEventPayload::Capabilities {
-                    capabilities: enabled_caps(),
-                },
-            )
-            .unwrap();
-        let core = engine
-            .with_session(&id, |s| {
-                serde_json::to_value(s.meta(&fake_accounts())).unwrap()
-            })
-            .unwrap();
-        assert_eq!(core["status"], status::ERROR);
-        assert_eq!(core["errorMessage"], "the child exited");
-        let ui = serde_json::to_value(&batch[0]).unwrap();
-        assert_eq!(ui["meta"], core);
-    }
-
-    /// pi-rpc-sessions FR-4/FR-8: `runtime_event_for_session` is what a
-    /// connection's OWN reader thread calls (it holds no `RuntimeProducer`
-    /// of its own) — confirm it round-trips to the SAME generation
-    /// `install_runtime_connection` minted, and that once the connection is
-    /// retired it fails with the same "retired" error `runtime_event` itself
-    /// raises for a stale generation, rather than panicking or silently
-    /// dropping the event.
-    #[test]
-    fn runtime_event_for_session_round_trips_the_current_generation_then_retires() {
-        let mut session = testutil::test_session();
-        session.id = uuid();
-        let id = session.id.clone();
-        let engine = Arc::new(testutil::test_engine_with(session));
-        let c = Arc::new(MockConnection {
-            engine: Arc::downgrade(&engine),
-            calls: Arc::new(Mutex::new(Vec::new())),
-        }) as Arc<dyn RuntimeSessionControl>;
-        let (producer, _) = engine
-            .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
-            .unwrap();
-
-        let batch = engine
-            .runtime_event_for_session(
-                &fake_accounts(),
-                &id,
-                1,
-                None,
-                None,
-                events::RuntimeEventPayload::RunState {
-                    state: events::RuntimeRunState::Running,
-                },
-            )
-            .unwrap();
-        assert!(matches!(batch.as_slice(), [SessionEvent::Meta { .. }, _]));
-        assert!(engine
-            .with_session(&id, |s| s.runtime_generation.as_deref()
-                == Some(producer.generation.as_str()))
-            .unwrap());
-        assert!(engine
-            .with_session(&id, |s| s.status == status::RUNNING)
-            .unwrap());
-
-        engine.shutdown_runtime(&id).unwrap();
-        let result = engine.runtime_event_for_session(
-            &fake_accounts(),
-            &id,
-            2,
-            None,
-            None,
-            events::RuntimeEventPayload::RunState {
-                state: events::RuntimeRunState::Idle,
-            },
-        );
-        let err = match result {
-            Err(e) => e,
-            Ok(_) => panic!("expected the retired producer to be rejected"),
-        };
-        assert_eq!(err.code, ErrorCode::RuntimeUnavailable);
-        assert!(err.message.contains("retired"));
-    }
-}
+#[path = "runtime_tests.rs"]
+mod connection_tests;

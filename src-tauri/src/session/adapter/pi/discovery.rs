@@ -21,7 +21,7 @@
 //! `specs/refactor-backlog.md`.
 
 use super::probe::{
-    parse_version_line, probe_native, probe_node_at_native, probe_node_wsl, probe_wsl,
+    parse_version_line, probe_native, probe_node_at_native, probe_node_wsl, probe_wsl, ProbeEnv,
     ResolutionOutcome,
 };
 use crate::ipc::{ok, AppError, ErrorCode, IpcResult};
@@ -322,8 +322,22 @@ fn cache() -> &'static Mutex<HashMap<String, CacheEntry>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn cache_key(runtime: &str, distro: Option<&str>) -> String {
-    format!("{runtime}:{}", distro.unwrap_or(""))
+/// pi-provider-auth FR-9: the account a probe runs FOR. Its `config_dir` is
+/// part of the CACHE KEY, not just the spawn: "no shared cache can mix
+/// providers/models across accounts", and a 60s entry keyed on the
+/// environment alone would hand one account's verdict to another — or leak an
+/// account-scoped result into the ambient `runtime_installation` cache.
+pub(crate) struct ProbeScope<'a> {
+    pub(crate) config_dir: &'a str,
+    pub(crate) env: &'a [(String, String)],
+}
+
+fn cache_key(runtime: &str, distro: Option<&str>, scope: Option<&ProbeScope<'_>>) -> String {
+    format!(
+        "{runtime}:{}:{}",
+        distro.unwrap_or(""),
+        scope.map(|s| s.config_dir).unwrap_or("")
+    )
 }
 
 /// §5: "Cache keyed by environment and resolved binary metadata for 60
@@ -336,8 +350,23 @@ pub(crate) fn probe_installation(
     distro: Option<&str>,
     refresh: bool,
 ) -> Result<RuntimeInstallStatus, AppError> {
+    probe_installation_scoped(runtime, distro, refresh, None)
+}
+
+/// The same probe, run in ONE account's environment (PR #142 §5). Everything
+/// about it is identical except the two things that make it account-scoped:
+/// the child's environment (so `PI_CODING_AGENT_DIR` — and, for `wsl`, the
+/// `WSLENV` entry that carries it into the distro — are the account's), and
+/// the cache key (FR-9).
+pub(crate) fn probe_installation_scoped(
+    runtime: &str,
+    distro: Option<&str>,
+    refresh: bool,
+    scope: Option<&ProbeScope<'_>>,
+) -> Result<RuntimeInstallStatus, AppError> {
     validate(runtime, distro)?;
-    let key = cache_key(runtime, distro);
+    let key = cache_key(runtime, distro, scope);
+    let env: ProbeEnv<'_> = scope.map(|s| s.env);
     if !refresh {
         // `unwrap_or_else(|e| e.into_inner())` rather than `.unwrap()`: a panic
         // in one probe (this lock is held only for the get/insert, never across
@@ -353,9 +382,9 @@ pub(crate) fn probe_installation(
     let now = crate::ids::now_ms();
     let (resolution, node_output) = if runtime == "wsl" {
         let distro = distro.expect("validated above: wsl always carries a distro");
-        (probe_wsl(distro), probe_node_wsl(distro))
+        (probe_wsl(distro, env), probe_node_wsl(distro, env))
     } else {
-        (probe_native(), probe_node_at_native())
+        (probe_native(env), probe_node_at_native(env))
     };
     let status = build_status(resolution, node_output, now);
     cache().lock().unwrap_or_else(|e| e.into_inner()).insert(
@@ -375,6 +404,16 @@ pub(crate) fn probe_installation(
 /// worker thread for the whole 5s deadline. Missing/incompatible/probe-failure
 /// are all successful `Result`s (§5) — only `INVALID_INPUT` (bad runtime/
 /// distro combination) rejects the envelope itself.
+///
+/// **Not a pi-provider-auth FR-4 bypass, though it runs `pi --version` with no
+/// trust check** (reviewed, PR #142 §5 — recorded here so the next reader does
+/// not re-raise it). FR-4 gates executing a USER-NOMINATED `configDir`, whose
+/// provider configuration can name credential helpers Francois would be
+/// running on the user's behalf. This probe nominates nothing: it resolves
+/// whatever `pi` the ambient PATH already offers and reads its version banner,
+/// which is the same thing typing `pi --version` in a terminal does. The
+/// account-scoped probe — the one that DOES carry a `configDir` — is
+/// `account::pi::refresh`, and it is gated by `pi_execution_preflight`.
 #[tauri::command(async)]
 pub fn runtime_installation(
     runtime: String,
@@ -384,6 +423,28 @@ pub fn runtime_installation(
     match probe_installation(&runtime, distro.as_deref(), refresh.unwrap_or(false)) {
         Ok(status) => ok(status),
         Err(e) => e.into(),
+    }
+}
+
+/// pi-provider-auth FR-7: the same preflight, shaped as `account::PiInstallProbe`
+/// — main.rs injects it so account/ never names `crate::session` (session/
+/// already depends on account/). Always `refresh`: Refresh is an explicit user
+/// action (FR-9's "no shared cache").
+///
+/// PR #142 §5: it takes the account's `config_dir` and its prebuilt
+/// environment, so "the same launch policy as sessions" now covers the child's
+/// ENVIRONMENT too, not just which binary gets resolved. `account::pi::refresh`
+/// builds the env (it owns that rule); this side only spends it.
+pub fn installation_preflight(
+    runtime: &str,
+    distro: Option<&str>,
+    config_dir: &str,
+    env: &[(String, String)],
+) -> Result<(), AppError> {
+    let scope = ProbeScope { config_dir, env };
+    match probe_installation_scoped(runtime, distro, true, Some(&scope))?.error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -724,9 +785,39 @@ mod tests {
         }
     }
 
+    /// pi-provider-auth FR-9: two accounts, two cache entries — and neither of
+    /// them is the ambient `runtime_installation` one. Before this, a 60s
+    /// entry keyed on `"native:"` alone was shared by every account and by the
+    /// unscoped probe, so the FIRST account's verdict answered for all of them.
+    #[test]
+    fn the_probe_cache_key_separates_accounts_from_each_other_and_from_the_ambient_probe() {
+        let env: Vec<(String, String)> = Vec::new();
+        let a = ProbeScope {
+            config_dir: "/pi/a",
+            env: &env,
+        };
+        let b = ProbeScope {
+            config_dir: "/pi/b",
+            env: &env,
+        };
+        assert_ne!(
+            cache_key("native", None, Some(&a)),
+            cache_key("native", None, Some(&b))
+        );
+        assert_ne!(
+            cache_key("native", None, Some(&a)),
+            cache_key("native", None, None)
+        );
+        // The environment itself is still keyed too (runtime + distro).
+        assert_ne!(
+            cache_key("wsl", Some("Ubuntu"), Some(&a)),
+            cache_key("wsl", Some("Debian"), Some(&a))
+        );
+    }
+
     #[test]
     fn cache_serves_fresh_entries_reprobes_past_ttl_and_refresh_and_never_caches_invalid_input() {
-        let key = cache_key("native", None);
+        let key = cache_key("native", None, None);
 
         // A fresh entry is served as-is, with no reprobe.
         let stale_status = fixture_status(1);
@@ -770,6 +861,6 @@ mod tests {
         assert!(!cache()
             .lock()
             .unwrap()
-            .contains_key(&cache_key("native", Some("Ubuntu"))));
+            .contains_key(&cache_key("native", Some("Ubuntu"), None)));
     }
 }

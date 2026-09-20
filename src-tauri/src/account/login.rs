@@ -155,6 +155,7 @@ pub fn spawn_login(
             master: pair.master,
             killer,
             settled: settled.clone(),
+            kind: AccountKind::ClaudeCodeOauth,
         },
         threads: LoginThreads {
             login_id,
@@ -319,9 +320,28 @@ fn claim(app: &AppHandle, login_id: &str) -> Option<LoginHandle> {
 /// re-login (FR-17) keeps its registry ROW — only the directory goes, exactly as
 /// for a fresh login, because credentials that were never completed must not be
 /// left behind for a turn to spawn against.
-fn discard(handle: &mut LoginHandle) {
+///
+/// pi-provider-auth FR-8: a Pi handle's directory is the user's OWN
+/// pre-existing directory, never one Francois created — this only ever kills
+/// the process for `handle.kind == AccountKind::Pi`, and never removes
+/// anything on disk.
+pub(crate) fn discard(handle: &mut LoginHandle) {
     let _ = handle.killer.kill();
-    let _ = std::fs::remove_dir_all(&handle.config_dir);
+    if handle.kind != AccountKind::Pi {
+        let _ = std::fs::remove_dir_all(&handle.config_dir);
+    }
+}
+
+/// pi-provider-auth FR-3: the exactly-once claim for a Pi setup PTY, the twin
+/// of `claim` above for the `pi_setups` map rather than the single `login`
+/// slot. `pub(crate)` so `pi::setup`'s reader-thread exit path can settle a setup
+/// the same way `settle_success`/`settle_failure` do for a Claude login.
+pub(crate) fn claim_pi_setup(app: &AppHandle, login_id: &str) -> Option<LoginHandle> {
+    let state = app.try_state::<AccountState>()?;
+    let mut inner = state.0.lock().ok()?;
+    let handle = inner.pi_setups.remove(login_id)?;
+    handle.settled.store(true, Ordering::SeqCst);
+    Some(handle)
 }
 
 /// FR-13: an identity appeared — kill the PTY, register (or refresh, FR-17) the
@@ -499,6 +519,7 @@ fn register(
                 // the Claude Code CLI OAuth flow — the only kind reachable here.
                 kind: AccountKind::ClaudeCodeOauth,
                 endpoint: None,
+                pi: None,
             });
         }
     }
@@ -524,14 +545,27 @@ pub fn write_login(app: &AppHandle, login_id: &str, data: &str) -> Result<(), Ap
             "the login terminal is closed",
         ));
     };
-    let Some(login) = inner.login.as_mut().filter(|l| l.login_id == login_id) else {
-        return Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN));
-    };
-    login
-        .writer
-        .write_all(data.as_bytes())
-        .and_then(|_| login.writer.flush())
-        .map_err(|_| AppError::new(ErrorCode::PtyError, "the login terminal is closed"))
+    // pi-provider-auth FR-3: the same passthrough shape serves a Pi setup PTY,
+    // parked in `pi_setups` rather than the single `login` slot (mod.rs).
+    // Two sequential `if let`s (not a chained `.or_else`) so each borrow of
+    // `inner` ends before the next begins.
+    if let Some(login) = inner.login.as_mut() {
+        if login.login_id == login_id {
+            return login
+                .writer
+                .write_all(data.as_bytes())
+                .and_then(|_| login.writer.flush())
+                .map_err(|_| AppError::new(ErrorCode::PtyError, "the login terminal is closed"));
+        }
+    }
+    if let Some(setup) = inner.pi_setups.get_mut(login_id) {
+        return setup
+            .writer
+            .write_all(data.as_bytes())
+            .and_then(|_| setup.writer.flush())
+            .map_err(|_| AppError::new(ErrorCode::PtyError, "the login terminal is closed"));
+    }
+    Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN))
 }
 
 pub fn resize_login(app: &AppHandle, login_id: &str, cols: u16, rows: u16) -> Result<(), AppError> {
@@ -552,24 +586,47 @@ pub fn resize_login(app: &AppHandle, login_id: &str, cols: u16, rows: u16) -> Re
             "the login terminal is closed",
         ));
     };
-    let Some(login) = inner.login.as_ref().filter(|l| l.login_id == login_id) else {
-        return Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN));
-    };
-    login
-        .master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|_| AppError::new(ErrorCode::PtyError, "could not resize the login terminal"))
+    // pi-provider-auth FR-3: same dual lookup as `write_login`.
+    if let Some(login) = inner.login.as_ref() {
+        if login.login_id == login_id {
+            return login
+                .master
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|_| {
+                    AppError::new(ErrorCode::PtyError, "could not resize the login terminal")
+                });
+        }
+    }
+    if let Some(setup) = inner.pi_setups.get(login_id) {
+        return setup
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|_| {
+                AppError::new(ErrorCode::PtyError, "could not resize the login terminal")
+            });
+    }
+    Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN))
 }
 
-/// FR-16: cancel — kill the PTY, delete the dir. No event: the caller asked for
-/// this, and the modal returns to the list on its own ack.
+/// FR-16: cancel — kill the PTY, delete the dir (unless it is a Pi setup —
+/// `discard` never deletes a Pi account's directory, FR-8). No event: the
+/// caller asked for this, and the modal returns to the list on its own ack.
 pub fn cancel_login(app: &AppHandle, login_id: &str) -> Result<(), AppError> {
-    match claim(app, login_id) {
+    if let Some(mut handle) = claim(app, login_id) {
+        discard(&mut handle);
+        return Ok(());
+    }
+    match claim_pi_setup(app, login_id) {
         Some(mut handle) => {
             discard(&mut handle);
             Ok(())
@@ -581,23 +638,39 @@ pub fn cancel_login(app: &AppHandle, login_id: &str) -> Result<(), AppError> {
 /// FR-8 + FR-16: an account removed while a login into THAT row is in flight
 /// cancels it, so a late success cannot resurrect the row that was just removed.
 /// Called with the account lock already held (the removal's critical section).
+///
+/// pi-provider-auth FR-8: also drops any Pi setup PTYs open for that account —
+/// defense in depth only, since `account_remove` already refuses a Pi account
+/// with an open setup PTY (`ACCOUNT_IN_USE`) before this ever runs for one.
 pub fn cancel_login_for_account(inner: &mut AccountInner, account_id: &str) {
     let targeted = inner
         .login
         .as_ref()
         .map(|l| l.account_id == account_id)
         .unwrap_or(false);
-    if !targeted {
-        return;
+    if targeted {
+        if let Some(mut handle) = inner.login.take() {
+            handle.settled.store(true, Ordering::SeqCst);
+            discard(&mut handle);
+        }
     }
-    if let Some(mut handle) = inner.login.take() {
-        handle.settled.store(true, Ordering::SeqCst);
-        discard(&mut handle);
+    let stale: Vec<String> = inner
+        .pi_setups
+        .iter()
+        .filter(|(_, h)| h.account_id == account_id)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in stale {
+        if let Some(mut handle) = inner.pi_setups.remove(&id) {
+            handle.settled.store(true, Ordering::SeqCst);
+            discard(&mut handle);
+        }
     }
 }
 
 /// FR-16: app exit cancels the in-flight login the same way — no orphan PTY,
-/// no orphan half-written config dir.
+/// no orphan half-written config dir. pi-provider-auth: every open Pi setup
+/// PTY goes the same way (process killed, directory untouched — FR-8).
 pub fn cancel_all_logins(app: &AppHandle) {
     let Some(state) = app.try_state::<AccountState>() else {
         return;
@@ -606,6 +679,10 @@ pub fn cancel_all_logins(app: &AppHandle) {
         return;
     };
     if let Some(mut handle) = inner.login.take() {
+        handle.settled.store(true, Ordering::SeqCst);
+        discard(&mut handle);
+    }
+    for (_, mut handle) in inner.pi_setups.drain() {
         handle.settled.store(true, Ordering::SeqCst);
         discard(&mut handle);
     }

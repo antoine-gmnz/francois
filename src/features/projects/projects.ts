@@ -309,10 +309,17 @@ const INHERIT: FieldOption = { value: '', label: 'inherit' };
  * Structural on purpose: this module stays free of the multi-account feature so
  * the dependency runs one way only (sessions/accounts import projects, not the
  * reverse).
+ *
+ * pi-models-metrics FR-4: `kind` is optional and read ONLY to tell whether the
+ * default account is a Pi one — the modelId/effort selects below are keyed to
+ * a legacy per-account catalog that is always empty for Pi (its own
+ * `runtime_models` probe is a different command), so they are hidden rather
+ * than rendered as two rows that can only ever offer "inherit".
  */
 export interface AccountOptionSource {
   id: string;
   label: string;
+  kind?: string;
 }
 
 /**
@@ -343,6 +350,12 @@ export function defaultFieldDefs(
   profiles: ProfileOptionSource[] = [],
 ): DefaultFieldDef[] {
   const defaultEffort = models.find(m => m.id === defaults.modelId)?.defaultEffort;
+  // pi-models-metrics FR-4: this form's model/effort selects are keyed to the
+  // legacy per-account catalog, which is always empty for a Pi account — see
+  // AccountOptionSource's own doc comment. DefaultsSection shows the saved
+  // `runtimeModel` pair read-only instead (it round-trips untouched either way,
+  // since this function simply omits the two keys rather than clearing them).
+  const isPiDefaultAccount = accounts.find((a) => a.id === defaults.accountId)?.kind === 'pi';
   const accountField: DefaultFieldDef[] =
     accounts.length > 1
       ? [
@@ -368,19 +381,24 @@ export function defaultFieldDefs(
           },
         ]
       : [];
+  const modelFields: DefaultFieldDef[] = isPiDefaultAccount
+    ? []
+    : [
+        {
+          key: 'modelId',
+          label: 'model',
+          options: [INHERIT, ...models.map((m) => ({ value: m.id, label: m.label }))],
+        },
+        {
+          key: 'effort',
+          label: 'effort',
+          options: [{ value: '', label: defaultEffort ? `Model default · ${defaultEffort}` : 'Model default' }, ...effortOptions(models, defaults.modelId ?? '').map((e) => ({ value: e, label: e }))],
+        },
+      ];
   return [
     ...accountField,
     ...profileField,
-    {
-      key: 'modelId',
-      label: 'model',
-      options: [INHERIT, ...models.map((m) => ({ value: m.id, label: m.label }))],
-    },
-    {
-      key: 'effort',
-      label: 'effort',
-      options: [{ value: '', label: defaultEffort ? `Model default · ${defaultEffort}` : 'Model default' }, ...effortOptions(models, defaults.modelId ?? '').map((e) => ({ value: e, label: e }))],
-    },
+    ...modelFields,
     {
       key: 'permissionMode',
       label: 'permission mode',
@@ -403,6 +421,31 @@ export function defaultFieldDefs(
   ];
 }
 
+/**
+ * pi-models-metrics FR-4: the read-only line DefaultsSection shows for a saved
+ * Pi `runtimeModel` default — this form's select system is keyed to a legacy
+ * `modelId`, which cannot represent an exact provider/model pair, so this is
+ * display only (see this feature's handoff for the fuller picker it stands in
+ * for). `null` ⇒ no Pi default is saved, same as every other optional default.
+ */
+export function piRuntimeModelDefaultLabel(defaults: ProjectDefaults): string | null {
+  const ref = defaults.runtimeModel;
+  return ref ? `${ref.providerId} / ${ref.modelId}` : null;
+}
+
+/**
+ * pr-142 §C1: whether `fieldDefs` — `defaultFieldDefs`'s own output — is
+ * showing the modelId/effort selects. `defaultFieldDefs` omits them for
+ * exactly one reason (the default account resolving to Pi), so this is the
+ * SAME predicate DefaultsSection's read-only "model (pi)" row must gate on:
+ * switching the default account away from Pi has to make the stale row
+ * disappear together with the selects it stands in for, not just add them
+ * back above it.
+ */
+export function fieldDefsShowModelSelect(fieldDefs: DefaultFieldDef[]): boolean {
+  return fieldDefs.some((f) => f.key === 'modelId');
+}
+
 /** The select's current value; '' ⇒ inherit (rendered dim, §8 C). */
 export function defaultsSelectValue(defaults: ProjectDefaults, key: DefaultsKey): string {
   if (key === 'allowGit') {
@@ -415,12 +458,23 @@ export function defaultsSelectValue(defaults: ProjectDefaults, key: DefaultsKey)
 /**
  * FR-7: `defaults` is replaced wholesale on every update, so a cleared field is
  * expressed by OMITTING it. This returns the next whole object for one edit.
+ *
+ * pr-142 §C1: `modelId` and `runtimeModel` are mutually exclusive per the
+ * contract and `src-tauri/src/project/mod.rs` — nothing else in this editor
+ * ever clears a stale `runtimeModel` (or a stale `modelId`/`effort`), so this
+ * is the one place that enforces it, on every edit that could create the
+ * conflict: committing `modelId` drops `runtimeModel`; committing a Pi
+ * `accountId` drops `modelId`/`effort` (the selects that account can never
+ * resolve — `fieldDefsShowModelSelect` hides them for the same reason);
+ * committing a non-Pi `accountId` drops `runtimeModel` (only a Pi session's
+ * "Set as project default" ever writes one).
  */
 export function patchDefaults(
   defaults: ProjectDefaults,
   key: DefaultsKey,
   value: string,
   models?: ModelInfo[],
+  accounts?: AccountOptionSource[],
 ): ProjectDefaults {
   const next: ProjectDefaults = { ...defaults };
   if (value === '') {
@@ -431,6 +485,7 @@ export function patchDefaults(
     case 'modelId':
       next.modelId = value;
       if (models && next.effort && !effortOptions(models, value).includes(next.effort)) delete next.effort;
+      delete next.runtimeModel;
       break;
     case 'effort':
       next.effort = value;
@@ -447,6 +502,12 @@ export function patchDefaults(
     // multi-account FR-20: the account a new session under this project opens on.
     case 'accountId':
       next.accountId = value;
+      if (accounts?.find((a) => a.id === value)?.kind === 'pi') {
+        delete next.modelId;
+        delete next.effort;
+      } else {
+        delete next.runtimeModel;
+      }
       break;
     // session-profiles FR-20: the profile a new session under this project opens on.
     case 'profileId':

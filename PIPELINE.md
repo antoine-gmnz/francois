@@ -45,7 +45,9 @@ surfaces:
     # Bridled variant — what agents actually RUN, so a green run costs lines, not pages.
     test_quiet_cmd: npm test -- --reporter=dot
     lint_cmd: npx eslint .
-    lint_quiet_cmd: npx eslint . --format compact
+    # `--quiet` = errors only, so a green run prints nothing. NOT `--format compact`: ESLint 9
+    # moved that formatter out of core, and the flag now exits 2 before linting anything.
+    lint_quiet_cmd: npx eslint . --quiet
     format_cmd: ""                            # no prettier; eslint --fix is the autofixer
     typecheck_cmd: npx tsc --noEmit
     build_cmd: npm run build

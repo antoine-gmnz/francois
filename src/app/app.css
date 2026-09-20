@@ -311,8 +311,10 @@
   width: var(--space-2);
   flex-shrink: 0;
 }
-/* The state pill. Its hue is set inline from the contract's STATUS_COLOR, so
-   this file never re-states that map. */
+/* The state pill. pr-142 §9: the hue used to arrive as an inline style
+   (`STATUS_COLOR`/`toneVar`, computed in SessionRow.tsx) — now a `--status`
+   modifier class per `SessionStatus` (a closed union), so this IS the one
+   place that restates that map, exhaustively, rather than a runtime style. */
 .session-row__status {
   display: flex;
   align-items: center;
@@ -320,15 +322,35 @@
   flex-shrink: 0;
   height: 26px;
   padding: 0 var(--space-9);
-  /* 9a: tone instead of stroke. The hue arrives inline from the contract's
-     STATUS_COLOR, so `currentColor` is all this file needs to know — it never
-     re-states that map. */
+  /* 9a: tone instead of stroke. `currentColor` (set per state below) is all
+     this rule needs to know — it never re-states the hue itself. */
   border: 0;
   background: color-mix(in srgb, currentColor 13%, var(--bg-panel));
   border-radius: var(--radius-base);
   font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
   white-space: nowrap;
+}
+.session-row__status--starting {
+  color: var(--accent-dim);
+}
+.session-row__status--running {
+  color: var(--accent);
+}
+.session-row__status--awaiting_approval {
+  color: var(--attn);
+}
+.session-row__status--awaiting_input {
+  color: var(--warn);
+}
+.session-row__status--idle {
+  color: var(--success);
+}
+.session-row__status--done {
+  color: var(--text-dim);
+}
+.session-row__status--error {
+  color: var(--error);
 }
 .session-row__status-age {
   font-family: var(--font-mono);

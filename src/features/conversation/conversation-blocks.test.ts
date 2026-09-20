@@ -3,11 +3,11 @@
 // and the model-card switch error path. Pure logic only (no DOM).
 
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentInfo, AgentStep, CommandCard, McpServerInfo, PermissionAsk, PermissionRule, Result, SessionEvent, SessionQuestion, WorkflowRun } from '../../../contract/common';
+import type { AgentInfo, AgentStep, CommandCard, McpServerInfo, PermissionAsk, PermissionRule, Result, RuntimeToolCall, SessionEvent, SessionQuestion, WorkflowRun } from '../../../contract/common';
 import type { CommandConversationBlock } from '../../../contract/interactive-commands';
 import type { PermissionConversationBlock } from '../../../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
-import { classifyToolStart, type ConversationBlock } from '../../../contract/conversation-view';
+import { classifyToolStart, type ConversationBlock, type NoticeConversationBlock } from '../../../contract/conversation-view';
 import {
   applySessionEvent,
   CARD_KIND_COMMAND,
@@ -16,6 +16,7 @@ import {
   compactBlocks,
   decideEarlierActivation,
   deriveShowSkeleton,
+  deltaFromEvent,
   drainDeltas,
   earlierRowLabel,
   earlierRowState,
@@ -38,6 +39,7 @@ import {
   type DeltaChunk,
   type TranscriptState,
 } from './conversation-blocks';
+import { runtimeToolBlock, runtimeToolElapsedMs, runtimeToolStatusLabel, runtimeToolSummary } from './runtime-tool-blocks';
 
 const S0: TranscriptState = { blocks: [], windowSize: RENDER_WINDOW };
 
@@ -1270,6 +1272,92 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     expect(dispatch).not.toHaveBeenCalled();
     for (const fn of Object.values(setters)) expect(fn).not.toHaveBeenCalled();
   });
+
+  describe('runtime.event transcript kinds (pi-transcript-events §5)', () => {
+    it('message.user forwards to the reducer with attachments and clears resume/limit notices', () => {
+      const dispatch = vi.fn();
+      const setters = newSetters();
+      const attachments = [{ id: 'att1', name: 'a.png', mimeType: 'image/png', state: 'available' as const }];
+      applySessionEvent(dispatch, setters, {
+        type: 'runtime.event', sessionId: 'x', generation: 'g1', sequence: 1, at: 0,
+        event: { kind: 'message.user', blockId: 'b1', text: 'hi', attachments },
+      });
+      expect(dispatch).toHaveBeenCalledWith({
+        t: 'msgUser',
+        blockId: 'b1',
+        text: 'hi',
+        attachments,
+        clientMessageId: undefined,
+      });
+      expect(setters.setResumeFailed).toHaveBeenCalledWith(false);
+      expect(setters.setLimitNotice).toHaveBeenCalledWith(null);
+    });
+
+    it('message.user forwards clientMessageId (FR-6) so the reducer can rekey the optimistic block', () => {
+      const dispatch = vi.fn();
+      const setters = newSetters();
+      applySessionEvent(dispatch, setters, {
+        type: 'runtime.event', sessionId: 'x', generation: 'g1', sequence: 1, at: 0,
+        event: { kind: 'message.user', blockId: 'b1', text: 'hi', attachments: [], clientMessageId: 'optimistic-1' },
+      });
+      expect(dispatch).toHaveBeenCalledWith({
+        t: 'msgUser',
+        blockId: 'b1',
+        text: 'hi',
+        attachments: [],
+        clientMessageId: 'optimistic-1',
+      });
+    });
+
+    it('assistant.delta forwards to the reducer verbatim', () => {
+      const dispatch = vi.fn();
+      const setters = newSetters();
+      applySessionEvent(dispatch, setters, {
+        type: 'runtime.event', sessionId: 'x', generation: 'g1', sequence: 1, at: 0,
+        event: { kind: 'assistant.delta', blockId: 'b1', contentIndex: 0, text: 'He', offset: 0 },
+      });
+      expect(dispatch).toHaveBeenCalledWith({ t: 'delta', blockId: 'b1', text: 'He', offset: 0 });
+    });
+
+    it('assistant.complete forwards with its outcome', () => {
+      const dispatch = vi.fn();
+      const setters = newSetters();
+      applySessionEvent(dispatch, setters, {
+        type: 'runtime.event', sessionId: 'x', generation: 'g1', sequence: 1, at: 0,
+        event: { kind: 'assistant.complete', blockId: 'b1', text: 'Hello', outcome: 'interrupted' },
+      });
+      expect(dispatch).toHaveBeenCalledWith({ t: 'assistantDone', blockId: 'b1', text: 'Hello', outcome: 'interrupted' });
+    });
+
+    it('tool.update forwards the normalized call', () => {
+      const dispatch = vi.fn();
+      const setters = newSetters();
+      const tool: RuntimeToolCall = {
+        id: 'call-1',
+        name: 'Read',
+        status: 'running',
+        inputText: '',
+        outputText: '',
+        inputTruncated: false,
+        outputTruncated: false,
+      };
+      applySessionEvent(dispatch, setters, {
+        type: 'runtime.event', sessionId: 'x', generation: 'g1', sequence: 1, at: 0,
+        event: { kind: 'tool.update', blockId: 't1', tool },
+      });
+      expect(dispatch).toHaveBeenCalledWith({ t: 'toolUpdate', blockId: 't1', tool });
+    });
+
+    it('notice forwards tone and text', () => {
+      const dispatch = vi.fn();
+      const setters = newSetters();
+      applySessionEvent(dispatch, setters, {
+        type: 'runtime.event', sessionId: 'x', generation: 'g1', sequence: 1, at: 0,
+        event: { kind: 'notice', blockId: 'n1', tone: 'error', text: 'malformed event' },
+      });
+      expect(dispatch).toHaveBeenCalledWith({ t: 'notice', blockId: 'n1', tone: 'error', text: 'malformed event' });
+    });
+  });
 });
 
 describe('isTranscriptRelevantEvent (transcript-scale FR-21 regression fix)', () => {
@@ -1304,6 +1392,43 @@ describe('isTranscriptRelevantEvent (transcript-scale FR-21 regression fix)', ()
     expect(isTranscriptRelevantEvent({ type: 'assistant.delta', sessionId: 'x', blockId: 'b1', text: 'hi', offset: 0 })).toBe(true);
     expect(isTranscriptRelevantEvent({ type: 'agent.step', sessionId: 'x', agentId: 'a1', step })).toBe(true);
     expect(isTranscriptRelevantEvent({ type: 'mcp.update', sessionId: 'x', server })).toBe(true);
+  });
+});
+
+describe('deltaFromEvent (pi-transcript-events FR-8: shared rAF coalescer route)', () => {
+  it('matches the plain Claude assistant.delta SessionEvent', () => {
+    expect(deltaFromEvent({ type: 'assistant.delta', sessionId: 'x', blockId: 'b1', text: 'He', offset: 4 })).toEqual({
+      blockId: 'b1',
+      text: 'He',
+      offset: 4,
+    });
+  });
+
+  it('matches Pi’s nested runtime.event assistant.delta the same way', () => {
+    expect(
+      deltaFromEvent({
+        type: 'runtime.event',
+        sessionId: 'x',
+        generation: 'g1',
+        sequence: 1,
+        at: 0,
+        event: { kind: 'assistant.delta', blockId: 'b1', contentIndex: 0, text: 'He', offset: 4 },
+      }),
+    ).toEqual({ blockId: 'b1', text: 'He', offset: 4 });
+  });
+
+  it('is null for a non-delta runtime.event kind and for other event types', () => {
+    expect(
+      deltaFromEvent({
+        type: 'runtime.event',
+        sessionId: 'x',
+        generation: 'g1',
+        sequence: 1,
+        at: 0,
+        event: { kind: 'run.state', state: 'running' },
+      }),
+    ).toBeNull();
+    expect(deltaFromEvent({ type: 'session.status', sessionId: 'x', status: 'running' })).toBeNull();
   });
 });
 
@@ -1383,6 +1508,49 @@ describe('compactBlocks (render-time merge of duplicate consecutive tool rows)',
       tool('t3', 'Edit', 'src/a.ts', '+5 −2'),
     ]);
     expect(out).toHaveLength(3);
+  });
+
+  // A Pi row decides from `execution.status`, a plain Claude row from an
+  // exact `error` meta — the two runtimes never share a rule. Claude's metas
+  // are free-form (tools.rs: a Task row's is the first line of the subagent's
+  // own result), so a WORD match on them would break a run on prose that
+  // merely mentions a failure.
+  it('merges consecutive Claude rows whose free-form meta merely mentions failure', () => {
+    const out = compactBlocks([
+      tool('t1', 'Read', 'src/a.ts', '2 unknown symbols'),
+      tool('t2', 'Read', 'src/a.ts', '3 unknown symbols'),
+    ]);
+    expect(out).toHaveLength(1);
+    const b = out[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.meta).toBe('3 unknown symbols');
+  });
+
+  it('merges consecutive Claude rows whose meta says “cancelled” inside a sentence', () => {
+    const out = compactBlocks([
+      tool('t1', 'Read', 'src/a.ts', 'the run was cancelled upstream'),
+      tool('t2', 'Read', 'src/a.ts', 'the run was cancelled upstream'),
+    ]);
+    expect(out).toHaveLength(1);
+  });
+
+  it('never merges a Pi runtime tool whose call did not settle cleanly (pi-transcript-events §3)', () => {
+    // Same execution id on both rows, so ONLY the status can break the run.
+    for (const status of ['failed', 'cancelled', 'unknown'] as const) {
+      const out = compactBlocks([
+        runtimeToolBlock('t1', runtimeTool({ id: 'call-1', inputText: 'src/a.ts', status })),
+        runtimeToolBlock('t2', runtimeTool({ id: 'call-1', inputText: 'src/a.ts', status: 'succeeded' })),
+      ]);
+      expect(out).toHaveLength(2);
+    }
+  });
+
+  it('does not merge Pi tool rows whose execution IDs differ', () => {
+    const out = compactBlocks([
+      runtimeToolBlock('t1', runtimeTool({ id: 'call-1', name: 'Read', inputText: 'src/a.ts' })),
+      runtimeToolBlock('t2', runtimeTool({ id: 'call-2', name: 'Read', inputText: 'src/a.ts' })),
+    ]);
+    expect(out).toHaveLength(2);
   });
 
   it('a still-streaming newest edit keeps the run total and the streaming state', () => {
@@ -1509,6 +1677,265 @@ describe('deriveShowSkeleton (session-switch-loader FR-2/FR-3/FR-11 — one case
 describe('RESTORING_PLACEHOLDER (session-switch-loader FR-8)', () => {
   it('is the exact copy the design brief specifies', () => {
     expect(RESTORING_PLACEHOLDER).toBe('restoring transcript — you can start typing');
+  });
+});
+
+// ---------- pi-transcript-events ----------
+
+function runtimeTool(overrides: Partial<RuntimeToolCall> = {}): RuntimeToolCall {
+  return {
+    id: 'call-1',
+    name: 'Read',
+    status: 'pending',
+    inputText: '',
+    outputText: '',
+    inputTruncated: false,
+    outputTruncated: false,
+    ...overrides,
+  };
+}
+
+describe('runtimeToolSummary (pi-transcript-events FR-4)', () => {
+  it('takes the first line, trimmed', () => {
+    expect(runtimeToolSummary('  src/a.ts  \nrest of the input')).toBe('src/a.ts');
+  });
+
+  it('bounds a long single line with an ellipsis', () => {
+    const long = 'x'.repeat(200);
+    const out = runtimeToolSummary(long);
+    expect(out.length).toBe(140);
+    expect(out.endsWith('…')).toBe(true);
+  });
+
+  it('is empty for empty input', () => {
+    expect(runtimeToolSummary('')).toBe('');
+  });
+});
+
+describe('runtimeToolStatusLabel (pi-transcript-events FR-3: never "running" during argument generation)', () => {
+  it('states no label for pending/running — the row carries no result yet', () => {
+    expect(runtimeToolStatusLabel('pending')).toBe('');
+    expect(runtimeToolStatusLabel('running')).toBe('');
+  });
+
+  it('states a distinct word for every terminal status', () => {
+    expect(runtimeToolStatusLabel('succeeded')).toBe('done');
+    expect(runtimeToolStatusLabel('failed')).toBe('failed');
+    expect(runtimeToolStatusLabel('cancelled')).toBe('cancelled');
+    expect(runtimeToolStatusLabel('unknown')).toBe('unknown');
+  });
+});
+
+// pi-transcript-events review round 3 (MEDIUM): contract/conversation-view.ts is
+// frozen (lead-authored) — this surface cannot factor its glyph switch out for
+// reuse. This pins parity instead: a future edit to either table that drifts
+// from the other fails here rather than silently.
+describe('runtimeToolBlock glyphs stay in lockstep with classifyToolStart (contract/conversation-view.ts)', () => {
+  it.each(['Read', 'Grep', 'Search', 'Edit', 'Write', 'Bash', 'WebFetch'])('matches classifyToolStart for %s', (name) => {
+    const fromContract = classifyToolStart(name, 'x', 'b1');
+    const fromRuntime = runtimeToolBlock('b1', runtimeTool({ name }));
+    expect(fromRuntime.glyph).toBe(fromContract.glyph);
+    expect(fromRuntime.glyphColor).toBe(fromContract.glyphColor);
+  });
+});
+
+describe('runtimeToolElapsedMs (pi-transcript-events FR-4: timing in the expanded detail)', () => {
+  it('is null when the call never started (nothing to time yet)', () => {
+    expect(runtimeToolElapsedMs(runtimeTool({ startedAt: undefined }), 5_000)).toBeNull();
+  });
+
+  it('is the settled duration once completedAt is known, regardless of `now`', () => {
+    const tool = runtimeTool({ startedAt: 1_000, completedAt: 4_500 });
+    expect(runtimeToolElapsedMs(tool, 9_999)).toBe(3_500);
+  });
+
+  it('is the live elapsed against `now` while still running (no completedAt yet)', () => {
+    const tool = runtimeTool({ startedAt: 1_000 });
+    expect(runtimeToolElapsedMs(tool, 6_000)).toBe(5_000);
+  });
+
+  it('never goes negative on a clock skew', () => {
+    const tool = runtimeTool({ startedAt: 5_000 });
+    expect(runtimeToolElapsedMs(tool, 1_000)).toBe(0);
+  });
+});
+
+describe('transcriptReducer — toolUpdate (pi-transcript-events FR-1/FR-3/FR-4)', () => {
+  it('inserts a tool block carrying the sanitized execution snapshot', () => {
+    const tool = runtimeTool({ status: 'running', inputText: 'ls -la\nextra' });
+    const s = transcriptReducer(S0, { t: 'toolUpdate', blockId: 't1', tool });
+    expect(s.blocks).toEqual([
+      {
+        kind: 'tool',
+        blockId: 't1',
+        isStreaming: true, // FR-3: only 'running' shows as in-flight
+        glyph: '⧉',
+        glyphColor: '#8b93a3',
+        bodyColor: '#8b93a3',
+        tool: 'Read',
+        summary: 'ls -la',
+        execution: tool,
+      },
+    ]);
+  });
+
+  it('is never shown running while pending — argument generation (FR-3)', () => {
+    const s = transcriptReducer(S0, { t: 'toolUpdate', blockId: 't1', tool: runtimeTool({ status: 'pending' }) });
+    const b = s.blocks[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.isStreaming).toBe(false);
+    expect(b.meta).toBeUndefined();
+  });
+
+  it('never invokes subagent classification, even for a Task/Agent-named call (FR-1)', () => {
+    const s = transcriptReducer(S0, { t: 'toolUpdate', blockId: 't1', tool: runtimeTool({ name: 'Task' }) });
+    const b = s.blocks[0];
+    expect(b.kind).toBe('tool');
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.tool).toBe('Task'); // verbatim, never renamed
+  });
+
+  it('settles the same call exactly once — a terminal update replaces the running snapshot in place', () => {
+    const running = transcriptReducer(S0, { t: 'toolUpdate', blockId: 't1', tool: runtimeTool({ status: 'running' }) });
+    const done = transcriptReducer(running, {
+      t: 'toolUpdate',
+      blockId: 't1',
+      tool: runtimeTool({ status: 'succeeded', outputText: '12 lines' }),
+    });
+    expect(done.blocks).toHaveLength(1);
+    const b = done.blocks[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.isStreaming).toBe(false);
+    expect(b.meta).toBe('done');
+    expect(b.execution?.status).toBe('succeeded');
+  });
+
+  it('a failed outcome reads as an error chip via the existing meta-tone rule', () => {
+    const s = transcriptReducer(S0, { t: 'toolUpdate', blockId: 't1', tool: runtimeTool({ status: 'failed' }) });
+    const b = s.blocks[0];
+    if (b.kind !== 'tool') throw new Error('expected tool block');
+    expect(b.meta).toBe('failed');
+  });
+
+  it('is a no-op when the blockId belongs to a non-tool block', () => {
+    const s1 = transcriptReducer(S0, { t: 'msgUser', blockId: 'u1', text: 'hi' });
+    const s2 = transcriptReducer(s1, { t: 'toolUpdate', blockId: 'u1', tool: runtimeTool() });
+    expect(s2).toBe(s1);
+  });
+});
+
+describe('transcriptReducer — notice (pi-transcript-events FR-5)', () => {
+  it('inserts a neutral notice block', () => {
+    const s = transcriptReducer(S0, { t: 'notice', blockId: 'n1', tone: 'warning', text: 'Reconnecting…' });
+    const expected: NoticeConversationBlock = { kind: 'notice', blockId: 'n1', isStreaming: false, tone: 'warning', text: 'Reconnecting…' };
+    expect(s.blocks).toEqual([expected]);
+  });
+
+  it('is idempotent on replay (same content, one block)', () => {
+    const s1 = transcriptReducer(S0, { t: 'notice', blockId: 'n1', tone: 'info', text: 'a' });
+    const s2 = transcriptReducer(s1, { t: 'notice', blockId: 'n1', tone: 'info', text: 'a' });
+    expect(s2.blocks).toEqual(s1.blocks);
+    expect(s2.blocks).toHaveLength(1);
+  });
+
+  it('upserts in place when the same id carries updated progress text', () => {
+    const s1 = transcriptReducer(S0, { t: 'notice', blockId: 'n1', tone: 'info', text: 'compacting…' });
+    const s2 = transcriptReducer(s1, { t: 'notice', blockId: 'n1', tone: 'info', text: 'compaction complete' });
+    expect(s2.blocks).toHaveLength(1);
+    expect((s2.blocks[0] as NoticeConversationBlock).text).toBe('compaction complete');
+  });
+
+  it('is a no-op when the blockId belongs to a non-notice block', () => {
+    const s1 = transcriptReducer(S0, { t: 'msgUser', blockId: 'u1', text: 'hi' });
+    const s2 = transcriptReducer(s1, { t: 'notice', blockId: 'u1', tone: 'info', text: 'x' });
+    expect(s2).toBe(s1);
+  });
+});
+
+describe('transcriptReducer — msgUser clientMessageId rekey (pi-transcript-events FR-6)', () => {
+  it('rekeys the optimistic block onto the confirmed blockId instead of appending', () => {
+    const s1 = transcriptReducer(S0, { t: 'optimisticUser', blockId: 'optimistic-1', text: 'hi' });
+    const s2 = transcriptReducer(s1, {
+      t: 'msgUser',
+      blockId: 'core-b1',
+      text: 'hi',
+      clientMessageId: 'optimistic-1',
+    });
+    expect(s2.blocks).toEqual([{ kind: 'user', blockId: 'core-b1', isStreaming: false, text: 'hi' }]);
+  });
+
+  it('carries attachments through the rekey', () => {
+    const attachments = [{ id: 'att1', name: 'a.png', mimeType: 'image/png', state: 'available' as const }];
+    const s1 = transcriptReducer(S0, { t: 'optimisticUser', blockId: 'optimistic-1', text: 'hi' });
+    const s2 = transcriptReducer(s1, {
+      t: 'msgUser',
+      blockId: 'core-b1',
+      text: 'hi',
+      attachments,
+      clientMessageId: 'optimistic-1',
+    });
+    expect(s2.blocks).toEqual([{ kind: 'user', blockId: 'core-b1', isStreaming: false, text: 'hi', attachments }]);
+  });
+
+  it('falls back to insert-by-blockId when clientMessageId names no live block', () => {
+    const s = transcriptReducer(S0, { t: 'msgUser', blockId: 'core-b1', text: 'hi', clientMessageId: 'gone' });
+    expect(s.blocks).toEqual([{ kind: 'user', blockId: 'core-b1', isStreaming: false, text: 'hi' }]);
+  });
+
+  it('is idempotent on replay once the confirmed blockId is already applied', () => {
+    const s1 = transcriptReducer(S0, { t: 'optimisticUser', blockId: 'optimistic-1', text: 'hi' });
+    const s2 = transcriptReducer(s1, {
+      t: 'msgUser',
+      blockId: 'core-b1',
+      text: 'hi',
+      clientMessageId: 'optimistic-1',
+    });
+    const s3 = transcriptReducer(s2, { t: 'msgUser', blockId: 'core-b1', text: 'hi', clientMessageId: 'optimistic-1' });
+    expect(s3.blocks).toEqual(s2.blocks);
+    expect(s3.blocks).toHaveLength(1);
+  });
+
+  it('does not rekey a non-user block found under clientMessageId', () => {
+    const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts' });
+    const s2 = transcriptReducer(s1, { t: 'msgUser', blockId: 'core-b1', text: 'hi', clientMessageId: 't1' });
+    expect(s2.blocks).toHaveLength(2);
+    expect(s2.blocks[0]).toEqual(s1.blocks[0]); // the tool block is untouched
+    expect(s2.blocks[1]).toEqual({ kind: 'user', blockId: 'core-b1', isStreaming: false, text: 'hi' });
+  });
+});
+
+describe('transcriptReducer — msgUser attachments (pi-transcript-events FR-7)', () => {
+  it('carries attachment refs onto the inserted block', () => {
+    const attachments = [{ id: 'att1', name: 'diagram.png', mimeType: 'image/png', state: 'available' as const }];
+    const s = transcriptReducer(S0, { t: 'msgUser', blockId: 'u1', text: 'see this', attachments });
+    expect(s.blocks).toEqual([{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'see this', attachments }]);
+  });
+
+  it('omits the field entirely when absent (runtimes with no attachment support)', () => {
+    const s = transcriptReducer(S0, { t: 'msgUser', blockId: 'u1', text: 'hi' });
+    expect(s.blocks[0]).not.toHaveProperty('attachments');
+  });
+});
+
+describe('transcriptReducer — assistantDone outcome (pi-transcript-events FR-9)', () => {
+  it('carries a non-complete outcome onto the finalized block', () => {
+    const s = transcriptReducer(S0, { t: 'assistantDone', blockId: 'a1', text: 'partial', outcome: 'interrupted' });
+    const b = s.blocks[0];
+    if (b.kind !== 'assistant') throw new Error('expected assistant block');
+    expect(b.outcome).toBe('interrupted');
+  });
+
+  it('carries the outcome through when finalizing an already-open block', () => {
+    const s1 = transcriptReducer(S0, { t: 'delta', blockId: 'a1', text: 'partial', offset: 0 });
+    const s2 = transcriptReducer(s1, { t: 'assistantDone', blockId: 'a1', text: 'partial', outcome: 'error' });
+    const b = s2.blocks[0];
+    if (b.kind !== 'assistant') throw new Error('expected assistant block');
+    expect(b.outcome).toBe('error');
+  });
+
+  it('omits the field entirely when absent', () => {
+    const s = transcriptReducer(S0, { t: 'assistantDone', blockId: 'a1', text: 'done' });
+    expect(s.blocks[0]).not.toHaveProperty('outcome');
   });
 });
 

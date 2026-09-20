@@ -226,6 +226,19 @@
   border: 0;
 }
 
+/* pi-models-metrics FR-5: the run chip's live Pi model/effort switch — same
+   UA-frame reset as the field above, plus the stacked-block gap its model
+   field and effort row need without an extra wrapping <div>. */
+.pi-run-model-switch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 /* design 15a — the changed-row treatment: the ONLY stroke this feature adds. A
    tonal step alone can't say "this one differs" when the row beside it shares
    the same fill. Reuses the existing field components' own classes (NameField,
@@ -427,4 +440,14 @@
 
 .worktree-field__resolved-cwd {
   color: var(--text-faint);
+}
+
+/* pi-skills-capabilities FR-5: replaces the PERMISSIONS row for a Pi account —
+   the notice, the PROJECT RESOURCES choice, and the acknowledgment chip. No
+   new surface/border (design brief "Notes / constraints"); the notice reuses
+   the attention tone the brief reserves for "action required". */
+.pi-policy-field__notice {
+  font-size: var(--font-size-11);
+  color: var(--attn);
+  margin-bottom: var(--space-10);
 }

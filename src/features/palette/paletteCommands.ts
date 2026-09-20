@@ -7,9 +7,10 @@ import { modelCatalogStep } from './model-catalog';
 import type { PaletteCommand } from '../../../contract/command-palette';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import type { RuntimeCapability, Result } from '../../../contract/common';
+import { isBusyStatus } from '../../../contract/fleet-board';
 import { registerPaletteCommand as registerCommand, requestBodyFocusOnClose, showToast } from './palette';
 import { getPaletteDiffCount, getPaletteRunningAgents, getPaletteSkills } from './paletteData';
-import { agentsKill, sessionClearAttachments, sessionCompact, skillsRun } from '../../lib/api';
+import { agentsKill, sessionClearAttachments, sessionClearQueue, sessionCompact, sessionInterrupt, skillsRun } from '../../lib/api';
 import { useNotificationsStore } from '../../lib/notificationsStore';
 import { useStore } from '../../lib/store';
 import type { PanelTab } from '../../app/appShell';
@@ -17,8 +18,11 @@ import { requestUsageRefresh } from '../usage/usage';
 import { checkUpdateManually } from '../update/update';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
+import { clearableCount, getQueueEntries } from '../../lib/pi-queue';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
 import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../lib/layoutStore';
+import { skillRowKey } from '../skills/skills-loaded';
+import { buildSkillsRunRequest, piSkillDelivery } from '../skills/skills-run';
 
 const commandCapabilities: Record<string, RuntimeCapability> = {
   'switch-model': 'modelSwitching', 'compact-context': 'compaction',
@@ -189,11 +193,30 @@ export function registerBuiltinCommands(): void {
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: (ctx) => {
       const sid = ctx.activeSessionId;
+      // pr-142 §6: id keyed on skillRowKey (invocation when present), same
+      // fix as SkillsListBody's B1 — a repo's '/skill:deploy' and the user's
+      // '/deploy' both derive to the bare name 'deploy' and must not collide.
+      const skills = getPaletteSkills(sid);
       return {
         placeholder: 'browse installed skills',
-        items: getPaletteSkills(sid).map((s) => ({ id: s.name, label: s.name, hint: s.description })),
-        onPick: (name) => {
-          if (sid) delegate(skillsRun(sid, name) as Promise<Result<unknown>>);
+        items: skills.map((s) => ({ id: skillRowKey(s), label: s.name, hint: s.description })),
+        onPick: (id) => {
+          if (!sid) return;
+          const skill = skills.find((s) => skillRowKey(s) === id);
+          if (!skill) return;
+          // pi-skills-capabilities §5: this must agree with the Skills panel's
+          // own Run — a fresh clientMessageId + the session's idle/busy delivery,
+          // ignored by every runtime but Pi (skills-run.ts's piSkillDelivery) —
+          // and, per pr-142 §6, the picked entry's own `invocation`.
+          const status = useStore.getState().sessions.find((s) => s.id === sid)?.status ?? 'idle';
+          delegate(
+            skillsRun(
+              buildSkillsRunRequest(sid, skill, undefined, {
+                clientMessageId: crypto.randomUUID(),
+                delivery: piSkillDelivery(status),
+              }),
+            ) as Promise<Result<unknown>>,
+          );
         },
       };
     },
@@ -245,10 +268,54 @@ export function registerBuiltinCommands(): void {
       const s = st.sessions.find((x) => x.id === st.activeSessionId);
       return s ? `${formatTokens(s.contextUsedTokens)} → summary` : '→ summary';
     },
-    enabled: (ctx) => ctx.activeSessionId !== null,
+    // pi-turn-controls FR-8: a Pi session only accepts compaction while idle
+    // (the core would refuse it with SESSION_BUSY anyway) — every other
+    // runtime's existing behaviour is untouched.
+    enabled: (ctx) => {
+      if (ctx.activeSessionId === null) return false;
+      const s = useStore.getState().sessions.find((x) => x.id === ctx.activeSessionId);
+      return !(s && s.agentRuntime === 'pi' && isBusyStatus(s.status));
+    },
     run: (ctx) => {
       const sid = ctx.activeSessionId;
       if (sid) delegate(sessionCompact(sid) as Promise<Result<unknown>>);
+    },
+  });
+
+  // 6b — Stop (pi-turn-controls FR-6/FR-7): interrupt closes admission,
+  // drains Pi's own queue and waits for confirmation before resolving.
+  // Pi-only — every other runtime already has its own Stop (topbar + ⌃C).
+  registerPaletteCommand({
+    id: 'pi-stop-turn',
+    glyph: '■',
+    name: 'Stop',
+    hint: () => 'cancel the current turn',
+    enabled: (ctx) => {
+      const s = useStore.getState().sessions.find((x) => x.id === ctx.activeSessionId);
+      return !!s && s.agentRuntime === 'pi' && isBusyStatus(s.status);
+    },
+    run: (ctx) => {
+      if (ctx.activeSessionId) delegate(sessionInterrupt(ctx.activeSessionId) as Promise<Result<unknown>>);
+    },
+  });
+
+  // 6c — Clear queued messages (pi-turn-controls FR-5): the only way to drop
+  // a message Pi has already accepted into its own queue — a still-local one
+  // can be removed individually from the composer strip instead.
+  registerPaletteCommand({
+    id: 'pi-clear-queue',
+    glyph: '⌫',
+    name: 'Clear queued messages',
+    hint: () => {
+      const sid = useStore.getState().activeSessionId;
+      return `${sid ? clearableCount(getQueueEntries(sid)) : 0} pending`;
+    },
+    enabled: (ctx) => {
+      const s = useStore.getState().sessions.find((x) => x.id === ctx.activeSessionId);
+      return !!s && s.agentRuntime === 'pi' && clearableCount(getQueueEntries(s.id)) > 0;
+    },
+    run: (ctx) => {
+      if (ctx.activeSessionId) delegate(sessionClearQueue(ctx.activeSessionId) as Promise<Result<unknown>>);
     },
   });
 

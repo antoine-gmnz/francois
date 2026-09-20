@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { dismissPalette, isPaletteOpen, togglePalette } from '../features/palette/palette';
+import { dismissPalette, isPaletteOpen, showToast, togglePalette } from '../features/palette/palette';
 import { clampPaneIndex, focusedSessionId, focusedTab, layoutRegime, paneCount } from '../lib/layoutStore';
+import { sessionCapability } from '../lib/runtimeCapability';
 import { useStore, type MainTab, type Pane } from '../lib/store';
 import { buildShortcutActions } from './appShell';
 
@@ -182,6 +183,15 @@ export function useAppShortcuts(state: AppShortcutState): void {
         setNewAgentOpen,
         closeAgentTab: (agentId) => useStore.getState().closeAgentTab(agentId),
         toggleLeftPane: () => useStore.getState().toggleLeftPane(),
+        // pi-skills-capabilities FR-4: the same capability the AGENTS tab body
+        // and the palette's `new-agent` command read, for the FOCUSED session.
+        getSubagentsCapability: () => {
+          const st = useStore.getState();
+          const sid = focusedSessionId(st);
+          const meta = sid ? (st.sessions.find((s) => s.id === sid) ?? null) : null;
+          return sessionCapability(meta, 'subagents');
+        },
+        notifyUnavailable: (reason) => showToast(reason, 'error'),
       });
       const action = actions[e.key];
       if (action) action();

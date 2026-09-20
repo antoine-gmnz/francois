@@ -16,8 +16,30 @@ import type { AccountId, ClaudeRuntime, PermissionMode, ProjectDefaults, Project
 import { NEXT_TURN_KEYS, SETTING_LABELS, type SessionSettingsPatch } from '../../../contract/session-settings-sheet';
 import type { Account } from '../../../contract/multi-account';
 import type { ProjectMeta } from '../../../contract/projects';
+import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
+import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
 import { wslUncToLinux } from '../../../contract/wsl-filesystem';
+import type { ChipOption } from '../../ui/ChipGroup';
 import { accountDisplayLabel, findAccount, middleTruncate } from '../accounts/accounts';
+
+// session-permission-mode FR-8 / response-mode FR-13: the contract tables are
+// the single source for label/hint/danger — no component maps a mode on its own.
+// They live here rather than beside the rows that render them (SharedSettingsRows.tsx)
+// because a file that exports components must export nothing else, or Fast
+// Refresh falls back to a full reload for it (react-refresh/only-export-components).
+export const PERMISSION_CHIP_OPTIONS: ChipOption<PermissionMode>[] = PERMISSION_MODE_OPTIONS.map((opt) => ({
+  value: opt.mode,
+  label: opt.label,
+  danger: opt.danger,
+}));
+export const RESPONSE_CHIP_OPTIONS: ChipOption<ResponseMode>[] = RESPONSE_MODE_OPTIONS.map((opt) => ({
+  value: opt.mode,
+  label: opt.label,
+}));
+export const RUNTIME_CHIP_OPTIONS: ChipOption<ClaudeRuntime>[] = (['native', 'wsl'] as const).map((runtime) => ({
+  value: runtime,
+  label: runtime,
+}));
 
 /** The six rows the sheet keeps live in both modes — everything FR-14 can dirty. */
 export interface SettingsDraft {
@@ -225,15 +247,28 @@ export function canSetProjectDefault(session: SessionMeta): boolean {
  * merges rather than patches. FR-17: written from the sheet's CURRENT draft —
  * including unapplied edits — not from the session's last-persisted meta. An
  * absent effort DELETES the key rather than leaving the project's old level behind.
+ *
+ * pi-models-metrics FR-4: `session` is the live session this action reads
+ * `runtimeModel` off (`draft.modelId` is the Pi picker's own composite
+ * (accountId, providerId, modelId) key — never a real modelId, so it can never
+ * be the value this writes for a Pi session). `runtimeModel`/`modelId` are
+ * mutually exclusive on `ProjectDefaults`, so picking one always clears the other.
  */
-export function nextProjectDefaults(current: ProjectDefaults, draft: SettingsDraft): ProjectDefaults {
+export function nextProjectDefaults(current: ProjectDefaults, draft: SettingsDraft, session?: SessionMeta): ProjectDefaults {
   const next: ProjectDefaults = {
     ...current,
-    modelId: draft.modelId,
     permissionMode: draft.permissionMode,
     responseMode: draft.responseMode,
     allowGit: draft.allowGit,
   };
+  if (session?.agentRuntime === 'pi') {
+    delete next.modelId;
+    if (session.runtimeModel) next.runtimeModel = session.runtimeModel;
+    else delete next.runtimeModel;
+  } else {
+    next.modelId = draft.modelId;
+    delete next.runtimeModel;
+  }
   if (draft.effort) next.effort = draft.effort;
   else delete next.effort;
   return next;
@@ -247,11 +282,17 @@ export function settingCapability(session: SessionMeta, key: keyof SettingsDraft
   return { available: true };
 }
 
-/** Window capture must leave activation/navigation to the focused control. */
+/**
+ * Window capture must leave activation/navigation to the focused control.
+ * A3 (review addendum): `[role="combobox"]` covers the model picker's search
+ * input, which lives OUTSIDE `[role="listbox"]` (a11y fix) but must still be
+ * excluded here — otherwise Enter there creates/applies the sheet instead of
+ * selecting the highlighted model.
+ */
 export function submitSettingsOnEnter(event: KeyboardEvent, submit: () => unknown): void {
   if (event.key !== 'Enter' || event.defaultPrevented || event.isComposing) return;
   const target = event.target as Element | null;
-  if (target?.closest?.('button, [role="button"], [role="listbox"], [role="option"], select, textarea, [data-worktree-row], [contenteditable="true"]')) return;
+  if (target?.closest?.('button, [role="button"], [role="listbox"], [role="option"], [role="combobox"], select, textarea, [data-worktree-row], [contenteditable="true"]')) return;
   event.preventDefault();
   void submit();
 }

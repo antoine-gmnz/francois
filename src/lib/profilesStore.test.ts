@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { useStore } from './store';
 
 function profile(id: string, name = id) {
-  return { id, name, createdAt: 0, updatedAt: 0 };
+  return { id, name, kind: 'legacy' as const, createdAt: 0, updatedAt: 0 };
 }
 
 describe('profiles store slice', () => {

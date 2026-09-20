@@ -1,6 +1,6 @@
 # Francois — Claude Code Session Orchestrator
 
-A terminal application for running and supervising [Claude Code](https://claude.com/claude-code) sessions. One window shows every session, its conversation, its diff, its subagents, its MCP servers, and its skills — plus a **regular terminal** (real shell) alongside the AI, so you never have to leave the app to run commands yourself.
+A terminal application for running and supervising [Claude Code](https://claude.com/claude-code) sessions. One window shows every session, its conversation, its diff, its subagents, its MCP servers, and its skills — plus a **regular terminal** (real shell) alongside the AI, so you never have to leave the app to run commands yourself. The session engine underneath is model-agnostic — Claude Code, Codex and Grok already share the same orchestration, and a Pi runtime is being added behind a release gate (see [Pi runtime](#pi-runtime-gated) below).
 
 The name **Francois** is a nod to Claude François, the French singer. (The design mock still uses the earlier working name "clyde", v0.4.2 — treat every "clyde" in the mock as "francois".) The reference design lives in this repo:
 
@@ -250,6 +250,39 @@ token override of the same system (geometry, type and spacing do not change).
 
 Every frontend↔core payload shape lives in [`contract/`](contract/); the Rust core mirrors it with
 serde. Spawned children resolve their binaries against the **login-shell** PATH, not launchd's.
+
+## Pi runtime (gated)
+
+Francois's session engine is model-agnostic: `AgentRuntime` already covers Claude Code, Codex
+and Grok, and Pi is the newest addition, driven over its own RPC subprocess rather than
+Claude Code's `stream-json`. Pi is **not generally available**: session creation stays closed
+to ordinary users until every dependent Pi spec passes acceptance and a real Pi installation
+is certified on each supported OS (`specs/pi-migration-rollout.md` FR-8).
+
+### Setup
+
+- Pi is external and separately installed and authenticated — Francois neither installs nor
+  updates it. The certified package is `@earendil-works/pi-coding-agent`; Pi requires
+  **Node >=22.19.0** of its own.
+- Accounts reference an existing Pi configuration directory (`~/.pi/agent` by default,
+  `PI_CODING_AGENT_DIR`) instead of a Francois-owned config dir; Francois does not mirror or
+  manage it.
+- Compatibility is checked by package-version match against a certified manifest today, not
+  by a live protocol capture — a matching install reports as unverified, not certified.
+- Existing Claude Code, Codex, Grok and endpoint accounts/sessions are untouched: they remain
+  visible and resumable on their original runtime, and no history converts into Pi.
+
+### Limitations
+
+- No native approval enforcement: Pi tools run with the user's own process permissions.
+  Francois shows *"Pi tools run with your user permissions; François does not approve each
+  tool call"* rather than offering a permission-mode picker (plan/accept-edits/bypass), a
+  filesystem sandbox, project confinement, or network restriction.
+- Arbitrary Pi extensions stay disabled; project resources (AGENTS.md, instructions, skills)
+  are ignored unless explicitly allowed per session.
+- Deferred beyond this rollout: native approval interception, arbitrary Pi extension/package
+  management, MCP/subagent/workflow parity, branch-tree editing, Remote Control parity, a
+  managed or bundled Pi distribution, and exact subscription plan meters.
 
 ## Open decisions
 

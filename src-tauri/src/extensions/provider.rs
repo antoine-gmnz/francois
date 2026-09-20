@@ -381,14 +381,21 @@ mod tests {
     }
 
     #[test]
-    fn the_allowlist_match_is_case_sensitive() {
+    fn the_allowlist_match_follows_the_platforms_name_casing() {
         let source = vec![
             ("PATH".to_string(), "/usr/bin".to_string()),
             ("path".to_string(), "/sneaky".to_string()),
             ("Home".to_string(), "/sneaky2".to_string()),
         ];
         let kept: Vec<String> = scrub_env(source).into_iter().map(|(k, _)| k).collect();
-        assert_eq!(kept, vec!["PATH"]);
+        if cfg!(windows) {
+            // Names are case-INSENSITIVE there (`process_util::env_name_eq`):
+            // the real ones are spelled `Path`/`ComSpec`, and an exact match
+            // dropped them from every scrubbed child.
+            assert_eq!(kept, vec!["PATH", "path", "Home"]);
+        } else {
+            assert_eq!(kept, vec!["PATH"]);
+        }
     }
 
     #[test]

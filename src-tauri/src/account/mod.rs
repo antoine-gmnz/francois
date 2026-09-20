@@ -22,9 +22,18 @@
 //  * commands.rs — the francois:account:<verb> Tauri command surface.
 //
 // LOCK ORDER: `AccountState` is a LEAF like `usage::UsageState` — nothing here
-// ever takes `session::Engine.sessions`. FR-9's session repointing (an account
-// was removed) is driven from commands.rs AFTER the registry write returns,
-// by calling into `session::reassign_account_sessions` with no account lock held.
+// ever takes `session::Engine.sessions` WHILE `AccountState` IS HELD. FR-9's
+// session repointing (an account was removed) is driven from commands.rs AFTER
+// the registry write returns, by calling into `session::reassign_account_sessions`
+// with no account lock held. pi-provider-auth's `sessions_pinned_to` (via the
+// `AccountSessionQuery` hook) is the same shape: `session::Session::meta()`
+// already locks `AccountState` FROM INSIDE an `Engine.sessions`-locked closure
+// (`kind_of`, called by every `with_session(_mut)` that builds a `SessionMeta`),
+// so the established order is `Engine.sessions` → `AccountState`. Calling
+// `sessions_pinned_to` with `AccountState` already held would take the two in
+// the OPPOSITE order — see pi/mod.rs's `sessions_currently_use` doc comment and
+// `account_trust_pi`/`account_remove` (pi_commands.rs/commands.rs) for the
+// two-phase (check unlocked, mutate separately) shape this requires.
 
 /// The vendor CLIs the login routes are driven by (`claude`, `codex`, `grok`):
 /// is one installed on this machine, and `npm i -g` it if not. A CHILD here
@@ -39,6 +48,10 @@ mod commands;
 /// registry.rs's OAuth-focused FRs, even though both touch `AccountRecord` —
 /// same "one concern per child" shape as `cloud` inside `session`.
 mod endpoint;
+/// PR #142 §5: "can this account be used from THIS session's environment?"
+/// — multi-account FR-25's config-dir reachability plus pi-provider-auth's
+/// pinned runtime/distro, one concern, out of this file for the size cap.
+mod environment;
 /// multi-provider-grok FR-19..FR-22: `grok-cli` accounts — a per-account
 /// `GROK_HOME` that `grok login` fills in. Structurally identical to codex.rs
 /// (same trade, same file layout); a CHILD of its own rather than folded into
@@ -46,15 +59,34 @@ mod endpoint;
 mod grok;
 mod login;
 mod mirror;
+/// pi-provider-auth: `pi` accounts — a reference to an existing, user-owned
+/// `PI_CODING_AGENT_DIR` rather than a Francois-owned config dir (see the
+/// module doc there for why that makes this child unlike every other one).
+mod pi;
+/// pi-provider-auth: the `francois:account:addPi/trustPi/piSetup/piRefresh`
+/// Tauri command surface — a SIBLING of commands.rs rather than a section
+/// inside it, purely for CLAUDE.md's ~1000-line file cap (see its module doc).
+mod pi_commands;
 mod registry;
 
 pub(crate) use cli_tools::*;
 pub(crate) use codex::*;
 pub use commands::*;
 pub(crate) use endpoint::*;
+pub use environment::*;
 pub(crate) use grok::*;
 pub use login::*;
 pub(crate) use mirror::*;
+// `pub` for the three types `pi::refresh` declares `pub` — `account_pi_refresh`
+// (pi_commands.rs) answers with `PiProviderAuthObservation`/`PiAuthState`, and
+// `main.rs` manages a `PiInstallProbe`; like `AccountLoginStarted`, a type
+// `main.rs` must name has to be reachable from an external crate
+// (core-architecture-wave3 FR-2). The rest of `pi`'s surface is declared
+// `pub(crate)` at its definition and stays that way through this glob — see
+// pi/mod.rs for why this is one glob and not a `pub(crate)` glob plus an
+// explicit `pub use`.
+pub use pi::*;
+pub use pi_commands::*;
 pub use registry::*;
 
 #[cfg(test)]
@@ -100,9 +132,38 @@ pub enum AccountKind {
     /// `GROK_HOME` — the same trade again, a third time (FR-19).
     #[serde(rename = "grok-cli")]
     GrokCli,
+    /// pi-provider-auth FR-1: a REFERENCE to an existing, user-owned
+    /// `PI_CODING_AGENT_DIR` — NOT a fourth interactive-CLI trade. Francois
+    /// never runs a login of its own for this kind; see `PiAccountConfig`.
+    #[serde(rename = "pi")]
+    Pi,
 }
 
+/// PR #142 §5: what `account_add` answers when a Re-login names a row that does
+/// not sign in through the Claude login PTY (see `uses_claude_login`).
+pub const MSG_NOT_CLAUDE_KIND: &str = "this account does not sign in through the Claude login";
+
 impl AccountKind {
+    /// PR #142 §5: does this kind sign in through the CLAUDE login PTY —
+    /// `account_add`'s Re-login? That PTY runs `claude` against the row's
+    /// `configDir` and seeds it from `~/.claude` (`mirror_global`), so a Pi
+    /// row must never reach it: its directory is the USER's own, not one
+    /// Francois creates and owns (pi-provider-auth FR-1/FR-2). Codex and Grok
+    /// rows have their own login commands (`account_codex_login`/
+    /// `account_grok_login`), and an endpoint row has no PTY login at all.
+    ///
+    /// A `match` rather than a `==` for the same reason `config_dir_env_var`
+    /// is one: a sixth kind has to answer this question explicitly.
+    pub(crate) fn uses_claude_login(self) -> bool {
+        match self {
+            AccountKind::ClaudeCodeOauth => true,
+            AccountKind::CodexCli
+            | AccountKind::GrokCli
+            | AccountKind::Pi
+            | AccountKind::OpenAiCompatible => false,
+        }
+    }
+
     /// multi-provider-codex FR-18: the environment variable that points this
     /// kind's CLI at an account's own config dir. `None` for kinds whose
     /// credential is not a config dir at all (`OpenAiCompatible` keys off a
@@ -117,6 +178,8 @@ impl AccountKind {
             AccountKind::CodexCli => Some("CODEX_HOME"),
             // multi-provider-grok FR-19.
             AccountKind::GrokCli => Some("GROK_HOME"),
+            // pi-provider-auth FR-1: Pi's own config-dir variable.
+            AccountKind::Pi => Some("PI_CODING_AGENT_DIR"),
             AccountKind::OpenAiCompatible => None,
         }
     }
@@ -157,6 +220,23 @@ pub struct Account {
     /// look healthy right up until the first message bounced.
     #[serde(rename = "signedIn", skip_serializing_if = "Option::is_none")]
     signed_in: Option<bool>,
+    /// pi-provider-auth FR-1. Present iff `kind == Pi`. `configDir` is omitted
+    /// here — `Account.config_dir` above already carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pi: Option<PiAccountConfig>,
+}
+
+/// Mirrors `PiAccountConfig` with `configDir` OMITTED (contract:
+/// `Omit<PiAccountConfig,'configDir'>` — `Account.config_dir` already carries
+/// the same absolute path, so it is never stored twice on the wire).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct PiAccountConfig {
+    pub(crate) runtime: String, // "native" | "wsl"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) distro: Option<String>,
+    #[serde(rename = "inheritEnvironmentCredentials")]
+    pub(crate) inherit_environment_credentials: bool,
+    pub(crate) trusted: bool,
 }
 
 /// Mirrors `EndpointConfig` (contract/multi-account.ts). Carries NO key
@@ -178,6 +258,13 @@ pub struct AccountRemoveData {
     accounts: Vec<Account>,
     #[serde(rename = "reassignedSessions")]
     reassigned_sessions: Vec<String>,
+    /// pi-provider-auth FR-6/FR-8: sessions this removal would STRAND (pinned
+    /// to the removed Pi account, with no reassignment target). Non-empty ⇒
+    /// the call instead rejects with `ACCOUNT_IN_USE` and carries this same
+    /// list on the error's `detail`; legacy (non-Pi) removal never populates
+    /// this and keeps its existing reassignment behaviour.
+    #[serde(rename = "blockedSessions")]
+    blocked_sessions: Vec<String>,
 }
 
 // francois:account:event → francois://account/event (§5).
@@ -250,6 +337,28 @@ pub struct AccountRecord {
     /// the sidecar `<configDir>/endpoint-key` file is the key's only home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     endpoint: Option<EndpointRecord>,
+    /// pi-provider-auth FR-1: present iff `kind == Pi` — enforced on load by
+    /// `registry::account_record_invariant_holds`, same discipline as
+    /// `endpoint` above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pi: Option<PiRecord>,
+}
+
+/// The persisted half of a `pi` account (pi-provider-auth FR-1/FR-4).
+/// `fingerprint` is INTERNAL ONLY — never serialized onto `Account.pi`
+/// (`PiAccountConfig` carries no such field) — it is compared on every
+/// trust-gated call to detect a changed executable configuration.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PiRecord {
+    pub(crate) runtime: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) distro: Option<String>,
+    #[serde(rename = "inheritEnvironmentCredentials", default)]
+    pub(crate) inherit_environment_credentials: bool,
+    #[serde(default)]
+    pub(crate) trusted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) fingerprint: Option<String>,
 }
 
 /// The persisted half of an `openai-compatible` account (multi-provider-endpoint
@@ -281,6 +390,14 @@ pub struct LoginHandle {
     /// Set the moment one of the four finishers claims the login, so the losers
     /// stop early rather than racing on a handle that is already gone.
     pub(crate) settled: Arc<AtomicBool>,
+    /// pi-provider-auth FR-3/FR-8: which kind of PTY this is — every
+    /// pre-existing construction site is `ClaudeCodeOauth` (its own login);
+    /// Pi setup is the one carrying `Pi`. `discard()` (login.rs) reads this to
+    /// decide whether the directory goes with the process: a Claude/Codex/Grok
+    /// login owns and creates its dir, so an abandoned one is cleaned up, but a
+    /// Pi account's dir is the user's OWN pre-existing directory and must
+    /// never be deleted by Francois (FR-8).
+    pub(crate) kind: AccountKind,
 }
 
 /// The second field is FR-16's `login_pending` reservation flag, kept OUTSIDE
@@ -304,6 +421,14 @@ pub struct AccountInner {
     default_organization: Option<String>,
     /// FR-16: at most one login in flight, app-wide.
     login: Option<LoginHandle>,
+    /// pi-provider-auth FR-3: open Pi setup PTYs, keyed by `login_id`. A
+    /// SEPARATE collection from `login` (rather than sharing its single slot)
+    /// because `piSetup`'s own error list (contract/multi-account.ts) carries
+    /// no "a login is already in progress" code — an unrelated Claude login
+    /// and a Pi setup, or two Pi setups, must not collide with one another.
+    /// `pi::setup_pty_open_for` is what still caps ONE PER ACCOUNT for the
+    /// FR-4/FR-8 trust/remove gate.
+    pi_setups: HashMap<String, LoginHandle>,
 }
 
 impl Default for AccountState {
@@ -316,6 +441,7 @@ impl Default for AccountState {
                 default_email: None,
                 default_organization: None,
                 login: None,
+                pi_setups: HashMap::new(),
             }),
             AtomicBool::new(false),
         )
@@ -437,6 +563,34 @@ pub fn notify_credentials_changing(account_id: &str) {
     }
 }
 
+/// pi-provider-auth FR-4/FR-6/FR-8: whether the given account currently has
+/// any LIVE session pinned to it — checked before `trustPi`/Pi removal refuse
+/// with `ACCOUNT_IN_USE`. Same inversion as `AccountRemovalObserver`: this
+/// domain only declares that it needs the answer; `session` (the domain that
+/// actually owns the registry the answer comes from) supplies it, wired once
+/// in the crate root's `.setup()`, so `account` still never names `session`.
+pub trait AccountSessionQuery: Send + Sync {
+    fn sessions_pinned_to(&self, app: &AppHandle, account_id: &str) -> Vec<String>;
+}
+
+static SESSION_QUERY: std::sync::OnceLock<Box<dyn AccountSessionQuery>> =
+    std::sync::OnceLock::new();
+
+/// Called ONCE, from the crate root's `.setup()`. A second call is ignored —
+/// see `session::register_teardown` for why that is not a panic.
+pub fn register_session_query(query: Box<dyn AccountSessionQuery>) {
+    let _ = SESSION_QUERY.set(query);
+}
+
+/// Empty when nothing is registered (every unit test): a test with no session
+/// registry has no session to report, so "in use" reads `false` there.
+pub(crate) fn sessions_pinned_to(app: &AppHandle, account_id: &str) -> Vec<String> {
+    SESSION_QUERY
+        .get()
+        .map(|q| q.sessions_pinned_to(app, account_id))
+        .unwrap_or_default()
+}
+
 pub trait AccountKinds {
     fn kind_of(&self, account_id: &str) -> AccountKind;
 }
@@ -503,6 +657,50 @@ pub fn endpoint_of(app: &AppHandle, account_id: &str) -> Option<(EndpointRecord,
     })
 }
 
+/// pi-session-durability HIGH remediation (pi-provider-auth FR-5 wiring):
+/// `session::adapter::pi::recovery`'s entry point into FR-4's execution gate
+/// (`pi_execution_preflight`, this module's `pi` child) — the exact
+/// lock → reconcile-drift → persist → gate sequence `account_pi_setup`/
+/// `account_pi_refresh` (pi_commands.rs) already run inline, factored out
+/// here so a caller OUTSIDE this domain never reaches into `AccountState`'s
+/// own lock directly (only this module ever touches its private `.0` field —
+/// same reason `config_dir_of`/`kind_of` are the accessors they are).
+/// Returns the SAME `(configDir, runtime, distro,
+/// inheritEnvironmentCredentials)` tuple `pi_execution_preflight` does, so a
+/// reconnect's `RuntimeConnectContext` can be built straight from it.
+pub(crate) fn pi_execution_preflight_for(
+    app: &AppHandle,
+    account_id: &str,
+    blocked_action: &str,
+) -> Result<(String, String, Option<String>, bool), AppError> {
+    let Some(state) = app.try_state::<AccountState>() else {
+        return Err(AppError::new(
+            ErrorCode::Internal,
+            "account state is unavailable",
+        ));
+    };
+    let Ok(mut inner) = state.0.lock() else {
+        return Err(AppError::new(
+            ErrorCode::Internal,
+            "account state is unavailable",
+        ));
+    };
+    if find_pi_record(&inner, account_id).is_err() {
+        return Err(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG));
+    }
+    let drifted = reconcile_trust_drift(&mut inner, account_id);
+    if drifted {
+        if let Err(msg) = persist(app, &inner) {
+            eprintln!("accounts: could not persist accounts.json: {msg}");
+        }
+        // pi-models-metrics FR-2/FR-9: the configuration this account's models
+        // were probed under just changed — its cached catalogue must not be
+        // served back by the keep-the-last-snapshot fallback.
+        notify_credentials_changing(account_id);
+    }
+    pi_execution_preflight(&inner, account_id, blocked_action, drifted)
+}
+
 /// FR-10: every account id a persisted `SessionMeta.accountId` may resolve
 /// against — the built-in id plus every registered one.
 pub fn known_ids(app: &AppHandle) -> std::collections::HashSet<String> {
@@ -553,13 +751,6 @@ pub fn default_account_id(app: &AppHandle) -> String {
             Some(inner.default_account_id.clone())
         })
         .unwrap_or_else(|| DEFAULT_ACCOUNT_ID.to_string())
-}
-
-/// FR-25: an account `configDir` a `wsl.exe` spawn can reach. Only a
-/// drive-letter Windows path is (wsl.exe maps it to `/mnt/...` itself); a UNC
-/// path (including a `\\wsl$\...`/`\\wsl.localhost\...` one) is not.
-pub fn wsl_translatable_config_dir(path: &str) -> bool {
-    !path.trim_start().starts_with("\\\\") && !path.trim_start().starts_with("//")
 }
 
 /// FR-22: does this account's config dir report an identity on disk?
@@ -633,6 +824,23 @@ mod tests {
     use crate::account::testutil::*;
     use serde_json::json;
 
+    /// PR #142 §5: `account_add(account_id)` — Re-login — starts the CLAUDE
+    /// login PTY against the row's own `configDir` and mirrors `~/.claude`
+    /// into it. Answering `true` for a Pi row would run a Claude login against
+    /// a directory Francois does not own and write into it.
+    #[test]
+    fn only_a_claude_row_signs_in_through_the_claude_login_pty() {
+        assert!(AccountKind::ClaudeCodeOauth.uses_claude_login());
+        for kind in [
+            AccountKind::Pi,
+            AccountKind::CodexCli,
+            AccountKind::GrokCli,
+            AccountKind::OpenAiCompatible,
+        ] {
+            assert!(!kind.uses_claude_login(), "{kind:?}");
+        }
+    }
+
     #[test]
     fn every_account_event_member_serializes_to_the_contract_shape() {
         // §5: the tagged union on francois://account/event.
@@ -680,18 +888,6 @@ mod tests {
             json!({ "type": "account.login.failed", "loginId": "l1",
                     "error": { "code": "ACCOUNT_DUPLICATE", "message": "already registered" } })
         );
-    }
-
-    #[test]
-    fn wsl_translatable_config_dir_rejects_unc_and_accepts_drive_paths() {
-        assert!(wsl_translatable_config_dir("D:\\francois\\accounts\\a1"));
-        assert!(!wsl_translatable_config_dir(
-            "\\\\wsl$\\Ubuntu\\home\\u\\.francois"
-        ));
-        assert!(!wsl_translatable_config_dir(
-            "\\\\server\\share\\accounts\\a1"
-        ));
-        assert!(!wsl_translatable_config_dir("//server/share/accounts/a1"));
     }
 
     #[test]

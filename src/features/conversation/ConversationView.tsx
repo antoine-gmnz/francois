@@ -9,6 +9,8 @@ import EarlierBlocksRow from './EarlierBlocksRow';
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import UsageLimitBanner from './UsageLimitBanner';
+import PiRecoveryBanner from './PiRecoveryBanner';
+import { isBlockingRecovery } from './pi-recovery';
 import { useConversationTranscript } from './useConversationTranscript';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { hasPendingQuestionBlock } from '../questions/question-card';
@@ -131,6 +133,10 @@ export default function ConversationView({
   const hasPendingQuestion = useMemo(() => hasPendingQuestionBlock(state.blocks), [state.blocks]);
   const hasPendingPermission = useMemo(() => hasPendingPermissionBlock(state.blocks), [state.blocks]);
 
+  // pi-session-durability: present only on a Pi session (SessionMeta.recovery),
+  // and only blocking for four of its six states — see isBlockingRecovery.
+  const recovery = meta?.recovery;
+
   return (
     <div className="conv-root">
       {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript
@@ -146,8 +152,16 @@ export default function ConversationView({
         />
       )}
 
-      {/* resume-fail banner (durable-sessions FR-14) */}
+      {/* resume-fail banner (durable-sessions FR-14) — Claude only; unrelated
+          to Pi's own recovery below (`recovery` is never set on a session this
+          event fires for). */}
       {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
+
+      {/* pi-session-durability §8: missing/corrupt/incompatible/account-missing
+          refuse resume with one cause plus Retry/Create new session (FR-3/7).
+          `ready`/`disconnected` render nothing — resume then happens
+          transparently on the next send. */}
+      {isBlockingRecovery(recovery) && <PiRecoveryBanner sessionId={sessionId} recovery={recovery} />}
 
       {/* plan usage-limit notice — the session stays live behind it */}
       {limitNotice !== null && <UsageLimitBanner message={limitNotice} onDismiss={dismissLimitNotice} />}

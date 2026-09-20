@@ -425,6 +425,15 @@ fn create_adopted_session(
         // defaults from, so the core applies its snapshot here — an unknown
         // persisted value reads as 'default' (§7), never as a failure.
         ResponseMode::parse_or_default(seed.response_mode.as_deref()),
+        // pi-migration-rollout: adoption has no New Session dialog to pick a
+        // Pi profile from either — it carries none.
+        None,
+        // pi-migration-rollout FR-3 (read-once fix): no Pi profile means no
+        // launch prompt to resolve either.
+        None,
+        // pi-skills-capabilities: an adopted session is never Pi (cloud
+        // sessions come from Claude Code on the web) — no resource policy.
+        None,
     );
     // FR-10/FR-16: presence is the whole provenance signal. Set here rather than
     // through `Session::new` so no other creation path can accidentally carry it.
@@ -1040,6 +1049,6 @@ mod tests {
                 normalized.chars().take(1500).collect::<String>()
             );
         }
-        eprintln!("adopted local session {}", hydrated.unwrap());
+        assert!(hydrated.is_some());
     }
 }

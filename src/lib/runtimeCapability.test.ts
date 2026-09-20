@@ -5,7 +5,8 @@
 
 import { describe, expect, it } from 'vitest';
 import type { RuntimeCapabilities, SessionMeta } from '../../contract/common';
-import { sessionCapability } from './runtimeCapability';
+import { PI_BASELINE_UNAVAILABLE, PI_UNRESTRICTED_TOOLS_NOTICE } from '../../contract/pi-skills-capabilities';
+import { sandboxSelectionCapability, sessionCapability } from './runtimeCapability';
 
 function meta(overrides: Partial<SessionMeta>): SessionMeta {
   return {
@@ -84,11 +85,84 @@ describe('sessionCapability (FR-20)', () => {
     };
     const pi = meta({ agentRuntime: 'pi', protocol: null, effectiveCapabilities: effective });
     expect(sessionCapability(pi, 'skills')).toEqual({ available: false, reason: 'Disabled by this model.' });
-    expect(sessionCapability(pi, 'mcp')).toEqual({ available: true });
+    // `steering`, not `mcp`: outside the FR-3 clamp, Pi's static row is a
+    // DISCONNECTED placeholder rather than a ceiling, so the connected
+    // snapshot is what grants the capability.
+    expect(sessionCapability(pi, 'steering')).toEqual({ available: true });
   });
 
   it('keeps a Pi session disabled until the core sends its live snapshot', () => {
     const pi = meta({ agentRuntime: 'pi', protocol: null });
     expect(sessionCapability(pi, 'steering')).toEqual({ available: false, reason: 'Runtime is not connected.' });
+  });
+
+  // pi-skills-capabilities FR-4/FR-3: nothing in the baseline the spec pins
+  // (skillsInstall, mcp, subagents, workflows, permissions, remoteControl,
+  // usageBar) is ever reachable for a Pi session — neither before the core's
+  // live snapshot arrives (disconnected default) nor once it does.
+  //
+  // The snapshot below claims ALL of them, which is the only shape that makes
+  // this a test of the clamp rather than of the fixture: pi-runtime-boundary
+  // FR-4 lets a live snapshot NARROW the static table, never widen it, and Pi
+  // is the one runtime whose static row is a disconnected placeholder rather
+  // than a ceiling — so without the clamp the frontend would hand a Pi session
+  // whatever an incomplete, optimistic or future core snapshot asserted.
+  it('clamps a Pi session away from every PI_BASELINE_UNAVAILABLE capability even when the live snapshot claims it', () => {
+    const disconnected = meta({ agentRuntime: 'pi', protocol: null });
+    for (const capability of PI_BASELINE_UNAVAILABLE) {
+      expect(sessionCapability(disconnected, capability).available).toBe(false);
+    }
+
+    const claimsEverything = Object.fromEntries(
+      (
+        [
+          'mcp', 'subagents', 'skills', 'skillsInstall', 'workflows', 'interactiveCommands',
+          'permissions', 'remoteControl', 'usageBar', 'compaction', 'steering', 'followUps',
+          'resumableSessions', 'modelSwitching', 'images', 'contextMetrics', 'costMetrics',
+        ] as const
+      ).map((key) => [key, { available: true }]),
+    ) as RuntimeCapabilities;
+    const connected = meta({ agentRuntime: 'pi', protocol: null, effectiveCapabilities: claimsEverything });
+    for (const capability of PI_BASELINE_UNAVAILABLE) {
+      const state = sessionCapability(connected, capability);
+      expect(state.available).toBe(false);
+      // FR-4: "Disabled actions give a reason" — a clamped one is no exception.
+      // `CapabilityState` is a flat interface (`reason` is optional, not tied
+      // to `available` by a discriminated union), so `available === false`
+      // narrows nothing about `reason` — check it directly instead.
+      expect((state.reason?.length ?? 0) > 0).toBe(true);
+    }
+    // and skills — the one baseline capability the spec turns ON — stays reachable.
+    expect(sessionCapability(connected, 'skills').available).toBe(true);
+    // …as does everything outside the clamped list, which the snapshot still owns.
+    expect(sessionCapability(connected, 'steering')).toEqual({ available: true });
+  });
+
+  // A snapshot that narrows a clamped capability keeps its OWN sentence — the
+  // core knows why (auth, config, model) and the clamp does not.
+  it('prefers the core’s reason over the clamp’s when the snapshot already disables the capability', () => {
+    const snapshot = {
+      mcp: { available: false, reason: 'Pi was started with --no-extensions.' },
+    } as unknown as RuntimeCapabilities;
+    const pi = meta({ agentRuntime: 'pi', protocol: null, effectiveCapabilities: snapshot });
+    expect(sessionCapability(pi, 'mcp')).toEqual({
+      available: false,
+      reason: 'Pi was started with --no-extensions.',
+    });
+  });
+});
+
+describe('sandboxSelectionCapability (pi-skills-capabilities FR-5)', () => {
+  it('reads available for every non-Pi runtime', () => {
+    expect(sandboxSelectionCapability(meta({ agentRuntime: 'claude-code' }))).toEqual({ available: true });
+    expect(sandboxSelectionCapability(meta({ agentRuntime: 'codex' }))).toEqual({ available: true });
+    expect(sandboxSelectionCapability(null)).toEqual({ available: true });
+  });
+
+  it('reads the FR-5 notice verbatim for a Pi session — not a generic "unavailable" line', () => {
+    expect(sandboxSelectionCapability(meta({ agentRuntime: 'pi' }))).toEqual({
+      available: false,
+      reason: PI_UNRESTRICTED_TOOLS_NOTICE,
+    });
   });
 });

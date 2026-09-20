@@ -27,7 +27,8 @@ pub(crate) struct Deadlines {
     pub(crate) init: Duration,
     pub(crate) read_only: Duration,
     pub(crate) prompt: Duration,
-    #[allow(dead_code)] // no compaction command wired up in this MVP yet
+    /// pi-turn-controls FR-8: now wired up — `PiCommandKind::Compact`'s own
+    /// bound (the spec's 180s manual-compaction operation deadline).
     pub(crate) compaction: Duration,
 }
 
@@ -48,6 +49,21 @@ impl Deadlines {
             PiCommandKind::GetState => self.init,
             PiCommandKind::Prompt => self.prompt,
             PiCommandKind::Interrupt => self.read_only,
+            // pi-session-durability FR-4: read-only, same bound as Interrupt.
+            PiCommandKind::GetEntries => self.read_only,
+            // pi-models-metrics: none of these three carry a user prompt, so
+            // they share the same read-only bound as Interrupt/GetEntries.
+            PiCommandKind::GetAvailableModels
+            | PiCommandKind::SetModel
+            | PiCommandKind::GetSessionStats => self.read_only,
+            // pi-turn-controls FR-6: clear_queue/abort carry no user prompt —
+            // same read-only bound the Stop sequence's own 5s budget wraps.
+            PiCommandKind::ClearQueue | PiCommandKind::Abort => self.read_only,
+            // pi-turn-controls FR-8: the 180s manual-compaction deadline.
+            PiCommandKind::Compact => self.compaction,
+            // pi-skills-capabilities FR-1: read-only, no user prompt — same
+            // bound as GetEntries/GetSessionStats.
+            PiCommandKind::GetCommands => self.read_only,
         }
     }
 }
@@ -179,23 +195,45 @@ impl ProtocolEngine {
         Ok((command, self.deadlines.for_kind(kind), rx))
     }
 
-    /// The caller gave up waiting (its own deadline elapsed) — drop the entry
-    /// so a very late reply is classified as "unknown id" (FR-3) rather than
-    /// retained forever. Unused on the path that already fails the whole
-    /// connection on timeout (see `PiConnection::dispatch`) but kept for a
-    /// caller that only wants to abandon its OWN wait without failing others.
-    #[allow(dead_code)]
+    /// The caller gave up on a command that never reached the wire — drop the
+    /// entry so a (impossible, but cheap to be right about) late reply is
+    /// classified as "unknown id" (FR-3) rather than retained forever. Used
+    /// only where NOTHING is known to be wrong with the connection itself:
+    /// `PiConnection::write_command`'s two pre-write exits (the connection is
+    /// shutting down; this verb ran out of its own deadline waiting for
+    /// another verb's write). A command that DID reach the wire and then
+    /// timed out is the opposite case — "ambiguous, not permission to
+    /// replay" — and fails the whole connection through `on_timeout`.
     pub(crate) fn forget(&mut self, id: &str) {
         self.pending.remove(id);
     }
 
-    /// FR-2/FR-3: react to one already-framed, already-decoded line.
+    /// FR-2/FR-3: react to one already-framed line, decoding it here. The
+    /// reader thread decodes each line ONCE (the transcript reducer needs the
+    /// same `Value`) and calls `on_frame` instead; this stays for callers
+    /// holding only the text — the malformed-JSON branch, which has no
+    /// `Value` to hand over, and this module's own tests.
     pub(crate) fn on_line(&mut self, line: &str) -> LineOutcome {
         if self.failed {
             return LineOutcome::default();
         }
         self.frame_count += 1;
-        match wire::parse_line(line) {
+        self.classify(wire::parse_line(line))
+    }
+
+    /// `on_line` for a line the caller has ALREADY decoded — no second
+    /// `serde_json::from_str` over a record that may be megabytes (LOW,
+    /// review round 4: the reader used to parse every line three times).
+    pub(crate) fn on_frame(&mut self, value: &serde_json::Value) -> LineOutcome {
+        if self.failed {
+            return LineOutcome::default();
+        }
+        self.frame_count += 1;
+        self.classify(wire::parse_value(value))
+    }
+
+    fn classify(&mut self, parsed: Result<Frame, ParseError>) -> LineOutcome {
+        match parsed {
             Ok(Frame::Response(resp)) => self.on_response(resp),
             Ok(Frame::Event(ev)) => self.on_event(ev),
             Err(ParseError::NotAFrame) => self.fail(
@@ -283,6 +321,13 @@ impl ProtocolEngine {
             // deliberately no state change. `turn_end` is informational too
             // in this MVP (its `reason` field is validated, not acted on).
             wire::PiEvent::AgentEnd | wire::PiEvent::TurnEnd => Default::default(),
+            // pi-transcript-events FR-1 (review round 3): known, healthy
+            // transcript traffic that `normalize::TranscriptReducer` already
+            // owns (fed the same raw line by
+            // `dispatcher::apply_transcript_line`) — no run-state change, no
+            // error/diagnostic. `Unknown` stays the only path that counts an
+            // error and notifies.
+            wire::PiEvent::Recognized(_) => Default::default(),
             wire::PiEvent::Unknown(kind) => {
                 *self.event_counts.entry(kind.clone()).or_insert(0) += 1;
                 self.error_count += 1;
@@ -321,6 +366,16 @@ impl ProtocolEngine {
     /// instead of borrowing `RuntimeExited`.
     pub(crate) fn on_timeout(&mut self, reason: &str) -> LineOutcome {
         self.fail(ErrorCode::RuntimeTimeout, reason)
+    }
+
+    /// pi-skills-capabilities FR-6: a baseline child emitted something that
+    /// looks like extension UI despite `--no-extensions` — the caller
+    /// (`dispatcher::spawn_reader`) detected this ahead of `on_line`'s own
+    /// classification and asks this connection to fail with a policy-shaped
+    /// code instead of continuing (never fed to `on_event`, which would just
+    /// count/ignore an unrecognized kind and let the connection run).
+    pub(crate) fn on_policy_violation(&mut self, reason: &str) -> LineOutcome {
+        self.fail(ErrorCode::RuntimeUnsupported, reason)
     }
 
     /// FR-3/FR-6: once a failure wins, later calls are no-ops — the terminal
@@ -385,7 +440,12 @@ mod tests {
         e.on_line(&resp_line(&h.id, "get_state", true));
 
         for _ in 0..2 {
-            let (p, _, prx) = e.send(PiCommandBody::Prompt { text: "hi".into() }).unwrap();
+            let (p, _, prx) = e
+                .send(PiCommandBody::Prompt {
+                    text: "hi".into(),
+                    images: Vec::new(),
+                })
+                .unwrap();
             let outcome = e.on_line(&resp_line(&p.id, "prompt", true));
             assert_eq!(outcome.run_state, Some(RuntimeRunState::Running));
             match prx.recv().unwrap() {
@@ -403,7 +463,12 @@ mod tests {
         let mut e = engine_for_test();
         let (h, _, _) = e.send(PiCommandBody::GetState).unwrap();
         e.on_line(&resp_line(&h.id, "get_state", true));
-        let (p, _, _) = e.send(PiCommandBody::Prompt { text: "hi".into() }).unwrap();
+        let (p, _, _) = e
+            .send(PiCommandBody::Prompt {
+                text: "hi".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
         e.on_line(&resp_line(&p.id, "prompt", true));
         let outcome = e.on_line(r#"{"type":"agent_end"}"#);
         assert!(outcome.run_state.is_none());
@@ -454,6 +519,57 @@ mod tests {
         assert!(!e.is_failed());
     }
 
+    /// pi-transcript-events FR-1 (review round 3): the FR-1 transcript event
+    /// vocabulary must never be misclassified as `Unknown` — no diagnostic,
+    /// no error count, no run-state change, for a batch representative of
+    /// normal, healthy transcript traffic on a turn.
+    #[test]
+    fn fr1_transcript_events_produce_no_diagnostic_or_error() {
+        let mut e = engine_for_test();
+        for line in [
+            r#"{"type":"message_start"}"#,
+            r#"{"type":"content_delta"}"#,
+            r#"{"type":"text_end"}"#,
+            r#"{"type":"message_end"}"#,
+            r#"{"type":"toolcall_start"}"#,
+            r#"{"type":"toolcall_delta"}"#,
+            r#"{"type":"toolcall_end"}"#,
+            r#"{"type":"tool_execution_start"}"#,
+            r#"{"type":"tool_execution_update"}"#,
+            r#"{"type":"tool_execution_end"}"#,
+            r#"{"type":"compaction_start"}"#,
+            r#"{"type":"compaction_end"}"#,
+            r#"{"type":"retry"}"#,
+            r#"{"type":"queue_update"}"#,
+        ] {
+            let outcome = e.on_line(line);
+            assert!(outcome.diagnostic.is_none(), "{line} produced a diagnostic");
+            assert!(outcome.failure.is_none(), "{line} produced a failure");
+            assert!(outcome.run_state.is_none(), "{line} changed run state");
+        }
+        assert!(!e.is_failed());
+        assert_eq!(e.counts().1, 0, "no FR-1 event should count as an error");
+    }
+
+    /// LOW (review round 4): `on_frame` is what the reader calls for every
+    /// line it has already decoded — it must classify exactly as `on_line`
+    /// does, for a response and for an event alike, since that is the hot
+    /// path now.
+    #[test]
+    fn on_frame_classifies_an_already_decoded_line_exactly_like_on_line() {
+        let mut e = engine_for_test();
+        let (h, _, rx) = e.send(PiCommandBody::GetState).unwrap();
+        let line = resp_line(&h.id, "get_state", true);
+        let outcome = e.on_frame(&serde_json::from_str(&line).unwrap());
+        assert_eq!(outcome.run_state, Some(RuntimeRunState::Idle));
+        assert!(matches!(rx.recv().unwrap(), PendingOutcome::Response(_)));
+
+        let unknown = e.on_frame(&serde_json::json!({ "type": "future_event" }));
+        assert!(unknown.diagnostic.is_some());
+        assert_eq!(e.counts(), (2, 1));
+        assert!(!e.is_failed());
+    }
+
     #[test]
     fn a_known_event_missing_a_required_field_fails_the_protocol() {
         let mut e = engine_for_test();
@@ -477,7 +593,12 @@ mod tests {
     fn eof_rejects_every_outstanding_request_exactly_once() {
         let mut e = engine_for_test();
         let (_h, _, rx1) = e.send(PiCommandBody::GetState).unwrap();
-        let (_p, _, rx2) = e.send(PiCommandBody::Prompt { text: "x".into() }).unwrap();
+        let (_p, _, rx2) = e
+            .send(PiCommandBody::Prompt {
+                text: "x".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
         let outcome = e.on_disconnect("the child exited");
         assert_eq!(outcome.run_state, Some(RuntimeRunState::Failed));
         for rx in [rx1, rx2] {
@@ -512,7 +633,12 @@ mod tests {
     fn on_timeout_fails_the_whole_connection_and_rejects_every_outstanding_request() {
         let mut e = engine_for_test();
         let (_h, _, rx1) = e.send(PiCommandBody::GetState).unwrap();
-        let (_p, _, rx2) = e.send(PiCommandBody::Prompt { text: "x".into() }).unwrap();
+        let (_p, _, rx2) = e
+            .send(PiCommandBody::Prompt {
+                text: "x".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
         let outcome = e.on_timeout("get_state did not respond in time");
         assert!(e.is_failed());
         assert_eq!(outcome.run_state, Some(RuntimeRunState::Failed));
@@ -528,6 +654,27 @@ mod tests {
         }
         // Once failed, a second on_timeout/on_disconnect is a no-op (FR-3/FR-6).
         assert!(e.on_disconnect("also broken").failure.is_none());
+    }
+
+    /// pi-skills-capabilities FR-6: fails the connection with
+    /// `RuntimeUnsupported` (not `RuntimeProtocolError`/`RuntimeExited`),
+    /// and rejects any outstanding request exactly like the other terminal
+    /// paths.
+    #[test]
+    fn on_policy_violation_fails_with_runtime_unsupported_and_rejects_outstanding_requests() {
+        let mut e = engine_for_test();
+        let (_h, _, rx) = e.send(PiCommandBody::GetState).unwrap();
+        let outcome = e.on_policy_violation("baseline session received an extension event");
+        assert!(e.is_failed());
+        assert_eq!(outcome.run_state, Some(RuntimeRunState::Failed));
+        assert_eq!(
+            outcome.failure.as_ref().map(|(c, _)| *c),
+            Some(ErrorCode::RuntimeUnsupported)
+        );
+        match rx.recv().unwrap() {
+            PendingOutcome::ConnectionFailed(_) => {}
+            _ => panic!("expected the pending get_state to be rejected"),
+        }
     }
 
     /// FR-8: `counts()` tracks total decoded frames and anomalies

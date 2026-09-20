@@ -108,6 +108,14 @@
 
 .model-picker__provider-heading { grid-column: 1 / -1; }
 
+/* A3(a) (review addendum): the listbox role sits on a node whose only children
+   are the families/submenu columns (no non-option descendant) — `display:
+   contents` keeps those two columns direct items of `.model-picker__popover`'s
+   grid, so row 2's two-column layout is byte-for-byte the same as before. */
+.model-picker__listbox {
+  display: contents;
+}
+
 .model-picker__families,
 .model-picker__submenu {
   min-height: 0;
@@ -149,3 +157,67 @@
 .model-picker__option--focused { background: var(--bg-hover-2); }
 .model-picker__option-label { overflow-wrap: anywhere; }
 .model-picker__trigger { text-align: left; }
+
+/* pi-models-metrics: search box, unavailable rows, favorites — flat treatment,
+   no new border/shadow (PIPELINE.md's Flat rules), tonal steps only. Grouped
+   with the provider heading under one grid item (row 1) so families/submenu
+   (row 2) stay the same two-column layout whether or not the box is rendered. */
+.model-picker__header {
+  grid-column: 1 / -1;
+}
+
+.model-picker__search {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-base);
+  height: 28px;
+  margin: 0 var(--space-8) var(--space-4);
+  padding: 0 var(--space-8);
+  color: var(--text);
+  font-size: var(--font-size-12);
+  font-family: inherit;
+}
+
+.model-picker__empty {
+  padding: var(--space-8) var(--space-10);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+
+.model-picker__option--unavailable {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.model-picker__option--unavailable .model-picker__option-brief {
+  color: var(--error);
+}
+
+.model-picker__option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.model-picker__favorite {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.model-picker__favorite:hover {
+  color: var(--text-dim);
+}
+
+.model-picker__favorite--on {
+  color: var(--accent);
+}
