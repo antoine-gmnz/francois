@@ -155,3 +155,33 @@ from delivery-unknown prompts without asserting what the model executed.
 ### 2026-09-19 — round 1 (lead integration check, pre-review)
 
 - 2026-09-19 — 3 findings (2 HIGH / 1 MEDIUM), all fixed (Pi child env isolation via `pi_account_env` + `exact_env`; `pi_execution_preflight` gate before reconnect validation/spawn; RUNTIME_UNSUPPORTED for non-Pi sessions)
+
+### 2026-09-20 — round 2 (PR #142 review)
+
+**Decision — a rebuild MERGES, it does not replace (amends FR-4/FR-5).** Pi's entries are the
+authority for *messages* only; they carry no execution rows and none of François's own notices.
+A successful rebuild therefore:
+
+1. Rebuilds the User/Assistant blocks from the active-branch ancestry, exactly as FR-4/FR-5 say.
+   A rebuilt block whose id matches a block already on disk **starts from that block** — it keeps
+   its `at`, its attachments and every other local field; only `text` and `nativeEntryId` come
+   from the entry. A rebuild never re-stamps history with "now".
+2. Keeps every **local-only** block (any kind the entries cannot produce — Tool/execution, Notice,
+   …). Each is anchored to the nearest message block that PRECEDES it in the transcript on disk
+   and is re-inserted right after that anchor, relative order preserved. A local-only block with
+   no preceding message stays at the head.
+3. Drops a local-only block only when its anchor did not survive the rebuild — i.e. it belonged
+   to an abandoned branch, which FR-4 already keeps out of the current conversation.
+4. Appends the delivery-unknown notice (FR-7) at most ONCE per unconfirmed user block: since
+   notices now survive, a Retry must find the existing one rather than add another. The same
+   notice is appended, non-destructively and with the same dedupe, on the keep-local path (a
+   session whose FIRST message never reached Pi), which used to get none.
+
+"Projection files are disposable derived state" (FR-2) still holds for what can be re-derived
+from Pi. Execution rows and notices cannot, so they are not disposable.
+
+**Declared gaps — not closed in PR #142** (no Pi session can be created in that build, so
+neither is reachable): nothing yet writes the FIRST `PiResumeRecord` (`PiResumeRecord::new` and
+`Engine::connect_runtime` have no production caller), and FR-1's owned directory
+`<app_data>/runtimes/pi/sessions/<id>/` is never created nor handed to Pi. Acceptance criterion
+1 is therefore met by no code until the first-connect wiring lands in its own PR.

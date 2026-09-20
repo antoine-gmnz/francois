@@ -1,189 +1,7 @@
 use super::*;
 
-// ---------------------------------------------------------- FR-4: active_branch
-
-fn entry(id: &str, parent: Option<&str>, role: &str, text: &str) -> NativeEntry {
-    NativeEntry {
-        id: id.into(),
-        parent_id: parent.map(String::from),
-        role: role.into(),
-        text: text.into(),
-    }
-}
-
-#[test]
-fn active_branch_walks_from_leaf_to_root_in_chronological_order() {
-    let entries = vec![
-        entry("e1", None, "user", "hi"),
-        entry("e2", Some("e1"), "assistant", "hello"),
-        entry("e3", Some("e2"), "user", "again"),
-    ];
-    let branch = active_branch(&entries, "e3");
-    assert_eq!(
-        branch.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
-        vec!["e1", "e2", "e3"]
-    );
-}
-
-/// FR-4: "without showing abandoned branches as the current conversation".
-#[test]
-fn active_branch_excludes_a_sibling_branch_not_reachable_from_the_leaf() {
-    let entries = vec![
-        entry("e1", None, "user", "hi"),
-        entry("e2a", Some("e1"), "assistant", "abandoned reply"),
-        entry("e2b", Some("e1"), "assistant", "kept reply"),
-        entry("e3", Some("e2b"), "user", "continue"),
-    ];
-    let branch = active_branch(&entries, "e3");
-    let ids: Vec<&str> = branch.iter().map(|e| e.id.as_str()).collect();
-    assert_eq!(ids, vec!["e1", "e2b", "e3"]);
-    assert!(!ids.contains(&"e2a"), "abandoned branch must not leak in");
-}
-
-/// FR-4: pre-compaction messages on the surviving ancestry are preserved
-/// — a compaction entry is just another node in the chain.
-#[test]
-fn active_branch_preserves_pre_compaction_messages_still_on_the_ancestry() {
-    let entries = vec![
-        entry("e1", None, "user", "long history begins"),
-        entry("e2", Some("e1"), "assistant", "long reply"),
-        entry("summary", Some("e2"), "assistant", "[compacted summary]"),
-        entry("e3", Some("summary"), "user", "continue after compaction"),
-    ];
-    let branch = active_branch(&entries, "e3");
-    let ids: Vec<&str> = branch.iter().map(|e| e.id.as_str()).collect();
-    assert_eq!(ids, vec!["e1", "e2", "summary", "e3"]);
-}
-
-#[test]
-fn active_branch_stops_at_a_cycle_instead_of_looping_forever() {
-    let entries = vec![
-        entry("a", Some("b"), "user", "x"),
-        entry("b", Some("a"), "assistant", "y"),
-    ];
-    let branch = active_branch(&entries, "a");
-    assert!(branch.len() <= 2, "must terminate, not loop");
-}
-
-#[test]
-fn active_branch_on_an_unknown_leaf_is_empty() {
-    let entries = vec![entry("e1", None, "user", "hi")];
-    assert!(active_branch(&entries, "nope").is_empty());
-}
-
-// ---------------------------------------------------------- FR-5: reconcile_block_ids
-
-#[test]
-fn a_previously_seen_entry_keeps_its_stable_block_id_across_a_rebuild() {
-    let entries = vec![entry("e1", None, "user", "hi")];
-    let mut previous = HashMap::new();
-    previous.insert("e1".to_string(), "stable-block-1".to_string());
-    let (rebuilt, _) = reconcile_block_ids(&entries, &previous, &[]);
-    assert_eq!(rebuilt[0].block_id, "stable-block-1");
-}
-
-/// FR-5: "Keep duplicate identical user messages as distinct entries" —
-/// two entries with byte-identical text but different ids never merge.
-#[test]
-fn duplicate_identical_text_entries_get_distinct_fresh_block_ids() {
-    let entries = vec![
-        entry("e1", None, "user", "same text"),
-        entry("e2", Some("e1"), "user", "same text"),
-    ];
-    let (rebuilt, _) = reconcile_block_ids(&entries, &HashMap::new(), &[]);
-    assert_ne!(rebuilt[0].block_id, rebuilt[1].block_id);
-    assert_eq!(rebuilt[0].text, rebuilt[1].text);
-}
-
-/// FR-5: FIFO reconciliation — a provisional (never-persisted) live block
-/// left over from an interrupted turn reconciles with the FIRST new
-/// entry the rebuild has never seen before, in order.
-#[test]
-fn leftover_new_entries_reconcile_with_provisional_blocks_in_fifo_order() {
-    let entries = vec![
-        entry("e1", None, "user", "first"),
-        entry("e2", Some("e1"), "assistant", "second"),
-        entry("e3", Some("e2"), "user", "third"),
-    ];
-    let mut previous = HashMap::new();
-    previous.insert("e1".to_string(), "known-block".to_string());
-    let provisional = vec!["provisional-a".to_string(), "provisional-b".to_string()];
-    let (rebuilt, consumed) = reconcile_block_ids(&entries, &previous, &provisional);
-    assert_eq!(rebuilt[0].block_id, "known-block");
-    assert_eq!(rebuilt[1].block_id, "provisional-a");
-    assert_eq!(rebuilt[2].block_id, "provisional-b");
-    assert!(consumed.contains("provisional-a"));
-    assert!(consumed.contains("provisional-b"));
-}
-
-/// A torn checkpoint (a malformed trailing persisted line) simply never
-/// makes it into `previous_by_native_id` — the caller's loader already
-/// skips unparsable lines (`parse_persisted_block`), so the entry it
-/// belonged to is treated as never-seen and gets a fresh id here, with no
-/// duplicate row and no special-cased "torn" branch needed.
-#[test]
-fn an_entry_missing_from_a_torn_previous_map_gets_a_fresh_id_not_a_duplicate() {
-    let entries = vec![
-        entry("e1", None, "user", "kept"),
-        entry("e2", Some("e1"), "assistant", "torn tail, never recorded"),
-    ];
-    let mut previous = HashMap::new();
-    previous.insert("e1".to_string(), "kept-block".to_string());
-    let (rebuilt, _) = reconcile_block_ids(&entries, &previous, &[]);
-    assert_eq!(rebuilt.len(), 2);
-    assert_eq!(rebuilt[0].block_id, "kept-block");
-    assert_ne!(rebuilt[1].block_id, "kept-block");
-}
-
-// ---------------------------------------------------------- FR-7: unconfirmed_user_block
-
-#[test]
-fn a_provisional_user_block_never_confirmed_by_any_new_entry_is_flagged() {
-    let previous_user_blocks = vec![("user-block-1".to_string(), "are you there?".to_string())];
-    let consumed = std::collections::HashSet::new();
-    let provisional = vec!["user-block-1".to_string()];
-    let (id, text) =
-        unconfirmed_user_block(&previous_user_blocks, &consumed, &provisional).unwrap();
-    assert_eq!(id, "user-block-1");
-    assert_eq!(text, "are you there?");
-}
-
-#[test]
-fn a_provisional_user_block_that_was_reconciled_is_not_flagged() {
-    let previous_user_blocks = vec![("user-block-1".to_string(), "hi".to_string())];
-    let mut consumed = std::collections::HashSet::new();
-    consumed.insert("user-block-1".to_string());
-    let provisional = vec!["user-block-1".to_string()];
-    assert!(unconfirmed_user_block(&previous_user_blocks, &consumed, &provisional).is_none());
-}
-
-#[test]
-fn no_provisional_blocks_at_all_flags_nothing() {
-    let previous_user_blocks = vec![("user-block-1".to_string(), "hi".to_string())];
-    assert!(unconfirmed_user_block(
-        &previous_user_blocks,
-        &std::collections::HashSet::new(),
-        &[]
-    )
-    .is_none());
-}
-
-/// Only the LAST unconfirmed candidate is ever flagged — one notice, never a
-/// growing list (the readiness gap explicitly defers the full intent-queue
-/// contract to pi-turn-controls).
-#[test]
-fn only_the_last_unconfirmed_user_block_is_flagged() {
-    let previous_user_blocks = vec![
-        ("user-block-1".to_string(), "first".to_string()),
-        ("user-block-2".to_string(), "second".to_string()),
-    ];
-    let consumed = std::collections::HashSet::new();
-    let provisional = vec!["user-block-1".to_string(), "user-block-2".to_string()];
-    let (id, text) =
-        unconfirmed_user_block(&previous_user_blocks, &consumed, &provisional).unwrap();
-    assert_eq!(id, "user-block-2");
-    assert_eq!(text, "second");
-}
+// FR-4/FR-5/FR-7's projection tests live with the code they cover, in
+// `recovery/projection_tests.rs`.
 
 // ---------------------------------------------------------- FR-3: validate_before_resume
 
@@ -252,6 +70,50 @@ fn a_removed_or_reconfigured_account_fails_account_missing() {
         let err = validate_before_resume(&record, "/repo", &account, &dir).unwrap_err();
         assert_eq!(err.code, ErrorCode::RuntimeAccountMissing);
     }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// LOW (round-2 review): the three paths this module compares — the pinned
+/// `config_dir`, the session's `cwd` and the conversation file Pi reports
+/// back — were compared as RAW strings. Each arrives from a different
+/// producer than the one that recorded it, so a trailing separator, a `./`
+/// segment or (on Windows) a different case made a perfectly healthy session
+/// refuse to resume as "moved" / "no longer available".
+#[test]
+fn a_differently_spelled_but_identical_cwd_and_config_dir_still_validate() {
+    let dir = temp_dir("spelling");
+    let file = write_native_file(&dir, "native-1");
+    let record = base_record(&file);
+    for (cwd, config_dir) in [
+        ("/repo/", "/home/user/.pi/"),
+        ("/repo/./", "/home/user/./.pi"),
+        ("/repo/sub/..", "/home/user/.pi/sub/.."),
+    ] {
+        let account = AccountSnapshot {
+            is_pi: true,
+            config_dir: Some(config_dir.into()),
+        };
+        assert!(
+            validate_before_resume(&record, cwd, &account, &dir).is_ok(),
+            "{cwd} / {config_dir} names the same location as the record"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Windows spells the same directory in either case; every other platform
+/// does not, and must keep saying so.
+#[test]
+fn case_only_differences_follow_the_platforms_own_rule() {
+    let dir = temp_dir("case");
+    let file = write_native_file(&dir, "native-1");
+    let record = base_record(&file);
+    let account = AccountSnapshot {
+        is_pi: true,
+        config_dir: Some("/home/user/.pi".into()),
+    };
+    let same = validate_before_resume(&record, "/REPO", &account, &dir).is_ok();
+    assert_eq!(same, cfg!(windows), "case folding must follow the platform");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -402,6 +264,70 @@ fn backup_path_is_versioned_and_a_sibling_of_the_native_file() {
         .to_str()
         .unwrap()
         .contains("v0.85.1"));
+}
+
+/// DEFECT 2 / FR-8: the backup's failure used to be discarded (`let _ =`),
+/// and `super::connect` then launched the NEWER Pi with `--resume` against
+/// the unbacked file — which Pi migrates IN PLACE, and which is the only
+/// copy. A backup that could not be taken must refuse, and the spawn behind
+/// it must never run.
+#[test]
+fn a_failed_backup_refuses_and_the_spawn_never_runs() {
+    // A path under a directory that was never created: the copy cannot work.
+    let missing = temp_dir("backup-unwritable").join("never-written.jsonl");
+    let mut spawned = false;
+    let err = backup_then_spawn(true, &missing, "0.85.1", || {
+        spawned = true;
+        Ok(())
+    })
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Internal);
+    assert!(
+        !spawned,
+        "Pi must never be launched against a conversation file that was not backed up"
+    );
+}
+
+/// FR-8's ordering, asserted from INSIDE the spawn: whatever runs after this
+/// step already has its backup on disk.
+#[test]
+fn the_backup_is_already_on_disk_when_the_spawn_runs() {
+    let dir = temp_dir("backup-before-spawn");
+    let file = write_native_file(&dir, "native-1");
+    let backup = backup_path(&file, "0.85.1");
+    let seen_by_spawn = backup_then_spawn(true, &file, "0.85.1", || Ok(backup.exists())).unwrap();
+    assert!(seen_by_spawn, "the backup must precede the spawn");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// No version change ⇒ no backup to take, and the spawn proceeds untouched.
+#[test]
+fn an_unchanged_version_spawns_without_writing_a_backup() {
+    let dir = temp_dir("backup-skipped");
+    let file = write_native_file(&dir, "native-1");
+    assert!(backup_then_spawn(false, &file, "0.85.1", || Ok(true)).unwrap());
+    assert!(!backup_path(&file, "0.85.1").exists());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// DEFECT 3 / FR-8: an undetectable installation used to persist its version
+/// as `""`. `version_transition` compares `""` fail-open forever after, so
+/// that one write permanently disables the downgrade guard for the session.
+/// An unknown version never overwrites a known one.
+#[test]
+fn an_undetectable_version_keeps_the_recorded_one() {
+    for detected in [None, Some(""), Some("   ")] {
+        assert_eq!(
+            recorded_version("0.85.1", detected),
+            "0.85.1",
+            "an undetectable version ({detected:?}) must not erase the recorded one"
+        );
+    }
+}
+
+#[test]
+fn a_detected_version_replaces_the_recorded_one() {
+    assert_eq!(recorded_version("0.85.1", Some("0.86.0")), "0.86.0");
 }
 
 #[test]
@@ -568,23 +494,55 @@ fn load_reconnect_snapshot_carries_no_launch_prompt_when_unresolved_yet() {
     assert!(snapshot.pi_launch_prompt.is_none());
 }
 
-/// pi-session-durability: "Create new session" copies the source's resolved
-/// snapshot VERBATIM, same as it copies `pi_profile_settings` — never a
-/// re-resolve, and never `None`d out just because it is a new session id.
+// `session_new_from`'s own tests live with the code they cover, in
+// `recovery/new_from_tests.rs`.
+
+// ---------------------------------------------------------- LOW: the SESSION_BUSY claim is a guard
+
+/// LOW (round-2 review): `release_recovery` used to be a statement AFTER the
+/// call, so a panic anywhere in the reconnect/new-from body skipped it. The
+/// session then stayed `recovery_busy` forever — every later reconnect AND
+/// every "Create new session" answered `SESSION_BUSY`, and the banner's Retry
+/// button could not clear it short of restarting the app. A guard cannot be
+/// skipped: unwinding runs `Drop`.
 #[test]
-fn load_new_from_snapshot_carries_the_launch_prompt_through_unchanged() {
+fn a_panic_under_the_recovery_claim_still_releases_it() {
     use crate::session::testutil::{test_engine_with, test_session};
 
-    let mut session = test_session();
-    session.agent_runtime = AgentRuntime::Pi;
-    session.pi_profile_settings = Some(pi_settings_with_instructions(Vec::new()));
-    session.pi_launch_prompt = Some(crate::session::adapter::pi::PiLaunchPrompt {
-        text: Some("copied verbatim".into()),
-    });
-    let engine = test_engine_with(session);
-    let snapshot = load_new_from_snapshot(&engine, "s1").expect("session present");
-    assert_eq!(
-        snapshot.pi_launch_prompt.unwrap().text.as_deref(),
-        Some("copied verbatim")
+    let engine = test_engine_with(test_session());
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _claim = claim_recovery(&engine, "s1").expect("the claim is free");
+        panic!("a reconnect step blew up");
+    }));
+    assert!(panicked.is_err(), "the fixture must actually panic");
+    assert!(
+        claim_recovery(&engine, "s1").is_some(),
+        "the claim must be free again after a panicking run"
     );
+}
+
+/// The claim is exclusive while it is held, and free again once dropped —
+/// which is what makes the `SESSION_BUSY` answer above meaningful.
+#[test]
+fn the_recovery_claim_is_exclusive_while_held_and_free_once_dropped() {
+    use crate::session::testutil::{test_engine_with, test_session};
+
+    let engine = test_engine_with(test_session());
+    let claim = claim_recovery(&engine, "s1").expect("the first claim wins");
+    assert!(
+        claim_recovery(&engine, "s1").is_none(),
+        "a second recovery must be refused while the first holds the claim"
+    );
+    drop(claim);
+    assert!(claim_recovery(&engine, "s1").is_some());
+}
+
+/// A claim on a session that does not exist is never granted — the caller
+/// must not "release" a flag it never set on some other record.
+#[test]
+fn no_claim_is_granted_for_an_unknown_session() {
+    use crate::session::testutil::{test_engine_with, test_session};
+
+    let engine = test_engine_with(test_session());
+    assert!(claim_recovery(&engine, "nope").is_none());
 }

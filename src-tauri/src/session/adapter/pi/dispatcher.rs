@@ -1,9 +1,11 @@
 //! session/adapter/pi/dispatcher.rs — FR-1/FR-5/FR-7: the live per-session Pi
 //! RPC connection. `protocol::ProtocolEngine` (a sibling module — split out
 //! purely for CLAUDE.md's ~1000-line file cap) is the pure correlation/
-//! state-machine core; this file owns the I/O around it: the reader thread,
-//! the child's stdin, the `RuntimeSessionControl` implementation, and
-//! publishing `francois://session/event` runtime envelopes.
+//! state-machine core; this file owns the I/O around it: the child's stdin,
+//! the `RuntimeSessionControl` implementation, and publishing
+//! `francois://session/event` runtime envelopes. The inbound half — the
+//! reader thread and everything it runs per line — lives in the `reader`
+//! child module, for the same cap.
 //!
 //! `PiConnection` is the live wrapper `PiAdapter::connect_session` hands back
 //! — it owns the reader thread, the child's stdin, and the wait/kill pair
@@ -21,7 +23,6 @@ use crate::session::adapter::{
 };
 use crate::session::events;
 use crate::session::events::{RuntimeEventPayload, RuntimeRunState};
-use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -30,6 +31,12 @@ use super::normalize::TranscriptReducer;
 use super::process::{self, ProcessHandle};
 use super::protocol::{LineOutcome, PendingOutcome, ProtocolEngine};
 use super::wire::{self, PiCommandBody};
+
+mod child;
+mod reader;
+
+use child::{ChildLink, WriteFault, EXIT_GRACE};
+use reader::{counts_ctx, finalize_transcript, publish_with_stderr, spawn_reader};
 
 #[cfg(test)]
 use super::protocol::Deadlines;
@@ -169,18 +176,6 @@ impl EventPublisher for AppPublisher {
     }
 }
 
-fn publish(publisher: &Arc<dyn EventPublisher>, outcome: LineOutcome, ctx: DiagnosticContext) {
-    if let Some(state) = outcome.run_state {
-        publisher.run_state(state);
-    }
-    if let Some((code, reason)) = &outcome.failure {
-        publisher.failure(*code, reason, ctx.clone());
-    }
-    if let Some(diag) = &outcome.diagnostic {
-        publisher.diagnostic(diag, ctx);
-    }
-}
-
 // ---------------------------------------------------------------- connection
 
 /// FR-1/FR-2/FR-5/FR-7: the live `RuntimeSessionControl` a Pi session's
@@ -189,17 +184,13 @@ fn publish(publisher: &Arc<dyn EventPublisher>, outcome: LineOutcome, ctx: Diagn
 /// way to reach.
 pub(crate) struct PiConnection {
     engine: Arc<Mutex<ProtocolEngine>>,
-    /// FR-5: one per-session dispatcher — every user-affecting command
-    /// (submit/cancel) holds this for its whole round trip, so two can never
-    /// race on the wire.
-    write_lock: Mutex<()>,
-    stdin: Mutex<Option<Box<dyn Write + Send>>>,
-    wait_timeout: Mutex<Option<Box<dyn FnMut(Duration) -> bool + Send>>>,
-    /// pi-skills-capabilities FR-6: `Arc`-shared (not a bare `Mutex`) so
-    /// `spawn_reader`'s own defensive stop (an extension-policy violation)
-    /// can terminate the tracked process tree without waiting for an
-    /// explicit `shutdown()` call from elsewhere.
-    kill: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>>,
+    /// HIGH (review round 4): the child itself — its stdin, its wait/kill
+    /// pair and the retirement latch — `Arc`-shared with the reader thread,
+    /// because BOTH sides end connections and both must take the child down
+    /// with them (`child.rs`'s own doc). Nothing here reaches back into
+    /// `PiConnection`, so the share is one-way and the connection is still
+    /// dropped when its owner lets go of it.
+    child: Arc<ChildLink>,
     reader: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// pi-skills-capabilities FR-3: mutable — `images` is corrected once the
     /// connect handshake's model descriptor is known, after the baseline
@@ -337,215 +328,6 @@ fn response_error(resp: &wire::PiResponse) -> AppError {
     )
 }
 
-/// FR-2/FR-8: never log the stderr ring's TEXT, sanitized or not — a
-/// control-character strip does nothing to redact a secret-shaped substring
-/// (an API key, a bearer token) a misbehaving or malicious child might write
-/// to its own stderr. Only its size and a non-reversible digest are safe to
-/// write to `pi-rpc.log`; still logged alongside the failure (never as the
-/// failure's own message, which stays the protocol/EOF reason).
-fn stderr_tail_digest(ring: &Arc<Mutex<Vec<u8>>>) -> Option<String> {
-    use std::hash::{Hash, Hasher};
-    let bytes = ring.lock().unwrap();
-    if bytes.is_empty() {
-        return None;
-    }
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    Some(format!(
-        "stderr tail: {} bytes (digest {:016x})",
-        bytes.len(),
-        hasher.finish()
-    ))
-}
-
-/// FR-8: a `DiagnosticContext` carrying only the connection-wide counts off
-/// `ProtocolEngine::counts` — the reader thread has no in-flight command to
-/// attach a requestId/command/duration to.
-fn counts_ctx(engine: &Arc<Mutex<ProtocolEngine>>) -> DiagnosticContext {
-    let (frame_count, error_count) = engine.lock().unwrap().counts();
-    DiagnosticContext {
-        frame_count,
-        error_count,
-        ..Default::default()
-    }
-}
-
-/// pi-transcript-events FR-1/FR-6: hand one already-framed line to the
-/// transcript reducer and publish whatever it produces — but only for
-/// EVENT-shaped lines (`wire::looks_like_response` false). A response line
-/// carries no `type` field, so the reducer would misread it as "missing its
-/// type" and fail; `ProtocolEngine::on_line` (called separately, right
-/// beside this) already owns response correlation. Malformed JSON is not
-/// reported here a second time — `ProtocolEngine::on_line`'s own parse
-/// already fails the whole connection for that line.
-fn apply_transcript_line(
-    reducer: &Arc<Mutex<TranscriptReducer>>,
-    publisher: &Arc<dyn EventPublisher>,
-    line: &str,
-) {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-        return;
-    };
-    if wire::looks_like_response(&value) {
-        return;
-    }
-    let events = reducer
-        .lock()
-        .unwrap()
-        .on_event(&value, crate::ids::now_ms());
-    for event in events {
-        publisher.transcript(event);
-    }
-}
-
-/// pi-transcript-events FR-9: crash/stop finalizes every still-open assistant
-/// slot as `interrupted` and every unsettled tool call as `cancelled`/
-/// `unknown` — called once, right after this connection reaches ANY terminal
-/// `LineOutcome` (EOF, a read error, an oversize/malformed frame, or a
-/// protocol failure), the same "whole connection is now failed" moment
-/// `on_disconnect`/`on_frame_error`/`fail` already latch. Idempotent by
-/// construction: `spawn_reader`'s loop breaks right after, so this can only
-/// ever run once per connection.
-fn finalize_transcript(
-    reducer: &Arc<Mutex<TranscriptReducer>>,
-    publisher: &Arc<dyn EventPublisher>,
-) {
-    let events = reducer
-        .lock()
-        .unwrap()
-        .finalize_interrupted(crate::ids::now_ms());
-    for event in events {
-        publisher.transcript(event);
-    }
-}
-
-/// pi-skills-capabilities FR-6 (defensive; no certified wire shape exists
-/// for this — see this feature's own handoff): `--no-extensions` means a
-/// certified Pi child should never emit anything about an extension's own
-/// UI, so ANY event whose `type` mentions "extension" is treated as a
-/// policy violation rather than fed to `ProtocolEngine` (which would just
-/// count/ignore an unrecognized kind and let the connection keep running).
-/// Checked ahead of `on_line` so the reader can stop the child before the
-/// correlation engine even sees the line — "never automatically confirm a
-/// request as an approval bridge" holds trivially (nothing here ever reads
-/// such an event's fields to reply to it), and this is the "cancel/surface
-/// a policy failure/stop it" half.
-fn extension_policy_violation(line: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    let kind = value.get("type")?.as_str()?;
-    kind.to_ascii_lowercase()
-        .contains("extension")
-        .then(|| format!("baseline session received an extension event ({kind}); stopping"))
-}
-
-fn spawn_reader(
-    mut stdout: Box<dyn Read + Send>,
-    engine: Arc<Mutex<ProtocolEngine>>,
-    publisher: Arc<dyn EventPublisher>,
-    stderr_ring: Arc<Mutex<Vec<u8>>>,
-    reducer: Arc<Mutex<TranscriptReducer>>,
-    kill: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut framer = wire::FrameReader::new();
-        let mut buf = [0u8; 8192];
-        'reader: loop {
-            match stdout.read(&mut buf) {
-                Ok(0) => {
-                    let outcome = engine
-                        .lock()
-                        .unwrap()
-                        .on_disconnect("the Pi child closed its output");
-                    let ctx = counts_ctx(&engine);
-                    publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                    finalize_transcript(&reducer, &publisher);
-                    break;
-                }
-                Ok(n) => match framer.feed(&buf[..n]) {
-                    Ok(lines) => {
-                        for line in lines {
-                            if let Some(reason) = extension_policy_violation(&line) {
-                                let outcome = engine.lock().unwrap().on_policy_violation(&reason);
-                                let ctx = counts_ctx(&engine);
-                                publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                                finalize_transcript(&reducer, &publisher);
-                                // FR-6: "stop it" — terminate the tracked
-                                // process tree right here, rather than only
-                                // marking the connection failed and waiting
-                                // for an explicit Stop/session_remove to
-                                // reap it later.
-                                if let Some(kill_fn) = kill.lock().unwrap().as_mut() {
-                                    kill_fn();
-                                }
-                                break 'reader;
-                            }
-                            apply_transcript_line(&reducer, &publisher, &line);
-                            let outcome = engine.lock().unwrap().on_line(&line);
-                            let terminal = outcome.failure.is_some();
-                            let ctx = counts_ctx(&engine);
-                            publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                            if terminal {
-                                finalize_transcript(&reducer, &publisher);
-                                break 'reader;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let reason = match e {
-                            wire::FrameError::OversizeRecord => {
-                                "a wire record exceeded the 32 MiB cap"
-                            }
-                            wire::FrameError::InvalidUtf8 => "a wire record was not valid UTF-8",
-                        };
-                        let outcome = engine.lock().unwrap().on_frame_error(reason);
-                        let ctx = counts_ctx(&engine);
-                        publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                        finalize_transcript(&reducer, &publisher);
-                        break;
-                    }
-                },
-                // A real `ChildStdout` carries no read timeout and blocks
-                // indefinitely, which is exactly what a long-lived Pi child
-                // needs — but a test transport MAY set one (to make a killed
-                // fake child's socket-shutdown observable promptly rather
-                // than depending on an in-flight blocking call being
-                // interrupted, which is not reliable cross-platform); a
-                // timeout is not a disconnect, just an empty poll.
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) => {}
-                Err(e) => {
-                    let outcome = engine
-                        .lock()
-                        .unwrap()
-                        .on_disconnect(&format!("read error: {e}"));
-                    let ctx = counts_ctx(&engine);
-                    publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
-                    finalize_transcript(&reducer, &publisher);
-                    break;
-                }
-            }
-        }
-    })
-}
-
-fn publish_with_stderr(
-    publisher: &Arc<dyn EventPublisher>,
-    outcome: LineOutcome,
-    stderr_ring: &Arc<Mutex<Vec<u8>>>,
-    ctx: DiagnosticContext,
-) {
-    let is_failure = outcome.failure.is_some();
-    publish(publisher, outcome, ctx.clone());
-    if is_failure {
-        if let Some(tail) = stderr_tail_digest(stderr_ring) {
-            publisher.diagnostic(&tail, ctx);
-        }
-    }
-}
-
 impl PiConnection {
     fn connect_engine(
         publisher: Arc<dyn EventPublisher>,
@@ -553,27 +335,30 @@ impl PiConnection {
         engine: ProtocolEngine,
     ) -> Result<Arc<Self>, AppError> {
         let engine = Arc::new(Mutex::new(engine));
-        let stderr_ring = handle.stderr_ring.clone();
+        let ProcessHandle {
+            stdin,
+            stdout,
+            wait_timeout,
+            kill,
+            stderr_ring,
+        } = handle;
         let reducer = Arc::new(Mutex::new(TranscriptReducer::new()));
-        // pi-skills-capabilities FR-6: shared with `spawn_reader`'s own
-        // defensive stop, not moved exclusively into `Self.kill` — see
-        // `PiConnection.kill`'s own doc.
-        let kill: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>> =
-            Arc::new(Mutex::new(Some(handle.kill)));
+        // HIGH (review round 4): the child is shared with the reader thread,
+        // which ends connections too (EOF, a read error, a frame error, the
+        // extension-policy gate) and has to take it down when it does — see
+        // `child.rs`'s own doc.
+        let child = Arc::new(ChildLink::new(stdin, wait_timeout, kill));
         let reader = spawn_reader(
-            handle.stdout,
+            stdout,
             engine.clone(),
             publisher.clone(),
             stderr_ring.clone(),
             reducer.clone(),
-            kill.clone(),
+            child.clone(),
         );
         let conn = Arc::new(Self {
             engine,
-            write_lock: Mutex::new(()),
-            stdin: Mutex::new(Some(handle.stdin)),
-            wait_timeout: Mutex::new(Some(handle.wait_timeout)),
-            kill,
+            child,
             reader: Mutex::new(Some(reader)),
             capabilities: Mutex::new(baseline_capabilities()),
             handshake_info: Mutex::new(HandshakeInfo::default()),
@@ -662,40 +447,20 @@ impl PiConnection {
     /// module of this one, not a child — dispatches its own new command
     /// kinds (`clear_queue`/`abort`/`compact`) through this exact method
     /// rather than duplicating the write/correlate/timeout machinery above.
+    ///
+    /// §4 (review round 4): the WRITE is the only exclusive part of a round
+    /// trip. It used to hold a connection-wide `write_lock` until the answer
+    /// came back, so every verb queued behind the slowest one in flight — a
+    /// manual compaction (180s deadline) parked Stop, a model switch and a
+    /// metrics read for as long as it ran. Nothing needed that: each command
+    /// is correlated by its OWN request id (`ProtocolEngine::send` registers
+    /// one pending entry per id; `on_response` routes each reply by it and
+    /// rejects one naming a different command), so replies may interleave
+    /// freely — only the bytes on the wire may not.
     pub(super) fn dispatch(&self, body: PiCommandBody) -> Result<wire::PiResponse, AppError> {
-        let _write_guard = self.write_lock.lock().unwrap(); // FR-5: one dispatcher at a time
         let started = Instant::now();
         let (command, deadline, rx) = self.engine.lock().unwrap().send(body)?;
-        {
-            let mut stdin = self.stdin.lock().unwrap();
-            let Some(writer) = stdin.as_mut() else {
-                // The connection is already shutting down (stdin taken by
-                // `shutdown()`) — this command was never sent, so there is
-                // nothing to fail the WHOLE connection over; drop just this
-                // entry, silently.
-                self.engine.lock().unwrap().forget(&command.id);
-                return Err(AppError::new(
-                    ErrorCode::RuntimeUnavailable,
-                    "the Pi connection is shutting down",
-                ));
-            };
-            if let Err(e) = writer
-                .write_all(command.to_line().as_bytes())
-                .and_then(|_| writer.flush())
-            {
-                // FR-6: a write failure means the pipe (and so the
-                // connection) is gone — fail the WHOLE connection, not just
-                // this command, and publish the terminal outcome exactly
-                // like the reader thread's own EOF/read-error path does
-                // (contradicted the method's own doc before this fix).
-                let reason = format!("could not write to pi: {e}");
-                let ctx = self.command_ctx(&command, started);
-                let outcome = self.engine.lock().unwrap().on_disconnect(&reason);
-                publish_with_stderr(&self.publisher, outcome, &self.stderr_ring, ctx);
-                finalize_transcript(&self.reducer, &self.publisher);
-                return Err(AppError::new(ErrorCode::RuntimeExited, reason));
-            }
-        }
+        self.write_command(&command, started, deadline)?;
         match rx.recv_timeout(deadline) {
             Ok(PendingOutcome::Response(resp)) if resp.success => Ok(resp),
             Ok(PendingOutcome::Response(resp)) => Err(response_error(&resp)),
@@ -711,11 +476,77 @@ impl PiConnection {
                 let reason = format!("{} did not respond in time", command.kind().wire_name());
                 let ctx = self.command_ctx(&command, started);
                 let outcome = self.engine.lock().unwrap().on_timeout(&reason);
-                publish_with_stderr(&self.publisher, outcome, &self.stderr_ring, ctx);
-                finalize_transcript(&self.reducer, &self.publisher);
+                self.fail_connection(outcome, ctx);
                 Err(AppError::new(ErrorCode::RuntimeTimeout, reason))
             }
         }
+    }
+
+    /// One command's bytes, and nothing else, under the stdin lock. The lock
+    /// is acquired with THIS command's own deadline: a verb that cannot even
+    /// reach the wire within the time it was willing to wait for an answer
+    /// gives up with `RUNTIME_TIMEOUT` instead of parking behind whatever is
+    /// writing (§4, review round 4).
+    fn write_command(
+        &self,
+        command: &wire::PiCommand,
+        started: Instant,
+        deadline: Duration,
+    ) -> Result<(), AppError> {
+        match self
+            .child
+            .write_line(&command.to_line(), started + deadline)
+        {
+            Ok(()) => Ok(()),
+            // Neither of these two reached the wire, and neither says anything
+            // is wrong with the CONNECTION — only this command's entry is
+            // dropped.
+            Err(WriteFault::Busy) => {
+                self.engine.lock().unwrap().forget(&command.id);
+                Err(AppError::new(
+                    ErrorCode::RuntimeTimeout,
+                    "another Pi command was still writing to the child",
+                ))
+            }
+            Err(WriteFault::Closed) => {
+                self.engine.lock().unwrap().forget(&command.id);
+                Err(AppError::new(
+                    ErrorCode::RuntimeUnavailable,
+                    "the Pi connection is shutting down",
+                ))
+            }
+            Err(WriteFault::Io(e)) => {
+                // FR-6: a write failure means the pipe (and so the connection)
+                // is gone — fail the WHOLE connection, not just this command,
+                // and publish the terminal outcome exactly like the reader
+                // thread's own EOF/read-error path does (contradicted the
+                // method's own doc before this fix).
+                let reason = format!("could not write to pi: {e}");
+                let ctx = self.command_ctx(command, started);
+                let outcome = self.engine.lock().unwrap().on_disconnect(&reason);
+                self.fail_connection(outcome, ctx);
+                Err(AppError::new(ErrorCode::RuntimeExited, reason))
+            }
+        }
+    }
+
+    /// HIGH (review round 4): the dispatch-side twin of the reader thread's
+    /// terminal branches — a write failure and a wait that ran out both mean
+    /// this connection is over. It publishes the SAME terminal outcome,
+    /// stderr digest and finalized transcript the reader would, and RETIRES
+    /// the connection with them: before this, the reader thread stayed alive
+    /// on a failed connection, kept normalizing lines into it, and nothing
+    /// ever reaped the child.
+    ///
+    /// The order is load-bearing: retirement is latched first, so no further
+    /// line can reach the errored session while the failure goes out, but the
+    /// child's own grace period is spent last, so the frontend never waits on
+    /// it to learn the connection failed.
+    fn fail_connection(&self, outcome: LineOutcome, ctx: DiagnosticContext) {
+        self.child.latch();
+        publish_with_stderr(&self.publisher, outcome, &self.stderr_ring, ctx);
+        finalize_transcript(&self.reducer, &self.publisher);
+        self.child.retire(EXIT_GRACE);
     }
 }
 
@@ -784,34 +615,32 @@ impl RuntimeSessionControl for PiConnection {
         self.dispatch(PiCommandBody::Interrupt).map(|_| ())
     }
 
-    /// FR-7: stop admissions, close stdin (letting Pi's own shutdown cleanup
-    /// run — the audit's linked RPC implementation notes "EOF follows
-    /// shutdown cleanup"), wait up to 5s, then terminate the tracked process
-    /// tree and join the reader. Idempotent: `session_remove` and app-exit
-    /// invoke the same owner (FR-7), and either may call this twice.
+    /// FR-7: retire this connection (`reap`: stop admissions, close stdin so
+    /// Pi's own shutdown cleanup runs — the audit's linked RPC implementation
+    /// notes "EOF follows shutdown cleanup" — wait out the grace period, then
+    /// terminate the tracked process tree) and join the reader. Idempotent:
+    /// `session_remove` and app-exit invoke the same owner (FR-7), either may
+    /// call this twice, and a dispatch-side failure may have retired the
+    /// connection already — the reap runs once and every caller reports the
+    /// exit status it recorded.
+    ///
+    /// Bounded end to end (MED, review round 4), which is the whole point: a
+    /// child that has stopped draining its stdin must never be able to stop
+    /// the app from quitting.
     fn shutdown(&self) -> Result<(), AppError> {
         self.engine.lock().unwrap().stop_admissions();
-        self.stdin.lock().unwrap().take();
-        let exited = match self.wait_timeout.lock().unwrap().as_mut() {
-            Some(wait) => wait(Duration::from_secs(5)),
-            None => true,
-        };
-        if !exited {
-            if let Some(kill) = self.kill.lock().unwrap().as_mut() {
-                kill();
-            }
-        }
+        let exit_status = self.child.retire(EXIT_GRACE);
         if let Some(handle) = self.reader.lock().unwrap().take() {
             let _ = handle.join();
         }
         // FR-7/FR-8: "exit status" logged once per shutdown call —
         // best-effort: `ProcessHandle` exposes only whether the child
-        // exited on its own within the 5s grace period or had to be
+        // exited on its own within the grace period or had to be
         // terminated, not a real OS exit code (see this feature's handoff).
         self.publisher.diagnostic(
             "shutdown complete",
             DiagnosticContext {
-                exit_status: Some(if exited { "exited" } else { "killed" }),
+                exit_status: Some(exit_status),
                 ..counts_ctx(&self.engine)
             },
         );
@@ -908,6 +737,17 @@ pub(crate) fn connect(
     PiConnection::connect_with(publisher, handle)
 }
 
+/// The fake child every Pi fake-process test drives. `pub(in …::pi)` rather
+/// than private: `controls.rs` and `recovery/shell_tests.rs` used to keep
+/// their own copies of it, each with its own hand-rolled read deadline.
+#[cfg(test)]
+#[path = "dispatcher_testutil.rs"]
+pub(in crate::session::adapter::pi) mod testutil;
+
 #[cfg(test)]
 #[path = "dispatcher_tests.rs"]
 mod connection_tests;
+
+#[cfg(test)]
+#[path = "dispatcher_lifecycle_tests.rs"]
+mod lifecycle_tests;

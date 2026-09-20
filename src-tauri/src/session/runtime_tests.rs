@@ -658,3 +658,153 @@ fn tool_update_for_session_reads_back_no_block_while_pending_and_the_settled_blo
         1
     );
 }
+
+/// pi-turn-controls FR-3 (review): the `admission_consumed` path had no test
+/// at all. A consumed `message.user` settles the admission the ECHOED
+/// `clientMessageId` names — not the oldest, because admission order is not
+/// wire order — and publishes a SECOND envelope in the same batch carrying
+/// the refreshed pending snapshot.
+#[test]
+fn a_consumed_message_user_settles_the_echoed_admission_and_republishes_the_queue() {
+    let mut session = testutil::test_session();
+    session.id = uuid();
+    session.agent_runtime = AgentRuntime::Pi;
+    let id = session.id.clone();
+    let engine = Arc::new(testutil::test_engine_with(session));
+    let c = Arc::new(MockConnection {
+        engine: Arc::downgrade(&engine),
+        calls: Arc::new(Mutex::new(Vec::new())),
+    }) as Arc<dyn RuntimeSessionControl>;
+    engine
+        .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
+        .unwrap();
+    for cid in ["a", "b"] {
+        engine
+            .with_admissions(&id, |l| {
+                l.admit(cid, cid, admission::DeliveryMode::Normal, &[], 0)
+            })
+            .unwrap();
+    }
+
+    let (batch, block) = engine
+        .runtime_event_for_session(
+            &fake_accounts(),
+            &id,
+            1,
+            None,
+            None,
+            events::RuntimeEventPayload::MessageUser {
+                block_id: "b1".into(),
+                text: "b".into(),
+                attachments: Vec::new(),
+                client_message_id: Some("b".into()),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        block.map(|b| b.block_id).as_deref(),
+        Some("b1"),
+        "the user block is handed back for persistence"
+    );
+    assert_eq!(batch.len(), 2, "the message.user, then the queue snapshot");
+    let queue = serde_json::to_value(&batch[1]).unwrap();
+    assert_eq!(queue["event"]["kind"], "queue.changed");
+    assert_eq!(queue["event"]["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(queue["event"]["entries"][0]["clientMessageId"], "a");
+    assert_eq!(
+        queue["sequence"], 2,
+        "the extra envelope rides the SAME sequence, next number"
+    );
+
+    // Nothing left to settle for an event that echoes an id we never admitted:
+    // one envelope, no queue republish.
+    let (batch, _) = engine
+        .runtime_event_for_session(
+            &fake_accounts(),
+            &id,
+            2,
+            None,
+            None,
+            events::RuntimeEventPayload::MessageUser {
+                block_id: "b2".into(),
+                text: "not ours".into(),
+                attachments: Vec::new(),
+                client_message_id: Some("never-admitted".into()),
+            },
+        )
+        .unwrap();
+    assert_eq!(batch.len(), 1);
+    assert_eq!(
+        engine.with_admissions(&id, |l| l.snapshot_pending()).len(),
+        1,
+        "the surviving admission is untouched"
+    );
+}
+
+/// HIGH (review round 7): the settling block was re-`find`-ed by id AFTER the
+/// buffer trim — and settling it is exactly what UNPINS the trim, so a buffer
+/// already over its cap evicts that block in the very same apply and the
+/// settled tool row was never persisted. The block must come back for
+/// persistence even though it is no longer IN the buffer.
+#[test]
+fn a_settled_tool_block_the_trim_evicts_in_the_same_apply_is_still_returned_for_persistence() {
+    let mut session = testutil::test_session();
+    session.id = uuid();
+    let id = session.id.clone();
+    let engine = Arc::new(testutil::test_engine_with(session));
+    let c = Arc::new(MockConnection {
+        engine: Arc::downgrade(&engine),
+        calls: Arc::new(Mutex::new(Vec::new())),
+    }) as Arc<dyn RuntimeSessionControl>;
+    engine
+        .install_runtime_connection(&fake_accounts(), id.clone(), c, model(), enabled_caps())
+        .unwrap();
+
+    let call = |status: &str| events::RuntimeToolCall {
+        id: "t1".into(),
+        name: "Bash".into(),
+        status: status.into(),
+        input_text: serde_json::json!({ "command": "ls" }).to_string(),
+        output_text: String::new(),
+        input_truncated: false,
+        output_truncated: false,
+        started_at: Some(0),
+        completed_at: None,
+    };
+    let tool_update = |status: &str| events::RuntimeEventPayload::ToolUpdate {
+        block_id: "b1".into(),
+        tool: call(status),
+    };
+
+    engine
+        .runtime_event_for_session(&fake_accounts(), &id, 1, None, None, tool_update("running"))
+        .unwrap();
+    // The running call pins eviction at the head; everything after it piles up
+    // past the cap.
+    engine.with_session_mut(&id, |s| {
+        for i in 0..(TRANSCRIPT_BUFFER_CAP + 20) {
+            s.buf_user(&format!("u{i}"), "hi".into());
+        }
+    });
+    assert!(engine
+        .with_session(&id, |s| s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP)
+        .unwrap());
+
+    let (_, block) = engine
+        .runtime_event_for_session(
+            &fake_accounts(),
+            &id,
+            2,
+            None,
+            None,
+            tool_update("succeeded"),
+        )
+        .unwrap();
+    let block = block.expect("the settled block must survive the trim that evicted it");
+    assert_eq!(block.block_id, "b1");
+    assert!(!block.streaming);
+    assert!(engine
+        .with_session(&id, |s| !s.block_buffer.iter().any(|b| b.block_id == "b1"))
+        .unwrap());
+}

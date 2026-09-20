@@ -1,28 +1,6 @@
 //! Session-scoped connections and capability enforcement.
 use super::*;
 
-/// pi-transcript-events FR-6: which `blockId`, if any, `runtime_event_for_session`
-/// should read back off the session's `block_buffer` after applying `event` —
-/// exactly the events that reach a TERMINAL, persistable state. A still-open
-/// assistant delta or a `pending`/`running` tool update returns `None`: it is
-/// visible live (the envelope still carries it to the frontend), but nothing
-/// is written to disk for it yet, matching every other runtime's own
-/// stream-then-settle split (`buf_assistant_streaming`/`finish_assistant`,
-/// `buf_tool`/`buf_tool_done`).
-fn transcript_persist_id(event: &events::RuntimeEventPayload) -> Option<&str> {
-    match event {
-        events::RuntimeEventPayload::MessageUser { block_id, .. }
-        | events::RuntimeEventPayload::AssistantComplete { block_id, .. }
-        | events::RuntimeEventPayload::Notice { block_id, .. } => Some(block_id),
-        events::RuntimeEventPayload::ToolUpdate { block_id, tool } => matches!(
-            tool.status.as_str(),
-            "succeeded" | "failed" | "cancelled" | "unknown"
-        )
-        .then_some(block_id.as_str()),
-        _ => None,
-    }
-}
-
 /// Core-minted producer identity, retained by one connection's reader.
 #[allow(dead_code)]
 pub(crate) struct RuntimeProducer {
@@ -87,6 +65,12 @@ impl Engine {
     /// (`AppPublisher::publish`, which alone holds the `AppHandle`) is what
     /// then calls `persistence::append_transcript` with it — this method has
     /// no I/O of its own, same as `runtime_event`.
+    ///
+    /// HIGH (review round 7): the block is what the `buf_*_pi` helper itself
+    /// hands back (their own pre-trim clone), never a re-`find` by id after
+    /// the fact — settling a block is exactly what unpins `trim_transcript`,
+    /// so a re-find after the apply returns `None` for precisely the block
+    /// the trim just evicted, and that settled block is never persisted.
     #[allow(dead_code)]
     pub(crate) fn runtime_event_for_session(
         &self,
@@ -113,15 +97,17 @@ impl Engine {
             session_id: session_id.to_string(),
             generation,
         };
-        let persist_id = transcript_persist_id(&event).map(str::to_string);
-        let batch = self.runtime_event(accounts, &producer, at, run_id, request_id, event)?;
-        let block = persist_id.and_then(|id| {
-            self.with_session(session_id, |s| {
-                s.block_buffer.iter().find(|b| b.block_id == id).cloned()
-            })
-            .flatten()
-        });
-        Ok((batch, block))
+        let mut settled = None;
+        let batch = self.runtime_event_settling(
+            accounts,
+            &producer,
+            at,
+            run_id,
+            request_id,
+            event,
+            &mut settled,
+        )?;
+        Ok((batch, settled))
     }
     /// pi-rpc-sessions FR-8: the session's CURRENT generation, for
     /// diagnostics logging only (`pi-rpc.log`'s `generation=` field) — `None`
@@ -266,6 +252,24 @@ impl Engine {
         request_id: Option<String>,
         event: events::RuntimeEventPayload,
     ) -> Result<Vec<SessionEvent>, AppError> {
+        self.runtime_event_settling(accounts, producer, at, run_id, request_id, event, &mut None)
+    }
+
+    /// `runtime_event`, plus the ONE out-parameter its transcript arms have to
+    /// hand back: the `BufBlock` a `buf_*_pi` helper just settled, captured by
+    /// the helper itself before its own trim. Private, so every caller that
+    /// does not persist keeps `runtime_event`'s simpler signature.
+    #[allow(clippy::too_many_arguments)]
+    fn runtime_event_settling(
+        &self,
+        accounts: &dyn crate::account::AccountKinds,
+        producer: &RuntimeProducer,
+        at: u64,
+        run_id: Option<String>,
+        request_id: Option<String>,
+        event: events::RuntimeEventPayload,
+        settled: &mut Option<BufBlock>,
+    ) -> Result<Vec<SessionEvent>, AppError> {
         let mut streams = self.runtime_events.lock().unwrap();
         let sequence = streams
             .get_mut(&producer.session_id)
@@ -285,8 +289,8 @@ impl Engine {
         let mut batch = Vec::new();
         // pi-turn-controls FR-3: set inside the `MessageUser` arm below when a
         // consumed user message actually settled a pending admission — never
-        // by matching text, only by admission order (`AdmissionLedger::
-        // mark_consumed_oldest`).
+        // by matching text, only by the echoed `clientMessageId` or, failing
+        // that, admission order (`AdmissionLedger::mark_consumed`).
         let mut admission_consumed = false;
         // pi-runtime-boundary: `run.state`/`failure` events settle the matching
         // Session's status/error BEFORE any later event (e.g. `capabilities`)
@@ -329,16 +333,22 @@ impl Engine {
                 block_id,
                 text,
                 attachments,
-                ..
+                client_message_id,
             } => {
-                self.with_session_mut(&producer.session_id, |s| {
-                    s.buf_message_user_pi(&block_id, text, attachments);
+                *settled = self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_message_user_pi(&block_id, text, attachments)
                 });
                 // pi-turn-controls FR-3: this is the ONLY signal the ledger
-                // trusts to settle an admission "consumed" — the oldest still-
-                // pending entry, by admission order, never an echoed id.
+                // trusts to settle an admission "consumed", and the echoed
+                // `clientMessageId` `normalize` parsed off this very event is
+                // the only EXACT association there is — admission order is
+                // not wire order, so oldest-first (the fallback, for an echo
+                // that names nothing) settles the wrong row whenever Pi
+                // consumes out of order. Never by matching text.
                 if self
-                    .with_admissions(&producer.session_id, |l| l.mark_consumed_oldest())
+                    .with_admissions(&producer.session_id, |l| {
+                        l.mark_consumed(client_message_id.as_deref())
+                    })
                     .is_some()
                 {
                     admission_consumed = true;
@@ -356,15 +366,22 @@ impl Engine {
                 text,
                 outcome,
             } => {
-                self.with_session_mut(&producer.session_id, |s| {
-                    s.finish_assistant_pi(&block_id, text, &outcome);
-                });
+                *settled = self
+                    .with_session_mut(&producer.session_id, |s| {
+                        s.finish_assistant_pi(&block_id, text, &outcome)
+                    })
+                    .flatten();
                 None
             }
             events::RuntimeEventPayload::ToolUpdate { block_id, tool } => {
-                self.with_session_mut(&producer.session_id, |s| {
-                    s.buf_tool_update_pi(&block_id, tool);
-                });
+                // `None` while the call is still pending/running: visible live
+                // through the envelope below, nothing to persist until it
+                // settles (the helper owns that rule).
+                *settled = self
+                    .with_session_mut(&producer.session_id, |s| {
+                        s.buf_tool_update_pi(&block_id, tool)
+                    })
+                    .flatten();
                 None
             }
             events::RuntimeEventPayload::Notice {
@@ -372,8 +389,8 @@ impl Engine {
                 tone,
                 text,
             } => {
-                self.with_session_mut(&producer.session_id, |s| {
-                    s.buf_notice_pi(&block_id, tone, text);
+                *settled = self.with_session_mut(&producer.session_id, |s| {
+                    s.buf_notice_pi(&block_id, tone, text)
                 });
                 None
             }

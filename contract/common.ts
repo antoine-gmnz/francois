@@ -486,7 +486,11 @@ export interface ModelInfo {
   /** Advertised default, present only when included in efforts. */
   defaultEffort?: string;
   /** pi-models-metrics: the exact provider/model pair this row stands for. Present on
-   *  every Pi row, where `id` alone is NOT an identity (FR-1/FR-4). */
+   *  every Pi row, where `id` alone is NOT an identity (FR-1/FR-4).
+   *  WEBVIEW-SIDE ONLY, like `descriptor` below: the core never serializes either on a
+   *  `ModelInfo` (its serde mirror has no such fields). A Pi picker row is built in the
+   *  webview from a `runtime_models` descriptor; the core's own identity for a session's
+   *  Pi model is `SessionMeta.runtimeModel`. */
   runtimeModel?: RuntimeModelRef;
   /** pi-models-metrics: required on Pi catalogue rows; absent for every other runtime. */
   descriptor?: RuntimeModelDescriptor;

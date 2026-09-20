@@ -553,25 +553,14 @@ pub fn session_create(
         || crate::session::models::catalog_for_account(&app, Some(&account_id), false),
         |model_id, effort| {
             let account_config_dir = crate::account::config_dir_of(&app, &account_id);
-            // FR-25: a WSL session reaches its config dir through `WSLENV`'s `/p` path
-            // translation, which only works for a drive-letter path. Fail at creation,
-            // NAMING the account, rather than spawning a claude that would silently use
-            // a different configuration inside the distro.
-            if runtime == "wsl" {
-                if let Some(dir) = account_config_dir
-                    .as_deref()
-                    .filter(|d| !crate::account::wsl_translatable_config_dir(d))
-                {
-                    let label = crate::account::label_of(&app, &account_id)
-                        .unwrap_or_else(|| account_id.clone());
-                    return err(
-                        ErrorCode::InvalidInput,
-                        format!(
-                    "account {label} keeps its Claude Code configuration at {dir}, which WSL \
-                     cannot translate — use the native runtime for this account"
-                ),
-                    );
-                }
+            // FR-25 + PR #142 §5: can this account be used from THIS session's
+            // environment at all (a WSL-untranslatable config dir; a Pi account
+            // pinned to another runtime/distro)? One account-side answer, applied
+            // before anything is spawned and naming the account when it refuses.
+            if let Err(e) =
+                crate::account::account_environment_check(&app, &account_id, &runtime, &cwd)
+            {
+                return e.into();
             }
 
             // multi-provider-codex FR-5: this preflight runs `claude --version` with the
@@ -910,12 +899,16 @@ pub fn session_switch_model(
     }
     if let Some(pair) = runtime_model {
         // pi-models-metrics FR-6: switching model always clears any existing
-        // effort — the model that follows may not support it.
+        // effort — the model that follows may not support it. Both specs' §5
+        // ("all verbs revalidate session/capability/state") is honoured inside
+        // `apply_pi_model_switch`, which is the ONE ladder this branch and
+        // `session_switch_effort` share — see `pi_switch_gate`.
         return match apply_pi_model_switch(&app, &session_id, pair, None) {
             Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
             Err(error) => error.into(),
         };
     }
+    // The non-Pi ladder, byte-for-byte the order it already ran.
     if let Err((code, msg)) = engine.require_capability(&session_id, "modelSwitching") {
         return err(code, msg);
     }
@@ -954,15 +947,39 @@ fn pi_settled_gate(status: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// pi-models-metrics FR-5 ("failure preserves the previous selection") / §7
+/// ("a read-back failure must not leave the app guessing which model won"):
+/// `RuntimeSessionControl::switch_model` verifies the EFFORT against what was
+/// requested and nothing else, so a Pi that silently falls back — or a
+/// `get_state` read-back that still names the OLD model — used to resolve
+/// `Ok`, with the requested pair written onto `runtime_model` and the
+/// read-back one onto `model_id`/`model_label`/`context_limit_tokens`. Those
+/// two halves then disagree, and the mismatched `runtime_model` is persisted
+/// and replayed as `--provider/--model` on the next reconnect. Pure, and
+/// called BEFORE any mutation: a mismatch changes nothing.
+fn verify_model_readback(
+    requested: &adapter::RuntimeModelRef,
+    descriptor: &events::RuntimeModelDescriptor,
+) -> Result<(), AppError> {
+    if descriptor.model_ref != *requested {
+        return Err(AppError::new(
+            ErrorCode::RuntimeProtocolError,
+            "Pi reported a different model than the one requested",
+        ));
+    }
+    Ok(())
+}
+
 /// pi-models-metrics FR-5/FR-6: the Pi branch shared by
 /// `session_switch_model` (a new `model`, `effort` always `None` — clearing
 /// any incompatible level) and `session_switch_effort` (the CURRENT model,
-/// the requested `effort`). Accepted only when settled (`pi_settled_gate`);
-/// resolved against the account's (possibly cached — FR-5, unlike FR-4's
-/// creation-time freshness rule) available snapshot BEFORE dispatch; sent,
-/// then READ BACK before anything on the session is mutated (FR-5's "failure
-/// preserves the previous selection" — nothing here is applied until the
-/// connection itself confirms it).
+/// the requested `effort`). Accepted only when settled (`pi_settled_gate`)
+/// and connected+capable (`pi_switch_gate`); resolved against the account's
+/// (possibly cached — FR-5, unlike FR-4's creation-time freshness rule)
+/// available snapshot BEFORE dispatch; sent, then READ BACK before anything
+/// on the session is mutated (FR-5's "failure preserves the previous
+/// selection" — nothing here is applied until the connection itself confirms
+/// it).
 fn apply_pi_model_switch(
     app: &AppHandle,
     session_id: &str,
@@ -978,21 +995,22 @@ fn apply_pi_model_switch(
                 account_id
             }
         };
+    let connection = super::runtime_models::pi_switch_gate(&engine, session_id)?;
     adapter::pi::resolve_and_validate_pair(app, &account_id, &model, false)?;
-    let connection = engine.runtime_connection_for(session_id).ok_or_else(|| {
-        AppError::new(
-            ErrorCode::RuntimeUnavailable,
-            "this session has no live Pi connection",
-        )
-    })?;
     let (descriptor, applied_effort, efforts) = connection.switch_model(model.clone(), effort)?;
+    // FR-5: before ANY mutation — a read-back naming another model leaves the
+    // session exactly as it was.
+    verify_model_readback(&model, &descriptor)?;
     // Mutate FIRST — `model.efforts` (lead clarification: the descriptor
     // carries only `reasoning: boolean`) has no slot on the `model.changed`
     // payload below, so `SessionMeta.model.efforts` is the only vehicle for
     // it and must already be current by the time `session.meta` is built.
     if engine
         .with_session_mut(session_id, |s| {
-            s.runtime_model = Some(model);
+            // The READ-BACK pair, not the requested one (they are equal by
+            // `verify_model_readback` above): every field below comes from the
+            // descriptor, so the two halves can never diverge.
+            s.runtime_model = Some(descriptor.model_ref.clone());
             s.model_id = descriptor.model_ref.model_id.clone();
             s.model_label = descriptor.display_name.clone();
             s.context_limit_tokens = descriptor
@@ -2217,6 +2235,46 @@ mod tests {
         for terminal in [status::DONE, status::ERROR] {
             let err = pi_settled_gate(terminal).unwrap_err();
             assert_eq!(err.code, ErrorCode::SessionNotRunning);
+        }
+    }
+
+    /// pi-models-metrics FR-5/§7: `switch_model` verifies the effort and
+    /// nothing else, so the read-back must be checked against what was
+    /// REQUESTED before a single field is written — otherwise a silent Pi
+    /// fallback leaves `runtime_model` (requested) and `model_id` (read back)
+    /// naming different models, and the mismatch is persisted and replayed on
+    /// the next reconnect.
+    #[test]
+    fn a_read_back_naming_another_model_is_a_protocol_error_before_any_mutation() {
+        fn descriptor(provider_id: &str, model_id: &str) -> events::RuntimeModelDescriptor {
+            events::RuntimeModelDescriptor {
+                model_ref: adapter::RuntimeModelRef {
+                    provider_id: provider_id.into(),
+                    model_id: model_id.into(),
+                },
+                display_name: "Model".into(),
+                input: vec!["text".into()],
+                context_window: Some(200_000),
+                max_output_tokens: None,
+                reasoning: false,
+                auth_state: "verified".into(),
+                availability: "available".into(),
+                unavailable_reason: None,
+            }
+        }
+        let requested = adapter::RuntimeModelRef {
+            provider_id: "anthropic".into(),
+            model_id: "sonnet".into(),
+        };
+        assert!(verify_model_readback(&requested, &descriptor("anthropic", "sonnet")).is_ok());
+        for (provider_id, model_id) in [("openai", "sonnet"), ("anthropic", "haiku")] {
+            let err = verify_model_readback(&requested, &descriptor(provider_id, model_id))
+                .expect_err("a read-back naming another model must be refused");
+            assert_eq!(
+                err.code,
+                ErrorCode::RuntimeProtocolError,
+                "{provider_id}/{model_id}"
+            );
         }
     }
 

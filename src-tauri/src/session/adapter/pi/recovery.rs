@@ -5,17 +5,37 @@
 //! Tauri commands (`session/commands/lifecycle.rs`) call into.
 //!
 //! Every DECISION is a pure function, unit-tested directly with no
-//! `AppHandle` — same discipline `protocol.rs`/`normalize/mod.rs` follow.
-//! Only the bottom "orchestration" section touches an `AppHandle` (spawning
-//! the child, reading `sessions.json`'s app-data root, emitting events), and
-//! is exercised the same way `dispatcher_tests.rs` exercises the wire layer:
-//! a fake child over a loopback pipe, never a real `pi` binary.
+//! `AppHandle` — same discipline `protocol.rs`/`normalize/mod.rs` follow:
+//! FR-3's validation and its ordering behind the account gate
+//! (`validate_before_resume`, `gate_then_validate`), FR-8's version verdict,
+//! the backup-before-spawn order and the version actually recorded
+//! (`version_transition`, `backup_then_spawn`, `recorded_version`), and —
+//! in the `projection` child module — the whole FR-4/FR-5/FR-7 rebuild
+//! (`rebuild_projection`), which decides what the transcript should become
+//! before anything here touches disk.
+//!
+//! The I/O shell is split into two seams that take their I/O as closures —
+//! `fetch_and_rebuild` (the `get_entries` round trip + the rebuild decision)
+//! and `commit_rebuild` (the transcript write) — so `recovery/shell_tests.rs`
+//! drives the whole "reconnect → `get_entries` → merged transcript on disk"
+//! chain against a REAL fake child over a socket and a REAL file in a temp
+//! dir, with no `AppHandle`. That is also where §7's one invariant is pinned:
+//! a rebuild that fails returns BEFORE the write, so the cached transcript
+//! stays readable.
+//!
+//! What is still NOT tested: what genuinely needs an `AppHandle` — the
+//! account gate, `super::connect`'s spawn, `install_runtime_connection` and
+//! the final `with_session_mut`/`emit`. This crate wires up no `AppHandle`
+//! test harness; those are held together by keeping every decision above
+//! pure.
 //!
 //! **Provisional**, same honest caveat every other Pi wire assumption in this
 //! adapter carries (see `wire.rs`'s doc): no real capture of `get_entries`
-//! exists yet. `NativeEntry`'s shape is this module's best-effort mirror of
-//! the audited session-format doc ("versioned JSONL tree, stable entry/parent
-//! IDs"), reconciled against a real capture once one exists.
+//! exists yet. `NativeEntry`'s shape (in `projection`) is a best-effort
+//! mirror of the audited session-format doc ("versioned JSONL tree, stable
+//! entry/parent IDs"), reconciled against a real capture once one exists.
+//! Because those names are unconfirmed, a payload this build cannot prove an
+//! ancestry from is REFUSED rather than guessed at.
 
 use crate::ipc::{AppError, ErrorCode};
 use crate::session::adapter::{
@@ -23,178 +43,21 @@ use crate::session::adapter::{
     RuntimeProfileSnapshot, RuntimeSessionControl,
 };
 use crate::session::events::{RuntimeRecovery, RuntimeRecoveryState};
-use crate::session::{
-    emit, persist, BlockKind, BufBlock, Engine, ResponseMode, SessionEvent, SessionMeta,
-};
-use serde::Deserialize;
-use std::collections::HashMap;
+use crate::session::{emit, persist, BufBlock, Engine, SessionEvent, SessionMeta};
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use super::persistence::{self, PiResumeRecord};
 
-// ---------------------------------------------------------------- FR-4: native entries
+/// §5's `session_new_from` — a sibling concern, not a step of the reconnect
+/// path: it never connects, never reads an entry, and shares only the
+/// `SESSION_BUSY` claim and the account snapshot below.
+mod new_from;
+mod projection;
 
-/// PROVISIONAL — one node of Pi's native entry tree (specs/research/
-/// pi-integration-audit.md: "versioned JSONL tree, stable entry/parent IDs").
-/// Only the fields the projection rebuild reads; anything else in a real
-/// `get_entries` response is ignored, not rejected.
-#[derive(Deserialize, Clone, Debug, PartialEq)]
-pub(crate) struct NativeEntry {
-    pub(crate) id: String,
-    #[serde(rename = "parentId", default)]
-    pub(crate) parent_id: Option<String>,
-    /// "user" | "assistant" — anything else is dropped by `active_branch`'s
-    /// caller rather than guessed at.
-    pub(crate) role: String,
-    #[serde(default)]
-    pub(crate) text: String,
-}
-
-#[derive(Deserialize)]
-struct GetEntriesData {
-    #[serde(default)]
-    entries: Vec<NativeEntry>,
-    #[serde(rename = "leafId", default)]
-    leaf_id: Option<String>,
-}
-
-/// FR-4: reconstruct the ACTIVE branch by walking `parentId` from `leaf_id`
-/// back to the root, then return it in chronological (root → leaf) order.
-/// An entry not on this ancestry — an abandoned branch, or one superseded by
-/// compaction — is never returned, so it never renders as the current
-/// conversation. A cycle (a corrupt parent chain) stops the walk rather than
-/// looping forever; whatever was collected before the cycle is still shown,
-/// per the edge case "corrupt parent chains fail with readable cached
-/// history" (the CACHED history is the caller's fallback on an error from
-/// THIS function's sibling, `validate_before_resume` — this function itself
-/// never errors, it just cannot walk past a break).
-pub(crate) fn active_branch(entries: &[NativeEntry], leaf_id: &str) -> Vec<NativeEntry> {
-    let by_id: HashMap<&str, &NativeEntry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
-    let mut chain = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut current = by_id.get(leaf_id).copied();
-    while let Some(entry) = current {
-        if !seen.insert(entry.id.as_str()) {
-            break; // cycle guard — a corrupt parent chain must not loop forever
-        }
-        chain.push(entry.clone());
-        current = entry
-            .parent_id
-            .as_deref()
-            .and_then(|pid| by_id.get(pid).copied());
-    }
-    chain.reverse();
-    chain
-}
-
-// ---------------------------------------------------------------- FR-5: block-id reconciliation
-
-/// One ancestry entry, resolved to the stable François block id it should
-/// render as.
-pub(crate) struct RebuiltBlock {
-    pub(crate) block_id: String,
-    pub(crate) native_entry_id: String,
-    pub(crate) role: String,
-    pub(crate) text: String,
-}
-
-/// FR-5: "map native entry ID ... to stable François block IDs" + "reconcile
-/// provisional live blocks with entries in ordered FIFO position, not text
-/// deduplication".
-///
-/// `previous_by_native_id` covers every entry this projection has already
-/// shown before — read back from the PERSISTED transcript's own
-/// `nativeEntryId` tags, so an entry's block id survives every later rebuild
-/// (this is what keeps a reopened transcript's React keys stable). Matched by
-/// IDENTITY (the native id), never by comparing text — two entries with
-/// byte-identical text but different ids stay two distinct rows.
-///
-/// `provisional_tail` is the ordered block ids of blocks the LIVE buffer
-/// still held as unsettled (streaming, never persisted) at reconnect time —
-/// a turn interrupted mid-stream while the François app kept running. Each
-/// leftover entry the rebuild has never seen before consumes the OLDEST
-/// still-unmatched provisional id, in order (FIFO): the first new entry
-/// chronologically reconciles with the first still-open row, and so on.
-/// Anything left over after that (a genuinely new entry the live buffer never
-/// saw) mints a fresh id.
-///
-/// Returns the rebuilt blocks AND the set of `provisional_tail` ids that were
-/// actually consumed — the caller (`unconfirmed_user_block`) uses the
-/// complement (never consumed) to find a submitted message this rebuild
-/// still cannot confirm at all (FR-7 / this feature's readiness gap on
-/// "delivery-unknown").
-pub(crate) fn reconcile_block_ids(
-    ancestry: &[NativeEntry],
-    previous_by_native_id: &HashMap<String, String>,
-    provisional_tail: &[String],
-) -> (Vec<RebuiltBlock>, std::collections::HashSet<String>) {
-    let mut unmatched_provisional = provisional_tail.iter();
-    let mut consumed = std::collections::HashSet::new();
-    let rebuilt = ancestry
-        .iter()
-        .map(|entry| {
-            let block_id = previous_by_native_id
-                .get(&entry.id)
-                .cloned()
-                .or_else(|| {
-                    let id = unmatched_provisional.next().cloned();
-                    if let Some(id) = &id {
-                        consumed.insert(id.clone());
-                    }
-                    id
-                })
-                .unwrap_or_else(crate::ids::uuid);
-            RebuiltBlock {
-                block_id,
-                native_entry_id: entry.id.clone(),
-                role: entry.role.clone(),
-                text: entry.text.clone(),
-            }
-        })
-        .collect();
-    (rebuilt, consumed)
-}
-
-/// FR-7 (this feature's readiness gap, "FR-7 delivery-unknown" — lead's
-/// decision): the SAME projection rebuild that reconciles provisional blocks
-/// against fresh entries also reveals the opposite case — a `message.user`
-/// block the live buffer showed but this rebuild's ancestry never confirms
-/// AT ALL (`provisional_tail`'s id was never consumed by
-/// `reconcile_block_ids`). Never auto-resent; the caller keeps its existing
-/// block verbatim and appends exactly one `notice` (never a new IPC shape).
-/// Only the LAST such candidate matters — an intent queue's own delivery
-/// state (beyond this one warning) belongs to pi-turn-controls (Pi 08).
-pub(crate) fn unconfirmed_user_block(
-    previous_user_blocks: &[(String, String)], // (blockId, text), in buffer order
-    consumed_provisional: &std::collections::HashSet<String>,
-    provisional_tail: &[String],
-) -> Option<(String, String)> {
-    let unmatched: std::collections::HashSet<&str> = provisional_tail
-        .iter()
-        .map(String::as_str)
-        .filter(|id| !consumed_provisional.contains(*id))
-        .collect();
-    previous_user_blocks
-        .iter()
-        .rev()
-        .find(|(block_id, _)| unmatched.contains(block_id.as_str()))
-        .cloned()
-}
-
-fn to_buf_block(rb: &RebuiltBlock) -> BufBlock {
-    let kind = if rb.role == "user" {
-        BlockKind::User
-    } else {
-        BlockKind::Assistant
-    };
-    BufBlock {
-        text: rb.text.clone(),
-        native_entry_id: Some(rb.native_entry_id.clone()),
-        ..BufBlock::new(&rb.block_id, kind)
-    }
-}
+pub(crate) use new_from::new_from_session;
+use projection::{rebuild_projection, GetEntriesData, Rebuild};
 
 // ---------------------------------------------------------------- FR-3: pre-resume validation
 
@@ -207,6 +70,19 @@ pub(crate) struct AccountSnapshot {
     /// never falls back to the default Claude/Pi account").
     pub(crate) is_pi: bool,
     pub(crate) config_dir: Option<String>,
+}
+
+/// Do two path STRINGS name the same location? Every path this module
+/// compares — the pinned `config_dir`, the session's `cwd`, the conversation
+/// file Pi reports back — arrives from a different producer than the one that
+/// recorded it, so a trailing separator, a `./` segment or (on Windows) a
+/// different case made a perfectly healthy session fail validation as
+/// "moved"/"no longer available". `project::same_root` is the crate's one
+/// answer to that question: lexical (never resolves symlinks, so an
+/// unreadable path still compares), component-wise, case-folded only on
+/// Windows.
+fn same_path(a: &str, b: &str) -> bool {
+    crate::project::same_root(a, b)
 }
 
 /// PROVISIONAL, same caveat as `NativeEntry` — a best-effort identity check
@@ -242,13 +118,17 @@ pub(crate) fn validate_before_resume(
     account: &AccountSnapshot,
     native_root: &Path,
 ) -> Result<(), AppError> {
-    if !account.is_pi || account.config_dir.as_deref() != Some(record.config_dir.as_str()) {
+    let config_dir_matches = account
+        .config_dir
+        .as_deref()
+        .is_some_and(|dir| same_path(dir, &record.config_dir));
+    if !account.is_pi || !config_dir_matches {
         return Err(AppError::new(
             ErrorCode::RuntimeAccountMissing,
             "the account pinned to this session's Pi conversation is no longer available",
         ));
     }
-    if session_cwd != record.cwd {
+    if !same_path(session_cwd, &record.cwd) {
         return Err(AppError::new(
             ErrorCode::RuntimeSessionCorrupt,
             "this session's working directory has moved since it last connected to Pi",
@@ -340,6 +220,46 @@ fn backup_native_file(native_file: &Path, from_version: &str) -> std::io::Result
     Ok(())
 }
 
+/// FR-8's backup and the spawn it protects, as ONE ordered step: `spawn` is
+/// unreachable unless the backup is already on disk. Pure (no `AppHandle` —
+/// the spawn arrives as a closure), so the ORDER itself has a test with no
+/// Tauri context at all, same discipline as `gate_then_validate`.
+///
+/// It matters because `super::connect` launches the NEW Pi version with
+/// `--resume` against the recorded file, which Pi migrates IN PLACE — and
+/// that file is the only copy. A backup that failed is therefore a refusal,
+/// never a warning.
+pub(crate) fn backup_then_spawn<T>(
+    needs_backup: bool,
+    native_file: &Path,
+    from_version: &str,
+    spawn: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    if needs_backup {
+        backup_native_file(native_file, from_version).map_err(|e| {
+            AppError::new(
+                ErrorCode::Internal,
+                format!(
+                    "could not back up this session's Pi conversation before upgrading it: {e}"
+                ),
+            )
+        })?;
+    }
+    spawn()
+}
+
+/// FR-8: the Pi version to RECORD after a successful reconnect. An
+/// installation whose version could not be detected must NEVER overwrite a
+/// known recorded one: `version_transition` fails open on an empty string,
+/// so one such write permanently disables FR-8's downgrade guard for that
+/// session. Unknown ⇒ keep whatever the record already holds.
+pub(crate) fn recorded_version(record_version: &str, detected: Option<&str>) -> String {
+    match detected.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(detected) => detected.to_string(),
+        None => record_version.to_string(),
+    }
+}
+
 // ---------------------------------------------------------------- orchestration
 
 /// Everything `run_reconnect` needs off the session, snapshotted under the
@@ -375,73 +295,70 @@ struct ReconnectSnapshot {
     /// starts a genuinely NEW session).
     resource_policy: Option<crate::session::adapter::pi::RuntimeResourcePolicy>,
     pi_resume: Option<PiResumeRecord>,
-    previous_by_native_id: HashMap<String, String>,
-    /// Every `User`/`Assistant` block the CURRENT buffer holds with no
-    /// `native_entry_id` yet — a live-produced block a rebuild has never
-    /// reconciled, whether it is still mid-stream or was already "settled"
-    /// locally before the connection was lost. FIFO-reconciled first
-    /// (`reconcile_block_ids`); whatever is left unmatched is what
-    /// `unconfirmed_user_block` checks (FR-7).
-    provisional_tail: Vec<String>,
-    /// Every `User` block's `(blockId, text)`, in buffer order — read back by
-    /// `unconfirmed_user_block` to keep a still-unconfirmed message's
-    /// ORIGINAL text/id verbatim rather than reconstructing it.
-    previous_user_blocks: Vec<(String, String)>,
+    /// The session's CURRENT transcript, verbatim and in order — the whole
+    /// input side of the merge (spec round-2 remediation): the rebuild reads
+    /// back each block's own `at`, attachments and every other local field
+    /// from here (rule 1), and re-anchors every local-only row — Tool
+    /// executions, notices — to the message it followed (rules 2/3). The
+    /// three parallel maps this used to carry are derived inside
+    /// `rebuild_projection` now, so they cannot drift from the blocks.
+    previous_blocks: Vec<BufBlock>,
     busy: bool,
 }
 
 fn load_reconnect_snapshot(engine: &Engine, session_id: &str) -> Option<ReconnectSnapshot> {
-    engine.with_session(session_id, |s| {
-        let mut previous_by_native_id = HashMap::new();
-        let mut provisional_tail = Vec::new();
-        let mut previous_user_blocks = Vec::new();
-        for b in &s.block_buffer {
-            match (&b.native_entry_id, b.kind) {
-                (Some(native_id), _) => {
-                    previous_by_native_id.insert(native_id.clone(), b.block_id.clone());
-                }
-                (None, BlockKind::User | BlockKind::Assistant) => {
-                    provisional_tail.push(b.block_id.clone());
-                }
-                _ => {}
-            }
-            if b.kind == BlockKind::User {
-                previous_user_blocks.push((b.block_id.clone(), b.text.clone()));
-            }
-        }
-        ReconnectSnapshot {
-            account_id: s.account_id.clone(),
-            cwd: s.cwd.clone(),
-            runtime: s.runtime.clone(),
-            worktree_distro: s.worktree_distro.clone(),
-            agent_runtime: s.agent_runtime,
-            permission_mode: s.permission_mode.clone(),
-            allow_git: s.allow_git,
-            system_prompt: s.system_prompt.clone(),
-            extra_args: s.extra_args.clone(),
-            model: s.runtime_model.clone(),
-            pi_profile_settings: s.pi_profile_settings.clone(),
-            pi_launch_prompt: s.pi_launch_prompt.clone(),
-            resource_policy: s.resource_policy,
-            pi_resume: s.pi_resume.clone(),
-            previous_by_native_id,
-            provisional_tail,
-            previous_user_blocks,
-            busy: crate::session::status::is_busy(&s.status) || s.recovery_busy,
-        }
+    engine.with_session(session_id, |s| ReconnectSnapshot {
+        account_id: s.account_id.clone(),
+        cwd: s.cwd.clone(),
+        runtime: s.runtime.clone(),
+        worktree_distro: s.worktree_distro.clone(),
+        agent_runtime: s.agent_runtime,
+        permission_mode: s.permission_mode.clone(),
+        allow_git: s.allow_git,
+        system_prompt: s.system_prompt.clone(),
+        extra_args: s.extra_args.clone(),
+        model: s.runtime_model.clone(),
+        pi_profile_settings: s.pi_profile_settings.clone(),
+        pi_launch_prompt: s.pi_launch_prompt.clone(),
+        resource_policy: s.resource_policy,
+        pi_resume: s.pi_resume.clone(),
+        previous_blocks: s.block_buffer.clone(),
+        busy: crate::session::status::is_busy(&s.status) || s.recovery_busy,
     })
 }
 
-fn account_snapshot(app: &AppHandle, account_id: &str) -> AccountSnapshot {
+pub(super) fn account_snapshot(app: &AppHandle, account_id: &str) -> AccountSnapshot {
     AccountSnapshot {
         is_pi: crate::account::kind_of(app, account_id) == crate::account::AccountKind::Pi,
         config_dir: crate::account::config_dir_of(app, account_id),
     }
 }
 
-/// Claim the `SESSION_BUSY` guard — `true` iff this call won it (and so owns
-/// clearing it when done).
-fn claim_recovery(engine: &Engine, session_id: &str) -> bool {
+/// The `SESSION_BUSY` claim, held as a GUARD: `recovery_busy` is cleared when
+/// this drops, so a panic anywhere in the reconnect/new-from body leaves the
+/// session usable. Releasing it by hand after the call (what this replaced)
+/// meant one panicking run left the session permanently "busy" — every later
+/// reconnect AND every `newFrom` answered `SESSION_BUSY` until the app was
+/// restarted, and the recovery banner's Retry button could never clear it.
+pub(super) struct RecoveryClaim<'a> {
+    engine: &'a Engine,
+    session_id: String,
+}
+
+impl Drop for RecoveryClaim<'_> {
+    fn drop(&mut self) {
+        self.engine
+            .with_session_mut(&self.session_id, |s| s.recovery_busy = false);
+    }
+}
+
+/// Claim the `SESSION_BUSY` guard — `None` iff another recovery already holds
+/// it (the caller then answers `SESSION_BUSY` and releases nothing, since it
+/// took nothing).
+pub(super) fn claim_recovery<'a>(
+    engine: &'a Engine,
+    session_id: &str,
+) -> Option<RecoveryClaim<'a>> {
     engine
         .with_session_mut(session_id, |s| {
             if s.recovery_busy {
@@ -452,10 +369,10 @@ fn claim_recovery(engine: &Engine, session_id: &str) -> bool {
             }
         })
         .unwrap_or(false)
-}
-
-fn release_recovery(engine: &Engine, session_id: &str) {
-    engine.with_session_mut(session_id, |s| s.recovery_busy = false);
+        .then(|| RecoveryClaim {
+            engine,
+            session_id: session_id.to_string(),
+        })
 }
 
 /// pi-migration-rollout FR-3 (read-once fix): the pure decision behind
@@ -560,14 +477,14 @@ pub(crate) fn reconnect_session(
             "a turn or another recovery is already in flight for this session",
         ));
     }
-    if !claim_recovery(&engine, session_id) {
+    let Some(claim) = claim_recovery(&engine, session_id) else {
         return Err(AppError::new(
             ErrorCode::SessionBusy,
             "a turn or another recovery is already in flight for this session",
         ));
-    }
+    };
     let result = run_reconnect(app, &engine, session_id, &snapshot);
-    release_recovery(&engine, session_id);
+    drop(claim); // released BEFORE the meta below, which reads the session again
     match &result {
         Ok(meta) => emit(app, SessionEvent::Meta { meta: meta.clone() }),
         Err(e) => {
@@ -583,6 +500,100 @@ pub(crate) fn reconnect_session(
         }
     }
     result
+}
+
+/// `get_entries` → the rebuild decision, as ONE step. The malformed-payload
+/// refusal belongs WITH the parse, and parameterizing the fetch is what gives
+/// this half of the I/O shell a test driven by a real fake child with no
+/// `AppHandle` at all (`recovery/shell_tests.rs`) — the sequencing this
+/// module's doc used to list as untested.
+fn fetch_and_rebuild(
+    fetch: impl FnOnce() -> Result<Option<serde_json::Value>, AppError>,
+    previous: &[BufBlock],
+) -> Result<Rebuild, AppError> {
+    // A payload this build cannot prove an ancestry from is an ERROR, never
+    // an empty rebuild — and an error means the caller's `commit_rebuild`
+    // below is never reached, so the cached history stays readable exactly as
+    // §7 promises.
+    let data: GetEntriesData = fetch()?
+        .ok_or(())
+        .and_then(|v| serde_json::from_value(v).map_err(|_| ()))
+        .map_err(|()| {
+            AppError::new(
+                ErrorCode::RuntimeProtocolError,
+                "get_entries returned a malformed payload",
+            )
+        })?;
+    rebuild_projection(data, previous)
+}
+
+/// What `commit_rebuild` wrote, for the ONE `with_session_mut` below to
+/// apply. `buffer`/`appended` are both `None` when nothing about the
+/// transcript changed, and the two anchors then stay at whatever the record
+/// already held rather than being erased to `null`.
+struct CommittedRebuild {
+    buffer: Option<Vec<BufBlock>>,
+    /// The single non-destructive line the `KeepLocal` path may add
+    /// (remediation rule 4's delivery-unknown notice) — already on disk when
+    /// this is `Some`, and pushed onto the live buffer by the caller.
+    appended: Option<BufBlock>,
+    truncated: bool,
+    last_entry_id: Option<String>,
+    leaf_id: Option<String>,
+}
+
+/// The rebuild's whole DISK side, ordered: nothing reaches the session until
+/// the transcript file itself is written. Parameterized over the two writes
+/// (`replace`/`append`) so the ordering has a test with no `AppHandle`.
+fn commit_rebuild(
+    rebuild: Rebuild,
+    record: &PiResumeRecord,
+    replace: impl FnOnce(&[BufBlock]) -> std::io::Result<()>,
+    append: impl FnOnce(&BufBlock),
+) -> Result<CommittedRebuild, AppError> {
+    match rebuild {
+        Rebuild::Merged {
+            blocks: mut rebuilt,
+            last_entry_id,
+            leaf_id,
+        } => {
+            replace(&rebuilt).map_err(|e| {
+                AppError::new(
+                    ErrorCode::Internal,
+                    format!("could not save the rebuilt transcript: {e}"),
+                )
+            })?;
+            // FR-6: the FULL rebuilt list is on disk already (`replace`,
+            // above) — this only bounds what stays in memory, same
+            // cap/eviction logic every other runtime's own live append uses.
+            let truncated = crate::session::trim_transcript(
+                &mut rebuilt,
+                crate::session::TRANSCRIPT_BUFFER_CAP,
+            );
+            Ok(CommittedRebuild {
+                buffer: Some(rebuilt),
+                appended: None,
+                truncated,
+                last_entry_id,
+                leaf_id,
+            })
+        }
+        Rebuild::KeepLocal { append: notice } => {
+            // Remediation rule 4: ONE appended line, nothing rewritten — the
+            // transcript this path keeps is the only copy of a conversation
+            // Pi's entries cannot reproduce.
+            if let Some(notice) = &notice {
+                append(notice);
+            }
+            Ok(CommittedRebuild {
+                buffer: None,
+                appended: notice,
+                truncated: false,
+                last_entry_id: record.last_entry_id.clone(),
+                leaf_id: record.leaf_id.clone(),
+            })
+        }
+    }
 }
 
 fn run_reconnect(
@@ -612,8 +623,32 @@ fn run_reconnect(
         &snapshot.account_id,
         "reconnecting this session",
     );
-    let (config_dir, _pinned_runtime, _pinned_distro, inherit) =
+    let (config_dir, pinned_runtime, pinned_distro, inherit) =
         gate_then_validate(gate, record, &snapshot.cwd, &native_root)?;
+    // PR #142 §5: the account's PINNED environment is not decoration (FR-1/
+    // FR-6). Its `PI_CODING_AGENT_DIR` is spelled for that environment, so
+    // reconnecting from a session running somewhere else would hand the child
+    // a directory that does not exist there — and Pi would quietly fall back
+    // to the ambient one. Same helper `session_create`'s gate uses; the
+    // session's distro is its worktree's, or the one its WSL cwd names.
+    let session_distro = snapshot
+        .worktree_distro
+        .clone()
+        .or_else(|| crate::wsl::wsl_unc_to_linux(&snapshot.cwd).map(|(d, _)| d));
+    if let Some(reason) = crate::account::pi_environment_mismatch(
+        &pinned_runtime,
+        pinned_distro.as_deref(),
+        &snapshot.runtime,
+        session_distro.as_deref(),
+    ) {
+        // RUNTIME_UNAVAILABLE, not INVALID_INPUT: reconnect's contract error
+        // list has no INVALID_INPUT, and Pi genuinely is not reachable for
+        // this session as configured.
+        return Err(AppError::new(
+            ErrorCode::RuntimeUnavailable,
+            format!("this session's Pi account {reason}"),
+        ));
+    }
 
     let installed = super::discovery::probe_installation(
         &snapshot.runtime,
@@ -621,9 +656,10 @@ fn run_reconnect(
         false,
     )?;
     let installed_version = installed.detected_version.clone().unwrap_or_default();
-    if version_transition(&record.pi_version, &installed_version)? {
-        let _ = backup_native_file(Path::new(&record.native_session_file), &record.pi_version);
-    }
+    // FR-8, decided here so a DOWNGRADE refuses before anything else is
+    // built or spawned; the backup it calls for is taken immediately before
+    // the spawn itself (`backup_then_spawn`, below).
+    let needs_backup = version_transition(&record.pi_version, &installed_version)?;
 
     let model = snapshot.model.clone().ok_or_else(|| {
         AppError::new(
@@ -669,14 +705,19 @@ fn run_reconnect(
     }
     .validate()?;
 
-    let conn = super::connect(app, ctx)?;
+    let conn = backup_then_spawn(
+        needs_backup,
+        Path::new(&record.native_session_file),
+        &record.pi_version,
+        || super::connect(app, ctx),
+    )?;
     // FR-3: a resumed handshake reporting a DIFFERENT native file than the
     // one it was just told to resume is corruption, not a value to trust —
     // best-effort (a response that omits `sessionFile` skips the check,
     // same "provisional, no real capture" caveat every other Pi wire
     // assumption in this adapter carries).
     if let Some(reported) = conn.handshake_info().session_file {
-        if reported != record.native_session_file {
+        if !same_path(&reported, &record.native_session_file) {
             let _ = conn.shutdown();
             return Err(AppError::new(
                 ErrorCode::RuntimeSessionCorrupt,
@@ -694,73 +735,33 @@ fn run_reconnect(
     // response has no pagination or bounded-streaming-native-file fallback
     // yet — it fails with whatever `RUNTIME_PROTOCOL_ERROR`/transport error
     // the oversized response itself raises.
-    let entries = match conn.get_entries(None) {
-        Ok(resp) => resp,
+    let rebuild = match fetch_and_rebuild(
+        || conn.get_entries(None).map(|resp| resp.data),
+        &snapshot.previous_blocks,
+    ) {
+        Ok(rebuild) => rebuild,
         Err(e) => {
             let _ = conn.shutdown();
             return Err(e);
         }
     };
-    let data: GetEntriesData = match entries
-        .data
-        .ok_or(())
-        .and_then(|v| serde_json::from_value(v).map_err(|_| ()))
-    {
-        Ok(d) => d,
-        Err(()) => {
+    let committed = match commit_rebuild(
+        rebuild,
+        record,
+        |blocks| crate::session::persistence::replace_transcript(app, session_id, blocks),
+        |block| crate::session::persistence::append_transcript(app, session_id, block),
+    ) {
+        Ok(committed) => committed,
+        Err(e) => {
             let _ = conn.shutdown();
-            return Err(AppError::new(
-                ErrorCode::RuntimeProtocolError,
-                "get_entries returned a malformed payload",
-            ));
+            return Err(e);
         }
     };
-    let ancestry = match &data.leaf_id {
-        Some(leaf) => active_branch(&data.entries, leaf),
-        None => Vec::new(),
-    };
-    let (rebuilt, consumed_provisional) = reconcile_block_ids(
-        &ancestry,
-        &snapshot.previous_by_native_id,
-        &snapshot.provisional_tail,
-    );
-    let mut blocks: Vec<BufBlock> = rebuilt.iter().map(to_buf_block).collect();
-    // FR-7 (readiness gap "FR-7 delivery-unknown"): a submitted message this
-    // rebuild still cannot confirm is kept verbatim, never re-sent, with one
-    // warning notice — never silently dropped.
-    if let Some((block_id, text)) = unconfirmed_user_block(
-        &snapshot.previous_user_blocks,
-        &consumed_provisional,
-        &snapshot.provisional_tail,
-    ) {
-        blocks.push(BufBlock {
-            text,
-            ..BufBlock::new(&block_id, BlockKind::User)
-        });
-        blocks.push(BufBlock {
-            text: "Delivery of the last message is unknown — it was not re-sent.".into(),
-            tone: Some("warning".into()),
-            ..BufBlock::new(&crate::ids::uuid(), BlockKind::Notice)
-        });
-    }
-
-    if let Err(e) = crate::session::persistence::replace_transcript(app, session_id, &blocks) {
-        let _ = conn.shutdown();
-        return Err(AppError::new(
-            ErrorCode::Internal,
-            format!("could not save the rebuilt transcript: {e}"),
-        ));
-    }
-    // FR-6: the FULL rebuilt list is on disk already (`replace_transcript`,
-    // above) — this only bounds what stays in memory, same cap/eviction
-    // logic every other runtime's own live append uses.
-    let truncated =
-        crate::session::trim_transcript(&mut blocks, crate::session::TRANSCRIPT_BUFFER_CAP);
 
     let updated_record = PiResumeRecord {
-        last_entry_id: ancestry.last().map(|e| e.id.clone()),
-        leaf_id: data.leaf_id.clone(),
-        pi_version: installed_version,
+        last_entry_id: committed.last_entry_id,
+        leaf_id: committed.leaf_id,
+        pi_version: recorded_version(&record.pi_version, installed.detected_version.as_deref()),
         ..record.clone()
     };
 
@@ -781,11 +782,16 @@ fn run_reconnect(
     let now = crate::ids::now_ms();
     let meta = engine
         .with_session_mut(session_id, |s| {
-            s.block_buffer = blocks;
+            if let Some(blocks) = committed.buffer {
+                s.block_buffer = blocks;
+            }
+            if let Some(notice) = committed.appended {
+                s.block_buffer.push(notice);
+            }
             // transcript-scale FR-6: monotonic — a rebuild that happens to
             // fit entirely in memory this time must not un-truncate a
             // session whose history was already known to run past the cap.
-            s.transcript_truncated = s.transcript_truncated || truncated;
+            s.transcript_truncated = s.transcript_truncated || committed.truncated;
             s.pi_resume = Some(updated_record);
             s.recovery = RuntimeRecovery::ready(now);
             if let Some((_, effort, efforts)) = &handshake_model {
@@ -799,193 +805,12 @@ fn run_reconnect(
     Ok(meta)
 }
 
-/// Everything `new_from_session` copies off the SOURCE session — snapshotted
-/// under the engine lock, same discipline as `ReconnectSnapshot`.
-struct NewFromSnapshot {
-    name: String,
-    cwd: String,
-    model_id: String,
-    model_label: String,
-    effort: Option<String>,
-    permission_mode: String,
-    runtime: String,
-    allow_git: bool,
-    project_id: Option<String>,
-    account_id: String,
-    system_prompt: Option<String>,
-    extra_args: Vec<String>,
-    profile: Option<crate::profiles::SessionProfileRef>,
-    /// pi-migration-rollout FR-3: carried over verbatim — "Create new
-    /// session" copies validated profile/model settings, this included.
-    pi_profile_settings: Option<crate::profiles::PiProfileSettings>,
-    /// pi-migration-rollout FR-3 (read-once fix): the source's OWN resolved
-    /// snapshot, copied VERBATIM — never re-read. `None` only if the source
-    /// itself has never resolved one yet (an un-reconnected pre-fix record).
-    pi_launch_prompt: Option<super::profile_args::PiLaunchPrompt>,
-    response_mode: ResponseMode,
-    /// pi-skills-capabilities: the source session's pinned launch policy —
-    /// `build_new_from` copies `projectResources`/`extensions` but resets
-    /// `acknowledgedUnrestrictedTools` (a session created unacknowledged
-    /// needs its own acknowledgment; a profile/source can never fabricate
-    /// it).
-    resource_policy: Option<crate::session::adapter::pi::RuntimeResourcePolicy>,
-    /// pi-session-durability (quality remediation): same early
-    /// `RUNTIME_UNSUPPORTED` guard `ReconnectSnapshot` carries — see its doc.
-    agent_runtime: AgentRuntime,
-    busy: bool,
-}
-
-fn load_new_from_snapshot(engine: &Engine, session_id: &str) -> Option<NewFromSnapshot> {
-    engine.with_session(session_id, |s| NewFromSnapshot {
-        name: s.name.clone(),
-        cwd: s.cwd.clone(),
-        model_id: s.model_id.clone(),
-        model_label: s.model_label.clone(),
-        effort: s.effort.clone(),
-        permission_mode: s.permission_mode.clone(),
-        runtime: s.runtime.clone(),
-        allow_git: s.allow_git,
-        project_id: s.project_id.clone(),
-        account_id: s.account_id.clone(),
-        system_prompt: s.system_prompt.clone(),
-        extra_args: s.extra_args.clone(),
-        profile: s.profile.clone(),
-        pi_profile_settings: s.pi_profile_settings.clone(),
-        pi_launch_prompt: s.pi_launch_prompt.clone(),
-        response_mode: s.response_mode,
-        resource_policy: s.resource_policy,
-        agent_runtime: s.agent_runtime,
-        busy: crate::session::status::is_busy(&s.status) || s.recovery_busy,
-    })
-}
-
-/// session-rename FR-1's cap, doubled for the " (copy)" suffix's own room —
-/// `validate_session_name` re-checks the 80-char cap regardless, so a name
-/// this derives can never exceed it either.
-fn derive_new_from_name(source_name: &str) -> String {
-    let candidate = format!("{source_name} (copy)");
-    if candidate.chars().count() <= 80 {
-        candidate
-    } else {
-        source_name.chars().take(80).collect()
-    }
-}
-
-/// "Create new session" from a session whose native conversation cannot be
-/// resumed. Copies ONLY validated cwd/project/account/profile/model settings
-/// into a NEW session id — no messages, no native resume anchor (so no
-/// `worktree` provenance either: the new session is not itself attached to
-/// whatever worktree the source's `cwd` happened to be, see this feature's
-/// handoff). Never spawns a Pi child and never sends a prompt — this is a
-/// pure metadata copy, which is what makes it safe to offer even when Pi
-/// itself is unreachable.
-pub(crate) fn new_from_session(
-    app: &AppHandle,
-    source_id: &str,
-    name: Option<String>,
-) -> Result<SessionMeta, AppError> {
-    let name = match name {
-        Some(raw) => Some(crate::session::validate_session_name(&raw)?),
-        None => None,
-    };
-    let engine = app.state::<Engine>();
-    let Some(source) = load_new_from_snapshot(&engine, source_id) else {
-        return Err(AppError::new(ErrorCode::SessionNotFound, "no such session"));
-    };
-    if source.agent_runtime != AgentRuntime::Pi {
-        return Err(AppError::new(
-            ErrorCode::RuntimeUnsupported,
-            "this session's runtime does not support this action",
-        ));
-    }
-    if source.busy {
-        return Err(AppError::new(
-            ErrorCode::SessionBusy,
-            "this session has a recovery already in flight",
-        ));
-    }
-    if !claim_recovery(&engine, source_id) {
-        return Err(AppError::new(
-            ErrorCode::SessionBusy,
-            "this session has a recovery already in flight",
-        ));
-    }
-    let outcome = build_new_from(app, &engine, &source, name);
-    release_recovery(&engine, source_id);
-    if let Ok(meta) = &outcome {
-        emit(app, SessionEvent::Meta { meta: meta.clone() });
-    }
-    outcome
-}
-
-fn build_new_from(
-    app: &AppHandle,
-    engine: &Engine,
-    source: &NewFromSnapshot,
-    name: Option<String>,
-) -> Result<SessionMeta, AppError> {
-    let account = account_snapshot(app, &source.account_id);
-    if !account.is_pi {
-        return Err(AppError::new(
-            ErrorCode::RuntimeAccountMissing,
-            "the pinned account for this session is no longer a Pi account",
-        ));
-    }
-    let now = crate::ids::now_ms();
-    let id = crate::ids::uuid();
-    let name = name.unwrap_or_else(|| derive_new_from_name(&source.name));
-    let (agent_runtime, protocol) =
-        AgentRuntime::from_account_kind(crate::account::kind_of(app, &source.account_id));
-    let session = crate::session::Session::new(
-        id.clone(),
-        name,
-        source.cwd.clone(),
-        source.model_id.clone(),
-        source.model_label.clone(),
-        0,
-        crate::session::resolve_model_display(app, &source.account_id, &source.model_id).1,
-        now,
-        now,
-        source.effort.clone(),
-        source.permission_mode.clone(),
-        source.runtime.clone(),
-        source.allow_git,
-        source.project_id.clone(),
-        None, // no worktree provenance — see this fn's own doc comment
-        None,
-        source.account_id.clone(),
-        agent_runtime,
-        protocol,
-        None, // no native resume anchor
-        Vec::new(),
-        source.system_prompt.clone(),
-        source.extra_args.clone(),
-        source.profile.clone(),
-        source.response_mode,
-        source.pi_profile_settings.clone(),
-        // pi-migration-rollout FR-3 (read-once fix): copied verbatim, never
-        // re-resolved — see this fn's own doc comment.
-        source.pi_launch_prompt.clone(),
-        // pi-skills-capabilities: copy the project-resources/extensions
-        // choice, but never the acknowledgment — the new session needs its
-        // own (`session_acknowledge_policy`).
-        source
-            .resource_policy
-            .map(|p| crate::session::adapter::pi::RuntimeResourcePolicy {
-                acknowledged_unrestricted_tools: false,
-                ..p
-            }),
-    );
-    let meta = session.meta(app);
-    engine
-        .sessions
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(id, session);
-    persist(app, engine);
-    Ok(meta)
-}
-
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod tests;
+
+/// The I/O shell's own tests, driven by a fake child — kept in their own file
+/// because they need a socket harness the decision tests above do not.
+#[cfg(test)]
+#[path = "recovery/shell_tests.rs"]
+mod shell_tests;

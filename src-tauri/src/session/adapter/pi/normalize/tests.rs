@@ -12,8 +12,22 @@ fn only_notice(events: &[RuntimeEventPayload]) -> (&str, &str) {
     }
 }
 
-fn is_failure(events: &[RuntimeEventPayload]) -> bool {
-    matches!(events.first(), Some(RuntimeEventPayload::Failure { .. }))
+/// MEDIUM (review round 7): a malformed FIELD inside one transcript event is
+/// reported as an error-toned notice — it explains what was dropped without
+/// flipping the whole session to `status::ERROR` (that is reserved for the
+/// failures that actually end the connection: `wire::FrameError`, a dead
+/// child, a dispatch failure — see `protocol_notice`).
+fn is_error_notice(events: &[RuntimeEventPayload]) -> bool {
+    matches!(
+        events.first(),
+        Some(RuntimeEventPayload::Notice { tone, .. }) if tone == "error"
+    )
+}
+
+fn has_failure(events: &[RuntimeEventPayload]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, RuntimeEventPayload::Failure { .. }))
 }
 
 // ---------------------------------------------------------- FR-1: mapping table
@@ -169,6 +183,116 @@ fn a_fast_message_with_no_prior_deltas_still_finalizes_from_message_end() {
     }
 }
 
+/// `content` is OPTIONAL on the wire (`message_end` with no `content` is the
+/// natural encoding for an interrupted turn), so a `message_end` that covers
+/// none of the slots that actually streamed used to finalize the MESSAGE while
+/// stranding those slots: no `assistant.complete` ever, the block left
+/// `streaming: true` forever — never persisted, and pinning `trim_transcript`
+/// so the buffer grows past its cap.
+#[test]
+fn message_end_with_no_content_completes_every_streamed_slot_with_the_wire_outcome() {
+    let mut r = TranscriptReducer::new();
+    r.on_event(
+        &json!({"type":"message_start","role":"assistant","messageId":"m2"}),
+        0,
+    );
+    r.on_event(
+        &json!({"type":"content_delta","messageId":"m2","contentIndex":0,
+            "delta":{"type":"text","text":"the answer is "}}),
+        0,
+    );
+    let end = r.on_event(
+        &json!({"type":"message_end","messageId":"m2","outcome":"interrupted"}),
+        10,
+    );
+    assert_eq!(
+        end,
+        vec![RuntimeEventPayload::AssistantComplete {
+            block_id: r.messages["m2"].slots[&0].block_id.clone(),
+            text: "the answer is ".into(),
+            // The WIRE outcome, never relabelled: if Pi simply never echoes
+            // `content`, a normal message must still read as complete.
+            outcome: "interrupted".into(),
+        }]
+    );
+}
+
+#[test]
+fn a_streamed_slot_settled_by_message_end_is_never_completed_a_second_time() {
+    let mut r = TranscriptReducer::new();
+    r.on_event(
+        &json!({"type":"content_delta","messageId":"m2","contentIndex":0,
+            "delta":{"type":"text","text":"partial"}}),
+        0,
+    );
+    assert_eq!(
+        r.on_event(&json!({"type":"message_end","messageId":"m2"}), 10)
+            .len(),
+        1
+    );
+    // FR-9's crash/stop sweep skips a message that settled normally.
+    assert!(r.finalize_interrupted(20).is_empty());
+    // Edge cases §7's idempotent upsert: a replayed message_end with no
+    // authoritative content to re-apply emits nothing further either.
+    assert!(r
+        .on_event(&json!({"type":"message_end","messageId":"m2"}), 30)
+        .is_empty());
+}
+
+#[test]
+fn message_end_content_covering_only_some_slots_still_completes_the_rest() {
+    let mut r = TranscriptReducer::new();
+    for (index, text) in [(0, "authoritative"), (1, "streamed only")] {
+        r.on_event(
+            &json!({"type":"content_delta","messageId":"m2","contentIndex":index,
+                "delta":{"type":"text","text":text}}),
+            0,
+        );
+    }
+    let end = r.on_event(
+        &json!({"type":"message_end","messageId":"m2","role":"assistant",
+            "content":[{"type":"text","text":"authoritative"}],"outcome":"complete"}),
+        10,
+    );
+    let completed: Vec<(&str, &str)> = end
+        .iter()
+        .filter_map(|e| match e {
+            RuntimeEventPayload::AssistantComplete { text, outcome, .. } => {
+                Some((text.as_str(), outcome.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        completed,
+        vec![
+            ("authoritative", "complete"),
+            ("streamed only", "complete") // in content-index order
+        ]
+    );
+}
+
+#[test]
+fn a_thinking_only_slot_is_never_completed_as_assistant_text_by_message_end() {
+    // FR-5: a thinking/signature slot opened no assistant text block — it
+    // emitted the one "not shown" notice and nothing else.
+    let mut r = TranscriptReducer::new();
+    r.on_event(
+        &json!({"type":"content_delta","messageId":"m2","contentIndex":0,
+            "delta":{"type":"thinking","text":"reasoning\u{2026}"}}),
+        0,
+    );
+    let end = r.on_event(
+        &json!({"type":"message_end","messageId":"m2","outcome":"complete"}),
+        10,
+    );
+    assert!(
+        !end.iter()
+            .any(|e| matches!(e, RuntimeEventPayload::AssistantComplete { .. })),
+        "a thinking slot must never be completed as prose: {end:?}"
+    );
+}
+
 #[test]
 fn a_late_delta_after_text_end_never_reopens_the_finalized_block() {
     // HIGH (review round 2): text_end already finalized this slot — a
@@ -245,7 +369,7 @@ fn a_content_index_past_u32_max_is_a_protocol_error_not_a_silent_truncation() {
             "delta":{"type":"text","text":"x"}}),
         0,
     );
-    assert!(is_failure(&out));
+    assert!(is_error_notice(&out));
 }
 
 // ---------------------------------------------------------- FR-5: thinking/signature
@@ -405,18 +529,61 @@ fn finalize_interrupted_leaves_an_already_settled_tool_and_finalized_message_unt
 // ---------------------------------------------------------- edge cases / malformed
 
 #[test]
-fn a_malformed_known_event_fails_with_runtime_protocol_error() {
+fn a_malformed_known_event_is_reported_as_a_protocol_error_notice() {
     let mut r = TranscriptReducer::new();
-    assert!(is_failure(
+    assert!(is_error_notice(
         &r.on_event(&json!({"type":"toolcall_start"}), 0)
     ));
-    assert!(is_failure(
+    assert!(is_error_notice(
         &r.on_event(&json!({"type":"message_start","role":"bogus"}), 0)
     ));
-    assert!(is_failure(&r.on_event(
+    assert!(is_error_notice(&r.on_event(
         &json!({"type":"content_delta","messageId":"m1","contentIndex":0}),
         0
     )));
+}
+
+/// MEDIUM (review round 7): one malformed field used to ride out as a
+/// `Failure`, which `runtime.rs` turns into `status::ERROR` for the WHOLE
+/// session — an unusable session on the strength of a single bad event, with
+/// the connection still happily streaming. The session must stay usable: the
+/// very next well-formed event still normalizes.
+#[test]
+fn a_malformed_field_never_errors_the_session_and_the_next_good_event_still_normalizes() {
+    let mut r = TranscriptReducer::new();
+    let malformed = r.on_event(&json!({"type":"text_end","messageId":"m1"}), 0);
+    assert!(is_error_notice(&malformed));
+    assert!(
+        !has_failure(&malformed),
+        "a malformed field must not fail the session: {malformed:?}"
+    );
+
+    let good = r.on_event(
+        &json!({"type":"content_delta","messageId":"m1","contentIndex":0,
+            "delta":{"type":"text","text":"still working"}}),
+        0,
+    );
+    assert!(matches!(
+        good.first(),
+        Some(RuntimeEventPayload::AssistantDelta { .. })
+    ));
+}
+
+/// A wire that is malformed on EVERY line must not spam the transcript with
+/// an unbounded run of notices — same "bounded diagnostic" discipline the
+/// unknown-kind notice already follows.
+#[test]
+fn protocol_error_notices_are_bounded_over_the_connection() {
+    let mut r = TranscriptReducer::new();
+    let mut notices = 0;
+    for _ in 0..500 {
+        notices += r.on_event(&json!({"type":"text_end"}), 0).len();
+    }
+    assert!(
+        notices <= 32,
+        "protocol-error notices grew unbounded: {notices}"
+    );
+    assert!(notices > 0, "the first malformed events must still be seen");
 }
 
 /// MEDIUM (review round 3): `content_delta` and its sibling `text_end` must
@@ -425,12 +592,12 @@ fn a_malformed_known_event_fails_with_runtime_protocol_error() {
 #[test]
 fn an_out_of_range_content_index_fails_explicitly_on_content_delta_and_text_end() {
     let mut r = TranscriptReducer::new();
-    assert!(is_failure(&r.on_event(
+    assert!(is_error_notice(&r.on_event(
         &json!({"type":"content_delta","messageId":"m1","contentIndex":u64::MAX,
             "delta":{"type":"text","text":"x"}}),
         0
     )));
-    assert!(is_failure(&r.on_event(
+    assert!(is_error_notice(&r.on_event(
         &json!({"type":"text_end","messageId":"m1","contentIndex":u64::MAX}),
         0
     )));
@@ -439,8 +606,8 @@ fn an_out_of_range_content_index_fails_explicitly_on_content_delta_and_text_end(
 #[test]
 fn a_frame_with_no_recognizable_type_fails_explicitly() {
     let mut r = TranscriptReducer::new();
-    assert!(is_failure(&r.on_event(&json!({"foo":"bar"}), 0)));
-    assert!(is_failure(&r.on_event(&json!({"type":""}), 0)));
+    assert!(is_error_notice(&r.on_event(&json!({"foo":"bar"}), 0)));
+    assert!(is_error_notice(&r.on_event(&json!({"type":""}), 0)));
 }
 
 #[test]

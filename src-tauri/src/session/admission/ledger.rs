@@ -7,18 +7,22 @@ use super::*;
 
 impl AdmissionLedger {
     pub(crate) fn is_closed(&self) -> bool {
-        self.closed
+        self.close_depth > 0
     }
 
-    /// FR-6: the first step of Stop.
+    /// FR-6: the first step of Stop — and of `session_clear_queue`'s own
+    /// bracket. Nesting (see `close_depth`): two brackets may overlap, and the
+    /// ledger stays closed until the LAST of them reopens it.
     pub(crate) fn close(&mut self) {
-        self.closed = true;
+        self.close_depth += 1;
     }
 
-    /// FR-6/FR-7: reopen once Stop's sequence has settled — a session is not
-    /// permanently disabled by a Stop.
+    /// FR-6/FR-7: reopen once the bracket that closed admission has settled —
+    /// a session is not permanently disabled by a Stop. Saturating, so a
+    /// reopen with no matching close is a no-op rather than a depth that
+    /// underflows and swallows the next real close.
     pub(crate) fn reopen(&mut self) {
-        self.closed = false;
+        self.close_depth = self.close_depth.saturating_sub(1);
     }
 
     fn find(&self, client_message_id: &str) -> Option<&Entry> {
@@ -87,6 +91,19 @@ impl AdmissionLedger {
                 Err(AdmitError::IdConflict)
             };
         }
+        // FR-6: "Reject while stopping" — the AUTHORITATIVE check, deliberately
+        // here rather than only in `admit_and_deliver`, which probes
+        // `is_closed` in one lock acquisition and calls this in another: a Stop
+        // landing between the two would otherwise admit and dispatch a message
+        // AFTER the abort, starting a new turn the user just stopped. This runs
+        // under the same lock acquisition as the insert below, so it cannot be
+        // raced. It sits AFTER the idempotent-retry branch on purpose — a retry
+        // of a known id creates no new delivery, so it stays answerable while
+        // closed — and before validation, so a race is reported as the race it
+        // is rather than as a content complaint.
+        if self.is_closed() {
+            return Err(AdmitError::Closed);
+        }
         if text.trim().is_empty() {
             return Err(AdmitError::Empty);
         }
@@ -115,6 +132,15 @@ impl AdmissionLedger {
     /// The dispatch attempt for `client_message_id` resolved — settle its
     /// state accordingly. `None` if the id is unknown (should not happen for
     /// a caller that just admitted it).
+    ///
+    /// FR-6/FR-7: only a still-`Admitting` entry may be settled by its own
+    /// dispatch. The dispatch happens with no lock held, so a Stop (or a
+    /// `session_clear_queue`) can settle the entry `cancelled`/
+    /// `delivery-unknown` while the wire call is still out; that outcome is
+    /// already published AND persisted, so a late result must not overwrite
+    /// it — the user pressed Stop, saw the message cancelled, and it would
+    /// otherwise come back as `queued` and survive a restart. Anything already
+    /// settled is left exactly as it is, and its CURRENT receipt is returned.
     pub(crate) fn mark_dispatch_result(
         &mut self,
         client_message_id: &str,
@@ -122,13 +148,20 @@ impl AdmissionLedger {
     ) -> Option<RuntimeMessageReceipt> {
         {
             let entry = self.find_mut(client_message_id)?;
-            entry.state = match outcome {
-                DispatchOutcome::Accepted => AdmissionState::Queued,
-                DispatchOutcome::Rejected => AdmissionState::Rejected,
-                DispatchOutcome::Uncertain => AdmissionState::DeliveryUnknown,
-            };
+            if entry.state == AdmissionState::Admitting {
+                entry.state = match outcome {
+                    DispatchOutcome::Accepted => AdmissionState::Queued,
+                    DispatchOutcome::Rejected => AdmissionState::Rejected,
+                    DispatchOutcome::Uncertain => AdmissionState::DeliveryUnknown,
+                };
+            }
         }
-        self.receipt_for(client_message_id)
+        // Read the receipt BEFORE the eviction pass: this entry may itself be
+        // the one evicted (it just became terminal), and the caller still needs
+        // the outcome it is reporting.
+        let receipt = self.receipt_for(client_message_id);
+        self.evict_terminal_overflow();
+        receipt
     }
 
     /// pi-turn-controls contract clarification (lead, post-freeze): removes
@@ -152,20 +185,40 @@ impl AdmissionLedger {
         UnqueueOutcome::Removed
     }
 
-    /// FR-3: associate consumption with the OLDEST still-pending entry, by
-    /// admission order alone — never by matching text or an echoed id. `None`
-    /// when nothing is pending (a message.user with no matching admission —
-    /// not an error, just nothing for the ledger to settle). Consumed removes
-    /// the entry from the ledger entirely — contract clarification: "a
-    /// 'consumed' entry drops out of the array — its transcript block
-    /// replaces it," unlike the recoverable terminal states below.
-    pub(crate) fn mark_consumed_oldest(&mut self) -> Option<RuntimeMessageReceipt> {
-        let entry = self
-            .entries
-            .iter()
-            .filter(|e| matches!(e.state, AdmissionState::Admitting | AdmissionState::Queued))
-            .min_by_key(|e| e.seq)?
-            .clone();
+    /// FR-3: settle the admission a consumed `message.user` corresponds to.
+    /// `echoed` is the `clientMessageId` Pi put on that event (`normalize`
+    /// already parses it off the wire).
+    ///
+    /// HIGH (review): the echo is the ONLY exact association there is, and it
+    /// is not "matching on text" — `seq` is ADMISSION order, which is not wire
+    /// order, so the moment Pi consumes out of order (a steer jumping the
+    /// line, or its own queue reordering) oldest-first settles the wrong row
+    /// and strands the real one pending forever. Oldest-first survives ONLY as
+    /// the fallback for an echo that carries no id at all — FR-3's "Pi has no
+    /// assumed echoed request ID on message events", which covers an older Pi
+    /// build and every `message.user` Pi generates itself rather than from one
+    /// of our submissions.
+    ///
+    /// `None` when there is nothing to settle: an empty ledger, an echo naming
+    /// an id this session never admitted (not ours — settling an unrelated row
+    /// would be exactly the mis-association this guards against), or one whose
+    /// entry is already terminal (a late echo must not resurrect a draft the
+    /// user already saw cancelled). Consumed removes the entry from the ledger
+    /// entirely — contract clarification: "a 'consumed' entry drops out of the
+    /// array — its transcript block replaces it," unlike the recoverable
+    /// terminal states below.
+    pub(crate) fn mark_consumed(&mut self, echoed: Option<&str>) -> Option<RuntimeMessageReceipt> {
+        let pending =
+            |e: &&Entry| matches!(e.state, AdmissionState::Admitting | AdmissionState::Queued);
+        let entry = match echoed {
+            Some(id) => self.find(id).filter(pending)?.clone(),
+            None => self
+                .entries
+                .iter()
+                .filter(pending)
+                .min_by_key(|e| e.seq)?
+                .clone(),
+        };
         self.entries
             .retain(|e| e.client_message_id != entry.client_message_id);
         let mut consumed = entry;
@@ -173,12 +226,40 @@ impl AdmissionLedger {
         Some(consumed.receipt(None))
     }
 
+    /// FR-9 (review): keep at most [`MAX_TERMINAL_DRAFTS`] recoverable
+    /// terminal entries, oldest (by admission order) evicted first. Run after
+    /// every transition that CREATES one — `mark_dispatch_result`, `clear`,
+    /// `mark_all_pending_unknown`, and the sidecar's own `hydrate_from_drafts`
+    /// — so the ledger, and the whole-file sidecar snapshot behind it, has a
+    /// real upper bound rather than the one its doc claimed.
+    ///
+    /// It NEVER evicts a non-terminal entry: an `admitting`/`queued` message
+    /// is live work Pi may still consume, not a draft to drop.
+    pub(super) fn evict_terminal_overflow(&mut self) {
+        let mut seqs: Vec<u64> = self
+            .entries
+            .iter()
+            .filter(|e| e.state.is_recoverable_terminal())
+            .map(|e| e.seq)
+            .collect();
+        if seqs.len() <= MAX_TERMINAL_DRAFTS {
+            return;
+        }
+        seqs.sort_unstable();
+        let oldest_kept = seqs[seqs.len() - MAX_TERMINAL_DRAFTS];
+        self.entries
+            .retain(|e| !e.state.is_recoverable_terminal() || e.seq >= oldest_kept);
+    }
+
     /// FR-5/FR-6: bulk clear — every non-terminal entry becomes `Cancelled`.
     /// Contract clarification (lead, post-freeze): a cancelled entry STAYS in
     /// the ledger, text intact, as a recoverable draft — it is never silently
-    /// dropped, only removed later by an explicit `unqueue` (Discard) or a
-    /// fresh `admit` reusing its id (Resend). Returns just the entries THIS
-    /// call cancelled, for `RuntimeQueueClearOutput.entries`.
+    /// dropped, only removed later by an explicit `unqueue`. That is the ONE
+    /// removal path: Discard calls it directly, and a Resend mints a NEW id
+    /// (see `unqueue`'s own doc above) and then unqueues the stale row — a
+    /// fresh `admit` reusing the id would never replace the draft anyway, it
+    /// returns the existing receipt or `IdConflict`. Returns just the entries
+    /// THIS call cancelled, for `RuntimeQueueClearOutput.entries`.
     pub(crate) fn clear(&mut self) -> Vec<RuntimeQueueEntry> {
         let mut cleared = Vec::new();
         for entry in self.entries.iter_mut() {
@@ -195,6 +276,7 @@ impl AdmissionLedger {
                 });
             }
         }
+        self.evict_terminal_overflow();
         cleared
     }
 
@@ -212,6 +294,7 @@ impl AdmissionLedger {
                 out.push(entry.receipt(None));
             }
         }
+        self.evict_terminal_overflow();
         out
     }
 
@@ -233,6 +316,43 @@ impl AdmissionLedger {
                 created_at: e.created_at,
             })
             .collect()
+    }
+}
+
+/// FR-6: the close/reopen bracket, held as a GUARD rather than as paired
+/// calls. `reopen` runs when this drops, so an early return — or a panic —
+/// anywhere inside the bracket (the Stop sequence, `session_clear_queue`)
+/// cannot leave `close_depth` permanently above zero, which would refuse
+/// every later submit on that session with "the session is stopping" until
+/// the app restarts. Same shape, and for the same reason, as
+/// `adapter::pi::recovery::RecoveryClaim`.
+///
+/// Nesting still works: the guard only ever adds one to the depth and takes
+/// one back off, so two overlapping brackets behave exactly as `close_depth`
+/// describes.
+pub(crate) struct AdmissionClose<'a> {
+    engine: &'a Engine,
+    session_id: String,
+}
+
+impl<'a> AdmissionClose<'a> {
+    /// Close admission for `session_id` and hand back the guard that reopens
+    /// it. Taking the guard IS the close — there is no way to close without
+    /// one, which is what makes the leak unreachable rather than merely
+    /// unlikely.
+    pub(crate) fn hold(engine: &'a Engine, session_id: &str) -> Self {
+        engine.with_admissions(session_id, |l| l.close());
+        Self {
+            engine,
+            session_id: session_id.to_string(),
+        }
+    }
+}
+
+impl Drop for AdmissionClose<'_> {
+    fn drop(&mut self) {
+        self.engine
+            .with_admissions(&self.session_id, |l| l.reopen());
     }
 }
 
@@ -332,7 +452,7 @@ mod tests {
                 .unwrap();
         }
         l.mark_dispatch_result("c0", DispatchOutcome::Accepted);
-        l.mark_consumed_oldest();
+        l.mark_consumed(None);
         assert!(l
             .admit("c-fits-now", "m", DeliveryMode::Normal, &ids(), 0)
             .is_ok());
@@ -374,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn mark_consumed_oldest_picks_admission_order_never_text_equality() {
+    fn mark_consumed_with_no_echo_picks_admission_order_never_text_equality() {
         let mut l = AdmissionLedger::default();
         // Two DISTINCT ids, IDENTICAL text — consumption must key on order,
         // not on matching the text (FR-3).
@@ -382,7 +502,7 @@ mod tests {
             .unwrap();
         l.admit("second", "same text", DeliveryMode::FollowUp, &ids(), 1)
             .unwrap();
-        let consumed = l.mark_consumed_oldest().unwrap();
+        let consumed = l.mark_consumed(None).unwrap();
         assert_eq!(consumed.client_message_id, "first");
         assert_eq!(consumed.state, AdmissionState::Consumed);
         // The remaining entry is unaffected and still pending.
@@ -391,9 +511,106 @@ mod tests {
     }
 
     #[test]
-    fn mark_consumed_oldest_on_an_empty_ledger_is_a_quiet_no_op() {
+    fn mark_consumed_on_an_empty_ledger_is_a_quiet_no_op() {
         let mut l = AdmissionLedger::default();
-        assert!(l.mark_consumed_oldest().is_none());
+        assert!(l.mark_consumed(None).is_none());
+    }
+
+    /// HIGH (review): `seq` is ADMISSION order, which is not WIRE order. Pi
+    /// echoes the `clientMessageId` on the `message.user` it consumed, and
+    /// `normalize` already parses it — ignoring it settled the wrong row the
+    /// moment Pi consumed out of order, and stranded the real one pending.
+    #[test]
+    fn an_echoed_client_message_id_consumes_that_entry_not_the_oldest() {
+        let mut l = AdmissionLedger::default();
+        l.admit("a", "first", DeliveryMode::Normal, &ids(), 0)
+            .unwrap();
+        l.admit("b", "second", DeliveryMode::FollowUp, &ids(), 1)
+            .unwrap();
+        let consumed = l
+            .mark_consumed(Some("b"))
+            .expect("the echoed id names the entry exactly");
+        assert_eq!(consumed.client_message_id, "b");
+        assert_eq!(consumed.state, AdmissionState::Consumed);
+        let pending = l.snapshot_pending();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].receipt.client_message_id, "a",
+            "the entry Pi did not consume must stay pending"
+        );
+    }
+
+    #[test]
+    fn an_echo_naming_an_unknown_or_already_terminal_entry_settles_nothing() {
+        let mut l = AdmissionLedger::default();
+        l.admit("a", "m", DeliveryMode::Normal, &ids(), 0).unwrap();
+        assert!(
+            l.mark_consumed(Some("not-ours")).is_none(),
+            "a message.user that is not one of our submissions must not consume a row"
+        );
+        assert_eq!(l.snapshot_pending().len(), 1);
+        l.clear();
+        assert!(
+            l.mark_consumed(Some("a")).is_none(),
+            "a late echo must not resurrect a draft the user already saw cancelled"
+        );
+        assert_eq!(l.snapshot_pending().len(), 1);
+    }
+
+    // ---------- FR-9 (review): the recoverable drafts are bounded ----------
+
+    /// The sidecar's doc claimed "capped at 20 entries" while nothing capped
+    /// the terminal half at all — every Stop added drafts that only an
+    /// explicit Discard ever removed, and the whole-file sidecar was rewritten
+    /// with all of them on every change.
+    #[test]
+    fn terminal_drafts_are_capped_oldest_first() {
+        let mut l = AdmissionLedger::default();
+        let mut admit_and_cancel = |from: usize, count: usize| {
+            for i in from..from + count {
+                l.admit(
+                    &format!("c{i}"),
+                    "m",
+                    DeliveryMode::Normal,
+                    &ids(),
+                    i as u64,
+                )
+                .unwrap();
+            }
+            l.clear();
+        };
+        admit_and_cancel(0, MAX_TERMINAL_DRAFTS);
+        admit_and_cancel(MAX_TERMINAL_DRAFTS, 5);
+
+        let pending = l.snapshot_pending();
+        assert_eq!(pending.len(), MAX_TERMINAL_DRAFTS);
+        // The five OLDEST went; the newest five are the ones still on record.
+        assert_eq!(pending[0].receipt.client_message_id, "c5");
+        assert_eq!(
+            pending[MAX_TERMINAL_DRAFTS - 1].receipt.client_message_id,
+            format!("c{}", MAX_TERMINAL_DRAFTS + 4)
+        );
+    }
+
+    #[test]
+    fn the_terminal_cap_never_evicts_a_live_entry() {
+        let mut l = AdmissionLedger::default();
+        // One entry Pi has ACCEPTED, admitted first so it is the oldest of all
+        // — exactly what an oldest-first eviction would reach for.
+        l.admit("live", "still queued", DeliveryMode::Normal, &ids(), 0)
+            .unwrap();
+        l.mark_dispatch_result("live", DispatchOutcome::Accepted);
+        for round in 0..2 {
+            for i in 0..MAX_TERMINAL_DRAFTS {
+                let id = format!("d{round}-{i}");
+                l.admit(&id, "m", DeliveryMode::Normal, &ids(), 1).unwrap();
+                l.mark_dispatch_result(&id, DispatchOutcome::Rejected);
+            }
+        }
+        let pending = l.snapshot_pending();
+        assert_eq!(pending.len(), MAX_TERMINAL_DRAFTS + 1);
+        assert_eq!(pending[0].receipt.client_message_id, "live");
+        assert_eq!(pending[0].receipt.state, AdmissionState::Queued);
     }
 
     #[test]
@@ -420,7 +637,7 @@ mod tests {
         assert!(matches!(l.unqueue("nope"), UnqueueOutcome::NotFound));
         l.admit("c1", "m", DeliveryMode::Normal, &ids(), 0).unwrap();
         l.mark_dispatch_result("c1", DispatchOutcome::Accepted);
-        l.mark_consumed_oldest(); // consumed entries are removed from the ledger
+        l.mark_consumed(None); // consumed entries are removed from the ledger
         assert!(matches!(l.unqueue("c1"), UnqueueOutcome::NotFound));
     }
 
@@ -490,7 +707,7 @@ mod tests {
         let mut l = AdmissionLedger::default();
         l.admit("c1", "m", DeliveryMode::Normal, &ids(), 0).unwrap();
         l.mark_dispatch_result("c1", DispatchOutcome::Accepted);
-        l.mark_consumed_oldest();
+        l.mark_consumed(None);
         let cleared = l.clear();
         assert!(cleared.is_empty());
         assert!(l.snapshot_pending().is_empty());
@@ -504,6 +721,155 @@ mod tests {
         assert!(l.is_closed());
         l.reopen();
         assert!(!l.is_closed());
+    }
+
+    /// FR-6: Stop and `session_clear_queue` both bracket their wire calls with
+    /// close/reopen, so the two can overlap. With a boolean flag the inner
+    /// bracket's `reopen` would reopen admission while the outer one is still
+    /// mid-sequence — a depth counter is what makes the bracket composable.
+    #[test]
+    fn close_nests_so_an_overlapping_bracket_cannot_reopen_early() {
+        let mut l = AdmissionLedger::default();
+        l.close();
+        l.close();
+        l.reopen();
+        assert!(
+            l.is_closed(),
+            "the outer bracket is still open; only its own reopen may unclose the ledger"
+        );
+        l.reopen();
+        assert!(!l.is_closed(), "the last reopen settles the ledger open");
+    }
+
+    // ---------- FR-6 (review): the bracket is a guard, not paired calls ----------
+
+    /// LOW (review): `close()` and `reopen()` used to be written out by hand
+    /// around the wire calls, so an early return — or a panic — between them
+    /// leaked a close. A leaked close refuses EVERY later submit on that
+    /// session with "the session is stopping", for the life of the app.
+    #[test]
+    fn a_panic_inside_the_admission_bracket_still_reopens_it() {
+        let engine =
+            crate::session::testutil::test_engine_with(crate::session::testutil::test_session());
+        // The panic below prints, as any caught panic does — it is the point
+        // of the test, not a failure.
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _closed = AdmissionClose::hold(&engine, "s1");
+            assert!(engine.with_admissions("s1", |l| l.is_closed()));
+            panic!("the bracket's body blew up");
+        }));
+        assert!(panicked.is_err());
+        assert!(
+            !engine.with_admissions("s1", |l| l.is_closed()),
+            "a session must not be left permanently unable to accept a submit"
+        );
+    }
+
+    #[test]
+    fn two_overlapping_guards_keep_the_ledger_closed_until_the_last_one_drops() {
+        let engine =
+            crate::session::testutil::test_engine_with(crate::session::testutil::test_session());
+        let outer = AdmissionClose::hold(&engine, "s1");
+        {
+            let _inner = AdmissionClose::hold(&engine, "s1");
+        }
+        assert!(
+            engine.with_admissions("s1", |l| l.is_closed()),
+            "the outer bracket is still open"
+        );
+        drop(outer);
+        assert!(!engine.with_admissions("s1", |l| l.is_closed()));
+    }
+
+    #[test]
+    fn reopen_on_an_already_open_ledger_never_underflows() {
+        let mut l = AdmissionLedger::default();
+        l.reopen();
+        assert!(!l.is_closed());
+        // A stray reopen must not leave a "negative" depth that swallows the
+        // next real close.
+        l.close();
+        assert!(l.is_closed());
+    }
+
+    // ---------- FR-6: a closed ledger admits nothing new ----------
+
+    /// `admit_and_deliver` probes `is_closed` in one lock acquisition and calls
+    /// `admit` in another; a Stop landing between the two must still be caught,
+    /// so the authoritative check is the one INSIDE `admit` — under the same
+    /// lock acquisition as the insert.
+    #[test]
+    fn a_closed_ledger_refuses_a_brand_new_admission() {
+        let mut l = AdmissionLedger::default();
+        l.close();
+        assert!(
+            matches!(
+                l.admit("c1", "m", DeliveryMode::Normal, &ids(), 0),
+                Err(AdmitError::Closed)
+            ),
+            "a submit racing a Stop must not be admitted after admission closed"
+        );
+        assert!(
+            l.snapshot_pending().is_empty(),
+            "the refused admission leaves no entry behind"
+        );
+        l.reopen();
+        assert!(l.admit("c1", "m", DeliveryMode::Normal, &ids(), 0).is_ok());
+    }
+
+    /// A retry of a KNOWN id creates no new delivery, so it stays answerable
+    /// while closed — the idempotent branch runs before the closed check.
+    #[test]
+    fn a_retry_of_a_known_id_is_still_answered_while_closed() {
+        let mut l = AdmissionLedger::default();
+        l.admit("c1", "m", DeliveryMode::Normal, &ids(), 0).unwrap();
+        l.close();
+        let (receipt, is_new) = l
+            .admit("c1", "m", DeliveryMode::Normal, &ids(), 0)
+            .expect("a retry of a known id is answerable while closed");
+        assert!(!is_new);
+        assert_eq!(receipt.client_message_id, "c1");
+        // And a conflicting retry is still a conflict, not a Closed.
+        assert!(matches!(
+            l.admit("c1", "different", DeliveryMode::Normal, &ids(), 0),
+            Err(AdmitError::IdConflict)
+        ));
+    }
+
+    // ---------- FR-6: a settled entry is never resurrected ----------
+
+    /// The race: a submit blocks in its wire dispatch, a Stop cancels the entry
+    /// meanwhile (published AND persisted), then the dispatch returns and marks
+    /// its result. The user pressed Stop and saw it cancelled — it must not
+    /// come back as `queued`.
+    #[test]
+    fn mark_dispatch_result_never_resurrects_a_cancelled_entry() {
+        let mut l = AdmissionLedger::default();
+        l.admit("c1", "m", DeliveryMode::Normal, &ids(), 0).unwrap();
+        l.clear();
+        let receipt = l
+            .mark_dispatch_result("c1", DispatchOutcome::Accepted)
+            .expect("the entry is still on record as a recoverable draft");
+        assert_eq!(
+            receipt.state,
+            AdmissionState::Cancelled,
+            "a late dispatch result must not undo the Stop the user already saw"
+        );
+        assert_eq!(
+            l.snapshot_pending()[0].receipt.state,
+            AdmissionState::Cancelled
+        );
+    }
+
+    #[test]
+    fn mark_dispatch_result_leaves_a_delivery_unknown_entry_alone() {
+        let mut l = AdmissionLedger::default();
+        l.admit("c1", "m", DeliveryMode::Normal, &ids(), 0).unwrap();
+        l.mark_all_pending_unknown();
+        let receipt = l
+            .mark_dispatch_result("c1", DispatchOutcome::Rejected)
+            .unwrap();
+        assert_eq!(receipt.state, AdmissionState::DeliveryUnknown);
     }
 
     #[test]

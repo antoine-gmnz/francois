@@ -120,12 +120,22 @@ fn pi_owned_actions() -> [SlashCommandInfo; 3] {
 
 /// FR-2 / contract §5: the runtime's own commands (in their reported order,
 /// exact `invocation` spelling preserved), augmented — never replaced — with
-/// the François-owned actions above. Dedup by bare name, first occurrence
-/// wins, so a runtime command never loses to a same-named builtin action
-/// (the builtins are appended last, not merged in ahead of the runtime's own
-/// list).
+/// the François-owned actions above.
+///
+/// The three owned names are RESERVED (pr-142 §6): a runtime command that
+/// derives one of them is dropped, and the action keeps the name. This is the
+/// `builtin > skill` precedence `merge_commands` already applies to the Claude
+/// registry, and here it is load-bearing rather than cosmetic — `/compact` in
+/// the menu has to reach `session_compact_pi`, whereas a runtime entry of that
+/// name would submit the literal text as an ordinary turn. Everything else
+/// dedups by bare name, first occurrence wins, in the runtime's own order.
 pub fn merge_pi_commands(runtime: &[adapter::RuntimeCommandInfo]) -> Vec<SlashCommandInfo> {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let actions = pi_owned_actions();
+    // Seeding `seen` with the reserved names is what drops a shadowing
+    // runtime entry; the actions themselves are three distinct names by
+    // construction, so they need no dedup pass of their own.
+    let mut seen: std::collections::HashSet<String> =
+        actions.iter().map(|a| a.name.clone()).collect();
     let mut out = Vec::new();
     for c in runtime {
         let name = adapter::pi::skill_name_from_invocation(&c.invocation);
@@ -139,11 +149,7 @@ pub fn merge_pi_commands(runtime: &[adapter::RuntimeCommandInfo]) -> Vec<SlashCo
             });
         }
     }
-    for action in pi_owned_actions() {
-        if seen.insert(action.name.clone()) {
-            out.push(action);
-        }
-    }
+    out.extend(actions);
     out
 }
 
@@ -367,12 +373,18 @@ mod tests {
         assert!(!bare.iter().any(|c| c.name == "login"));
     }
 
+    /// pr-142 §6: a runtime-reported command may NOT shadow one of the three
+    /// François-owned actions. `/compact` in the menu has to run
+    /// `session_compact_pi`; a runtime entry of the same bare name would
+    /// instead submit the literal text as a turn. Same `builtin > skill`
+    /// precedence `merge_commands` applies to the Claude registry.
     #[test]
-    fn merge_pi_commands_dedups_by_bare_name_runtime_wins_over_an_owned_action() {
+    fn merge_pi_commands_never_lets_a_runtime_command_shadow_an_owned_action() {
         let runtime = vec![pi_command("/compact", "runtime-owned compaction")];
         let merged = merge_pi_commands(&runtime);
         let compact_entries: Vec<_> = merged.iter().filter(|c| c.name == "compact").collect();
         assert_eq!(compact_entries.len(), 1);
-        assert_eq!(compact_entries[0].source, "skill");
+        assert_eq!(compact_entries[0].source, "builtin");
+        assert_eq!(compact_entries[0].invocation, None);
     }
 }

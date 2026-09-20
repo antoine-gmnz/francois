@@ -157,4 +157,16 @@ Composer mode control, queue strip, clear-all and persistent Stop; status explai
 
 ## Remediation
 
-(Empty.)
+### 2026-09-20 — round 1 (PR #142 review, §4)
+
+- 12 findings (2 HIGH / 7 MEDIUM / 3 LOW), all fixed: a Pi compaction claims the session (RAII, `SESSION_BUSY`
+  for anything arriving meanwhile, a terminal session is never resurrected); consumption follows the echoed
+  `clientMessageId`, oldest-first only when the echo carries none; the stop budget covers the settle alone
+  and checks once before it can kill; terminal drafts are capped at 20 so the sidecar is bounded; the draft
+  is persisted BEFORE the dispatch (FR-9); `session_submit` refuses a non-Pi session before writing
+  anything; model and effort switches share one gate (connection → `RUNTIME_UNAVAILABLE`, then capability →
+  `RUNTIME_UNSUPPORTED`); a submit racing a reconnect is `SESSION_BUSY`; a Pi session with no resource
+  policy on record fails CLOSED (`RUNTIME_POLICY_REQUIRED`); the close/reopen bracket is a guard.
+- Known, unreachable: `session_acknowledge_policy` is a no-op when `resource_policy` is `None`, so that
+  banner could not be cleared from the UI — but such a session can never connect (`pi_args` refuses a
+  context with no pinned policy). Seed a default-deny policy there if that ever changes.

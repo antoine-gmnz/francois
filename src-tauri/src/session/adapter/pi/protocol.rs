@@ -195,23 +195,45 @@ impl ProtocolEngine {
         Ok((command, self.deadlines.for_kind(kind), rx))
     }
 
-    /// The caller gave up waiting (its own deadline elapsed) — drop the entry
-    /// so a very late reply is classified as "unknown id" (FR-3) rather than
-    /// retained forever. Unused on the path that already fails the whole
-    /// connection on timeout (see `PiConnection::dispatch`) but kept for a
-    /// caller that only wants to abandon its OWN wait without failing others.
-    #[allow(dead_code)]
+    /// The caller gave up on a command that never reached the wire — drop the
+    /// entry so a (impossible, but cheap to be right about) late reply is
+    /// classified as "unknown id" (FR-3) rather than retained forever. Used
+    /// only where NOTHING is known to be wrong with the connection itself:
+    /// `PiConnection::write_command`'s two pre-write exits (the connection is
+    /// shutting down; this verb ran out of its own deadline waiting for
+    /// another verb's write). A command that DID reach the wire and then
+    /// timed out is the opposite case — "ambiguous, not permission to
+    /// replay" — and fails the whole connection through `on_timeout`.
     pub(crate) fn forget(&mut self, id: &str) {
         self.pending.remove(id);
     }
 
-    /// FR-2/FR-3: react to one already-framed, already-decoded line.
+    /// FR-2/FR-3: react to one already-framed line, decoding it here. The
+    /// reader thread decodes each line ONCE (the transcript reducer needs the
+    /// same `Value`) and calls `on_frame` instead; this stays for callers
+    /// holding only the text — the malformed-JSON branch, which has no
+    /// `Value` to hand over, and this module's own tests.
     pub(crate) fn on_line(&mut self, line: &str) -> LineOutcome {
         if self.failed {
             return LineOutcome::default();
         }
         self.frame_count += 1;
-        match wire::parse_line(line) {
+        self.classify(wire::parse_line(line))
+    }
+
+    /// `on_line` for a line the caller has ALREADY decoded — no second
+    /// `serde_json::from_str` over a record that may be megabytes (LOW,
+    /// review round 4: the reader used to parse every line three times).
+    pub(crate) fn on_frame(&mut self, value: &serde_json::Value) -> LineOutcome {
+        if self.failed {
+            return LineOutcome::default();
+        }
+        self.frame_count += 1;
+        self.classify(wire::parse_value(value))
+    }
+
+    fn classify(&mut self, parsed: Result<Frame, ParseError>) -> LineOutcome {
+        match parsed {
             Ok(Frame::Response(resp)) => self.on_response(resp),
             Ok(Frame::Event(ev)) => self.on_event(ev),
             Err(ParseError::NotAFrame) => self.fail(
@@ -527,6 +549,25 @@ mod tests {
         }
         assert!(!e.is_failed());
         assert_eq!(e.counts().1, 0, "no FR-1 event should count as an error");
+    }
+
+    /// LOW (review round 4): `on_frame` is what the reader calls for every
+    /// line it has already decoded — it must classify exactly as `on_line`
+    /// does, for a response and for an event alike, since that is the hot
+    /// path now.
+    #[test]
+    fn on_frame_classifies_an_already_decoded_line_exactly_like_on_line() {
+        let mut e = engine_for_test();
+        let (h, _, rx) = e.send(PiCommandBody::GetState).unwrap();
+        let line = resp_line(&h.id, "get_state", true);
+        let outcome = e.on_frame(&serde_json::from_str(&line).unwrap());
+        assert_eq!(outcome.run_state, Some(RuntimeRunState::Idle));
+        assert!(matches!(rx.recv().unwrap(), PendingOutcome::Response(_)));
+
+        let unknown = e.on_frame(&serde_json::json!({ "type": "future_event" }));
+        assert!(unknown.diagnostic.is_some());
+        assert_eq!(e.counts(), (2, 1));
+        assert!(!e.is_failed());
     }
 
     #[test]

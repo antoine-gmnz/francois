@@ -39,8 +39,17 @@ pub(crate) fn admission_sidecar_path(app: &AppHandle, session_id: &str) -> Optio
 }
 
 /// Atomic whole-file snapshot (temp + rename, `fs_util::unique_temp_path`) —
-/// unlike the transcript's append-only sidecar, this ledger is small (capped
-/// at 20 entries) and mutates in place, so a snapshot is the natural shape.
+/// unlike the transcript's append-only sidecar, this ledger mutates in place,
+/// so a snapshot is the natural shape.
+///
+/// A whole-file rewrite on every change is only defensible because the ledger
+/// is genuinely BOUNDED (review: it was not, and this doc claimed a cap of 20
+/// that nothing enforced): at most `MAX_PENDING` non-terminal entries plus
+/// `MAX_TERMINAL_DRAFTS` recoverable drafts, each carrying at most
+/// `MAX_TEXT_BYTES`. `AdmissionLedger::evict_terminal_overflow` is what makes
+/// that true, and it runs on every transition that creates a terminal entry,
+/// `hydrate_from_drafts` included — so a sidecar edited by hand cannot
+/// reintroduce an unbounded one either.
 /// Best-effort: a write failure never breaks the calling turn.
 fn write_sidecar_file(path: &Path, drafts: &[DraftRecord]) {
     if drafts.is_empty() {
@@ -123,6 +132,11 @@ impl AdmissionLedger {
                 seq,
             });
         }
+        // FR-9 (review): the on-disk file is the one input this process did
+        // not itself bound — a sidecar from an older build (or edited by hand)
+        // can carry any number of drafts, and hydrating it unbounded would put
+        // the ledger straight back over its cap.
+        ledger.evict_terminal_overflow();
         ledger
     }
 
@@ -220,6 +234,26 @@ mod tests {
         let pending = l.snapshot_pending();
         assert_eq!(pending[0].receipt.state, AdmissionState::Cancelled);
         assert_eq!(pending[1].receipt.state, AdmissionState::Rejected);
+    }
+
+    /// FR-9 (review): an oversized sidecar — an older build's, or one edited
+    /// by hand — is trimmed on load rather than hydrated whole.
+    #[test]
+    fn hydrating_an_oversized_sidecar_trims_it_back_to_the_cap() {
+        let drafts: Vec<DraftRecord> = (0..MAX_TERMINAL_DRAFTS + 7)
+            .map(|i| DraftRecord {
+                client_message_id: format!("c{i}"),
+                text: "draft".into(),
+                delivery: DeliveryMode::Normal,
+                attachment_ids: Vec::new(),
+                created_at: i as u64,
+                state: AdmissionState::Cancelled,
+            })
+            .collect();
+        let l = AdmissionLedger::hydrate_from_drafts(drafts);
+        let pending = l.snapshot_pending();
+        assert_eq!(pending.len(), MAX_TERMINAL_DRAFTS);
+        assert_eq!(pending[0].receipt.client_message_id, "c7");
     }
 
     #[test]

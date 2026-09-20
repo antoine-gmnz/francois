@@ -4,7 +4,9 @@
 //! exactly-once settle shared with `message_end.toolResult`. The data model
 //! (`ToolState`, `ToolStatus`) stays in `mod.rs` with the rest of the reducer.
 
-use super::{bound_preview, protocol_error, str_field, ToolState, ToolStatus, TranscriptReducer};
+use super::{
+    append_scrubbed_delta, bound_preview, str_field, ToolState, ToolStatus, TranscriptReducer,
+};
 use crate::session::events::RuntimeEventPayload;
 use serde_json::Value;
 
@@ -26,79 +28,103 @@ impl TranscriptReducer {
         &mut self,
         raw: &Value,
         now_ms: u64,
-    ) -> Option<RuntimeEventPayload> {
+    ) -> Vec<RuntimeEventPayload> {
         let Some(tool_call_id) = str_field(raw, "toolCallId") else {
-            return Some(protocol_error(
-                "message_end toolResult is missing toolCallId",
-            ));
+            return self.protocol_notice("message_end toolResult is missing toolCallId");
         };
         let Some(is_error) = raw.get("isError").and_then(Value::as_bool) else {
-            return Some(protocol_error("message_end toolResult is missing isError"));
+            return self.protocol_notice("message_end toolResult is missing isError");
         };
         let output = raw.get("output").and_then(Value::as_str).unwrap_or("");
-        let tool = self.tools.get_mut(tool_call_id)?;
+        let tool_call_id = tool_call_id.to_string();
+        let Some(tool) = self.tools.get_mut(&tool_call_id) else {
+            return Vec::new();
+        };
         if tool.settled {
-            return None; // FR-3: settle exactly once
+            return Vec::new(); // FR-3: settle exactly once
         }
         settle_tool(tool, is_error, output, now_ms);
         let event = RuntimeEventPayload::ToolUpdate {
             block_id: tool.block_id.clone(),
-            tool: tool.to_call(tool_call_id),
+            tool: tool.to_call(&tool_call_id),
         };
         // pi-transcript-events (review remediation): bounded eviction, same
         // rationale as `note_message_finalized` — `tools` otherwise grows
         // for the connection's lifetime.
-        self.note_tool_settled(tool_call_id);
-        Some(event)
+        self.note_tool_settled(&tool_call_id);
+        vec![event]
     }
 
     // ---------------------------------------------------------- tool calls
 
-    pub(super) fn on_toolcall_start(&mut self, raw: &Value) -> Vec<RuntimeEventPayload> {
+    pub(super) fn on_toolcall_start(
+        &mut self,
+        raw: &Value,
+        now_ms: u64,
+    ) -> Vec<RuntimeEventPayload> {
         let (Some(tool_call_id), Some(name)) =
             (str_field(raw, "toolCallId"), str_field(raw, "name"))
         else {
-            return vec![protocol_error("toolcall_start is missing toolCallId/name")];
+            return self.protocol_notice("toolcall_start is missing toolCallId/name");
         };
-        // FR-3/FR-8 (review round 2): `entry(...).or_insert_with(...)`, same
-        // as `on_message_start` — a REPLAYED start for an already-tracked
-        // toolCallId must reuse the existing block/state, never mint a
-        // second `ToolState` (a fresh insert would orphan the first block
-        // and duplicate the tool row).
-        let tool = self
-            .tools
-            .entry(tool_call_id.to_string())
-            .or_insert_with(|| {
-                // FR-3 acceptance: "A tool is not shown running during argument
-                // generation" — pending, not running, until tool_execution_start.
-                ToolState {
-                    block_id: crate::ids::uuid(),
-                    name: name.to_string(),
-                    status: ToolStatus::Pending,
-                    input_text: String::new(),
-                    output_text: String::new(),
-                    input_truncated: false,
-                    output_truncated: false,
-                    started_at: None,
-                    completed_at: None,
-                    settled: false,
-                }
-            });
-        let block_id = tool.block_id.clone();
-        let call = tool.to_call(tool_call_id);
-        vec![RuntimeEventPayload::ToolUpdate {
-            block_id,
-            tool: call,
-        }]
+        let (tool_call_id, name) = (tool_call_id.to_string(), name.to_string());
+        // FR-3/FR-8 (review round 2): a REPLAYED start for an already-tracked
+        // toolCallId reuses the existing block/state, never a second
+        // `ToolState` (a fresh insert would orphan the first block and
+        // duplicate the tool row).
+        if let Some(tool) = self.tools.get(&tool_call_id) {
+            // LOW (review round 7): …and if that call already SETTLED, the
+            // replay is a no-op, exactly like every other handler's `settled`
+            // guard. Re-publishing the terminal snapshot would re-persist a
+            // final block, and adopting the id for a NEW call would give it a
+            // settled state it could never leave (its execution events would
+            // all be dropped). An id whose state has since been EVICTED is
+            // indistinguishable from a fresh one and deliberately opens a new
+            // block — the eviction window (`REDUCER_STATE_CAP`) is what bounds
+            // how far back "replay" can reach.
+            if tool.settled {
+                return Vec::new();
+            }
+            let block_id = tool.block_id.clone();
+            let call = tool.to_call(&tool_call_id);
+            return vec![RuntimeEventPayload::ToolUpdate {
+                block_id,
+                tool: call,
+            }];
+        }
+        // FR-3 acceptance: "A tool is not shown running during argument
+        // generation" — pending, not running, until tool_execution_start.
+        self.tools.insert(
+            tool_call_id.clone(),
+            ToolState {
+                block_id: crate::ids::uuid(),
+                name,
+                status: ToolStatus::Pending,
+                input_text: String::new(),
+                output_text: String::new(),
+                input_truncated: false,
+                output_truncated: false,
+                started_at: None,
+                completed_at: None,
+                settled: false,
+            },
+        );
+        // caps.rs: the new call joins the OPEN tier, which may settle and
+        // evict the oldest call that never got a result.
+        let mut events = self.note_tool_opened(&tool_call_id, now_ms);
+        let tool = &self.tools[&tool_call_id];
+        events.push(RuntimeEventPayload::ToolUpdate {
+            block_id: tool.block_id.clone(),
+            tool: tool.to_call(&tool_call_id),
+        });
+        events
     }
 
     pub(super) fn on_toolcall_delta(&mut self, raw: &Value) -> Vec<RuntimeEventPayload> {
         let (Some(tool_call_id), Some(delta)) =
             (str_field(raw, "toolCallId"), str_field(raw, "inputDelta"))
         else {
-            return vec![protocol_error(
-                "toolcall_delta is missing toolCallId/inputDelta",
-            )];
+            return self.protocol_notice("toolcall_delta is missing toolCallId/inputDelta");
         };
         let Some(tool) = self.tools.get_mut(tool_call_id) else {
             return Vec::new(); // no matching call tracked — nothing to accumulate onto
@@ -106,11 +132,12 @@ impl TranscriptReducer {
         if tool.settled {
             return Vec::new();
         }
+        // MED (review round 7): scrub only what is NEW (plus a bounded tail of
+        // what is already there, so a secret split across two deltas is still
+        // caught) — re-scrubbing the whole accumulated input on every delta
+        // made argument generation quadratic in its own length.
         if !tool.input_truncated {
-            tool.input_text.push_str(delta);
-            let (bounded, truncated) = bound_preview(&tool.input_text);
-            tool.input_text = bounded;
-            tool.input_truncated = truncated;
+            tool.input_truncated = append_scrubbed_delta(&mut tool.input_text, delta);
         }
         vec![RuntimeEventPayload::ToolUpdate {
             block_id: tool.block_id.clone(),
@@ -122,7 +149,7 @@ impl TranscriptReducer {
         let (Some(tool_call_id), Some(input)) =
             (str_field(raw, "toolCallId"), str_field(raw, "input"))
         else {
-            return vec![protocol_error("toolcall_end is missing toolCallId/input")];
+            return self.protocol_notice("toolcall_end is missing toolCallId/input");
         };
         let Some(tool) = self.tools.get_mut(tool_call_id) else {
             return Vec::new();
@@ -147,7 +174,7 @@ impl TranscriptReducer {
         now_ms: u64,
     ) -> Vec<RuntimeEventPayload> {
         let Some(tool_call_id) = str_field(raw, "toolCallId") else {
-            return vec![protocol_error("tool_execution_start is missing toolCallId")];
+            return self.protocol_notice("tool_execution_start is missing toolCallId");
         };
         let Some(tool) = self.tools.get_mut(tool_call_id) else {
             return Vec::new(); // defensive: execution reported for an untracked call
@@ -167,9 +194,7 @@ impl TranscriptReducer {
         let (Some(tool_call_id), Some(progress)) =
             (str_field(raw, "toolCallId"), str_field(raw, "progress"))
         else {
-            return vec![protocol_error(
-                "tool_execution_update is missing toolCallId/progress",
-            )];
+            return self.protocol_notice("tool_execution_update is missing toolCallId/progress");
         };
         let Some(tool) = self.tools.get_mut(tool_call_id) else {
             return Vec::new();
@@ -197,12 +222,11 @@ impl TranscriptReducer {
             str_field(raw, "toolCallId"),
             raw.get("isError").and_then(Value::as_bool),
         ) else {
-            return vec![protocol_error(
-                "tool_execution_end is missing toolCallId/isError",
-            )];
+            return self.protocol_notice("tool_execution_end is missing toolCallId/isError");
         };
         let output = raw.get("output").and_then(Value::as_str).unwrap_or("");
-        let Some(tool) = self.tools.get_mut(tool_call_id) else {
+        let tool_call_id = tool_call_id.to_string();
+        let Some(tool) = self.tools.get_mut(&tool_call_id) else {
             return Vec::new();
         };
         if tool.settled {
@@ -211,19 +235,20 @@ impl TranscriptReducer {
         settle_tool(tool, is_error, output, now_ms);
         let event = RuntimeEventPayload::ToolUpdate {
             block_id: tool.block_id.clone(),
-            tool: tool.to_call(tool_call_id),
+            tool: tool.to_call(&tool_call_id),
         };
         // pi-transcript-events (review remediation): same bounded eviction
         // as `reconcile_tool_result`.
-        self.note_tool_settled(tool_call_id);
+        self.note_tool_settled(&tool_call_id);
         vec![event]
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::scrub::PREVIEW_BYTES;
     use super::super::testutil::tool_update;
-    use super::super::{TranscriptReducer, PREVIEW_BYTES};
+    use super::super::TranscriptReducer;
     use crate::session::events::RuntimeEventPayload;
     use serde_json::json;
 
@@ -370,6 +395,100 @@ mod tests {
                 _ => panic!("expected a tool.update"),
             },
             "same toolCallId ⇒ same stable blockId across a replay"
+        );
+    }
+
+    /// LOW (review round 7): a `toolcall_start` reusing an id whose call has
+    /// already SETTLED used to republish the settled snapshot — re-persisting
+    /// a final block — and, if the wire meant it as a NEW call, handed that
+    /// call a settled state it could never leave (every later event for it
+    /// returns early on `settled`, so it would sit finished forever). The
+    /// deterministic rule is the one every other handler already follows: a
+    /// settled id is a no-op.
+    #[test]
+    fn a_toolcall_start_reusing_a_settled_id_is_a_no_op() {
+        let mut r = TranscriptReducer::new();
+        r.on_event(
+            &json!({"type":"toolcall_start","toolCallId":"t1","name":"Bash"}),
+            0,
+        );
+        let settled = r.on_event(
+            &json!({"type":"tool_execution_end","toolCallId":"t1","isError":false,"output":"ok"}),
+            10,
+        );
+        let settled_block = match &settled[0] {
+            RuntimeEventPayload::ToolUpdate { block_id, .. } => block_id.clone(),
+            other => panic!("expected a tool.update, got {other:?}"),
+        };
+
+        let replay = r.on_event(
+            &json!({"type":"toolcall_start","toolCallId":"t1","name":"Read"}),
+            20,
+        );
+        assert!(
+            replay.is_empty(),
+            "a settled call must neither re-publish nor reopen: {replay:?}"
+        );
+        // Nothing about the settled row moved: same block, same name, still
+        // succeeded — and a later execution event stays a no-op too.
+        let tool = &r.tools["t1"];
+        assert_eq!(tool.block_id, settled_block);
+        assert_eq!(tool.name, "Bash");
+        assert!(r
+            .on_event(
+                &json!({"type":"tool_execution_start","toolCallId":"t1"}),
+                30
+            )
+            .is_empty());
+    }
+
+    /// The other half of the same decision: once the bounded reducer state has
+    /// EVICTED that id, it is indistinguishable from an id never seen, so the
+    /// start deliberately opens a NEW block rather than pretending to
+    /// recognize it. The eviction window is what bounds how far back a replay
+    /// can reach, and it is documented rather than silently duplicating a row
+    /// that is still on screen.
+    #[test]
+    fn a_toolcall_start_for_an_evicted_id_opens_a_new_block() {
+        let mut r = TranscriptReducer::new();
+        let start = r.on_event(
+            &json!({"type":"toolcall_start","toolCallId":"t1","name":"Bash"}),
+            0,
+        );
+        let first_block = match &start[0] {
+            RuntimeEventPayload::ToolUpdate { block_id, .. } => block_id.clone(),
+            other => panic!("expected a tool.update, got {other:?}"),
+        };
+        r.on_event(
+            &json!({"type":"tool_execution_end","toolCallId":"t1","isError":false,"output":"ok"}),
+            1,
+        );
+        // Push "t1" out of the settled window.
+        for i in 0..(crate::session::TRANSCRIPT_BUFFER_CAP + 1) {
+            let id = format!("filler{i}");
+            r.on_event(
+                &json!({"type":"toolcall_start","toolCallId":id,"name":"Bash"}),
+                2,
+            );
+            r.on_event(
+                &json!({"type":"tool_execution_end","toolCallId":id,"isError":false,"output":"ok"}),
+                3,
+            );
+        }
+        assert!(
+            !r.tools.contains_key("t1"),
+            "the window must have evicted it"
+        );
+
+        let reused = r.on_event(
+            &json!({"type":"toolcall_start","toolCallId":"t1","name":"Bash"}),
+            4,
+        );
+        let call = tool_update(&reused, "t1");
+        assert_eq!(call.status, "pending");
+        assert_ne!(
+            r.tools["t1"].block_id, first_block,
+            "an evicted id opens its own block rather than resurrecting one"
         );
     }
 

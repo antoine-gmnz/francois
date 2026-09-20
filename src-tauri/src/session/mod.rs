@@ -27,6 +27,7 @@ mod agent_transcript;
 mod agents;
 mod attachments;
 mod blocks;
+mod blocks_pi;
 /// cloud-sessions: adopting a Claude Code on the web session. A CHILD of this
 /// module on purpose — it constructs a `Session` (FR-10), and Rust lets a child
 /// read its ancestor's private fields, so nothing here needs widened visibility.
@@ -155,13 +156,13 @@ pub use cloud::{
 pub(crate) use commands::switch_permission_mode_in_engine;
 pub(crate) use commands::validate_catalog_selection;
 pub use commands::{
-    RuntimeModelCatalogOut, SendSource, SessionSettingsPatch, __cmd__conversation_get_transcript,
-    __cmd__permissions_decide, __cmd__runtime_models, __cmd__session_acknowledge_policy,
-    __cmd__session_answer_question, __cmd__session_clear, __cmd__session_clear_queue,
-    __cmd__session_compact, __cmd__session_create, __cmd__session_interrupt, __cmd__session_list,
-    __cmd__session_metrics, __cmd__session_new_from, __cmd__session_pick_directory,
-    __cmd__session_reconnect, __cmd__session_remove, __cmd__session_rename, __cmd__session_send,
-    __cmd__session_submit, __cmd__session_switch_effort, __cmd__session_switch_model,
+    __cmd__conversation_get_transcript, __cmd__permissions_decide, __cmd__runtime_models,
+    __cmd__session_acknowledge_policy, __cmd__session_answer_question, __cmd__session_clear,
+    __cmd__session_clear_queue, __cmd__session_compact, __cmd__session_create,
+    __cmd__session_interrupt, __cmd__session_list, __cmd__session_metrics, __cmd__session_new_from,
+    __cmd__session_pick_directory, __cmd__session_reconnect, __cmd__session_remove,
+    __cmd__session_rename, __cmd__session_send, __cmd__session_submit,
+    __cmd__session_switch_effort, __cmd__session_switch_model,
     __cmd__session_switch_permission_mode, __cmd__session_switch_response_mode,
     __cmd__session_unqueue, __cmd__session_update_settings,
     __tauri_command_name_conversation_get_transcript, __tauri_command_name_permissions_decide,
@@ -182,7 +183,8 @@ pub use commands::{
     session_interrupt, session_list, session_metrics, session_new_from, session_pick_directory,
     session_reconnect, session_remove, session_rename, session_send, session_submit,
     session_switch_effort, session_switch_model, session_switch_permission_mode,
-    session_switch_response_mode, session_unqueue, session_update_settings,
+    session_switch_response_mode, session_unqueue, session_update_settings, RuntimeModelCatalogOut,
+    SendSource, SessionSettingsPatch,
 };
 #[cfg(test)]
 pub(crate) use control::QuestionOption;
@@ -1475,138 +1477,6 @@ impl Session {
         }
         self.agents.insert(a.id.clone(), a);
     }
-
-    // ---------------------------------------------------------- pi-transcript-events
-
-    /// FR-6/FR-7: append a normalized Pi user block, with resolved attachment
-    /// refs riding alongside (never base64) — present only when non-empty,
-    /// matching every other optional `BufBlock` field's omit-when-absent
-    /// convention (see `classify_block_user_attachments_present_only_when_set`).
-    fn buf_message_user_pi(
-        &mut self,
-        block_id: &str,
-        text: String,
-        attachments: Vec<events::RuntimeAttachmentRef>,
-    ) {
-        let attachments = (!attachments.is_empty()).then(|| {
-            serde_json::to_value(&attachments).unwrap_or_else(|_| Value::Array(Vec::new()))
-        });
-        self.block_buffer.push(BufBlock {
-            text,
-            attachments,
-            ..BufBlock::new(block_id, BlockKind::User)
-        });
-        self.trim_block_buffer();
-    }
-
-    /// FR-2/FR-9: settle a normalized Pi assistant content slot in place, or
-    /// append one that streamed no prior delta — same upsert `finish_assistant`
-    /// performs for every other runtime, plus the `outcome` field. Left absent
-    /// for a normal completion (contract note: "absent ⇒ a normal completion"),
-    /// set only for `interrupted`/`error`. Returns the finalized block so the
-    /// caller persists it exactly once, at settlement.
-    fn finish_assistant_pi(
-        &mut self,
-        block_id: &str,
-        text: String,
-        outcome: &str,
-    ) -> Option<BufBlock> {
-        let outcome_field = (outcome != "complete").then(|| outcome.to_string());
-        let out = match self
-            .block_buffer
-            .iter_mut()
-            .rev()
-            .find(|b| b.block_id == block_id)
-        {
-            Some(b) => {
-                b.text = text;
-                b.streaming = false;
-                b.outcome = outcome_field;
-                Some(b.clone())
-            }
-            None => {
-                self.block_buffer.push(BufBlock {
-                    text,
-                    outcome: outcome_field,
-                    ..BufBlock::new(block_id, BlockKind::Assistant)
-                });
-                self.block_buffer.last().cloned()
-            }
-        };
-        self.trim_block_buffer();
-        out
-    }
-
-    /// FR-3/FR-4: append (pending) or update (running/settled) a normalized
-    /// Pi tool block in place — one row for the whole lifecycle, never a
-    /// second one for the same call id (edge cases §7: "do not append a
-    /// second tool row"). `execution` carries the whole sanitized snapshot on
-    /// every call; only a TERMINAL status (never `pending`/`running`) returns
-    /// the block, so a caller persists exactly once, at settlement — mid-
-    /// lifecycle rows stay live-only, matching every other runtime's own
-    /// `buf_tool`/`buf_tool_done` split.
-    fn buf_tool_update_pi(
-        &mut self,
-        block_id: &str,
-        tool: events::RuntimeToolCall,
-    ) -> Option<BufBlock> {
-        let streaming = matches!(tool.status.as_str(), "pending" | "running");
-        let name = tool.name.clone();
-        // MEDIUM (review round 3): derive a genuinely informative summary
-        // from the tool's own input the same way every other adapter does
-        // (`grok`/`codex`/`openai`/`stream` all call `tools::tool_summary`),
-        // and recompute it on EVERY update — `input_text` starts empty at
-        // `toolcall_start`, accumulates through `toolcall_delta`, and becomes
-        // authoritative at `toolcall_end`, so the bare tool name from the
-        // first insert must not be left standing once real input exists.
-        let summary = tool_summary_from_input_text(&name, &tool.input_text, &self.cwd);
-        let execution = serde_json::to_value(&tool).ok();
-        match self
-            .block_buffer
-            .iter_mut()
-            .find(|b| b.block_id == block_id)
-        {
-            Some(b) => {
-                b.tool = name;
-                b.summary = summary;
-                b.execution = execution;
-                b.streaming = streaming;
-            }
-            None => {
-                self.block_buffer.push(BufBlock {
-                    tool: name,
-                    summary,
-                    execution,
-                    streaming,
-                    ..BufBlock::new(block_id, BlockKind::Tool)
-                });
-            }
-        }
-        self.trim_block_buffer();
-        if streaming {
-            return None;
-        }
-        self.block_buffer
-            .iter()
-            .find(|b| b.block_id == block_id)
-            .cloned()
-    }
-
-    /// FR-5/FR-8: append a normalized Pi notice — always final, like every
-    /// other `NoticeConversationBlock` producer (agent-tab's own notices carry
-    /// no `tone`; this one, appended to the SESSION transcript, always does).
-    fn buf_notice_pi(&mut self, block_id: &str, tone: String, text: String) -> BufBlock {
-        self.block_buffer.push(BufBlock {
-            text,
-            tone: Some(tone),
-            ..BufBlock::new(block_id, BlockKind::Notice)
-        });
-        self.trim_block_buffer();
-        self.block_buffer
-            .last()
-            .cloned()
-            .expect("just pushed above")
-    }
 }
 
 #[derive(Default)]
@@ -2123,72 +1993,6 @@ mod tests {
         // SAME call — the returned clone was captured before that happened.
         assert_eq!(s.block_buffer.len(), TRANSCRIPT_BUFFER_CAP);
         assert_eq!(s.block_buffer[0].block_id, "b20");
-    }
-
-    // ---------- pi-transcript-events: buf_*_pi direct unit coverage ----------
-
-    #[test]
-    fn buf_message_user_pi_appends_text_and_omits_attachments_when_none() {
-        let mut s = test_session();
-        s.buf_message_user_pi("u1", "hi".into(), Vec::new());
-        let block = &s.block_buffer[0];
-        assert_eq!(block.block_id, "u1");
-        assert!(matches!(block.kind, BlockKind::User));
-        assert_eq!(block.text, "hi");
-        assert!(block.attachments.is_none());
-    }
-
-    #[test]
-    fn buf_message_user_pi_carries_resolved_attachment_refs() {
-        let mut s = test_session();
-        let attachments = vec![events::RuntimeAttachmentRef {
-            id: "a1".into(),
-            name: "cat.png".into(),
-            mime_type: "image/png".into(),
-            state: "available".into(),
-        }];
-        s.buf_message_user_pi("u1", "see this".into(), attachments);
-        let stored = s.block_buffer[0].attachments.as_ref().unwrap();
-        assert_eq!(stored[0]["id"], "a1");
-        assert_eq!(stored[0]["state"], "available");
-    }
-
-    #[test]
-    fn finish_assistant_pi_appends_when_no_delta_ever_opened_the_block() {
-        let mut s = test_session();
-        let finished = s
-            .finish_assistant_pi("a1", "Hello".into(), "complete")
-            .expect("block");
-        assert_eq!(finished.block_id, "a1");
-        assert!(!finished.streaming);
-        // A normal completion leaves `outcome` unset (contract note: "absent
-        // ⇒ a normal completion").
-        assert!(finished.outcome.is_none());
-    }
-
-    #[test]
-    fn finish_assistant_pi_settles_a_streaming_block_in_place_with_its_outcome() {
-        let mut s = test_session();
-        s.buf_assistant_streaming("a1", "Hel", "Hel");
-        let finished = s
-            .finish_assistant_pi("a1", "Hello".into(), "interrupted")
-            .expect("block");
-        assert_eq!(s.block_buffer.len(), 1);
-        assert_eq!(finished.text, "Hello");
-        assert!(!finished.streaming);
-        assert_eq!(finished.outcome.as_deref(), Some("interrupted"));
-    }
-
-    #[test]
-    fn buf_notice_pi_appends_an_already_final_block_with_its_tone() {
-        let mut s = test_session();
-        let notice = s.buf_notice_pi("n1", "warning".into(), "Retrying: rate limited".into());
-        assert_eq!(notice.block_id, "n1");
-        assert!(matches!(notice.kind, BlockKind::Notice));
-        assert!(!notice.streaming);
-        assert_eq!(notice.tone.as_deref(), Some("warning"));
-        assert_eq!(notice.text, "Retrying: rate limited");
-        assert_eq!(s.block_buffer.len(), 1);
     }
 
     #[test]

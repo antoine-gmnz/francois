@@ -181,3 +181,19 @@ Reuse transcript typography and tool rows; add expandable details, state labels 
 ### 2026-09-19 — round 6
 
 - 2026-09-19 — 6 findings (1 HIGH / 1 MEDIUM / 4 LOW), all fixed
+
+### 2026-09-20 — round 7 (PR #142 review, §2)
+
+- 11 findings (2 HIGH / 4 MEDIUM / 5 LOW), all fixed: a settled block the trim evicts in the same apply is
+  still persisted; a dispatch-side failure — and the reader's own EOF / read-error / frame-error paths —
+  retire the connection and reap the child; `shutdown()` is bounded even behind a stalled stdin write;
+  `write_lock` no longer spans a round trip; reducer state is capped for never-settling ids; tool-arg
+  scrubbing is incremental and previews are cut before they are scrubbed; image reads are contained to the
+  session directory; a replayed `toolcall_start` on a settled id is a no-op; each wire line is parsed once.
+- **Reading of the §4 failure table, recorded.** "malformed known event → failure RUNTIME_PROTOCOL_ERROR"
+  is applied at the level that can end a connection (`wire::FrameError`, `protocol.rs`). A malformed FIELD
+  inside an otherwise well-framed event is a `Notice { tone: "error" }` and the session stays usable — the
+  treatment §3 already gives a failed tool — bounded at 10 notices per connection, then one "not shown".
+- Accepted ceiling: a stalled `write_all` still parks the dispatch thread that issued it until the child
+  dies (bounded by any Stop/`shutdown()`). Upgrade trigger: a real Pi child observed wedging stdin without
+  exiting → a dedicated writer thread fed by a bounded channel.

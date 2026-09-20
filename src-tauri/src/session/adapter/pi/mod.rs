@@ -91,7 +91,7 @@ pub(crate) use dispatcher::connect;
 /// pi-models-metrics §5: `francois:runtime:models` / the Pi branches of
 /// `session_create`/`session_switch_model` reach these through
 /// `adapter::pi::models::*` — see that module's own doc.
-pub(crate) use models::{resolve_and_validate_pair, runtime_models};
+pub(crate) use models::{evict_catalog, resolve_and_validate_pair, runtime_models};
 pub(crate) use persistence::PiResumeRecord;
 /// pi-migration-rollout FR-3: `session_create`'s Pi branch resolves the
 /// launch-prompt snapshot exactly once, here — the SAME `PiLaunchPrompt`

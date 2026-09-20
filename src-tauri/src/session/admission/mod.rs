@@ -27,8 +27,11 @@
 //! `snapshot_pending`) is the FULL unresolved ledger — `admitting`/`queued`
 //! PLUS the recoverable terminal states (`cancelled`/`delivery-unknown`/
 //! `rejected`), which stay listed with their text intact until the user
-//! removes them (`unqueue` — Discard — or a fresh `admit` reusing the id —
-//! Resend). Only `consumed` drops an entry from the ledger, the instant it
+//! removes them. `unqueue` is the ONLY removal path — Discard calls it
+//! directly, and a Resend mints a NEW `clientMessageId` and then unqueues the
+//! stale row (a fresh `admit` reusing the id never replaces the draft: it
+//! answers with the existing receipt, or `IdConflict` if the content
+//! differs). Only `consumed` drops an entry from the ledger, the instant it
 //! settles (its transcript block replaces it). `session_unqueue`, for a Pi
 //! session, removes any entry Pi does NOT own — a still-local `admitting`
 //! intent, or any of the three recoverable terminal states; a Pi-accepted
@@ -62,10 +65,20 @@ mod ledger;
 mod sidecar;
 
 pub(crate) use deliver::{admit_and_deliver, publish_queue_changed};
+pub(crate) use ledger::AdmissionClose;
 pub(crate) use sidecar::{remove_admission_sidecar, write_admission_sidecar};
 
 /// FR-4: at most this many pending (not yet consumed/settled) intents per session.
 pub(crate) const MAX_PENDING: usize = 20;
+/// FR-9 (review): at most this many RECOVERABLE TERMINAL entries
+/// (`cancelled`/`delivery-unknown`/`rejected`) per session. `MAX_PENDING`
+/// counts only the non-terminal ones, and the ONLY thing that ever removes a
+/// terminal entry is an explicit `unqueue` — so a session stopped over and
+/// over grew this ledger, and the whole-file sidecar rewrite behind it,
+/// without any bound at all. Same number as `MAX_PENDING` because a draft is
+/// a draft: the ledger a user can act on is at most one full queue of live
+/// intents plus one full queue of recoverable ones.
+pub(crate) const MAX_TERMINAL_DRAFTS: usize = MAX_PENDING;
 /// FR-4: at most this many UTF-8 bytes of message text.
 pub(crate) const MAX_TEXT_BYTES: usize = 1024 * 1024;
 /// FR-4: the 32 MiB encoded-frame cap, estimated pre-dispatch in `admit_and_deliver`.
@@ -92,6 +105,19 @@ pub enum AdmissionState {
     Cancelled,
     DeliveryUnknown,
     Rejected,
+}
+
+impl AdmissionState {
+    /// The RECOVERABLE terminal states — the ones that stay on record with
+    /// their text intact until the user removes them. `Consumed` is terminal
+    /// too but is never IN the ledger (it drops out the instant it settles),
+    /// so it is deliberately not one of these.
+    fn is_recoverable_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Cancelled | Self::DeliveryUnknown | Self::Rejected
+        )
+    }
 }
 
 /// Mirrors contract/common.ts `RuntimeMessageReceipt`.
@@ -148,6 +174,17 @@ pub(crate) enum AdmitError {
     TooLarge,
     IdConflict,
     QueueFull,
+    /// FR-6: admission is closed — a Stop (or a `session_clear_queue`) is
+    /// mid-bracket, so nothing new may be admitted, let alone dispatched.
+    Closed,
+}
+
+/// FR-6 / Edge cases §7: "Reject while stopping", spelled ONCE — both the
+/// fast-path probe in `admit_and_deliver` and `AdmitError::Closed`'s own
+/// mapping answer with this, so the two can never drift apart (the caller sees
+/// the same code and message whichever check caught the race).
+pub(crate) fn stopping_error() -> AppError {
+    AppError::new(ErrorCode::SessionBusy, "the session is stopping")
 }
 
 impl AdmitError {
@@ -167,6 +204,7 @@ impl AdmitError {
                 "this session already has 20 pending intents",
                 serde_json::json!({ "cap": MAX_PENDING }),
             ),
+            AdmitError::Closed => stopping_error(),
         }
     }
 }
@@ -195,8 +233,14 @@ pub(crate) enum UnqueueOutcome {
 pub(crate) struct AdmissionLedger {
     entries: Vec<Entry>,
     next_seq: u64,
-    /// FR-6: "Stop closes admission" — a new submit is refused while true.
-    closed: bool,
+    /// FR-6: "Stop closes admission" — a new submit is refused while this is
+    /// above zero. A DEPTH counter, not a flag, because two callers bracket
+    /// their wire calls with `close`/`reopen` (the Stop sequence and
+    /// `session_clear_queue`) and they can overlap: with a flag, whichever
+    /// bracket finished first would reopen admission while the other was
+    /// still mid-sequence. Runtime-only — never persisted to the sidecar (a
+    /// reloaded ledger is always open; no bracket survives a restart).
+    close_depth: u32,
 }
 
 // ---------------------------------------------------------------- Engine glue

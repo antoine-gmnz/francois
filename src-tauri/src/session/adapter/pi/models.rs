@@ -46,14 +46,52 @@ use tauri::AppHandle;
 
 // ---------------------------------------------------------------- mapping
 
+/// LOW (review): the descriptor's two free-text fields are DISPLAY strings
+/// that land on `SessionMeta` and in the model picker, and nothing else
+/// bounded them — a buggy or hostile reply could hand the UI a megabyte of
+/// `displayName`, or a control/bidi run that reorders a rendered line.
+/// Clamped at the ONE mapping function rather than at each consumer.
+/// `crate::ipc::safe_display` is the repo's predicate for the same rule; this
+/// is its clamping twin, since dropping a whole model row over a cosmetic
+/// string would be worse than trimming it.
+const MAX_DISPLAY_BYTES: usize = 256;
+
+fn bound_display(text: &str) -> String {
+    let mut out = String::new();
+    for c in text
+        .chars()
+        .filter(|c| !c.is_control() && !crate::ipc::is_bidi_control(*c))
+    {
+        if out.len() + c.len_utf8() > MAX_DISPLAY_BYTES {
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// One row of `get_available_models`' assumed `{ models: [...] }` shape, or a
 /// `set_model` read-back's `data.model`. `None` on anything that does not
-/// deserialize as `RuntimeModelDescriptor`, or whose identity is blank —
-/// never a partially-filled descriptor.
+/// deserialize as `RuntimeModelDescriptor`, or whose identity is blank or
+/// fails `RuntimeModelRef::validate` — never a partially-filled descriptor.
+///
+/// LOW (review): `validate()` is what the rest of the boundary already
+/// enforces on a provider/model pair (`install_runtime_connection`,
+/// `RuntimeConnectContext::validate`, `resolve_and_validate_pair`), so a row
+/// that skipped it here could be cached, offered in the picker, and only
+/// refused at the moment the user picked it. The blank-after-trim check stays
+/// on top: `validate` rejects `""` but not `"   "`.
 fn parse_descriptor(v: &Value) -> Option<RuntimeModelDescriptor> {
-    let d: RuntimeModelDescriptor = serde_json::from_value(v.clone()).ok()?;
-    (!d.model_ref.provider_id.trim().is_empty() && !d.model_ref.model_id.trim().is_empty())
-        .then_some(d)
+    let mut d: RuntimeModelDescriptor = serde_json::from_value(v.clone()).ok()?;
+    if d.model_ref.provider_id.trim().is_empty()
+        || d.model_ref.model_id.trim().is_empty()
+        || d.model_ref.validate().is_err()
+    {
+        return None;
+    }
+    d.display_name = bound_display(&d.display_name);
+    d.unavailable_reason = d.unavailable_reason.as_deref().map(bound_display);
+    Some(d)
 }
 
 /// FR-1: the AVAILABLE snapshot — empty when the account has none, never
@@ -197,16 +235,57 @@ fn catalog_cache() -> &'static Mutex<HashMap<String, CacheEntry>> {
 /// account's `inheritEnvironmentCredentials` choice (the "environment" axis:
 /// a session launched with a different credential-inheritance policy is a
 /// different probe environment).
-fn cache_key(account_id: &str, config_dir: &str, inherit_environment_credentials: bool) -> String {
+/// PR #142 §5: the fingerprint is read through `account::readable_config_dir`,
+/// the SAME accessor the trust model uses — a `wsl` account stores the path
+/// the distro uses, and hashing that string from this side would key every
+/// such account on the one "unfingerprintable" bucket instead of on its
+/// actual configuration. An unreadable directory still renders (that is what
+/// `Fingerprint`'s `Display` is for), it just never doubles as a baseline.
+fn cache_key(
+    account_id: &str,
+    config_dir: &str,
+    runtime: &str,
+    distro: Option<&str>,
+    inherit_environment_credentials: bool,
+) -> String {
     format!(
         "{account_id}|{}|{inherit_environment_credentials}",
-        crate::account::compute_fingerprint(config_dir)
+        crate::account::compute_fingerprint(
+            &crate::account::readable_config_dir(config_dir, runtime, distro).unwrap_or_default()
+        )
     )
 }
 
 /// FR-2: served-from-cache after the 60 s TTL lapsed ⇒ stale.
 fn catalog_is_stale(checked_at: u64, now: u64) -> bool {
     now.saturating_sub(checked_at) > CATALOG_TTL_MS
+}
+
+/// LOW (review): drop every cached catalogue belonging to `account_id`.
+///
+/// The cache is keyed by `account|fingerprint|inherit`, so a CHANGED
+/// fingerprint already misses — but the stale rows stay in the map for the
+/// life of the process, and FR-9's fallback ("a failed live probe keeps the
+/// previous display metadata, marked stale") reads them back: after a trust
+/// revocation or a credential-directory edit, a failing probe would serve the
+/// models the OLD configuration reported. A removed account keeps its models
+/// resident for the same reason. Called from wherever an account's identity
+/// changes (`account::**`); every key for the id goes, whatever fingerprint
+/// or inheritance choice minted it.
+///
+/// Wired through the EXISTING inversion, not a direct call: every place that
+/// knows an account's identity changed lives under `account/**`, and
+/// `account` naming `crate::session` would close a module cycle the
+/// conventions gate rejects. So those sites announce it
+/// (`account::notify_credentials_changing` / `notify_account_removed`) and
+/// `session::SessionAccountObserver` — the observer main.rs already registers,
+/// which does exactly this for Codex's catalogue — calls this.
+pub(crate) fn evict_catalog(account_id: &str) {
+    let prefix = format!("{account_id}|");
+    catalog_cache()
+        .lock()
+        .unwrap()
+        .retain(|key, _| !key.starts_with(&prefix));
 }
 
 // ---------------------------------------------------------------- no-session probe
@@ -240,28 +319,49 @@ fn probe_available_models(
         )
     })?;
 
-    let mut ambient: Vec<(String, String)> = std::env::vars().collect();
-    if let Some(path) = crate::process_util::login_shell_path_env() {
-        ambient.retain(|(k, _)| k != "PATH");
-        ambient.push(("PATH".to_string(), path));
-    }
-    let env = crate::account::pi_account_env(&ambient, config_dir, inherit_environment_credentials);
+    // The discovery probe is a Pi child like any other, so it takes the SAME
+    // per-account environment a real connect does (`process::connect_env`) —
+    // including the runtime, which is what decides how `PI_CODING_AGENT_DIR`
+    // crosses a WSL boundary. No extra `WSLENV` entries: this probe passes no
+    // path-shaped variable of its own. `pi_spawn_ambient` is the shared
+    // snapshot (login-shell PATH folded in under the name the environment
+    // already spells it with — PR #142 §5).
+    let env = crate::account::pi_account_env(
+        &crate::account::pi_spawn_ambient(),
+        config_dir,
+        inherit_environment_credentials,
+        runtime,
+        &[],
+    );
+    // PR #142 §5: and it is LAUNCHED like one too — a `wsl` account's resolved
+    // path is a path inside the distro, which must not be handed to
+    // CreateProcess. `pi_invocation` wraps it as `wsl.exe -d <distro> --cd …`;
+    // its Windows-side cwd is dropped there (a Linux path can never be one),
+    // so the probe's neutral temp-dir cwd only applies natively.
+    let (program, argv, spawn_cwd) = super::process::pi_invocation(
+        runtime,
+        &std::env::temp_dir().to_string_lossy(),
+        distro,
+        &exe,
+        PROBE_ARGV.iter().map(|a| (*a).to_string()).collect(),
+    );
 
-    let mut child = crate::process_util::spawn(&exe)
-        .args(PROBE_ARGV)
-        .current_dir(std::env::temp_dir())
+    let mut command = crate::process_util::spawn(&program)
+        .args(argv)
         .exact_env(env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .configure(crate::process_util::own_process_group)
-        .start()
-        .map_err(|e| {
-            AppError::new(
-                ErrorCode::RuntimeUnavailable,
-                format!("could not start pi: {e}"),
-            )
-        })?;
+        .configure(crate::process_util::own_process_group);
+    if let Some(cwd) = spawn_cwd {
+        command = command.current_dir(cwd);
+    }
+    let mut child = command.start().map_err(|e| {
+        AppError::new(
+            ErrorCode::RuntimeUnavailable,
+            format!("could not start pi: {e}"),
+        )
+    })?;
 
     let result = round_trip(
         &mut child,
@@ -390,7 +490,13 @@ pub(crate) fn runtime_models(
 ) -> Result<(Vec<RuntimeModelDescriptor>, u64, bool), AppError> {
     let (config_dir, runtime, distro, inherit) =
         crate::account::pi_execution_preflight_for(app, account_id, "listing available models")?;
-    let key = cache_key(account_id, &config_dir, inherit);
+    let key = cache_key(
+        account_id,
+        &config_dir,
+        &runtime,
+        distro.as_deref(),
+        inherit,
+    );
     let now = crate::ids::now_ms();
     if !refresh {
         if let Some(entry) = catalog_cache().lock().unwrap().get(&key) {
@@ -486,6 +592,43 @@ mod tests {
         let mut blank = descriptor_json("", "claude-sonnet-5", true);
         blank["ref"]["providerId"] = serde_json::json!("");
         assert!(parse_descriptor(&blank).is_none());
+    }
+
+    /// LOW (review): the identity must clear the SAME `RuntimeModelRef::
+    /// validate` every other runtime-boundary call site applies, or a row that
+    /// no connection could ever accept gets cached and offered in the picker.
+    #[test]
+    fn parse_descriptor_applies_the_runtime_model_ref_validation() {
+        for bad in ["x\u{0}y", &"m".repeat(257)] {
+            let row = descriptor_json("anthropic", bad, true);
+            assert!(
+                parse_descriptor(&row).is_none(),
+                "{} must not pass",
+                bad.len()
+            );
+            assert!(parse_descriptor(&descriptor_json(bad, "m", true)).is_none());
+        }
+    }
+
+    /// LOW (review): `displayName`/`unavailableReason` are rendered text and
+    /// were completely unbounded.
+    #[test]
+    fn parse_descriptor_bounds_and_sanitizes_the_display_strings() {
+        let mut row = descriptor_json("anthropic", "claude-sonnet-5", false);
+        row["displayName"] = serde_json::json!("A".repeat(MAX_DISPLAY_BYTES * 4));
+        row["unavailableReason"] = serde_json::json!("no\u{202e}auth\nhere");
+        let d = parse_descriptor(&row).expect("a long display name trims, never drops the row");
+        assert_eq!(d.display_name.len(), MAX_DISPLAY_BYTES);
+        assert_eq!(d.unavailable_reason.as_deref(), Some("noauthhere"));
+    }
+
+    #[test]
+    fn bound_display_never_splits_a_multibyte_character() {
+        // 4-byte chars: the cut must land on a boundary, under the cap.
+        let text = "\u{1F600}".repeat(MAX_DISPLAY_BYTES);
+        let bounded = bound_display(&text);
+        assert!(bounded.len() <= MAX_DISPLAY_BYTES);
+        assert_eq!(bounded.len() % 4, 0);
     }
 
     // ---------------------------------------------------------- parse_models_list
@@ -632,17 +775,113 @@ mod tests {
 
     #[test]
     fn cache_key_differs_by_account_fingerprint_and_environment_choice() {
-        let a = cache_key("acc-1", "/pi/acc-1", false);
-        let b = cache_key("acc-2", "/pi/acc-1", false);
-        let c = cache_key("acc-1", "/pi/acc-1", true);
+        let a = cache_key("acc-1", "/pi/acc-1", "native", None, false);
+        let b = cache_key("acc-2", "/pi/acc-1", "native", None, false);
+        let c = cache_key("acc-1", "/pi/acc-1", "native", None, true);
         assert_ne!(a, b);
         assert_ne!(a, c);
-        assert_eq!(a, cache_key("acc-1", "/pi/acc-1", false));
+        assert_eq!(a, cache_key("acc-1", "/pi/acc-1", "native", None, false));
+    }
+
+    /// PR #142 §5: the discovery probe is launched like any other Pi child —
+    /// a `wsl` account's resolved path lives INSIDE the distro and must never
+    /// be handed to CreateProcess, and the probe's neutral temp-dir cwd rides
+    /// `--cd` (it cannot be a `wsl.exe` child's Windows working directory).
+    #[test]
+    fn the_no_session_probe_runs_inside_the_distro_for_a_wsl_account() {
+        let temp = std::env::temp_dir().to_string_lossy().into_owned();
+        let (program, argv, cwd) = super::super::process::pi_invocation(
+            "wsl",
+            &temp,
+            Some("Ubuntu"),
+            "\\\\wsl.localhost\\Ubuntu\\usr\\local\\bin\\pi",
+            PROBE_ARGV.iter().map(|a| (*a).to_string()).collect(),
+        );
+        assert_eq!(program, "wsl.exe");
+        assert_eq!(argv[..4], ["-d", "Ubuntu", "--cd", temp.as_str()]);
+        assert_eq!(argv[4..6], ["--", "/usr/local/bin/pi"]);
+        assert!(argv.ends_with(&PROBE_ARGV.map(String::from)));
+        assert!(cwd.is_none());
+        // native is unchanged: the resolved binary, in the probe's own cwd.
+        let (program, argv, cwd) = super::super::process::pi_invocation(
+            "native",
+            &temp,
+            None,
+            "/usr/local/bin/pi",
+            vec![],
+        );
+        assert_eq!(program, "/usr/local/bin/pi");
+        assert!(argv.is_empty());
+        assert_eq!(cwd.as_deref(), Some(temp.as_str()));
+    }
+
+    /// PR #142 §5: a `wsl` account's stored `configDir` is the path the DISTRO
+    /// uses, so the key's fingerprint is read through the same accessor the
+    /// trust model uses — otherwise every WSL account collapses onto one
+    /// "unfingerprintable" bucket and two of them share a catalogue (FR-2/FR-9).
+    #[test]
+    fn the_cache_key_reads_a_wsl_accounts_fingerprint_through_its_own_spelling() {
+        let dir =
+            std::env::temp_dir().join(format!("francois-pi-cache-key-{}", crate::ids::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().into_owned();
+        // native: the directory is right here, so the key carries its real
+        // content fingerprint. wsl: the same string is read through the DISTRO
+        // instead — never hashed as a local path — so the two can never
+        // coincide, whatever this host's WSL looks like.
+        assert_ne!(
+            cache_key("acc-1", &path, "native", None, false),
+            cache_key("acc-1", &path, "wsl", Some("Ubuntu"), false)
+        );
+        // An unreadable configuration still keys per ACCOUNT (FR-9: no shared
+        // cache can mix accounts), it just carries no baseline.
+        assert_ne!(
+            cache_key("acc-1", "/home/u/.pi", "wsl", None, false),
+            cache_key("acc-2", "/home/u/.pi", "wsl", None, false)
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn catalog_staleness_is_gated_at_the_60s_ttl() {
         assert!(!catalog_is_stale(0, CATALOG_TTL_MS));
         assert!(catalog_is_stale(0, CATALOG_TTL_MS + 1));
+    }
+
+    /// LOW (review): nothing ever evicted the catalogue, so FR-9's
+    /// keep-the-last-snapshot fallback could serve models an account no longer
+    /// has (removed, or its trust/fingerprint changed). Every key belonging to
+    /// the account goes, whichever fingerprint/inheritance minted it —
+    /// neighbours are untouched.
+    ///
+    /// A unique account id per run keeps this off the shared `CATALOG_CACHE`
+    /// state other tests could see: no shared global state between tests.
+    #[test]
+    fn evict_catalog_drops_every_key_for_one_account_and_nothing_else() {
+        let mine = format!("acc-{}", crate::ids::uuid());
+        let neighbour = format!("acc-{}", crate::ids::uuid());
+        let entry = || CacheEntry {
+            models: Vec::new(),
+            checked_at: 0,
+        };
+        let keys = [
+            cache_key(&mine, "/pi/one", "native", None, false),
+            cache_key(&mine, "/pi/two", "native", None, true),
+            cache_key(&neighbour, "/pi/one", "native", None, false),
+        ];
+        {
+            let mut cache = catalog_cache().lock().unwrap();
+            for key in &keys {
+                cache.insert(key.clone(), entry());
+            }
+        }
+        evict_catalog(&mine);
+        let cache = catalog_cache().lock().unwrap();
+        assert!(!cache.contains_key(&keys[0]));
+        assert!(!cache.contains_key(&keys[1]));
+        assert!(
+            cache.contains_key(&keys[2]),
+            "another account's snapshot is not this account's to drop"
+        );
     }
 }

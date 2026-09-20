@@ -208,8 +208,8 @@ fn pi_discover_skills(engine: &Engine, session_id: &str) -> Result<Vec<SkillInfo
         .collect())
 }
 
-/// The pure half of FR-2's lookup: does `name` (the bare name a listing
-/// returned) resolve to a currently LOADED command? Split out of
+/// The pure half of FR-2's lookup: does `invocation` (a LISTED entry's exact
+/// invocation) resolve to a currently LOADED command? Split out of
 /// `pi_skills_run` so this decision is unit-testable with no `AppHandle` and
 /// no live connection — `pi_skills_run` only adds the I/O (emit + admission)
 /// each outcome implies.
@@ -223,42 +223,58 @@ enum PiSkillLookup {
     Vanished,
 }
 
-fn lookup_pi_skill(commands: &[adapter::RuntimeCommandInfo], name: &str) -> PiSkillLookup {
-    match commands
-        .iter()
-        .find(|c| adapter::pi::skill_name_from_invocation(&c.invocation) == name)
-    {
+/// contract/skills-panel.ts: matched EXACTLY against the listed entries'
+/// `invocation`, never against the derived `SkillInfo.name`. The derived name
+/// is not an identity — `/skill:deploy` and `/deploy` both list as `deploy`,
+/// so keying the run on it lets a repo's skill shadow the user's command.
+fn lookup_pi_skill(commands: &[adapter::RuntimeCommandInfo], invocation: &str) -> PiSkillLookup {
+    match commands.iter().find(|c| c.invocation == invocation) {
         Some(c) if c.loaded => PiSkillLookup::Loaded(c.invocation.clone()),
         Some(c) => PiSkillLookup::Blocked(c.unavailable_reason.clone()),
         None => PiSkillLookup::Vanished,
     }
 }
 
+/// The three fields a Pi run REQUIRES (contract §5: `invocation`,
+/// `clientMessageId`, `delivery`) — pure, so the refusal is testable without
+/// an `AppHandle`. Every other runtime ignores all three.
+fn pi_run_fields(
+    invocation: Option<String>,
+    client_message_id: Option<String>,
+    delivery: Option<admission::DeliveryMode>,
+) -> Result<(String, String, admission::DeliveryMode), AppError> {
+    let (Some(invocation), Some(client_message_id), Some(delivery)) =
+        (invocation, client_message_id, delivery)
+    else {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "invocation, clientMessageId and delivery are required to run a skill on a Pi session",
+        ));
+    };
+    Ok((invocation, client_message_id, delivery))
+}
+
 /// FR-2: resolve a listed skill's exact `invocation` and submit it through
 /// the SAME internal admissions function as `session_submit` — never a raw
-/// RPC call, never a second queue. A name that is no longer LOADED (vanished
-/// on reconnect, or blocked by the resource policy) is `RUNTIME_UNSUPPORTED`;
-/// only the "vanished entirely" case emits `skills.changed` to refresh the
-/// listing (a still-listed-but-unloaded entry did not change).
-#[allow(clippy::too_many_arguments)]
+/// RPC call, never a second queue. An invocation that is no longer LOADED
+/// (vanished on reconnect, or blocked by the resource policy) is
+/// `RUNTIME_UNSUPPORTED`; only the "vanished entirely" case emits
+/// `skills.changed` to refresh the listing (a still-listed-but-unloaded entry
+/// did not change).
 fn pi_skills_run(
     app: &AppHandle,
     engine: &Engine,
     session_id: &str,
-    name: &str,
     args: Option<&str>,
+    requested_invocation: Option<String>,
     client_message_id: Option<String>,
     delivery: Option<admission::DeliveryMode>,
 ) -> Result<(), AppError> {
     if let Err((code, msg)) = engine.require_capability(session_id, "skills") {
         return Err(AppError::new(code, msg));
     }
-    let (Some(client_message_id), Some(delivery)) = (client_message_id, delivery) else {
-        return Err(AppError::new(
-            ErrorCode::InvalidInput,
-            "clientMessageId and delivery are required to run a skill on a Pi session",
-        ));
-    };
+    let (requested_invocation, client_message_id, delivery) =
+        pi_run_fields(requested_invocation, client_message_id, delivery)?;
     let connection = engine.runtime_connection_for(session_id).ok_or_else(|| {
         AppError::new(
             ErrorCode::RuntimeExited,
@@ -266,13 +282,15 @@ fn pi_skills_run(
         )
     })?;
     let commands = connection.list_commands()?;
-    let invocation = match lookup_pi_skill(&commands, name) {
+    let invocation = match lookup_pi_skill(&commands, &requested_invocation) {
         PiSkillLookup::Loaded(invocation) => invocation,
         PiSkillLookup::Blocked(reason) => {
             let reason = reason.map(|r| format!(": {r}")).unwrap_or_default();
             return Err(AppError::new(
                 ErrorCode::RuntimeUnsupported,
-                format!("'{name}' is not available under the current resource policy{reason}"),
+                format!(
+                    "'{requested_invocation}' is not available under the current resource policy{reason}"
+                ),
             ));
         }
         PiSkillLookup::Vanished => {
@@ -283,7 +301,7 @@ fn pi_skills_run(
             );
             return Err(AppError::new(
                 ErrorCode::RuntimeUnsupported,
-                format!("'{name}' is no longer listed for this session"),
+                format!("'{requested_invocation}' is no longer listed for this session"),
             ));
         }
     };
@@ -563,6 +581,12 @@ pub fn skills_run(
     engine: State<'_, Engine>,
     session_id: String,
     name: String,
+    // pi-skills-capabilities / pr-142 §6: the LISTED entry's exact
+    // `SkillInfo.invocation`. REQUIRED for a Pi session — it is what the run
+    // is keyed on there, because `name` is derived from it and is not an
+    // identity. Optional on the wire so every other runtime (which ignores it
+    // and keys on `name` exactly as before) can keep omitting it.
+    invocation: Option<String>,
     args: Option<String>,
     // pi-skills-capabilities: REQUIRED for a Pi session (validated exactly
     // as `RuntimeMessageInput`'s fields); ignored by every other runtime.
@@ -577,8 +601,8 @@ pub fn skills_run(
             &app,
             &engine,
             &session_id,
-            &name,
             args.as_deref(),
+            invocation,
             client_message_id,
             delivery,
         ) {
@@ -696,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn lookup_pi_skill_finds_a_loaded_command_by_its_bare_name() {
+    fn lookup_pi_skill_finds_a_loaded_command_by_its_invocation() {
         let commands = vec![pi_command(
             "/skill:review",
             adapter::RuntimeCommandSource::Skill,
@@ -704,7 +728,7 @@ mod tests {
             None,
         )];
         assert_eq!(
-            lookup_pi_skill(&commands, "review"),
+            lookup_pi_skill(&commands, "/skill:review"),
             PiSkillLookup::Loaded("/skill:review".into())
         );
     }
@@ -718,19 +742,135 @@ mod tests {
             Some("project resources are disabled"),
         )];
         assert_eq!(
-            lookup_pi_skill(&commands, "review"),
+            lookup_pi_skill(&commands, "/skill:review"),
             PiSkillLookup::Blocked(Some("project resources are disabled".into()))
         );
     }
 
+    /// pr-142 §6: the derived bare name is NOT an identity — `/skill:deploy`
+    /// and `/deploy` both list as `deploy`, so a run keyed on the name lets a
+    /// repo's skill shadow the user's command. The lookup keys on the exact
+    /// `invocation` the listing returned.
     #[test]
-    fn lookup_pi_skill_is_vanished_for_an_unknown_name() {
+    fn lookup_pi_skill_keys_on_the_exact_invocation_never_the_derived_name() {
+        let commands = vec![
+            pi_command(
+                "/skill:deploy",
+                adapter::RuntimeCommandSource::Skill,
+                true,
+                None,
+            ),
+            pi_command("/deploy", adapter::RuntimeCommandSource::Prompt, true, None),
+        ];
+        assert_eq!(
+            lookup_pi_skill(&commands, "/deploy"),
+            PiSkillLookup::Loaded("/deploy".into())
+        );
+        assert_eq!(
+            lookup_pi_skill(&commands, "/skill:deploy"),
+            PiSkillLookup::Loaded("/skill:deploy".into())
+        );
+        assert_eq!(
+            lookup_pi_skill(&commands, "deploy"),
+            PiSkillLookup::Vanished,
+            "the derived name is not an identity — it must not resolve either entry"
+        );
+    }
+
+    #[test]
+    fn lookup_pi_skill_is_vanished_for_an_unknown_invocation() {
         let commands = vec![pi_command(
             "/skill:review",
             adapter::RuntimeCommandSource::Skill,
             true,
             None,
         )];
-        assert_eq!(lookup_pi_skill(&commands, "gone"), PiSkillLookup::Vanished);
+        assert_eq!(lookup_pi_skill(&commands, "/gone"), PiSkillLookup::Vanished);
+    }
+
+    #[test]
+    fn a_pi_run_without_an_invocation_is_invalid_input() {
+        let err = pi_run_fields(
+            None,
+            Some("cm-1".into()),
+            Some(admission::DeliveryMode::Normal),
+        )
+        .expect_err("invocation is required on Pi");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        // …and the two fields that were already required still are.
+        assert!(pi_run_fields(
+            Some("/deploy".into()),
+            None,
+            Some(admission::DeliveryMode::Normal)
+        )
+        .is_err());
+        assert!(pi_run_fields(Some("/deploy".into()), Some("cm-1".into()), None).is_err());
+        assert_eq!(
+            pi_run_fields(
+                Some("/deploy".into()),
+                Some("cm-1".into()),
+                Some(admission::DeliveryMode::FollowUp)
+            )
+            .expect("all three present"),
+            (
+                "/deploy".to_string(),
+                "cm-1".to_string(),
+                admission::DeliveryMode::FollowUp
+            )
+        );
+    }
+
+    /// contract/skills-panel.ts: `invocation` is OPTIONAL on the wire — a
+    /// Claude-session run omits it entirely (the frontend sends `undefined`,
+    /// which never reaches the payload), and a required `String` parameter
+    /// would make every one of those runs fail to deserialize.
+    ///
+    /// Two halves, the same shape `profiles::commands`' `copy_to_pi` pin uses:
+    /// the function-pointer line fails to COMPILE if the parameter ever stops
+    /// being optional, and the round-trip records what the wire actually looks
+    /// like with and without the field. (`skills_run` itself needs an
+    /// `AppHandle`, which this crate has no test harness for.)
+    #[test]
+    fn the_run_request_round_trips_with_and_without_an_invocation() {
+        let _invocation_is_optional: fn(
+            AppHandle,
+            State<'_, Engine>,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<admission::DeliveryMode>,
+        ) -> IpcResult<Option<()>> = skills_run;
+
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct RunArgs {
+            #[serde(default)]
+            invocation: Option<String>,
+            #[serde(default)]
+            client_message_id: Option<String>,
+            #[serde(default)]
+            delivery: Option<admission::DeliveryMode>,
+        }
+
+        let pi: RunArgs = serde_json::from_value(serde_json::json!({
+            "sessionId": "s1",
+            "name": "deploy",
+            "invocation": "/skill:deploy",
+            "clientMessageId": "cm-1",
+            "delivery": "followUp",
+        }))
+        .expect("a Pi run carries all three");
+        assert_eq!(pi.invocation.as_deref(), Some("/skill:deploy"));
+        assert_eq!(pi.client_message_id.as_deref(), Some("cm-1"));
+        assert_eq!(pi.delivery, Some(admission::DeliveryMode::FollowUp));
+
+        let claude: RunArgs =
+            serde_json::from_value(serde_json::json!({ "sessionId": "s1", "name": "deploy" }))
+                .expect("a Claude run omits all three");
+        assert_eq!(claude.invocation, None);
+        assert_eq!(claude.client_message_id, None);
+        assert_eq!(claude.delivery, None);
     }
 }

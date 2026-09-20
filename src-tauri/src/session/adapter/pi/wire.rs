@@ -14,10 +14,14 @@
 //! real captures identify the certified artifact; provisional fixtures are
 //! labelled."
 
-use crate::ipc::{AppError, ErrorCode};
-use crate::session::attachments::{mime_type_for_extension, Attachment};
+// `Deserialize` is in scope as a trait too: `parse_value` deserializes a
+// response straight out of a borrowed `Value`.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+mod images;
+
+pub(crate) use images::{build_prompt_body, PiPromptImage};
 
 /// FR-2: one wire record (a line, before its LF) may be at most this large.
 pub(crate) const MAX_RECORD_BYTES: usize = 32 * 1024 * 1024;
@@ -151,16 +155,6 @@ pub(crate) struct PiCommand {
     pub(crate) body: PiCommandBody,
 }
 
-/// FR-7: one image content part of a `prompt` command — bytes resolved and
-/// base64-encoded server-side (`build_prompt_body`), never round-tripped
-/// from React.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub(crate) struct PiPromptImage {
-    pub(crate) data: String,
-    #[serde(rename = "mimeType")]
-    pub(crate) mime_type: String,
-}
-
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub(crate) enum PiCommandBody {
@@ -219,50 +213,6 @@ pub(crate) enum PiCommandBody {
     /// session's own loaded commands.
     #[serde(rename = "get_commands")]
     GetCommands,
-}
-
-/// FR-7: build a `prompt` command's body from the user's text and the
-/// session's CURRENT attachment records, resolving only the ones the text
-/// actually references — the same `@refPath` convention
-/// `Session::validate_attachment_submission` already checks before a send is
-/// even attempted. Rejects with `RUNTIME_UNSUPPORTED` before anything is read
-/// off disk when a referenced attachment is an image and the connection's own
-/// capability snapshot marks `images` unavailable — the adapter's own gate,
-/// independent of (and in addition to) the generic session-level one, since
-/// `PiConnection` is the only thing that knows the ACTUAL wire shape a model
-/// without vision would otherwise receive. Image bytes are read and
-/// base64-encoded HERE, server-side, and never travel back through React —
-/// FR-7's "never transmit base64 back to React".
-pub(crate) fn build_prompt_body(
-    text: String,
-    attachments: &[Attachment],
-    images_supported: bool,
-) -> Result<PiCommandBody, AppError> {
-    let referenced_images: Vec<&Attachment> = attachments
-        .iter()
-        .filter(|a| a.kind == "image" && text.contains(&format!("@{}", a.ref_path)))
-        .collect();
-    if !referenced_images.is_empty() && !images_supported {
-        return Err(AppError::new(
-            ErrorCode::RuntimeUnsupported,
-            "runtime images capability is unavailable",
-        ));
-    }
-    let mut images = Vec::with_capacity(referenced_images.len());
-    for a in referenced_images {
-        let bytes = std::fs::read(&a.stored_path).map_err(|e| {
-            AppError::new(
-                ErrorCode::RuntimeUnavailable,
-                format!("could not read attachment {}: {e}", a.name),
-            )
-        })?;
-        use base64::Engine as _;
-        images.push(PiPromptImage {
-            data: base64::engine::general_purpose::STANDARD.encode(bytes),
-            mime_type: mime_type_for_extension(&a.name).to_string(),
-        });
-    }
-    Ok(PiCommandBody::Prompt { text, images })
 }
 
 impl PiCommand {
@@ -364,19 +314,27 @@ fn looks_like_event(value: &Value) -> bool {
     value.get("type").is_some()
 }
 
-/// FR-2/FR-3: parse one already-framed, already-decoded line. Pure — no
-/// correlation-table lookups here (that is the dispatcher's job); this only
-/// decides what SHAPE the line is and whether a known event's mandatory
-/// fields are present.
+/// FR-2/FR-3: parse one already-framed line. Pure — no correlation-table
+/// lookups here (that is the dispatcher's job); this only decides what SHAPE
+/// the line is and whether a known event's mandatory fields are present.
 pub(crate) fn parse_line(line: &str) -> Result<Frame, ParseError> {
     let value: Value = serde_json::from_str(line).map_err(|_| ParseError::InvalidJson)?;
-    if looks_like_response(&value) {
-        let resp: PiResponse =
-            serde_json::from_value(value).map_err(|_| ParseError::InvalidJson)?;
+    parse_value(&value)
+}
+
+/// [`parse_line`] for a line that has ALREADY been decoded to a `Value`. The
+/// reader decodes each line once (it hands the same `Value` to
+/// `normalize::TranscriptReducer` too), so `protocol.rs` classifying it from
+/// here costs no second `from_str` over a record that may be megabytes.
+pub(crate) fn parse_value(value: &Value) -> Result<Frame, ParseError> {
+    if looks_like_response(value) {
+        // By reference: only the fields `PiResponse` names are copied out,
+        // and the caller keeps its `Value`.
+        let resp = PiResponse::deserialize(value).map_err(|_| ParseError::InvalidJson)?;
         return Ok(Frame::Response(resp));
     }
-    if looks_like_event(&value) {
-        return parse_event(&value).map(Frame::Event);
+    if looks_like_event(value) {
+        return parse_event(value).map(Frame::Event);
     }
     Err(ParseError::NotAFrame)
 }
@@ -669,160 +627,6 @@ mod tests {
         assert_eq!(cmd.kind().wire_name(), "get_session_stats");
     }
 
-    // ------------------------------------------------------- FR-7: build_prompt_body
-
-    fn attachment(
-        id: &str,
-        kind: &str,
-        ref_path: &str,
-        stored_path: &str,
-        name: &str,
-    ) -> Attachment {
-        Attachment {
-            id: id.into(),
-            session_id: "s1".into(),
-            kind: kind.into(),
-            origin_path: None,
-            stored_path: stored_path.into(),
-            ref_path: ref_path.into(),
-            name: name.into(),
-            bytes: 1,
-            copied: true,
-            state: "sent".into(),
-            created_at: 0,
-        }
-    }
-
-    #[test]
-    fn a_text_only_prompt_carries_no_images() {
-        let body = build_prompt_body("just text, no refs".into(), &[], true).unwrap();
-        match body {
-            PiCommandBody::Prompt { text, images } => {
-                assert_eq!(text, "just text, no refs");
-                assert!(images.is_empty());
-            }
-            _ => panic!("expected a prompt body"),
-        }
-    }
-
-    #[test]
-    fn a_referenced_image_is_resolved_and_base64_encoded_never_left_as_a_path() {
-        let dir = std::env::temp_dir().join(format!(
-            "francois-pi-wire-{}-{}",
-            std::process::id(),
-            crate::ids::uuid()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("shot.png");
-        std::fs::write(&path, b"hello").unwrap();
-        let a = attachment(
-            "a1",
-            "image",
-            ".francois/attachments/a3f9c1e2/shot.png",
-            &path.to_string_lossy(),
-            "shot.png",
-        );
-
-        let body = build_prompt_body(
-            "look at @.francois/attachments/a3f9c1e2/shot.png".into(),
-            &[a],
-            true,
-        )
-        .unwrap();
-
-        match body {
-            PiCommandBody::Prompt { images, .. } => {
-                assert_eq!(images.len(), 1);
-                assert_eq!(images[0].mime_type, "image/png");
-                use base64::Engine as _;
-                assert_eq!(
-                    base64::engine::general_purpose::STANDARD
-                        .decode(&images[0].data)
-                        .unwrap(),
-                    b"hello"
-                );
-            }
-            _ => panic!("expected a prompt body"),
-        }
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn an_unreferenced_attachment_is_never_resolved() {
-        let a = attachment(
-            "a1",
-            "image",
-            ".francois/attachments/a3f9c1e2/shot.png",
-            "/does/not/exist.png",
-            "shot.png",
-        );
-        let body = build_prompt_body("nothing attached here".into(), &[a], true).unwrap();
-        match body {
-            PiCommandBody::Prompt { images, .. } => assert!(images.is_empty()),
-            _ => panic!("expected a prompt body"),
-        }
-    }
-
-    #[test]
-    fn a_referenced_image_is_rejected_before_submission_when_images_are_unsupported() {
-        let a = attachment(
-            "a1",
-            "image",
-            ".francois/attachments/a3f9c1e2/shot.png",
-            "/does/not/exist.png",
-            "shot.png",
-        );
-        let err = build_prompt_body(
-            "look at @.francois/attachments/a3f9c1e2/shot.png".into(),
-            &[a],
-            false,
-        )
-        .unwrap_err();
-        assert_eq!(err.code, ErrorCode::RuntimeUnsupported);
-    }
-
-    #[test]
-    fn a_referenced_file_attachment_is_never_resolved_as_an_image() {
-        // FR-7: "File paths remain explicit user attachments, not guessed
-        // URLs" — a non-image kind never becomes image content, whatever the
-        // capability snapshot says, and never touches the filesystem for it.
-        let a = attachment(
-            "a1",
-            "file",
-            ".francois/attachments/a3f9c1e2/report.pdf",
-            "/does/not/exist.pdf",
-            "report.pdf",
-        );
-        let body = build_prompt_body(
-            "see @.francois/attachments/a3f9c1e2/report.pdf".into(),
-            &[a],
-            false,
-        )
-        .unwrap();
-        match body {
-            PiCommandBody::Prompt { images, .. } => assert!(images.is_empty()),
-            _ => panic!("expected a prompt body"),
-        }
-    }
-
-    #[test]
-    fn a_missing_referenced_image_file_fails_explicitly_rather_than_silently_dropping() {
-        let a = attachment(
-            "a1",
-            "image",
-            ".francois/attachments/a3f9c1e2/shot.png",
-            "/definitely/does/not/exist-francois-test.png",
-            "shot.png",
-        );
-        let err = build_prompt_body(
-            "look at @.francois/attachments/a3f9c1e2/shot.png".into(),
-            &[a],
-            true,
-        )
-        .unwrap_err();
-        assert_eq!(err.code, ErrorCode::RuntimeUnavailable);
-    }
-
     // ---------------------------------------------------------------- parsing
 
     #[test]
@@ -948,5 +752,26 @@ mod tests {
     #[test]
     fn invalid_json_is_rejected() {
         assert_eq!(parse_line("not json"), Err(ParseError::InvalidJson));
+    }
+
+    /// The seam the reader uses so a line is decoded exactly once: classifying
+    /// an already-parsed `Value` must produce what classifying its text does,
+    /// for every frame shape — response, event, and both refusals.
+    #[test]
+    fn parse_value_agrees_with_parse_line_for_every_frame_shape() {
+        for line in [
+            r#"{"id":"req-1","command":"get_entries","success":true,"data":{"entries":[1,2,3]}}"#,
+            r#"{"id":"req-2","command":"prompt","success":false,"error":"queue full"}"#,
+            r#"{"type":"agent_settled"}"#,
+            r#"{"type":"turn_end","reason":"done"}"#,
+            r#"{"type":"turn_end"}"#,
+            r#"{"type":"content_delta","messageId":"m1"}"#,
+            r#"{"type":"some_future_event"}"#,
+            r#"{"type":""}"#,
+            r#"{"foo":"bar"}"#,
+        ] {
+            let value: Value = serde_json::from_str(line).unwrap();
+            assert_eq!(parse_value(&value), parse_line(line), "{line}");
+        }
     }
 }

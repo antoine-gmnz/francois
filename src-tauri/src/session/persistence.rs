@@ -3,6 +3,14 @@
 use super::*;
 use crate::ipc::AppError;
 
+/// The `sessions.json` file's own read/write rules — atomic publish and the
+/// quarantine that keeps an unreadable index from being overwritten. A child
+/// module because this file is already over the ~1000-line cap.
+mod sessions_file;
+/// The per-session transcript JSONL's own write rules, over an
+/// already-resolved path. Same reason, same shape.
+pub(crate) mod transcript_file;
+
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
@@ -132,34 +140,16 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
     o
 }
 
-/// Append one finalized block as a JSON line to the session's transcript (FR-1/2).
-/// Best-effort: a write failure is ignored so it never breaks the turn (§7).
+/// Append one finalized block as a JSON line to the session's transcript
+/// (FR-1/2). The write itself is `transcript_file::append_at`.
 pub fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
-    use std::io::Write as _;
-    let Some(path) = transcript_path(app, session_id) else {
-        return;
-    };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let mut line = serde_json::to_string(&persisted_block_json(block)).unwrap_or_default();
-    line.push('\n');
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = f.write_all(line.as_bytes());
+    if let Some(path) = transcript_path(app, session_id) {
+        transcript_file::append_at(&path, block);
     }
 }
 
 /// pi-session-durability FR-6: atomically REPLACE a session's whole transcript
-/// file with a freshly rebuilt block list. Unlike `append_transcript` (one
-/// line, best-effort, `O(1)` per event), a projection rebuild supersedes the
-/// file's entire prior content — a crash mid-write must never leave a torn
-/// mix of old and new lines, so this writes a sibling temp file (`fs_util`'s
-/// shared helper, FR-6: "existing fs helpers", not a private temp-name
-/// scheme) and renames it into place.
+/// file with a freshly rebuilt block list (`transcript_file::replace_at`).
 pub(crate) fn replace_transcript(
     app: &AppHandle,
     session_id: &str,
@@ -167,20 +157,7 @@ pub(crate) fn replace_transcript(
 ) -> std::io::Result<()> {
     let path = transcript_path(app, session_id)
         .ok_or_else(|| std::io::Error::other("invalid session id"))?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut bytes = Vec::new();
-    for block in blocks {
-        bytes.extend_from_slice(persisted_block_json(block).to_string().as_bytes());
-        bytes.push(b'\n');
-    }
-    let tmp = crate::fs_util::unique_temp_path(&path, "jsonl");
-    let result = std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, &path));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    transcript_file::replace_at(&path, blocks)
 }
 
 /// /clear: remove the session's persisted transcript so a reload starts empty.
@@ -550,13 +527,11 @@ pub fn persist(app: &AppHandle, engine: &Engine) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        // Atomic write (temp + rename) so a crash mid-write can't torn sessions.json —
-        // it now holds every session's claudeSessionId resume anchor (FR-10).
+        // Atomic write (unique temp + sync_all + rename) so neither a crash
+        // mid-write nor a second writer can leave a torn sessions.json — it
+        // holds every session's resume anchor (FR-10). See `sessions_file`.
         let bytes = serde_json::to_vec_pretty(&list).unwrap_or_default();
-        let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &path).is_err() {
-            let _ = std::fs::remove_file(&tmp);
-        }
+        let _ = sessions_file::write_atomic(&path, &bytes);
     }
 }
 
@@ -950,12 +925,15 @@ pub fn load_persisted(app: &AppHandle) {
     let Some(path) = sessions_json_path(app) else {
         return;
     };
-    let Ok(bytes) = std::fs::read(&path) else {
-        return;
-    };
-    let Ok(list) = serde_json::from_slice::<Vec<Value>>(&bytes) else {
-        return;
-    };
+    // A `sessions.json` this build cannot read is MOVED ASIDE here, before
+    // anything can persist over it — loading "no sessions" and then writing
+    // an empty list back destroyed every session and every resume anchor the
+    // file held. The fault is surfaced through the same app-data log the rest
+    // of the crate's non-fatal diagnostics use.
+    let (list, diagnostic) = sessions_file::read_or_set_aside(&path, now_ms());
+    if let Some(block) = diagnostic {
+        crate::diagnostics::append_log(app, "sessions.log", &block);
+    }
     let engine = app.state::<Engine>();
     // projects FR-18: read the registry ONCE for the whole load — main.rs runs
     // project::load_projects before this, so it is already populated.
