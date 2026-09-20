@@ -109,10 +109,10 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
       reason: "Installing skills isn't available on this provider yet.",
     },
     workflows: { available: false, reason: "Workflows aren't available on this provider yet." },
-    interactiveCommands: {
-      available: false,
-      reason: "Slash commands aren't available on this provider yet.",
-    },
+    // Francois-owned commands (/model, /status and /help) are answered in the
+    // core and do not require Codex's non-interactive stdin transport. Vendor
+    // slash commands still pass through as ordinary prompts.
+    interactiveCommands: { available: true },
     permissions: {
       available: false,
       reason: 'Codex enforces permissions with its own sandbox.',

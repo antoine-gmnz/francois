@@ -111,11 +111,12 @@ describe('runtimeCapabilities', () => {
     expect(caps.skillsInstall.available).toBe(false);
   });
 
-  // multi-provider-codex FR-16.
-  it('preserves only model and image actions on the codex runtime', () => {
+  it('exposes local slash commands alongside model and image actions on codex', () => {
     const caps = runtimeCapabilities('codex');
     for (const capability of CAPABILITIES) {
-      expect(caps[capability].available).toBe(capability === 'modelSwitching' || capability === 'images');
+      expect(caps[capability].available).toBe(
+        capability === 'interactiveCommands' || capability === 'modelSwitching' || capability === 'images',
+      );
     }
   });
 
