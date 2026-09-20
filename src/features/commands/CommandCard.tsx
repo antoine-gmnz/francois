@@ -238,7 +238,7 @@ function HelpBody({ entries }: { entries: HelpEntry[] }) {
           </Fragment>
         ))}
       </div>
-      <div className="cmdcard-help-footer">other /commands are passed to Claude Code</div>
+      <div className="cmdcard-help-footer">other /commands are passed to the active runtime</div>
     </div>
   );
 }

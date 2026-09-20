@@ -65,10 +65,11 @@ loop owner. A collapsed enum could not name it.
 - **`reasoning` items.** The core has no thinking block kind (`BlockKind` has no such member), and
   rendering a reasoning summary as an `Assistant` block would misattribute it. Dropped in v1;
   the first follow-up.
-- **Skills, MCP, subagents, workflows, slash commands, compaction, remote control.** Codex has its
+- **Skills, MCP, subagents, workflows, vendor slash commands, compaction, remote control.** Codex has its
   own skills (`~/.codex/skills`) and its own MCP client (`codex mcp`) — but Francois' panes read
   *Claude Code's* control surfaces, and inverting them into runtime-agnostic discovery is
-  `capability-registry`, not this feature. All `available: false` here, worded as current gaps.
+  `capability-registry`, not this feature. All except the local command capability are
+  `available: false` here, worded as current gaps.
 - **Codex's interactive TUI, `codex cloud`, `codex review`.** Out of scope.
 
 ## 3. User stories / flows
@@ -94,7 +95,8 @@ is there (durable-sessions) and so is the thread anchor, so the next message con
 starting over.
 
 **The panes.** Agents, MCP, Skills and Workflows render the disabled notice with their reason. The
-usage bar hides. The slash menu says slash commands aren't available on this provider yet.
+usage bar hides. Francois-owned slash commands (`/model`, `/status`, `/help`) are answered locally;
+vendor slash commands are still sent as ordinary prompts.
 
 ## 4. Functional requirements
 
@@ -245,7 +247,7 @@ usage bar hides. The slash menu says slash commands aren't available on this pro
   | `skills` | false | "Skills aren't available on this provider yet." |
   | `skillsInstall` | false | "Installing skills isn't available on this provider yet." |
   | `workflows` | false | "Workflows aren't available on this provider yet." |
-  | `interactiveCommands` | false | "Slash commands aren't available on this provider yet." |
+  | `interactiveCommands` | true | Francois-owned commands are answered locally; vendor commands pass through. |
   | `permissions` | false | "Codex enforces permissions with its own sandbox." |
   | `remoteControl` | false | "Remote Control is an Anthropic service." |
   | `usageBar` | false | "Plan limits aren't available on this provider yet." |

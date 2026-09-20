@@ -5,7 +5,13 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
+  server: {
+    port: 1420,
+    strictPort: true,
+    // Rust rewrites Windows executables under target/ while Tauri dev runs.
+    // Watching those files makes chokidar fail with EBUSY on Windows.
+    watch: { ignored: ['**/src-tauri/target/**'] },
+  },
   // The demo backend (src/demo/, README screenshot + GIF captures only) must
   // leave NO trace in a shipped build. A bare `import.meta.env.VITE_FRANCOIS_DEMO`
   // is not statically replaced when the variable is unset, so the comparison
