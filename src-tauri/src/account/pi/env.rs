@@ -216,7 +216,9 @@ mod tests {
 
     /// The env block a real Windows process carries: `Path`, not `PATH`;
     /// `ComSpec`, not `COMSPEC`. Taken from `cmd.exe /C set` — the casing is
-    /// the whole point of the fixture.
+    /// the whole point of the fixture. Gated like the tests that read it:
+    /// elsewhere it has no caller, and dead code is an error under CI's lints.
+    #[cfg(windows)]
     fn windows_ambient() -> Vec<(String, String)> {
         vec![
             ("Path".to_string(), r"C:\Windows\system32".to_string()),
