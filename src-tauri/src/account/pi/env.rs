@@ -493,7 +493,9 @@ mod tests {
             .iter()
             .filter(|(k, _)| crate::process_util::env_name_eq(k, "PATH"))
             .count();
-        assert!(paths <= 1, "{env:?}");
+        // No `{env:?}` in the message: a failing assert would print a whole
+        // environment block into the test log.
+        assert!(paths <= 1, "two spellings of PATH reached the child");
         assert!(env
             .iter()
             .any(|(k, v)| k == "PI_CODING_AGENT_DIR" && v == "/pi/a"));

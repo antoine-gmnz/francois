@@ -1049,6 +1049,6 @@ mod tests {
                 normalized.chars().take(1500).collect::<String>()
             );
         }
-        eprintln!("adopted local session {}", hydrated.unwrap());
+        assert!(hydrated.is_some());
     }
 }

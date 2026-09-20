@@ -197,14 +197,14 @@ mod tests {
 
         assert!(list.is_empty());
         let diagnostic = diagnostic.expect("the user is told");
-        assert!(diagnostic.contains("could not be parsed"), "{diagnostic}");
+        assert!(diagnostic.contains("could not be parsed"));
         assert!(
             !path.exists(),
             "the unreadable file must be MOVED, not left"
         );
         let aside = dir.join("sessions.json.corrupt-1700000000000");
         assert_eq!(std::fs::read(&aside).unwrap(), b"[{ not json");
-        assert!(diagnostic.contains("set aside as"), "{diagnostic}");
+        assert!(diagnostic.contains("set aside as"));
 
         // ...and the very next write is a clean one that destroys nothing.
         write_atomic(&path, b"[]").unwrap();
@@ -259,7 +259,7 @@ mod tests {
         let (list, diagnostic) = read_or_set_aside(&path, 1_700_000_000_000);
         assert!(list.is_empty());
         let diagnostic = diagnostic.expect("an unreadable index is reported, never silent");
-        assert!(diagnostic.contains("could not be read"), "{diagnostic}");
+        assert!(diagnostic.contains("could not be read"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
